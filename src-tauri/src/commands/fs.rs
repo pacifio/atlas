@@ -1,6 +1,39 @@
+use parking_lot::Mutex;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use tauri::State;
+
+/// In-memory mirror of the editor's live (unsaved) buffers, keyed by absolute
+/// file path. The frontend pushes a file's current text here whenever it goes
+/// dirty (`editor_sync_buffer`) and drops it on save / reload / close
+/// (`editor_clear_buffer`). This lets the backend — and, later, the ACP
+/// `fs/read_text_file` handler — read a user's in-flight edits instead of the
+/// stale on-disk version.
+///
+/// Only dirty buffers are mirrored: a clean buffer equals disk, so the ordinary
+/// disk read path already serves it. Untitled scratch buffers are never
+/// mirrored (they have no real path to serve).
+#[derive(Default)]
+pub struct EditorBuffers(pub Mutex<HashMap<String, String>>);
+
+impl EditorBuffers {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Backend read accessor for the live-buffer registry: returns the mirrored
+/// text when the path has an unsaved buffer, `None` otherwise. The future ACP
+/// `fs/read_text_file` handler consults this first and falls back to reading
+/// disk when it returns `None`.
+// Intentionally unused in Phase 0 — wired up by the ACP `fs/read` handler in a
+// later phase; exposed now so that work has a stable accessor to call.
+#[allow(dead_code)]
+pub fn live_buffer(state: &EditorBuffers, path: &str) -> Option<String> {
+    state.0.lock().get(path).cloned()
+}
 
 #[derive(Debug, Serialize)]
 pub struct FileEntry {
@@ -174,6 +207,24 @@ pub async fn write_file_content(path: String, content: String) -> Result<(), Str
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Mirror a dirty editor buffer's live text into the backend registry. Called
+/// (debounced) by the editor whenever a tracked file has unsaved changes, so
+/// the backend can serve in-flight edits instead of stale disk content.
+///
+/// Sync (no `async`) on purpose: it does no file I/O — just a lock + map insert
+/// — so it won't freeze the NSApp main thread the way the disk commands would.
+#[tauri::command]
+pub fn editor_sync_buffer(path: String, content: String, state: State<'_, EditorBuffers>) {
+    state.0.lock().insert(path, content);
+}
+
+/// Drop a file's live-buffer mirror — on save, reload, or tab close, when the
+/// buffer no longer diverges from disk (or is gone). Idempotent.
+#[tauri::command]
+pub fn editor_clear_buffer(path: String, state: State<'_, EditorBuffers>) {
+    state.0.lock().remove(&path);
 }
 
 /// Write a binary file from standard base64. Counterpart of `read_file_base64`

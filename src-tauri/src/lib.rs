@@ -210,6 +210,7 @@ pub fn run() {
         .manage(commands::memory_sharing::MemorySharingState::new())
         .manage(commands::shared_memory::SharedMemoryStore::new())
         .manage(commands::updater::UpdaterState::new())
+        .manage(commands::fs::EditorBuffers::new())
         // Drop a window's per-window index + mention caches when it closes, so
         // its file watcher stops and memory is freed (these states are keyed by
         // webview label for multi-window project scoping).
@@ -249,6 +250,8 @@ pub fn run() {
             commands::fs::file_mtime_ms,
             commands::fs::asset_allow_dir,
             commands::fs::write_file_content,
+            commands::fs::editor_sync_buffer,
+            commands::fs::editor_clear_buffer,
             commands::fs::write_file_base64,
             commands::fs::ensure_atlas_gitignore,
             commands::fs::fs_create_file,

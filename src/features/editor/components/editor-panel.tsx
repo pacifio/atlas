@@ -183,6 +183,8 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
       await invoke("write_file_content", { path, content });
       const mtime = await invoke<number>("file_mtime_ms", { path }).catch(() => 0);
       markSaved(path, content, mtime);
+      // Buffer now equals disk — drop the live-buffer mirror.
+      void invoke("editor_clear_buffer", { path });
       logEvent({
         source: "editor",
         kind: "save",
@@ -259,6 +261,8 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     if (content === liveDoc) {
       // Content matches what's shown (e.g. our own save) — just record mtime.
       reloadBuffer(path, content, mtime);
+      // Buffer now matches disk — drop any stale live-buffer mirror.
+      void invoke("editor_clear_buffer", { path });
       return;
     }
     if (cur.dirty) {
@@ -268,6 +272,8 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     reloadBuffer(path, content, mtime);
     replaceViewDoc(content);
     refreshDiffGutter();
+    // Clean buffer silently reloaded from disk — mirror (if any) is now stale.
+    void invoke("editor_clear_buffer", { path });
   }, [path, isUntitled, reloadBuffer, markExternallyChanged, replaceViewDoc, refreshDiffGutter]);
   const revalidateRef = useRef(revalidate);
   revalidateRef.current = revalidate;
@@ -286,6 +292,8 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     reloadBuffer(path, content, mtime);
     replaceViewDoc(content);
     refreshDiffGutter();
+    // User discarded unsaved edits for disk — the mirror is now stale.
+    void invoke("editor_clear_buffer", { path });
   }, [path, isUntitled, reloadBuffer, replaceViewDoc, refreshDiffGutter]);
 
   // Repaint the gutter when the working tree changes elsewhere (commits,
@@ -364,7 +372,17 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
               dirtyTimerRef.current = setTimeout(() => {
                 const current = update.view.state.doc.toString();
                 const orig = useEditorStore.getState().buffers[path]?.originalContent ?? "";
-                setDirty(path, current !== orig);
+                const dirty = current !== orig;
+                setDirty(path, dirty);
+                // Phase 0 live-buffer mirror: keep the backend registry in sync
+                // with the editor's unsaved text so agents can read in-flight
+                // edits. Dirty-only (a clean buffer equals disk); untitled
+                // scratch buffers have no real path to serve. Reuses this timer
+                // — no extra per-keystroke work, no store write.
+                if (!isUntitled) {
+                  if (dirty) void invoke("editor_sync_buffer", { path, content: current });
+                  else void invoke("editor_clear_buffer", { path });
+                }
               }, DIRTY_CHECK_DEBOUNCE);
             }
           }),
@@ -393,6 +411,8 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
         viewRef.current.destroy();
         viewRef.current = null;
       }
+      // Editor for this path is going away (tab close) — drop its mirror.
+      if (!isUntitled) void invoke("editor_clear_buffer", { path });
     };
   }, [path, !!buffer]); // eslint-disable-line react-hooks/exhaustive-deps
 
