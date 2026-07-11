@@ -193,6 +193,11 @@ pub struct AppSettings {
     /// theme; persisted so it survives relaunch.
     #[serde(default = "default_atlas_theme")]
     pub atlas_theme: String,
+    /// Show inline Git blame (author · relative time · commit summary) at the
+    /// end of the editor's active line, Zed-style. Default ON; when off the
+    /// blame extension is left out of the editor entirely (no overhead).
+    #[serde(default = "default_true")]
+    pub git_blame_inline: bool,
     /// Auto-update master switch. When ON (default), every startup runs a
     /// non-blocking check against PostHog remote config and prompts if a newer
     /// version is available. See `crate::commands::updater`.
@@ -245,6 +250,7 @@ impl Default for AppSettings {
             llm_model_id: default_llm_model(),
             code_editor_theme: default_code_editor_theme(),
             atlas_theme: default_atlas_theme(),
+            git_blame_inline: true,
             auto_update: true,
             updater_ignored_version: None,
         }

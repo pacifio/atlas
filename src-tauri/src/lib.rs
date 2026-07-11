@@ -271,6 +271,7 @@ pub fn run() {
             commands::mission_control::mission_control_export_markdown,
             commands::mission_control::mission_control_write_file,
             commands::git::git_diff_file,
+            commands::git::git_blame_file,
             commands::git::git_stage,
             commands::git::git_unstage,
             commands::git::git_commit,

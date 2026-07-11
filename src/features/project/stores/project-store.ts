@@ -77,6 +77,9 @@ export interface AppSettings {
   /** A version the user chose to "Ignore" in the update prompt; the startup
    *  check won't re-prompt for exactly this version. */
   updaterIgnoredVersion: string | null;
+  /** Show inline Git blame at the end of the editor's active line (author,
+   *  relative time, commit summary), Zed-style. Default ON. */
+  gitBlameInline: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -92,6 +95,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   adaptiveSuggestions: "agent",
   autoUpdate: true,
   updaterIgnoredVersion: null,
+  gitBlameInline: true,
 };
 
 /**

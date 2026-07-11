@@ -270,6 +270,15 @@ function GeneralSettings() {
         />
       </SettingRow>
       <SettingRow
+        label="Inline Git blame"
+        description="Show who last changed the current line — author, relative time, and commit summary — dimmed at the end of the active line in the code editor, Zed-style. Updates as you move the cursor. Default ON."
+      >
+        <Toggle
+          checked={settings.gitBlameInline}
+          onChange={(next) => updateSettings({ gitBlameInline: next })}
+        />
+      </SettingRow>
+      <SettingRow
         label="Enable Atlas Logs"
         description="Record Atlas-internal events (sign-in, agent start/finish, browser/file open, etc.) into the Logs tab under the `atlas` source. Default ON so when something goes wrong you can open the Logs tab, filter by `atlas`, and share a timeline. Turn off if the noise bothers you."
       >

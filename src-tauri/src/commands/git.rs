@@ -526,6 +526,115 @@ pub async fn git_diff_file(path: String, file: String) -> Result<String, String>
     }).await.map_err(|e| e.to_string())?
 }
 
+/// One line of `git blame` output, in final-file line order.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlameLine {
+    /// 1-based line number in the current (final) file.
+    pub line: u32,
+    pub sha: String,
+    pub short_sha: String,
+    pub author: String,
+    /// Author time as unix milliseconds (0 if unparsable).
+    pub time_ms: i64,
+    pub summary: String,
+    /// False for the synthetic all-zero sha git uses for local/uncommitted
+    /// lines ("Not Committed Yet").
+    pub committed: bool,
+}
+
+/// Blame a file against the working tree. `-w` ignores whitespace-only changes
+/// so reformatting doesn't reassign authorship. Returns one entry per line in
+/// final-file order; an empty vec when the file isn't tracked or the path isn't
+/// a repo (the frontend then shows nothing).
+#[tauri::command]
+pub async fn git_blame_file(path: String, file: String) -> Result<Vec<BlameLine>, String> {
+    tokio::task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .args(["blame", "-w", "--porcelain", "--", &file])
+            .current_dir(&path)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+        Ok(parse_blame_porcelain(&String::from_utf8_lossy(&output.stdout)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Parse `git blame --porcelain`. Commit metadata (author/summary/time) is
+/// emitted only the first time each sha appears; later lines with the same sha
+/// carry just the header + content, so we cache per-sha metadata and look it up.
+fn parse_blame_porcelain(out: &str) -> Vec<BlameLine> {
+    use std::collections::HashMap;
+
+    #[derive(Default, Clone)]
+    struct Commit {
+        author: String,
+        time_ms: i64,
+        summary: String,
+    }
+
+    let mut commits: HashMap<String, Commit> = HashMap::new();
+    let mut result: Vec<BlameLine> = Vec::new();
+    let mut cur_sha = String::new();
+    let mut cur_line: u32 = 0;
+
+    for raw in out.lines() {
+        // The actual file content is the only tab-prefixed line in each group;
+        // seeing it means the current group's metadata is complete → emit.
+        if raw.starts_with('\t') {
+            let c = commits.get(&cur_sha).cloned().unwrap_or_default();
+            let committed = !cur_sha.is_empty() && !cur_sha.chars().all(|ch| ch == '0');
+            let short_sha = cur_sha.chars().take(7).collect::<String>();
+            result.push(BlameLine {
+                line: cur_line,
+                sha: cur_sha.clone(),
+                short_sha,
+                author: if c.author.is_empty() && !committed {
+                    "You".to_string()
+                } else {
+                    c.author.clone()
+                },
+                time_ms: c.time_ms,
+                summary: if c.summary.is_empty() && !committed {
+                    "Uncommitted changes".to_string()
+                } else {
+                    c.summary.clone()
+                },
+                committed,
+            });
+            continue;
+        }
+
+        // A header line: "<40-hex-sha> <origLine> <finalLine> [numLines]".
+        // Distinguish it from "key value" metadata by the 40-char hex first token.
+        let mut parts = raw.splitn(4, ' ');
+        let first = parts.next().unwrap_or("");
+        if first.len() == 40 && first.bytes().all(|b| b.is_ascii_hexdigit()) {
+            cur_sha = first.to_string();
+            let _orig = parts.next();
+            cur_line = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+            commits.entry(cur_sha.clone()).or_default();
+            continue;
+        }
+
+        // Metadata line for the current sha: "key value".
+        let entry = commits.entry(cur_sha.clone()).or_default();
+        if let Some(rest) = raw.strip_prefix("author ") {
+            entry.author = rest.to_string();
+        } else if let Some(rest) = raw.strip_prefix("author-time ") {
+            entry.time_ms = rest.trim().parse::<i64>().map(|s| s * 1000).unwrap_or(0);
+        } else if let Some(rest) = raw.strip_prefix("summary ") {
+            entry.summary = rest.to_string();
+        }
+    }
+
+    result
+}
+
 #[tauri::command]
 pub async fn git_stage(path: String, files: Vec<String>) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
