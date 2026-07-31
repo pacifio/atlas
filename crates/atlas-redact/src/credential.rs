@@ -165,18 +165,25 @@ fn is_credential_key(key: &str) -> bool {
 fn segments(key: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut current = String::new();
+    let mut prev_upper = false;
     let mut prev_lower = false;
-    for ch in key.chars() {
+    let mut chars = key.chars().peekable();
+    while let Some(ch) = chars.next() {
         if matches!(ch, '_' | '-' | '.') {
             if !current.is_empty() {
                 out.push(std::mem::take(&mut current));
             }
+            prev_upper = false;
             prev_lower = false;
             continue;
         }
+        let next_lower = chars.peek().is_some_and(|nc| nc.is_ascii_lowercase());
         if ch.is_ascii_uppercase() && prev_lower && !current.is_empty() {
             out.push(std::mem::take(&mut current));
+        } else if ch.is_ascii_uppercase() && prev_upper && next_lower && !current.is_empty() {
+            out.push(std::mem::take(&mut current));
         }
+        prev_upper = ch.is_ascii_uppercase();
         prev_lower = ch.is_ascii_lowercase() || ch.is_ascii_digit();
         current.push(ch.to_ascii_lowercase());
     }
@@ -415,6 +422,20 @@ mod tests {
         assert!(spans(r#"{"password": "[REDACTED]"}"#).is_empty());
         assert!(spans(r#"{"api_key": "<your-api-key>"}"#).is_empty());
         assert!(spans(r#"{"client_secret": "changeme"}"#).is_empty());
+    }
+
+    #[test]
+    fn caps_acronym_prefix_camel_keys_are_detected() {
+        for (input, expected) in [
+            ("APIToken=hunter2xyz", "hunter2xyz"),
+            ("APISecret=hunter2xyz", "hunter2xyz"),
+            ("JWTSecret=hunter2xyz", "hunter2xyz"),
+            ("JWTToken=hunter2xyz", "hunter2xyz"),
+            ("GCPSecret=hunter2xyz", "hunter2xyz"),
+            ("DBPassword=hunter2xyz", "hunter2xyz"),
+        ] {
+            assert_eq!(spans(input), vec![expected], "missed: {input}");
+        }
     }
 
     #[test]
