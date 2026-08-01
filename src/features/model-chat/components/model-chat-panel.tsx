@@ -395,6 +395,7 @@ function Composer({
   const session = useModelChatStore((s) => s.sessions[sessionId]);
   const { setProvider, setModel } = useModelChatStore.use.actions();
   const projectPath = useProjectStore((s) => s.currentProject?.path ?? null);
+  const enterToSend = useProjectStore((s) => s.settings.enterToSend);
   const provider = session?.provider ?? "";
   const model = session?.model ?? "";
   const providerLocked = (session?.messages.length ?? 0) > 0;
@@ -530,6 +531,7 @@ function Composer({
           placeholder="Ask anything…  (@ to reference, ~ for notes)"
           onChange={(v) => setHasText(v.trim().length > 0)}
           onSubmit={submit}
+          enterToSend={enterToSend}
           onMentionTrigger={setTrigger}
           keyInterceptor={keyInterceptor}
         />

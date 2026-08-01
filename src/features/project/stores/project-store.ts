@@ -85,6 +85,11 @@ export interface AppSettings {
   /** A version the user chose to "Ignore" in the update prompt; the startup
    *  check won't re-prompt for exactly this version. */
   updaterIgnoredVersion: string | null;
+  /** Chat composer send gesture. true (default) = Enter sends, Shift+Enter
+   *  inserts a newline (Slack/Discord/ChatGPT convention). false = only
+   *  Cmd/Ctrl+Enter sends, bare Enter always inserts a newline (the old
+   *  default). Cmd/Ctrl+Enter always sends regardless of this setting. */
+  enterToSend: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -102,6 +107,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   gitBlameInline: true,
   autoUpdate: true,
   updaterIgnoredVersion: null,
+  enterToSend: true,
 };
 
 /**

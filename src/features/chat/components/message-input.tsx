@@ -596,6 +596,9 @@ export function MessageInput({
   const agentType = useChatStore(
     (s) => s.sessions[tabId]?.agentType ?? "claude-code"
   );
+  // Settings → General → "Enter to send" (#51). Narrow selector so a toggle
+  // flip only re-renders composers, not the whole settings surface.
+  const enterToSend = useProjectStore((s) => s.settings.enterToSend);
   // `agentType` widened to a SwitchableAgent (drops "custom") for the composer
   // sub-components (skill/session scope, agent switcher) + the label lookup.
   const switchableAgent: SwitchableAgent =
@@ -1445,6 +1448,7 @@ export function MessageInput({
               placeholder={effectivePlaceholder}
               onChange={setValue}
               onSubmit={submit}
+              enterToSend={enterToSend}
               onMentionTrigger={setTrigger}
               onSlashTrigger={setSlashTrigger}
               onPasteImages={handlePasteImages}
@@ -1548,7 +1552,7 @@ export function MessageInput({
                       : "Stop generation"
                     : mode === "queue"
                     ? "Queue message (sends after current finishes)"
-                    : "Send to agent (⌘↵)"
+                    : `Send to agent (${enterToSend ? "↵" : "⌘↵"})`
                 }
               >
                 {mode === "stop" ? (

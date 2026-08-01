@@ -388,6 +388,12 @@ pub struct AppSettings {
     /// check won't re-prompt for exactly this version. `None` = nothing ignored.
     #[serde(default)]
     pub updater_ignored_version: Option<String>,
+    /// Chat composer send gesture. Default ON: Enter sends, Shift+Enter inserts
+    /// a newline (Slack/Discord/ChatGPT convention). OFF: only Cmd/Ctrl+Enter
+    /// sends, matching Atlas's original behavior. Cmd/Ctrl+Enter always sends
+    /// regardless of this setting. See `src/features/chat/components/chat-input.tsx`.
+    #[serde(default = "default_true")]
+    pub enter_to_send: bool,
 }
 
 fn default_true() -> bool {
@@ -435,6 +441,7 @@ impl Default for AppSettings {
             git_blame_inline: true,
             auto_update: true,
             updater_ignored_version: None,
+            enter_to_send: true,
         }
     }
 }
