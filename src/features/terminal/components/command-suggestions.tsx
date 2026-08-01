@@ -77,13 +77,24 @@ export function CommandSuggestions({
         "shadow-[var(--shadow-overlay)]",
       )}
       onMouseDown={(e) => e.preventDefault()}
-      style={{ position: "fixed", left, bottom, width, maxHeight: 280, zIndex: 9999 }}
+      style={{
+        position: "fixed",
+        left,
+        bottom,
+        width,
+        maxHeight: 280,
+        zIndex: 9999,
+      }}
     >
       <div className="flex-1 overflow-y-auto py-1 hide-scrollbar">
         {items.map((s, i) => {
           const isActive = i === activeIndex;
           const Icon =
-            s.kind === "dir" ? Folder : s.kind === "command" ? TerminalSquare : FileText;
+            s.kind === "dir"
+              ? Folder
+              : s.kind === "command"
+                ? TerminalSquare
+                : FileText;
           return (
             <button
               key={`${s.kind}:${s.name}`}
@@ -104,7 +115,9 @@ export function CommandSuggestions({
                 size={11}
                 className={cn(
                   "shrink-0",
-                  s.kind === "dir" ? "text-[var(--accent-primary)]" : "text-[var(--text-tertiary)]",
+                  s.kind === "dir"
+                    ? "text-[var(--accent-primary)]"
+                    : "text-[var(--text-tertiary)]",
                 )}
               />
               <span className="truncate">

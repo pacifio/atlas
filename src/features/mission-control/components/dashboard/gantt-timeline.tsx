@@ -54,7 +54,10 @@ export function GanttTimeline({ data }: { data: MissionControlUsage }) {
       for (const [date, tokens] of r.days) {
         const ms = Date.parse(`${date}T12:00:00`);
         if (Number.isNaN(ms)) continue;
-        const idx = Math.min(BUCKETS - 1, Math.max(0, Math.floor((ms - min) / bucketMs)));
+        const idx = Math.min(
+          BUCKETS - 1,
+          Math.max(0, Math.floor((ms - min) / bucketMs)),
+        );
         arr[idx] += tokens;
       }
       for (const v of arr) maxCell = Math.max(maxCell, v);
@@ -65,7 +68,10 @@ export function GanttTimeline({ data }: { data: MissionControlUsage }) {
 
   if (rows.length === 0) {
     return (
-      <ChartCard title="Project timeline" subtitle="Activity + token volume over time">
+      <ChartCard
+        title="Project timeline"
+        subtitle="Activity + token volume over time"
+      >
         <div className="h-[120px] flex items-center justify-center text-[11px] text-[var(--text-tertiary)]">
           No project activity.
         </div>
@@ -84,7 +90,10 @@ export function GanttTimeline({ data }: { data: MissionControlUsage }) {
       <div className="px-1.5 pb-1 space-y-1.5">
         {rows.map((r, ri) => (
           <div key={r.path} className="flex items-center gap-2">
-            <div className="w-[120px] shrink-0 truncate text-[11px] text-[var(--text-secondary)]" title={r.name}>
+            <div
+              className="w-[120px] shrink-0 truncate text-[11px] text-[var(--text-secondary)]"
+              title={r.name}
+            >
               {r.name}
             </div>
             <div className="relative flex-1 h-5 rounded bg-[var(--bg-base)] overflow-hidden">

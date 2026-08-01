@@ -86,7 +86,7 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
-    [plansPanel.width, setPlansPanelWidth]
+    [plansPanel.width, setPlansPanelWidth],
   );
 
   return (
@@ -144,7 +144,7 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
                   key={p.id}
                   className={cn(
                     "px-3 py-2.5",
-                    !isLast && "border-b border-[var(--border-subtle)]"
+                    !isLast && "border-b border-[var(--border-subtle)]",
                   )}
                 >
                   {/* Header row: user message + expand toggle */}
@@ -167,7 +167,7 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
                     <span
                       className={cn(
                         "text-[12px] leading-snug text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors",
-                        !isOpen && "line-clamp-2"
+                        !isOpen && "line-clamp-2",
                       )}
                     >
                       {p.userMessage || "(no message)"}
@@ -176,7 +176,9 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
 
                   {/* Meta: human timestamp + relative age + session */}
                   <div className="flex items-center gap-2 pl-[18px] mt-1 text-[10px] text-[var(--text-tertiary)]">
-                    <span title={p.timestamp}>{formatPlanTimestamp(p.timestamp)}</span>
+                    <span title={p.timestamp}>
+                      {formatPlanTimestamp(p.timestamp)}
+                    </span>
                     <span>·</span>
                     <span>{planTimeAgo(p.timestamp)}</span>
                     {p.sessionTitle && (

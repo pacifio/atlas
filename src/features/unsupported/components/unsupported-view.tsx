@@ -22,7 +22,7 @@ export function UnsupportedView({ filePath }: UnsupportedViewProps) {
       await revealItemInDir(filePath);
     } catch (err) {
       toast.error(
-        `Couldn't reveal in Finder: ${err instanceof Error ? err.message : String(err)}`
+        `Couldn't reveal in Finder: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   };
@@ -38,10 +38,14 @@ export function UnsupportedView({ filePath }: UnsupportedViewProps) {
             <FileX2 className="size-5 text-[var(--text-tertiary)]" />
           </div>
           <div className="space-y-1">
-            <div className="text-sm text-[var(--text-primary)] font-mono">{name}</div>
+            <div className="text-sm text-[var(--text-primary)] font-mono">
+              {name}
+            </div>
             <div className="text-[11px] text-[var(--text-tertiary)]">
               File type{" "}
-              <span className="font-mono text-[var(--text-secondary)]">.{ext}</span>{" "}
+              <span className="font-mono text-[var(--text-secondary)]">
+                .{ext}
+              </span>{" "}
               not supported for inline preview.
             </div>
           </div>

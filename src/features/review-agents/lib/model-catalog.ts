@@ -19,15 +19,15 @@ const PREFERRED: Record<string, string[]> = {
     "claude-sonnet-4-5",
   ],
   openai: ["gpt-5.1", "gpt-5", "o4-mini", "gpt-4.1", "gpt-4o"],
-  google: [
-    "gemini-3.1-pro-preview",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-  ],
+  google: ["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash"],
   xai: ["grok-4", "grok-code-fast-1", "grok-3"],
   deepseek: ["deepseek-reasoner", "deepseek-chat"],
   mistral: ["mistral-large-latest", "codestral-latest"],
-  groq: ["moonshotai/kimi-k2-instruct", "qwen-3-coder-480b", "llama-3.3-70b-versatile"],
+  groq: [
+    "moonshotai/kimi-k2-instruct",
+    "qwen-3-coder-480b",
+    "llama-3.3-70b-versatile",
+  ],
   together: [
     "Qwen/Qwen3-Coder-480B-A35B-Instruct",
     "deepseek-ai/DeepSeek-V3",
@@ -127,7 +127,10 @@ export function isPreferredModel(provider: string, id: string): boolean {
 }
 
 /** The default model to select for a provider given its curated list. */
-export function defaultModelFor(provider: string, curated: string[]): string | null {
+export function defaultModelFor(
+  provider: string,
+  curated: string[],
+): string | null {
   const preferred = PREFERRED[provider] ?? [];
   // Prefer the first available preferred model, else the first curated one.
   const firstPreferred = preferred.find((id) => curated.includes(id));

@@ -68,13 +68,12 @@ const useFeedbackStoreBase = create<FeedbackState>()((set, get) => ({
   source: "status-bar",
 
   actions: {
-    openPanel: (source) => set({ open: true, source, error: null, sent: false }),
+    openPanel: (source) =>
+      set({ open: true, source, error: null, sent: false }),
     // Draft survives on purpose — see the module note.
     closePanel: () => set({ open: false }),
     toggle: (source) =>
-      get().open
-        ? get().actions.closePanel()
-        : get().actions.openPanel(source),
+      get().open ? get().actions.closePanel() : get().actions.openPanel(source),
 
     setCategory: (category) => set({ category }),
     setMessage: (message) => set({ message }),

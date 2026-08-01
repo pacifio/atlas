@@ -144,7 +144,10 @@ interface ProjectState {
     clearRecents: () => void;
     updateSettings: (partial: Partial<AppSettings>) => void;
     /** One-shot hydration from Rust. Called once on app boot. */
-    hydrate: (payload: AppStateWire, opts?: { skipActiveSwitch?: boolean }) => void;
+    hydrate: (
+      payload: AppStateWire,
+      opts?: { skipActiveSwitch?: boolean },
+    ) => void;
   };
 }
 
@@ -188,8 +191,8 @@ export async function flushAppStateSave(): Promise<void> {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
-  await invoke("save_app_state", { payload: buildAppStatePayload() }).catch((e) =>
-    console.warn("flushAppStateSave failed:", e),
+  await invoke("save_app_state", { payload: buildAppStatePayload() }).catch(
+    (e) => console.warn("flushAppStateSave failed:", e),
   );
 }
 
@@ -246,13 +249,28 @@ function maybeEnsureAtlasGitignore(path: string, settings: AppSettings): void {
  */
 export async function loadProjectStores(path: string): Promise<void> {
   await Promise.all([
-    useExplorerStore.getState().actions.openFolder(path).catch((e) => console.error("Explorer failed:", e)),
-    useGitStore.getState().actions.loadStatus(path).catch((e) => console.error("Git failed:", e)),
-    useSessionStore.getState().actions.loadSession(path).catch((e) => console.error("Session load failed:", e)),
+    useExplorerStore
+      .getState()
+      .actions.openFolder(path)
+      .catch((e) => console.error("Explorer failed:", e)),
+    useGitStore
+      .getState()
+      .actions.loadStatus(path)
+      .catch((e) => console.error("Git failed:", e)),
+    useSessionStore
+      .getState()
+      .actions.loadSession(path)
+      .catch((e) => console.error("Session load failed:", e)),
     // Only the KB META bind is on the critical path — it's cheap and the @-/~
     // mention picker needs it for page-header titles + emoji from `_meta.json`.
-    useKnowledgeMetaStore.getState().actions.bind(path).catch((e) => console.error("Knowledge bind failed:", e)),
-    useLayoutStore.getState().actions.loadEditorState(path).catch((e) => console.error("Editor state load failed:", e)),
+    useKnowledgeMetaStore
+      .getState()
+      .actions.bind(path)
+      .catch((e) => console.error("Knowledge bind failed:", e)),
+    useLayoutStore
+      .getState()
+      .actions.loadEditorState(path)
+      .catch((e) => console.error("Editor state load failed:", e)),
   ]);
 
   // Load the full KB entries OFF the switch critical path. This is the single
@@ -263,7 +281,9 @@ export async function loadProjectStores(path: string): Promise<void> {
   // while still warming the @-/~ mention cache shortly after open. Fire-and-
   // forget; a stale project is harmless (entries are keyed by path).
   const warmEntries = () => {
-    void useKnowledgeStore.getState().actions.loadEntries(path)
+    void useKnowledgeStore
+      .getState()
+      .actions.loadEntries(path)
       .catch((e) => console.error("Knowledge entries load failed:", e));
   };
   if (typeof requestIdleCallback === "function") {
@@ -347,10 +367,15 @@ export const useProjectStore = createSelectors(
           void useExplorerStore.getState().actions.refresh();
         }
         if (partial.uiScale !== undefined) applyUiScale(partial.uiScale);
-        if (partial.codeEditorTheme !== undefined) applyEditorTheme(partial.codeEditorTheme);
-        if (partial.atlasTheme !== undefined) applyAtlasTheme(partial.atlasTheme);
+        if (partial.codeEditorTheme !== undefined)
+          applyEditorTheme(partial.codeEditorTheme);
+        if (partial.atlasTheme !== undefined)
+          applyAtlasTheme(partial.atlasTheme);
       },
-      hydrate: (payload: AppStateWire, opts?: { skipActiveSwitch?: boolean }) => {
+      hydrate: (
+        payload: AppStateWire,
+        opts?: { skipActiveSwitch?: boolean },
+      ) => {
         // Merge with defaults so older state.json files (written before a new
         // setting existed) get the modern default rather than `undefined`.
         const settings: AppSettings = {

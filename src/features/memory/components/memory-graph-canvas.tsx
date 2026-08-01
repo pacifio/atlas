@@ -120,9 +120,15 @@ export function MemoryGraphCanvas({
   useEffect(() => {
     let cancelled = false;
     void invoke<GraphLayout>("memory_graph_layout_load", { projectPath })
-      .then((l) => { if (!cancelled) setLayout(l ?? { positions: {} }); })
-      .catch(() => { if (!cancelled) setLayout({ positions: {} }); });
-    return () => { cancelled = true; };
+      .then((l) => {
+        if (!cancelled) setLayout(l ?? { positions: {} });
+      })
+      .catch(() => {
+        if (!cancelled) setLayout({ positions: {} });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [projectPath]);
 
   useLayoutEffect(() => {
@@ -141,7 +147,11 @@ export function MemoryGraphCanvas({
   }, []);
 
   return (
-    <div ref={containerRef} className="h-full w-full relative" style={{ background: "var(--bg-canvas, var(--bg-base))" }}>
+    <div
+      ref={containerRef}
+      className="h-full w-full relative"
+      style={{ background: "var(--bg-canvas, var(--bg-base))" }}
+    >
       {size.width > 0 && size.height > 0 && layout !== undefined && (
         <Scene
           graph={graph}
@@ -228,7 +238,9 @@ function Scene({
       return seen;
     };
     const impact = selectedId ? reach(selectedId, adj.fwd) : new Set<string>();
-    const ancestors = selectedId ? reach(selectedId, adj.bwd) : new Set<string>();
+    const ancestors = selectedId
+      ? reach(selectedId, adj.bwd)
+      : new Set<string>();
     sceneRef.current = { ...sceneRef.current, selectedId, impact, ancestors };
   }, [selectedId, adj]);
 
@@ -276,7 +288,11 @@ function Scene({
       })
       .then(() => {
         if (disposed) {
-          try { app.destroy(true, { children: true }); } catch { /* ignore */ }
+          try {
+            app.destroy(true, { children: true });
+          } catch {
+            /* ignore */
+          }
           return;
         }
         const pushViewport = (v: Viewport) => {
@@ -289,15 +305,44 @@ function Scene({
             });
           }
         };
-        teardown = buildScene(app, graph, width, height, sceneRef, onSelect, onActivate, initialLayout, projectPath, pushViewport);
+        teardown = buildScene(
+          app,
+          graph,
+          width,
+          height,
+          sceneRef,
+          onSelect,
+          onActivate,
+          initialLayout,
+          projectPath,
+          pushViewport,
+        );
       })
-      .catch(() => { /* disposal handles fallout */ });
+      .catch(() => {
+        /* disposal handles fallout */
+      });
 
     return () => {
       disposed = true;
-      if (teardown) { try { teardown(); } catch { /* ignore */ } }
-      if (createdApp) { try { createdApp.destroy(true, { children: true }); } catch { /* ignore */ } }
-      try { host.removeChild(canvas); } catch { /* ignore */ }
+      if (teardown) {
+        try {
+          teardown();
+        } catch {
+          /* ignore */
+        }
+      }
+      if (createdApp) {
+        try {
+          createdApp.destroy(true, { children: true });
+        } catch {
+          /* ignore */
+        }
+      }
+      try {
+        host.removeChild(canvas);
+      } catch {
+        /* ignore */
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, width, height]);
@@ -328,10 +373,18 @@ function buildScene(
   engine.constraintIterations = 7;
 
   const walls = [
-    Matter.Bodies.rectangle(width / 2, height + 50, width + 200, 100, { isStatic: true }),
-    Matter.Bodies.rectangle(width / 2, -50, width + 200, 100, { isStatic: true }),
-    Matter.Bodies.rectangle(-50, height / 2, 100, height + 200, { isStatic: true }),
-    Matter.Bodies.rectangle(width + 50, height / 2, 100, height + 200, { isStatic: true }),
+    Matter.Bodies.rectangle(width / 2, height + 50, width + 200, 100, {
+      isStatic: true,
+    }),
+    Matter.Bodies.rectangle(width / 2, -50, width + 200, 100, {
+      isStatic: true,
+    }),
+    Matter.Bodies.rectangle(-50, height / 2, 100, height + 200, {
+      isStatic: true,
+    }),
+    Matter.Bodies.rectangle(width + 50, height / 2, 100, height + 200, {
+      isStatic: true,
+    }),
   ];
   Matter.Composite.add(engine.world, walls);
 
@@ -418,7 +471,10 @@ function buildScene(
     });
     nodeLayer.addChild(graphics);
 
-    const label = new Text({ text: node.summary || node.title, style: styleFor("#c4c4c4") });
+    const label = new Text({
+      text: node.summary || node.title,
+      style: styleFor("#c4c4c4"),
+    });
     label.anchor.set(0.5, 0); // top-center: hangs below the disc
     labelLayer.addChild(label);
 
@@ -442,7 +498,10 @@ function buildScene(
   const mouse = Matter.Mouse.create(app.canvas as HTMLCanvasElement);
   const mouseConstraint = Matter.MouseConstraint.create(engine, {
     mouse,
-    constraint: { stiffness: 0.2, render: { visible: false } as Matter.IConstraintRenderDefinition },
+    constraint: {
+      stiffness: 0.2,
+      render: { visible: false } as Matter.IConstraintRenderDefinition,
+    },
   });
   Matter.Composite.add(engine.world, mouseConstraint);
 
@@ -450,39 +509,68 @@ function buildScene(
     const z = viewport.scale.x;
     const s = 1 / (RESOLUTION * z);
     Matter.Mouse.setScale(mouse, { x: s, y: s });
-    Matter.Mouse.setOffset(mouse, { x: -viewport.position.x / z, y: -viewport.position.y / z });
+    Matter.Mouse.setOffset(mouse, {
+      x: -viewport.position.x / z,
+      y: -viewport.position.y / z,
+    });
     onViewport({ x: viewport.position.x, y: viewport.position.y, scale: z });
   };
   syncMouseToViewport();
 
-  Matter.Events.on(mouseConstraint, "startdrag", (ev: Matter.IEvent<Matter.MouseConstraint>) => {
-    const dragged = (ev as unknown as { body?: Matter.Body }).body;
-    if (!dragged) return;
-    for (const node of nodesById.values()) {
-      if (node.body !== dragged) continue;
-      const ns = new Set<string>();
-      for (const e of graph.edges) {
-        if (e.from === node.id) ns.add(e.to);
-        else if (e.to === node.id) ns.add(e.from);
+  Matter.Events.on(
+    mouseConstraint,
+    "startdrag",
+    (ev: Matter.IEvent<Matter.MouseConstraint>) => {
+      const dragged = (ev as unknown as { body?: Matter.Body }).body;
+      if (!dragged) return;
+      for (const node of nodesById.values()) {
+        if (node.body !== dragged) continue;
+        const ns = new Set<string>();
+        for (const e of graph.edges) {
+          if (e.from === node.id) ns.add(e.to);
+          else if (e.to === node.id) ns.add(e.from);
+        }
+        sceneRef.current = {
+          ...sceneRef.current,
+          draggingId: node.id,
+          draggingNeighbors: ns,
+        };
+        break;
       }
-      sceneRef.current = { ...sceneRef.current, draggingId: node.id, draggingNeighbors: ns };
-      break;
-    }
-  });
+    },
+  );
   Matter.Events.on(mouseConstraint, "enddrag", () => {
-    sceneRef.current = { ...sceneRef.current, draggingId: null, draggingNeighbors: new Set() };
+    sceneRef.current = {
+      ...sceneRef.current,
+      draggingId: null,
+      draggingNeighbors: new Set(),
+    };
   });
 
-  let panStart: { startX: number; startY: number; origX: number; origY: number } | null = null;
+  let panStart: {
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+  } | null = null;
   let panMode = false;
-  let panOrigin: { startX: number; startY: number; origX: number; origY: number } | null = null;
+  let panOrigin: {
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+  } | null = null;
   let spaceHeld = false;
   const stageEventMode = app.stage.eventMode;
   const canvas = app.canvas as HTMLCanvasElement;
 
   const setCursor = () => {
     const grabbing = panStart !== null || panMode;
-    canvas.style.cursor = grabbing ? "grabbing" : spaceHeld ? "grab" : "default";
+    canvas.style.cursor = grabbing
+      ? "grabbing"
+      : spaceHeld
+        ? "grab"
+        : "default";
   };
   const onContext = (e: Event) => e.preventDefault();
   const onWheel = (e: WheelEvent) => {
@@ -491,7 +579,10 @@ function buildScene(
     const lx = e.clientX - rect.left;
     const ly = e.clientY - rect.top;
     const oldScale = viewport.scale.x;
-    const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, oldScale * Math.exp(-e.deltaY * ZOOM_STEP)));
+    const newScale = Math.min(
+      MAX_SCALE,
+      Math.max(MIN_SCALE, oldScale * Math.exp(-e.deltaY * ZOOM_STEP)),
+    );
     const worldX = (lx - viewport.position.x) / oldScale;
     const worldY = (ly - viewport.position.y) / oldScale;
     viewport.scale.set(newScale);
@@ -502,22 +593,35 @@ function buildScene(
   const onPointerDown = (e: PointerEvent) => {
     if (e.button !== 1 && e.button !== 2) return;
     e.preventDefault();
-    panStart = { startX: e.clientX, startY: e.clientY, origX: viewport.position.x, origY: viewport.position.y };
+    panStart = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: viewport.position.x,
+      origY: viewport.position.y,
+    };
     canvas.setPointerCapture(e.pointerId);
     setCursor();
   };
   const onPointerMove = (e: PointerEvent) => {
     if (!panStart) return;
-    viewport.position.set(panStart.origX + (e.clientX - panStart.startX), panStart.origY + (e.clientY - panStart.startY));
+    viewport.position.set(
+      panStart.origX + (e.clientX - panStart.startX),
+      panStart.origY + (e.clientY - panStart.startY),
+    );
     syncMouseToViewport();
   };
   const onPointerUp = (e: PointerEvent) => {
     if (!panStart) return;
     panStart = null;
-    try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    try {
+      canvas.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
     setCursor();
   };
-  const isSpaceKey = (e: KeyboardEvent) => e.code === "Space" || e.key === " " || e.key === "Spacebar";
+  const isSpaceKey = (e: KeyboardEvent) =>
+    e.code === "Space" || e.key === " " || e.key === "Spacebar";
   const onKeyDown = (e: KeyboardEvent) => {
     if (isSpaceKey(e) && !spaceHeld) {
       spaceHeld = true;
@@ -526,14 +630,22 @@ function buildScene(
     }
   };
   const onKeyUp = (e: KeyboardEvent) => {
-    if (isSpaceKey(e)) { spaceHeld = false; setCursor(); }
+    if (isSpaceKey(e)) {
+      spaceHeld = false;
+      setCursor();
+    }
   };
   const enterPanMode = (e: MouseEvent) => {
     if (panMode) return;
     panMode = true;
     Matter.Composite.remove(engine.world, mouseConstraint);
     app.stage.eventMode = "none";
-    panOrigin = { startX: e.clientX, startY: e.clientY, origX: viewport.position.x, origY: viewport.position.y };
+    panOrigin = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: viewport.position.x,
+      origY: viewport.position.y,
+    };
     setCursor();
   };
   const exitPanMode = () => {
@@ -546,7 +658,10 @@ function buildScene(
   };
   const onPanMove = (ev: MouseEvent) => {
     if (!panMode || !panOrigin) return;
-    viewport.position.set(panOrigin.origX + (ev.clientX - panOrigin.startX), panOrigin.origY + (ev.clientY - panOrigin.startY));
+    viewport.position.set(
+      panOrigin.origX + (ev.clientX - panOrigin.startX),
+      panOrigin.origY + (ev.clientY - panOrigin.startY),
+    );
     syncMouseToViewport();
   };
   const onMaybeStartPan = (e: MouseEvent) => {
@@ -574,7 +689,10 @@ function buildScene(
 
   let awake = true;
   let sleepFrames = 0;
-  const wake = () => { awake = true; sleepFrames = 0; };
+  const wake = () => {
+    awake = true;
+    sleepFrames = 0;
+  };
   window.addEventListener("pointerdown", wake);
   window.addEventListener("pointermove", wake);
   window.addEventListener("wheel", wake, { passive: true });
@@ -600,16 +718,26 @@ function buildScene(
         count += 1;
       }
       const avg = count > 0 ? total / count : 0;
-      if (avg < 0.05) { sleepFrames += 1; if (sleepFrames > 30) awake = false; }
-      else sleepFrames = 0;
+      if (avg < 0.05) {
+        sleepFrames += 1;
+        if (sleepFrames > 30) awake = false;
+      } else sleepFrames = 0;
     }
 
     const scene = sceneRef.current;
     if (!awake && scene === lastScene) return;
     lastScene = scene;
 
-    const { selectedId, impact, ancestors, matched, draggingId, draggingNeighbors, cutoff, zoom } =
-      scene;
+    const {
+      selectedId,
+      impact,
+      ancestors,
+      matched,
+      draggingId,
+      draggingNeighbors,
+      cutoff,
+      zoom,
+    } = scene;
     const hasSelection = selectedId !== null;
     const hasDrag = !hasSelection && draggingId !== null;
     const hasMatches = !hasSelection && !hasDrag && matched.size > 0;
@@ -632,17 +760,47 @@ function buildScene(
         alpha = 0.05;
         labelDim = true;
       } else if (hasSelection) {
-        if (node.id === selectedId) { color = COLOR_IMPACT; drawRadius = node.radius * 1.25; ring = true; lit = true; }
-        else if (impact.has(node.id)) { color = COLOR_IMPACT; lit = true; }
-        else if (ancestors.has(node.id)) { color = COLOR_ANCESTOR; alpha = 0.95; lit = true; }
-        else { color = COLOR_MUTED; alpha = 0.28; labelDim = true; }
+        if (node.id === selectedId) {
+          color = COLOR_IMPACT;
+          drawRadius = node.radius * 1.25;
+          ring = true;
+          lit = true;
+        } else if (impact.has(node.id)) {
+          color = COLOR_IMPACT;
+          lit = true;
+        } else if (ancestors.has(node.id)) {
+          color = COLOR_ANCESTOR;
+          alpha = 0.95;
+          lit = true;
+        } else {
+          color = COLOR_MUTED;
+          alpha = 0.28;
+          labelDim = true;
+        }
       } else if (hasDrag) {
-        if (node.id === draggingId) { color = COLOR_PRIMARY; ring = true; lit = true; }
-        else if (draggingNeighbors.has(node.id)) { color = COLOR_PRIMARY; lit = true; }
-        else { color = COLOR_MUTED; alpha = 0.4; labelDim = true; }
+        if (node.id === draggingId) {
+          color = COLOR_PRIMARY;
+          ring = true;
+          lit = true;
+        } else if (draggingNeighbors.has(node.id)) {
+          color = COLOR_PRIMARY;
+          lit = true;
+        } else {
+          color = COLOR_MUTED;
+          alpha = 0.4;
+          labelDim = true;
+        }
       } else if (hasMatches) {
-        if (matched.has(node.id)) { color = COLOR_PRIMARY; drawRadius = node.radius * 1.15; ring = true; lit = true; }
-        else { color = COLOR_MUTED; alpha = 0.35; labelDim = true; }
+        if (matched.has(node.id)) {
+          color = COLOR_PRIMARY;
+          drawRadius = node.radius * 1.15;
+          ring = true;
+          lit = true;
+        } else {
+          color = COLOR_MUTED;
+          alpha = 0.35;
+          labelDim = true;
+        }
       } else {
         // Neutral: brightness grades with recency (newer = brighter).
         color = COLOR_SECONDARY;
@@ -651,10 +809,18 @@ function buildScene(
 
       node.graphics.clear();
       if (ring) {
-        node.graphics.circle(node.body.position.x, node.body.position.y, drawRadius + 3 * inv);
+        node.graphics.circle(
+          node.body.position.x,
+          node.body.position.y,
+          drawRadius + 3 * inv,
+        );
         node.graphics.stroke({ width: 2 * inv, color, alpha: 0.6 });
       }
-      node.graphics.circle(node.body.position.x, node.body.position.y, drawRadius);
+      node.graphics.circle(
+        node.body.position.x,
+        node.body.position.y,
+        drawRadius,
+      );
       node.graphics.fill({ color, alpha });
 
       // Parallax: counter-scale the label so it stays a constant readable
@@ -665,10 +831,19 @@ function buildScene(
         node.body.position.y + drawRadius + LABEL_GAP * inv,
       );
       if (!showLabels || future) node.label.alpha = 0;
-      else if (!hasSelection && !hasDrag && !hasMatches) { node.label.alpha = 0.85; node.label.style = styleFor("#c4c4c4"); }
-      else if (lit) { node.label.alpha = 1; node.label.style = styleFor("#fafafa"); }
-      else if (labelDim) { node.label.alpha = 0.25; node.label.style = styleFor("#5e5e5e"); }
-      else { node.label.alpha = 0.6; node.label.style = styleFor("#c4c4c4"); }
+      else if (!hasSelection && !hasDrag && !hasMatches) {
+        node.label.alpha = 0.85;
+        node.label.style = styleFor("#c4c4c4");
+      } else if (lit) {
+        node.label.alpha = 1;
+        node.label.style = styleFor("#fafafa");
+      } else if (labelDim) {
+        node.label.alpha = 0.25;
+        node.label.style = styleFor("#5e5e5e");
+      } else {
+        node.label.alpha = 0.6;
+        node.label.style = styleFor("#c4c4c4");
+      }
     }
 
     const litFwd = (id: string) => id === selectedId || impact.has(id);
@@ -683,7 +858,11 @@ function buildScene(
         // One endpoint not born yet — keep faint.
         edge.graphics.moveTo(a.body.position.x, a.body.position.y);
         edge.graphics.lineTo(b.body.position.x, b.body.position.y);
-        edge.graphics.stroke({ width: 1 * inv, color: COLOR_EDGE_DIM, alpha: 0.04 });
+        edge.graphics.stroke({
+          width: 1 * inv,
+          color: COLOR_EDGE_DIM,
+          alpha: 0.04,
+        });
         continue;
       }
 
@@ -692,13 +871,27 @@ function buildScene(
       let arrow: number | null = null; // arrowhead color when on an influence path
 
       if (hasSelection) {
-        if (litFwd(edge.from) && litFwd(edge.to)) { color = COLOR_IMPACT; alpha = 0.85; arrow = COLOR_IMPACT; }
-        else if (litBwd(edge.from) && litBwd(edge.to)) { color = COLOR_ANCESTOR; alpha = 0.7; arrow = COLOR_ANCESTOR; }
-        else { color = COLOR_EDGE_DIM; alpha = 0.12; }
+        if (litFwd(edge.from) && litFwd(edge.to)) {
+          color = COLOR_IMPACT;
+          alpha = 0.85;
+          arrow = COLOR_IMPACT;
+        } else if (litBwd(edge.from) && litBwd(edge.to)) {
+          color = COLOR_ANCESTOR;
+          alpha = 0.7;
+          arrow = COLOR_ANCESTOR;
+        } else {
+          color = COLOR_EDGE_DIM;
+          alpha = 0.12;
+        }
       } else if (hasDrag) {
         const touches = edge.from === draggingId || edge.to === draggingId;
-        if (touches) { color = COLOR_EDGE_SELECTED; alpha = 0.9; }
-        else { color = COLOR_EDGE_DIM; alpha = 0.15; }
+        if (touches) {
+          color = COLOR_EDGE_SELECTED;
+          alpha = 0.9;
+        } else {
+          color = COLOR_EDGE_DIM;
+          alpha = 0.15;
+        }
       } else if (hasMatches) {
         alpha = 0.12;
       }
@@ -709,7 +902,11 @@ function buildScene(
       const by = b.body.position.y;
       edge.graphics.moveTo(ax, ay);
       edge.graphics.lineTo(bx, by);
-      edge.graphics.stroke({ width: (arrow !== null ? 1.5 : 1) * inv, color, alpha });
+      edge.graphics.stroke({
+        width: (arrow !== null ? 1.5 : 1) * inv,
+        color,
+        alpha,
+      });
 
       if (arrow !== null) {
         // Arrowhead just outside the target node, pointing older → newer.
@@ -747,7 +944,10 @@ function buildScene(
     if (saveTimer) return;
     saveTimer = setTimeout(() => {
       saveTimer = null;
-      invoke("memory_graph_layout_save", { projectPath, layout: snapshotLayout() }).catch(() => {});
+      invoke("memory_graph_layout_save", {
+        projectPath,
+        layout: snapshotLayout(),
+      }).catch(() => {});
     }, 2000);
   };
   Matter.Events.on(engine, "afterUpdate", () => {
@@ -757,7 +957,10 @@ function buildScene(
   return () => {
     app.ticker.remove(tick);
     if (saveTimer) clearTimeout(saveTimer);
-    invoke("memory_graph_layout_save", { projectPath, layout: snapshotLayout() }).catch(() => {});
+    invoke("memory_graph_layout_save", {
+      projectPath,
+      layout: snapshotLayout(),
+    }).catch(() => {});
     canvas.removeEventListener("contextmenu", onContext);
     canvas.removeEventListener("wheel", onWheel);
     canvas.removeEventListener("pointerdown", onPointerDown);

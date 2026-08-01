@@ -6,7 +6,11 @@
 import { create } from "zustand";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { createSelectors } from "@/lib/create-selectors";
-import { modelchat, listenModelChat, type WireMsg } from "@/features/model-chat/lib/model-chat-api";
+import {
+  modelchat,
+  listenModelChat,
+  type WireMsg,
+} from "@/features/model-chat/lib/model-chat-api";
 import { useCanvasStore } from "./canvas-store";
 import { CANVAS_AI_SYSTEM, parseOps, serializeGroup } from "../lib/canvas-ai";
 import { canvasCodebaseContext, memoryChatRetrieve } from "../lib/canvas-api";
@@ -41,10 +45,15 @@ let active: {
 
 /** Wants codebase structure folded in (architecture/system/dependency asks). */
 function wantsCodebase(prompt: string): boolean {
-  return /\b(architecture|codebase|system|module|dependenc|repo|structure)\b/i.test(prompt);
+  return /\b(architecture|codebase|system|module|dependenc|repo|structure)\b/i.test(
+    prompt,
+  );
 }
 
-async function buildContext(projectPath: string, prompt: string): Promise<string> {
+async function buildContext(
+  projectPath: string,
+  prompt: string,
+): Promise<string> {
   const parts: string[] = [];
   try {
     const { prompt: augmented } = await memoryChatRetrieve(projectPath, prompt);
@@ -68,11 +77,22 @@ export const useCanvasAiStore = createSelectors(
     streamingGroupId: null,
     error: null,
     actions: {
-      generate: async ({ groupId, anchor, prompt, provider, model, projectPath }) => {
+      generate: async ({
+        groupId,
+        anchor,
+        prompt,
+        provider,
+        model,
+        projectPath,
+      }) => {
         if (get().streamingGroupId) return; // one generation at a time
         const canvas = useCanvasStore.getState().actions;
         const ts = Date.now();
-        canvas.appendGroupMessage(groupId, { role: "user", content: prompt, ts });
+        canvas.appendGroupMessage(groupId, {
+          role: "user",
+          content: prompt,
+          ts,
+        });
         set({ streamingGroupId: groupId, error: null });
 
         const context = await buildContext(projectPath, prompt);
@@ -100,7 +120,9 @@ export const useCanvasAiStore = createSelectors(
           if (!a) return;
           const ops = parseOps(a.text);
           if (ops.length > 0) {
-            useCanvasStore.getState().actions.applyAiOps(a.groupId, ops, a.anchor);
+            useCanvasStore
+              .getState()
+              .actions.applyAiOps(a.groupId, ops, a.anchor);
             useCanvasStore.getState().actions.appendGroupMessage(a.groupId, {
               role: "assistant",
               content: `Applied ${ops.length} change${ops.length === 1 ? "" : "s"} to the diagram.`,

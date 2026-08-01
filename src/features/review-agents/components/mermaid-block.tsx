@@ -10,7 +10,9 @@ let lastPaletteKey = "";
 
 /** Read one CSS custom property off the document root, with a fallback. */
 function cssVar(name: string, fallback: string): string {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
   return v || fallback;
 }
 
@@ -28,7 +30,15 @@ async function getMermaid() {
   const border = cssVar("--border-strong", "#3d3d3d");
   const line = cssVar("--text-tertiary", "#777777");
 
-  const paletteKey = [bg, raised, elevated, textPrimary, textSecondary, border, line].join("|");
+  const paletteKey = [
+    bg,
+    raised,
+    elevated,
+    textPrimary,
+    textSecondary,
+    border,
+    line,
+  ].join("|");
   if (paletteKey !== lastPaletteKey) {
     lastPaletteKey = paletteKey;
     mermaid.initialize({
@@ -59,12 +69,19 @@ async function getMermaid() {
 function sanitize(src: string): string {
   let s = src.trim();
   // Ensure a diagram header.
-  if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|mindmap|gantt)/.test(s)) {
+  if (
+    !/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|mindmap|gantt)/.test(
+      s,
+    )
+  ) {
     s = `flowchart TD\n${s}`;
   }
   // `subgraph "Title"` → `subgraph s_n["Title"]` (a subgraph needs an id).
   let sg = 0;
-  s = s.replace(/subgraph\s+"([^"]+)"/g, (_m, title) => `subgraph sg${sg++}["${title}"]`);
+  s = s.replace(
+    /subgraph\s+"([^"]+)"/g,
+    (_m, title) => `subgraph sg${sg++}["${title}"]`,
+  );
   // Old-style labeled edge `A -- text --> B` → pipe form with a quoted label
   // (handles labels with leading dashes / specials that break the `--` form).
   s = s.replace(
@@ -136,7 +153,9 @@ export function MermaidBlock({ code }: { code: string }) {
     // under <body> (e.g. from an earlier failed render). Successful diagrams are
     // injected inside this component, never appended to the body.
     document
-      .querySelectorAll('body > [id^="atlas-mermaid-"], body > [id^="datlas-mermaid-"]')
+      .querySelectorAll(
+        'body > [id^="atlas-mermaid-"], body > [id^="datlas-mermaid-"]',
+      )
       .forEach((n) => n.remove());
 
     (async () => {
@@ -169,7 +188,11 @@ export function MermaidBlock({ code }: { code: string }) {
     );
   }
   if (!svg) {
-    return <div className="p-3 text-[11px] text-text-tertiary">Rendering diagram…</div>;
+    return (
+      <div className="p-3 text-[11px] text-text-tertiary">
+        Rendering diagram…
+      </div>
+    );
   }
   return (
     <div

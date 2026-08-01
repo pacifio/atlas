@@ -17,17 +17,26 @@ export function AiGroupMarkers({
 }) {
   const nodes = useCanvasStore.use.nodes();
   const aiGroups = useCanvasStore.use.aiGroups();
-  const { moveGroup, selectGroup, beginInteraction } = useCanvasStore.use.actions();
+  const { moveGroup, selectGroup, beginInteraction } =
+    useCanvasStore.use.actions();
   const streamingGroupId = useCanvasAiStore.use.streamingGroupId();
   const vp = useViewport(); // { x, y, zoom } — re-renders on pan/zoom
 
   // Per-drag bookkeeping (module-free; one active pin at a time).
-  const drag = useRef<{ id: string; lastX: number; lastY: number; moved: boolean } | null>(null);
+  const drag = useRef<{
+    id: string;
+    lastX: number;
+    lastY: number;
+    moved: boolean;
+  } | null>(null);
 
   const groupIds = Object.keys(aiGroups);
   if (groupIds.length === 0) return null;
 
-  const toScreen = (fx: number, fy: number) => ({ x: fx * vp.zoom + vp.x, y: fy * vp.zoom + vp.y });
+  const toScreen = (fx: number, fy: number) => ({
+    x: fx * vp.zoom + vp.x,
+    y: fy * vp.zoom + vp.y,
+  });
 
   return (
     <>
@@ -52,7 +61,12 @@ export function AiGroupMarkers({
               onPointerDown={(e) => {
                 e.stopPropagation();
                 (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-                drag.current = { id: gid, lastX: e.clientX, lastY: e.clientY, moved: false };
+                drag.current = {
+                  id: gid,
+                  lastX: e.clientX,
+                  lastY: e.clientY,
+                  moved: false,
+                };
               }}
               onPointerMove={(e) => {
                 const d = drag.current;
@@ -75,7 +89,11 @@ export function AiGroupMarkers({
                 }
               }}
             >
-              {generating ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+              {generating ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Sparkles size={12} />
+              )}
             </div>
           </div>
         );

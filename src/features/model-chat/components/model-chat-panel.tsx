@@ -28,7 +28,10 @@ import { Kbd, KbdGroup } from "@/ui/kbd";
 import { MessageItem } from "@/features/chat/components/message-item";
 import { ChatSearchPalette } from "@/features/chat/components/chat-search-palette";
 import { usePaneFind } from "@/features/chat/lib/use-pane-find";
-import { ChatInput, type ChatInputHandle } from "@/features/chat/components/chat-input";
+import {
+  ChatInput,
+  type ChatInputHandle,
+} from "@/features/chat/components/chat-input";
 import {
   MentionPicker,
   type MentionPickerHandle,
@@ -38,7 +41,10 @@ import type { MentionData } from "@/features/chat/lib/mentions";
 import { ModelChatSidebar } from "./model-chat-sidebar";
 import { ModelChatLinksPanel } from "./model-chat-links-panel";
 import { ProviderLogo } from "@/components/provider-logo";
-import { CHAT_PROVIDERS, providerById } from "@/features/settings/lib/providers";
+import {
+  CHAT_PROVIDERS,
+  providerById,
+} from "@/features/settings/lib/providers";
 import { useByokStore } from "@/features/settings/stores/byok-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
@@ -93,7 +99,9 @@ function mcRecordHeight(id: string, h: number) {
   mcHeights.set(id, h);
 }
 function mcAverageHeight(): number {
-  return mcHeightCount > 0 ? Math.round(mcHeightSum / mcHeightCount) : MC_DEFAULT_ROW;
+  return mcHeightCount > 0
+    ? Math.round(mcHeightSum / mcHeightCount)
+    : MC_DEFAULT_ROW;
 }
 
 // `tabId` is the center-panel tab id — used to scope the Cmd+F finder to this
@@ -120,7 +128,9 @@ export function ModelChatPanel({ tabId }: { tabId?: string } = {}) {
     return <EmptyState hasOtherKeys={Object.keys(keys).length > 0} />;
   }
 
-  return <ChatSurface tabId={tabId} configuredIds={configured.map((p) => p.id)} />;
+  return (
+    <ChatSurface tabId={tabId} configuredIds={configured.map((p) => p.id)} />
+  );
 }
 
 function ChatSurface({
@@ -201,7 +211,9 @@ function Conversation({
     measureElement:
       typeof window !== "undefined" && !navigator.userAgent.includes("Firefox")
         ? (el) => {
-            const h = Math.round(el?.getBoundingClientRect().height ?? mcAverageHeight());
+            const h = Math.round(
+              el?.getBoundingClientRect().height ?? mcAverageHeight(),
+            );
             const id = el?.getAttribute("data-message-id");
             if (id) mcRecordHeight(id, h);
             return h;
@@ -292,7 +304,10 @@ function Conversation({
       </div>
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto [overflow-anchor:none]">
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-y-auto [overflow-anchor:none]"
+      >
         {messages.length === 0 ? (
           <div className="grid h-full place-items-center px-6">
             <div className="max-w-[420px] text-center">
@@ -300,8 +315,8 @@ function Conversation({
                 {providerById(session.provider)?.name ?? "Chat"}
               </p>
               <p className="mt-1 text-[12px] text-text-tertiary">
-                Ask anything. Responses stream directly from the model using your
-                stored key.
+                Ask anything. Responses stream directly from the model using
+                your stored key.
               </p>
             </div>
           </div>
@@ -415,7 +430,9 @@ function Composer({
       const { open } = await import("@tauri-apps/plugin-dialog");
       const sel = await open({
         multiple: true,
-        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+        filters: [
+          { name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] },
+        ],
       });
       const paths = Array.isArray(sel) ? sel : sel ? [sel] : [];
       const next: ComposerAttachment[] = [];
@@ -427,7 +444,9 @@ function Composer({
       }
       if (next.length) setAttachments((a) => [...a, ...next]);
     } catch (e) {
-      toast.error(`Couldn't attach image: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(
+        `Couldn't attach image: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   };
 
@@ -542,10 +561,16 @@ function Composer({
                 key={i}
                 className="group relative h-12 w-12 overflow-hidden rounded-md border border-border-default"
               >
-                <img src={a.dataUrl} alt="" className="h-full w-full object-cover" />
+                <img
+                  src={a.dataUrl}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
                 <button
                   type="button"
-                  onClick={() => setAttachments((arr) => arr.filter((_, j) => j !== i))}
+                  onClick={() =>
+                    setAttachments((arr) => arr.filter((_, j) => j !== i))
+                  }
                   className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity"
                   title="Remove"
                 >
@@ -599,8 +624,12 @@ function Composer({
                     className="flex items-center gap-2 px-2.5 h-[28px] text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none"
                   >
                     <ProviderLogo id={id} size={14} />
-                    <span className="flex-1 truncate">{providerById(id)?.name ?? id}</span>
-                    {id === provider && <Check size={12} className="text-text-primary" />}
+                    <span className="flex-1 truncate">
+                      {providerById(id)?.name ?? id}
+                    </span>
+                    {id === provider && (
+                      <Check size={12} className="text-text-primary" />
+                    )}
                   </DropdownMenu.Item>
                 ))}
               </PickerDropdown>
@@ -716,7 +745,9 @@ function ModelCombo({
     >
       <Popover.Trigger asChild>
         <button className="flex min-w-0 items-center gap-1.5 h-[26px] rounded-full border border-border-default bg-bg-elevated px-2 text-[10px] font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors outline-none cursor-pointer">
-          {loading && <Loader2 size={11} className="animate-spin text-text-tertiary" />}
+          {loading && (
+            <Loader2 size={11} className="animate-spin text-text-tertiary" />
+          )}
           <span className="max-w-[200px] truncate font-mono">
             {value || (loading ? "Loading…" : "Select model")}
           </span>
@@ -757,7 +788,9 @@ function ModelCombo({
                   className="flex w-full items-center gap-2 px-2.5 h-[26px] text-left text-[11px] font-mono text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none"
                 >
                   <span className="flex-1 truncate">{id}</span>
-                  {id === value && <Check size={11} className="text-text-primary" />}
+                  {id === value && (
+                    <Check size={11} className="text-text-primary" />
+                  )}
                 </button>
               ))
             )}
@@ -788,16 +821,18 @@ function MessageAttachments({ messageId }: { messageId: string }) {
 
 function EmptyState({ hasOtherKeys }: { hasOtherKeys: boolean }) {
   const openSettings = () => {
-    void import("@/features/layout/stores/layout-store").then(({ useLayoutStore }) => {
-      useLayoutStore.getState().actions.addTab({
-        id: "settings",
-        type: "settings",
-        title: "Settings",
-        closable: true,
-        dirty: false,
-        data: { section: "providers" },
-      });
-    });
+    void import("@/features/layout/stores/layout-store").then(
+      ({ useLayoutStore }) => {
+        useLayoutStore.getState().actions.addTab({
+          id: "settings",
+          type: "settings",
+          title: "Settings",
+          closable: true,
+          dirty: false,
+          data: { section: "providers" },
+        });
+      },
+    );
   };
   return (
     <div className="grid h-full place-items-center bg-bg-base p-6">
@@ -806,7 +841,9 @@ function EmptyState({ hasOtherKeys }: { hasOtherKeys: boolean }) {
           <KeyRound size={20} className="text-text-tertiary" />
         </div>
         <p className="mt-3 text-[13px] font-medium text-text-primary">
-          {hasOtherKeys ? "No chat-capable provider yet" : "No provider keys yet"}
+          {hasOtherKeys
+            ? "No chat-capable provider yet"
+            : "No provider keys yet"}
         </p>
         <p className="mt-1 text-[11px] text-text-tertiary">
           {hasOtherKeys

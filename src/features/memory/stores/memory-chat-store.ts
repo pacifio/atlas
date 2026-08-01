@@ -79,7 +79,11 @@ interface MemoryChatState {
     downloadModel: () => Promise<void>;
     loadModel: () => Promise<void>;
     loadList: () => Promise<void>;
-    newSession: (init?: { mode?: ChatMode; provider?: string; model?: string }) => string;
+    newSession: (init?: {
+      mode?: ChatMode;
+      provider?: string;
+      model?: string;
+    }) => string;
     selectSession: (id: string) => Promise<void>;
     deleteSession: (id: string) => Promise<void>;
     setMode: (id: string, mode: ChatMode) => void;
@@ -88,7 +92,10 @@ interface MemoryChatState {
     send: (id: string, text: string, projectPath: string) => Promise<void>;
     stop: (id: string) => void;
     loadCodebaseStatus: (projectPath: string, force?: boolean) => Promise<void>;
-    buildCodebaseIndex: (projectPath: string, opts: CodebaseBuildOpts) => Promise<void>;
+    buildCodebaseIndex: (
+      projectPath: string,
+      opts: CodebaseBuildOpts,
+    ) => Promise<void>;
   };
 }
 
@@ -175,7 +182,9 @@ const useMemoryChatStoreBase = create<MemoryChatState>()((set, get) => ({
 
     downloadModel: async () => {
       set({ modelPhase: "downloading", modelProgress: null, modelError: null });
-      const unProg = await listenChatModelProgress((p) => set({ modelProgress: p }));
+      const unProg = await listenChatModelProgress((p) =>
+        set({ modelProgress: p }),
+      );
       const unDone = await listenChatModelDone((d) => {
         unProg();
         unDone();
@@ -184,7 +193,10 @@ const useMemoryChatStoreBase = create<MemoryChatState>()((set, get) => ({
           set({ modelProgress: null });
           void get().actions.loadModel();
         } else {
-          set({ modelPhase: "download-failed", modelError: d.error ?? "Download failed" });
+          set({
+            modelPhase: "download-failed",
+            modelError: d.error ?? "Download failed",
+          });
         }
       });
       try {
@@ -229,7 +241,10 @@ const useMemoryChatStoreBase = create<MemoryChatState>()((set, get) => ({
         updatedAt: now(),
         loaded: true,
       };
-      set((st) => ({ sessions: { ...st.sessions, [id]: session }, activeId: id }));
+      set((st) => ({
+        sessions: { ...st.sessions, [id]: session },
+        activeId: id,
+      }));
       return id;
     },
 
@@ -289,7 +304,9 @@ const useMemoryChatStoreBase = create<MemoryChatState>()((set, get) => ({
         const s = st.sessions[id];
         if (!s) return {};
         // Reset model on provider change so the selector reloads the right list.
-        return { sessions: { ...st.sessions, [id]: { ...s, provider, model: "" } } };
+        return {
+          sessions: { ...st.sessions, [id]: { ...s, provider, model: "" } },
+        };
       }),
     setModel: (id, model) =>
       set((st) => {
@@ -303,7 +320,8 @@ const useMemoryChatStoreBase = create<MemoryChatState>()((set, get) => ({
       const trimmed = text.trim();
       if (!session || !trimmed || get().streaming[id]) return;
       if (session.mode === "local" && get().modelPhase !== "ready") return;
-      if (session.mode === "provider" && (!session.provider || !session.model)) return;
+      if (session.mode === "provider" && (!session.provider || !session.model))
+        return;
 
       const priorMessages = session.messages;
       const userMsg = makeMessage("user", trimmed);
@@ -325,28 +343,53 @@ const useMemoryChatStoreBase = create<MemoryChatState>()((set, get) => ({
       if (session.mode === "provider") {
         // Retrieve in Rust → augmented prompt; generate via the BYOK provider.
         try {
-          const { prompt, sources } = await memoryChat.retrieve(projectPath, trimmed);
-          set((st) => ({ sourcesByMsg: { ...st.sourcesByMsg, [assistantMsg.id]: sources } }));
-          const wire = priorMessages.map((m) => ({ role: m.role, content: m.content }));
+          const { prompt, sources } = await memoryChat.retrieve(
+            projectPath,
+            trimmed,
+          );
+          set((st) => ({
+            sourcesByMsg: { ...st.sourcesByMsg, [assistantMsg.id]: sources },
+          }));
+          const wire = priorMessages.map((m) => ({
+            role: m.role,
+            content: m.content,
+          }));
           wire.push({ role: "user", content: prompt });
-          await providerChat.stream(streamId, session.provider, session.model, wire);
+          await providerChat.stream(
+            streamId,
+            session.provider,
+            session.model,
+            wire,
+          );
         } catch (e) {
-          onEvent(set, get, { stream_id: streamId, kind: "error", message: String(e) });
+          onEvent(set, get, {
+            stream_id: streamId,
+            kind: "error",
+            message: String(e),
+          });
         }
         return;
       }
 
       // Local mode: Rust does retrieval + on-device generation.
-      const wire = messages.slice(0, -1).map((m) => ({ role: m.role, content: m.content }));
+      const wire = messages
+        .slice(0, -1)
+        .map((m) => ({ role: m.role, content: m.content }));
       try {
         await memoryChat.send(streamId, projectPath, wire);
       } catch (e) {
-        onEvent(set, get, { stream_id: streamId, kind: "error", message: String(e) });
+        onEvent(set, get, {
+          stream_id: streamId,
+          kind: "error",
+          message: String(e),
+        });
       }
     },
 
     stop: (id) => {
-      const streamId = Object.entries(get().streamToSession).find(([, sid]) => sid === id)?.[0];
+      const streamId = Object.entries(get().streamToSession).find(
+        ([, sid]) => sid === id,
+      )?.[0];
       if (streamId) void memoryChat.cancel(streamId);
     },
 
@@ -363,7 +406,9 @@ const useMemoryChatStoreBase = create<MemoryChatState>()((set, get) => ({
     buildCodebaseIndex: async (projectPath, opts) => {
       if (get().codebaseBuilding) return;
       set({ codebaseBuilding: true, codebaseProgress: null });
-      const un = await listenCodebaseIndexProgress((p) => set({ codebaseProgress: p }));
+      const un = await listenCodebaseIndexProgress((p) =>
+        set({ codebaseProgress: p }),
+      );
       try {
         const status = await codebaseIndex.build(projectPath, opts);
         set({ codebaseStatus: status });

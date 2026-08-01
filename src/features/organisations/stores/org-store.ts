@@ -23,7 +23,9 @@ function nameTaken(
   exceptId?: string,
 ): boolean {
   const norm = name.trim().toLowerCase();
-  return orgs.some((o) => o.id !== exceptId && o.name.trim().toLowerCase() === norm);
+  return orgs.some(
+    (o) => o.id !== exceptId && o.name.trim().toLowerCase() === norm,
+  );
 }
 
 /**
@@ -139,7 +141,10 @@ interface OrgState {
      *  (the caller must reassign/close those first). Returns whether removed. */
     deleteOrg: (id: string) => boolean;
     /** Record the per-org last-active workspace (restore target on switch). */
-    setActiveWorkspaceForOrg: (orgId: string, workspaceId: string | null) => void;
+    setActiveWorkspaceForOrg: (
+      orgId: string,
+      workspaceId: string | null,
+    ) => void;
     /** Low-level setter used by the org-switch orchestration + overlay gate. */
     setSwitching: (v: boolean) => void;
     /** Set the active org id (authoritative swap; called by org-switch). */
@@ -410,7 +415,9 @@ export const useOrgStore = createSelectors(
             payload: { orgId: id, remoteId },
           });
         } catch (e) {
-          toast.error(typeof e === "string" ? e : "Couldn't sync organisation.");
+          toast.error(
+            typeof e === "string" ? e : "Couldn't sync organisation.",
+          );
         }
       },
 

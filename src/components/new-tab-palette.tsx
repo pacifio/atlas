@@ -1,4 +1,11 @@
-import { useState, useMemo, useRef, useEffect, useLayoutEffect, type ElementType } from "react";
+import {
+  useState,
+  useMemo,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  type ElementType,
+} from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   MessageSquare,
@@ -39,20 +46,54 @@ interface ModuleEntry {
  * palettes read as one consistent system.
  */
 const MODULES: ModuleEntry[] = [
-  { id: "chat", type: "chat", label: "New Agents Chat", icon: AtlasIcon as ElementType<LucideProps>, shortcut: "⌘T" },
-  { id: "model-chat", type: "model-chat", label: "New Chat", icon: MessageSquare },
-  { id: "terminal", type: "terminal", label: "New Terminal", icon: Terminal, shortcut: "⌘⇧T" },
+  {
+    id: "chat",
+    type: "chat",
+    label: "New Agents Chat",
+    icon: AtlasIcon as ElementType<LucideProps>,
+    shortcut: "⌘T",
+  },
+  {
+    id: "model-chat",
+    type: "model-chat",
+    label: "New Chat",
+    icon: MessageSquare,
+  },
+  {
+    id: "terminal",
+    type: "terminal",
+    label: "New Terminal",
+    icon: Terminal,
+    shortcut: "⌘⇧T",
+  },
   { id: "knowledge", type: "knowledge", label: "Knowledge", icon: Brain },
-  { id: "knowledge-graph", type: "knowledge-graph", label: "Knowledge Graph", icon: Network },
+  {
+    id: "knowledge-graph",
+    type: "knowledge-graph",
+    label: "Knowledge Graph",
+    icon: Network,
+  },
   { id: "memory", type: "memory", label: "Memory", icon: BrainCircuit },
   { id: "research", type: "research", label: "Research", icon: BookOpen },
   { id: "canvas", type: "canvas", label: "Spaces", icon: Map },
   { id: "diff", type: "diff", label: "Git Diff", icon: GitCompare },
   { id: "browser", type: "browser", label: "Browser", icon: Globe },
-  { id: "editor", type: "editor", label: "Untitled Editor", icon: Code, shortcut: "⌘N" },
+  {
+    id: "editor",
+    type: "editor",
+    label: "Untitled Editor",
+    icon: Code,
+    shortcut: "⌘N",
+  },
   { id: "log", type: "log", label: "Log", icon: ScrollText },
   { id: "pomodoro", type: "pomodoro", label: "Pomodoro", icon: Timer },
-  { id: "settings", type: "settings", label: "Settings", icon: Settings, shortcut: "⌘," },
+  {
+    id: "settings",
+    type: "settings",
+    label: "Settings",
+    icon: Settings,
+    shortcut: "⌘,",
+  },
 ];
 
 export function NewTabPalette({
@@ -80,8 +121,7 @@ export function NewTabPalette({
     if (!q) return MODULES;
     return MODULES.filter(
       (m) =>
-        m.label.toLowerCase().includes(q) ||
-        m.type.toLowerCase().includes(q),
+        m.label.toLowerCase().includes(q) || m.type.toLowerCase().includes(q),
     );
   }, [query]);
 
@@ -195,7 +235,10 @@ export function NewTabPalette({
         >
           <Dialog.Title className="sr-only">Open module</Dialog.Title>
           <div className="flex items-center gap-2 px-4 h-[44px] shrink-0 border-b border-[var(--border-default)]">
-            <Search size={14} className="text-[var(--text-tertiary)] shrink-0" />
+            <Search
+              size={14}
+              className="text-[var(--text-tertiary)] shrink-0"
+            />
             <input
               ref={inputRef}
               value={query}
@@ -228,7 +271,10 @@ export function NewTabPalette({
                       : "text-[var(--text-secondary)]",
                   )}
                 >
-                  <Icon size={14} className="shrink-0 text-[var(--text-tertiary)]" />
+                  <Icon
+                    size={14}
+                    className="shrink-0 text-[var(--text-tertiary)]"
+                  />
                   <span className="flex-1 truncate">{item.label}</span>
                   {item.shortcut && <KbdCombo combo={item.shortcut} />}
                 </button>

@@ -35,7 +35,9 @@ export function SkillsAndPacks() {
       <div className="flex h-[29px] shrink-0 items-center gap-1 border-b border-border-default px-2">
         <div className="flex items-center gap-1.5 px-1.5">
           <AtlasIcon size={13} />
-          <span className="text-[12px] font-semibold text-text-primary">Skills</span>
+          <span className="text-[12px] font-semibold text-text-primary">
+            Skills
+          </span>
         </div>
         <span className="mx-1 h-3.5 w-px bg-border-default" />
         {TABS.map((t) => (
@@ -56,7 +58,9 @@ export function SkillsAndPacks() {
                 key={s}
                 active={scope === s}
                 disabled={disabled}
-                title={disabled ? "Open a project to use project scope" : undefined}
+                title={
+                  disabled ? "Open a project to use project scope" : undefined
+                }
                 onClick={() => setScope(s)}
                 label={s}
               />

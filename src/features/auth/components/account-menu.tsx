@@ -137,7 +137,10 @@ export function AccountMenu({
                 onSelect={() => void beginSignIn()}
                 className={ITEM_CLASS}
               >
-                <LogIn size={13} className="shrink-0 text-[var(--text-tertiary)]" />
+                <LogIn
+                  size={13}
+                  className="shrink-0 text-[var(--text-tertiary)]"
+                />
                 <span className="flex-1 text-left">Sign In</span>
               </DropdownMenu.Item>
               <DropdownMenu.Separator className={SEPARATOR_CLASS} />
@@ -168,7 +171,10 @@ export function AccountMenu({
                 onSelect={() => void onSignOut()}
                 className={ITEM_CLASS}
               >
-                <LogOut size={13} className="shrink-0 text-[var(--text-tertiary)]" />
+                <LogOut
+                  size={13}
+                  className="shrink-0 text-[var(--text-tertiary)]"
+                />
                 <span className="flex-1 text-left">Sign Out</span>
               </DropdownMenu.Item>
             </>

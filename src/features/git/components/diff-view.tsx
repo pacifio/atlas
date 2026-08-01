@@ -72,8 +72,14 @@ export function DiffView({
   }, [allFiles, filters, query, langFilter, sortMode]);
 
   const rows = useMemo(() => buildRows(files, collapsed), [files, collapsed]);
-  const totalAdd = useMemo(() => files.reduce((s, f) => s + f.additions, 0), [files]);
-  const totalDel = useMemo(() => files.reduce((s, f) => s + f.deletions, 0), [files]);
+  const totalAdd = useMemo(
+    () => files.reduce((s, f) => s + f.additions, 0),
+    [files],
+  );
+  const totalDel = useMemo(
+    () => files.reduce((s, f) => s + f.deletions, 0),
+    [files],
+  );
   const anyExpanded = files.some((f) => !collapsed.has(f.path));
 
   const virtualizer = useVirtualizer({
@@ -107,12 +113,18 @@ export function DiffView({
         <div className="flex items-center gap-0.5">
           <button
             onClick={() =>
-              setCollapsed(anyExpanded ? new Set(files.map((f) => f.path)) : new Set())
+              setCollapsed(
+                anyExpanded ? new Set(files.map((f) => f.path)) : new Set(),
+              )
             }
             className="p-1 rounded hover:bg-bg-hover text-text-tertiary cursor-pointer"
             title={anyExpanded ? "Collapse all" : "Expand all"}
           >
-            {anyExpanded ? <FoldVertical size={10} /> : <UnfoldVertical size={10} />}
+            {anyExpanded ? (
+              <FoldVertical size={10} />
+            ) : (
+              <UnfoldVertical size={10} />
+            )}
           </button>
           {onRefresh && (
             <button
@@ -137,16 +149,26 @@ export function DiffView({
           />
         </div>
         <button
-          onClick={() => setSortMode(sortMode === "most-changes" ? "default" : "most-changes")}
+          onClick={() =>
+            setSortMode(
+              sortMode === "most-changes" ? "default" : "most-changes",
+            )
+          }
           className={cn(
             "p-1 rounded transition-colors cursor-pointer",
-            sortMode === "most-changes" ? "text-accent bg-bg-selected" : "text-text-tertiary hover:bg-bg-hover",
+            sortMode === "most-changes"
+              ? "text-accent bg-bg-selected"
+              : "text-text-tertiary hover:bg-bg-hover",
           )}
           title="Sort by most changes"
         >
           <ArrowDownWideNarrow size={11} />
         </button>
-        <LangFilterPopover languages={languages} active={langFilter} onSelect={setLangFilter} />
+        <LangFilterPopover
+          languages={languages}
+          active={langFilter}
+          onSelect={setLangFilter}
+        />
       </div>
     </div>
   ) : null;
@@ -159,10 +181,17 @@ export function DiffView({
     <div className={cn("flex flex-col min-h-0 min-w-0", className)}>
       {header}
       {files.length === 0 ? (
-        <div className="px-3 py-8 text-center text-[11px] text-text-tertiary">{emptyLabel}</div>
+        <div className="px-3 py-8 text-center text-[11px] text-text-tertiary">
+          {emptyLabel}
+        </div>
       ) : (
-        <div ref={scrollRef} className="flex-1 min-h-0 min-w-0 overflow-auto hide-scrollbar px-3 py-2">
-          <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        <div
+          ref={scrollRef}
+          className="flex-1 min-h-0 min-w-0 overflow-auto hide-scrollbar px-3 py-2"
+        >
+          <div
+            style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+          >
             {virtualizer.getVirtualItems().map((vr) => {
               const row = rows[vr.index];
               // No fixed `height` — rows are MEASURED (`measureElement` below),
@@ -237,7 +266,11 @@ export function DiffView({
                     data-index={vr.index}
                     ref={virtualizer.measureElement}
                     // Empty spacer — keep an explicit height so it measures 8px.
-                    style={{ ...base, height: 8, backgroundColor: "var(--diff-context-bg, #0a0a0a)" }}
+                    style={{
+                      ...base,
+                      height: 8,
+                      backgroundColor: "var(--diff-context-bg, #0a0a0a)",
+                    }}
                     className="border-x border-b border-border-default rounded-b-md"
                   />
                 );
@@ -295,7 +328,13 @@ export function DiffView({
 /** Renders a diff line's code text with cheap, synchronous syntax highlighting
  *  (lowlight → `.diff-syntax` themed token spans). Falls back to plain text for
  *  unsupported languages / empty lines so it can never break the row. */
-function DiffCode({ content, language }: { content: string; language: string }) {
+function DiffCode({
+  content,
+  language,
+}: {
+  content: string;
+  language: string;
+}) {
   const tokens = highlightDiffLine(language, content);
   if (!tokens) {
     return (
@@ -330,7 +369,9 @@ function LangFilterPopover({
         <button
           className={cn(
             "p-1 rounded transition-colors cursor-pointer",
-            active ? "text-accent bg-bg-selected" : "text-text-tertiary hover:bg-bg-hover",
+            active
+              ? "text-accent bg-bg-selected"
+              : "text-text-tertiary hover:bg-bg-hover",
           )}
           title="Filter by language"
         >
@@ -380,7 +421,9 @@ function FileListPopover({
   onOpen?: (path: string) => void;
 }) {
   const [search, setSearch] = useState("");
-  const filtered = files.filter((f) => f.path.toLowerCase().includes(search.toLowerCase()));
+  const filtered = files.filter((f) =>
+    f.path.toLowerCase().includes(search.toLowerCase()),
+  );
   return (
     <Popover.Root onOpenChange={() => setSearch("")}>
       <Popover.Trigger asChild>
@@ -425,7 +468,9 @@ function FileListPopover({
               </button>
             ))}
             {filtered.length === 0 && (
-              <div className="px-3 py-2 text-[10px] text-text-tertiary text-center">No files found</div>
+              <div className="px-3 py-2 text-[10px] text-text-tertiary text-center">
+                No files found
+              </div>
             )}
           </div>
         </Popover.Content>

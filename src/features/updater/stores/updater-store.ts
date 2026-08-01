@@ -28,7 +28,12 @@ interface UpdaterState {
    *  to the titlebar badge, then reopened). */
   modalOpen: boolean;
   actions: {
-    setDownloading: (version: string, downloaded: number, total: number, phase: string) => void;
+    setDownloading: (
+      version: string,
+      downloaded: number,
+      total: number,
+      phase: string,
+    ) => void;
     setReady: (version: string) => void;
     setError: (message: string) => void;
     setChecking: (checking: boolean) => void;
@@ -55,18 +60,36 @@ const useUpdaterStoreBase = create<UpdaterState>()((set) => ({
       set({
         phase: "downloading",
         version,
-        progress: phase === "verifying" || total <= 0 ? null : Math.min(1, downloaded / total),
+        progress:
+          phase === "verifying" || total <= 0
+            ? null
+            : Math.min(1, downloaded / total),
         error: null,
         // Background download must NOT steal focus — no modal here.
         modalOpen: false,
       }),
-    setReady: (version) => set({ phase: "ready", version, progress: null, error: null, modalOpen: true }),
-    setError: (message) => set({ phase: "error", error: message, modalOpen: true }),
+    setReady: (version) =>
+      set({
+        phase: "ready",
+        version,
+        progress: null,
+        error: null,
+        modalOpen: true,
+      }),
+    setError: (message) =>
+      set({ phase: "error", error: message, modalOpen: true }),
     setChecking: (checking) => set({ checking }),
     beginApply: () => set({ phase: "applying" }),
     openModal: () => set({ modalOpen: true }),
     dismissModal: () => set({ modalOpen: false }),
-    reset: () => set({ phase: "idle", version: null, progress: null, error: null, modalOpen: false }),
+    reset: () =>
+      set({
+        phase: "idle",
+        version: null,
+        progress: null,
+        error: null,
+        modalOpen: false,
+      }),
   },
 }));
 

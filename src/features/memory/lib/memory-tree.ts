@@ -7,7 +7,10 @@
 // memory that references them (so an agent's decision/reasoning chains read as
 // nested branches). Pure functions — no DOM, no deps.
 
-import type { MemoryGraphData, MemoryNode } from "../components/memory-graph-canvas";
+import type {
+  MemoryGraphData,
+  MemoryNode,
+} from "../components/memory-graph-canvas";
 
 export interface TreeNode {
   /** Stable id. Memory nodes use the memory id; synthetic nodes use `root` /
@@ -45,7 +48,10 @@ const CATEGORY_LABEL: Record<string, string> = {
 };
 
 function categoryLabel(kind: string): string {
-  return CATEGORY_LABEL[kind] ?? (kind ? kind[0].toUpperCase() + kind.slice(1) : "Other");
+  return (
+    CATEGORY_LABEL[kind] ??
+    (kind ? kind[0].toUpperCase() + kind.slice(1) : "Other")
+  );
 }
 
 function categoryRank(kind: string): number {
@@ -59,7 +65,10 @@ function categoryRank(kind: string): number {
  * parent is always older ⇒ acyclic); memories with no such link hang under
  * their category branch. Similarity edges are ignored for nesting.
  */
-export function buildMemoryTree(graph: MemoryGraphData, rootLabel: string): TreeNode {
+export function buildMemoryTree(
+  graph: MemoryGraphData,
+  rootLabel: string,
+): TreeNode {
   const byId = new Map<string, MemoryNode>();
   for (const n of graph.nodes) byId.set(n.id, n);
 
@@ -113,7 +122,13 @@ export function buildMemoryTree(graph: MemoryGraphData, rootLabel: string): Tree
   const ensureCategory = (kind: string): TreeNode => {
     let c = categories.get(kind);
     if (!c) {
-      c = { id: `cat:${kind}`, label: categoryLabel(kind), kind, depth: 1, children: [] };
+      c = {
+        id: `cat:${kind}`,
+        label: categoryLabel(kind),
+        kind,
+        depth: 1,
+        children: [],
+      };
       categories.set(kind, c);
     }
     return c;
@@ -133,7 +148,9 @@ export function buildMemoryTree(graph: MemoryGraphData, rootLabel: string): Tree
     kind: "root",
     depth: 0,
     children: Array.from(categories.values()).sort(
-      (a, b) => categoryRank(a.kind) - categoryRank(b.kind) || a.label.localeCompare(b.label),
+      (a, b) =>
+        categoryRank(a.kind) - categoryRank(b.kind) ||
+        a.label.localeCompare(b.label),
     ),
   };
 
@@ -141,7 +158,9 @@ export function buildMemoryTree(graph: MemoryGraphData, rootLabel: string): Tree
   const sortRec = (t: TreeNode, depth: number) => {
     t.depth = depth;
     if (t.node) {
-      t.children.sort((a, b) => (b.node?.timestampMs ?? 0) - (a.node?.timestampMs ?? 0));
+      t.children.sort(
+        (a, b) => (b.node?.timestampMs ?? 0) - (a.node?.timestampMs ?? 0),
+      );
     }
     for (const c of t.children) sortRec(c, depth + 1);
   };
@@ -170,7 +189,10 @@ export const CARD_H = 54;
  * internal nodes centre on their visible children's span. Collapsed subtrees
  * contribute one row (the collapsed node) and are not descended into.
  */
-export function layoutTree(root: TreeNode, collapsed: ReadonlySet<string>): TreeLayout {
+export function layoutTree(
+  root: TreeNode,
+  collapsed: ReadonlySet<string>,
+): TreeLayout {
   const positions = new Map<string, { x: number; y: number }>();
   const visible: TreeNode[] = [];
   let row = 0;

@@ -30,7 +30,10 @@ export interface AppNotification {
 }
 
 /** Input for `add` — id/timestamp/read are filled in. */
-export type NewNotification = Omit<AppNotification, "id" | "timestamp" | "read">;
+export type NewNotification = Omit<
+  AppNotification,
+  "id" | "timestamp" | "read"
+>;
 
 const MAX_ITEMS = 100;
 
@@ -74,7 +77,9 @@ export const useNotificationsStore = createSelectors(
         set((s) => ({ items: s.items.filter((i) => i.id !== id) })),
       clearAll: () => set({ items: [] }),
       markAllRead: () =>
-        set((s) => ({ items: s.items.map((i) => (i.read ? i : { ...i, read: true })) })),
+        set((s) => ({
+          items: s.items.map((i) => (i.read ? i : { ...i, read: true })),
+        })),
       open: () =>
         set((s) => ({
           panelOpen: true,

@@ -13,7 +13,10 @@ export interface MediaNodeData extends Record<string, unknown> {
 /** Image node. (Video was dropped — it made the canvas very slow.) Media lives
  *  under `.atlas/canvas-media/`, which the asset protocol 403s, so we fetch a
  *  base64 data URL via `canvas_media_data_url`. */
-export const MediaNode = memo(function MediaNode({ data, selected }: NodeProps) {
+export const MediaNode = memo(function MediaNode({
+  data,
+  selected,
+}: NodeProps) {
   const d = data as MediaNodeData;
   const [url, setUrl] = useState<string | null>(null);
 
@@ -38,7 +41,9 @@ export const MediaNode = memo(function MediaNode({ data, selected }: NodeProps) 
       <div
         className={cn(
           "rounded-xl overflow-hidden border shadow-2xl bg-[var(--bg-secondary)]/40",
-          selected ? "border-[var(--accent-primary)]/60" : "border-white/10 hover:border-white/20",
+          selected
+            ? "border-[var(--accent-primary)]/60"
+            : "border-white/10 hover:border-white/20",
         )}
       >
         {url ? (

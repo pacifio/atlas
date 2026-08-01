@@ -10,14 +10,24 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { Check, ChevronDown, Loader2, RefreshCw, Search, Star } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Loader2,
+  RefreshCw,
+  Search,
+  Star,
+} from "lucide-react";
 import { ProviderLogo } from "@/components/provider-logo";
 import {
   useModelPricingStore,
   priceFor,
   formatPrice,
 } from "@/features/settings/stores/model-pricing-store";
-import { CHAT_PROVIDERS, providerById } from "@/features/settings/lib/providers";
+import {
+  CHAT_PROVIDERS,
+  providerById,
+} from "@/features/settings/lib/providers";
 import { useByokStore } from "@/features/settings/stores/byok-store";
 import { modelchat } from "@/features/model-chat/lib/model-chat-api";
 import {
@@ -43,7 +53,10 @@ function loadModelIds(provider: string): Promise<string[]> {
   const p = modelchat
     .models(provider)
     .then((rows) => {
-      const curated = curateModels(provider, rows.map((r) => r.id));
+      const curated = curateModels(
+        provider,
+        rows.map((r) => r.id),
+      );
       modelListCache.set(provider, curated);
       modelListInFlight.delete(provider);
       return curated;
@@ -100,7 +113,9 @@ export function ProviderModelPills({
     if (provider || configuredIds.length === 0) return;
     const pref = prefRef.current;
     const next =
-      pref && configuredIds.includes(pref.provider) ? pref.provider : configuredIds[0];
+      pref && configuredIds.includes(pref.provider)
+        ? pref.provider
+        : configuredIds[0];
     onProvider(next);
   }, [provider, configuredIds, onProvider]);
 
@@ -108,7 +123,9 @@ export function ProviderModelPills({
   // can point at an unconfigured provider (to show the "Set up key" prompt).
   const [viewProvider, setViewProvider] = useState(provider);
   useEffect(() => {
-    setViewProvider(provider || configuredIds[0] || CHAT_PROVIDERS[0]?.id || "");
+    setViewProvider(
+      provider || configuredIds[0] || CHAT_PROVIDERS[0]?.id || "",
+    );
   }, [provider, configuredIds]);
 
   const [models, setModels] = useState<string[]>([]);
@@ -130,7 +147,9 @@ export function ProviderModelPills({
       if (viewProvider !== provider || model || ids.length === 0) return;
       const pref = prefRef.current;
       const remembered =
-        pref && pref.provider === provider && ids.includes(pref.model) ? pref.model : null;
+        pref && pref.provider === provider && ids.includes(pref.model)
+          ? pref.model
+          : null;
       onModel(remembered ?? defaultModelFor(provider, ids) ?? ids[0]);
     };
     const cached = modelListCache.get(viewProvider);
@@ -167,23 +186,26 @@ export function ProviderModelPills({
   );
 
   const openApiKeys = useCallback(() => {
-    void import("@/features/layout/stores/layout-store").then(({ useLayoutStore }) => {
-      useLayoutStore.getState().actions.addTab({
-        id: "settings",
-        type: "settings",
-        title: "Settings",
-        closable: true,
-        dirty: false,
-        data: { section: "providers" },
-      });
-    });
+    void import("@/features/layout/stores/layout-store").then(
+      ({ useLayoutStore }) => {
+        useLayoutStore.getState().actions.addTab({
+          id: "settings",
+          type: "settings",
+          title: "Settings",
+          closable: true,
+          dirty: false,
+          data: { section: "providers" },
+        });
+      },
+    );
     setOpen(false);
   }, []);
 
   // Model pricing (models.dev, cached by Rust) — shows $/1M per model.
   const prices = useModelPricingStore.use.prices();
   const pricingLoading = useModelPricingStore.use.loading();
-  const { load: loadPricing, refresh: refreshPricing } = useModelPricingStore.use.actions();
+  const { load: loadPricing, refresh: refreshPricing } =
+    useModelPricingStore.use.actions();
   useEffect(() => {
     void loadPricing();
   }, [loadPricing]);
@@ -192,7 +214,9 @@ export function ProviderModelPills({
     const s = q.trim().toLowerCase();
     const match = (m: string) => (s ? m.toLowerCase().includes(s) : true);
     const order = preferredModels(viewProvider);
-    const pinnedSet = new Set(models.filter((m) => isPreferredModel(viewProvider, m)));
+    const pinnedSet = new Set(
+      models.filter((m) => isPreferredModel(viewProvider, m)),
+    );
     return {
       pinned: order.filter((m) => pinnedSet.has(m) && match(m)),
       rest: models.filter((m) => !pinnedSet.has(m) && match(m)),
@@ -200,7 +224,10 @@ export function ProviderModelPills({
   }, [viewProvider, models, q]);
 
   const renderModel = (id: string, starred: boolean) => {
-    const price = formatPrice(priceFor(prices, viewProvider, id), pricingLoading);
+    const price = formatPrice(
+      priceFor(prices, viewProvider, id),
+      pricingLoading,
+    );
     return (
       <button
         key={id}
@@ -208,7 +235,10 @@ export function ProviderModelPills({
         className="flex w-full items-center gap-2 px-2.5 h-[26px] text-left text-[11px] font-mono text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer outline-none"
       >
         {starred && (
-          <Star size={10} className="shrink-0 fill-[var(--accent-primary)] text-[var(--accent-primary)]" />
+          <Star
+            size={10}
+            className="shrink-0 fill-[var(--accent-primary)] text-[var(--accent-primary)]"
+          />
         )}
         <span className="min-w-0 flex-1 truncate">{id}</span>
         <span
@@ -233,9 +263,17 @@ export function ProviderModelPills({
       }}
     >
       <Popover.Trigger asChild>
-        <button className={PILL_CLASS} title="Model — click to choose provider + model">
+        <button
+          className={PILL_CLASS}
+          title="Model — click to choose provider + model"
+        >
           <ProviderLogo id={provider || viewProvider} size={13} />
-          {loadingModels && <Loader2 size={10} className="animate-spin text-[var(--text-tertiary)]" />}
+          {loadingModels && (
+            <Loader2
+              size={10}
+              className="animate-spin text-[var(--text-tertiary)]"
+            />
+          )}
           <span className="max-w-[150px] truncate font-mono">
             {model || (loadingModels ? "Loading…" : "Select model")}
           </span>
@@ -280,7 +318,10 @@ export function ProviderModelPills({
                 <>
                   {/* Search + pricing refresh */}
                   <div className="flex items-center gap-1.5 h-8 border-b border-[var(--border-subtle)] px-2.5">
-                    <Search size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+                    <Search
+                      size={12}
+                      className="shrink-0 text-[var(--text-tertiary)]"
+                    />
                     <input
                       autoFocus
                       value={q}
@@ -295,7 +336,10 @@ export function ProviderModelPills({
                       title="Refresh model pricing (models.dev)"
                       className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer disabled:cursor-default"
                     >
-                      <RefreshCw size={11} className={cn(pricingLoading && "animate-spin")} />
+                      <RefreshCw
+                        size={11}
+                        className={cn(pricingLoading && "animate-spin")}
+                      />
                     </button>
                   </div>
 
@@ -314,7 +358,9 @@ export function ProviderModelPills({
                               Recommended for coding
                             </div>
                             {pinned.map((id) => renderModel(id, true))}
-                            {rest.length > 0 && <div className="my-1 h-px bg-[var(--border-subtle)]" />}
+                            {rest.length > 0 && (
+                              <div className="my-1 h-px bg-[var(--border-subtle)]" />
+                            )}
                           </>
                         )}
                         {rest.map((id) => renderModel(id, false))}
@@ -345,21 +391,23 @@ export function ProviderModelPills({
 
           {/* RTK compression toggle (Cursor "MAX Mode"-style footer). */}
           {showCompress && (
-          <button
-            onClick={() => onCompress?.(!compress)}
-            className="flex w-full items-center gap-2 border-t border-[var(--border-subtle)] px-2.5 py-2 text-left text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer outline-none"
-            title="Tool-output compression — shrinks tool results to save tokens"
-          >
-            <span className="flex-1">Compress Tokens</span>
-            <span
-              className={cn(
-                "flex h-3.5 w-6 items-center rounded-full px-0.5 transition-colors",
-                compress ? "bg-[var(--accent-primary)] justify-end" : "bg-[var(--bg-base)] justify-start",
-              )}
+            <button
+              onClick={() => onCompress?.(!compress)}
+              className="flex w-full items-center gap-2 border-t border-[var(--border-subtle)] px-2.5 py-2 text-left text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer outline-none"
+              title="Tool-output compression — shrinks tool results to save tokens"
             >
-              <span className="h-2.5 w-2.5 rounded-full bg-[var(--bg-elevated)]" />
-            </span>
-          </button>
+              <span className="flex-1">Compress Tokens</span>
+              <span
+                className={cn(
+                  "flex h-3.5 w-6 items-center rounded-full px-0.5 transition-colors",
+                  compress
+                    ? "bg-[var(--accent-primary)] justify-end"
+                    : "bg-[var(--bg-base)] justify-start",
+                )}
+              >
+                <span className="h-2.5 w-2.5 rounded-full bg-[var(--bg-elevated)]" />
+              </span>
+            </button>
           )}
         </Popover.Content>
       </Popover.Portal>

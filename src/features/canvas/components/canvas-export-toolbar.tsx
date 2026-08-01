@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { useReactFlow } from "@xyflow/react";
-import { Download, Loader2, FileImage, FileType2, FileText } from "lucide-react";
+import {
+  Download,
+  Loader2,
+  FileImage,
+  FileType2,
+  FileText,
+} from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useCanvasStore } from "../stores/canvas-store";
@@ -34,9 +40,12 @@ export function CanvasExportToolbar() {
     try {
       const res = await exportCanvas(format, rf);
       if (res === "ok") toast.success(`Exported ${format.toUpperCase()}`);
-      else if (res === "empty") toast("Nothing to export — the canvas is empty.");
+      else if (res === "empty")
+        toast("Nothing to export — the canvas is empty.");
     } catch (e) {
-      toast.error(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(
+        `Export failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setBusy(null);
     }
@@ -54,13 +63,21 @@ export function CanvasExportToolbar() {
           "text-[11px] font-medium text-text-secondary hover:text-text-primary transition-colors cursor-pointer disabled:opacity-60",
         )}
       >
-        {busy ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+        {busy ? (
+          <Loader2 size={13} className="animate-spin" />
+        ) : (
+          <Download size={13} />
+        )}
         Export
       </button>
 
       {open && !busy && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden />
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setOpen(false)}
+            aria-hidden
+          />
           <div className="absolute right-0 top-full z-50 mt-1 w-[140px] overflow-hidden rounded-lg border border-border-default bg-[var(--bg-elevated)] py-1 shadow-[var(--shadow-overlay)]">
             {FORMATS.map((f) => (
               <button

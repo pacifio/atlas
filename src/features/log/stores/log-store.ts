@@ -42,7 +42,7 @@ interface LogActions {
     append: (
       entry: Omit<LogEntry, "id" | "timestamp" | "pinned" | "projectName"> & {
         projectName?: string;
-      }
+      },
     ) => void;
     pin: (id: string) => Promise<void>;
     unpin: (id: string) => Promise<void>;
@@ -77,7 +77,9 @@ export const useLogStore = createSelectors(
           const projectPath = entry.projectPath ?? project?.path ?? undefined;
           const projectName =
             entry.projectName ??
-            (project && projectPath === project.path ? project.name : undefined);
+            (project && projectPath === project.path
+              ? project.name
+              : undefined);
           const full: LogEntry = {
             ...entry,
             id: genId(),
@@ -113,7 +115,9 @@ export const useLogStore = createSelectors(
             if (i !== -1) s.buffer[i].pinned = true;
           });
           try {
-            await invoke("append_pinned_log", { entryJson: JSON.stringify(target) });
+            await invoke("append_pinned_log", {
+              entryJson: JSON.stringify(target),
+            });
           } catch (err) {
             // eslint-disable-next-line no-console
             console.error("pin log entry failed", err);
@@ -127,7 +131,9 @@ export const useLogStore = createSelectors(
           });
           try {
             const remaining = get().pinned;
-            const body = remaining.map((e) => JSON.stringify(e)).join("\n") + (remaining.length ? "\n" : "");
+            const body =
+              remaining.map((e) => JSON.stringify(e)).join("\n") +
+              (remaining.length ? "\n" : "");
             await invoke("rewrite_pinned_log", { entriesJson: body });
           } catch (err) {
             // eslint-disable-next-line no-console
@@ -138,7 +144,9 @@ export const useLogStore = createSelectors(
           const project = useProjectStore.getState().currentProject?.path;
           set((s) => {
             // Keep entries from OTHER projects; clear the current project's.
-            s.buffer = project ? s.buffer.filter((e) => e.projectPath !== project) : [];
+            s.buffer = project
+              ? s.buffer.filter((e) => e.projectPath !== project)
+              : [];
           });
           if (project) {
             void invoke("clear_project_log", { project }).catch(() => {});
@@ -216,6 +224,6 @@ export const useLogStore = createSelectors(
           });
         },
       },
-    }))
-  )
+    })),
+  ),
 );

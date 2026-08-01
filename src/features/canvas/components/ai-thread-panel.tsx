@@ -62,19 +62,33 @@ export function AiThreadPanel({
     const prompt = text.trim();
     if (!prompt || !provider || !model || generating) return;
     setText("");
-    void generate({ groupId, anchor: group.anchor, prompt, provider, model, projectPath });
+    void generate({
+      groupId,
+      anchor: group.anchor,
+      prompt,
+      provider,
+      model,
+      projectPath,
+    });
   };
 
   return (
     <div
       className="fixed z-[9999] flex flex-col rounded-xl border border-border-default bg-[var(--bg-elevated)]/90 backdrop-blur-2xl shadow-[var(--shadow-overlay)]"
-      style={{ left: Math.max(12, left), top: Math.max(12, top), width: PANEL_W, maxHeight: 420 }}
+      style={{
+        left: Math.max(12, left),
+        top: Math.max(12, top),
+        width: PANEL_W,
+        maxHeight: 420,
+      }}
       onPointerDown={(e) => e.stopPropagation()}
     >
       {/* Header */}
       <div className="flex items-center gap-1.5 border-b border-white/10 px-3 h-[34px] shrink-0">
         <Sparkles size={12} className="text-[var(--accent-primary)]" />
-        <span className="flex-1 text-[11px] font-semibold text-text-primary">AI diagram</span>
+        <span className="flex-1 text-[11px] font-semibold text-text-primary">
+          AI diagram
+        </span>
         <button
           type="button"
           title="Delete diagram"
@@ -97,12 +111,23 @@ export function AiThreadPanel({
       </div>
 
       {/* Messages */}
-      <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto hide-scrollbar px-3 py-2 space-y-2">
+      <div
+        ref={listRef}
+        className="flex-1 min-h-0 overflow-y-auto hide-scrollbar px-3 py-2 space-y-2"
+      >
         {group.messages.length === 0 && (
-          <div className="text-[11px] text-text-tertiary italic">No messages yet.</div>
+          <div className="text-[11px] text-text-tertiary italic">
+            No messages yet.
+          </div>
         )}
         {group.messages.map((m, i) => (
-          <div key={i} className={cn("text-[11px] leading-relaxed", m.role === "user" ? "text-text-primary" : "text-text-secondary")}>
+          <div
+            key={i}
+            className={cn(
+              "text-[11px] leading-relaxed",
+              m.role === "user" ? "text-text-primary" : "text-text-secondary",
+            )}
+          >
             <span className="text-[9px] uppercase tracking-wide text-text-tertiary mr-1.5">
               {m.role === "user" ? "You" : "AI"}
             </span>
@@ -110,7 +135,9 @@ export function AiThreadPanel({
           </div>
         ))}
         {generating && (
-          <div className="text-[11px] text-text-tertiary italic">Generating…</div>
+          <div className="text-[11px] text-text-tertiary italic">
+            Generating…
+          </div>
         )}
       </div>
 

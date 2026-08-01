@@ -131,7 +131,10 @@ export class BlockStreamParser {
     this.onChange();
   }
 
-  constructor(initialCwd: string, private onChange: () => void) {
+  constructor(
+    initialCwd: string,
+    private onChange: () => void,
+  ) {
     this.cwd = initialCwd;
     // Preamble block: the shell banner / output before the first prompt marker.
     // If shell integration ISN'T active (no OSC 133 ever), EVERYTHING stays
@@ -198,8 +201,16 @@ export class BlockStreamParser {
         let term = -1;
         let termLen = 0;
         while (j < n) {
-          if (s.charCodeAt(j) === 0x07) { term = j; termLen = 1; break; }
-          if (s.charCodeAt(j) === ESC && s[j + 1] === "\\") { term = j; termLen = 2; break; }
+          if (s.charCodeAt(j) === 0x07) {
+            term = j;
+            termLen = 1;
+            break;
+          }
+          if (s.charCodeAt(j) === ESC && s[j + 1] === "\\") {
+            term = j;
+            termLen = 2;
+            break;
+          }
           j++;
         }
         if (term === -1) break; // incomplete OSC; wait
@@ -216,9 +227,13 @@ export class BlockStreamParser {
         if (j >= n) break; // incomplete CSI; wait
         const seq = s.slice(i, j + 1);
         const body = s.slice(i + 2, j);
-        if (body === "?1049" && s[j] === "h") { this.altScreen = true; changed = true; }
-        else if (body === "?1049" && s[j] === "l") { this.altScreen = false; changed = true; }
-        else appendOut(seq); // keep SGR / other CSI in the block output
+        if (body === "?1049" && s[j] === "h") {
+          this.altScreen = true;
+          changed = true;
+        } else if (body === "?1049" && s[j] === "l") {
+          this.altScreen = false;
+          changed = true;
+        } else appendOut(seq); // keep SGR / other CSI in the block output
         i = j + 1;
         continue;
       }
@@ -238,7 +253,12 @@ export class BlockStreamParser {
     // field appears on "Password:" and disappears once other output follows.
     // Skip firehose blocks (a huge dump isn't a prompt) and scan only the tail
     // so the regex stays cheap even on a large block.
-    if (this.current && this.current.running && this.mode === "output" && !this.current.firehose) {
+    if (
+      this.current &&
+      this.current.running &&
+      this.mode === "output" &&
+      !this.current.firehose
+    ) {
       const out = this.current.output;
       const tail = out.length > 256 ? out.slice(-256) : out;
       const next = looksLikePasswordPrompt(tail);
@@ -297,7 +317,7 @@ export class BlockStreamParser {
           exitCode: null,
           running: true,
           startedAt: Date.now(),
-      endedAt: null,
+          endedAt: null,
         };
         this.pendingCommand = "";
         this.bytesInBlock = 0;
@@ -318,7 +338,7 @@ export class BlockStreamParser {
             this.current.command === "" || Number.isNaN(code) ? null : code;
           // Replace with a new object so React sees the change.
           this.blocks = this.blocks.map((b) =>
-            b.id === this.current!.id ? { ...this.current! } : b
+            b.id === this.current!.id ? { ...this.current! } : b,
           );
         }
         this.current = null;

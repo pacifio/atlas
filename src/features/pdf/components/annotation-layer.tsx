@@ -1,4 +1,8 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { Trash2 } from "lucide-react";
 import {
   usePdfAnnotationStore,
@@ -31,12 +35,18 @@ const MIN_HIGHLIGHT = 0.005; // ignore stray taps
  * tool is "none" the layer is click-through so PDF text selection/links work;
  * note pins stay interactive regardless so notes can always be read/edited.
  */
-export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayerProps) {
+export function AnnotationLayer({
+  pdfPath,
+  page,
+  pageW,
+  pageH,
+}: AnnotationLayerProps) {
   const tool = usePdfAnnotationStore.use.tool();
   const color = usePdfAnnotationStore.use.color();
   const selectedId = usePdfAnnotationStore.use.selectedId();
   const byPath = usePdfAnnotationStore.use.byPath();
-  const { add, remove, select, updateNoteText } = usePdfAnnotationStore.use.actions();
+  const { add, remove, select, updateNoteText } =
+    usePdfAnnotationStore.use.actions();
 
   const annotations = (byPath[pdfPath] ?? []).filter((a) => a.page === page);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -69,7 +79,11 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
       return;
     }
     if (tool === "highlight") {
-      setDraft({ kind: "highlight", start: p, rect: { x: p.x, y: p.y, w: 0, h: 0 } });
+      setDraft({
+        kind: "highlight",
+        start: p,
+        rect: { x: p.x, y: p.y, w: 0, h: 0 },
+      });
     } else if (tool === "pencil") {
       setDraft({ kind: "pencil", start: p, points: [p] });
     }
@@ -95,7 +109,12 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
 
   const onPointerUp = () => {
     if (!draft) return;
-    if (draft.kind === "highlight" && draft.rect && draft.rect.w > MIN_HIGHLIGHT && draft.rect.h > MIN_HIGHLIGHT) {
+    if (
+      draft.kind === "highlight" &&
+      draft.rect &&
+      draft.rect.w > MIN_HIGHLIGHT &&
+      draft.rect.h > MIN_HIGHLIGHT
+    ) {
       add(pdfPath, {
         id: newAnnotationId(),
         kind: "highlight",
@@ -104,7 +123,11 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
         rect: draft.rect,
         createdAt: new Date().toISOString(),
       });
-    } else if (draft.kind === "pencil" && draft.points && draft.points.length > 1) {
+    } else if (
+      draft.kind === "pencil" &&
+      draft.points &&
+      draft.points.length > 1
+    ) {
       add(pdfPath, {
         id: newAnnotationId(),
         kind: "pencil",
@@ -121,7 +144,9 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
     if (tool === "erase") remove(pdfPath, a.id);
   };
 
-  const notes = annotations.filter((a): a is Extract<PdfAnnotation, { kind: "note" }> => a.kind === "note");
+  const notes = annotations.filter(
+    (a): a is Extract<PdfAnnotation, { kind: "note" }> => a.kind === "note",
+  );
   const selectedNote = notes.find((n) => n.id === selectedId);
 
   return (
@@ -140,7 +165,12 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
         className="absolute inset-0"
         style={{
           pointerEvents: tool === "none" ? "none" : "auto",
-          cursor: tool === "pencil" ? "crosshair" : tool === "erase" ? "not-allowed" : "default",
+          cursor:
+            tool === "pencil"
+              ? "crosshair"
+              : tool === "erase"
+                ? "not-allowed"
+                : "default",
           touchAction: "none",
         }}
         onPointerDown={onPointerDown}
@@ -167,7 +197,9 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
             return (
               <polyline
                 key={a.id}
-                points={a.points.map((p) => `${p.x * pageW},${p.y * pageH}`).join(" ")}
+                points={a.points
+                  .map((p) => `${p.x * pageW},${p.y * pageH}`)
+                  .join(" ")}
                 fill="none"
                 stroke={a.color}
                 strokeWidth={2}
@@ -194,7 +226,9 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
         )}
         {draft?.kind === "pencil" && draft.points && (
           <polyline
-            points={draft.points.map((p) => `${p.x * pageW},${p.y * pageH}`).join(" ")}
+            points={draft.points
+              .map((p) => `${p.x * pageW},${p.y * pageH}`)
+              .join(" ")}
             fill="none"
             stroke={color}
             strokeWidth={2}
@@ -209,7 +243,9 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
         <button
           key={n.id}
           type="button"
-          onClick={() => (tool === "erase" ? remove(pdfPath, n.id) : select(n.id))}
+          onClick={() =>
+            tool === "erase" ? remove(pdfPath, n.id) : select(n.id)
+          }
           className="absolute flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-black/20 text-[10px] font-bold text-black/70 shadow-sm"
           style={{
             left: n.x * pageW,
@@ -236,7 +272,9 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
           <textarea
             autoFocus
             value={selectedNote.text}
-            onChange={(e) => updateNoteText(pdfPath, selectedNote.id, e.target.value)}
+            onChange={(e) =>
+              updateNoteText(pdfPath, selectedNote.id, e.target.value)
+            }
             placeholder="Write a note…"
             className="h-20 w-full resize-none rounded-sm border border-border-default bg-bg-base p-1.5 text-[12px] text-text-primary outline-none placeholder:text-text-tertiary"
           />

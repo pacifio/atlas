@@ -18,8 +18,22 @@ export interface AnsiSegment {
 
 // Standard 16-color palette (xterm-ish, tuned to read on the black terminal bg).
 const PALETTE_16 = [
-  "#1a1a1a", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#cccccc",
-  "#5c6370", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
+  "#1a1a1a",
+  "#e06c75",
+  "#98c379",
+  "#e5c07b",
+  "#61afef",
+  "#c678dd",
+  "#56b6c2",
+  "#cccccc",
+  "#5c6370",
+  "#e06c75",
+  "#98c379",
+  "#e5c07b",
+  "#61afef",
+  "#c678dd",
+  "#56b6c2",
+  "#ffffff",
 ];
 
 function color256(n: number): string {
@@ -64,7 +78,12 @@ function applySgr(state: SgrState, params: number[]): void {
     const p = params[i];
     if (p === 0) {
       state.fg = state.bg = undefined;
-      state.bold = state.dim = state.italic = state.underline = state.inverse = false;
+      state.bold =
+        state.dim =
+        state.italic =
+        state.underline =
+        state.inverse =
+          false;
     } else if (p === 1) state.bold = true;
     else if (p === 2) state.dim = true;
     else if (p === 3) state.italic = true;
@@ -150,7 +169,9 @@ export function resolveTerminalOutput(input: string): AnsiSegment[] {
         return Number.isNaN(v) ? def : v;
       };
       if (final === "m") {
-        const params = body.split(";").map((x) => (x === "" ? 0 : parseInt(x, 10)));
+        const params = body
+          .split(";")
+          .map((x) => (x === "" ? 0 : parseInt(x, 10)));
         applySgr(state, params.length ? params : [0]);
         curStyle = styleOf(state);
       } else if (final === "A") row = Math.max(0, row - num(1));
@@ -167,14 +188,19 @@ export function resolveTerminalOutput(input: string): AnsiSegment[] {
         const line = lineAt(row);
         const mode = num(0);
         if (mode === 0) line.length = Math.min(line.length, col);
-        else if (mode === 1) for (let k = 0; k < col && k < line.length; k++) line[k] = { ch: " " };
+        else if (mode === 1)
+          for (let k = 0; k < col && k < line.length; k++)
+            line[k] = { ch: " " };
         else if (mode === 2) line.length = 0;
       }
       // Other CSI (J erase-display, scroll, etc.) ignored — block output.
       i = j + 1;
       continue;
     }
-    if (ch === ESC && (input[i + 1] === "]" || input[i + 1] === ")" || input[i + 1] === "(")) {
+    if (
+      ch === ESC &&
+      (input[i + 1] === "]" || input[i + 1] === ")" || input[i + 1] === "(")
+    ) {
       let j = i + 2;
       while (
         j < n &&
@@ -258,17 +284,27 @@ export function ansiToSegments(input: string): AnsiSegment[] {
       const body = input.slice(i + 2, j);
       if (final === "m") {
         flush();
-        const params = body.split(";").map((x) => (x === "" ? 0 : parseInt(x, 10)));
+        const params = body
+          .split(";")
+          .map((x) => (x === "" ? 0 : parseInt(x, 10)));
         applySgr(state, params.length ? params : [0]);
       }
       // Any other CSI (cursor/erase) is dropped — static output only.
       i = j + 1;
       continue;
     }
-    if (ch === ESC && (input[i + 1] === "]" || input[i + 1] === ")" || input[i + 1] === "(")) {
+    if (
+      ch === ESC &&
+      (input[i + 1] === "]" || input[i + 1] === ")" || input[i + 1] === "(")
+    ) {
       // OSC or charset designation — skip to terminator (BEL or ST).
       let j = i + 2;
-      while (j < n && input.charCodeAt(j) !== 0x07 && !(input.charCodeAt(j) === ESC && input[j + 1] === "\\")) j++;
+      while (
+        j < n &&
+        input.charCodeAt(j) !== 0x07 &&
+        !(input.charCodeAt(j) === ESC && input[j + 1] === "\\")
+      )
+        j++;
       i = input.charCodeAt(j) === ESC ? j + 2 : j + 1;
       continue;
     }

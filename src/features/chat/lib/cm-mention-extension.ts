@@ -19,12 +19,7 @@
 // state mutation so other extensions (e.g. an `update` listener that wants
 // to surface mention changes to React) can observe them.
 
-import {
-  Range,
-  RangeSet,
-  StateEffect,
-  StateField,
-} from "@codemirror/state";
+import { Range, RangeSet, StateEffect, StateField } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
@@ -40,7 +35,18 @@ import type { MentionData, MentionKind } from "./mentions";
 import { toShortForm } from "./mentions";
 
 // ── Media hover preview (image/video `@file` chips) ──────────────────────────
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "svg", "heic", "heif"]);
+const IMAGE_EXTS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "avif",
+  "bmp",
+  "svg",
+  "heic",
+  "heif",
+]);
 const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "m4v", "avi", "mkv", "ogv"]);
 
 function mediaKindOf(path: string): "image" | "video" | null {
@@ -57,14 +63,24 @@ function parentDirOf(path: string): string {
 
 function imageMime(path: string): string {
   switch (path.split(".").pop()?.toLowerCase() ?? "") {
-    case "jpg": case "jpeg": return "image/jpeg";
-    case "gif": return "image/gif";
-    case "webp": return "image/webp";
-    case "svg": return "image/svg+xml";
-    case "bmp": return "image/bmp";
-    case "avif": return "image/avif";
-    case "heic": case "heif": return "image/heic";
-    default: return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "svg":
+      return "image/svg+xml";
+    case "bmp":
+      return "image/bmp";
+    case "avif":
+      return "image/avif";
+    case "heic":
+    case "heif":
+      return "image/heic";
+    default:
+      return "image/png";
   }
 }
 
@@ -198,7 +214,7 @@ export function mentionTriggerPlugin(
   onChange: (trigger: MentionTrigger | null) => void,
   // Returns whether the `#` skill picker is enabled. Read live so the active
   // agent (e.g. Cersei, which has no skills) can toggle it without remounting.
-  allowSkill: () => boolean = () => true
+  allowSkill: () => boolean = () => true,
 ): ViewPlugin<{ last: MentionTrigger | null; pending: number }> {
   return ViewPlugin.define((view) => {
     const state = {
@@ -219,7 +235,7 @@ function schedule(
   view: EditorView,
   state: { last: MentionTrigger | null; pending: number },
   onChange: (t: MentionTrigger | null) => void,
-  allowSkill: () => boolean
+  allowSkill: () => boolean,
 ): void {
   const ticket = ++state.pending;
   queueMicrotask(() => {
@@ -233,7 +249,7 @@ function recompute(
   view: EditorView,
   state: { last: MentionTrigger | null; pending: number },
   onChange: (t: MentionTrigger | null) => void,
-  allowSkill: () => boolean
+  allowSkill: () => boolean,
 ): void {
   // The view may have been destroyed between the queueMicrotask schedule
   // and its callback firing (e.g. component unmount inside the same tick).
@@ -244,7 +260,10 @@ function recompute(
   onChange(trig);
 }
 
-function sameTrigger(a: MentionTrigger | null, b: MentionTrigger | null): boolean {
+function sameTrigger(
+  a: MentionTrigger | null,
+  b: MentionTrigger | null,
+): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
   return (
@@ -259,7 +278,7 @@ function sameTrigger(a: MentionTrigger | null, b: MentionTrigger | null): boolea
 
 function detectTrigger(
   view: EditorView,
-  allowSkill: () => boolean
+  allowSkill: () => boolean,
 ): MentionTrigger | null {
   const sel = view.state.selection.main;
   if (!sel.empty) return null;
@@ -315,14 +334,12 @@ export type MentionKey = "Up" | "Down" | "Enter" | "Escape" | "Backspace";
 export type MentionKeyInterceptor = (key: MentionKey) => boolean;
 
 export const mentionKeymap = (
-  getInterceptor: () => MentionKeyInterceptor | null
+  getInterceptor: () => MentionKeyInterceptor | null,
 ) => {
-  const tryIntercept =
-    (key: MentionKey) =>
-    () => {
-      const fn = getInterceptor();
-      return fn ? fn(key) : false;
-    };
+  const tryIntercept = (key: MentionKey) => () => {
+    const fn = getInterceptor();
+    return fn ? fn(key) : false;
+  };
   return [
     { key: "ArrowDown", run: tryIntercept("Down") },
     { key: "ArrowUp", run: tryIntercept("Up") },
@@ -401,10 +418,15 @@ class ChipWidget extends WidgetType {
 
     // A media `@file` chip shows a hover preview CARD (image/video) instead of
     // the plain path tooltip.
-    const media = this.mention.kind === "file" ? mediaKindOf(this.mention.absPath) : null;
+    const media =
+      this.mention.kind === "file" ? mediaKindOf(this.mention.absPath) : null;
     if (this.mention.kind === "file" && media) {
       el.setAttribute("data-mention-media", media);
-      el._atlasPreviewCleanup = attachMediaHoverPreview(el, this.mention.absPath, media);
+      el._atlasPreviewCleanup = attachMediaHoverPreview(
+        el,
+        this.mention.absPath,
+        media,
+      );
     } else {
       el.title = chipTitle(this.mention);
     }
@@ -492,35 +514,59 @@ const ICON_ZAP = lucideSvg(
 
 function kindGlyph(kind: MentionKind): string {
   switch (kind) {
-    case "file":         return ICON_FILE;
-    case "folder":       return ICON_FOLDER;
-    case "symbol":       return ICON_HASH;
-    case "knowledge":    return ICON_BOOK_OPEN;
-    case "skill":        return ICON_ZAP;
-    case "component":    return ICON_ZAP;
-    case "repo":         return ICON_FOLDER_GIT;
-    case "workspace":    return ICON_FOLDER_GIT;
-    case "paper":        return ICON_NEWSPAPER;
-    case "branch":       return ICON_GIT_BRANCH;
-    case "past_message": return ICON_MESSAGE_SQUARE;
-    case "past_session": return ICON_MESSAGE_SQUARE;
+    case "file":
+      return ICON_FILE;
+    case "folder":
+      return ICON_FOLDER;
+    case "symbol":
+      return ICON_HASH;
+    case "knowledge":
+      return ICON_BOOK_OPEN;
+    case "skill":
+      return ICON_ZAP;
+    case "component":
+      return ICON_ZAP;
+    case "repo":
+      return ICON_FOLDER_GIT;
+    case "workspace":
+      return ICON_FOLDER_GIT;
+    case "paper":
+      return ICON_NEWSPAPER;
+    case "branch":
+      return ICON_GIT_BRANCH;
+    case "past_message":
+      return ICON_MESSAGE_SQUARE;
+    case "past_session":
+      return ICON_MESSAGE_SQUARE;
   }
 }
 
 function chipTitle(m: MentionData): string {
   switch (m.kind) {
-    case "file":         return m.absPath;
-    case "folder":       return m.absPath;
-    case "symbol":       return `${m.symbolKind} · ${m.filePath}:${m.line}`;
-    case "knowledge":    return `${m.source} · ${m.filePath}`;
-    case "skill":        return m.description || m.displayName;
-    case "component":    return m.description || m.displayName;
-    case "repo":         return m.absPath;
-    case "workspace":    return m.absPath;
-    case "paper":        return m.authors.length ? m.authors.join(", ") : "paper";
-    case "branch":       return `${m.refKind} · ${m.sha.slice(0, 7)}`;
-    case "past_message": return m.sessionTitle;
-    case "past_session": return `session · ${m.sessionTitle}`;
+    case "file":
+      return m.absPath;
+    case "folder":
+      return m.absPath;
+    case "symbol":
+      return `${m.symbolKind} · ${m.filePath}:${m.line}`;
+    case "knowledge":
+      return `${m.source} · ${m.filePath}`;
+    case "skill":
+      return m.description || m.displayName;
+    case "component":
+      return m.description || m.displayName;
+    case "repo":
+      return m.absPath;
+    case "workspace":
+      return m.absPath;
+    case "paper":
+      return m.authors.length ? m.authors.join(", ") : "paper";
+    case "branch":
+      return `${m.refKind} · ${m.sha.slice(0, 7)}`;
+    case "past_message":
+      return m.sessionTitle;
+    case "past_session":
+      return `session · ${m.sessionTitle}`;
   }
 }
 
@@ -531,7 +577,7 @@ function buildDecorations(ranges: readonly MentionRange[]): DecorationSet {
     Decoration.replace({
       widget: new ChipWidget(r.mention),
       inclusive: false,
-    }).range(r.from, r.to)
+    }).range(r.from, r.to),
   );
   return Decoration.set(decos, /* sort */ true);
 }
@@ -544,7 +590,7 @@ function mentionAtomicRanges(view: EditorView): RangeSet<Decoration> {
   if (ranges.length === 0) return RangeSet.empty;
   return RangeSet.of(
     ranges.map((r) => Decoration.mark({}).range(r.from, r.to)),
-    true
+    true,
   );
 }
 
@@ -565,7 +611,7 @@ export function insertMention(
   view: EditorView,
   mention: MentionData,
   from: number,
-  to: number
+  to: number,
 ): void {
   const shortform = toShortForm(mention);
   const insertText = shortform + " ";

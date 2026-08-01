@@ -37,7 +37,9 @@ export function ModelsManager() {
 
   const [kind, setKind] = useState<ModelKind>("embedding");
   const [query, setQuery] = useState("");
-  const [confirm, setConfirm] = useState<{ id: string; name: string } | null>(null);
+  const [confirm, setConfirm] = useState<{ id: string; name: string } | null>(
+    null,
+  );
 
   useEffect(() => {
     void actions.init();
@@ -56,7 +58,9 @@ export function ModelsManager() {
     try {
       await actions.download(m.id);
     } catch (e) {
-      toast.error(`Download failed: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(
+        `Download failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   };
 
@@ -106,12 +110,25 @@ export function ModelsManager() {
       {/* Toolbar */}
       <div className="shrink-0 border-b border-border-default px-4 py-2.5 flex items-center gap-2">
         <div className="flex items-center rounded-md border border-border-default overflow-hidden">
-          <KindTab active={kind === "embedding"} onClick={() => setKind("embedding")} icon={Boxes} label="Embedding" />
-          <KindTab active={kind === "llm"} onClick={() => setKind("llm")} icon={Cpu} label="Language" />
+          <KindTab
+            active={kind === "embedding"}
+            onClick={() => setKind("embedding")}
+            icon={Boxes}
+            label="Embedding"
+          />
+          <KindTab
+            active={kind === "llm"}
+            onClick={() => setKind("llm")}
+            icon={Cpu}
+            label="Language"
+          />
         </div>
 
         <div className="relative ml-auto w-[240px]">
-          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary" />
+          <Search
+            size={13}
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary"
+          />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -128,7 +145,9 @@ export function ModelsManager() {
       {/* Table */}
       <div className="flex-1 min-h-0 overflow-auto">
         {!loaded ? (
-          <div className="p-8 text-center text-[11px] text-text-tertiary">Loading models…</div>
+          <div className="p-8 text-center text-[11px] text-text-tertiary">
+            Loading models…
+          </div>
         ) : (
           <div className="min-w-[560px]">
             {/* header */}
@@ -149,17 +168,27 @@ export function ModelsManager() {
                 >
                   <div className={COL.name}>
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[12px] font-medium text-text-primary">{m.name}</span>
+                      <span className="text-[12px] font-medium text-text-primary">
+                        {m.name}
+                      </span>
                       {m.selected && (
                         <span className="text-[9px] uppercase tracking-wide text-[var(--bg-base)] bg-accent rounded px-1 py-px">
                           In use
                         </span>
                       )}
                     </div>
-                    <div className="text-[10px] text-text-tertiary mt-0.5 truncate">{m.description}</div>
+                    <div className="text-[10px] text-text-tertiary mt-0.5 truncate">
+                      {m.description}
+                    </div>
                   </div>
-                  <div className={cn(COL.size, "text-[11px] text-text-secondary")}>{fmtSize(m.sizeMb)}</div>
-                  <div className={cn(COL.dim, "text-[11px] text-text-secondary")}>
+                  <div
+                    className={cn(COL.size, "text-[11px] text-text-secondary")}
+                  >
+                    {fmtSize(m.sizeMb)}
+                  </div>
+                  <div
+                    className={cn(COL.dim, "text-[11px] text-text-secondary")}
+                  >
                     {m.dim ?? "—"}
                   </div>
                   <div className={COL.status}>
@@ -167,7 +196,8 @@ export function ModelsManager() {
                       <ProgressBar dl={dl} />
                     ) : m.downloaded ? (
                       <span className="inline-flex items-center gap-1 text-[10px] text-text-secondary">
-                        <Check size={12} className="text-text-secondary" /> Downloaded
+                        <Check size={12} className="text-text-secondary" />{" "}
+                        Downloaded
                       </span>
                     ) : (
                       <button
@@ -179,7 +209,12 @@ export function ModelsManager() {
                       </button>
                     )}
                   </div>
-                  <div className={cn(COL.use, "flex items-center justify-end gap-1")}>
+                  <div
+                    className={cn(
+                      COL.use,
+                      "flex items-center justify-end gap-1",
+                    )}
+                  >
                     {m.downloaded && !m.selected && (
                       <button
                         type="button"
@@ -187,7 +222,11 @@ export function ModelsManager() {
                         onClick={() => void doUse(m)}
                         className="h-6 rounded-md px-2 text-[10px] font-medium border border-border-default bg-bg-elevated text-text-primary hover:bg-bg-hover transition-colors disabled:opacity-50"
                       >
-                        {busy ? <Loader2 size={11} className="animate-spin" /> : "Use"}
+                        {busy ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          "Use"
+                        )}
                       </button>
                     )}
                     {m.downloaded && !m.selected && (
@@ -237,7 +276,9 @@ function KindTab({
       onClick={onClick}
       className={cn(
         "inline-flex items-center gap-1.5 h-7 px-2.5 text-[11px] font-medium transition-colors cursor-pointer",
-        active ? "bg-bg-selected text-text-primary" : "text-text-secondary hover:bg-bg-hover",
+        active
+          ? "bg-bg-selected text-text-primary"
+          : "text-text-secondary hover:bg-bg-hover",
       )}
     >
       {Icon && <Icon size={12} />}
@@ -246,11 +287,17 @@ function KindTab({
   );
 }
 
-function ProgressBar({ dl }: { dl: { fileIndex: number; fileCount: number; received: number; total: number } }) {
+function ProgressBar({
+  dl,
+}: {
+  dl: { fileIndex: number; fileCount: number; received: number; total: number };
+}) {
   const pct = Math.min(
     100,
     Math.round(
-      ((dl.fileIndex + (dl.total ? dl.received / dl.total : 0)) / Math.max(1, dl.fileCount)) * 100,
+      ((dl.fileIndex + (dl.total ? dl.received / dl.total : 0)) /
+        Math.max(1, dl.fileCount)) *
+        100,
     ),
   );
   return (
@@ -261,7 +308,9 @@ function ProgressBar({ dl }: { dl: { fileIndex: number; fileCount: number; recei
           style={{ width: `${pct}%` }}
         />
       </div>
-      <span className="text-[10px] tabular-nums text-text-tertiary">{pct}%</span>
+      <span className="text-[10px] tabular-nums text-text-tertiary">
+        {pct}%
+      </span>
     </div>
   );
 }
@@ -276,19 +325,28 @@ function ConfirmReindex({
   onConfirm: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onCancel}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onClick={onCancel}
+    >
       <div
         className="w-[380px] rounded-lg border border-border-default bg-bg-primary p-4 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start gap-2.5">
-          <AlertTriangle size={16} className="text-[var(--status-warning)] shrink-0 mt-0.5" />
+          <AlertTriangle
+            size={16}
+            className="text-[var(--status-warning)] shrink-0 mt-0.5"
+          />
           <div>
-            <p className="text-[13px] font-semibold text-text-primary">Switch embedding model?</p>
+            <p className="text-[13px] font-semibold text-text-primary">
+              Switch embedding model?
+            </p>
             <p className="text-[11px] text-text-secondary mt-1 leading-relaxed">
-              Using <span className="text-text-primary">{name}</span> re-embeds your memory in a new
-              vector space. Atlas will wipe this project's memory index and rebuild it in the
-              background. Your notes and files are untouched.
+              Using <span className="text-text-primary">{name}</span> re-embeds
+              your memory in a new vector space. Atlas will wipe this project's
+              memory index and rebuild it in the background. Your notes and
+              files are untouched.
             </p>
           </div>
         </div>

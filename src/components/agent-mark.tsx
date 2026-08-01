@@ -15,12 +15,19 @@ const AGENT_CLASS: Record<AgentType, string> = {
   custom: "",
 };
 
-function AgentGlyph({ agentType, size }: { agentType: AgentType; size: "sm" | "lg" }) {
+function AgentGlyph({
+  agentType,
+  size,
+}: {
+  agentType: AgentType;
+  size: "sm" | "lg";
+}) {
   const cls = size === "lg" ? "size-[18px]" : "size-3.5";
   if (agentType === "claude-code") return <AgentIcons.Claude className={cls} />;
   if (agentType === "codex") return <AgentIcons.Codex className={cls} />;
   // Atlas's native agent — its own brand mark.
-  if (agentType === "cersei") return <AtlasIcon size={size === "lg" ? 18 : 14} />;
+  if (agentType === "cersei")
+    return <AtlasIcon size={size === "lg" ? 18 : 14} />;
   return <span className="font-mono">?</span>;
 }
 
@@ -35,7 +42,12 @@ export function AgentMark({
 }) {
   return (
     <span
-      className={cn("amark", size === "lg" && "amark-lg", AGENT_CLASS[agentType], className)}
+      className={cn(
+        "amark",
+        size === "lg" && "amark-lg",
+        AGENT_CLASS[agentType],
+        className,
+      )}
       aria-hidden
     >
       <AgentGlyph agentType={agentType} size={size} />

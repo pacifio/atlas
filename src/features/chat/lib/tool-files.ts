@@ -33,8 +33,7 @@ export interface EditPart {
   neu: string;
 }
 
-const asStr = (v: unknown): string | null =>
-  typeof v === "string" ? v : null;
+const asStr = (v: unknown): string | null => (typeof v === "string" ? v : null);
 
 /** Before/after text pairs for an edit tool call, straight from its args. */
 export function getEditParts(
@@ -86,7 +85,10 @@ export function classifyToolFileKind(
 }
 
 /** Trim common prefix/suffix and count changed lines (matches `EditDiffView`). */
-function countPart(oldStr: string, neu: string): { added: number; removed: number } {
+function countPart(
+  oldStr: string,
+  neu: string,
+): { added: number; removed: number } {
   const o = oldStr.split("\n");
   const n = neu.split("\n");
   let start = 0;

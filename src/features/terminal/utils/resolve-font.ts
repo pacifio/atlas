@@ -43,15 +43,13 @@ function stripWrappingQuotes(name: string): string {
 function quoteFontName(name: string): string {
   const normalized = stripWrappingQuotes(name);
   if (!normalized) return "";
-  if (CSS_GENERIC_FONT_FAMILIES.has(normalized.toLowerCase())) return normalized;
+  if (CSS_GENERIC_FONT_FAMILIES.has(normalized.toLowerCase()))
+    return normalized;
   return `"${normalized.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 function splitFontFamilyList(fontFamily: string): string[] {
-  return fontFamily
-    .split(",")
-    .map(stripWrappingQuotes)
-    .filter(Boolean);
+  return fontFamily.split(",").map(stripWrappingQuotes).filter(Boolean);
 }
 
 function uniqueFontFamilies(families: string[]): string[] {
@@ -82,7 +80,10 @@ export function buildTerminalFontFamily(primaryFont: string): string {
 }
 
 /** Load and verify a font is renderable. Returns false on failure/timeout. */
-async function loadAndVerifyFont(fontName: string, fontSize: number): Promise<boolean> {
+async function loadAndVerifyFont(
+  fontName: string,
+  fontSize: number,
+): Promise<boolean> {
   const test = `${fontSize}px "${stripWrappingQuotes(fontName)}"`;
   try {
     await document.fonts.load(test);

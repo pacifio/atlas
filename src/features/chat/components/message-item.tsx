@@ -70,7 +70,6 @@ function getAtlasSplit(message: ChatMessage): SplitContext {
   return splitAtlasContext(message.content);
 }
 
-
 function openFileInEditor(filePath: string) {
   useLayoutStore.getState().actions.addTab({
     id: `editor:${filePath}`,
@@ -209,7 +208,11 @@ export const MessageItem = memo(function MessageItem({
             {!compact && (
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
-                  {isUser ? "You" : isAssistant ? (agentLabel ?? "Assistant") : message.role}
+                  {isUser
+                    ? "You"
+                    : isAssistant
+                      ? (agentLabel ?? "Assistant")
+                      : message.role}
                 </span>
                 <span className="text-[10px] text-[var(--text-tertiary)] font-mono">
                   {new Date(message.timestamp).toLocaleTimeString([], {
@@ -319,9 +322,10 @@ export const MessageItem = memo(function MessageItem({
             {/* Per-turn usage footer (native agent) — token count + cost at the
                 end of the turn, since with the in-process agent we know the
                 model + have exact usage. */}
-            {message.usage && message.usage.input + message.usage.output > 0 && (
-              <UsageFooter usage={message.usage} model={model ?? null} />
-            )}
+            {message.usage &&
+              message.usage.input + message.usage.output > 0 && (
+                <UsageFooter usage={message.usage} model={model ?? null} />
+              )}
             {/* Adaptive per-turn footer (files touched + next-step chips) —
                 only on the trailing message of a completed turn. */}
             {isLastInGroup &&
@@ -834,9 +838,12 @@ function UsageFooter({
           usage.cost > 0 ? ` · est. $${usage.cost.toFixed(4)}` : ""
         }`}
       >
-        ↑ {fmt(usage.input)} ↓ {fmt(usage.output)} · {fmt(usage.input + usage.output)} tokens{cost}
+        ↑ {fmt(usage.input)} ↓ {fmt(usage.output)} ·{" "}
+        {fmt(usage.input + usage.output)} tokens{cost}
       </span>
-      {model && <span className="text-[var(--text-tertiary)]/70">· {model}</span>}
+      {model && (
+        <span className="text-[var(--text-tertiary)]/70">· {model}</span>
+      )}
       {saved > 0 && (
         <span
           className="flex items-center gap-1 rounded-full border border-[var(--status-success)]/30 px-1.5 py-px text-[var(--status-success)]"
@@ -889,9 +896,11 @@ const MemoryRecallCard = memo(function MemoryRecallCard({
   const [open, setOpen] = useState(false);
   const args = toolCall.arguments as Record<string, unknown>;
   const query = typeof args.query === "string" ? args.query : "";
-  const isRunning = toolCall.status === "running" || toolCall.status === "pending";
+  const isRunning =
+    toolCall.status === "running" || toolCall.status === "pending";
   const failed = toolCall.status === "failed";
-  const docs = !isRunning && toolCall.result ? parseRecalledDocs(toolCall.result) : [];
+  const docs =
+    !isRunning && toolCall.result ? parseRecalledDocs(toolCall.result) : [];
 
   return (
     <div className="rounded-md border border-l-2 border-[var(--border-default)] border-l-[var(--accent-primary)] bg-[var(--bg-secondary)] overflow-hidden">
@@ -900,7 +909,10 @@ const MemoryRecallCard = memo(function MemoryRecallCard({
         className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
       >
         {isRunning ? (
-          <Loader2 size={12} className="shrink-0 animate-spin text-[var(--accent-primary)]" />
+          <Loader2
+            size={12}
+            className="shrink-0 animate-spin text-[var(--accent-primary)]"
+          />
         ) : (
           <Brain size={12} className="shrink-0 text-[var(--accent-primary)]" />
         )}
@@ -920,7 +932,10 @@ const MemoryRecallCard = memo(function MemoryRecallCard({
         {docs.length > 0 && (
           <ChevronRight
             size={13}
-            className={cn("shrink-0 text-[var(--text-tertiary)] transition-transform", open && "rotate-90")}
+            className={cn(
+              "shrink-0 text-[var(--text-tertiary)] transition-transform",
+              open && "rotate-90",
+            )}
           />
         )}
       </button>
@@ -942,7 +957,7 @@ const MemoryRecallCard = memo(function MemoryRecallCard({
                 <span
                   className={cn(
                     "shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide",
-                    MEMORY_SOURCE_STYLE[d.source] ?? MEMORY_SOURCE_STYLE.shared
+                    MEMORY_SOURCE_STYLE[d.source] ?? MEMORY_SOURCE_STYLE.shared,
                   )}
                 >
                   {d.source}

@@ -33,10 +33,14 @@ export const ReadmeView = memo(function ReadmeView({ source }: Props) {
             </h2>
           ),
           h3: (p) => (
-            <h3 className="text-[16px] font-semibold mt-6 mb-2">{p.children}</h3>
+            <h3 className="text-[16px] font-semibold mt-6 mb-2">
+              {p.children}
+            </h3>
           ),
           h4: (p) => (
-            <h4 className="text-[14px] font-semibold mt-4 mb-1.5">{p.children}</h4>
+            <h4 className="text-[14px] font-semibold mt-4 mb-1.5">
+              {p.children}
+            </h4>
           ),
           p: (p) => <p className="my-3">{p.children}</p>,
           a: (p) => (
@@ -47,8 +51,12 @@ export const ReadmeView = memo(function ReadmeView({ source }: Props) {
               className="text-[var(--accent-primary)] underline hover:opacity-80"
             />
           ),
-          ul: (p) => <ul className="list-disc pl-6 space-y-1 my-3">{p.children}</ul>,
-          ol: (p) => <ol className="list-decimal pl-6 space-y-1 my-3">{p.children}</ol>,
+          ul: (p) => (
+            <ul className="list-disc pl-6 space-y-1 my-3">{p.children}</ul>
+          ),
+          ol: (p) => (
+            <ol className="list-decimal pl-6 space-y-1 my-3">{p.children}</ol>
+          ),
           li: (p) => <li className="leading-relaxed">{p.children}</li>,
           img: (p) => (
             // eslint-disable-next-line jsx-a11y/alt-text
@@ -95,7 +103,9 @@ export const ReadmeView = memo(function ReadmeView({ source }: Props) {
           hr: () => <hr className="my-6 border-[var(--border-subtle)]" />,
           table: (p) => (
             <div className="my-4 rounded-md border border-[var(--border-default)] overflow-x-auto">
-              <table className="w-full text-[13px] border-collapse">{p.children}</table>
+              <table className="w-full text-[13px] border-collapse">
+                {p.children}
+              </table>
             </div>
           ),
           thead: (p) => (

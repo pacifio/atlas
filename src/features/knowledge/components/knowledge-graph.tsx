@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Application,
   Container,
@@ -109,9 +103,15 @@ export function KnowledgeGraph() {
     void invoke<GraphLayout>("knowledge_graph_layout_load", {
       projectPath: currentProject.path,
     })
-      .then((l) => { if (!cancelled) setLayout(l ?? { positions: {} }); })
-      .catch(() => { if (!cancelled) setLayout({ positions: {} }); });
-    return () => { cancelled = true; };
+      .then((l) => {
+        if (!cancelled) setLayout(l ?? { positions: {} });
+      })
+      .catch(() => {
+        if (!cancelled) setLayout({ positions: {} });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [currentProject?.path]);
 
   // Override node titles with `meta.title` when set — the wire-side
@@ -286,7 +286,11 @@ function GraphCanvas({
       })
       .then(() => {
         if (disposed) {
-          try { app.destroy(true, { children: true }); } catch { /* ignore */ }
+          try {
+            app.destroy(true, { children: true });
+          } catch {
+            /* ignore */
+          }
           return;
         }
         const pushViewport = (v: Viewport) => {
@@ -319,12 +323,24 @@ function GraphCanvas({
     return () => {
       disposed = true;
       if (teardown) {
-        try { teardown(); } catch { /* ignore */ }
+        try {
+          teardown();
+        } catch {
+          /* ignore */
+        }
       }
       if (createdApp) {
-        try { createdApp.destroy(true, { children: true }); } catch { /* ignore */ }
+        try {
+          createdApp.destroy(true, { children: true });
+        } catch {
+          /* ignore */
+        }
       }
-      try { host.removeChild(canvas); } catch { /* ignore */ }
+      try {
+        host.removeChild(canvas);
+      } catch {
+        /* ignore */
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, width, height]);
@@ -360,10 +376,18 @@ function buildScene(
   engine.constraintIterations = 7;
 
   const walls = [
-    Matter.Bodies.rectangle(width / 2, height + 50, width + 200, 100, { isStatic: true }),
-    Matter.Bodies.rectangle(width / 2, -50, width + 200, 100, { isStatic: true }),
-    Matter.Bodies.rectangle(-50, height / 2, 100, height + 200, { isStatic: true }),
-    Matter.Bodies.rectangle(width + 50, height / 2, 100, height + 200, { isStatic: true }),
+    Matter.Bodies.rectangle(width / 2, height + 50, width + 200, 100, {
+      isStatic: true,
+    }),
+    Matter.Bodies.rectangle(width / 2, -50, width + 200, 100, {
+      isStatic: true,
+    }),
+    Matter.Bodies.rectangle(-50, height / 2, 100, height + 200, {
+      isStatic: true,
+    }),
+    Matter.Bodies.rectangle(width + 50, height / 2, 100, height + 200, {
+      isStatic: true,
+    }),
   ];
   Matter.Composite.add(engine.world, walls);
 
@@ -390,7 +414,10 @@ function buildScene(
   // Obsidian-style spider seed: force-directed initial positions so hubs sit
   // central and leaves fan out, instead of a flat ring. Saved layouts win.
   const seedMap = forceLayout(
-    graph.nodes.map((nd) => ({ id: nd.id, degree: nd.inDegree + nd.outDegree })),
+    graph.nodes.map((nd) => ({
+      id: nd.id,
+      degree: nd.inDegree + nd.outDegree,
+    })),
     graph.edges,
     width,
     height,
@@ -491,24 +518,28 @@ function buildScene(
   syncMouseToViewport();
 
   // While the user is dragging a node, light up its neighbours live.
-  Matter.Events.on(mouseConstraint, "startdrag", (ev: Matter.IEvent<Matter.MouseConstraint>) => {
-    const dragged = (ev as unknown as { body?: Matter.Body }).body;
-    if (!dragged) return;
-    for (const node of nodesById.values()) {
-      if (node.body !== dragged) continue;
-      const ns = new Set<string>();
-      for (const e of graph.edges) {
-        if (e.from === node.id) ns.add(e.to);
-        else if (e.to === node.id) ns.add(e.from);
+  Matter.Events.on(
+    mouseConstraint,
+    "startdrag",
+    (ev: Matter.IEvent<Matter.MouseConstraint>) => {
+      const dragged = (ev as unknown as { body?: Matter.Body }).body;
+      if (!dragged) return;
+      for (const node of nodesById.values()) {
+        if (node.body !== dragged) continue;
+        const ns = new Set<string>();
+        for (const e of graph.edges) {
+          if (e.from === node.id) ns.add(e.to);
+          else if (e.to === node.id) ns.add(e.from);
+        }
+        sceneRef.current = {
+          ...sceneRef.current,
+          draggingId: node.id,
+          draggingNeighbors: ns,
+        };
+        break;
       }
-      sceneRef.current = {
-        ...sceneRef.current,
-        draggingId: node.id,
-        draggingNeighbors: ns,
-      };
-      break;
-    }
-  });
+    },
+  );
   Matter.Events.on(mouseConstraint, "enddrag", () => {
     sceneRef.current = {
       ...sceneRef.current,
@@ -523,16 +554,30 @@ function buildScene(
   //   • Space + left-click drag   — flips into a hard "pan mode" that
   //     removes Matter's MouseConstraint and disables Pixi interaction
   //     for the duration, then restores both on release.
-  let panStart: { startX: number; startY: number; origX: number; origY: number } | null = null;
+  let panStart: {
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+  } | null = null;
   let panMode = false;
-  let panOrigin: { startX: number; startY: number; origX: number; origY: number } | null = null;
+  let panOrigin: {
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+  } | null = null;
   let spaceHeld = false;
   const stageEventMode = app.stage.eventMode;
   const canvas = app.canvas as HTMLCanvasElement;
 
   const setCursor = () => {
     const grabbing = panStart !== null || panMode;
-    canvas.style.cursor = grabbing ? "grabbing" : spaceHeld ? "grab" : "default";
+    canvas.style.cursor = grabbing
+      ? "grabbing"
+      : spaceHeld
+        ? "grab"
+        : "default";
   };
 
   const onContext = (e: Event) => e.preventDefault();
@@ -578,7 +623,11 @@ function buildScene(
   const onPointerUp = (e: PointerEvent) => {
     if (!panStart) return;
     panStart = null;
-    try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    try {
+      canvas.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
     setCursor();
   };
 
@@ -656,7 +705,10 @@ function buildScene(
   // ── Sleep/wake ────────────────────────────────────────────────
   let awake = true;
   let sleepFrames = 0;
-  const wake = () => { awake = true; sleepFrames = 0; };
+  const wake = () => {
+    awake = true;
+    sleepFrames = 0;
+  };
   window.addEventListener("pointerdown", wake);
   window.addEventListener("pointermove", wake);
   window.addEventListener("wheel", wake, { passive: true });
@@ -698,7 +750,8 @@ function buildScene(
     if (!awake && scene === lastScene) return;
     lastScene = scene;
 
-    const { selectedId, neighbors, draggingId, draggingNeighbors, zoom } = scene;
+    const { selectedId, neighbors, draggingId, draggingNeighbors, zoom } =
+      scene;
     // Drag-highlight uses the same visual treatment as selection.
     // Selection wins if both are active.
     const focusId = selectedId ?? draggingId;
@@ -726,10 +779,22 @@ function buildScene(
       }
       node.graphics.clear();
       if (isFocused) {
-        node.graphics.circle(node.body.position.x, node.body.position.y, drawRadius + 3 * inv);
-        node.graphics.stroke({ width: 2 * inv, color: COLOR_PRIMARY, alpha: 0.6 });
+        node.graphics.circle(
+          node.body.position.x,
+          node.body.position.y,
+          drawRadius + 3 * inv,
+        );
+        node.graphics.stroke({
+          width: 2 * inv,
+          color: COLOR_PRIMARY,
+          alpha: 0.6,
+        });
       }
-      node.graphics.circle(node.body.position.x, node.body.position.y, drawRadius);
+      node.graphics.circle(
+        node.body.position.x,
+        node.body.position.y,
+        drawRadius,
+      );
       node.graphics.fill({ color, alpha });
 
       // Parallax: counter-scale the label so it stays a constant readable
@@ -773,7 +838,11 @@ function buildScene(
       }
       edge.graphics.moveTo(a.body.position.x, a.body.position.y);
       edge.graphics.lineTo(b.body.position.x, b.body.position.y);
-      edge.graphics.stroke({ width: (touchesFocus ? 2 : 1) * inv, color, alpha });
+      edge.graphics.stroke({
+        width: (touchesFocus ? 2 : 1) * inv,
+        color,
+        alpha,
+      });
     }
   };
   app.ticker.add(tick);
@@ -849,7 +918,9 @@ function LoadingState() {
 function EmptyState() {
   return (
     <div className="h-full w-full flex flex-col items-center justify-center text-text-tertiary gap-2">
-      <div className="text-[12px]">No notes yet — create some and reference them with</div>
+      <div className="text-[12px]">
+        No notes yet — create some and reference them with
+      </div>
       <div className="mono text-[11px] text-text-muted">[[note-id]]</div>
       <div className="text-[12px]">to see them connect here.</div>
     </div>

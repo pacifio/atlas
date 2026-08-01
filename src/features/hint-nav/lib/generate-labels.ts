@@ -9,7 +9,10 @@
 // Home-row + easy reaches first, so the most common targets get the easiest keys.
 export const HINT_ALPHABET = "fjdkslaghrueiwovncm";
 
-export function generateLabels(count: number, alphabet = HINT_ALPHABET): string[] {
+export function generateLabels(
+  count: number,
+  alphabet = HINT_ALPHABET,
+): string[] {
   const chars = alphabet.split("");
   const n = chars.length;
   if (count <= 0) return [];

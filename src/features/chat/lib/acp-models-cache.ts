@@ -28,7 +28,8 @@ export function loadCachedAcpModels(agentType: string): CachedAcpModels | null {
     const raw = localStorage.getItem(key(agentType));
     if (!raw) return null;
     const v = JSON.parse(raw) as CachedAcpModels;
-    if (Array.isArray(v?.availableModels) && v.availableModels.length > 0) return v;
+    if (Array.isArray(v?.availableModels) && v.availableModels.length > 0)
+      return v;
   } catch {
     // corrupt / unavailable storage — treat as a cache miss
   }
@@ -38,7 +39,10 @@ export function loadCachedAcpModels(agentType: string): CachedAcpModels | null {
 /** True when we have a cached list newer than `ttlMs`. A pre-TTL entry (no
  *  `fetchedAt`) counts as fresh — treat existing caches as good rather than
  *  forcing one more warm. */
-export function isCachedAcpModelsFresh(agentType: string, ttlMs: number): boolean {
+export function isCachedAcpModelsFresh(
+  agentType: string,
+  ttlMs: number,
+): boolean {
   const cached = loadCachedAcpModels(agentType);
   if (!cached) return false;
   if (cached.fetchedAt == null) return true;
@@ -46,7 +50,10 @@ export function isCachedAcpModelsFresh(agentType: string, ttlMs: number): boolea
 }
 
 /** Persist the models confirmed by a live session (no-op for empty sets). */
-export function saveCachedAcpModels(agentType: string, models: CachedAcpModels): void {
+export function saveCachedAcpModels(
+  agentType: string,
+  models: CachedAcpModels,
+): void {
   try {
     if (models.availableModels.length > 0) {
       localStorage.setItem(

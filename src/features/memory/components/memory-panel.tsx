@@ -33,7 +33,11 @@ import { ClaudeIcon, CodexIcon } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useMemoryStore } from "../stores/memory-store";
-import type { ClaudeMemory, CodexMemory, CodexThread } from "../lib/memory-types";
+import type {
+  ClaudeMemory,
+  CodexMemory,
+  CodexThread,
+} from "../lib/memory-types";
 
 // ── Panel shell ─────────────────────────────────────────────────────────────
 
@@ -42,7 +46,8 @@ export function MemoryPanel() {
   const sub = useMemoryStore.use.subTab();
   const data = useMemoryStore.use.agentMemory();
   const loading = useMemoryStore.use.agentMemoryLoading();
-  const { setSubTab, ensureProject, loadAgentMemory } = useMemoryStore.use.actions();
+  const { setSubTab, ensureProject, loadAgentMemory } =
+    useMemoryStore.use.actions();
   const setSub = setSubTab;
 
   // Cached: only fetches on first load / project change. Switching sub-tabs or
@@ -216,14 +221,18 @@ function PillSeg({
       <span className={cn(active ? "opacity-100" : "opacity-60")}>{icon}</span>
       {label}
       {count !== undefined && count > 0 && (
-        <span className="text-[9px] tabular-nums text-[var(--text-tertiary)]">{count}</span>
+        <span className="text-[9px] tabular-nums text-[var(--text-tertiary)]">
+          {count}
+        </span>
       )}
     </button>
   );
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="h-full flex items-center justify-center">{children}</div>;
+  return (
+    <div className="h-full flex items-center justify-center">{children}</div>
+  );
 }
 
 // ── Coding-agent combobox ────────────────────────────────────────────────────
@@ -256,9 +265,24 @@ function CodingAgentMenu({
 }) {
   const options = useMemo<CodingAgentOption[]>(
     () => [
-      { sub: "cersei", label: "Atlas", icon: <AtlasIcon size={14} />, count: cerseiCount },
-      { sub: "claude", label: "Claude Code", icon: <ClaudeIcon className="size-3.5" />, count: claudeCount },
-      { sub: "codex", label: "Codex", icon: <CodexIcon className="size-3.5" />, count: codexCount },
+      {
+        sub: "cersei",
+        label: "Atlas",
+        icon: <AtlasIcon size={14} />,
+        count: cerseiCount,
+      },
+      {
+        sub: "claude",
+        label: "Claude Code",
+        icon: <ClaudeIcon className="size-3.5" />,
+        count: claudeCount,
+      },
+      {
+        sub: "codex",
+        label: "Codex",
+        icon: <CodexIcon className="size-3.5" />,
+        count: codexCount,
+      },
     ],
     [claudeCount, codexCount, cerseiCount],
   );
@@ -281,7 +305,8 @@ function CodingAgentMenu({
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -302,7 +327,9 @@ function CodingAgentMenu({
 
   const selected = options.find((o) => o.sub === lastAgent) ?? options[0];
   const q = query.trim().toLowerCase();
-  const filtered = q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
+  const filtered = q
+    ? options.filter((o) => o.label.toLowerCase().includes(q))
+    : options;
 
   const choose = (s: AgentSub) => {
     setSub(s);
@@ -321,20 +348,30 @@ function CodingAgentMenu({
         )}
         title="Coding agents"
       >
-        <span className={cn(isAgentActive ? "opacity-100" : "opacity-60")}>{selected.icon}</span>
+        <span className={cn(isAgentActive ? "opacity-100" : "opacity-60")}>
+          {selected.icon}
+        </span>
         {selected.label}
         {selected.count > 0 && (
-          <span className="text-[9px] tabular-nums text-[var(--text-tertiary)]">{selected.count}</span>
+          <span className="text-[9px] tabular-nums text-[var(--text-tertiary)]">
+            {selected.count}
+          </span>
         )}
         <ChevronDown
           size={11}
-          className={cn("opacity-50 transition-transform", open && "rotate-180")}
+          className={cn(
+            "opacity-50 transition-transform",
+            open && "rotate-180",
+          )}
         />
       </button>
       {open && (
         <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 z-[var(--z-max)] min-w-[210px] rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated,var(--bg-secondary))] p-1 shadow-lg">
           <div className="flex items-center gap-1.5 px-1.5 py-1">
-            <Search size={11} className="shrink-0 text-[var(--text-tertiary)]" />
+            <Search
+              size={11}
+              className="shrink-0 text-[var(--text-tertiary)]"
+            />
             <input
               ref={inputRef}
               value={query}
@@ -345,7 +382,9 @@ function CodingAgentMenu({
           </div>
           <div className="mb-1 h-px bg-[var(--border-default)]" />
           {filtered.length === 0 ? (
-            <div className="px-2 py-1.5 text-[10px] text-[var(--text-tertiary)]">No agents found</div>
+            <div className="px-2 py-1.5 text-[10px] text-[var(--text-tertiary)]">
+              No agents found
+            </div>
           ) : (
             filtered.map((o) => {
               const active = sub === o.sub;
@@ -367,7 +406,12 @@ function CodingAgentMenu({
                       {o.count}
                     </span>
                   )}
-                  {active && <Check size={11} className="shrink-0 text-[var(--accent-primary)]" />}
+                  {active && (
+                    <Check
+                      size={11}
+                      className="shrink-0 text-[var(--accent-primary)]"
+                    />
+                  )}
                 </button>
               );
             })
@@ -440,8 +484,7 @@ function ClaudeView({ claude }: { claude: ClaudeMemory | null }) {
   }, [claude]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected =
-    items.find((i) => i.id === selectedId) ?? items[0] ?? null;
+  const selected = items.find((i) => i.id === selectedId) ?? items[0] ?? null;
 
   // Cross-tab navigation (e.g. from Timeline): select + scroll to the doc.
   const navTarget = useMemoryStore.use.navTarget();
@@ -458,9 +501,16 @@ function ClaudeView({ claude }: { claude: ClaudeMemory | null }) {
   }, [navTarget, items]);
 
   const grouped = useMemo(() => {
-    const order: ClaudeItem["section"][] = ["Instructions", "Index", "Memories"];
+    const order: ClaudeItem["section"][] = [
+      "Instructions",
+      "Index",
+      "Memories",
+    ];
     return order
-      .map((section) => ({ section, items: items.filter((i) => i.section === section) }))
+      .map((section) => ({
+        section,
+        items: items.filter((i) => i.section === section),
+      }))
       .filter((g) => g.items.length > 0);
   }, [items]);
 
@@ -469,7 +519,9 @@ function ClaudeView({ claude }: { claude: ClaudeMemory | null }) {
       <Centered>
         <div className="text-center space-y-1.5 max-w-[300px] px-4">
           <ClaudeIcon className="size-6 mx-auto opacity-40" />
-          <p className="text-[12px] text-[var(--text-secondary)]">No Claude memory yet</p>
+          <p className="text-[12px] text-[var(--text-secondary)]">
+            No Claude memory yet
+          </p>
           <p className="text-[11px] text-[var(--text-tertiary)] leading-relaxed">
             Claude Code writes per-project memory to{" "}
             <code className="text-[10px] break-all">
@@ -512,7 +564,10 @@ function ClaudeView({ claude }: { claude: ClaudeMemory | null }) {
                     {it.badge && (
                       <span
                         className="w-1.5 h-1.5 rounded-full shrink-0"
-                        style={{ background: KIND_TINT[it.badge] ?? "var(--text-tertiary)" }}
+                        style={{
+                          background:
+                            KIND_TINT[it.badge] ?? "var(--text-tertiary)",
+                        }}
                       />
                     )}
                     <span
@@ -606,7 +661,9 @@ function CodexView({ codex }: { codex: CodexMemory | null }) {
     }
     setQuery(""); // clear any filter so the row is in the list
     setExpandedId(rest);
-    requestAnimationFrame(() => rowRefs.current.get(rest)?.scrollIntoView({ block: "center" }));
+    requestAnimationFrame(() =>
+      rowRefs.current.get(rest)?.scrollIntoView({ block: "center" }),
+    );
   }, [navTarget]);
 
   const rows = useMemo(() => {
@@ -625,7 +682,10 @@ function CodexView({ codex }: { codex: CodexMemory | null }) {
   if (!codex) {
     return (
       <Centered>
-        <Loader2 size={18} className="animate-spin text-[var(--text-tertiary)]" />
+        <Loader2
+          size={18}
+          className="animate-spin text-[var(--text-tertiary)]"
+        />
       </Centered>
     );
   }
@@ -635,11 +695,13 @@ function CodexView({ codex }: { codex: CodexMemory | null }) {
       <Centered>
         <div className="text-center space-y-1.5 max-w-[320px] px-4">
           <CodexIcon className="size-6 mx-auto opacity-40" />
-          <p className="text-[12px] text-[var(--text-secondary)]">No Codex memory yet</p>
+          <p className="text-[12px] text-[var(--text-secondary)]">
+            No Codex memory yet
+          </p>
           <p className="text-[11px] text-[var(--text-tertiary)] leading-relaxed">
             Codex tracks per-project sessions in its state database and reads an{" "}
-            <code className="text-[10px]">AGENTS.md</code> if present. Run Codex in this
-            project to populate it.
+            <code className="text-[10px]">AGENTS.md</code> if present. Run Codex
+            in this project to populate it.
           </p>
         </div>
       </Centered>
@@ -694,7 +756,10 @@ function CodexView({ codex }: { codex: CodexMemory | null }) {
             <AgentsCard label="AGENTS.md · project" body={codex.agents_md} />
           )}
           {codex.global_agents_md && (
-            <AgentsCard label="AGENTS.md · global" body={codex.global_agents_md} />
+            <AgentsCard
+              label="AGENTS.md · global"
+              body={codex.global_agents_md}
+            />
           )}
         </div>
       )}
@@ -728,7 +793,9 @@ function CodexView({ codex }: { codex: CodexMemory | null }) {
                     if (el) rowRefs.current.set(k, el);
                     else rowRefs.current.delete(k);
                   }}
-                  onToggle={() => setExpandedId((cur) => (cur === k ? null : k))}
+                  onToggle={() =>
+                    setExpandedId((cur) => (cur === k ? null : k))
+                  }
                 />
               );
             })
@@ -762,7 +829,9 @@ function CodexRow({
         onClick={onToggle}
         className={cn(
           "w-full flex items-center h-[40px] px-3 text-left transition-colors",
-          expanded ? "bg-[var(--bg-elevated)]/50" : "hover:bg-[var(--bg-hover)]",
+          expanded
+            ? "bg-[var(--bg-elevated)]/50"
+            : "hover:bg-[var(--bg-hover)]",
         )}
       >
         <span className={cn(COL.session, "min-w-0 pr-3")}>
@@ -770,7 +839,12 @@ function CodexRow({
             {cleanTitle(t.title || t.first_user_message) || "Untitled session"}
           </span>
         </span>
-        <span className={cn(COL.model, "truncate font-mono text-[10px] text-[var(--text-tertiary)]")}>
+        <span
+          className={cn(
+            COL.model,
+            "truncate font-mono text-[10px] text-[var(--text-tertiary)]",
+          )}
+        >
           {t.model || "—"}
         </span>
         <span className={cn(COL.branch, "truncate")}>
@@ -791,15 +865,32 @@ function CodexRow({
             <span className="text-[var(--text-ghost)] text-[11px]">—</span>
           )}
         </span>
-        <span className={cn(COL.tokens, "text-right tabular-nums text-[11px] text-[var(--text-tertiary)]")}>
+        <span
+          className={cn(
+            COL.tokens,
+            "text-right tabular-nums text-[11px] text-[var(--text-tertiary)]",
+          )}
+        >
           {t.tokens_used ? formatTokens(t.tokens_used) : "—"}
         </span>
-        <span className={cn(COL.updated, "text-right text-[10px] text-[var(--text-tertiary)]")}>
+        <span
+          className={cn(
+            COL.updated,
+            "text-right text-[10px] text-[var(--text-tertiary)]",
+          )}
+        >
           {t.updated_at
-            ? timeAgo(new Date(t.updated_at * 1000).toISOString(), { suffix: true })
+            ? timeAgo(new Date(t.updated_at * 1000).toISOString(), {
+                suffix: true,
+              })
             : "—"}
         </span>
-        <span className={cn(COL.chevron, "flex items-center justify-end text-[var(--text-tertiary)]")}>
+        <span
+          className={cn(
+            COL.chevron,
+            "flex items-center justify-end text-[var(--text-tertiary)]",
+          )}
+        >
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
       </button>
@@ -816,15 +907,32 @@ function CodexDetail({ thread: t }: { thread: CodexThread }) {
       {/* Metadata chips */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-3">
         <MetaChip icon={Cpu} label="Model" value={t.model || "—"} mono />
-        <MetaChip icon={GitBranch} label="Branch" value={t.git_branch || "—"} mono />
-        <MetaChip icon={ShieldCheck} label="Approval" value={t.approval_mode || "—"} />
+        <MetaChip
+          icon={GitBranch}
+          label="Branch"
+          value={t.git_branch || "—"}
+          mono
+        />
+        <MetaChip
+          icon={ShieldCheck}
+          label="Approval"
+          value={t.approval_mode || "—"}
+        />
         <MetaChip
           icon={Coins}
           label="Tokens"
           value={t.tokens_used ? t.tokens_used.toLocaleString() : "—"}
         />
-        <MetaChip icon={Clock} label="Started" value={fmtDateTime(t.created_at)} />
-        <MetaChip icon={Clock} label="Updated" value={fmtDateTime(t.updated_at)} />
+        <MetaChip
+          icon={Clock}
+          label="Started"
+          value={fmtDateTime(t.created_at)}
+        />
+        <MetaChip
+          icon={Clock}
+          label="Updated"
+          value={fmtDateTime(t.updated_at)}
+        />
       </div>
 
       {/* Full first-message content */}
@@ -839,7 +947,9 @@ function CodexDetail({ thread: t }: { thread: CodexThread }) {
           {message ? (
             <Markdown className="text-[12px]">{message}</Markdown>
           ) : (
-            <p className="text-[11px] text-[var(--text-tertiary)]">No message recorded.</p>
+            <p className="text-[11px] text-[var(--text-tertiary)]">
+              No message recorded.
+            </p>
           )}
         </div>
       </div>

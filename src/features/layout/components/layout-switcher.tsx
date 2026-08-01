@@ -86,7 +86,9 @@ export function LayoutSwitcher({
                 )}
               >
                 <LayoutThumbnail template={t} />
-                <div className="mt-2 text-[12px] font-medium text-[var(--text-primary)]">{t.name}</div>
+                <div className="mt-2 text-[12px] font-medium text-[var(--text-primary)]">
+                  {t.name}
+                </div>
                 <div className="text-[10px] text-[var(--text-tertiary)] leading-snug line-clamp-2">
                   {t.description}
                 </div>

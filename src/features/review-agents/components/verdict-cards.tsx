@@ -26,7 +26,12 @@ interface Props {
 
 /** Render a full review report: badges, architecture diagram, overview, and a
  *  per-file accordion. */
-export function ReportView({ report, onOpenIssue, projectPath, onShareFile }: Props) {
+export function ReportView({
+  report,
+  onOpenIssue,
+  projectPath,
+  onShareFile,
+}: Props) {
   const hasSecurity =
     report.security_concerns &&
     report.security_concerns.trim().toLowerCase() !== "no";
@@ -36,10 +41,17 @@ export function ReportView({ report, onOpenIssue, projectPath, onShareFile }: Pr
       {/* Badges */}
       <div className="flex flex-wrap gap-1.5">
         {typeof report.score === "number" && (
-          <Badge label="Score" value={`${report.score}/100`} tone={scoreTone(report.score)} />
+          <Badge
+            label="Score"
+            value={`${report.score}/100`}
+            tone={scoreTone(report.score)}
+          />
         )}
         {typeof report.estimated_effort_to_review === "number" && (
-          <Badge label="Effort" value={`${report.estimated_effort_to_review}/5`} />
+          <Badge
+            label="Effort"
+            value={`${report.estimated_effort_to_review}/5`}
+          />
         )}
         <Badge
           label="Tests"
@@ -99,7 +111,8 @@ export function ReportView({ report, onOpenIssue, projectPath, onShareFile }: Pr
           <div>
             <div className="text-text-secondary">
               {report.not_reviewed.length} file
-              {report.not_reviewed.length > 1 ? "s" : ""} not individually reviewed
+              {report.not_reviewed.length > 1 ? "s" : ""} not individually
+              reviewed
             </div>
             <div className="mt-0.5 font-mono text-[10px] break-all">
               {report.not_reviewed.join(", ")}
@@ -132,7 +145,10 @@ export function FileCard({
   const stash = async () => {
     if (!projectPath) return;
     try {
-      await invoke("git_stash_paths", { path: projectPath, paths: [file.path] });
+      await invoke("git_stash_paths", {
+        path: projectPath,
+        paths: [file.path],
+      });
       toast.success(`Stashed ${name}`);
     } catch (e) {
       toast.error(String(e));
@@ -156,12 +172,17 @@ export function FileCard({
       >
         <ChevronRight
           size={12}
-          className={cn("text-text-tertiary shrink-0 transition-transform", open && "rotate-90")}
+          className={cn(
+            "text-text-tertiary shrink-0 transition-transform",
+            open && "rotate-90",
+          )}
         />
         <RiskDot risk={file.risk} />
         <span className="flex-1 min-w-0 truncate">
           <span className="text-text-primary">{name}</span>
-          {dir && <span className="text-text-tertiary text-[10px]"> {dir}</span>}
+          {dir && (
+            <span className="text-text-tertiary text-[10px]"> {dir}</span>
+          )}
         </span>
         {file.key_issues.length > 0 && (
           <span className="shrink-0 text-[10px] text-amber-400/90 flex items-center gap-0.5">
@@ -172,7 +193,9 @@ export function FileCard({
       {open && (
         <div className="px-2.5 pb-2.5 pt-0.5 flex flex-col gap-1.5">
           {file.summary && (
-            <div className="text-text-secondary leading-relaxed">{file.summary}</div>
+            <div className="text-text-secondary leading-relaxed">
+              {file.summary}
+            </div>
           )}
           {file.key_issues.map((issue, i) => (
             <button
@@ -185,7 +208,9 @@ export function FileCard({
             >
               <div className="flex items-center gap-1.5">
                 <AlertTriangle size={11} className="text-amber-400 shrink-0" />
-                <span className="font-medium text-text-primary">{issue.issue_header}</span>
+                <span className="font-medium text-text-primary">
+                  {issue.issue_header}
+                </span>
                 {typeof issue.start_line === "number" && (
                   <span className="ml-auto font-mono text-[10px] text-text-tertiary">
                     :{issue.start_line}
@@ -204,12 +229,24 @@ export function FileCard({
           {/* Per-file actions */}
           <div className="flex items-center gap-1 pt-1">
             {onShare && file.key_issues.length > 0 && (
-              <ActionBtn icon={<LinkIcon size={11} />} label="Share" onClick={() => onShare(file)} />
+              <ActionBtn
+                icon={<LinkIcon size={11} />}
+                label="Share"
+                onClick={() => onShare(file)}
+              />
             )}
             {projectPath && (
               <>
-                <ActionBtn icon={<Archive size={11} />} label="Stash" onClick={stash} />
-                <ActionBtn icon={<EyeOff size={11} />} label="Ignore" onClick={ignore} />
+                <ActionBtn
+                  icon={<Archive size={11} />}
+                  label="Stash"
+                  onClick={stash}
+                />
+                <ActionBtn
+                  icon={<EyeOff size={11} />}
+                  label="Ignore"
+                  onClick={ignore}
+                />
               </>
             )}
           </div>
@@ -259,7 +296,10 @@ function Section({
       >
         <ChevronRight
           size={12}
-          className={cn("text-text-tertiary shrink-0 transition-transform", open && "rotate-90")}
+          className={cn(
+            "text-text-tertiary shrink-0 transition-transform",
+            open && "rotate-90",
+          )}
         />
         {icon}
         <span className="font-medium">{title}</span>
@@ -276,7 +316,12 @@ function RiskDot({ risk }: { risk: string }) {
       : risk === "medium"
         ? "bg-[var(--status-warning)]"
         : "bg-text-tertiary";
-  return <span className={cn("size-1.5 rounded-full shrink-0", tone)} title={`risk: ${risk}`} />;
+  return (
+    <span
+      className={cn("size-1.5 rounded-full shrink-0", tone)}
+      title={`risk: ${risk}`}
+    />
+  );
 }
 
 function Badge({
@@ -292,9 +337,12 @@ function Badge({
     <span
       className={cn(
         "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 border text-[10.5px]",
-        tone === "good" && "border-[var(--status-success)]/50 bg-[var(--bg-elevated)] text-text-secondary",
-        tone === "warn" && "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
-        tone === "neutral" && "border-border-default bg-[var(--bg-elevated)] text-text-secondary",
+        tone === "good" &&
+          "border-[var(--status-success)]/50 bg-[var(--bg-elevated)] text-text-secondary",
+        tone === "warn" &&
+          "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
+        tone === "neutral" &&
+          "border-border-default bg-[var(--bg-elevated)] text-text-secondary",
       )}
     >
       <span className="text-text-tertiary">{label}</span>

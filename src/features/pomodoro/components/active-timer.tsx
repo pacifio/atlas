@@ -74,8 +74,16 @@ export function ActiveTimer() {
               No session running
             </div>
             <div className="inline-flex items-stretch rounded-md overflow-hidden bg-bg-elevated border border-border-default text-text-primary mt-3 divide-x divide-border-default shadow-[0_2px_8px_rgba(0,0,0,0.35)]">
-              <GroupedActionBtn icon={Zap} label="Quick start" onClick={quickStart} />
-              <GroupedActionBtn icon={Download} label="Export" onClick={handleExport} />
+              <GroupedActionBtn
+                icon={Zap}
+                label="Quick start"
+                onClick={quickStart}
+              />
+              <GroupedActionBtn
+                icon={Download}
+                label="Export"
+                onClick={handleExport}
+              />
               <GroupedActionBtn
                 icon={Trash2}
                 label="Clear all"
@@ -135,7 +143,9 @@ export function ActiveTimer() {
       </div>
 
       <div className="px-5 pb-4">
-        <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">Cycles</div>
+        <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+          Cycles
+        </div>
         <div className="flex gap-1.5">
           {Array.from({ length: cyclesPlanned }, (_, i) => {
             const done = i < cycleIdx;
@@ -158,7 +168,9 @@ export function ActiveTimer() {
       </div>
 
       <div className="px-5 pb-4">
-        <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">Preset</div>
+        <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+          Preset
+        </div>
         <div className="flex flex-wrap gap-1.5">
           {PRESETS.filter((p) => p.id !== "custom").map((p) => {
             const active = p.id === presetId;
@@ -184,7 +196,9 @@ export function ActiveTimer() {
 
       {today && (
         <div className="px-5 pb-5 mt-auto">
-          <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">Today</div>
+          <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+            Today
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <Stat label="Focus" value={fmtDur(today.focusMin)} />
             <Stat label="Sessions" value={String(today.sessions)} />

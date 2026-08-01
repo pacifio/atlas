@@ -18,9 +18,7 @@ export function AppContextMenu({ children }: { children: React.ReactNode }) {
 
   return (
     <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
-        {children}
-      </ContextMenu.Trigger>
+      <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content
           className="w-[180px] rounded-lg border border-[#1a1a1a] bg-[#0f0f0f] shadow-xl py-1"
@@ -38,17 +36,44 @@ export function AppContextMenu({ children }: { children: React.ReactNode }) {
                 icon={<Terminal size={12} />}
                 label="New Terminal"
                 shortcut="⌘⇧T"
-                onClick={() => addTab({ id: `terminal-${Date.now()}`, type: "terminal", title: "Terminal", closable: true, dirty: false, data: {} })}
+                onClick={() =>
+                  addTab({
+                    id: `terminal-${Date.now()}`,
+                    type: "terminal",
+                    title: "Terminal",
+                    closable: true,
+                    dirty: false,
+                    data: {},
+                  })
+                }
               />
               <MenuItem
                 icon={<Globe size={12} />}
                 label="New Browser"
-                onClick={() => addTab({ id: `browser-${Date.now()}`, type: "browser", title: "Browser", closable: true, dirty: false, data: {} })}
+                onClick={() =>
+                  addTab({
+                    id: `browser-${Date.now()}`,
+                    type: "browser",
+                    title: "Browser",
+                    closable: true,
+                    dirty: false,
+                    data: {},
+                  })
+                }
               />
               <MenuItem
                 icon={<BookOpen size={12} />}
                 label="Research"
-                onClick={() => addTab({ id: `research-${Date.now()}`, type: "research", title: "Research", closable: true, dirty: false, data: {} })}
+                onClick={() =>
+                  addTab({
+                    id: `research-${Date.now()}`,
+                    type: "research",
+                    title: "Research",
+                    closable: true,
+                    dirty: false,
+                    data: {},
+                  })
+                }
               />
               <ContextMenu.Separator className="h-px bg-[#1a1a1a] my-1" />
             </>
@@ -70,7 +95,16 @@ export function AppContextMenu({ children }: { children: React.ReactNode }) {
               icon={<Settings size={12} />}
               label="Settings"
               shortcut="⌘,"
-              onClick={() => addTab({ id: "settings", type: "settings", title: "Settings", closable: true, dirty: false, data: {} })}
+              onClick={() =>
+                addTab({
+                  id: "settings",
+                  type: "settings",
+                  title: "Settings",
+                  closable: true,
+                  dirty: false,
+                  data: {},
+                })
+              }
             />
           )}
         </ContextMenu.Content>
@@ -79,7 +113,17 @@ export function AppContextMenu({ children }: { children: React.ReactNode }) {
   );
 }
 
-function MenuItem({ icon, label, shortcut, onClick }: { icon: React.ReactNode; label: string; shortcut?: string; onClick: () => void }) {
+function MenuItem({
+  icon,
+  label,
+  shortcut,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  shortcut?: string;
+  onClick: () => void;
+}) {
   return (
     <ContextMenu.Item
       onClick={onClick}
@@ -87,7 +131,9 @@ function MenuItem({ icon, label, shortcut, onClick }: { icon: React.ReactNode; l
     >
       <span className="text-[#555]">{icon}</span>
       <span className="flex-1">{label}</span>
-      {shortcut && <span className="text-[9px] text-[#444] font-mono">{shortcut}</span>}
+      {shortcut && (
+        <span className="text-[9px] text-[#444] font-mono">{shortcut}</span>
+      )}
     </ContextMenu.Item>
   );
 }

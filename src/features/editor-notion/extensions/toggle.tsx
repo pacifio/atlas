@@ -53,7 +53,11 @@ export const Toggle = Node.create({
         class: "atlas-toggle",
         ...(node.attrs.open ? { open: "" } : {}),
       }),
-      ["summary", { class: "atlas-toggle-summary" }, node.attrs.title as string],
+      [
+        "summary",
+        { class: "atlas-toggle-summary" },
+        node.attrs.title as string,
+      ],
       ["div", { class: "atlas-toggle-body" }, 0],
     ];
   },
@@ -104,7 +108,10 @@ function ToggleView({ node, updateAttributes }: NodeViewProps) {
   const [draft, setDraft] = useState(title);
 
   return (
-    <NodeViewWrapper className="atlas-toggle" data-open={open ? "true" : "false"}>
+    <NodeViewWrapper
+      className="atlas-toggle"
+      data-open={open ? "true" : "false"}
+    >
       <div className="atlas-toggle-header" contentEditable={false}>
         <button
           type="button"

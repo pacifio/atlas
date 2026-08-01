@@ -16,12 +16,36 @@ interface CoverPickerProps {
 /** Synthetic prefixes the renderer detects to paint a gradient instead
  *  of loading an image off disk. */
 export const GRADIENTS: Array<{ id: string; css: string; label: string }> = [
-  { id: "gradient:slate-1", label: "Slate fade", css: "linear-gradient(135deg, #1f1f1f, #2a2a2a 60%, #161616)" },
-  { id: "gradient:warm-1", label: "Warm ember", css: "linear-gradient(135deg, #2a1d18, #382318 60%, #1d1411)" },
-  { id: "gradient:moss-1", label: "Moss",        css: "linear-gradient(135deg, #1a2422, #1f2e2a 60%, #131c1a)" },
-  { id: "gradient:dusk-1", label: "Dusk",        css: "linear-gradient(135deg, #1d1d2a, #232336 60%, #14141d)" },
-  { id: "gradient:rose-1", label: "Rose",        css: "linear-gradient(135deg, #271922, #36202d 60%, #1a1218)" },
-  { id: "gradient:gold-1", label: "Honey",       css: "linear-gradient(135deg, #2a2317, #36301a 60%, #1a1610)" },
+  {
+    id: "gradient:slate-1",
+    label: "Slate fade",
+    css: "linear-gradient(135deg, #1f1f1f, #2a2a2a 60%, #161616)",
+  },
+  {
+    id: "gradient:warm-1",
+    label: "Warm ember",
+    css: "linear-gradient(135deg, #2a1d18, #382318 60%, #1d1411)",
+  },
+  {
+    id: "gradient:moss-1",
+    label: "Moss",
+    css: "linear-gradient(135deg, #1a2422, #1f2e2a 60%, #131c1a)",
+  },
+  {
+    id: "gradient:dusk-1",
+    label: "Dusk",
+    css: "linear-gradient(135deg, #1d1d2a, #232336 60%, #14141d)",
+  },
+  {
+    id: "gradient:rose-1",
+    label: "Rose",
+    css: "linear-gradient(135deg, #271922, #36202d 60%, #1a1218)",
+  },
+  {
+    id: "gradient:gold-1",
+    label: "Honey",
+    css: "linear-gradient(135deg, #2a2317, #36301a 60%, #1a1610)",
+  },
 ];
 
 export function gradientCss(id: string): string | null {
@@ -60,7 +84,9 @@ export function CoverPicker({
   const handleUpload = async () => {
     try {
       const selected = await openFileDialog({
-        filters: [{ name: "Image", extensions: ["jpg", "jpeg", "png", "webp"] }],
+        filters: [
+          { name: "Image", extensions: ["jpg", "jpeg", "png", "webp"] },
+        ],
         multiple: false,
       });
       if (!selected || Array.isArray(selected)) return;
@@ -100,7 +126,10 @@ export function CoverPicker({
         padding: 8,
       }}
     >
-      <div className="eyebrow" style={{ fontSize: 9.5, padding: "4px 4px 6px" }}>
+      <div
+        className="eyebrow"
+        style={{ fontSize: 9.5, padding: "4px 4px 6px" }}
+      >
         Gradient
       </div>
       <div

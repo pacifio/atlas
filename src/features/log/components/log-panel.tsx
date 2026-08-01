@@ -29,7 +29,11 @@ import {
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
-import { useLogStore, type LogEntry, type LogSource } from "../stores/log-store";
+import {
+  useLogStore,
+  type LogEntry,
+  type LogSource,
+} from "../stores/log-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 
 const SOURCES: LogSource[] = [
@@ -46,7 +50,10 @@ const SOURCES: LogSource[] = [
   "system",
 ];
 
-const SOURCE_COLOR: Record<LogSource, { text: string; bg: string; border: string }> = {
+const SOURCE_COLOR: Record<
+  LogSource,
+  { text: string; bg: string; border: string }
+> = {
   agent: {
     text: "text-[var(--accent-primary)]",
     bg: "bg-[var(--accent-primary-muted)]",
@@ -115,9 +122,11 @@ export function LogPanel() {
 
   const [search, setSearch] = useState("");
   const [activeSources, setActiveSources] = useState<Set<LogSource>>(
-    () => new Set(SOURCES)
+    () => new Set(SOURCES),
   );
-  const [projectScope, setProjectScope] = useState<"all" | "current">("current");
+  const [projectScope, setProjectScope] = useState<"all" | "current">(
+    "current",
+  );
   const [showPinnedOnly, setShowPinnedOnly] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -158,13 +167,25 @@ export function LogPanel() {
         if (e.projectPath !== currentProject.path) return false;
       }
       if (q) {
-        const hay =
-          (e.summary + " " + e.kind + " " + (e.projectName ?? "")).toLowerCase();
+        const hay = (
+          e.summary +
+          " " +
+          e.kind +
+          " " +
+          (e.projectName ?? "")
+        ).toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [merged, search, activeSources, projectScope, currentProject, showPinnedOnly]);
+  }, [
+    merged,
+    search,
+    activeSources,
+    projectScope,
+    currentProject,
+    showPinnedOnly,
+  ]);
 
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
@@ -231,7 +252,7 @@ export function LogPanel() {
                 "inline-flex items-center px-1.5 h-[15px] rounded border text-[9px] font-mono leading-none",
                 c.text,
                 c.bg,
-                c.border
+                c.border,
               )}
             >
               {row.original.source}
@@ -287,7 +308,7 @@ export function LogPanel() {
                   "p-1 rounded hover:bg-[var(--bg-hover)] cursor-pointer transition-colors",
                   e.pinned
                     ? "text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)]"
-                    : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
+                    : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)]",
                 )}
                 title={e.pinned ? "Unpin" : "Pin (save)"}
               >
@@ -309,7 +330,7 @@ export function LogPanel() {
         size: 60,
       },
     ],
-    [expanded, copiedId, pin, unpin]
+    [expanded, copiedId, pin, unpin],
   );
 
   const table = useReactTable<LogEntry>({
@@ -359,7 +380,7 @@ export function LogPanel() {
             "flex items-center gap-1 px-2 h-6 rounded text-[10px] cursor-pointer outline-none transition-colors",
             showPinnedOnly
               ? "text-[var(--accent-primary)] bg-[var(--accent-primary-muted)]"
-              : "text-text-tertiary hover:text-text-primary hover:bg-bg-hover"
+              : "text-text-tertiary hover:text-text-primary hover:bg-bg-hover",
           )}
           title="Pinned only"
         >
@@ -396,7 +417,9 @@ export function LogPanel() {
                 style={cellStyle(h.column.id, h.getSize())}
                 className="truncate"
               >
-                {h.isPlaceholder ? null : flexRender(h.column.columnDef.header, h.getContext())}
+                {h.isPlaceholder
+                  ? null
+                  : flexRender(h.column.columnDef.header, h.getContext())}
               </div>
             ))}
           </div>
@@ -404,7 +427,10 @@ export function LogPanel() {
       </div>
 
       {/* Virtualized rows */}
-      <div ref={parentRef} className="flex-1 min-h-0 overflow-auto hide-scrollbar">
+      <div
+        ref={parentRef}
+        className="flex-1 min-h-0 overflow-auto hide-scrollbar"
+      >
         {rows.length === 0 ? (
           <div className="px-3 py-6 text-[11px] text-text-tertiary text-center">
             {merged.length === 0
@@ -439,7 +465,7 @@ export function LogPanel() {
                     onClick={() => toggleExpanded(row.original.id)}
                     className={cn(
                       "flex items-center px-3 cursor-pointer border-b border-[var(--border-subtle)] hover:bg-bg-hover",
-                      isExpanded && "bg-[var(--bg-elevated)]/40"
+                      isExpanded && "bg-[var(--bg-elevated)]/40",
                     )}
                     style={{ height: 32 }}
                   >
@@ -449,7 +475,10 @@ export function LogPanel() {
                         style={cellStyle(cell.column.id, cell.column.getSize())}
                         className="truncate flex items-center"
                       >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext(),
+                        )}
                       </div>
                     ))}
                   </div>
@@ -521,7 +550,7 @@ function SourceFilter({
                     "w-3 h-3 rounded-sm border flex items-center justify-center",
                     checked
                       ? "bg-[var(--accent-primary)] border-[var(--accent-primary)]"
-                      : "border-[var(--border-default)]"
+                      : "border-[var(--border-default)]",
                   )}
                 >
                   {checked && <Check size={9} className="text-white" />}
@@ -577,7 +606,9 @@ function ProjectScopeFilter({
                 value === v
                   ? "text-[var(--text-primary)] bg-[var(--bg-selected)]"
                   : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
-                v === "current" && !hasProject && "opacity-50 cursor-not-allowed"
+                v === "current" &&
+                  !hasProject &&
+                  "opacity-50 cursor-not-allowed",
               )}
             >
               {label}

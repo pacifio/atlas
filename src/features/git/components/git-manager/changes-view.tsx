@@ -31,7 +31,8 @@ function statusBadge(status: string): { letter: string; cls: string } {
   if (s.includes("delet")) return { letter: "D", cls: "text-error" };
   if (s.includes("add") || s.includes("new") || s.includes("untrack"))
     return { letter: "A", cls: "text-success" };
-  if (s.includes("renam")) return { letter: "R", cls: "text-[var(--status-info)]" };
+  if (s.includes("renam"))
+    return { letter: "R", cls: "text-[var(--status-info)]" };
   if (s.includes("conflict") || s.includes("unmerg"))
     return { letter: "!", cls: "text-error" };
   return { letter: "M", cls: "text-[var(--status-warning)]" };
@@ -67,12 +68,19 @@ function FileRow({
         selected ? "bg-bg-selected" : "hover:bg-bg-hover",
       )}
     >
-      <span className={cn("shrink-0 w-3 text-center font-mono text-[10px] font-semibold", badge.cls)}>
+      <span
+        className={cn(
+          "shrink-0 w-3 text-center font-mono text-[10px] font-semibold",
+          badge.cls,
+        )}
+      >
         {badge.letter}
       </span>
       <span className="truncate flex-1 min-w-0 font-mono">
         {dir && <span className="text-text-tertiary">{dir}</span>}
-        <span className="text-text-secondary group-hover:text-text-primary">{name}</span>
+        <span className="text-text-secondary group-hover:text-text-primary">
+          {name}
+        </span>
       </span>
       <div className="flex items-center opacity-0 group-hover:opacity-100 shrink-0">
         {onOpenDiff && (
@@ -174,14 +182,20 @@ export function ChangesView() {
   // untracked files have no HEAD to restore to, so reverting deletes them:
   // text additions delete directly; binary additions (e.g. `.png`, no diff to
   // review) ask for confirmation first since the bytes can't be recovered.
-  const [confirmDelete, setConfirmDelete] = useState<GitFileStatus | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<GitFileStatus | null>(
+    null,
+  );
   // Bulk revert of every unstaged change — discards tracked edits AND deletes
   // added files, so it always confirms first (unlike "Stage all").
   const [confirmRevertAll, setConfirmRevertAll] = useState(false);
   const revertAll = () =>
     run(async () => {
-      const tracked = unstaged.filter((f) => !isAddedStatus(f.status)).map((f) => f.path);
-      const added = unstaged.filter((f) => isAddedStatus(f.status)).map((f) => f.path);
+      const tracked = unstaged
+        .filter((f) => !isAddedStatus(f.status))
+        .map((f) => f.path);
+      const added = unstaged
+        .filter((f) => isAddedStatus(f.status))
+        .map((f) => f.path);
       if (tracked.length) await actions.discard(tracked);
       if (added.length) await actions.discardAdded(added);
     });
@@ -199,7 +213,11 @@ export function ChangesView() {
   const doCommit = () =>
     run(async () => {
       if (!summary.trim()) return;
-      await actions.commit(summary.trim(), description.trim() || undefined, amend);
+      await actions.commit(
+        summary.trim(),
+        description.trim() || undefined,
+        amend,
+      );
       setSummary("");
       setDescription("");
       setAmend(false);
@@ -209,7 +227,14 @@ export function ChangesView() {
   const openFile = (p: string) => {
     if (!currentProject) return;
     const full = `${currentProject.path}/${p}`;
-    addTab({ id: `editor-${full}`, type: "editor", title: p.split("/").pop() ?? p, closable: true, dirty: false, data: { filePath: full } });
+    addTab({
+      id: `editor-${full}`,
+      type: "editor",
+      title: p.split("/").pop() ?? p,
+      closable: true,
+      dirty: false,
+      data: { filePath: full },
+    });
   };
 
   const inProgressLabel = inProgress
@@ -236,9 +261,15 @@ export function ChangesView() {
     <div className="h-full flex flex-col min-w-0">
       {inProgressLabel && (
         <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[11px]">
-          <AlertTriangle size={12} className="text-[var(--status-warning)] shrink-0" />
+          <AlertTriangle
+            size={12}
+            className="text-[var(--status-warning)] shrink-0"
+          />
           <span className="flex-1 text-text-secondary">
-            Resolving <span className="font-medium text-text-primary">{inProgressLabel}</span>
+            Resolving{" "}
+            <span className="font-medium text-text-primary">
+              {inProgressLabel}
+            </span>
           </span>
           <button
             onClick={() => run(() => actions.opControl(opKind, "continue"))}
@@ -265,7 +296,9 @@ export function ChangesView() {
                 Staged ({staged.length})
               </span>
               <button
-                onClick={() => run(() => actions.unstageFiles(staged.map((f) => f.path)))}
+                onClick={() =>
+                  run(() => actions.unstageFiles(staged.map((f) => f.path)))
+                }
                 className="text-[10px] text-text-tertiary hover:text-text-primary"
               >
                 Unstage all
@@ -276,10 +309,16 @@ export function ChangesView() {
                 key={f.path}
                 file={f}
                 selected={selected === f.path}
-                onSelect={() => setSelected((cur) => (cur === f.path ? null : f.path))}
+                onSelect={() =>
+                  setSelected((cur) => (cur === f.path ? null : f.path))
+                }
                 action="unstage"
                 onAction={() => run(() => actions.unstageFiles([f.path]))}
-                onOpenDiff={repoPath ? () => openGitDiff(repoPath, f.path, true) : undefined}
+                onOpenDiff={
+                  repoPath
+                    ? () => openGitDiff(repoPath, f.path, true)
+                    : undefined
+                }
                 onOpenInEditor={() => openFile(f.path)}
               />
             ))}
@@ -295,7 +334,9 @@ export function ChangesView() {
             {unstaged.length > 0 && (
               <div className="flex items-center gap-1.5">
                 <button
-                  onClick={() => run(() => actions.stageFiles(unstaged.map((f) => f.path)))}
+                  onClick={() =>
+                    run(() => actions.stageFiles(unstaged.map((f) => f.path)))
+                  }
                   className="text-[10px] text-text-tertiary hover:text-text-primary"
                 >
                   Stage all
@@ -316,11 +357,17 @@ export function ChangesView() {
               key={f.path}
               file={f}
               selected={selected === f.path}
-              onSelect={() => setSelected((cur) => (cur === f.path ? null : f.path))}
+              onSelect={() =>
+                setSelected((cur) => (cur === f.path ? null : f.path))
+              }
               action="stage"
               onAction={() => run(() => actions.stageFiles([f.path]))}
               onDiscard={() => handleRevert(f)}
-              onOpenDiff={repoPath ? () => openGitDiff(repoPath, f.path, false) : undefined}
+              onOpenDiff={
+                repoPath
+                  ? () => openGitDiff(repoPath, f.path, false)
+                  : undefined
+              }
               onOpenInEditor={() => openFile(f.path)}
             />
           ))}
@@ -403,7 +450,8 @@ export function ChangesView() {
         name={confirmDelete?.path.split("/").pop() ?? ""}
         isDir={false}
         onConfirm={() => {
-          if (confirmDelete) void run(() => actions.discardAdded([confirmDelete.path]));
+          if (confirmDelete)
+            void run(() => actions.discardAdded([confirmDelete.path]));
           setConfirmDelete(null);
         }}
         onOpenChange={(open) => {
@@ -421,9 +469,11 @@ export function ChangesView() {
           <>
             All{" "}
             <span className="font-mono text-text-primary">
-              {unstaged.length} unstaged change{unstaged.length === 1 ? "" : "s"}
+              {unstaged.length} unstaged change
+              {unstaged.length === 1 ? "" : "s"}
             </span>{" "}
-            will be discarded and any newly added files deleted. This can't be undone.
+            will be discarded and any newly added files deleted. This can't be
+            undone.
           </>
         }
         onConfirm={() => {

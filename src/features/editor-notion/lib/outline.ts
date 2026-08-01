@@ -140,11 +140,13 @@ export function jumpToHeading(editor: Editor, pos: number): void {
   // Fallback: dispatch a scroll-into-view tr at the position.
   try {
     const { state } = view;
-    const tr = state.tr.setSelection(
-      // setTextSelection via tr.doc helper isn't on Transaction; let the
-      // chain command do it instead.
-      state.selection,
-    ).scrollIntoView();
+    const tr = state.tr
+      .setSelection(
+        // setTextSelection via tr.doc helper isn't on Transaction; let the
+        // chain command do it instead.
+        state.selection,
+      )
+      .scrollIntoView();
     void tr;
     editor.chain().focus().setTextSelection(pos).scrollIntoView().run();
   } catch {

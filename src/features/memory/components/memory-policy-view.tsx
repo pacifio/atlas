@@ -40,14 +40,20 @@ export function MemoryPolicyView() {
   const phase = useMemoryStore.use.policyPhase();
   const policies = useMemoryStore.use.policies() ?? [];
   const error = useMemoryStore.use.policyError();
-  const { ensureProject, loadPolicies: storeLoadPolicies, setPolicyPhase, updatePolicyValue } =
-    useMemoryStore.use.actions();
+  const {
+    ensureProject,
+    loadPolicies: storeLoadPolicies,
+    setPolicyPhase,
+    updatePolicyValue,
+  } = useMemoryStore.use.actions();
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
 
   // ── Filters ──────────────────────────────────────────────────────────────
   const [matchF, setMatchF] = useState<"all" | "semantic" | "keyword">("all");
   const [strengthF, setStrengthF] = useState<"all" | "soft" | "strong">("all");
-  const [originF, setOriginF] = useState<"all" | "preference" | "codebase">("all");
+  const [originF, setOriginF] = useState<"all" | "preference" | "codebase">(
+    "all",
+  );
   const [query, setQuery] = useState("");
   const visible = policies.filter(
     (p) =>
@@ -55,7 +61,9 @@ export function MemoryPolicyView() {
       (strengthF === "all" || p.category === strengthF) &&
       (originF === "all" || p.origin === originF) &&
       (query.trim() === "" ||
-        `${p.key} ${p.value}`.toLowerCase().includes(query.trim().toLowerCase())),
+        `${p.key} ${p.value}`
+          .toLowerCase()
+          .includes(query.trim().toLowerCase())),
   );
 
   const loadPolicies = useCallback(
@@ -115,7 +123,10 @@ export function MemoryPolicyView() {
     return (
       <Centered>
         <div className="text-center space-y-2">
-          <Loader2 size={18} className="animate-spin text-[var(--text-tertiary)] mx-auto" />
+          <Loader2
+            size={18}
+            className="animate-spin text-[var(--text-tertiary)] mx-auto"
+          />
           <p className="text-[11px] text-[var(--text-tertiary)]">
             {phase === "loading" ? "Distilling preferences…" : "Checking…"}
           </p>
@@ -153,7 +164,8 @@ export function MemoryPolicyView() {
   if (phase === "downloading") {
     const pct = progress
       ? Math.round(
-          ((progress.file_index + (progress.total ? progress.received / progress.total : 0)) /
+          ((progress.file_index +
+            (progress.total ? progress.received / progress.total : 0)) /
             Math.max(1, progress.file_count)) *
             100,
         )
@@ -161,12 +173,22 @@ export function MemoryPolicyView() {
     return (
       <Centered>
         <div className="text-center max-w-[360px] px-6 w-full space-y-2">
-          <Loader2 size={20} className="animate-spin text-[var(--text-secondary)] mx-auto" />
-          <p className="text-[12px] text-[var(--text-primary)]">Downloading model…</p>
+          <Loader2
+            size={20}
+            className="animate-spin text-[var(--text-secondary)] mx-auto"
+          />
+          <p className="text-[12px] text-[var(--text-primary)]">
+            Downloading model…
+          </p>
           <div className="h-1.5 rounded-full bg-[var(--bg-elevated)] overflow-hidden">
-            <div className="h-full bg-[var(--accent-primary)] transition-[width] duration-200" style={{ width: `${pct}%` }} />
+            <div
+              className="h-full bg-[var(--accent-primary)] transition-[width] duration-200"
+              style={{ width: `${pct}%` }}
+            />
           </div>
-          <p className="text-[10px] text-[var(--text-tertiary)] font-mono">{pct}%</p>
+          <p className="text-[10px] text-[var(--text-tertiary)] font-mono">
+            {pct}%
+          </p>
         </div>
       </Centered>
     );
@@ -176,9 +198,18 @@ export function MemoryPolicyView() {
     return (
       <Centered>
         <div className="text-center max-w-[340px] px-6 space-y-3">
-          <AlertTriangle size={20} className="text-[var(--status-error)] mx-auto" />
-          <p className="text-[12px] text-[var(--text-secondary)]">Couldn't load policies</p>
-          {error && <p className="text-[10px] text-[var(--text-tertiary)] font-mono break-words">{error}</p>}
+          <AlertTriangle
+            size={20}
+            className="text-[var(--status-error)] mx-auto"
+          />
+          <p className="text-[12px] text-[var(--text-secondary)]">
+            Couldn't load policies
+          </p>
+          {error && (
+            <p className="text-[10px] text-[var(--text-tertiary)] font-mono break-words">
+              {error}
+            </p>
+          )}
           <button
             onClick={() => void init(projectPath)}
             className="inline-flex items-center gap-1.5 h-7 px-3 rounded-md border border-[var(--border-default)] text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
@@ -213,8 +244,8 @@ export function MemoryPolicyView() {
       {policies.length === 0 ? (
         <Centered>
           <p className="text-[12px] text-[var(--text-tertiary)] max-w-[300px] text-center px-4">
-            No preferences detected yet. As Claude Code & Codex record how you like
-            to work, they'll surface here.
+            No preferences detected yet. As Claude Code & Codex record how you
+            like to work, they'll surface here.
           </p>
         </Centered>
       ) : (
@@ -224,17 +255,35 @@ export function MemoryPolicyView() {
             <FilterGroup
               value={originF}
               onChange={setOriginF}
-              options={[["all", "All"], ["preference", "Preferences"], ["codebase", "Codebase"]] as const}
+              options={
+                [
+                  ["all", "All"],
+                  ["preference", "Preferences"],
+                  ["codebase", "Codebase"],
+                ] as const
+              }
             />
             <FilterGroup
               value={matchF}
               onChange={setMatchF}
-              options={[["all", "Any match"], ["semantic", "Semantic"], ["keyword", "Keyword"]] as const}
+              options={
+                [
+                  ["all", "Any match"],
+                  ["semantic", "Semantic"],
+                  ["keyword", "Keyword"],
+                ] as const
+              }
             />
             <FilterGroup
               value={strengthF}
               onChange={setStrengthF}
-              options={[["all", "Any"], ["soft", "Soft"], ["strong", "Strong"]] as const}
+              options={
+                [
+                  ["all", "Any"],
+                  ["soft", "Soft"],
+                  ["strong", "Strong"],
+                ] as const
+              }
             />
             <input
               value={query}
@@ -258,7 +307,9 @@ export function MemoryPolicyView() {
                   No policies match these filters.
                 </div>
               ) : (
-                visible.map((p) => <PolicyRow key={p.id} policy={p} onSaved={onSaved} />)
+                visible.map((p) => (
+                  <PolicyRow key={p.id} policy={p} onSaved={onSaved} />
+                ))
               )}
             </div>
           </div>
@@ -321,7 +372,9 @@ function PolicyRow({
       onSaved(policy.id, draft);
       toast.success(`${policy.key} updated`);
     } catch (e) {
-      toast.error(`Couldn't update: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(
+        `Couldn't update: ${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setSaving(false);
     }
@@ -338,13 +391,21 @@ function PolicyRow({
                 ? "border-[var(--status-error)]/40 bg-[var(--status-error)]/10 text-[var(--status-error)]"
                 : "border-[var(--border-default)] bg-[var(--bg-elevated)] text-[var(--text-tertiary)]",
             )}
-            title={policy.category === "strong" ? "Strong rule — must follow" : "Soft preference — guidance"}
+            title={
+              policy.category === "strong"
+                ? "Strong rule — must follow"
+                : "Soft preference — guidance"
+            }
           >
             {policy.category}
           </span>
-          <span className="text-[12px] text-[var(--text-primary)] truncate">{policy.key}</span>
+          <span className="text-[12px] text-[var(--text-primary)] truncate">
+            {policy.key}
+          </span>
         </div>
-        <div className="text-[10px] text-[var(--text-tertiary)] truncate mt-0.5">{policy.hint}</div>
+        <div className="text-[10px] text-[var(--text-tertiary)] truncate mt-0.5">
+          {policy.hint}
+        </div>
       </div>
 
       <div className={cn(COL.value, "pr-3")}>
@@ -371,12 +432,20 @@ function PolicyRow({
         ) : (
           <ClaudeIcon className="size-3 shrink-0 opacity-70" />
         )}
-        <span className="text-[10px] text-[var(--text-tertiary)] truncate" title={policy.file_path}>
+        <span
+          className="text-[10px] text-[var(--text-tertiary)] truncate"
+          title={policy.file_path}
+        >
           {basename(policy.file_path)}
         </span>
       </div>
 
-      <div className={cn(COL.score, "text-right tabular-nums text-[10px] text-[var(--text-tertiary)]")}>
+      <div
+        className={cn(
+          COL.score,
+          "text-right tabular-nums text-[10px] text-[var(--text-tertiary)]",
+        )}
+      >
         {Math.round(policy.score * 100)}%
       </div>
 
@@ -389,7 +458,11 @@ function PolicyRow({
               className="flex items-center justify-center w-5 h-5 rounded text-[var(--status-success,#4d4d4d)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50"
               title="Save (Enter)"
             >
-              {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={13} />}
+              {saving ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Check size={13} />
+              )}
             </button>
             <button
               onClick={() => setDraft(policy.value)}
@@ -401,7 +474,9 @@ function PolicyRow({
           </>
         ) : (
           <button
-            onClick={() => sendToAgentChat(`Preference — ${policy.key}: ${policy.value}`)}
+            onClick={() =>
+              sendToAgentChat(`Preference — ${policy.key}: ${policy.value}`)
+            }
             className="flex items-center justify-center w-5 h-5 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
             title="Send to agent chat"
           >

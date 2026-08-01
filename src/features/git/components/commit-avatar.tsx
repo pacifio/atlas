@@ -10,7 +10,7 @@ async function sha256(text: string): Promise<string> {
   if (cached) return cached;
   const buf = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(text)
+    new TextEncoder().encode(text),
   );
   const bytes = Array.from(new Uint8Array(buf));
   const hex = bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -24,7 +24,11 @@ interface CommitAvatarProps {
   className?: string;
 }
 
-export function CommitAvatar({ email, size = 16, className }: CommitAvatarProps) {
+export function CommitAvatar({
+  email,
+  size = 16,
+  className,
+}: CommitAvatarProps) {
   const [hash, setHash] = useState<string | null>(() => {
     if (!email) return null;
     return hashCache.get(email.trim().toLowerCase()) ?? null;

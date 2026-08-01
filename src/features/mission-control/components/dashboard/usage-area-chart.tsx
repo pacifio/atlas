@@ -23,9 +23,15 @@ export function UsageAreaChart({
   data: MissionControlUsage;
   rangeDays: number | null;
 }) {
-  const paths = useMemo(() => data.projects.map((p) => p.projectPath), [data.projects]);
+  const paths = useMemo(
+    () => data.projects.map((p) => p.projectPath),
+    [data.projects],
+  );
   const nameByPath = useMemo(
-    () => Object.fromEntries(data.projects.map((p) => [p.projectPath, p.projectName])),
+    () =>
+      Object.fromEntries(
+        data.projects.map((p) => [p.projectPath, p.projectName]),
+      ),
     [data.projects],
   );
   const colors = useMemo(() => projectColorMap(paths), [paths]);
@@ -35,22 +41,43 @@ export function UsageAreaChart({
   );
 
   return (
-    <ChartCard title="Token usage over time" subtitle="Combined tokens per day, stacked by project">
+    <ChartCard
+      title="Token usage over time"
+      subtitle="Combined tokens per day, stacked by project"
+    >
       <div className="h-[240px]">
         {rows.length === 0 ? (
           <Empty />
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={rows} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
+            <AreaChart
+              data={rows}
+              margin={{ top: 8, right: 8, left: 4, bottom: 0 }}
+            >
               <defs>
                 {paths.map((p) => (
-                  <linearGradient key={p} id={`area-${gid(p)}`} x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient
+                    key={p}
+                    id={`area-${gid(p)}`}
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
                     <stop offset="0%" stopColor={colors[p]} stopOpacity={0.5} />
-                    <stop offset="100%" stopColor={colors[p]} stopOpacity={0.03} />
+                    <stop
+                      offset="100%"
+                      stopColor={colors[p]}
+                      stopOpacity={0.03}
+                    />
                   </linearGradient>
                 ))}
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} vertical={false} />
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke={CHART.grid}
+                vertical={false}
+              />
               <XAxis
                 dataKey="date"
                 tick={{ fill: CHART.axis, fontSize: CHART.tickFont }}
@@ -66,7 +93,10 @@ export function UsageAreaChart({
                 width={44}
                 tickFormatter={(v: number) => fmtTokens(v)}
               />
-              <Tooltip content={<ChartTooltip />} cursor={{ stroke: CHART.grid }} />
+              <Tooltip
+                content={<ChartTooltip />}
+                cursor={{ stroke: CHART.grid }}
+              />
               {paths.map((p) => (
                 <Area
                   key={p}

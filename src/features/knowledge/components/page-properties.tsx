@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Flame, User, Tag, Calendar, Clock, Link as LinkIcon, X, Plus, ChevronRight } from "lucide-react";
+import {
+  Flame,
+  User,
+  Tag,
+  Calendar,
+  Clock,
+  Link as LinkIcon,
+  X,
+  Plus,
+  ChevronRight,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   usePageMeta,
@@ -38,8 +48,14 @@ export function PageProperties({
   const summaryParts: string[] = [];
   if (meta.status) summaryParts.push(meta.status);
   if (meta.owner) summaryParts.push(`@${meta.owner}`);
-  if (meta.tags && meta.tags.length > 0) summaryParts.push(`#${meta.tags[0]}${meta.tags.length > 1 ? ` +${meta.tags.length - 1}` : ""}`);
-  const summary = summaryParts.length > 0 ? summaryParts.join(" · ") : "Add status, owner, tags…";
+  if (meta.tags && meta.tags.length > 0)
+    summaryParts.push(
+      `#${meta.tags[0]}${meta.tags.length > 1 ? ` +${meta.tags.length - 1}` : ""}`,
+    );
+  const summary =
+    summaryParts.length > 0
+      ? summaryParts.join(" · ")
+      : "Add status, owner, tags…";
 
   return (
     <div
@@ -132,7 +148,10 @@ export function PageProperties({
             </span>
           </Row>
           <Row icon={LinkIcon} label="References">
-            <span className="mono" style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>
+            <span
+              className="mono"
+              style={{ fontSize: 11.5, color: "var(--text-secondary)" }}
+            >
               {referencesLabel}
             </span>
           </Row>
@@ -262,7 +281,9 @@ function StatusEditor({
               outline: "none",
             }}
           />
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+          <div
+            style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}
+          >
             {STATUS_PRESETS.map((p) => (
               <button
                 key={p}
@@ -438,7 +459,11 @@ function TagsEditor({
             else if (e.key === "Escape") {
               setDraft("");
               setAdding(false);
-            } else if (e.key === "Backspace" && draft === "" && tags.length > 0) {
+            } else if (
+              e.key === "Backspace" &&
+              draft === "" &&
+              tags.length > 0
+            ) {
               onChange(tags.slice(0, -1));
             }
           }}

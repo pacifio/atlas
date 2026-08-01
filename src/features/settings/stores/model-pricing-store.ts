@@ -37,10 +37,14 @@ const base = create<ModelPricingState>((set, get) => ({
       // Rust side reloads the cache here automatically.
       if (!listenerBound) {
         listenerBound = true;
-        void listen("atlas:models-pricing-updated", () => void get().actions.load());
+        void listen(
+          "atlas:models-pricing-updated",
+          () => void get().actions.load(),
+        );
       }
       try {
-        const prices = await invoke<Record<string, ModelPrice>>("models_pricing_get");
+        const prices =
+          await invoke<Record<string, ModelPrice>>("models_pricing_get");
         set({ prices, loaded: true });
       } catch {
         set({ loaded: true });
@@ -50,7 +54,8 @@ const base = create<ModelPricingState>((set, get) => ({
       set({ loading: true });
       try {
         await invoke("models_pricing_refresh");
-        const prices = await invoke<Record<string, ModelPrice>>("models_pricing_get");
+        const prices =
+          await invoke<Record<string, ModelPrice>>("models_pricing_get");
         set({ prices, loaded: true });
       } catch {
         // best-effort — keep whatever's cached
@@ -75,6 +80,7 @@ export function priceFor(
 /** Compact display: `$3 / $15` (input / output per 1M tokens). */
 export function formatPrice(p: ModelPrice | null, loading: boolean): string {
   if (loading || !p) return "---";
-  const fmt = (n: number) => (Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`);
+  const fmt = (n: number) =>
+    Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`;
   return `${fmt(p.input)} / ${fmt(p.output)}`;
 }

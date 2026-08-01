@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MemoryTimeline } from "../lib/memory-timeline-api";
@@ -50,7 +57,10 @@ function addDays(ms: number, n: number): number {
   return d.getTime();
 }
 function fmtTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return new Date(ms).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export function MemoryTimelineCalendar({
@@ -87,7 +97,8 @@ export function MemoryTimelineCalendar({
       });
     }
     for (const s of data.sessions) {
-      if (s.agent !== "codex" || !s.branch || !branchSet.has(s.branch)) continue;
+      if (s.agent !== "codex" || !s.branch || !branchSet.has(s.branch))
+        continue;
       items.push({
         id: `session:${s.id}`,
         kind: "session",
@@ -100,7 +111,8 @@ export function MemoryTimelineCalendar({
     items.sort((a, b) => a.ts - b.ts);
 
     const commitCount = new Map<string, number>();
-    for (const c of data.commits) commitCount.set(c.branch, (commitCount.get(c.branch) ?? 0) + 1);
+    for (const c of data.commits)
+      commitCount.set(c.branch, (commitCount.get(c.branch) ?? 0) + 1);
 
     // Days that actually contain something (for empty-range skipping).
     const activityDays = [
@@ -111,12 +123,16 @@ export function MemoryTimelineCalendar({
 
   // The anchor day we're focused on (default: most recent activity, else today).
   const [anchorDay, setAnchorDay] = useState<number>(() =>
-    model.activityDays.length ? model.activityDays[model.activityDays.length - 1] : startOfDay(Date.now()),
+    model.activityDays.length
+      ? model.activityDays[model.activityDays.length - 1]
+      : startOfDay(Date.now()),
   );
   useEffect(() => {
     // When the project/data changes, snap to its latest activity day.
     setAnchorDay(
-      model.activityDays.length ? model.activityDays[model.activityDays.length - 1] : startOfDay(Date.now()),
+      model.activityDays.length
+        ? model.activityDays[model.activityDays.length - 1]
+        : startOfDay(Date.now()),
     );
   }, [model.activityDays]);
 
@@ -165,7 +181,9 @@ export function MemoryTimelineCalendar({
 
   // Active branch = hovered, else the selected branch row.
   const [hoverBranch, setHoverBranch] = useState<string | null>(null);
-  const selectedBranch = selectedId?.startsWith("branch:") ? selectedId.slice(7) : null;
+  const selectedBranch = selectedId?.startsWith("branch:")
+    ? selectedId.slice(7)
+    : null;
   const activeBranch = hoverBranch ?? selectedBranch;
 
   const hasHi = !!highlightIds && highlightIds.size > 0;
@@ -205,7 +223,9 @@ export function MemoryTimelineCalendar({
       const x2 = cr.left - base.left;
       const y2 = cr.top + cr.height / 2 - base.top;
       const dx = Math.max(40, (x2 - x1) * 0.5);
-      next.push(`M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`);
+      next.push(
+        `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`,
+      );
     }
     setPaths(next);
   }, [activeBranch, rangeStart, dayCards, tick, model.items]);
@@ -246,26 +266,36 @@ export function MemoryTimelineCalendar({
                   else branchRowRefs.current.delete(b.name);
                 }}
                 onMouseEnter={() => setHoverBranch(b.name)}
-                onMouseLeave={() => setHoverBranch((h) => (h === b.name ? null : h))}
+                onMouseLeave={() =>
+                  setHoverBranch((h) => (h === b.name ? null : h))
+                }
                 onClick={() => onSelect(sel ? null : `branch:${b.name}`)}
                 className={cn(
                   "w-full flex flex-col justify-center gap-0.5 px-3 py-2 border-b border-[var(--border-subtle)] text-left transition-colors",
-                  sel ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
+                  sel
+                    ? "bg-[var(--bg-selected)]"
+                    : "hover:bg-[var(--bg-hover)]",
                 )}
               >
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: MONO }} />
+                  <span
+                    className="w-2 h-2 rounded-sm shrink-0"
+                    style={{ background: MONO }}
+                  />
                   <span
                     className={cn(
                       "text-[11px] truncate",
-                      b.is_current ? "text-[var(--text-primary)] font-medium" : "text-[var(--text-secondary)]",
+                      b.is_current
+                        ? "text-[var(--text-primary)] font-medium"
+                        : "text-[var(--text-secondary)]",
                     )}
                   >
                     {b.name}
                   </span>
                 </div>
                 <span className="text-[9px] text-[var(--text-tertiary)] pl-3.5">
-                  {model.commitCount.get(b.name) ?? 0} commits{b.is_current ? " · current" : ""}
+                  {model.commitCount.get(b.name) ?? 0} commits
+                  {b.is_current ? " · current" : ""}
                 </span>
               </button>
             );
@@ -299,7 +329,9 @@ export function MemoryTimelineCalendar({
           >
             Today
           </button>
-          <span className="text-[12px] font-medium text-[var(--text-primary)] tabular-nums ml-1">{rangeLabel}</span>
+          <span className="text-[12px] font-medium text-[var(--text-primary)] tabular-nums ml-1">
+            {rangeLabel}
+          </span>
         </div>
 
         {/* Day-column headers */}
@@ -318,9 +350,9 @@ export function MemoryTimelineCalendar({
                   className={cn(
                     "text-[13px] tabular-nums leading-none",
                     isToday
-                      // `w-6 h-6` (was w-5) so two-digit dates (10–31) aren't
-                      // cramped/clipped inside the today circle.
-                      ? "text-[var(--bg-base)] bg-[var(--accent-primary)] rounded-full w-6 h-6 flex items-center justify-center font-semibold mt-0.5"
+                      ? // `w-6 h-6` (was w-5) so two-digit dates (10–31) aren't
+                        // cramped/clipped inside the today circle.
+                        "text-[var(--bg-base)] bg-[var(--accent-primary)] rounded-full w-6 h-6 flex items-center justify-center font-semibold mt-0.5"
                       : "text-[var(--text-secondary)]",
                   )}
                 >
@@ -353,11 +385,14 @@ export function MemoryTimelineCalendar({
                         else cardRefs.current.delete(c.id);
                       }}
                       onClick={(e) => {
-                        if ((e.metaKey || e.ctrlKey) && c.kind === "session") onActivate(c.id);
+                        if ((e.metaKey || e.ctrlKey) && c.kind === "session")
+                          onActivate(c.id);
                         else onSelect(sel ? null : c.id);
                       }}
                       onMouseEnter={() => setHoverBranch(c.branch)}
-                      onMouseLeave={() => setHoverBranch((h) => (h === c.branch ? null : h))}
+                      onMouseLeave={() =>
+                        setHoverBranch((h) => (h === c.branch ? null : h))
+                      }
                       title={c.title}
                       className={cn(
                         "group w-full max-w-full min-w-0 flex items-start gap-1.5 pl-1.5 pr-1 py-1 rounded-md border text-left cursor-pointer transition-all",
@@ -369,7 +404,11 @@ export function MemoryTimelineCalendar({
                     >
                       <span
                         className="shrink-0 w-1.5 h-1.5 rounded-full mt-[4px]"
-                        style={{ background: memoryIds?.has(c.id) ? DOT_MEMORY : DOT_PLAIN }}
+                        style={{
+                          background: memoryIds?.has(c.id)
+                            ? DOT_MEMORY
+                            : DOT_PLAIN,
+                        }}
                       />
                       <span className="min-w-0 flex-1">
                         <span className="block text-[10px] leading-snug text-[var(--text-secondary)] line-clamp-2 break-words">
@@ -390,9 +429,19 @@ export function MemoryTimelineCalendar({
 
       {/* ── Curved connectors (branch → cards) ── */}
       {paths.length > 0 && (
-        <svg className="absolute inset-0 pointer-events-none z-20" width="100%" height="100%">
+        <svg
+          className="absolute inset-0 pointer-events-none z-20"
+          width="100%"
+          height="100%"
+        >
           {paths.map((d, i) => (
-            <path key={i} d={d} fill="none" stroke={CONNECTOR} strokeWidth={1.5} />
+            <path
+              key={i}
+              d={d}
+              fill="none"
+              stroke={CONNECTOR}
+              strokeWidth={1.5}
+            />
           ))}
         </svg>
       )}

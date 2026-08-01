@@ -11,11 +11,7 @@ import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import "../tiptap.css";
 import { cn } from "@/lib/utils";
 import { buildExtensions } from "../lib/extensions";
-import {
-  dropCachedDoc,
-  getCachedDoc,
-  setCachedDoc,
-} from "../lib/blocks-cache";
+import { dropCachedDoc, getCachedDoc, setCachedDoc } from "../lib/blocks-cache";
 import { AtlasBubbleMenu } from "./bubble-menu";
 
 export interface TiptapEditorHandle {
@@ -68,7 +64,14 @@ export interface TiptapEditorProps {
  */
 export const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
   function TiptapEditor(
-    { documentId, initialMarkdown, editable = true, onDirty, className, placeholder },
+    {
+      documentId,
+      initialMarkdown,
+      editable = true,
+      onDirty,
+      className,
+      placeholder,
+    },
     ref,
   ) {
     const extensions = useMemo(
@@ -215,7 +218,10 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
     );
 
     return (
-      <div className={cn("atlas-tiptap", className)} style={{ position: "relative" }}>
+      <div
+        className={cn("atlas-tiptap", className)}
+        style={{ position: "relative" }}
+      >
         <EditorContent editor={editor} />
         {editable && editor && viewReady && <AtlasBubbleMenu editor={editor} />}
       </div>

@@ -4,7 +4,14 @@ import { useProjectStore } from "@/features/project/stores/project-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { useNotificationsStore } from "@/features/notifications/stores/notifications-store";
-import { PanelLeft, PanelRight, Bell, Layers, ArrowDownToLine, Loader2 } from "lucide-react";
+import {
+  PanelLeft,
+  PanelRight,
+  Bell,
+  Layers,
+  ArrowDownToLine,
+  Loader2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
@@ -76,7 +83,9 @@ export function Titlebar() {
 
   const isTitlebarSurface = (target: EventTarget | null) => {
     const el = target as HTMLElement | null;
-    return !el?.closest("button, a, input, select, textarea, [role='menuitem']");
+    return !el?.closest(
+      "button, a, input, select, textarea, [role='menuitem']",
+    );
   };
 
   // Drag the window manually (the `data-tauri-drag-region` CSS hook
@@ -214,7 +223,9 @@ function ProjectLabel({
                 <span className="min-w-0 shrink truncate text-[var(--text-tertiary)]">
                   {orgName}
                 </span>
-                <span className="shrink-0 text-[var(--text-tertiary)] opacity-50">/</span>
+                <span className="shrink-0 text-[var(--text-tertiary)] opacity-50">
+                  /
+                </span>
               </>
             )}
             <span className="min-w-0 truncate text-[var(--text-secondary)] transition-colors group-hover:text-[var(--text-primary)]">
@@ -222,7 +233,9 @@ function ProjectLabel({
             </span>
             {/* Only once capture is on. An always-present grey dot on every
                 project reads as a defect indicator rather than a state. */}
-            {binding?.enabled && <StatusDot binding={binding} health={health} />}
+            {binding?.enabled && (
+              <StatusDot binding={binding} health={health} />
+            )}
           </button>
         </Popover.Trigger>
         {path && (
@@ -305,7 +318,15 @@ function ArcProgress({ value }: { value: number }) {
   const off = c * (1 - Math.max(0, Math.min(1, value)));
   return (
     <svg width={14} height={14} viewBox="0 0 16 16" className="-rotate-90">
-      <circle cx="8" cy="8" r={r} fill="none" stroke="currentColor" strokeOpacity={0.25} strokeWidth={2} />
+      <circle
+        cx="8"
+        cy="8"
+        r={r}
+        fill="none"
+        stroke="currentColor"
+        strokeOpacity={0.25}
+        strokeWidth={2}
+      />
       <circle
         cx="8"
         cy="8"
@@ -347,10 +368,16 @@ function UpdateButton() {
       .checkNow()
       .then((status) => {
         if (!status.available) {
-          toast.success(`You're on the latest version (${status.currentVersion}).`);
+          toast.success(
+            `You're on the latest version (${status.currentVersion}).`,
+          );
         }
       })
-      .catch((e) => toast.error(`Update check failed: ${e instanceof Error ? e.message : String(e)}`));
+      .catch((e) =>
+        toast.error(
+          `Update check failed: ${e instanceof Error ? e.message : String(e)}`,
+        ),
+      );
   };
 
   const title = checking
@@ -376,7 +403,11 @@ function UpdateButton() {
       {checking ? (
         <Loader2 size={14} className="animate-spin" />
       ) : downloading ? (
-        progress != null ? <ArcProgress value={progress} /> : <Loader2 size={14} className="animate-spin" />
+        progress != null ? (
+          <ArcProgress value={progress} />
+        ) : (
+          <Loader2 size={14} className="animate-spin" />
+        )
       ) : (
         <ArrowDownToLine size={14} />
       )}
@@ -431,7 +462,10 @@ function RightPanelToggle() {
       className="flex items-center justify-center w-6 h-6 rounded text-[#555] hover:text-[#aaa] hover:bg-[#ffffff08] transition-all duration-150"
       title={rightPanel.visible ? "Hide right panel" : "Show right panel"}
     >
-      <PanelRight size={14} className={rightPanel.visible ? "" : "opacity-40"} />
+      <PanelRight
+        size={14}
+        className={rightPanel.visible ? "" : "opacity-40"}
+      />
     </button>
   );
 }

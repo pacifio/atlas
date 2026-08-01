@@ -128,7 +128,9 @@ export const usePdfAnnotationStore = createSelectors(
         },
         remove: (pdfPath, id) => {
           set((s) => {
-            s.byPath[pdfPath] = (s.byPath[pdfPath] ?? []).filter((a) => a.id !== id);
+            s.byPath[pdfPath] = (s.byPath[pdfPath] ?? []).filter(
+              (a) => a.id !== id,
+            );
             s.dirty[pdfPath] = true;
             if (s.selectedId === id) s.selectedId = null;
           });
@@ -155,7 +157,11 @@ export const usePdfAnnotationStore = createSelectors(
           if (!projectPath) return;
           const annotations = get().byPath[pdfPath] ?? [];
           try {
-            await invoke("pdf_annotations_save", { projectPath, pdfPath, annotations });
+            await invoke("pdf_annotations_save", {
+              projectPath,
+              pdfPath,
+              annotations,
+            });
             set((s) => {
               s.dirty[pdfPath] = false;
             });
@@ -164,8 +170,8 @@ export const usePdfAnnotationStore = createSelectors(
           }
         },
       },
-    }))
-  )
+    })),
+  ),
 );
 
 export function newAnnotationId(): string {

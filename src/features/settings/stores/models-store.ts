@@ -64,7 +64,9 @@ export const useModelsStore = createSelectors(
             void get().actions.refresh();
           }),
         );
-        unlistens.push(await listenModelsChanged(() => void get().actions.refresh()));
+        unlistens.push(
+          await listenModelsChanged(() => void get().actions.refresh()),
+        );
       },
 
       refresh: async () => {
@@ -83,7 +85,14 @@ export const useModelsStore = createSelectors(
         set((s) => ({
           downloading: {
             ...s.downloading,
-            [id]: { id, file: "", fileIndex: 0, fileCount: 1, received: 0, total: 0 },
+            [id]: {
+              id,
+              file: "",
+              fileIndex: 0,
+              fileCount: 1,
+              received: 0,
+              total: 0,
+            },
           },
         }));
         try {

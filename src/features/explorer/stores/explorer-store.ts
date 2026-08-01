@@ -110,14 +110,15 @@ export const useExplorerStore = createSelectors(
             s.loading = true;
           });
           try {
-            const entries = await invoke<FileEntry[]>("read_directory", { path });
-            const nodes: TreeNode[] = applyHiddenFilter(entries)
-              .map((e) => ({
-                entry: e,
-                children: e.is_dir ? null : [],
-                expanded: false,
-                depth: 0,
-              }));
+            const entries = await invoke<FileEntry[]>("read_directory", {
+              path,
+            });
+            const nodes: TreeNode[] = applyHiddenFilter(entries).map((e) => ({
+              entry: e,
+              children: e.is_dir ? null : [],
+              expanded: false,
+              depth: 0,
+            }));
             set((s) => {
               s.tree = nodes;
               s.loading = false;
@@ -143,17 +144,18 @@ export const useExplorerStore = createSelectors(
 
           if (node.children === null) {
             try {
-              const entries = await invoke<FileEntry[]>("read_directory", { path });
+              const entries = await invoke<FileEntry[]>("read_directory", {
+                path,
+              });
               set((s) => {
                 const n = findNode(s.tree, path);
                 if (n) {
-                  n.children = applyHiddenFilter(entries)
-                    .map((e) => ({
-                      entry: e,
-                      children: e.is_dir ? null : [],
-                      expanded: false,
-                      depth: n.depth + 1,
-                    }));
+                  n.children = applyHiddenFilter(entries).map((e) => ({
+                    entry: e,
+                    children: e.is_dir ? null : [],
+                    expanded: false,
+                    depth: n.depth + 1,
+                  }));
                   n.expanded = true;
                 }
               });
@@ -172,7 +174,9 @@ export const useExplorerStore = createSelectors(
           // Root re-walk if this is the project root.
           if (state.rootPath === dirPath) {
             try {
-              const entries = await invoke<FileEntry[]>("read_directory", { path: dirPath });
+              const entries = await invoke<FileEntry[]>("read_directory", {
+                path: dirPath,
+              });
               set((s) => {
                 s.tree = reconcileChildren(s.tree, entries, 0);
               });
@@ -184,11 +188,17 @@ export const useExplorerStore = createSelectors(
           }
           // Sub-dir: only refetch if it's currently loaded (children !== null).
           const existing = findNode(state.tree, dirPath);
-          if (!existing || !existing.entry.is_dir || existing.children === null) {
+          if (
+            !existing ||
+            !existing.entry.is_dir ||
+            existing.children === null
+          ) {
             return;
           }
           try {
-            const entries = await invoke<FileEntry[]>("read_directory", { path: dirPath });
+            const entries = await invoke<FileEntry[]>("read_directory", {
+              path: dirPath,
+            });
             set((s) => {
               const n = findNode(s.tree, dirPath);
               if (!n || n.children === null) return;
@@ -294,8 +304,8 @@ export const useExplorerStore = createSelectors(
           });
         },
       },
-    }))
-  )
+    })),
+  ),
 );
 
 function collapseAllNodes(nodes: TreeNode[]): void {

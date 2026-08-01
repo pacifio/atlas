@@ -38,15 +38,8 @@ export function MemoryGraphView() {
   const results = useMemoryGraphStore.use.results();
   const matchedIds = useMemoryGraphStore.use.matchedIds();
   const selectedId = useMemoryGraphStore.use.selectedId();
-  const {
-    init,
-    download,
-    buildIndex,
-    runQuery,
-    setQuery,
-    clearQuery,
-    select,
-  } = useMemoryGraphStore.use.actions();
+  const { init, download, buildIndex, runQuery, setQuery, clearQuery, select } =
+    useMemoryGraphStore.use.actions();
 
   useEffect(() => {
     if (projectPath) void init(projectPath);
@@ -59,7 +52,10 @@ export function MemoryGraphView() {
   if (phase === "checking") {
     return (
       <Centered>
-        <Loader2 size={18} className="animate-spin text-[var(--text-tertiary)]" />
+        <Loader2
+          size={18}
+          className="animate-spin text-[var(--text-tertiary)]"
+        />
       </Centered>
     );
   }
@@ -77,8 +73,8 @@ export function MemoryGraphView() {
             </h3>
             <p className="text-[11px] leading-relaxed text-[var(--text-tertiary)]">
               Download a small on-device embedding model to index your Claude &
-              Codex memory, map how it relates, and query it in natural language.
-              Runs entirely locally — nothing leaves your machine.
+              Codex memory, map how it relates, and query it in natural
+              language. Runs entirely locally — nothing leaves your machine.
             </p>
           </div>
           <button
@@ -88,7 +84,9 @@ export function MemoryGraphView() {
             <Download size={13} />
             Download model
           </button>
-          <p className="text-[10px] text-[var(--text-ghost)] font-mono">{MODEL_LABEL}</p>
+          <p className="text-[10px] text-[var(--text-ghost)] font-mono">
+            {MODEL_LABEL}
+          </p>
         </div>
       </Centered>
     );
@@ -97,7 +95,8 @@ export function MemoryGraphView() {
   if (phase === "downloading") {
     const pct = progress
       ? Math.round(
-          ((progress.file_index + (progress.total ? progress.received / progress.total : 0)) /
+          ((progress.file_index +
+            (progress.total ? progress.received / progress.total : 0)) /
             Math.max(1, progress.file_count)) *
             100,
         )
@@ -105,9 +104,14 @@ export function MemoryGraphView() {
     return (
       <Centered>
         <div className="text-center max-w-[360px] px-6 w-full space-y-3">
-          <Loader2 size={20} className="animate-spin text-[var(--text-secondary)] mx-auto" />
+          <Loader2
+            size={20}
+            className="animate-spin text-[var(--text-secondary)] mx-auto"
+          />
           <div className="space-y-1.5">
-            <p className="text-[12px] text-[var(--text-primary)]">Downloading model…</p>
+            <p className="text-[12px] text-[var(--text-primary)]">
+              Downloading model…
+            </p>
             <div className="h-1.5 rounded-full bg-[var(--bg-elevated)] overflow-hidden">
               <div
                 className="h-full bg-[var(--accent-primary)] transition-[width] duration-200"
@@ -129,9 +133,14 @@ export function MemoryGraphView() {
     return (
       <Centered>
         <div className="text-center max-w-[340px] px-6 space-y-3">
-          <AlertTriangle size={20} className="text-[var(--status-error)] mx-auto" />
+          <AlertTriangle
+            size={20}
+            className="text-[var(--status-error)] mx-auto"
+          />
           <p className="text-[12px] text-[var(--text-secondary)]">
-            {phase === "download-failed" ? "Model download failed" : "Something went wrong"}
+            {phase === "download-failed"
+              ? "Model download failed"
+              : "Something went wrong"}
           </p>
           {error && (
             <p className="text-[10px] text-[var(--text-tertiary)] font-mono break-words">
@@ -140,7 +149,9 @@ export function MemoryGraphView() {
           )}
           <button
             onClick={() =>
-              phase === "download-failed" ? void download() : void init(projectPath)
+              phase === "download-failed"
+                ? void download()
+                : void init(projectPath)
             }
             className="inline-flex items-center gap-1.5 h-7 px-3 rounded-md border border-[var(--border-default)] text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           >
@@ -156,8 +167,13 @@ export function MemoryGraphView() {
     return (
       <Centered>
         <div className="text-center space-y-2">
-          <Loader2 size={18} className="animate-spin text-[var(--text-secondary)] mx-auto" />
-          <p className="text-[11px] text-[var(--text-tertiary)]">Indexing memory…</p>
+          <Loader2
+            size={18}
+            className="animate-spin text-[var(--text-secondary)] mx-auto"
+          />
+          <p className="text-[11px] text-[var(--text-tertiary)]">
+            Indexing memory…
+          </p>
         </div>
       </Centered>
     );
@@ -249,7 +265,10 @@ function GraphReady({
   const rafRef = useRef<number | undefined>(undefined);
 
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
-    const v = typeof localStorage !== "undefined" ? localStorage.getItem(VIEW_KEY) : null;
+    const v =
+      typeof localStorage !== "undefined"
+        ? localStorage.getItem(VIEW_KEY)
+        : null;
     // Tree is the default/initial view; only an explicit "graph" pref overrides.
     return v === "graph" ? "graph" : "tree";
   });
@@ -356,7 +375,12 @@ function GraphReady({
             spellCheck={false}
             className="flex-1 min-w-0 bg-transparent outline-none text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]"
           />
-          {querying && <Loader2 size={11} className="animate-spin text-[var(--text-tertiary)]" />}
+          {querying && (
+            <Loader2
+              size={11}
+              className="animate-spin text-[var(--text-tertiary)]"
+            />
+          )}
           {query && !querying && (
             <button
               onClick={onClearQuery}
@@ -438,10 +462,18 @@ function GraphReady({
           {selected && viewMode === "graph" && (
             <div className="absolute right-3 top-[26px] flex items-center gap-3 rounded-md border border-[var(--border-default)] bg-[var(--bg-elevated)]/90 backdrop-blur-sm px-2.5 h-7 text-[10px] text-[var(--text-tertiary)]">
               <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full" style={{ background: "#fafafa" }} /> impacted
+                <span
+                  className="w-2 h-2 rounded-full"
+                  style={{ background: "#fafafa" }}
+                />{" "}
+                impacted
               </span>
               <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full" style={{ background: "#6796e6" }} /> influenced by
+                <span
+                  className="w-2 h-2 rounded-full"
+                  style={{ background: "#6796e6" }}
+                />{" "}
+                influenced by
               </span>
             </div>
           )}
@@ -471,7 +503,8 @@ function GraphReady({
               </p>
               <p className="text-[9px] text-[var(--text-ghost)] mt-1.5 uppercase tracking-wide">
                 {selected.source} · {selected.kind}
-                {selected.timestampMs > 0 && ` · ${fmtDate(selected.timestampMs)}`}
+                {selected.timestampMs > 0 &&
+                  ` · ${fmtDate(selected.timestampMs)}`}
               </p>
             </button>
           )}
@@ -492,7 +525,9 @@ function GraphReady({
                   onClick={() => onSelect(active ? null : hit.id)}
                   className={cn(
                     "w-full text-left px-3 py-2 border-b border-[var(--border-subtle)] transition-colors flex flex-col gap-0.5",
-                    active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
+                    active
+                      ? "bg-[var(--bg-selected)]"
+                      : "hover:bg-[var(--bg-hover)]",
                   )}
                 >
                   <div className="flex items-center gap-1.5 min-w-0">

@@ -19,7 +19,9 @@ export function MissionControlDashboard() {
   const error = useMissionControlStore.use.error();
   const { setRange, refresh } = useMissionControlStore.use.actions();
   // Re-fetch when the set of workspaces changes.
-  const wsSig = useWorkspaceStore((s) => s.workspaces.map((w) => w.path).join("|"));
+  const wsSig = useWorkspaceStore((s) =>
+    s.workspaces.map((w) => w.path).join("|"),
+  );
 
   // Node captured for image/PDF export (cards + charts + gantt).
   const captureRef = useRef<HTMLDivElement>(null);
@@ -57,10 +59,14 @@ export function MissionControlDashboard() {
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         {!data && loading && (
-          <div className="p-6 text-[12px] text-[var(--text-tertiary)]">Loading metrics…</div>
+          <div className="p-6 text-[12px] text-[var(--text-tertiary)]">
+            Loading metrics…
+          </div>
         )}
         {error && (
-          <div className="p-6 text-[12px] text-[var(--status-error)]">Failed to load: {error}</div>
+          <div className="p-6 text-[12px] text-[var(--status-error)]">
+            Failed to load: {error}
+          </div>
         )}
         {data && (
           <div className="p-4 space-y-4">

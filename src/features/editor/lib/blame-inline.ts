@@ -7,9 +7,19 @@
 // already reports as uncommitted) falls back to "You · Uncommitted changes"
 // instead of ever showing another commit's info.
 
-import { EditorView, Decoration, WidgetType, ViewPlugin } from "@codemirror/view";
+import {
+  EditorView,
+  Decoration,
+  WidgetType,
+  ViewPlugin,
+} from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
-import { StateField, StateEffect, RangeSet, RangeValue } from "@codemirror/state";
+import {
+  StateField,
+  StateEffect,
+  RangeSet,
+  RangeValue,
+} from "@codemirror/state";
 import type { Extension, Text } from "@codemirror/state";
 import type { BlameLine } from "@/features/git/lib/git-blame-api";
 
@@ -52,7 +62,8 @@ const blameField = StateField.define<BlameState>({
   create: () => null,
   update(value, tr) {
     for (const e of tr.effects) {
-      if (e.is(setBlame)) return e.value.length === 0 ? null : buildSet(tr.state.doc, e.value);
+      if (e.is(setBlame))
+        return e.value.length === 0 ? null : buildSet(tr.state.doc, e.value);
     }
     if (value === null || !tr.docChanged) return value;
     // Shift markers through the edit, then drop every line the edit touched so
@@ -62,9 +73,11 @@ const blameField = StateField.define<BlameState>({
     tr.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
       const first = tr.state.doc.lineAt(fromB).number;
       const last = tr.state.doc.lineAt(toB).number;
-      for (let n = first; n <= last; n++) touched.add(tr.state.doc.line(n).from);
+      for (let n = first; n <= last; n++)
+        touched.add(tr.state.doc.line(n).from);
     });
-    if (touched.size) set = set.update({ filter: (from) => !touched.has(from) });
+    if (touched.size)
+      set = set.update({ filter: (from) => !touched.has(from) });
     return set;
   },
 });
@@ -103,7 +116,11 @@ class BlameWidget extends WidgetType {
   }
 }
 
-function blameTextFor(state: BlameState, doc: Text, head: number): string | null {
+function blameTextFor(
+  state: BlameState,
+  doc: Text,
+  head: number,
+): string | null {
   if (state === null) return null;
   const line = doc.lineAt(head);
   let found: BlameLine | null = null;
@@ -129,7 +146,12 @@ const blameDecorations = ViewPlugin.fromClass(
       const blameChanged = update.transactions.some((tr) =>
         tr.effects.some((e) => e.is(setBlame)),
       );
-      if (update.docChanged || update.selectionSet || update.focusChanged || blameChanged) {
+      if (
+        update.docChanged ||
+        update.selectionSet ||
+        update.focusChanged ||
+        blameChanged
+      ) {
         this.decorations = this.build(update.view);
       }
     }
@@ -142,7 +164,10 @@ const blameDecorations = ViewPlugin.fromClass(
       );
       if (text === null) return Decoration.none;
       const line = view.state.doc.lineAt(view.state.selection.main.head);
-      const deco = Decoration.widget({ widget: new BlameWidget(text), side: 1 });
+      const deco = Decoration.widget({
+        widget: new BlameWidget(text),
+        side: 1,
+      });
       return Decoration.set([deco.range(line.to)]);
     }
   },

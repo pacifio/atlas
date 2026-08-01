@@ -58,11 +58,17 @@ function wrapLabel(text: string, maxChars: number, maxLines = 2): string[] {
   }
   if (lines.length < maxLines && cur) lines.push(cur);
   // Hard-clamp each line; ellipsise the last if we dropped content.
-  const out = lines.slice(0, maxLines).map((l) => (l.length > maxChars ? l.slice(0, maxChars - 1) : l));
+  const out = lines
+    .slice(0, maxLines)
+    .map((l) => (l.length > maxChars ? l.slice(0, maxChars - 1) : l));
   const shown = out.join(" ");
   if (shown.length < clean.length && out.length) {
     const i = out.length - 1;
-    out[i] = (out[i].length > maxChars - 1 ? out[i].slice(0, maxChars - 1) : out[i]).trimEnd() + "…";
+    out[i] =
+      (out[i].length > maxChars - 1
+        ? out[i].slice(0, maxChars - 1)
+        : out[i]
+      ).trimEnd() + "…";
   }
   return out;
 }
@@ -80,7 +86,10 @@ export function MemoryTreeView({
     [projectPath],
   );
 
-  const tree = useMemo(() => buildMemoryTree(graph, rootLabel), [graph, rootLabel]);
+  const tree = useMemo(
+    () => buildMemoryTree(graph, rootLabel),
+    [graph, rootLabel],
+  );
 
   // parentId for every node — drives the ancestor decision-path highlight.
   const parentOf = useMemo(() => {
@@ -137,7 +146,12 @@ export function MemoryTreeView({
   const [transform, setTransform] = useState({ x: 28, y: 24, k: 1 });
   const wrapRef = useRef<HTMLDivElement>(null);
   const userMoved = useRef(false);
-  const panning = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
+  const panning = useRef<{
+    x: number;
+    y: number;
+    tx: number;
+    ty: number;
+  } | null>(null);
 
   useEffect(() => {
     userMoved.current = false;
@@ -167,7 +181,10 @@ export function MemoryTreeView({
       const lx = e.clientX - rect.left;
       const ly = e.clientY - rect.top;
       setTransform((t) => {
-        const k = Math.min(MAX_K, Math.max(MIN_K, t.k * Math.exp(-e.deltaY * ZOOM_STEP)));
+        const k = Math.min(
+          MAX_K,
+          Math.max(MIN_K, t.k * Math.exp(-e.deltaY * ZOOM_STEP)),
+        );
         const wx = (lx - t.x) / t.k;
         const wy = (ly - t.y) / t.k;
         return { x: lx - wx * k, y: ly - wy * k, k };
@@ -180,7 +197,12 @@ export function MemoryTreeView({
   const dragMoved = useRef(false);
   const onPointerDown = (e: React.PointerEvent) => {
     dragMoved.current = false;
-    panning.current = { x: e.clientX, y: e.clientY, tx: transform.x, ty: transform.y };
+    panning.current = {
+      x: e.clientX,
+      y: e.clientY,
+      tx: transform.x,
+      ty: transform.y,
+    };
     (e.target as Element).setPointerCapture?.(e.pointerId);
   };
   const onPointerMove = (e: React.PointerEvent) => {
@@ -190,7 +212,11 @@ export function MemoryTreeView({
       dragMoved.current = true;
       userMoved.current = true;
     }
-    setTransform((t) => ({ ...t, x: p.tx + (e.clientX - p.x), y: p.ty + (e.clientY - p.y) }));
+    setTransform((t) => ({
+      ...t,
+      x: p.tx + (e.clientX - p.x),
+      y: p.ty + (e.clientY - p.y),
+    }));
   };
   const onPointerUp = () => {
     panning.current = null;
@@ -202,12 +228,16 @@ export function MemoryTreeView({
   };
 
   const hasMatches = matchedIds.size > 0;
-  const visibleSet = useMemo(() => new Set(layout.visible.map((v) => v.id)), [layout.visible]);
+  const visibleSet = useMemo(
+    () => new Set(layout.visible.map((v) => v.id)),
+    [layout.visible],
+  );
 
   /** Dim factor for a node id given current path/search/time state. */
   const dimmed = (t: TreeNode): boolean => {
     if (pathIds) return !pathIds.has(t.id);
-    if (cutoffMs != null && t.node && t.node.timestampMs > cutoffMs) return true;
+    if (cutoffMs != null && t.node && t.node.timestampMs > cutoffMs)
+      return true;
     if (hasMatches && t.node) return !matchedIds.has(t.id);
     return false;
   };
@@ -223,7 +253,9 @@ export function MemoryTreeView({
       onClick={onBackgroundClick}
     >
       <svg width="100%" height="100%" className="block select-none">
-        <g transform={`translate(${transform.x} ${transform.y}) scale(${transform.k})`}>
+        <g
+          transform={`translate(${transform.x} ${transform.y}) scale(${transform.k})`}
+        >
           {/* Connectors: parent card right edge → child card left edge. */}
           {layout.visible.map((t) => {
             if (collapsed.has(t.id)) return null;
@@ -231,7 +263,8 @@ export function MemoryTreeView({
             return t.children.map((c) => {
               if (!visibleSet.has(c.id)) return null;
               const cp = layout.positions.get(c.id)!;
-              const onPath = !!pathIds && pathIds.has(t.id) && pathIds.has(c.id);
+              const onPath =
+                !!pathIds && pathIds.has(t.id) && pathIds.has(c.id);
               const dim = dimmed(c) && !onPath;
               return (
                 <path
@@ -285,9 +318,19 @@ export function MemoryTreeView({
                       toggle(t.id);
                     }}
                   >
-                    <rect x={-6} y={-8} width={16} height={16} fill="transparent" />
+                    <rect
+                      x={-6}
+                      y={-8}
+                      width={16}
+                      height={16}
+                      fill="transparent"
+                    />
                     <path
-                      d={collapsed.has(t.id) ? "M0 -4 L5 0 L0 4 Z" : "M-4 -1.5 L4 -1.5 L0 3.5 Z"}
+                      d={
+                        collapsed.has(t.id)
+                          ? "M0 -4 L5 0 L0 4 Z"
+                          : "M-4 -1.5 L4 -1.5 L0 3.5 Z"
+                      }
                       fill={lit ? HL : "var(--text-tertiary)"}
                     />
                   </g>
@@ -295,7 +338,9 @@ export function MemoryTreeView({
                 {(() => {
                   const fontSize = isRoot ? 11 : isCat ? 10.5 : 10;
                   const textX = isRoot ? 10 : 20;
-                  const maxChars = Math.floor((CARD_W - textX - 9) / (fontSize * 0.54));
+                  const maxChars = Math.floor(
+                    (CARD_W - textX - 9) / (fontSize * 0.54),
+                  );
                   const suffix =
                     collapsed.has(t.id) && t.children.length > 0
                       ? `  (${t.children.length})`
@@ -303,7 +348,9 @@ export function MemoryTreeView({
                   const lines = wrapLabel(t.label + suffix, maxChars, 3);
                   const lineH = fontSize + 2.5;
                   const top = CARD_H / 2 - ((lines.length - 1) * lineH) / 2;
-                  const textColor = lit ? "var(--text-primary)" : "var(--text-secondary)";
+                  const textColor = lit
+                    ? "var(--text-primary)"
+                    : "var(--text-secondary)";
                   return (
                     <>
                       <rect
@@ -339,7 +386,12 @@ export function MemoryTreeView({
                         fill={textColor}
                       >
                         {lines.map((ln, i) => (
-                          <tspan key={i} x={textX} y={top + i * lineH} dominantBaseline="middle">
+                          <tspan
+                            key={i}
+                            x={textX}
+                            y={top + i * lineH}
+                            dominantBaseline="middle"
+                          >
                             {ln}
                           </tspan>
                         ))}

@@ -62,7 +62,9 @@ export const useSessionStore = createSelectors(
       setLastResearchSource: (source) =>
         set((s) => ({ session: { ...s.session, lastResearchSource: source } })),
       setLastResearchResults: (results) =>
-        set((s) => ({ session: { ...s.session, lastResearchResults: results } })),
+        set((s) => ({
+          session: { ...s.session, lastResearchResults: results },
+        })),
       setLastTrendingPapers: (papers) =>
         set((s) => ({ session: { ...s.session, lastTrendingPapers: papers } })),
       setLastOpenedFiles: (files) =>
@@ -75,12 +77,18 @@ export const useSessionStore = createSelectors(
         set((s) => ({
           session: {
             ...s.session,
-            searchHistory: [query, ...s.session.searchHistory.filter((q) => q !== query)].slice(0, 20),
+            searchHistory: [
+              query,
+              ...s.session.searchHistory.filter((q) => q !== query),
+            ].slice(0, 20),
           },
         })),
       removeSearchHistory: (query) =>
         set((s) => ({
-          session: { ...s.session, searchHistory: s.session.searchHistory.filter((q) => q !== query) },
+          session: {
+            ...s.session,
+            searchHistory: s.session.searchHistory.filter((q) => q !== query),
+          },
         })),
       clearSearchHistory: () =>
         set((s) => ({ session: { ...s.session, searchHistory: [] } })),
@@ -109,5 +117,5 @@ export const useSessionStore = createSelectors(
         }
       },
     },
-  }))
+  })),
 );

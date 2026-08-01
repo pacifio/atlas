@@ -1,12 +1,10 @@
-import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
-  X,
-  MessageSquare,
-  Search,
-  PanelLeftClose,
-  Plus,
-} from "lucide-react";
+  useQuery,
+  useQueryClient,
+  keepPreviousData,
+} from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { X, MessageSquare, Search, PanelLeftClose, Plus } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
@@ -199,12 +197,8 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
   } = useChatStore.use.actions();
 
   const chatSidebar = useLayoutStore.use.chatSidebar();
-  const {
-    toggleChatSidebar,
-    setChatSidebarWidth,
-    addTab,
-    setActiveTab,
-  } = useLayoutStore.use.actions();
+  const { toggleChatSidebar, setChatSidebarWidth, addTab, setActiveTab } =
+    useLayoutStore.use.actions();
 
   const [search, setSearch] = useState("");
 
@@ -311,7 +305,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
       (e) => {
         if (e.payload.cwd !== cwd) return;
         invalidate();
-      }
+      },
     );
     window.addEventListener("focus", invalidate);
     return () => {
@@ -352,7 +346,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
       liveAgents.map((s) => {
         const id = s.acpSessionId ?? `live-${s.id}`;
         return [id, s] as const;
-      })
+      }),
     );
     // Merge both agents' disk listings into one map, tagging each row with the
     // agent that produced it so the row icon + resume routing are correct even
@@ -364,7 +358,8 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
     >();
     for (const d of agentList) diskById.set(d.id, { meta: d, agent: "claude" });
     for (const d of codexList) diskById.set(d.id, { meta: d, agent: "codex" });
-    for (const d of cerseiList) diskById.set(d.id, { meta: d, agent: "cersei" });
+    for (const d of cerseiList)
+      diskById.set(d.id, { meta: d, agent: "cersei" });
 
     // An unbound live row (`live-<tabId>` key — after an agent switch or
     // clearSession dropped the binding but kept messages, or during the
@@ -372,7 +367,8 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
     // conversation as a disk row listed under its real session id. Rendering
     // both shows the session twice, so suppress the live twin whenever a
     // disk row already covers the same first-user text.
-    const normFirstUser = (t: string) => stripInjectedContext(t).trim().slice(0, 60);
+    const normFirstUser = (t: string) =>
+      stripInjectedContext(t).trim().slice(0, 60);
     // Keyed by "<agent>|<text>", paired with the disk row's last-modified
     // time. A live twin is only suppressed when the disk row belongs to the
     // SAME agent and their activity times are close (a true twin's live
@@ -414,10 +410,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
       }
     }
 
-    const allIds = new Set<string>([
-      ...liveById.keys(),
-      ...diskById.keys(),
-    ]);
+    const allIds = new Set<string>([...liveById.keys(), ...diskById.keys()]);
 
     const agents: SidebarItem[] = Array.from(allIds, (id) => {
       const live = liveById.get(id);
@@ -763,12 +756,16 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
         targetTabId,
         snapshot.current_mode,
         snapshot.available_modes,
-        agentTypeFromPluginId(snapshot.plugin_id)
+        agentTypeFromPluginId(snapshot.plugin_id),
       );
       // Seed the ACP model picker too (Claude Code / Codex). On resume the agent
       // may not re-advertise models, so setAcpModels falls back to the cache.
       if (snapshot.available_models.length > 0) {
-        setAcpModels(targetTabId, snapshot.current_model, snapshot.available_models);
+        setAcpModels(
+          targetTabId,
+          snapshot.current_model,
+          snapshot.available_models,
+        );
       }
       setTranscriptLoading(targetTabId, false);
     })();
@@ -838,7 +835,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
-    [chatSidebar.width, setChatSidebarWidth]
+    [chatSidebar.width, setChatSidebarWidth],
   );
 
   if (!chatSidebar.visible) {
@@ -880,7 +877,9 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
       {/* List */}
       <div className="flex-1 overflow-y-auto hide-scrollbar">
         {isLoading && (
-          <div className="text-[11px] text-[var(--text-tertiary)] px-3 py-2">Loading…</div>
+          <div className="text-[11px] text-[var(--text-tertiary)] px-3 py-2">
+            Loading…
+          </div>
         )}
         {showEmpty && (
           <div className="text-[11px] text-[var(--text-tertiary)] px-3 py-3 leading-relaxed">
@@ -904,7 +903,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
                 active
                   ? "bg-[var(--bg-selected)] text-[var(--text-primary)] opacity-100"
                   : "text-[var(--text-secondary)] opacity-80 hover:opacity-100 hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
-                !isLast && "border-b border-[var(--border-default)]"
+                !isLast && "border-b border-[var(--border-default)]",
               )}
             >
               <div className="flex items-start gap-2 min-w-0 pr-5">
@@ -921,7 +920,10 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
                   }
                 >
                   {isRunning ? (
-                    <AtlasLoader size={8} className="text-[var(--accent-primary)]" />
+                    <AtlasLoader
+                      size={8}
+                      className="text-[var(--accent-primary)]"
+                    />
                   ) : item.kind === "agent" ? (
                     item.agent === "codex" ? (
                       <CodexIcon className="size-3" />
@@ -931,7 +933,10 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
                       <ClaudeIcon className="size-3" />
                     )
                   ) : (
-                    <MessageSquare size={11} className="text-[var(--accent-primary)]" />
+                    <MessageSquare
+                      size={11}
+                      className="text-[var(--accent-primary)]"
+                    />
                   )}
                 </span>
                 <span className="text-[11px] leading-snug line-clamp-2 flex-1">
@@ -959,15 +964,15 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
                 (item.agent === "cersei" ||
                   item.agent === "codex" ||
                   (item.agent === "claude" && !!item.filePath)) && (
-                <button
-                  onClick={(e) => handleDeleteAgent(e, item)}
-                  aria-label="Delete session"
-                  className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 flex items-center justify-center w-4 h-4 rounded text-[var(--text-tertiary)] hover:text-[var(--status-error)] hover:bg-[var(--bg-elevated)] transition-opacity"
-                  title="Delete session"
-                >
-                  <X size={10} />
-                </button>
-              )}
+                  <button
+                    onClick={(e) => handleDeleteAgent(e, item)}
+                    aria-label="Delete session"
+                    className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 flex items-center justify-center w-4 h-4 rounded text-[var(--text-tertiary)] hover:text-[var(--status-error)] hover:bg-[var(--bg-elevated)] transition-opacity"
+                    title="Delete session"
+                  >
+                    <X size={10} />
+                  </button>
+                )}
             </div>
           );
         })}

@@ -35,14 +35,18 @@ export function StashesView() {
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto hide-scrollbar">
         {stashes.length === 0 ? (
-          <div className="px-3 py-8 text-center text-[11px] text-text-tertiary">No stashes</div>
+          <div className="px-3 py-8 text-center text-[11px] text-text-tertiary">
+            No stashes
+          </div>
         ) : (
           stashes.map((s) => (
             <div
               key={s.index}
               className="group flex flex-col gap-1 px-3 py-2 border-b border-border-subtle"
             >
-              <span className="text-[11px] text-text-secondary truncate">{s.message}</span>
+              <span className="text-[11px] text-text-secondary truncate">
+                {s.message}
+              </span>
               <div className="flex items-center gap-2">
                 <span className="text-[9px] font-mono text-text-tertiary flex-1">
                   stash@{`{${s.index}}`} {s.branch && `· ${s.branch}`}

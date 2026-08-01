@@ -28,7 +28,10 @@ function StepIcon({ status }: { status: PlanStep["status"] }) {
     return <CheckCircle2 size={12} className="text-[var(--status-success)]" />;
   if (status === "in_progress")
     return (
-      <Loader2 size={12} className="animate-spin text-[var(--accent-primary)]" />
+      <Loader2
+        size={12}
+        className="animate-spin text-[var(--accent-primary)]"
+      />
     );
   return (
     <div className="h-3 w-3 rounded-full border border-[var(--border-strong)]" />

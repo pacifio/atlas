@@ -31,11 +31,15 @@ export function loadCachedAcpModes(agentType: string): CachedAcpModes | null {
     const raw = localStorage.getItem(key(agentType));
     if (!raw) return null;
     const v = JSON.parse(raw) as CachedAcpModes;
-    if (!Array.isArray(v?.availableModes) || v.availableModes.length === 0) return null;
+    if (!Array.isArray(v?.availableModes) || v.availableModes.length === 0)
+      return null;
     // A current mode that isn't one of the available ones is not usable: the
     // picker would render its "Mode" fallback and the first pick would push an
     // id the agent rejects. Keep the list, drop the orphan.
-    if (v.currentMode && !v.availableModes.some((m) => m.id === v.currentMode)) {
+    if (
+      v.currentMode &&
+      !v.availableModes.some((m) => m.id === v.currentMode)
+    ) {
       return { ...v, currentMode: null };
     }
     return v;
@@ -46,7 +50,10 @@ export function loadCachedAcpModes(agentType: string): CachedAcpModes | null {
 }
 
 /** Persist the modes confirmed by a live session (no-op for empty sets). */
-export function saveCachedAcpModes(agentType: string, modes: CachedAcpModes): void {
+export function saveCachedAcpModes(
+  agentType: string,
+  modes: CachedAcpModes,
+): void {
   try {
     if (modes.availableModes.length > 0) {
       localStorage.setItem(key(agentType), JSON.stringify(modes));

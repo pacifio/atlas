@@ -91,7 +91,12 @@ export function captureSnapshot(workspaceId: string): void {
   // mirror's persisted fields only (NOT viewsByWs, which is the whole map).
   const ls = useLayoutStore.getState();
   const layoutForHash = {
-    tabs: ls.tabs.map((t) => ({ id: t.id, type: t.type, groupId: t.groupId, data: t.data })),
+    tabs: ls.tabs.map((t) => ({
+      id: t.id,
+      type: t.type,
+      groupId: t.groupId,
+      data: t.data,
+    })),
     groupOrder: ls.groupOrder,
     activeByGroup: ls.activeByGroup,
     focusedGroupId: ls.focusedGroupId,

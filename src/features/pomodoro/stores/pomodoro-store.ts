@@ -178,7 +178,9 @@ export const usePomodoroStore = createSelectors(
                 });
                 fireNotification(
                   "Back to focus",
-                  s.currentTask ? `Resuming: ${s.currentTask}` : "Cycle starting.",
+                  s.currentTask
+                    ? `Resuming: ${s.currentTask}`
+                    : "Cycle starting.",
                 );
               }
             }
@@ -306,7 +308,10 @@ export const usePomodoroStore = createSelectors(
                 ? normalized
                 : [{ ...emptyToday(), today: true }, ...normalized];
               s.activeDayIdx = 0;
-              s.blocks = (file?.blocks ?? []).map((b) => ({ ...b, current: false }));
+              s.blocks = (file?.blocks ?? []).map((b) => ({
+                ...b,
+                current: false,
+              }));
               s.knownTags = file?.knownTags ?? [];
               s.hydrated = true;
               s.hydratedFor = projectPath;
@@ -376,7 +381,11 @@ let lastSig = "";
 export function attachPersistence(projectPath: string) {
   return usePomodoroStore.subscribe((s) => {
     if (!s.hydrated) return;
-    const file: PomodoroFile = { days: s.days, blocks: s.blocks, knownTags: s.knownTags };
+    const file: PomodoroFile = {
+      days: s.days,
+      blocks: s.blocks,
+      knownTags: s.knownTags,
+    };
     const sig = JSON.stringify(file);
     if (sig === lastSig) return;
     lastSig = sig;

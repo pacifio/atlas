@@ -63,10 +63,22 @@ function agentMeta(agent: string): {
 } {
   const a = agent.toLowerCase();
   if (a.includes("codex"))
-    return { Icon: CodexIcon, tint: "var(--agent-codex-chip-bg)", label: "Codex" };
+    return {
+      Icon: CodexIcon,
+      tint: "var(--agent-codex-chip-bg)",
+      label: "Codex",
+    };
   if (a.includes("claude"))
-    return { Icon: ClaudeIcon, tint: "var(--agent-claude-chip-bg)", label: "Claude" };
-  return { Icon: null, tint: "var(--bg-elevated)", label: agent.split(/[-_]/)[0] || agent };
+    return {
+      Icon: ClaudeIcon,
+      tint: "var(--agent-claude-chip-bg)",
+      label: "Claude",
+    };
+  return {
+    Icon: null,
+    tint: "var(--bg-elevated)",
+    label: agent.split(/[-_]/)[0] || agent,
+  };
 }
 
 const str = (v: unknown): string => (v == null ? "" : String(v));
@@ -114,7 +126,10 @@ export function SharedMemoryView({ projectPath, className }: Props) {
   const [agentFilter, setAgentFilter] = useState<string>("");
   const [kindFilter, setKindFilter] = useState<string>("");
 
-  const plans = useMemo(() => events.filter((e) => e.kind === "plan_set"), [events]);
+  const plans = useMemo(
+    () => events.filter((e) => e.kind === "plan_set"),
+    [events],
+  );
 
   // Filter options derived from the data actually present.
   const agentOptions = useMemo(
@@ -136,10 +151,16 @@ export function SharedMemoryView({ projectPath, className }: Props) {
       eventDetail(e).toLowerCase().includes(q));
 
   const eventRows = useMemo(
-    () => events.filter((e) => baseMatch(e) && (!kindFilter || e.kind === kindFilter)),
+    () =>
+      events.filter(
+        (e) => baseMatch(e) && (!kindFilter || e.kind === kindFilter),
+      ),
     [events, q, agentFilter, kindFilter],
   );
-  const planRows = useMemo(() => plans.filter(baseMatch), [plans, q, agentFilter]);
+  const planRows = useMemo(
+    () => plans.filter(baseMatch),
+    [plans, q, agentFilter],
+  );
 
   return (
     <div className={cn("h-full flex flex-col bg-[var(--bg-base)]", className)}>
@@ -265,13 +286,25 @@ function EventRow({
         onClick={onToggle}
         className={cn(
           "w-full flex items-center h-[40px] px-3 text-left transition-colors cursor-pointer",
-          expanded ? "bg-[var(--bg-elevated)]/50" : "hover:bg-[var(--bg-hover)]",
+          expanded
+            ? "bg-[var(--bg-elevated)]/50"
+            : "hover:bg-[var(--bg-hover)]",
         )}
       >
-        <span className={cn(EVENT_COL.seq, "font-mono text-[10px] tabular-nums text-[var(--text-ghost)]")}>
+        <span
+          className={cn(
+            EVENT_COL.seq,
+            "font-mono text-[10px] tabular-nums text-[var(--text-ghost)]",
+          )}
+        >
           {e.seq}
         </span>
-        <span className={cn(EVENT_COL.time, "text-[10px] text-[var(--text-tertiary)]")}>
+        <span
+          className={cn(
+            EVENT_COL.time,
+            "text-[10px] text-[var(--text-tertiary)]",
+          )}
+        >
           {eventTime(e.ts)}
         </span>
         <span className={EVENT_COL.agent}>
@@ -282,10 +315,17 @@ function EventRow({
         </span>
         <span className={cn(EVENT_COL.detail, "min-w-0 pr-3")}>
           <span className="block truncate text-[12px] text-[var(--text-secondary)]">
-            {eventDetail(e) || <span className="text-[var(--text-ghost)]">—</span>}
+            {eventDetail(e) || (
+              <span className="text-[var(--text-ghost)]">—</span>
+            )}
           </span>
         </span>
-        <span className={cn(EVENT_COL.chevron, "flex items-center justify-end text-[var(--text-tertiary)]")}>
+        <span
+          className={cn(
+            EVENT_COL.chevron,
+            "flex items-center justify-end text-[var(--text-tertiary)]",
+          )}
+        >
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
       </button>
@@ -369,13 +409,25 @@ function PlanRow({
         onClick={onToggle}
         className={cn(
           "w-full flex items-center h-[40px] px-3 text-left transition-colors cursor-pointer",
-          expanded ? "bg-[var(--bg-elevated)]/50" : "hover:bg-[var(--bg-hover)]",
+          expanded
+            ? "bg-[var(--bg-elevated)]/50"
+            : "hover:bg-[var(--bg-hover)]",
         )}
       >
-        <span className={cn(PLAN_COL.seq, "font-mono text-[10px] tabular-nums text-[var(--text-ghost)]")}>
+        <span
+          className={cn(
+            PLAN_COL.seq,
+            "font-mono text-[10px] tabular-nums text-[var(--text-ghost)]",
+          )}
+        >
           {e.seq}
         </span>
-        <span className={cn(PLAN_COL.time, "text-[10px] text-[var(--text-tertiary)]")}>
+        <span
+          className={cn(
+            PLAN_COL.time,
+            "text-[10px] text-[var(--text-tertiary)]",
+          )}
+        >
           {eventTime(e.ts)}
         </span>
         <span className={PLAN_COL.agent}>
@@ -389,7 +441,12 @@ function PlanRow({
             {firstLine || <span className="text-[var(--text-ghost)]">—</span>}
           </span>
         </span>
-        <span className={cn(PLAN_COL.chevron, "flex items-center justify-end text-[var(--text-tertiary)]")}>
+        <span
+          className={cn(
+            PLAN_COL.chevron,
+            "flex items-center justify-end text-[var(--text-tertiary)]",
+          )}
+        >
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
       </button>
@@ -456,7 +513,9 @@ function SegBtn({
       <span className={active ? "opacity-100" : "opacity-60"}>{icon}</span>
       {label}
       {count > 0 && (
-        <span className="text-[9px] tabular-nums text-[var(--text-ghost)]">{count}</span>
+        <span className="text-[9px] tabular-nums text-[var(--text-ghost)]">
+          {count}
+        </span>
       )}
     </button>
   );
@@ -482,7 +541,8 @@ function FilterMenu({
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -514,7 +574,10 @@ function FilterMenu({
         <span className="max-w-[120px] truncate">{display}</span>
         <ChevronDown
           size={10}
-          className={cn("shrink-0 opacity-50 transition-transform", open && "rotate-180")}
+          className={cn(
+            "shrink-0 opacity-50 transition-transform",
+            open && "rotate-180",
+          )}
         />
       </button>
       {open && (
@@ -564,7 +627,9 @@ function FilterOption({
       )}
     >
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {active && <Check size={11} className="shrink-0 text-[var(--accent-primary)]" />}
+      {active && (
+        <Check size={11} className="shrink-0 text-[var(--accent-primary)]" />
+      )}
     </button>
   );
 }
@@ -637,7 +702,9 @@ function MetaChip({
 }) {
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span className="text-[9px] uppercase tracking-wider text-[var(--text-ghost)]">{label}</span>
+      <span className="text-[9px] uppercase tracking-wider text-[var(--text-ghost)]">
+        {label}
+      </span>
       <span
         className={cn(
           "text-[11px] text-[var(--text-secondary)]",

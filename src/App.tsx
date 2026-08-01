@@ -23,7 +23,11 @@ import { SWITCHABLE_AGENTS } from "@/types/agent";
 import { FilePicker } from "@/features/file-picker/components/file-picker";
 import { HintOverlay } from "@/features/hint-nav/components/hint-overlay";
 import { BrowserOverlayWatcher } from "@/features/browser/components/browser-overlay-watcher";
-import { fileIndex, openFileIndex, markFileIndexClosed } from "@/features/file-picker/lib/file-picker-api";
+import {
+  fileIndex,
+  openFileIndex,
+  markFileIndexClosed,
+} from "@/features/file-picker/lib/file-picker-api";
 import { activeWorkspaceId } from "@/features/workspaces/lib/active-workspace";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { pickAndAddWorkspace } from "@/features/workspaces/lib/pick-workspace";
@@ -73,7 +77,11 @@ import {
 } from "@/features/auth/lib/auth-api";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { ConnectDialog } from "@/features/auth/components/connect-dialog";
-import { clampScale, SCALE_STEP, DEFAULT_SCALE } from "@/features/settings/lib/ui-scale";
+import {
+  clampScale,
+  SCALE_STEP,
+  DEFAULT_SCALE,
+} from "@/features/settings/lib/ui-scale";
 
 // Interface-zoom helpers (⌘+/⌘-/⌘0). They read + write the persisted
 // `uiScale` setting; `updateSettings` applies it to the native WebView zoom.
@@ -154,7 +162,9 @@ export function App() {
   useEffect(() => {
     const a = useUpdaterStore.getState().actions;
     const offs: Array<Promise<() => void>> = [
-      listenUpdateProgress((e) => a.setDownloading(e.version, e.downloaded, e.total, e.phase)),
+      listenUpdateProgress((e) =>
+        a.setDownloading(e.version, e.downloaded, e.total, e.phase),
+      ),
       listenUpdateReady((e) => a.setReady(e.version)),
       listenUpdateApplied((e) => {
         a.reset();
@@ -241,9 +251,9 @@ export function App() {
       // both clobber the CLI workspace and swallow the CLI switch (`switching`
       // guard). So we suppress hydrate's auto-switch when a CLI path is present
       // and perform the CLI open as the sole, final switch.
-      const cliPath = await invoke<string | null>("cli_take_initial_project_path").catch(
-        () => null,
-      );
+      const cliPath = await invoke<string | null>(
+        "cli_take_initial_project_path",
+      ).catch(() => null);
       try {
         const payload = await invoke<AppStateWire>("bootstrap_app_state");
         if (cancelled) return;
@@ -446,7 +456,8 @@ export function App() {
     // first interaction (e.g. scrolling the chat) eats the catch-up. Firing this
     // on the focus/visibility RISING edge lets listeners (chat virtualizer,
     // markdown worker) warm the pipeline before the user touches anything.
-    const signalActive = () => window.dispatchEvent(new CustomEvent("atlas:window-active"));
+    const signalActive = () =>
+      window.dispatchEvent(new CustomEvent("atlas:window-active"));
     void appWindow
       .onFocusChanged(({ payload: focused }) => {
         if (focused && !windowFocused) signalActive();
@@ -564,7 +575,9 @@ export function App() {
       const deltas = pendingDeltas.slice();
       pendingDeltas.length = 0;
       toolDeltaPos.clear();
-      useChatStore.getState().actions.applyAgentBatch({ texts: [], thoughts: [], deltas });
+      useChatStore
+        .getState()
+        .actions.applyAgentBatch({ texts: [], thoughts: [], deltas });
     };
     // Coalesce a streaming text/thinking chunk into the trailing pendingDeltas
     // entry when it's the same kind + session; otherwise append in order. Keeps
@@ -632,7 +645,10 @@ export function App() {
       for (const [tabId, s] of Object.entries(sessions)) {
         if (s.acpSessionId === acpSessionId) return { tabId, title: s.title };
       }
-      return { tabId: undefined as string | undefined, title: undefined as string | undefined };
+      return {
+        tabId: undefined as string | undefined,
+        title: undefined as string | undefined,
+      };
     };
     const notify = () => useNotificationsStore.getState().actions;
 
@@ -643,7 +659,9 @@ export function App() {
     const indexTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const autoIndexAfterTurn = (acpSessionId: string) => {
       const sessions = useChatStore.getState().sessions;
-      const sess = Object.values(sessions).find((s) => s.acpSessionId === acpSessionId);
+      const sess = Object.values(sessions).find(
+        (s) => s.acpSessionId === acpSessionId,
+      );
       if (sess?.agentType !== "cersei") return;
       const path = sess.workingDirectory;
       if (!path) return;
@@ -657,7 +675,9 @@ export function App() {
           // "Indexing…" then refresh its status.
           const emit = (active: boolean) =>
             window.dispatchEvent(
-              new CustomEvent("atlas:cersei-index", { detail: { path, active } }),
+              new CustomEvent("atlas:cersei-index", {
+                detail: { path, active },
+              }),
             );
           emit(true);
           void invoke("codebase_index_build", {
@@ -786,7 +806,8 @@ export function App() {
           // the "done" notification, memory reindex, and log too.
           if (isStaleAgentTurn(env.session_id, env.turn_seq)) return;
           // Keep the native agent's project memory fresh (debounced, cheap).
-          if (env.stop_reason !== "cancelled") autoIndexAfterTurn(env.session_id);
+          if (env.stop_reason !== "cancelled")
+            autoIndexAfterTurn(env.session_id);
           logEvent({
             source: "atlas",
             kind: "agent-turn-finished",
@@ -870,7 +891,11 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | null = null;
-    type Payload = { workspaceId?: string; dirs: string[]; fullRefresh: boolean };
+    type Payload = {
+      workspaceId?: string;
+      dirs: string[];
+      fullRefresh: boolean;
+    };
     listen<Payload>("atlas:explorer:changed", (e) => {
       if (cancelled) return;
       // Ignore changes from a backgrounded workspace's resident watcher —
@@ -920,16 +945,15 @@ export function App() {
     for (const t of tabs) {
       if (t.type !== "editor" && t.type !== "media" && t.type !== "unsupported")
         continue;
-      const absPath = (t.data as Record<string, unknown> | undefined)?.filePath as
-        | string
-        | undefined;
+      const absPath = (t.data as Record<string, unknown> | undefined)
+        ?.filePath as string | undefined;
       if (!absPath) continue;
       if (seenFileTabsRef.current.has(absPath)) continue;
       seenFileTabsRef.current.add(absPath);
       const rel =
         projectPath && absPath.startsWith(projectPath + "/")
           ? absPath.slice(projectPath.length + 1)
-          : absPath.split("/").pop() ?? absPath;
+          : (absPath.split("/").pop() ?? absPath);
       useRecentFilesStore.getState().actions.push({ absPath, rel });
     }
   }, [tabs, currentProject?.path]);
@@ -967,8 +991,8 @@ export function App() {
     // Capture: a bound Workspace just became active — open its store (which
     // also heals a folder rename) and kick its transcript import and drain.
     // A no-op for Workspaces that never enabled capture.
-    void invoke("capture_activate", { projectPath: currentProject.path }).catch((e) =>
-      console.warn("capture activate failed:", e),
+    void invoke("capture_activate", { projectPath: currentProject.path }).catch(
+      (e) => console.warn("capture activate failed:", e),
     );
     // Clear the global recents mirror SYNCHRONOUSLY before the async reload so
     // there's no window where it still shows the previous project's files
@@ -1107,7 +1131,8 @@ export function App() {
       // ⌘9 always jumps to the LAST tab (browser convention), regardless
       // of how many tabs there are; ⌘1–8 select by index.
       // ⌘9 = last tab in the focused column (the store treats i<0 as "last").
-      action: i === 8 ? () => activateTabByIndex(-1) : () => activateTabByIndex(i),
+      action:
+        i === 8 ? () => activateTabByIndex(-1) : () => activateTabByIndex(i),
     })),
     {
       combo: { key: "w", meta: true },
@@ -1164,9 +1189,13 @@ export function App() {
         const chat = useChatStore.getState();
         const sess = chat.sessions[tab.id];
         const curIdx = SWITCHABLE_AGENTS.indexOf(
-          (sess?.agentType ?? "claude-code") as (typeof SWITCHABLE_AGENTS)[number]
+          (sess?.agentType ??
+            "claude-code") as (typeof SWITCHABLE_AGENTS)[number],
         );
-        const next = SWITCHABLE_AGENTS[(Math.max(curIdx, 0) + 1) % SWITCHABLE_AGENTS.length];
+        const next =
+          SWITCHABLE_AGENTS[
+            (Math.max(curIdx, 0) + 1) % SWITCHABLE_AGENTS.length
+          ];
         // Empty chat flips agent in place. A started chat always starts a fresh
         // session in the SAME tab bound to the next agent (singleton model —
         // never a new tab, even mid-stream; the abandoned turn persists to the
@@ -1254,7 +1283,10 @@ export function App() {
   return (
     <>
       <AppContextMenu>
-        <div className="h-screen w-screen" onContextMenu={(e) => e.preventDefault()}>
+        <div
+          className="h-screen w-screen"
+          onContextMenu={(e) => e.preventDefault()}
+        >
           <AppLayout />
         </div>
       </AppContextMenu>

@@ -12,7 +12,7 @@ import { useUsageReport } from "@/features/monitor/stores/usage-report-store";
 const UsagePanel = lazy(() =>
   import("@/features/monitor/components/usage-panel").then((m) => ({
     default: m.UsagePanel,
-  }))
+  })),
 );
 
 /**
@@ -24,7 +24,9 @@ const UsagePanel = lazy(() =>
  * "Usage" report stays docked at the bottom.
  */
 export function LeftPanel() {
-  const usagePanelVisible = useLayoutStore((s) => s.leftPanel.usagePanelVisible);
+  const usagePanelVisible = useLayoutStore(
+    (s) => s.leftPanel.usagePanelVisible,
+  );
   const { toggleUsagePanel } = useLayoutStore.use.actions();
   const cwd = useProjectStore((s) => s.currentProject?.path ?? null);
   const loadUsage = useUsageReport((s) => s.load);
@@ -77,7 +79,10 @@ export function LeftPanel() {
             >
               <ChevronDown
                 size={12}
-                className={cn("transition-transform", !usagePanelVisible && "-rotate-90")}
+                className={cn(
+                  "transition-transform",
+                  !usagePanelVisible && "-rotate-90",
+                )}
               />
             </button>
           </div>

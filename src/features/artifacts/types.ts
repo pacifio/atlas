@@ -8,7 +8,12 @@
  * is the failure mode to watch for.
  */
 
-export type EntryKind = "prompt" | "response" | "thinking" | "tool_call" | "checkpoint";
+export type EntryKind =
+  | "prompt"
+  | "response"
+  | "thinking"
+  | "tool_call"
+  | "checkpoint";
 
 export type ToolStatus = "pending" | "running" | "completed" | "failed";
 

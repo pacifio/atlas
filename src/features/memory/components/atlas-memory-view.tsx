@@ -53,7 +53,11 @@ function latestPlan(items: ReplayItem[]): TodoItem[] | null {
   return null;
 }
 
-export function AtlasMemoryView({ projectPath }: { projectPath: string | null }) {
+export function AtlasMemoryView({
+  projectPath,
+}: {
+  projectPath: string | null;
+}) {
   const [sessions, setSessions] = useState<CerseiSessionMeta[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<ReplayItem[] | null>(null);
@@ -74,7 +78,10 @@ export function AtlasMemoryView({ projectPath }: { projectPath: string | null })
       if (!projectPath) return;
       setLoading(true);
       setTranscript(null);
-      invoke<ReplayItem[]>("cersei_session_transcript", { projectPath, sessionId: id })
+      invoke<ReplayItem[]>("cersei_session_transcript", {
+        projectPath,
+        sessionId: id,
+      })
         .then(setTranscript)
         .catch(() => setTranscript([]))
         .finally(() => setLoading(false));
@@ -86,12 +93,17 @@ export function AtlasMemoryView({ projectPath }: { projectPath: string | null })
     if (selected) loadTranscript(selected);
   }, [selected, loadTranscript]);
 
-  const plan = useMemo(() => (transcript ? latestPlan(transcript) : null), [transcript]);
+  const plan = useMemo(
+    () => (transcript ? latestPlan(transcript) : null),
+    [transcript],
+  );
 
   if (!projectPath) {
     return (
       <div className="h-full flex items-center justify-center">
-        <p className="text-[12px] text-[var(--text-tertiary)]">Open a project to view Atlas agent memory.</p>
+        <p className="text-[12px] text-[var(--text-tertiary)]">
+          Open a project to view Atlas agent memory.
+        </p>
       </div>
     );
   }
@@ -101,7 +113,8 @@ export function AtlasMemoryView({ projectPath }: { projectPath: string | null })
       <div className="h-full flex flex-col items-center justify-center gap-2 text-center px-6">
         <AtlasIcon size={20} />
         <p className="text-[12px] text-[var(--text-tertiary)]">
-          No Atlas agent sessions yet. Chat with the Atlas agent and its sessions + plans appear here.
+          No Atlas agent sessions yet. Chat with the Atlas agent and its
+          sessions + plans appear here.
         </p>
       </div>
     );
@@ -117,10 +130,14 @@ export function AtlasMemoryView({ projectPath }: { projectPath: string | null })
             onClick={() => setSelected(s.id)}
             className={cn(
               "flex w-full flex-col gap-0.5 border-b border-[var(--border-subtle)] px-3 py-2 text-left transition-colors",
-              s.id === selected ? "bg-[var(--bg-selected,var(--bg-hover))]" : "hover:bg-[var(--bg-hover)]",
+              s.id === selected
+                ? "bg-[var(--bg-selected,var(--bg-hover))]"
+                : "hover:bg-[var(--bg-hover)]",
             )}
           >
-            <span className="truncate text-[12px] text-[var(--text-primary)]">{s.preview || "Session"}</span>
+            <span className="truncate text-[12px] text-[var(--text-primary)]">
+              {s.preview || "Session"}
+            </span>
             <span className="text-[10px] text-[var(--text-tertiary)] tabular-nums">
               {s.message_count} msg{s.message_count === 1 ? "" : "s"}
               {s.last_modified ? ` · ${timeAgo(s.last_modified)}` : ""}
@@ -140,16 +157,29 @@ export function AtlasMemoryView({ projectPath }: { projectPath: string | null })
             {plan && (
               <div className="mb-4 rounded-md border border-[var(--border-default)] bg-[var(--bg-secondary)] px-3 py-2">
                 <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
-                  <ListTodo size={11} className="text-[var(--accent-primary)]" /> Plan
+                  <ListTodo
+                    size={11}
+                    className="text-[var(--accent-primary)]"
+                  />{" "}
+                  Plan
                 </div>
                 {plan.map((t, i) => (
                   <div key={i} className="flex items-start gap-2 py-0.5">
                     {t.status === "completed" ? (
-                      <CheckCircle2 size={12} className="mt-0.5 shrink-0 text-[var(--status-success)]" />
+                      <CheckCircle2
+                        size={12}
+                        className="mt-0.5 shrink-0 text-[var(--status-success)]"
+                      />
                     ) : t.status === "in_progress" ? (
-                      <Loader2 size={12} className="mt-0.5 shrink-0 animate-spin text-[var(--accent-primary)]" />
+                      <Loader2
+                        size={12}
+                        className="mt-0.5 shrink-0 animate-spin text-[var(--accent-primary)]"
+                      />
                     ) : (
-                      <Circle size={12} className="mt-0.5 shrink-0 text-[var(--text-tertiary)]" />
+                      <Circle
+                        size={12}
+                        className="mt-0.5 shrink-0 text-[var(--text-tertiary)]"
+                      />
                     )}
                     <span
                       className={cn(
@@ -183,7 +213,9 @@ function TranscriptItem({ item }: { item: ReplayItem }) {
     if (item.name === "TodoWrite") return null; // shown as the Plan block above
     return (
       <div className="rounded border border-l-2 border-[var(--border-default)] border-l-[var(--border-strong)] bg-[var(--bg-secondary)] px-3 py-1.5">
-        <span className="font-mono text-[11px] text-[var(--text-secondary)]">{item.name}</span>
+        <span className="font-mono text-[11px] text-[var(--text-secondary)]">
+          {item.name}
+        </span>
         {item.result && (
           <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-snug text-[var(--text-tertiary)]">
             {item.result}
@@ -192,7 +224,12 @@ function TranscriptItem({ item }: { item: ReplayItem }) {
       </div>
     );
   }
-  const roleLabel = item.kind === "user" ? "User" : item.kind === "thinking" ? "Thinking" : "Atlas";
+  const roleLabel =
+    item.kind === "user"
+      ? "User"
+      : item.kind === "thinking"
+        ? "Thinking"
+        : "Atlas";
   return (
     <div>
       <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
@@ -201,7 +238,9 @@ function TranscriptItem({ item }: { item: ReplayItem }) {
       <div
         className={cn(
           "text-[12px] leading-relaxed",
-          item.kind === "thinking" ? "italic text-[var(--text-tertiary)]" : "text-[var(--text-secondary)]",
+          item.kind === "thinking"
+            ? "italic text-[var(--text-tertiary)]"
+            : "text-[var(--text-secondary)]",
         )}
       >
         <Markdown>{item.text}</Markdown>

@@ -32,7 +32,11 @@ import {
 import { cn } from "@/lib/utils";
 import { AgentIcons } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
-import { SWITCHABLE_AGENTS, AGENT_LABEL, type SwitchableAgent } from "@/types/agent";
+import {
+  SWITCHABLE_AGENTS,
+  AGENT_LABEL,
+  type SwitchableAgent,
+} from "@/types/agent";
 import type { GithubRepo, ClonedRepo } from "@/features/github/types";
 import {
   searchMentions,
@@ -177,7 +181,10 @@ export function ComposerAddMenu({
           className={cn(CONTENT_CLASS, "min-w-[210px]")}
           style={{ zIndex: 9999 }}
         >
-          <DropdownMenu.Item className={ITEM_CLASS} onSelect={onAddFilesOrPhotos}>
+          <DropdownMenu.Item
+            className={ITEM_CLASS}
+            onSelect={onAddFilesOrPhotos}
+          >
             <Paperclip size={11} />
             <span>{imageSupported ? "Add files or photos" : "Add files"}</span>
           </DropdownMenu.Item>
@@ -189,7 +196,10 @@ export function ComposerAddMenu({
             <DropdownMenu.SubTrigger className={ITEM_CLASS}>
               <Camera size={11} />
               <span>Take a screenshot</span>
-              <ChevronRight size={11} className="ml-auto text-[var(--text-tertiary)]" />
+              <ChevronRight
+                size={11}
+                className="ml-auto text-[var(--text-tertiary)]"
+              />
             </DropdownMenu.SubTrigger>
             <DropdownMenu.Portal>
               <DropdownMenu.SubContent
@@ -197,11 +207,17 @@ export function ComposerAddMenu({
                 className={cn(CONTENT_CLASS, "min-w-[190px]")}
                 style={{ zIndex: 9999 }}
               >
-                <DropdownMenu.Item className={ITEM_CLASS} onSelect={() => onTakeScreenshot("region")}>
+                <DropdownMenu.Item
+                  className={ITEM_CLASS}
+                  onSelect={() => onTakeScreenshot("region")}
+                >
                   <Crop size={11} />
                   <span>Selected region</span>
                 </DropdownMenu.Item>
-                <DropdownMenu.Item className={ITEM_CLASS} onSelect={() => onTakeScreenshot("full")}>
+                <DropdownMenu.Item
+                  className={ITEM_CLASS}
+                  onSelect={() => onTakeScreenshot("full")}
+                >
                   <Monitor size={11} />
                   <span>Whole desktop</span>
                 </DropdownMenu.Item>
@@ -217,12 +233,18 @@ export function ComposerAddMenu({
             <DropdownMenu.SubTrigger className={ITEM_CLASS}>
               <SquareSlash size={11} />
               <span>Skills</span>
-              <ChevronRight size={11} className="ml-auto text-[var(--text-tertiary)]" />
+              <ChevronRight
+                size={11}
+                className="ml-auto text-[var(--text-tertiary)]"
+              />
             </DropdownMenu.SubTrigger>
             <DropdownMenu.Portal>
               <DropdownMenu.SubContent
                 sideOffset={6}
-                className={cn(CONTENT_CLASS, "min-w-[220px] max-w-[280px] max-h-[320px] overflow-y-auto")}
+                className={cn(
+                  CONTENT_CLASS,
+                  "min-w-[220px] max-w-[280px] max-h-[320px] overflow-y-auto",
+                )}
                 style={{ zIndex: 9999 }}
               >
                 {skills === null ? (
@@ -232,7 +254,9 @@ export function ComposerAddMenu({
                   </div>
                 ) : skills.length === 0 ? (
                   <div className="px-3 py-1.5 text-[11px] text-[var(--text-tertiary)]">
-                    {skillsError ? "Couldn't load skills." : "No skills installed"}
+                    {skillsError
+                      ? "Couldn't load skills."
+                      : "No skills installed"}
                   </div>
                 ) : (
                   skills.map((skill) => (
@@ -265,7 +289,11 @@ export function ComposerAddMenu({
             </DropdownMenu.Portal>
           </DropdownMenu.Sub>
 
-          <SessionsSubmenu projectPath={projectPath} agentId={agentId} onPickSession={onPickSession} />
+          <SessionsSubmenu
+            projectPath={projectPath}
+            agentId={agentId}
+            onPickSession={onPickSession}
+          />
 
           <WorkspaceSubmenu
             projectPath={projectPath}
@@ -309,7 +337,10 @@ export function ComposerAddMenu({
                 );
               })}
             </div>
-            <span className="flex items-center gap-1 text-[10px] text-[var(--text-tertiary)]" title="Cycle coding agent">
+            <span
+              className="flex items-center gap-1 text-[10px] text-[var(--text-tertiary)]"
+              title="Cycle coding agent"
+            >
               <kbd className="rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] px-1 leading-[15px] font-sans">
                 ⌥
               </kbd>
@@ -354,8 +385,12 @@ function GithubSubmenu({
 
   // A searched repo is "already downloaded" when its on-disk dir (`owner-repo`)
   // is present in the cloned list — the same name we pass to `clone_github_repo`.
-  const clonedDirs = useMemo(() => new Set(cloned.map((c) => c.name)), [cloned]);
-  const isCloned = (repo: GithubRepo) => clonedDirs.has(repo.full_name.replace(/\//g, "-"));
+  const clonedDirs = useMemo(
+    () => new Set(cloned.map((c) => c.name)),
+    [cloned],
+  );
+  const isCloned = (repo: GithubRepo) =>
+    clonedDirs.has(repo.full_name.replace(/\//g, "-"));
 
   const runSearch = () => {
     const q = query.trim();
@@ -372,7 +407,10 @@ function GithubSubmenu({
       <DropdownMenu.SubTrigger className={ITEM_CLASS}>
         <Github size={11} />
         <span>Add from GitHub</span>
-        <ChevronRight size={11} className="ml-auto text-[var(--text-tertiary)]" />
+        <ChevronRight
+          size={11}
+          className="ml-auto text-[var(--text-tertiary)]"
+        />
       </DropdownMenu.SubTrigger>
       <DropdownMenu.Portal>
         <DropdownMenu.SubContent
@@ -403,12 +441,21 @@ function GithubSubmenu({
                       <DropdownMenu.Item
                         key={c.name}
                         disabled
-                        className={cn(ITEM_CLASS, "opacity-60 data-[disabled]:opacity-60")}
+                        className={cn(
+                          ITEM_CLASS,
+                          "opacity-60 data-[disabled]:opacity-60",
+                        )}
                         title={`Already downloaded · ${c.path}`}
                       >
-                        <FolderGit2 size={11} className="shrink-0 text-[var(--text-tertiary)]" />
+                        <FolderGit2
+                          size={11}
+                          className="shrink-0 text-[var(--text-tertiary)]"
+                        />
                         <span className="truncate">{c.display_name}</span>
-                        <Check size={11} className="ml-auto shrink-0 text-[var(--status-success)]" />
+                        <Check
+                          size={11}
+                          className="ml-auto shrink-0 text-[var(--status-success)]"
+                        />
                       </DropdownMenu.Item>
                     ))}
                     <DropdownMenu.Separator className="my-1 h-px bg-[var(--border-default)]" />
@@ -445,13 +492,21 @@ function GithubSubmenu({
                         title={repo.description || repo.full_name}
                       >
                         {already ? (
-                          <Check size={11} className="mt-0.5 shrink-0 text-[var(--status-success)]" />
+                          <Check
+                            size={11}
+                            className="mt-0.5 shrink-0 text-[var(--status-success)]"
+                          />
                         ) : (
-                          <Download size={11} className="mt-0.5 shrink-0 text-[var(--text-tertiary)]" />
+                          <Download
+                            size={11}
+                            className="mt-0.5 shrink-0 text-[var(--text-tertiary)]"
+                          />
                         )}
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
-                            <span className="truncate text-[var(--text-primary)]">{repo.full_name}</span>
+                            <span className="truncate text-[var(--text-primary)]">
+                              {repo.full_name}
+                            </span>
                             {already ? (
                               <span className="ml-auto shrink-0 text-[9px] text-[var(--text-tertiary)]">
                                 downloaded
@@ -512,7 +567,10 @@ function SessionsSubmenu({
       <DropdownMenu.SubTrigger className={ITEM_CLASS}>
         <MessageSquareText size={11} />
         <span>Attach a session</span>
-        <ChevronRight size={11} className="ml-auto text-[var(--text-tertiary)]" />
+        <ChevronRight
+          size={11}
+          className="ml-auto text-[var(--text-tertiary)]"
+        />
       </DropdownMenu.SubTrigger>
       <DropdownMenu.Portal>
         <DropdownMenu.SubContent
@@ -526,7 +584,11 @@ function SessionsSubmenu({
             </div>
           ) : (
             <>
-              <SearchBox value={query} onChange={setQuery} placeholder="Search sessions…" />
+              <SearchBox
+                value={query}
+                onChange={setQuery}
+                placeholder="Search sessions…"
+              />
               <div className="max-h-[300px] overflow-y-auto">
                 {sessions === null ? (
                   <div className="flex items-center gap-2 px-3 h-[26px] text-[11px] text-[var(--text-tertiary)]">
@@ -535,7 +597,9 @@ function SessionsSubmenu({
                   </div>
                 ) : filtered.length === 0 ? (
                   <div className="px-3 py-1.5 text-[11px] text-[var(--text-tertiary)]">
-                    {sessions.length === 0 ? "No past sessions in this project." : "No matches."}
+                    {sessions.length === 0
+                      ? "No past sessions in this project."
+                      : "No matches."}
                   </div>
                 ) : (
                   filtered.map((s) => (
@@ -545,11 +609,17 @@ function SessionsSubmenu({
                       onSelect={() => onPickSession(s)}
                       title={s.title}
                     >
-                      <MessageSquareText size={11} className="mt-0.5 shrink-0 text-[var(--text-tertiary)]" />
+                      <MessageSquareText
+                        size={11}
+                        className="mt-0.5 shrink-0 text-[var(--text-tertiary)]"
+                      />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-[var(--text-primary)]">{s.title}</div>
+                        <div className="truncate text-[var(--text-primary)]">
+                          {s.title}
+                        </div>
                         <div className="text-[10px] text-[var(--text-tertiary)]">
-                          {s.messageCount} message{s.messageCount === 1 ? "" : "s"}
+                          {s.messageCount} message
+                          {s.messageCount === 1 ? "" : "s"}
                         </div>
                       </div>
                     </DropdownMenu.Item>
@@ -589,7 +659,9 @@ function WorkspaceSubmenu({
     void searchMentions(query, "workspace", { projectPath, agentId })
       .then((rows) => {
         if (cancelled) return;
-        setWorkspaces(rows.filter((m): m is MentionWorkspace => m.kind === "workspace"));
+        setWorkspaces(
+          rows.filter((m): m is MentionWorkspace => m.kind === "workspace"),
+        );
       })
       .catch(() => {
         if (!cancelled) setWorkspaces([]);
@@ -604,7 +676,10 @@ function WorkspaceSubmenu({
       <DropdownMenu.SubTrigger className={ITEM_CLASS}>
         <Boxes size={11} />
         <span>Reference workspace</span>
-        <ChevronRight size={11} className="ml-auto text-[var(--text-tertiary)]" />
+        <ChevronRight
+          size={11}
+          className="ml-auto text-[var(--text-tertiary)]"
+        />
       </DropdownMenu.SubTrigger>
       <DropdownMenu.Portal>
         <DropdownMenu.SubContent
@@ -612,7 +687,11 @@ function WorkspaceSubmenu({
           className={cn(CONTENT_CLASS, "w-[300px]")}
           style={{ zIndex: 9999 }}
         >
-          <SearchBox value={query} onChange={setQuery} placeholder="Search workspaces…" />
+          <SearchBox
+            value={query}
+            onChange={setQuery}
+            placeholder="Search workspaces…"
+          />
           <div className="max-h-[300px] overflow-y-auto">
             {workspaces === null ? (
               <div className="flex items-center gap-2 px-3 h-[26px] text-[11px] text-[var(--text-tertiary)]">
@@ -621,7 +700,9 @@ function WorkspaceSubmenu({
               </div>
             ) : workspaces.length === 0 ? (
               <div className="px-3 py-1.5 text-[11px] text-[var(--text-tertiary)]">
-                {query ? "No matches." : "No other projects in this organisation."}
+                {query
+                  ? "No matches."
+                  : "No other projects in this organisation."}
               </div>
             ) : (
               workspaces.map((w) => (
@@ -631,9 +712,14 @@ function WorkspaceSubmenu({
                   onSelect={() => onPickWorkspace(w)}
                   title={w.absPath}
                 >
-                  <Boxes size={11} className="mt-0.5 shrink-0 text-[var(--text-tertiary)]" />
+                  <Boxes
+                    size={11}
+                    className="mt-0.5 shrink-0 text-[var(--text-tertiary)]"
+                  />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[var(--text-primary)]">{w.displayName}</div>
+                    <div className="truncate text-[var(--text-primary)]">
+                      {w.displayName}
+                    </div>
                     <div className="truncate text-[10px] text-[var(--text-tertiary)]">
                       {w.absPath}
                     </div>

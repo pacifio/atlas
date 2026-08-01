@@ -14,7 +14,12 @@
 // it), so it's invisible to the UI and never persisted (no turn runs). Agents are
 // pooled per plugin, so this is one cheap extra ACP session per agent per launch.
 
-import { agents, ensureAgent, CODEX_PLUGIN_ID, DEFAULT_PLUGIN_ID } from "./agents-api";
+import {
+  agents,
+  ensureAgent,
+  CODEX_PLUGIN_ID,
+  DEFAULT_PLUGIN_ID,
+} from "./agents-api";
 import {
   loadCachedAcpModels,
   saveCachedAcpModels,
@@ -50,8 +55,14 @@ const warmed = new Set<string>();
  * persist them to the cache. No-op for non-ACP agents or if already warmed this
  * session. Best-effort + silent — never throws into the caller.
  */
-export async function warmAcpModels(agentType: string, cwd: string): Promise<void> {
-  const at = agentType === "claude-code" || agentType === "codex" ? (agentType as AcpAgentType) : null;
+export async function warmAcpModels(
+  agentType: string,
+  cwd: string,
+): Promise<void> {
+  const at =
+    agentType === "claude-code" || agentType === "codex"
+      ? (agentType as AcpAgentType)
+      : null;
   if (!at) return;
   if (warmed.has(at)) return;
   // TTL gate: if we already have a fresh cached list, DON'T spawn a throwaway

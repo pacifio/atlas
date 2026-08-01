@@ -49,7 +49,9 @@ export function ArtifactsPanel() {
   const activeOrganisationId = useOrgStore.use.activeOrganisationId();
   const projects = useMemo(
     () =>
-      allWorkspaces.filter((w) => w.orgId === activeOrganisationId || w.orgId == null),
+      allWorkspaces.filter(
+        (w) => w.orgId === activeOrganisationId || w.orgId == null,
+      ),
     [allWorkspaces, activeOrganisationId],
   );
   // A stable key, so the read effect does not re-fire on unrelated workspace
@@ -84,7 +86,8 @@ export function ArtifactsPanel() {
   // A filter naming a project that is no longer open would hide everything with
   // no way back, so it is dropped rather than left dangling.
   useEffect(() => {
-    if (projectFilter && !projectPaths.includes(projectFilter)) setProjectFilter(null);
+    if (projectFilter && !projectPaths.includes(projectFilter))
+      setProjectFilter(null);
   }, [projectFilter, projectPaths, setProjectFilter]);
 
   const refresh = useCallback(async () => {
@@ -206,7 +209,9 @@ export function ArtifactsPanel() {
           </button>
         ) : (
           <>
-            <span className="text-[12px] font-medium text-[var(--text-primary)]">Timeline</span>
+            <span className="text-[12px] font-medium text-[var(--text-primary)]">
+              Timeline
+            </span>
             {filterable.length > 0 && (
               <ProjectFilter
                 projects={filterable}
@@ -257,15 +262,17 @@ export function ArtifactsPanel() {
               <SessionList
                 sessions={sessions}
                 loading={!loaded}
-                onOpen={(sessionId, projectPath) => openSession({ sessionId, projectPath })}
+                onOpen={(sessionId, projectPath) =>
+                  openSession({ sessionId, projectPath })
+                }
               />
             </div>
             {/* Say what is being left out. A board that silently stops at the
              *  newest few hundred reads as "this is everything". */}
             {capped && (
               <p className="shrink-0 border-t border-[var(--border-subtle)] px-4 py-1.5 text-[11px] text-[var(--text-tertiary)]">
-                Showing the newest {BOARD_LIMIT} sessions — filter by project to see a
-                project&apos;s full history.
+                Showing the newest {BOARD_LIMIT} sessions — filter by project to
+                see a project&apos;s full history.
               </p>
             )}
           </div>
@@ -343,9 +350,9 @@ function NotEnabled() {
         Nothing captured yet
       </h2>
       <p className="mt-1.5 max-w-[420px] text-[12px] leading-relaxed text-[var(--text-tertiary)]">
-        Turn capture on for a project and Atlas records what you asked, what the agent did, and
-        which commits came out of it — stored on this machine, with secrets scrubbed before
-        anything is written.
+        Turn capture on for a project and Atlas records what you asked, what the
+        agent did, and which commits came out of it — stored on this machine,
+        with secrets scrubbed before anything is written.
       </p>
       {/* The control is deliberately not repeated here. Capture is per project
        *  and this board spans all of them, so the honest place to switch it on
@@ -362,7 +369,9 @@ function NotEnabled() {
 function NotFound({ onBack }: { onBack: () => void }) {
   return (
     <div className="flex h-full flex-col items-center justify-center px-8 text-center">
-      <p className="text-[13px] text-[var(--text-secondary)]">This session no longer exists.</p>
+      <p className="text-[13px] text-[var(--text-secondary)]">
+        This session no longer exists.
+      </p>
       <button
         type="button"
         onClick={onBack}

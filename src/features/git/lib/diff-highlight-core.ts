@@ -67,14 +67,20 @@ function lowlight(): ReturnType<typeof createLowlight> {
  * token runs, or `null` when the id is empty, the line is empty/too long, or
  * highlighting produced nothing worth coloring — the caller renders raw text.
  */
-export function tokenizeLine(hljsId: string, content: string): DiffToken[] | null {
+export function tokenizeLine(
+  hljsId: string,
+  content: string,
+): DiffToken[] | null {
   if (!hljsId || !content || content.length > MAX_LEN) return null;
   try {
     const tree = lowlight().highlight(hljsId, content) as Root;
     const tokens = flatten(tree.children, null);
     // Single unclassed run == nothing to highlight; let the caller fast-path to
     // plain text (and skip the wrapper class).
-    if (tokens.length === 0 || (tokens.length === 1 && tokens[0].cls === null)) {
+    if (
+      tokens.length === 0 ||
+      (tokens.length === 1 && tokens[0].cls === null)
+    ) {
       return null;
     }
     return tokens;

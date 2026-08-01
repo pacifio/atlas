@@ -7,10 +7,7 @@ import { useKnowledgeStore } from "../stores/knowledge-store";
 import { useKnowledgeMetaStore } from "../stores/knowledge-meta-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
-import {
-  KnowledgeTree,
-  type KnowledgeTreeHandle,
-} from "./knowledge-tree";
+import { KnowledgeTree, type KnowledgeTreeHandle } from "./knowledge-tree";
 import {
   FoldVertical,
   UnfoldVertical,
@@ -166,7 +163,11 @@ export function KnowledgeList() {
             className="p-1 rounded hover:bg-bg-hover text-text-tertiary hover:text-text-secondary transition-colors"
             title={anyExpanded ? "Collapse all" : "Expand all"}
           >
-            {anyExpanded ? <FoldVertical size={11} /> : <UnfoldVertical size={11} />}
+            {anyExpanded ? (
+              <FoldVertical size={11} />
+            ) : (
+              <UnfoldVertical size={11} />
+            )}
           </button>
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
@@ -174,7 +175,8 @@ export function KnowledgeList() {
                 disabled={exporting || entries.length === 0}
                 className={cn(
                   "p-1 rounded hover:bg-bg-hover text-text-tertiary hover:text-text-secondary transition-colors outline-none",
-                  (exporting || entries.length === 0) && "opacity-40 pointer-events-none",
+                  (exporting || entries.length === 0) &&
+                    "opacity-40 pointer-events-none",
                 )}
                 title="Export knowledge"
               >

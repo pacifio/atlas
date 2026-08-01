@@ -46,7 +46,11 @@ export function KnowledgeFinder({
     const out: Result[] = [];
     for (const e of entries) {
       if (!e.title.toLowerCase().includes(s)) continue;
-      out.push({ id: e.id, title: e.title || "Untitled", icon: e.icon || "📄" });
+      out.push({
+        id: e.id,
+        title: e.title || "Untitled",
+        icon: e.icon || "📄",
+      });
       if (out.length >= MAX_RESULTS) break;
     }
     return out;
@@ -111,7 +115,9 @@ export function KnowledgeFinder({
         {q.trim() && (
           <div className="max-h-[340px] overflow-y-auto hide-scrollbar py-1">
             {results.length === 0 ? (
-              <div className="px-3 py-3 text-[12px] text-text-tertiary">No matches</div>
+              <div className="px-3 py-3 text-[12px] text-text-tertiary">
+                No matches
+              </div>
             ) : (
               results.map((r, i) => (
                 <button
@@ -123,7 +129,9 @@ export function KnowledgeFinder({
                     i === active ? "bg-bg-hover" : "hover:bg-bg-hover/60",
                   )}
                 >
-                  <span className="shrink-0 text-[13px] leading-none">{r.icon}</span>
+                  <span className="shrink-0 text-[13px] leading-none">
+                    {r.icon}
+                  </span>
                   <span className="truncate text-[12px] font-medium text-text-primary">
                     {r.title}
                   </span>

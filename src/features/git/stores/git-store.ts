@@ -203,7 +203,11 @@ interface GitActions {
     discard: (paths: string[]) => Promise<void>;
     /** Revert ADDED files by deleting them (no HEAD to restore to). */
     discardAdded: (paths: string[]) => Promise<void>;
-    commit: (summary: string, description?: string, amend?: boolean) => Promise<void>;
+    commit: (
+      summary: string,
+      description?: string,
+      amend?: boolean,
+    ) => Promise<void>;
     fetch: () => Promise<void>;
     pull: (rebase: boolean) => Promise<void>;
     push: (forceWithLease?: boolean, followTags?: boolean) => Promise<void>;
@@ -217,7 +221,11 @@ interface GitActions {
     reset: (target: string, mode: "soft" | "mixed" | "hard") => Promise<void>;
     revert: (sha: string) => Promise<void>;
     cherryPick: (sha: string) => Promise<void>;
-    createTag: (name: string, target?: string, message?: string) => Promise<void>;
+    createTag: (
+      name: string,
+      target?: string,
+      message?: string,
+    ) => Promise<void>;
     deleteTag: (name: string) => Promise<void>;
     opControl: (
       kind: "merge" | "rebase" | "cherry-pick" | "revert",
@@ -308,7 +316,10 @@ export const useGitStore = createSelectors(
           },
           loadLog: async (path) => {
             try {
-              const entries = await invoke<GitLogEntry[]>("git_log", { path, limit: 100 });
+              const entries = await invoke<GitLogEntry[]>("git_log", {
+                path,
+                limit: 100,
+              });
               set((s) => {
                 s.log = entries;
               });
@@ -332,7 +343,9 @@ export const useGitStore = createSelectors(
             const p = repo();
             if (!p) return;
             try {
-              const branches = await invoke<GitBranch[]>("git_list_branches", { path: p });
+              const branches = await invoke<GitBranch[]>("git_list_branches", {
+                path: p,
+              });
               set((s) => {
                 s.branches = branches;
               });
@@ -344,7 +357,9 @@ export const useGitStore = createSelectors(
             const p = repo();
             if (!p) return;
             try {
-              const b = await invoke<BranchInfo[]>("git_branches_full", { path: p });
+              const b = await invoke<BranchInfo[]>("git_branches_full", {
+                path: p,
+              });
               set((s) => {
                 s.branchesFull = b;
               });
@@ -356,7 +371,9 @@ export const useGitStore = createSelectors(
             const p = repo();
             if (!p) return;
             try {
-              const stashes = await invoke<StashEntry[]>("git_stash_list", { path: p });
+              const stashes = await invoke<StashEntry[]>("git_stash_list", {
+                path: p,
+              });
               set((s) => {
                 s.stashes = stashes;
               });
@@ -368,7 +385,9 @@ export const useGitStore = createSelectors(
             const p = repo();
             if (!p) return;
             try {
-              const remotes = await invoke<RemoteInfo[]>("git_remotes", { path: p });
+              const remotes = await invoke<RemoteInfo[]>("git_remotes", {
+                path: p,
+              });
               set((s) => {
                 s.remotes = remotes;
               });
@@ -392,10 +411,14 @@ export const useGitStore = createSelectors(
             const p = repo();
             if (!p) return;
             try {
-              const ip = await invoke<InProgress>("git_inprogress", { path: p });
+              const ip = await invoke<InProgress>("git_inprogress", {
+                path: p,
+              });
               set((s) => {
                 s.inProgress =
-                  ip.merge || ip.rebase || ip.cherryPick || ip.revert ? ip : null;
+                  ip.merge || ip.rebase || ip.cherryPick || ip.revert
+                    ? ip
+                    : null;
               });
             } catch {
               /* ignore */
@@ -405,7 +428,10 @@ export const useGitStore = createSelectors(
             const p = repo();
             if (!p) return;
             try {
-              const detail = await invoke<CommitDetail>("git_show", { path: p, sha });
+              const detail = await invoke<CommitDetail>("git_show", {
+                path: p,
+                sha,
+              });
               set((s) => {
                 s.selectedCommit = detail;
               });
@@ -436,7 +462,12 @@ export const useGitStore = createSelectors(
             const p = repo();
             if (!p) return;
             await invoke("git_checkout", { path: p, branch });
-            logEvent({ source: "git", kind: "checkout", summary: branch, payload: { branch } });
+            logEvent({
+              source: "git",
+              kind: "checkout",
+              summary: branch,
+              payload: { branch },
+            });
             // Switching branches changes HEAD + working-tree status — update
             // now; the watcher (HEAD move) reconciles branch lists shortly.
             await get().actions.refreshStatusNow(p);
@@ -446,7 +477,12 @@ export const useGitStore = createSelectors(
             const p = repo();
             if (!p) return;
             await invoke("git_create_branch", { path: p, name });
-            logEvent({ source: "git", kind: "branch-create", summary: name, payload: { name } });
+            logEvent({
+              source: "git",
+              kind: "branch-create",
+              summary: name,
+              payload: { name },
+            });
           },
           renameBranch: async (oldName, newName) => {
             const p = repo();
@@ -457,7 +493,12 @@ export const useGitStore = createSelectors(
             const p = repo();
             if (!p) return;
             await invoke("git_branch_delete", { path: p, name, force });
-            logEvent({ source: "git", kind: "branch-delete", summary: name, payload: { name } });
+            logEvent({
+              source: "git",
+              kind: "branch-delete",
+              summary: name,
+              payload: { name },
+            });
           },
           mergeBranch: async (branch) => {
             const p = repo();
@@ -469,7 +510,10 @@ export const useGitStore = createSelectors(
             if (!p) {
               return { kind: "invalid", commitCount: 0, conflictedFiles: 0 };
             }
-            return invoke<MergePreview>("git_merge_preview", { path: p, branch });
+            return invoke<MergePreview>("git_merge_preview", {
+              path: p,
+              branch,
+            });
           },
           stageFiles: async (paths) => {
             const p = repo();
@@ -504,8 +548,18 @@ export const useGitStore = createSelectors(
           commit: async (summary, description, amend = false) => {
             const p = repo();
             if (!p) return;
-            await invoke("git_commit_ex", { path: p, summary, description: description ?? null, amend });
-            logEvent({ source: "git", kind: "commit", summary: summary.slice(0, 120), payload: {} });
+            await invoke("git_commit_ex", {
+              path: p,
+              summary,
+              description: description ?? null,
+              amend,
+            });
+            logEvent({
+              source: "git",
+              kind: "commit",
+              summary: summary.slice(0, 120),
+              payload: {},
+            });
             // Commit clears the staged set and moves HEAD — refresh the
             // status/diff now; the watcher still reconciles branch ahead/behind.
             await get().actions.refreshStatusNow(p);
@@ -547,7 +601,10 @@ export const useGitStore = createSelectors(
           stashPush: async (message) => {
             const p = repo();
             if (!p) return;
-            await invoke("git_stash_push", { path: p, message: message ?? null });
+            await invoke("git_stash_push", {
+              path: p,
+              message: message ?? null,
+            });
             await get().actions.loadStashes();
           },
           stashApply: async (index) => {

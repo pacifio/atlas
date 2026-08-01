@@ -78,11 +78,17 @@ export const Callout = Node.create({
     return {
       markdown: {
         serialize(
-          state: { write: (s: string) => void; renderContent: (n: unknown) => void; closeBlock: (n: unknown) => void },
+          state: {
+            write: (s: string) => void;
+            renderContent: (n: unknown) => void;
+            closeBlock: (n: unknown) => void;
+          },
           node: { attrs: { emoji?: string } },
         ) {
           const emoji = node.attrs.emoji ?? "💡";
-          state.write(`<aside class="atlas-callout" data-emoji="${emoji}">\n\n`);
+          state.write(
+            `<aside class="atlas-callout" data-emoji="${emoji}">\n\n`,
+          );
           state.renderContent(node);
           state.write(`\n</aside>`);
           state.closeBlock(node);

@@ -20,7 +20,9 @@ const BASH_TOOL_NAMES = new Set([
   "run-command",
 ]);
 
-export function isBashToolCall(tc: Pick<ToolCallDisplay, "kind" | "toolName">): boolean {
+export function isBashToolCall(
+  tc: Pick<ToolCallDisplay, "kind" | "toolName">,
+): boolean {
   if (tc.kind === "execute") return true;
   return BASH_TOOL_NAMES.has(tc.toolName.toLowerCase());
 }

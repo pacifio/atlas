@@ -15,11 +15,14 @@ interface Props {
 }
 
 export function DayTimeline({ day, blocks, nowMin, onNewSession }: Props) {
-  const dateStr = new Date(day.date + "T00:00:00").toLocaleDateString(undefined, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  });
+  const dateStr = new Date(day.date + "T00:00:00").toLocaleDateString(
+    undefined,
+    {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    },
+  );
 
   // Auto-fit the hour gutter to the work-hours range, expanding to cover
   // any block or the current time outside it.
@@ -35,7 +38,10 @@ export function DayTimeline({ day, blocks, nowMin, onNewSession }: Props) {
   }
   startHour = Math.max(0, startHour);
   endHour = Math.min(24, endHour);
-  const hours = Array.from({ length: endHour - startHour + 1 }, (_, i) => startHour + i);
+  const hours = Array.from(
+    { length: endHour - startHour + 1 },
+    (_, i) => startHour + i,
+  );
   const totalHeight = (endHour - startHour) * HOUR_PX;
 
   const minToY = (m: number) => ((m - startHour * 60) / 60) * HOUR_PX;
@@ -54,7 +60,9 @@ export function DayTimeline({ day, blocks, nowMin, onNewSession }: Props) {
           <div className="flex items-center gap-2 text-[11px] text-text-tertiary whitespace-nowrap mt-2">
             <span>{fmtDur(day.focusMin)} focus</span>
             <span className="text-text-tertiary/50">·</span>
-            <span>{day.sessions} session{day.sessions === 1 ? "" : "s"}</span>
+            <span>
+              {day.sessions} session{day.sessions === 1 ? "" : "s"}
+            </span>
             {day.distractions > 0 && (
               <>
                 <span className="text-text-tertiary/50">·</span>
@@ -76,7 +84,10 @@ export function DayTimeline({ day, blocks, nowMin, onNewSession }: Props) {
         className="relative px-6 py-4"
         style={{ minHeight: totalHeight + 32 }}
       >
-        <div className="relative" style={{ height: totalHeight, marginLeft: 56 }}>
+        <div
+          className="relative"
+          style={{ height: totalHeight, marginLeft: 56 }}
+        >
           {hours.slice(0, -1).map((h, i) => (
             <div
               key={h}
@@ -209,7 +220,8 @@ function TimelineBlock({
         </div>
         {isFocus && (block.distractions ?? 0) > 0 && (
           <div className="text-[10px] text-text-tertiary">
-            {block.distractions} distraction{block.distractions === 1 ? "" : "s"}
+            {block.distractions} distraction
+            {block.distractions === 1 ? "" : "s"}
           </div>
         )}
       </div>

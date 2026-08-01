@@ -131,7 +131,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       minHeight = 44,
       maxHeight = 200,
     },
-    ref
+    ref,
   ) {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
@@ -217,9 +217,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
               background: "var(--selection-bg) !important",
             },
           },
-          { dark: true }
+          { dark: true },
         ),
-      [minHeight, maxHeight]
+      [minHeight, maxHeight],
     );
 
     const extensionsKey = extraExtensions ?? null;
@@ -319,7 +319,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                 // when the agent supports image prompts. Unconsumed images
                 // fall through to the path-paste below.
                 const imageFiles = dt?.files
-                  ? Array.from(dt.files).filter((f) => f.type.startsWith("image/"))
+                  ? Array.from(dt.files).filter((f) =>
+                      f.type.startsWith("image/"),
+                    )
                   : [];
                 if (
                   imageFiles.length > 0 &&
@@ -337,7 +339,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                 event.preventDefault();
                 void (async () => {
                   try {
-                    const paths = await invoke<string[]>("clipboard_file_paths");
+                    const paths = await invoke<string[]>(
+                      "clipboard_file_paths",
+                    );
                     if (!paths || paths.length === 0) return;
                     const text = paths.map(quotePath).join(" ") + " ";
                     const head = view.state.selection.main.head;
@@ -371,9 +375,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
               keymap.of(
                 mentionKeymap(
                   () =>
-                    (keyInterceptorRef.current as MentionKeyInterceptor | null) ?? null,
-                )
-              )
+                    (keyInterceptorRef.current as MentionKeyInterceptor | null) ??
+                    null,
+                ),
+              ),
             ),
             ...(extensionsKey ?? []),
           ],
@@ -421,11 +426,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         },
         view: () => viewRef.current,
       }),
-      []
+      [],
     );
 
     return <div ref={containerRef} className="atlas-chat-cm-host" />;
-  }
+  },
 );
 
 /** Whether the current selection's main caret sits on a markdown bullet or

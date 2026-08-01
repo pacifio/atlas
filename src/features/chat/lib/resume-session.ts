@@ -1,7 +1,11 @@
 import { agents } from "./agents-api";
 import { snapshotMessageToWire } from "./snapshot-message";
 import type { AgentInfo } from "@/types/acp";
-import type { SessionKey, SessionMessage, SessionSnapshot } from "@/types/agents";
+import type {
+  SessionKey,
+  SessionMessage,
+  SessionSnapshot,
+} from "@/types/agents";
 
 type WireMessage = ReturnType<typeof snapshotMessageToWire>;
 

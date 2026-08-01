@@ -15,18 +15,27 @@ export const DEFAULT_PAGE_ICON = "📜";
 export function PagesPanel({ width = 240 }: { width?: number }) {
   const tree = useCanvasStore.use.tree();
   const activePageId = useCanvasStore.use.activePageId();
-  const { createPage, setActivePage, renameTreeEntry, setTreeEntryIcon, deleteTreeEntry } =
-    useCanvasStore.use.actions();
+  const {
+    createPage,
+    setActivePage,
+    renameTreeEntry,
+    setTreeEntryIcon,
+    deleteTreeEntry,
+  } = useCanvasStore.use.actions();
 
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [iconFor, setIconFor] = useState<{ id: string; rect: DOMRect } | null>(null);
+  const [iconFor, setIconFor] = useState<{ id: string; rect: DOMRect } | null>(
+    null,
+  );
 
   const pages = tree
     .filter((e) => e.kind === "page")
     .slice()
     .sort((a, b) => a.order - b.order);
 
-  const iconEntry = iconFor ? tree.find((e) => e.id === iconFor.id) ?? null : null;
+  const iconEntry = iconFor
+    ? (tree.find((e) => e.id === iconFor.id) ?? null)
+    : null;
 
   const renderEntry = (entry: PageTreeEntry): React.ReactNode => {
     const active = entry.id === activePageId;
@@ -35,7 +44,9 @@ export function PagesPanel({ width = 240 }: { width?: number }) {
         key={entry.id}
         className={cn(
           "group/row flex h-[26px] items-center gap-1.5 rounded px-1.5 text-[11px] cursor-pointer",
-          active ? "bg-bg-selected text-text-primary" : "text-text-secondary hover:bg-bg-hover",
+          active
+            ? "bg-bg-selected text-text-primary"
+            : "text-text-secondary hover:bg-bg-hover",
         )}
         onClick={() => setActivePage(entry.id)}
       >
@@ -45,11 +56,16 @@ export function PagesPanel({ width = 240 }: { width?: number }) {
           title="Change icon"
           onClick={(e) => {
             e.stopPropagation();
-            setIconFor({ id: entry.id, rect: e.currentTarget.getBoundingClientRect() });
+            setIconFor({
+              id: entry.id,
+              rect: e.currentTarget.getBoundingClientRect(),
+            });
           }}
           className="flex h-4 w-4 shrink-0 items-center justify-center rounded hover:bg-white/10"
         >
-          <span className="text-[11px] leading-none">{entry.icon || DEFAULT_PAGE_ICON}</span>
+          <span className="text-[11px] leading-none">
+            {entry.icon || DEFAULT_PAGE_ICON}
+          </span>
         </button>
 
         {/* Name / inline rename */}
@@ -64,7 +80,8 @@ export function PagesPanel({ width = 240 }: { width?: number }) {
               setEditingId(null);
             }}
             onKeyDown={(e) => {
-              if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
+              if (e.key === "Enter")
+                (e.currentTarget as HTMLInputElement).blur();
               else if (e.key === "Escape") setEditingId(null);
             }}
             className="min-w-0 flex-1 rounded bg-bg-input px-1 text-[11px] text-text-primary outline-none"

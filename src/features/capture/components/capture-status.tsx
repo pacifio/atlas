@@ -35,12 +35,16 @@ export function StatusDot({
  * continues. The degraded label is `health.summary` because the backend already
  * formats the count and reason better than a recomputation here would.
  */
-export function statusLabel(binding: Binding | null, health: CaptureHealth | null): string {
+export function statusLabel(
+  binding: Binding | null,
+  health: CaptureHealth | null,
+): string {
   if (health?.state === "stopped") return "Capture stopped";
   if (health?.state === "degraded") return health.summary || "Needs review";
   if (!binding) return "Off";
   if (!binding.enabled) return "Paused";
-  if (binding.mode === "cloud" && !binding.importApproved) return "Cloud · import waiting";
+  if (binding.mode === "cloud" && !binding.importApproved)
+    return "Cloud · import waiting";
   const mode = binding.mode === "cloud" ? "Cloud" : "Local";
   const pending = health?.pendingRows ?? 0;
   if (pending > 0) return `${mode} · ${pending} pending`;

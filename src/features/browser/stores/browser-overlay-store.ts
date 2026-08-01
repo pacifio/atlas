@@ -43,6 +43,6 @@ export const useBrowserOverlayStore = createSelectors(
             if (s.embedCount === 0) s.overlayOpen = false;
           }),
       },
-    }))
-  )
+    })),
+  ),
 );

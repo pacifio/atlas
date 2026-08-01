@@ -46,7 +46,10 @@ function installModListeners() {
   });
 }
 
-export function createPathLinkProvider(term: Terminal, terminalId: string): ILinkProvider {
+export function createPathLinkProvider(
+  term: Terminal,
+  terminalId: string,
+): ILinkProvider {
   installModListeners();
   return {
     provideLinks(lineNo, callback) {

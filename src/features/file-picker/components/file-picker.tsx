@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Image as ImageIcon, Film, Music, FileCode, FileX, RotateCw } from "lucide-react";
+import {
+  Image as ImageIcon,
+  Film,
+  Music,
+  FileCode,
+  FileX,
+  RotateCw,
+} from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/features/project/stores/project-store";
@@ -64,7 +71,9 @@ export function FilePicker({ open, onOpenChange }: FilePickerProps) {
       const status = await ensureFileIndex(project?.path);
       if (cancelled) return;
       setIndexing(status ? !status.indexed : false);
-      const r = await fileIndex.search("", RESULT_LIMIT).catch(() => [] as FileMatch[]);
+      const r = await fileIndex
+        .search("", RESULT_LIMIT)
+        .catch(() => [] as FileMatch[]);
       if (cancelled) return;
       setResults(r);
       if (project && r.length) cacheFileList(project.path, r);
@@ -82,12 +91,15 @@ export function FilePicker({ open, onOpenChange }: FilePickerProps) {
     setReindexing(true);
     setIndexing(true);
     await openFileIndex(project.path).catch(() => {});
-    const r = await fileIndex.search(query, RESULT_LIMIT).catch(() => [] as FileMatch[]);
+    const r = await fileIndex
+      .search(query, RESULT_LIMIT)
+      .catch(() => [] as FileMatch[]);
     setResults(r);
     setSelected(0);
     setIndexing(false);
     setReindexing(false);
-    if (project && query.trim() === "" && r.length) cacheFileList(project.path, r);
+    if (project && query.trim() === "" && r.length)
+      cacheFileList(project.path, r);
   };
 
   // Debounced backend search on query change.
@@ -121,7 +133,8 @@ export function FilePicker({ open, onOpenChange }: FilePickerProps) {
         .search(query, RESULT_LIMIT)
         .then((r) => {
           setResults(r);
-          if (project && query.trim() === "" && r.length) cacheFileList(project.path, r);
+          if (project && query.trim() === "" && r.length)
+            cacheFileList(project.path, r);
         })
         .catch(() => {});
     }).then((un) => {
@@ -179,7 +192,7 @@ export function FilePicker({ open, onOpenChange }: FilePickerProps) {
           className={cn(
             "fixed left-1/2 top-[18%] z-50 -translate-x-1/2",
             "w-[640px] max-w-[92vw] rounded-md border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-2xl",
-            "flex flex-col overflow-hidden"
+            "flex flex-col overflow-hidden",
           )}
         >
           <Dialog.Title className="sr-only">Open file</Dialog.Title>
@@ -193,7 +206,10 @@ export function FilePicker({ open, onOpenChange }: FilePickerProps) {
             disabled={!project}
             className="px-4 h-11 bg-transparent border-b border-[var(--border-default)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none"
           />
-          <div ref={scrollRef} className="max-h-[420px] overflow-y-auto hide-scrollbar">
+          <div
+            ref={scrollRef}
+            className="max-h-[420px] overflow-y-auto hide-scrollbar"
+          >
             {showEmpty ? (
               <div className="px-4 py-3 text-[11px] text-[var(--text-tertiary)]">
                 {!project
@@ -234,11 +250,13 @@ export function FilePicker({ open, onOpenChange }: FilePickerProps) {
                         "flex items-center gap-2 px-3 text-left cursor-pointer transition-colors",
                         active
                           ? "bg-[var(--bg-selected)] text-[var(--text-primary)]"
-                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
                       )}
                     >
                       <KindIcon kind={classifyFile(m.path)} />
-                      <span className="truncate text-[12px] font-mono">{m.rel}</span>
+                      <span className="truncate text-[12px] font-mono">
+                        {m.rel}
+                      </span>
                     </button>
                   );
                 })}
@@ -253,13 +271,18 @@ export function FilePicker({ open, onOpenChange }: FilePickerProps) {
                 title="Rebuild the file index"
                 className={cn(
                   "flex items-center gap-1 rounded px-1 -ml-1 transition-colors",
-                  "hover:text-[var(--text-secondary)] disabled:opacity-40 disabled:cursor-default cursor-pointer outline-none"
+                  "hover:text-[var(--text-secondary)] disabled:opacity-40 disabled:cursor-default cursor-pointer outline-none",
                 )}
               >
-                <RotateCw size={10} className={cn(reindexing && "animate-spin")} />
+                <RotateCw
+                  size={10}
+                  className={cn(reindexing && "animate-spin")}
+                />
                 Reindex
               </button>
-              <span>{results.length} match{results.length === 1 ? "" : "es"}</span>
+              <span>
+                {results.length} match{results.length === 1 ? "" : "es"}
+              </span>
             </div>
             <span>↑↓ navigate · ↵ open · esc close</span>
           </div>

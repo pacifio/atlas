@@ -14,12 +14,19 @@ import {
 export type ExportFormat = "png" | "jpeg" | "svg" | "pdf";
 export type ExportResult = "ok" | "empty" | "cancelled";
 
-const EXT: Record<ExportFormat, string> = { png: "png", jpeg: "jpg", svg: "svg", pdf: "pdf" };
+const EXT: Record<ExportFormat, string> = {
+  png: "png",
+  jpeg: "jpg",
+  svg: "svg",
+  pdf: "pdf",
+};
 const MAX_DIM = 4096; // cap the longest side (px) to keep files/memory sane
 
 /** Canvas background (matches the app) — used for formats without alpha. */
 function canvasBg(): string {
-  const v = getComputedStyle(document.documentElement).getPropertyValue("--bg-base").trim();
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue("--bg-base")
+    .trim();
   return v || "#0a0a0a";
 }
 
@@ -33,10 +40,16 @@ function base64FromDataUrl(dataUrl: string): string {
 function filterChrome(el: HTMLElement): boolean {
   const cl = el.classList;
   if (!cl) return true;
-  return !cl.contains("react-flow__handle") && !cl.contains("react-flow__resize-control");
+  return (
+    !cl.contains("react-flow__handle") &&
+    !cl.contains("react-flow__resize-control")
+  );
 }
 
-export async function exportCanvas(format: ExportFormat, rf: ReactFlowInstance): Promise<ExportResult> {
+export async function exportCanvas(
+  format: ExportFormat,
+  rf: ReactFlowInstance,
+): Promise<ExportResult> {
   const nodes = rf.getNodes();
   if (nodes.length === 0) return "empty";
   // Load the heavy export libs (jspdf ~390KB + html-to-image) ONLY when an
@@ -45,7 +58,9 @@ export async function exportCanvas(format: ExportFormat, rf: ReactFlowInstance):
     import("html-to-image"),
     import("jspdf"),
   ]);
-  const viewportEl = document.querySelector<HTMLElement>(".react-flow__viewport");
+  const viewportEl = document.querySelector<HTMLElement>(
+    ".react-flow__viewport",
+  );
   if (!viewportEl) return "empty";
 
   const bounds = getNodesBounds(nodes);
@@ -88,15 +103,25 @@ export async function exportCanvas(format: ExportFormat, rf: ReactFlowInstance):
 
   if (format === "png") {
     const dataUrl = await toPng(viewportEl, baseOpts);
-    await invoke("write_file_base64", { path, contents: base64FromDataUrl(dataUrl) });
+    await invoke("write_file_base64", {
+      path,
+      contents: base64FromDataUrl(dataUrl),
+    });
     return "ok";
   }
 
   // JPEG + PDF both need an opaque background (no alpha).
   const png = await toPng(viewportEl, { ...baseOpts, backgroundColor: bg });
   if (format === "jpeg") {
-    const dataUrl = await toJpeg(viewportEl, { ...baseOpts, backgroundColor: bg, quality: 0.95 });
-    await invoke("write_file_base64", { path, contents: base64FromDataUrl(dataUrl) });
+    const dataUrl = await toJpeg(viewportEl, {
+      ...baseOpts,
+      backgroundColor: bg,
+      quality: 0.95,
+    });
+    await invoke("write_file_base64", {
+      path,
+      contents: base64FromDataUrl(dataUrl),
+    });
     return "ok";
   }
 

@@ -55,11 +55,13 @@ interface KnowledgeTreeProps {
  * Visually identical to the project explorer: same row height, indent,
  * chevron, hover/active states. See plans/lexical-wibbling-elephant.md.
  */
-export const KnowledgeTree = forwardRef<KnowledgeTreeHandle, KnowledgeTreeProps>(
-  function KnowledgeTree(
-    { entries, activeEntryId, onSelect, onDelete, onExpandedCountChange },
-    ref,
-  ) {
+export const KnowledgeTree = forwardRef<
+  KnowledgeTreeHandle,
+  KnowledgeTreeProps
+>(function KnowledgeTree(
+  { entries, activeEntryId, onSelect, onDelete, onExpandedCountChange },
+  ref,
+) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -76,7 +78,10 @@ export const KnowledgeTree = forwardRef<KnowledgeTreeHandle, KnowledgeTreeProps>
   // the same paper/note twice (e.g. when a research import races with
   // a manual save) and React keys must be unique.
   const dirMap = useMemo(() => {
-    const map = new Map<string, { dirs: Set<string>; files: KnowledgeTreeEntry[] }>();
+    const map = new Map<
+      string,
+      { dirs: Set<string>; files: KnowledgeTreeEntry[] }
+    >();
     const ensure = (path: string) => {
       if (!map.has(path)) map.set(path, { dirs: new Set(), files: [] });
       return map.get(path)!;
@@ -112,14 +117,24 @@ export const KnowledgeTree = forwardRef<KnowledgeTreeHandle, KnowledgeTreeProps>
       const node = dirMap.get(path);
       if (!node) return;
       const dirs = Array.from(node.dirs).sort();
-      const files = [...node.files].sort((a, b) => a.title.localeCompare(b.title));
+      const files = [...node.files].sort((a, b) =>
+        a.title.localeCompare(b.title),
+      );
       for (const dir of dirs) {
-        const name = dir.includes("/") ? dir.substring(dir.lastIndexOf("/") + 1) : dir;
+        const name = dir.includes("/")
+          ? dir.substring(dir.lastIndexOf("/") + 1)
+          : dir;
         out.push({ key: dir, name, depth, isDir: true });
         if (expanded.has(dir)) walk(dir, depth + 1);
       }
       for (const file of files) {
-        out.push({ key: file.id, name: file.title, depth, isDir: false, entry: file });
+        out.push({
+          key: file.id,
+          name: file.title,
+          depth,
+          isDir: false,
+          entry: file,
+        });
       }
     };
     walk("", 0);
@@ -134,7 +149,7 @@ export const KnowledgeTree = forwardRef<KnowledgeTreeHandle, KnowledgeTreeProps>
   });
 
   // Every directory key that exists in the dirMap (excluding the
-   // virtual root ""). Used by `expandAll()`.
+  // virtual root ""). Used by `expandAll()`.
   const allDirKeys = useMemo(() => {
     const keys: string[] = [];
     for (const key of dirMap.keys()) {
@@ -170,7 +185,10 @@ export const KnowledgeTree = forwardRef<KnowledgeTreeHandle, KnowledgeTreeProps>
   }
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-auto hide-scrollbar px-1.5 pb-2 min-h-0">
+    <div
+      ref={scrollRef}
+      className="flex-1 overflow-auto hide-scrollbar px-1.5 pb-2 min-h-0"
+    >
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
         {virtualizer.getVirtualItems().map((virtualRow) => {
           const node = flat[virtualRow.index];
@@ -220,5 +238,4 @@ export const KnowledgeTree = forwardRef<KnowledgeTreeHandle, KnowledgeTreeProps>
       </div>
     </div>
   );
-  },
-);
+});

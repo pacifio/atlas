@@ -61,25 +61,40 @@ function buildChain(t: MemoryTimeline) {
 }
 type Chain = ReturnType<typeof buildChain>;
 
-function affectingItems(selectedId: string, chain: Chain, t: MemoryTimeline): PanelItem[] {
+function affectingItems(
+  selectedId: string,
+  chain: Chain,
+  t: MemoryTimeline,
+): PanelItem[] {
   const notes = new Map<string, string>();
-  const add = (mid: string, note: string) => { if (!notes.has(mid)) notes.set(mid, note); };
+  const add = (mid: string, note: string) => {
+    if (!notes.has(mid)) notes.set(mid, note);
+  };
   if (selectedId.startsWith("commit:")) {
     const sha = selectedId.slice(7);
     for (const sid of chain.commitToSessions.get(sha) ?? [])
-      for (const mid of chain.sessionToMems.get(sid) ?? []) add(mid, `fed a run → ${sha.slice(0, 7)}`);
+      for (const mid of chain.sessionToMems.get(sid) ?? [])
+        add(mid, `fed a run → ${sha.slice(0, 7)}`);
   } else if (selectedId.startsWith("session:")) {
-    for (const mid of chain.sessionToMems.get(selectedId.slice(8)) ?? []) add(mid, "fed this run");
+    for (const mid of chain.sessionToMems.get(selectedId.slice(8)) ?? [])
+      add(mid, "fed this run");
   } else if (selectedId.startsWith("branch:")) {
     const br = selectedId.slice(7);
     for (const s of t.sessions)
       if (s.branch === br)
-        for (const mid of chain.sessionToMems.get(s.id) ?? []) add(mid, `fed a run on ${br}`);
+        for (const mid of chain.sessionToMems.get(s.id) ?? [])
+          add(mid, `fed a run on ${br}`);
   }
   return [...notes.entries()]
     .map(([mid, note]) => {
       const m = chain.memById.get(mid) as TimelineMemory;
-      return { id: mid, title: m.title, source: m.source, note, ts_ms: m.ts_ms };
+      return {
+        id: mid,
+        title: m.title,
+        source: m.source,
+        note,
+        ts_ms: m.ts_ms,
+      };
     })
     .sort((a, b) => b.ts_ms - a.ts_ms);
 }
@@ -89,7 +104,8 @@ export function MemoryTimelineView() {
   const isRepo = useGitStore.use.isRepo();
   const timeline = useMemoryStore.use.timeline();
   const loading = useMemoryStore.use.timelineLoading();
-  const { ensureProject, loadTimeline, navigateToMemory } = useMemoryStore.use.actions();
+  const { ensureProject, loadTimeline, navigateToMemory } =
+    useMemoryStore.use.actions();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -106,17 +122,22 @@ export function MemoryTimelineView() {
     if (projectPath && isRepo) void loadTimeline(projectPath);
   }, [projectPath, isRepo, ensureProject, loadTimeline]);
 
-  const chain = useMemo(() => (timeline ? buildChain(timeline) : null), [timeline]);
+  const chain = useMemo(
+    () => (timeline ? buildChain(timeline) : null),
+    [timeline],
+  );
 
   // Card ids (commit/session) that have memory feeding into them via the chain.
   const memoryIds = useMemo(() => {
     if (!timeline || !chain) return null;
     const s = new Set<string>();
     for (const ses of timeline.sessions)
-      if ((chain.sessionToMems.get(ses.id)?.length ?? 0) > 0) s.add(`session:${ses.id}`);
+      if ((chain.sessionToMems.get(ses.id)?.length ?? 0) > 0)
+        s.add(`session:${ses.id}`);
     for (const c of timeline.commits) {
       const sids = chain.commitToSessions.get(c.sha) ?? [];
-      if (sids.some((sid) => (chain.sessionToMems.get(sid)?.length ?? 0) > 0)) s.add(`commit:${c.sha}`);
+      if (sids.some((sid) => (chain.sessionToMems.get(sid)?.length ?? 0) > 0))
+        s.add(`commit:${c.sha}`);
     }
     return s;
   }, [timeline, chain]);
@@ -128,7 +149,11 @@ export function MemoryTimelineView() {
         const s = timeline?.sessions.find((x) => x.id === id.slice(8));
         if (s) {
           const sub =
-            s.agent === "codex" ? "codex" : s.agent === "cersei" ? "cersei" : "claude";
+            s.agent === "codex"
+              ? "codex"
+              : s.agent === "cersei"
+                ? "cersei"
+                : "claude";
           navigateToMemory(sub, s.id);
         }
         return;
@@ -165,12 +190,21 @@ export function MemoryTimelineView() {
             note = `impacts ${sha.slice(0, 7)} on ${chain.commitBySha.get(sha)?.branch ?? "?"}`;
           } else note = "linked to a run";
         }
-        items.push({ id: h.id, title: m.title, source: m.source, note, ts_ms: m.ts_ms, score: h.score });
+        items.push({
+          id: h.id,
+          title: m.title,
+          source: m.source,
+          note,
+          ts_ms: m.ts_ms,
+          score: h.score,
+        });
       }
       setHighlightIds(hi);
       setSearchItems(items);
       if (items.length === 0)
-        setSearchError("No indexed memory matched. Build the Graph tab first if results look empty.");
+        setSearchError(
+          "No indexed memory matched. Build the Graph tab first if results look empty.",
+        );
     } catch (e) {
       const msg = String(e);
       setSearchError(
@@ -198,23 +232,38 @@ export function MemoryTimelineView() {
     return (
       <Centered>
         <div className="text-center max-w-[320px] px-6 space-y-2">
-          <GitBranch size={22} className="text-[var(--text-tertiary)] mx-auto" />
-          <p className="text-[12px] text-[var(--text-secondary)]">Timeline needs a git repo</p>
+          <GitBranch
+            size={22}
+            className="text-[var(--text-tertiary)] mx-auto"
+          />
+          <p className="text-[12px] text-[var(--text-secondary)]">
+            Timeline needs a git repo
+          </p>
           <p className="text-[11px] text-[var(--text-tertiary)] leading-relaxed">
-            Initialize git to map agent sessions and memory onto branch lanes over time.
+            Initialize git to map agent sessions and memory onto branch lanes
+            over time.
           </p>
         </div>
       </Centered>
     );
   }
   if (loading && !timeline) {
-    return <Centered><Loader2 size={18} className="animate-spin text-[var(--text-tertiary)]" /></Centered>;
+    return (
+      <Centered>
+        <Loader2
+          size={18}
+          className="animate-spin text-[var(--text-tertiary)]"
+        />
+      </Centered>
+    );
   }
   if (!timeline || !chain) {
     return (
       <Centered>
         <div className="text-center space-y-2">
-          <p className="text-[12px] text-[var(--text-tertiary)]">Couldn't build the timeline.</p>
+          <p className="text-[12px] text-[var(--text-tertiary)]">
+            Couldn't build the timeline.
+          </p>
           <button
             onClick={() => projectPath && void loadTimeline(projectPath, true)}
             className="inline-flex items-center gap-1.5 h-7 px-3 rounded-md border border-[var(--border-default)] text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
@@ -234,19 +283,24 @@ export function MemoryTimelineView() {
     : selectedId
       ? affectingItems(selectedId, chain, timeline)
       : [];
-  const panelTitle = searchMode ? `Impact of “${query.trim()}”` : selectionTitle(selectedId, timeline);
+  const panelTitle = searchMode
+    ? `Impact of “${query.trim()}”`
+    : selectionTitle(selectedId, timeline);
   const panelSubtitle = searchMode
-    ? searchError ?? `${searchItems!.length} memories · ${highlightIds?.size ?? 0} git targets`
+    ? (searchError ??
+      `${searchItems!.length} memories · ${highlightIds?.size ?? 0} git targets`)
     : "memory affecting this, newest first";
 
   return (
     <div className="h-full flex flex-col bg-[var(--bg-base)]">
       {/* Header */}
       <div className="flex items-center gap-3 px-3 h-[32px] shrink-0 border-b border-[var(--border-default)] text-[10px] text-[var(--text-tertiary)]">
-        <span className="text-[11px] font-medium text-[var(--text-secondary)]">Timeline</span>
+        <span className="text-[11px] font-medium text-[var(--text-secondary)]">
+          Timeline
+        </span>
         <span className="tabular-nums">
-          {timeline.branches.length} branches · {timeline.commits.length} commits ·{" "}
-          {timeline.sessions.length} sessions
+          {timeline.branches.length} branches · {timeline.commits.length}{" "}
+          commits · {timeline.sessions.length} sessions
         </span>
         <div className="flex-1" />
         {/* Day-range segmented toggle (auto via breakpoint, user-overridable). */}
@@ -305,7 +359,10 @@ export function MemoryTimelineView() {
         {/* Floating semantic search pill — overlaid on the chart, no box. */}
         <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-10 w-[min(620px,calc(100%-40px))]">
           <div className="flex items-center gap-2.5 h-11 rounded-full bg-[#141414]/95 backdrop-blur-2xl shadow-[0_10px_40px_rgba(0,0,0,0.6)] border border-white/[0.12] px-4">
-            <Search size={15} className="text-[var(--text-tertiary)] shrink-0" />
+            <Search
+              size={15}
+              className="text-[var(--text-tertiary)] shrink-0"
+            />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -318,7 +375,11 @@ export function MemoryTimelineView() {
               className="flex-1 min-w-0 bg-transparent outline-none text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]"
             />
             {(query || searchMode) && !searching && (
-              <button onClick={clearSearch} className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] shrink-0" title="Clear">
+              <button
+                onClick={clearSearch}
+                className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] shrink-0"
+                title="Clear"
+              >
                 <X size={15} />
               </button>
             )}
@@ -328,7 +389,11 @@ export function MemoryTimelineView() {
               className="flex items-center justify-center w-7 h-7 rounded-full bg-[var(--accent-primary)] text-[var(--bg-base)] shrink-0 disabled:opacity-30 hover:opacity-90 transition-opacity cursor-pointer"
               title="Search memory impact"
             >
-              {searching ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
+              {searching ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <ArrowUp size={15} />
+              )}
             </button>
           </div>
         </div>
@@ -353,5 +418,9 @@ function selectionTitle(selectedId: string | null, t: MemoryTimeline): string {
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="h-full flex items-center justify-center text-[var(--text-tertiary)] text-[12px]">{children}</div>;
+  return (
+    <div className="h-full flex items-center justify-center text-[var(--text-tertiary)] text-[12px]">
+      {children}
+    </div>
+  );
 }

@@ -36,7 +36,9 @@ export const nodeSetup = {
 export const listenNodeInstallProgress = (
   handler: (p: NodeInstallProgress) => void,
 ): Promise<UnlistenFn> =>
-  listen<NodeInstallProgress>("atlas:node-install:progress", (e) => handler(e.payload));
+  listen<NodeInstallProgress>("atlas:node-install:progress", (e) =>
+    handler(e.payload),
+  );
 
 export const listenNodeInstallDone = (
   handler: (p: NodeInstallDone) => void,

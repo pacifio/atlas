@@ -25,18 +25,29 @@ const CHECKER: React.CSSProperties = {
 const MIN_SCALE = 1;
 const MAX_SCALE = 8;
 
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+const clamp = (v: number, lo: number, hi: number) =>
+  Math.min(hi, Math.max(lo, v));
 
 /**
  * Zoomable / pannable image. Wheel (or ⌘/Ctrl-wheel) zooms toward the cursor,
  * drag pans when zoomed in, double-click resets to fit. Scale is clamped to
  * [1, 8]; at 1× the image snaps back to centered/fit.
  */
-export function ImageZoomView({ src, alt, fill, checkerboard }: ImageZoomViewProps) {
+export function ImageZoomView({
+  src,
+  alt,
+  fill,
+  checkerboard,
+}: ImageZoomViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const dragRef = useRef<{
+    x: number;
+    y: number;
+    ox: number;
+    oy: number;
+  } | null>(null);
 
   const reset = useCallback(() => {
     setScale(1);
@@ -48,24 +59,21 @@ export function ImageZoomView({ src, alt, fill, checkerboard }: ImageZoomViewPro
     reset();
   }, [src, reset]);
 
-  const zoomAt = useCallback(
-    (factor: number, cx: number, cy: number) => {
-      setScale((prev) => {
-        const next = clamp(prev * factor, MIN_SCALE, MAX_SCALE);
-        const ratio = next / prev;
-        if (next === MIN_SCALE) {
-          setOffset({ x: 0, y: 0 });
-        } else {
-          setOffset((o) => ({
-            x: cx - ratio * (cx - o.x),
-            y: cy - ratio * (cy - o.y),
-          }));
-        }
-        return next;
-      });
-    },
-    []
-  );
+  const zoomAt = useCallback((factor: number, cx: number, cy: number) => {
+    setScale((prev) => {
+      const next = clamp(prev * factor, MIN_SCALE, MAX_SCALE);
+      const ratio = next / prev;
+      if (next === MIN_SCALE) {
+        setOffset({ x: 0, y: 0 });
+      } else {
+        setOffset((o) => ({
+          x: cx - ratio * (cx - o.x),
+          y: cy - ratio * (cy - o.y),
+        }));
+      }
+      return next;
+    });
+  }, []);
 
   // Non-passive wheel listener so we can preventDefault the page scroll.
   useEffect(() => {
@@ -88,7 +96,12 @@ export function ImageZoomView({ src, alt, fill, checkerboard }: ImageZoomViewPro
   const onPointerDown = (e: React.PointerEvent) => {
     if (scale <= 1) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = { x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y };
+    dragRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      ox: offset.x,
+      oy: offset.y,
+    };
   };
   const onPointerMove = (e: React.PointerEvent) => {
     const d = dragRef.current;

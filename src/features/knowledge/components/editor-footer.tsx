@@ -105,7 +105,10 @@ export function EditorFooter({
   const handleExportNoteHtml = () =>
     run("note-html", async () => {
       if (!entryId) return;
-      const target = await pickSavePath(`${entryId.split("/").pop()}.html`, "html");
+      const target = await pickSavePath(
+        `${entryId.split("/").pop()}.html`,
+        "html",
+      );
       if (!target) return;
       await invoke("knowledge_export_note_html", {
         projectPath,
@@ -151,7 +154,8 @@ export function EditorFooter({
 
   const hasNote = !!entryId;
   const isBusy = busy !== null;
-  const busyLabel = busy === "server" ? "Building…" : busy ? "Exporting…" : null;
+  const busyLabel =
+    busy === "server" ? "Building…" : busy ? "Exporting…" : null;
 
   return (
     <div
@@ -165,10 +169,12 @@ export function EditorFooter({
       }}
     >
       <span>
-        <span className="mono tnum">{wordCount.toLocaleString("en-US")}</span> words
+        <span className="mono tnum">{wordCount.toLocaleString("en-US")}</span>{" "}
+        words
       </span>
       <span>
-        <span className="mono tnum">{charCount.toLocaleString("en-US")}</span> chars
+        <span className="mono tnum">{charCount.toLocaleString("en-US")}</span>{" "}
+        chars
       </span>
       <span>
         <span className="mono">~{readMinutes}m</span> read

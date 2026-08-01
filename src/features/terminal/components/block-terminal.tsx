@@ -1,13 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Loader2, CheckCircle2, XCircle, ChevronRight, Folder, Copy, RotateCw, ChevronDown, ChevronUp, Search, X, GitBranch, Lock } from "lucide-react";
+import {
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  ChevronRight,
+  Folder,
+  Copy,
+  RotateCw,
+  ChevronDown,
+  ChevronUp,
+  Search,
+  X,
+  GitBranch,
+  Lock,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { openFileOrReveal } from "@/lib/open-file";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { resolveTerminalFont } from "../utils/resolve-font";
-import { resolveTerminalOutput, type AnsiSegment } from "../lib/ansi-to-segments";
+import {
+  resolveTerminalOutput,
+  type AnsiSegment,
+} from "../lib/ansi-to-segments";
 import { splitLinks, normalizeUrl } from "../lib/linkify-paths";
 import { createTerminalKeymap } from "../lib/terminal-keymap";
 import { createPathLinkProvider } from "../lib/path-link-provider";
@@ -61,9 +78,13 @@ function renderHL(text: string, query: string): ReactNode {
     }
     if (idx > i) nodes.push(text.slice(i, idx));
     nodes.push(
-      <mark key={k++} data-term-match className="rounded-[2px] bg-[var(--status-warning)]/40 text-inherit">
+      <mark
+        key={k++}
+        data-term-match
+        className="rounded-[2px] bg-[var(--status-warning)]/40 text-inherit"
+      >
         {text.slice(idx, idx + q.length)}
-      </mark>
+      </mark>,
     );
     i = idx + q.length;
   }
@@ -88,11 +109,22 @@ const XTERM_THEME = {
   // hiding the selected glyphs (opaque #303030 read as nearly invisible).
   selectionBackground: "rgba(97,175,239,0.35)",
   selectionInactiveBackground: "rgba(255,255,255,0.16)",
-  black: "#1a1a1a", red: "#e06c75", green: "#98c379", yellow: "#e5c07b",
-  blue: "#61afef", magenta: "#c678dd", cyan: "#56b6c2", white: "#cccccc",
-  brightBlack: "#5c6370", brightRed: "#e06c75", brightGreen: "#98c379",
-  brightYellow: "#e5c07b", brightBlue: "#61afef", brightMagenta: "#c678dd",
-  brightCyan: "#56b6c2", brightWhite: "#ffffff",
+  black: "#1a1a1a",
+  red: "#e06c75",
+  green: "#98c379",
+  yellow: "#e5c07b",
+  blue: "#61afef",
+  magenta: "#c678dd",
+  cyan: "#56b6c2",
+  white: "#cccccc",
+  brightBlack: "#5c6370",
+  brightRed: "#e06c75",
+  brightGreen: "#98c379",
+  brightYellow: "#e5c07b",
+  brightBlue: "#61afef",
+  brightMagenta: "#c678dd",
+  brightCyan: "#56b6c2",
+  brightWhite: "#ffffff",
 };
 
 /**
@@ -104,7 +136,11 @@ const XTERM_THEME = {
  * The React command input sends lines to the shell; when an alt-screen app is
  * running, keystrokes go to xterm instead.
  */
-export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalProps) {
+export function BlockTerminal({
+  isActive,
+  onFocus,
+  terminalKey,
+}: BlockTerminalProps) {
   const [blocks, setBlocks] = useState<TerminalBlock[]>([]);
   const [altScreen, setAltScreen] = useState(false);
   const [cwd, setCwd] = useState<string>("");
@@ -124,7 +160,9 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
 
   useEffect(() => {
     void invoke<string | null>("terminal_zsh_dir")
-      .then((d) => { zshDirRef.current = d; })
+      .then((d) => {
+        zshDirRef.current = d;
+      })
       .catch(() => {});
   }, []);
 
@@ -197,7 +235,11 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
         /* keep defaults */
       }
 
-      const id = await invoke<string>("terminal_create", { cols, rows, cwd: initialCwd });
+      const id = await invoke<string>("terminal_create", {
+        cols,
+        rows,
+        cwd: initialCwd,
+      });
       if (disposed) {
         void invoke("terminal_close", { id }).catch(() => {});
         return;
@@ -223,13 +265,18 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
         if (mod && key === "c") {
           if (term.hasSelection()) {
             e.preventDefault();
-            void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+            void navigator.clipboard
+              .writeText(term.getSelection())
+              .catch(() => {});
           }
           return false;
         }
         if (mod && key === "v") {
           e.preventDefault();
-          void navigator.clipboard.readText().then((t) => t && term.paste(t)).catch(() => {});
+          void navigator.clipboard
+            .readText()
+            .then((t) => t && term.paste(t))
+            .catch(() => {});
           return false;
         }
         if (e.metaKey && key === "a") {
@@ -252,12 +299,15 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
         }
       });
 
-      unOut = await listen<{ id: string; data: number[] }>("terminal-output", (e) => {
-        if (e.payload.id !== id || disposed) return;
-        const bytes = new Uint8Array(e.payload.data);
-        term.write(bytes); // interactive surface
-        parser.push(decoderRef.current.decode(bytes, { stream: true })); // blocks
-      });
+      unOut = await listen<{ id: string; data: number[] }>(
+        "terminal-output",
+        (e) => {
+          if (e.payload.id !== id || disposed) return;
+          const bytes = new Uint8Array(e.payload.data);
+          term.write(bytes); // interactive surface
+          parser.push(decoderRef.current.decode(bytes, { stream: true })); // blocks
+        },
+      );
       unExit = await listen<{ id: string }>("terminal-exit", () => {});
     })();
 
@@ -266,7 +316,8 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
       safeUnlisten(unOut);
       safeUnlisten(unExit);
       xtermRef.current?.dispose();
-      if (ptyRef.current) void invoke("terminal_close", { id: ptyRef.current }).catch(() => {});
+      if (ptyRef.current)
+        void invoke("terminal_close", { id: ptyRef.current }).catch(() => {});
     };
   }, []);
 
@@ -284,7 +335,12 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
       } catch {
         return;
       }
-      if (id) void invoke("terminal_resize", { id, cols: t.cols, rows: t.rows }).catch(() => {});
+      if (id)
+        void invoke("terminal_resize", {
+          id,
+          cols: t.cols,
+          rows: t.rows,
+        }).catch(() => {});
     });
     ro.observe(host);
     return () => ro.disconnect();
@@ -347,7 +403,12 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
           if (cancelled) return;
           setGit(
             s.is_repo
-              ? { branch: s.branch, ahead: s.ahead, behind: s.behind, dirty: s.files.length > 0 }
+              ? {
+                  branch: s.branch,
+                  ahead: s.ahead,
+                  behind: s.behind,
+                  dirty: s.files.length > 0,
+                }
               : null,
           );
         })
@@ -434,7 +495,8 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
   }, [search.query, blocks]);
 
   const navMatch = useCallback((dir: 1 | -1) => {
-    const els = scrollRef.current?.querySelectorAll<HTMLElement>("[data-term-match]");
+    const els =
+      scrollRef.current?.querySelectorAll<HTMLElement>("[data-term-match]");
     if (!els || !els.length) return;
     matchIdxRef.current = (matchIdxRef.current + dir + els.length) % els.length;
     els.forEach((el) => el.classList.remove("term-match-active"));
@@ -449,7 +511,11 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
   }, []);
 
   return (
-    <div data-block-terminal className="relative flex h-full w-full flex-col bg-[var(--bg-base)]" onClick={onFocus}>
+    <div
+      data-block-terminal
+      className="relative flex h-full w-full flex-col bg-[var(--bg-base)]"
+      onClick={onFocus}
+    >
       {/* Interactive surface — overlays the block list while an alt-screen app runs. */}
       <div
         ref={xtermHostRef}
@@ -467,7 +533,9 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
           <input
             ref={searchInputRef}
             value={search.query}
-            onChange={(e) => setSearch((s) => ({ ...s, query: e.target.value }))}
+            onChange={(e) =>
+              setSearch((s) => ({ ...s, query: e.target.value }))
+            }
             onKeyDown={(e) => {
               if (e.key === "Escape") closeSearch();
               else if (e.key === "Enter") navMatch(e.shiftKey ? -1 : 1);
@@ -478,13 +546,25 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
           <span className="w-10 shrink-0 text-right text-[10px] tabular-nums text-[var(--text-tertiary)]">
             {matchCount}
           </span>
-          <button type="button" onClick={() => navMatch(-1)} className="rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]">
+          <button
+            type="button"
+            onClick={() => navMatch(-1)}
+            className="rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          >
             <ChevronUp size={13} />
           </button>
-          <button type="button" onClick={() => navMatch(1)} className="rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]">
+          <button
+            type="button"
+            onClick={() => navMatch(1)}
+            className="rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          >
             <ChevronDown size={13} />
           </button>
-          <button type="button" onClick={closeSearch} className="rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]">
+          <button
+            type="button"
+            onClick={closeSearch}
+            className="rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          >
             <X size={13} />
           </button>
         </div>
@@ -497,7 +577,13 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
         style={{ visibility: altScreen ? "hidden" : "visible" }}
       >
         {blocks.map((b) => (
-          <BlockCard key={b.id} block={b} onRerun={runCommand} onPassword={writePassword} query={search.query} />
+          <BlockCard
+            key={b.id}
+            block={b}
+            onRerun={runCommand}
+            onPassword={writePassword}
+            query={search.query}
+          />
         ))}
       </div>
 
@@ -507,9 +593,15 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
       {!altScreen && (
         <div className="flex min-h-[28px] items-center gap-2 border-t border-[var(--border-default)] bg-[var(--bg-base)] px-3 py-[5px]">
           {busy ? (
-            <Loader2 size={13} className="shrink-0 animate-spin text-[var(--accent-primary)]" />
+            <Loader2
+              size={13}
+              className="shrink-0 animate-spin text-[var(--accent-primary)]"
+            />
           ) : (
-            <ChevronRight size={13} className="shrink-0 text-[var(--accent-primary)]" />
+            <ChevronRight
+              size={13}
+              className="shrink-0 text-[var(--accent-primary)]"
+            />
           )}
           <CommandInput
             ref={commandInputRef}
@@ -573,12 +665,22 @@ function StatusBadge({ cwd, git }: { cwd: string; git: TermGit | null }) {
       {git && (
         <>
           <span className="h-3 w-px bg-[var(--border-default)]" />
-          <span className="flex items-center gap-1" title={`On branch ${git.branch}`}>
+          <span
+            className="flex items-center gap-1"
+            title={`On branch ${git.branch}`}
+          >
             <GitBranch size={9} />
             {git.branch || "(detached)"}
             {git.ahead > 0 && <span>↑{git.ahead}</span>}
             {git.behind > 0 && <span>↓{git.behind}</span>}
-            {git.dirty && <span className="text-[var(--status-warning)]" title="Uncommitted changes">●</span>}
+            {git.dirty && (
+              <span
+                className="text-[var(--status-warning)]"
+                title="Uncommitted changes"
+              >
+                ●
+              </span>
+            )}
           </span>
         </>
       )}
@@ -613,7 +715,9 @@ function BlockCard({
   const hasHeader = block.command !== "";
 
   const duration =
-    !block.running && block.endedAt ? formatDuration(block.endedAt - block.startedAt) : null;
+    !block.running && block.endedAt
+      ? formatDuration(block.endedAt - block.startedAt)
+      : null;
 
   const copyOutput = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -628,11 +732,20 @@ function BlockCard({
       {hasHeader && (
         <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-2.5 h-[28px] text-[12px]">
           {block.running ? (
-            <Loader2 size={12} className="shrink-0 animate-spin text-[var(--accent-primary)]" />
+            <Loader2
+              size={12}
+              className="shrink-0 animate-spin text-[var(--accent-primary)]"
+            />
           ) : block.exitCode && block.exitCode !== 0 ? (
-            <XCircle size={12} className="shrink-0 text-[var(--status-error)]" />
+            <XCircle
+              size={12}
+              className="shrink-0 text-[var(--status-error)]"
+            />
           ) : (
-            <CheckCircle2 size={12} className="shrink-0 text-[var(--status-success)]" />
+            <CheckCircle2
+              size={12}
+              className="shrink-0 text-[var(--status-success)]"
+            />
           )}
           <button
             type="button"
@@ -655,11 +768,25 @@ function BlockCard({
           <div className="ml-auto flex items-center gap-2 text-[10px] text-[var(--text-tertiary)]">
             {/* Hover actions */}
             <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-              <BlockAction title={copied ? "Copied" : "Copy output"} onClick={copyOutput} icon={Copy} />
-              <BlockAction title="Rerun" onClick={(e) => { e.stopPropagation(); onRerun(block.command); }} icon={RotateCw} />
+              <BlockAction
+                title={copied ? "Copied" : "Copy output"}
+                onClick={copyOutput}
+                icon={Copy}
+              />
+              <BlockAction
+                title="Rerun"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRerun(block.command);
+                }}
+                icon={RotateCw}
+              />
               <BlockAction
                 title={collapsed ? "Expand" : "Collapse"}
-                onClick={(e) => { e.stopPropagation(); setCollapsed((c) => !c); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCollapsed((c) => !c);
+                }}
                 icon={ChevronDown}
                 rotated={collapsed}
               />
@@ -671,15 +798,20 @@ function BlockCard({
               </span>
             )}
             {duration && <span>{duration}</span>}
-            {!block.running && block.exitCode != null && block.exitCode !== 0 && (
-              <span className="text-[var(--status-error)]">exit {block.exitCode}</span>
-            )}
+            {!block.running &&
+              block.exitCode != null &&
+              block.exitCode !== 0 && (
+                <span className="text-[var(--status-error)]">
+                  exit {block.exitCode}
+                </span>
+              )}
           </div>
         </div>
       )}
       {!collapsed && (clipped || block.truncated) && (
         <div className="px-3 pt-2 text-[10px] italic text-[var(--text-tertiary)]">
-          earlier output hidden — showing the latest {Math.round(RENDER_CAP / 1024)} KB (Copy gets more)
+          earlier output hidden — showing the latest{" "}
+          {Math.round(RENDER_CAP / 1024)} KB (Copy gets more)
         </div>
       )}
       {!collapsed && segments.length > 0 && (
@@ -710,12 +842,23 @@ function BlockAction({
       title={title}
       className="flex h-5 w-5 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
     >
-      <Icon size={11} className={cn("transition-transform", rotated && "-rotate-90")} />
+      <Icon
+        size={11}
+        className={cn("transition-transform", rotated && "-rotate-90")}
+      />
     </button>
   );
 }
 
-function BlockOutput({ segments, cwd, query }: { segments: AnsiSegment[]; cwd: string; query: string }) {
+function BlockOutput({
+  segments,
+  cwd,
+  query,
+}: {
+  segments: AnsiSegment[];
+  cwd: string;
+  query: string;
+}) {
   const openPath = useCallback(
     (raw: string) => {
       // Resolve to an absolute path, then open in Atlas if it's a kind we can
@@ -726,7 +869,7 @@ function BlockOutput({ segments, cwd, query }: { segments: AnsiSegment[]; cwd: s
         })
         .catch(() => {});
     },
-    [cwd]
+    [cwd],
   );
   const openLink = useCallback((raw: string) => {
     void import("@tauri-apps/plugin-opener")
@@ -766,8 +909,8 @@ function BlockOutput({ segments, cwd, query }: { segments: AnsiSegment[]; cwd: s
             <span key={`${i}-${j}`} style={s.style}>
               {renderHL(p.text, query)}
             </span>
-          )
-        )
+          ),
+        ),
       )}
     </pre>
   );

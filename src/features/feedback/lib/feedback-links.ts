@@ -17,10 +17,7 @@ const PREFIX: Record<FeedbackCategory, string> = {
 const MAX_BODY = 4000;
 
 /** A prefilled "new issue" URL carrying whatever the user has typed so far. */
-export function issueUrl(
-  category: FeedbackCategory,
-  message: string,
-): string {
+export function issueUrl(category: FeedbackCategory, message: string): string {
   const text = message.trim();
   const first = text.split("\n")[0]?.slice(0, 90) || "Feedback";
   const title = `${PREFIX[category]} ${first}`;

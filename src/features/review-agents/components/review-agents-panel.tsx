@@ -91,7 +91,13 @@ export function ReviewAgentsPanel() {
         prev.some((c) => c.hash === sha)
           ? prev
           : [
-              { hash: sha, short_hash: sha.slice(0, 7), message: "(selected commit)", author: "", date: "" },
+              {
+                hash: sha,
+                short_hash: sha.slice(0, 7),
+                message: "(selected commit)",
+                author: "",
+                date: "",
+              },
               ...prev,
             ],
       );
@@ -164,11 +170,14 @@ export function ReviewAgentsPanel() {
 
   const onOpenIssue = (relativeFile: string) => {
     if (!projectPath) return;
-    const full = relativeFile.startsWith("/") ? relativeFile : `${projectPath}/${relativeFile}`;
+    const full = relativeFile.startsWith("/")
+      ? relativeFile
+      : `${projectPath}/${relativeFile}`;
     openFile(full);
   };
 
-  const onShareFile = (file: FileVerdict) => sendToAgentChat(fileToMarkdown(file));
+  const onShareFile = (file: FileVerdict) =>
+    sendToAgentChat(fileToMarkdown(file));
 
   const canRun =
     !!projectPath &&
@@ -227,7 +236,10 @@ export function ReviewAgentsPanel() {
         {providersLoaded && providers.length === 0 ? (
           <div className="flex items-start gap-1.5 text-text-tertiary rounded border border-border-default bg-bg-selected/20 p-2">
             <KeyRound size={12} className="mt-0.5 shrink-0" />
-            <span>No API keys configured. Add one in Settings → API keys to run reviews.</span>
+            <span>
+              No API keys configured. Add one in Settings → API keys to run
+              reviews.
+            </span>
           </div>
         ) : (
           <div className="flex gap-1.5">
@@ -287,10 +299,15 @@ export function ReviewAgentsPanel() {
             onOpenIssue={onOpenIssue}
             projectPath={projectPath}
             onShareFile={onShareFile}
-            onBack={records.length > 0 ? () => actions.selectRecord(null) : undefined}
+            onBack={
+              records.length > 0 ? () => actions.selectRecord(null) : undefined
+            }
           />
         ) : (
-          <RecordList records={records} onPick={(r) => actions.selectRecord(r)} />
+          <RecordList
+            records={records}
+            onPick={(r) => actions.selectRecord(r)}
+          />
         )}
       </div>
     </div>
@@ -317,7 +334,9 @@ function LiveProgress({
     <div className="p-2 flex flex-col gap-2 animate-fade-in">
       <div className="flex items-center gap-1.5 text-text-tertiary">
         <Loader2 size={12} className="animate-spin" />
-        {synthesisText ? "Synthesizing report…" : `Reviewing files… (${done}/${total})`}
+        {synthesisText
+          ? "Synthesizing report…"
+          : `Reviewing files… (${done}/${total})`}
       </div>
 
       {pending.map((p) => (
@@ -379,7 +398,9 @@ function RecordView({
             <ChevronLeft size={12} /> Back
           </button>
         )}
-        <span className="truncate text-[10px] text-text-tertiary">{record.title}</span>
+        <span className="truncate text-[10px] text-text-tertiary">
+          {record.title}
+        </span>
         <button
           onClick={() => sendToAgentChat(reportToMarkdown(record))}
           className="ml-auto flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-text-secondary hover:bg-bg-hover transition-colors cursor-pointer shrink-0"
@@ -422,7 +443,9 @@ function RecordList({
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-[10px] text-text-tertiary">
             <span>{r.model}</span>
-            {typeof r.report?.score === "number" && <span>· {r.report.score}/100</span>}
+            {typeof r.report?.score === "number" && (
+              <span>· {r.report.score}/100</span>
+            )}
             <span>· {r.report?.files.length ?? 0} files</span>
             <span className="ml-auto">{relativeTime(r.createdAt)}</span>
           </div>

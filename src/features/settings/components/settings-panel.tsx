@@ -73,8 +73,12 @@ const SECTIONS: Array<{
 
 const NAV_COLLAPSED_KEY = "atlas:settings:navCollapsed";
 
-export function SettingsPanel({ initialSection }: { initialSection?: string } = {}) {
-  const [activeSection, setActiveSection] = useState(initialSection ?? "general");
+export function SettingsPanel({
+  initialSection,
+}: { initialSection?: string } = {}) {
+  const [activeSection, setActiveSection] = useState(
+    initialSection ?? "general",
+  );
 
   // Honor cross-component "open Settings → <section>" requests (e.g. the
   // sidebar's Skills button), whether this panel is fresh or already mounted.
@@ -206,11 +210,14 @@ function GeneralSettings() {
   // Model pricing (models.dev) — manual refresh + count for the picker.
   const pricingPrices = useModelPricingStore.use.prices();
   const pricingLoading = useModelPricingStore.use.loading();
-  const { load: loadPricing, refresh: refreshPricing } = useModelPricingStore.use.actions();
+  const { load: loadPricing, refresh: refreshPricing } =
+    useModelPricingStore.use.actions();
   useEffect(() => {
     void loadPricing();
   }, [loadPricing]);
-  const pricedModelCount = Object.keys(pricingPrices).filter((k) => k.includes("/")).length;
+  const pricedModelCount = Object.keys(pricingPrices).filter((k) =>
+    k.includes("/"),
+  ).length;
   const updatePricing = async () => {
     await refreshPricing();
     const n = Object.keys(useModelPricingStore.getState().prices).filter((k) =>
@@ -238,7 +245,9 @@ function GeneralSettings() {
       setCli(next);
       toast.success("Installed atlas tools");
     } catch (e) {
-      toast.error(`Install failed: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(
+        `Install failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setInstalling(false);
     }
@@ -263,9 +272,7 @@ function GeneralSettings() {
       >
         <Toggle
           checked={settings.autoAddAtlasGitignore}
-          onChange={(next) =>
-            updateSettings({ autoAddAtlasGitignore: next })
-          }
+          onChange={(next) => updateSettings({ autoAddAtlasGitignore: next })}
         />
       </SettingRow>
       <SettingRow
@@ -362,7 +369,11 @@ function GeneralSettings() {
             "disabled:opacity-50 disabled:cursor-not-allowed",
           )}
         >
-          {installing ? "Installing…" : cli?.installed ? "Reinstall" : "Install"}
+          {installing
+            ? "Installing…"
+            : cli?.installed
+              ? "Reinstall"
+              : "Install"}
         </button>
       </SettingRow>
       <SettingRow
@@ -399,7 +410,8 @@ function AppearanceSettings() {
   const [tab, setTab] = useState<AppearanceTab>("accent");
 
   const scalePct = Math.round(settings.uiScale * 100);
-  const setScale = (next: number) => updateSettings({ uiScale: clampScale(next) });
+  const setScale = (next: number) =>
+    updateSettings({ uiScale: clampScale(next) });
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -415,7 +427,10 @@ function AppearanceSettings() {
         ))}
 
         {/* Interface zoom — right-aligned control (like Skills' scope control). */}
-        <div className="ml-auto flex items-center gap-1 pr-0.5" title="Interface zoom (⌘+ / ⌘- / ⌘0)">
+        <div
+          className="ml-auto flex items-center gap-1 pr-0.5"
+          title="Interface zoom (⌘+ / ⌘- / ⌘0)"
+        >
           <button
             type="button"
             aria-label="Zoom out"
@@ -454,7 +469,11 @@ function AppearanceSettings() {
       </div>
 
       <div className="min-h-0 flex-1">
-        {tab === "theme" ? <CodeEditorThemesSettings /> : <AtlasThemesSettings />}
+        {tab === "theme" ? (
+          <CodeEditorThemesSettings />
+        ) : (
+          <AtlasThemesSettings />
+        )}
       </div>
     </div>
   );
@@ -505,10 +524,14 @@ function UpdatesSettings() {
       // When an update exists, the background download starts and the store
       // reflects it below; only surface the "up to date" case here.
       if (!status.available) {
-        toast.success(`You're on the latest version (${status.currentVersion}).`);
+        toast.success(
+          `You're on the latest version (${status.currentVersion}).`,
+        );
       }
     } catch (e) {
-      toast.error(`Update check failed: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(
+        `Update check failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setChecking(false);
     }
@@ -534,7 +557,9 @@ function UpdatesSettings() {
     </button>
   ) : downloading ? (
     <span className="text-[11px] text-text-tertiary tabular-nums">
-      {progress != null ? `Downloading ${Math.round(progress * 100)}%` : "Preparing…"}
+      {progress != null
+        ? `Downloading ${Math.round(progress * 100)}%`
+        : "Preparing…"}
     </span>
   ) : (
     <button
@@ -553,7 +578,10 @@ function UpdatesSettings() {
 
   return (
     <div className="space-y-6">
-      <SectionTitle title="Updates" subtitle="How Atlas keeps itself up to date" />
+      <SectionTitle
+        title="Updates"
+        subtitle="How Atlas keeps itself up to date"
+      />
       <SettingRow
         label="Automatic updates"
         description="Check for a newer version in the background and download it automatically. Updates are Apple-signed and notarized; Atlas verifies the signature before installing. Turn off to never check or download."
@@ -564,7 +592,11 @@ function UpdatesSettings() {
         />
       </SettingRow>
       <SettingRow
-        label={ready ? `Update ready${version ? ` (${version})` : ""}` : "Check for updates"}
+        label={
+          ready
+            ? `Update ready${version ? ` (${version})` : ""}`
+            : "Check for updates"
+        }
         description={
           ready
             ? "A new version has been downloaded and verified. Restart now, or it'll be applied automatically the next time you quit Atlas."
@@ -660,10 +692,12 @@ function KeybindingsSettings() {
                 key={b.action}
                 className={cn(
                   "flex items-center justify-between px-3 h-[32px]",
-                  i > 0 && "border-t border-border-subtle"
+                  i > 0 && "border-t border-border-subtle",
                 )}
               >
-                <span className="text-[11px] text-text-secondary">{b.action}</span>
+                <span className="text-[11px] text-text-secondary">
+                  {b.action}
+                </span>
                 <KbdCombo combo={b.keys} />
               </div>
             ))}
@@ -720,18 +754,28 @@ function AboutSettings() {
           <AtlasIcon size={40} className="rounded-xl" />
           <div>
             <p className="text-sm font-semibold text-text-primary">Atlas</p>
-            <p className="text-[10px] text-text-tertiary">v0.2.4 — The second brain IDE</p>
+            <p className="text-[10px] text-text-tertiary">
+              v0.2.4 — The second brain IDE
+            </p>
           </div>
         </div>
         <p className="text-[11px] text-text-secondary leading-relaxed pt-2">
-          Built with Tauri, React, and Rust. An everything app for agentic development — from code analysis to task management, research, and AI orchestration.
+          Built with Tauri, React, and Rust. An everything app for agentic
+          development — from code analysis to task management, research, and AI
+          orchestration.
         </p>
       </div>
     </div>
   );
 }
 
-function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
+function SectionTitle({
+  title,
+  subtitle,
+}: {
+  title: string;
+  subtitle: string;
+}) {
   return (
     <div>
       <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
@@ -740,7 +784,15 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) 
   );
 }
 
-function SettingRow({ label, description, children }: { label: string; description: string; children: React.ReactNode }) {
+function SettingRow({
+  label,
+  description,
+  children,
+}: {
+  label: string;
+  description: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex items-start justify-between gap-4">
       <div>
@@ -793,9 +845,7 @@ function Toggle({
         "relative inline-flex h-5 w-9 shrink-0 items-center",
         "rounded-full border-2 border-transparent transition-colors",
         disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer",
-        value
-          ? "bg-[var(--accent-primary)]"
-          : "bg-[var(--bg-elevated)]"
+        value ? "bg-[var(--accent-primary)]" : "bg-[var(--bg-elevated)]",
       )}
     >
       <span
@@ -804,10 +854,9 @@ function Toggle({
           "transition-transform duration-150",
           value
             ? "translate-x-4 bg-[var(--bg-base)]"
-            : "translate-x-0 bg-white"
+            : "translate-x-0 bg-white",
         )}
       />
     </button>
   );
 }
-

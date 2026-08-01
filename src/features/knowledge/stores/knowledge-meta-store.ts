@@ -92,7 +92,9 @@ const store = create<KnowledgeMetaState>()((set, get) => ({
       // metadata file changed under us, but don't toggle loading.
       if (get().projectPath === projectPath && unlisten) {
         try {
-          const file = await invoke<MetaFile>("knowledge_meta_load", { projectPath });
+          const file = await invoke<MetaFile>("knowledge_meta_load", {
+            projectPath,
+          });
           set({ pages: mapPages(file.pages) });
           republishMentionCache();
         } catch {
@@ -103,7 +105,9 @@ const store = create<KnowledgeMetaState>()((set, get) => ({
       get().actions.unbind();
       set({ projectPath, loading: true, pages: {} });
       try {
-        const file = await invoke<MetaFile>("knowledge_meta_load", { projectPath });
+        const file = await invoke<MetaFile>("knowledge_meta_load", {
+          projectPath,
+        });
         set({ pages: mapPages(file.pages), loading: false });
         republishMentionCache();
       } catch {

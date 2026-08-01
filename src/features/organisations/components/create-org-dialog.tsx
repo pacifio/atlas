@@ -149,7 +149,9 @@ export function CreateOrgDialog({
       await switchOrg(id); // land the user in the org they just made
     } catch (e) {
       // Rust hands back a user-facing string (duplicate handle, offline, …).
-      toast.error(typeof e === "string" ? e : "Couldn't create the organisation.");
+      toast.error(
+        typeof e === "string" ? e : "Couldn't create the organisation.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -248,7 +250,9 @@ export function CreateOrgDialog({
                 <p
                   className={cn(
                     "mt-1 h-[13px] text-[10px] leading-[13px]",
-                    slug.kind === "taken" ? "text-error" : "text-[var(--text-tertiary)]",
+                    slug.kind === "taken"
+                      ? "text-error"
+                      : "text-[var(--text-tertiary)]",
                   )}
                 >
                   {slug.kind === "taken"

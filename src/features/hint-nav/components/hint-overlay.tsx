@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Kbd } from "@/ui/kbd";
 import { useHintStore } from "../stores/hint-store";
-import { scanTargets, HINT_OVERLAY_ATTR, type HintTarget } from "../lib/scan-targets";
+import {
+  scanTargets,
+  HINT_OVERLAY_ATTR,
+  type HintTarget,
+} from "../lib/scan-targets";
 import { generateLabels } from "../lib/generate-labels";
 import { activate } from "../lib/activate-target";
 
@@ -57,7 +61,8 @@ export function HintOverlay() {
       toggleRef.current();
     };
     window.addEventListener("keydown", onKey, { capture: true });
-    return () => window.removeEventListener("keydown", onKey, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", onKey, { capture: true });
   }, []);
 
   // Scan + label on open; clear on close.
@@ -77,7 +82,7 @@ export function HintOverlay() {
   // Re-measure rects on scroll/resize (rAF-throttled) so badges track the UI.
   const remeasure = useCallback(() => {
     setTargets((prev) =>
-      prev.map((t) => ({ el: t.el, rect: t.el.getBoundingClientRect() }))
+      prev.map((t) => ({ el: t.el, rect: t.el.getBoundingClientRect() })),
     );
   }, []);
   useEffect(() => {
@@ -92,7 +97,10 @@ export function HintOverlay() {
     };
     // capture:true catches scrolls from any inner scroll container (scroll
     // events don't bubble).
-    window.addEventListener("scroll", schedule, { capture: true, passive: true });
+    window.addEventListener("scroll", schedule, {
+      capture: true,
+      passive: true,
+    });
     window.addEventListener("resize", schedule);
     return () => {
       if (raf) cancelAnimationFrame(raf);
@@ -103,11 +111,16 @@ export function HintOverlay() {
 
   // Scroll the scrollable element under the viewport centre (arrow keys).
   const scrollActive = useCallback((dy: number) => {
-    const el = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+    const el = document.elementFromPoint(
+      window.innerWidth / 2,
+      window.innerHeight / 2,
+    );
     let node: HTMLElement | null = el as HTMLElement | null;
     while (node && node !== document.body) {
       const style = getComputedStyle(node);
-      const scrollable = /(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight;
+      const scrollable =
+        /(auto|scroll)/.test(style.overflowY) &&
+        node.scrollHeight > node.clientHeight;
       if (scrollable) {
         node.scrollBy({ top: dy });
         return;
@@ -159,7 +172,8 @@ export function HintOverlay() {
       setTyped(next);
     };
     window.addEventListener("keydown", onKey, { capture: true });
-    return () => window.removeEventListener("keydown", onKey, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", onKey, { capture: true });
   }, [open, scrollActive]);
 
   if (!open) return null;
@@ -199,7 +213,9 @@ export function HintOverlay() {
             }}
           >
             {typed && (
-              <span style={{ opacity: 0.4 }}>{label.slice(0, typed.length)}</span>
+              <span style={{ opacity: 0.4 }}>
+                {label.slice(0, typed.length)}
+              </span>
             )}
             <span>{label.slice(typed.length)}</span>
           </span>

@@ -31,7 +31,10 @@ export function RetryPill({ tabId }: { tabId: string }) {
       className="mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[11px] text-[var(--text-secondary)]"
       title={retry.lastError}
     >
-      <RotateCw size={12} className="animate-spin text-[var(--text-tertiary)]" />
+      <RotateCw
+        size={12}
+        className="animate-spin text-[var(--text-tertiary)]"
+      />
       <span className="font-medium text-[var(--text-primary)]">
         Retrying {retry.attempt}/{retry.maxAttempts}
         {secs > 0 ? ` in ${secs}s` : "…"}

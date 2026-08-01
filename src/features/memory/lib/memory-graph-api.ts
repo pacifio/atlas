@@ -33,9 +33,12 @@ export const memoryGraph = {
   embedStatus: () => invoke<EmbedStatus>("memory_embed_status"),
   embedDownload: () => invoke<void>("memory_embed_download"),
   buildIndex: (projectPath: string) =>
-    invoke<MemoryGraphData & { dim: number; doc_count: number }>("memory_index_build", {
-      projectPath,
-    }),
+    invoke<MemoryGraphData & { dim: number; doc_count: number }>(
+      "memory_index_build",
+      {
+        projectPath,
+      },
+    ),
   query: (projectPath: string, query: string, topK = 12) =>
     invoke<QueryHit[]>("memory_index_query", { projectPath, query, topK }),
 };
@@ -43,7 +46,9 @@ export const memoryGraph = {
 export const listenMemoryEmbedProgress = (
   handler: (p: DownloadProgress) => void,
 ): Promise<UnlistenFn> =>
-  listen<DownloadProgress>("atlas:memory-embed:progress", (e) => handler(e.payload));
+  listen<DownloadProgress>("atlas:memory-embed:progress", (e) =>
+    handler(e.payload),
+  );
 
 export const listenMemoryEmbedDone = (
   handler: (p: DownloadDone) => void,

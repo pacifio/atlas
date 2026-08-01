@@ -56,7 +56,10 @@ export function NodeSetupBanner() {
       : "Installing Node…";
   return (
     <StatusPill>
-      <Loader2 size={11} className="animate-spin text-[var(--accent-primary)]" />
+      <Loader2
+        size={11}
+        className="animate-spin text-[var(--accent-primary)]"
+      />
       <span>{label}</span>
     </StatusPill>
   );

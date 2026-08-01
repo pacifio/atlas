@@ -108,7 +108,10 @@ function CodeLine({
   tokens: Array<{ w: string; c: string }>;
 }) {
   return (
-    <div className="flex h-1.5 items-center gap-1" style={{ paddingLeft: indent * 8 }}>
+    <div
+      className="flex h-1.5 items-center gap-1"
+      style={{ paddingLeft: indent * 8 }}
+    >
       {tokens.map((tk, i) => (
         <span
           key={i}
@@ -140,37 +143,75 @@ function ThemePreview({ theme }: { theme: AtlasTheme }) {
       {/* Activity rail */}
       <div
         className="flex w-5 shrink-0 flex-col items-center gap-2 py-2"
-        style={{ background: s.panel, borderRight: `1px solid ${s.borderSubtle}` }}
+        style={{
+          background: s.panel,
+          borderRight: `1px solid ${s.borderSubtle}`,
+        }}
       >
-        <span className="h-2 w-2 rounded-[3px]" style={{ background: s.accent }} />
-        <span className="h-2 w-2 rounded-[3px]" style={{ background: s.textTertiary }} />
-        <span className="h-2 w-2 rounded-[3px]" style={{ background: s.textGhost }} />
-        <span className="h-2 w-2 rounded-[3px]" style={{ background: s.textGhost }} />
+        <span
+          className="h-2 w-2 rounded-[3px]"
+          style={{ background: s.accent }}
+        />
+        <span
+          className="h-2 w-2 rounded-[3px]"
+          style={{ background: s.textTertiary }}
+        />
+        <span
+          className="h-2 w-2 rounded-[3px]"
+          style={{ background: s.textGhost }}
+        />
+        <span
+          className="h-2 w-2 rounded-[3px]"
+          style={{ background: s.textGhost }}
+        />
       </div>
 
       {/* Pane 1 — file tree */}
       <div
         className="flex w-[26%] shrink-0 flex-col gap-2 p-2"
-        style={{ background: s.panel, borderRight: `1px solid ${s.borderSubtle}` }}
+        style={{
+          background: s.panel,
+          borderRight: `1px solid ${s.borderSubtle}`,
+        }}
       >
-        <span className="h-1.5 w-1/2 rounded-full" style={{ background: s.textTertiary }} />
-        <span className="h-1.5 w-4/5 rounded-full" style={{ background: s.textSecondary }} />
+        <span
+          className="h-1.5 w-1/2 rounded-full"
+          style={{ background: s.textTertiary }}
+        />
+        <span
+          className="h-1.5 w-4/5 rounded-full"
+          style={{ background: s.textSecondary }}
+        />
         <span
           className="-mx-1 h-3 rounded px-1"
-          style={{ background: `color-mix(in srgb, ${s.accent} 16%, transparent)` }}
+          style={{
+            background: `color-mix(in srgb, ${s.accent} 16%, transparent)`,
+          }}
         >
           <span
             className="mt-[5px] block h-1.5 w-3/5 rounded-full"
             style={{ background: s.accent }}
           />
         </span>
-        <span className="h-1.5 w-2/3 rounded-full" style={{ background: s.textTertiary }} />
-        <span className="h-1.5 w-1/2 rounded-full" style={{ background: s.textTertiary }} />
-        <span className="h-1.5 w-3/4 rounded-full" style={{ background: s.textGhost }} />
+        <span
+          className="h-1.5 w-2/3 rounded-full"
+          style={{ background: s.textTertiary }}
+        />
+        <span
+          className="h-1.5 w-1/2 rounded-full"
+          style={{ background: s.textTertiary }}
+        />
+        <span
+          className="h-1.5 w-3/4 rounded-full"
+          style={{ background: s.textGhost }}
+        />
       </div>
 
       {/* Pane 2 — editor with syntax-highlighted dummy code */}
-      <div className="flex min-w-0 flex-1 flex-col" style={{ background: s.base }}>
+      <div
+        className="flex min-w-0 flex-1 flex-col"
+        style={{ background: s.base }}
+      >
         {/* Tab strip */}
         <div
           className="flex items-center gap-1 px-2 py-1.5"
@@ -178,44 +219,106 @@ function ThemePreview({ theme }: { theme: AtlasTheme }) {
         >
           <span
             className="h-2.5 w-10 rounded-t"
-            style={{ background: s.tabActive, borderTop: `1px solid ${s.accent}` }}
+            style={{
+              background: s.tabActive,
+              borderTop: `1px solid ${s.accent}`,
+            }}
           />
-          <span className="h-2.5 w-8 rounded-t" style={{ background: s.panel }} />
+          <span
+            className="h-2.5 w-8 rounded-t"
+            style={{ background: s.panel }}
+          />
         </div>
         {/* Code body */}
         <div className="flex flex-1 flex-col gap-[7px] p-2.5">
-          <CodeLine tokens={[{ w: "22%", c: mut }, { w: "34%", c: mut }]} />
-          <CodeLine tokens={[{ w: "18%", c: kw }, { w: "28%", c: id }, { w: "10%", c: punc }]} />
-          <CodeLine indent={1} tokens={[{ w: "26%", c: id }, { w: "14%", c: punc }, { w: "30%", c: kw }]} />
-          <CodeLine indent={2} tokens={[{ w: "16%", c: kw }, { w: "40%", c: id }]} />
-          <CodeLine indent={2} tokens={[{ w: "30%", c: id }, { w: "12%", c: punc }, { w: "22%", c: mut }]} />
+          <CodeLine
+            tokens={[
+              { w: "22%", c: mut },
+              { w: "34%", c: mut },
+            ]}
+          />
+          <CodeLine
+            tokens={[
+              { w: "18%", c: kw },
+              { w: "28%", c: id },
+              { w: "10%", c: punc },
+            ]}
+          />
+          <CodeLine
+            indent={1}
+            tokens={[
+              { w: "26%", c: id },
+              { w: "14%", c: punc },
+              { w: "30%", c: kw },
+            ]}
+          />
+          <CodeLine
+            indent={2}
+            tokens={[
+              { w: "16%", c: kw },
+              { w: "40%", c: id },
+            ]}
+          />
+          <CodeLine
+            indent={2}
+            tokens={[
+              { w: "30%", c: id },
+              { w: "12%", c: punc },
+              { w: "22%", c: mut },
+            ]}
+          />
           <CodeLine indent={1} tokens={[{ w: "12%", c: punc }]} />
-          <CodeLine tokens={[{ w: "20%", c: kw }, { w: "24%", c: id }]} />
+          <CodeLine
+            tokens={[
+              { w: "20%", c: kw },
+              { w: "24%", c: id },
+            ]}
+          />
         </div>
       </div>
 
       {/* Pane 3 — chat / assistant */}
       <div
         className="flex w-[24%] shrink-0 flex-col gap-2 p-2"
-        style={{ background: s.panel, borderLeft: `1px solid ${s.borderSubtle}` }}
+        style={{
+          background: s.panel,
+          borderLeft: `1px solid ${s.borderSubtle}`,
+        }}
       >
         <div
           className="flex flex-col gap-1 rounded p-1.5"
           style={{ background: s.elevated }}
         >
-          <span className="h-1.5 w-full rounded-full" style={{ background: s.textTertiary }} />
-          <span className="h-1.5 w-3/4 rounded-full" style={{ background: s.textTertiary }} />
+          <span
+            className="h-1.5 w-full rounded-full"
+            style={{ background: s.textTertiary }}
+          />
+          <span
+            className="h-1.5 w-3/4 rounded-full"
+            style={{ background: s.textTertiary }}
+          />
         </div>
         <div
           className="ml-auto flex w-4/5 flex-col gap-1 rounded p-1.5"
-          style={{ background: `color-mix(in srgb, ${s.accent} 18%, transparent)` }}
+          style={{
+            background: `color-mix(in srgb, ${s.accent} 18%, transparent)`,
+          }}
         >
-          <span className="h-1.5 w-full rounded-full" style={{ background: s.accent }} />
-          <span className="h-1.5 w-2/3 rounded-full" style={{ background: s.accent }} />
+          <span
+            className="h-1.5 w-full rounded-full"
+            style={{ background: s.accent }}
+          />
+          <span
+            className="h-1.5 w-2/3 rounded-full"
+            style={{ background: s.accent }}
+          />
         </div>
         <span
           className="mt-auto h-4 w-full rounded"
-          style={{ background: s.input, border: `1px solid ${s.borderDefault}` }}
+          style={{
+            background: s.input,
+            border: `1px solid ${s.borderDefault}`,
+          }}
         />
       </div>
     </div>

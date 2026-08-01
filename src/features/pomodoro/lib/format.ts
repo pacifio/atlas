@@ -1,4 +1,5 @@
-export const padZ = (n: number) => String(Math.max(0, Math.floor(n))).padStart(2, "0");
+export const padZ = (n: number) =>
+  String(Math.max(0, Math.floor(n))).padStart(2, "0");
 
 export function fmtHM(mins: number): string {
   const m = Math.max(0, Math.floor(mins));

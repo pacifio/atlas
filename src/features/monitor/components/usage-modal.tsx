@@ -62,7 +62,10 @@ export function UsageModal({
               </thead>
               <tbody>
                 {sessions.map((s) => (
-                  <tr key={s.session_id} className="border-b border-border-subtle hover:bg-bg-hover">
+                  <tr
+                    key={s.session_id}
+                    className="border-b border-border-subtle hover:bg-bg-hover"
+                  >
                     <Td className="text-left max-w-0">
                       <span className="block truncate text-text-secondary">
                         {s.preview || s.session_id.slice(0, 8)}
@@ -71,16 +74,24 @@ export function UsageModal({
                     <Td className="text-left text-text-tertiary truncate">
                       {(s.model ?? "—").replace(/^claude-/, "")}
                     </Td>
-                    <Td className="text-right font-mono tabular-nums">{fmtTokens(s.input_tokens)}</Td>
-                    <Td className="text-right font-mono tabular-nums">{fmtTokens(s.output_tokens)}</Td>
+                    <Td className="text-right font-mono tabular-nums">
+                      {fmtTokens(s.input_tokens)}
+                    </Td>
+                    <Td className="text-right font-mono tabular-nums">
+                      {fmtTokens(s.output_tokens)}
+                    </Td>
                     <Td className="text-right font-mono tabular-nums">
                       {fmtTokens(s.cache_creation_tokens + s.cache_read_tokens)}
                     </Td>
-                    <Td className="text-right font-mono tabular-nums">{s.request_count}</Td>
+                    <Td className="text-right font-mono tabular-nums">
+                      {s.request_count}
+                    </Td>
                     <Td className="text-right font-mono tabular-nums text-text-primary">
                       {fmtCost(s.total_cost_usd)}
                     </Td>
-                    <Td className="text-right text-text-tertiary">{fmtDate(s.last_modified)}</Td>
+                    <Td className="text-right text-text-tertiary">
+                      {fmtDate(s.last_modified)}
+                    </Td>
                   </tr>
                 ))}
               </tbody>
@@ -92,13 +103,34 @@ export function UsageModal({
   );
 }
 
-function Th({ className, children }: { className?: string; children: React.ReactNode }) {
+function Th({
+  className,
+  children,
+}: {
+  className?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <th className={cn("px-3 py-1.5 font-medium uppercase tracking-wider text-[9px]", className)}>
+    <th
+      className={cn(
+        "px-3 py-1.5 font-medium uppercase tracking-wider text-[9px]",
+        className,
+      )}
+    >
       {children}
     </th>
   );
 }
-function Td({ className, children }: { className?: string; children: React.ReactNode }) {
-  return <td className={cn("px-3 py-1.5 text-text-secondary", className)}>{children}</td>;
+function Td({
+  className,
+  children,
+}: {
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <td className={cn("px-3 py-1.5 text-text-secondary", className)}>
+      {children}
+    </td>
+  );
 }

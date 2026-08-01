@@ -104,18 +104,21 @@ export function ProvidersSettings() {
     return list;
   }, [category, query, sortKey, configuredOnly, keys]);
 
-  const tabs: Array<{ id: ProviderCategory | "All"; label: string; count: number }> =
-    useMemo(
-      () => [
-        { id: "All", label: "All", count: PROVIDERS.length },
-        ...PROVIDER_CATEGORIES.map((c) => ({
-          id: c,
-          label: c,
-          count: PROVIDERS.filter((p) => p.category === c).length,
-        })),
-      ],
-      [],
-    );
+  const tabs: Array<{
+    id: ProviderCategory | "All";
+    label: string;
+    count: number;
+  }> = useMemo(
+    () => [
+      { id: "All", label: "All", count: PROVIDERS.length },
+      ...PROVIDER_CATEGORIES.map((c) => ({
+        id: c,
+        label: c,
+        count: PROVIDERS.filter((p) => p.category === c).length,
+      })),
+    ],
+    [],
+  );
 
   return (
     <div className="h-full flex flex-col bg-bg-base">
@@ -177,7 +180,9 @@ export function ProvidersSettings() {
                 className="flex items-center gap-2 px-3 h-[26px] text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none"
               >
                 <span className="inline-flex w-3.5 justify-center">
-                  {configuredOnly && <Check size={11} className="text-text-primary" />}
+                  {configuredOnly && (
+                    <Check size={11} className="text-text-primary" />
+                  )}
                 </span>
                 Configured only
               </DropdownMenu.CheckboxItem>
@@ -194,7 +199,9 @@ export function ProvidersSettings() {
                   className="flex items-center justify-between gap-2 px-3 h-[26px] text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none"
                 >
                   {SORT_LABELS[k]}
-                  {sortKey === k && <Check size={11} className="text-text-primary" />}
+                  {sortKey === k && (
+                    <Check size={11} className="text-text-primary" />
+                  )}
                 </DropdownMenu.Item>
               ))}
             </DropdownMenu.Content>
@@ -279,7 +286,12 @@ function ProviderTableRow({
           {provider.env}
         </span>
         {/* Category */}
-        <span className={cn(COL.category, "truncate text-[11px] text-text-secondary")}>
+        <span
+          className={cn(
+            COL.category,
+            "truncate text-[11px] text-text-secondary",
+          )}
+        >
           {provider.category}
         </span>
         {/* Key */}
@@ -309,7 +321,12 @@ function ProviderTableRow({
           )}
         </span>
         {/* Chevron */}
-        <span className={cn(COL.chevron, "flex items-center justify-end text-text-tertiary")}>
+        <span
+          className={cn(
+            COL.chevron,
+            "flex items-center justify-end text-text-tertiary",
+          )}
+        >
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
       </button>
@@ -417,4 +434,3 @@ function ProviderEditor({
     </div>
   );
 }
-

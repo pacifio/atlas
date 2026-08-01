@@ -17,7 +17,10 @@ import { cn } from "@/lib/utils";
 import { PanelSkeleton } from "@/components/panel-skeleton";
 import { TreeRow } from "./tree-row";
 import { openFile } from "@/lib/open-file";
-import { useFileTreeDragDrop, ROOT_DROP } from "../hooks/use-file-tree-drag-drop";
+import {
+  useFileTreeDragDrop,
+  ROOT_DROP,
+} from "../hooks/use-file-tree-drag-drop";
 import { useExternalFileDrop } from "../hooks/use-external-file-drop";
 import { ROW_HEIGHT } from "../lib/tree-constants";
 import {
@@ -42,7 +45,13 @@ interface FlatRow {
 
 /** Tab types whose `data.filePath` points at a file on disk — these must be
  *  re-pointed/closed when that file is renamed or deleted. */
-const FILE_TAB_TYPES = new Set(["editor", "media", "svg", "pdf", "unsupported"]);
+const FILE_TAB_TYPES = new Set([
+  "editor",
+  "media",
+  "svg",
+  "pdf",
+  "unsupported",
+]);
 
 /** Map a git porcelain status char to a gutter-dot color, matching the
  *  Source Control panel's convention (`changes-view.tsx:statusBadge`). */
@@ -92,7 +101,9 @@ export function FileTree() {
   const tabs = useLayoutStore.use.tabs();
   const { closeTab } = useLayoutStore.use.actions();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [deleteTargets, setDeleteTargets] = useState<{ path: string; name: string; isDir: boolean }[] | null>(null);
+  const [deleteTargets, setDeleteTargets] = useState<
+    { path: string; name: string; isDir: boolean }[] | null
+  >(null);
 
   // Active editor tab's file path — used to highlight the matching
   // row in the tree (pill style like the screenshot).
@@ -120,7 +131,14 @@ export function FileTree() {
     if (!pendingNewEntry) return base;
     if (rootPath && pendingNewEntry.parentDir === rootPath) {
       return [
-        { node: null, ghost: { parentDir: rootPath, isDir: pendingNewEntry.isDir, depth: 0 } },
+        {
+          node: null,
+          ghost: {
+            parentDir: rootPath,
+            isDir: pendingNewEntry.isDir,
+            depth: 0,
+          },
+        },
         ...base,
       ];
     }
@@ -132,7 +150,11 @@ export function FileTree() {
     const next: FlatRow[] = [...base];
     next.splice(idx + 1, 0, {
       node: null,
-      ghost: { parentDir: pendingNewEntry.parentDir, isDir: pendingNewEntry.isDir, depth: parentDepth + 1 },
+      ghost: {
+        parentDir: pendingNewEntry.parentDir,
+        isDir: pendingNewEntry.isDir,
+        depth: parentDepth + 1,
+      },
     });
     return next;
   }, [tree, pendingNewEntry, rootPath]);
@@ -217,7 +239,14 @@ export function FileTree() {
         handleOpenFile(path, node.entry.name);
       }
     },
-    [flat, selectionAnchor, toggleSelection, setSelection, toggleExpand, handleOpenFile],
+    [
+      flat,
+      selectionAnchor,
+      toggleSelection,
+      setSelection,
+      toggleExpand,
+      handleOpenFile,
+    ],
   );
 
   const handlePickFolder = async () => {
@@ -279,7 +308,11 @@ export function FileTree() {
       await reconcileDirectory(dirOfPath(oldPath));
       // Re-point recent-files entries so the mention picker shows the new name
       // (the file-index search already self-updates via the fs watcher).
-      void invoke("recent_files_rename", { oldPath, newPath, workspaceId: activeWorkspaceId() }).catch(() => {});
+      void invoke("recent_files_rename", {
+        oldPath,
+        newPath,
+        workspaceId: activeWorkspaceId(),
+      }).catch(() => {});
       // If the renamed file is open in ANY file-backed viewer (editor, media,
       // svg, pdf, unsupported), swap those tabs to the new path — otherwise the
       // viewer keeps loading the old (now-missing) path and 404s. Re-opening
@@ -333,7 +366,11 @@ export function FileTree() {
         if (clipboard.isCut) {
           await invoke("fs_rename", { from: src, to: destPath });
           await reconcileDirectory(dirOfPath(src));
-          void invoke("recent_files_rename", { oldPath: src, newPath: destPath, workspaceId: activeWorkspaceId() }).catch(() => {});
+          void invoke("recent_files_rename", {
+            oldPath: src,
+            newPath: destPath,
+            workspaceId: activeWorkspaceId(),
+          }).catch(() => {});
         } else {
           await invoke("fs_copy", { from: src, to: destPath });
         }
@@ -383,7 +420,10 @@ export function FileTree() {
       try {
         const destPath = await resolveCollision(src, destDir);
         await invoke("fs_rename", { from: src, to: destPath });
-        void invoke("recent_files_rename", { oldPath: src, newPath: destPath }).catch(() => {});
+        void invoke("recent_files_rename", {
+          oldPath: src,
+          newPath: destPath,
+        }).catch(() => {});
         // Refresh both ends — the source's old parent loses the entry
         // and the destination gains it. The fs-watcher would catch
         // both eventually but the user expects an immediate update.
@@ -502,7 +542,9 @@ export function FileTree() {
   // longer in view, e.g. after its folder was collapsed).
   const selectionEntries = (): FileEntry[] => {
     const byPath = new Map(
-      flat.filter((r) => r.node).map((r) => [r.node!.entry.path, r.node!.entry] as const),
+      flat
+        .filter((r) => r.node)
+        .map((r) => [r.node!.entry.path, r.node!.entry] as const),
     );
     return selectedPaths.map(
       (p) =>
@@ -523,7 +565,8 @@ export function FileTree() {
     // batchable actions (cut/copy/delete/copy-path) operate on the whole
     // selection; single-row actions (rename/duplicate/new/paste) always
     // act on `entry`.
-    const multi = selectedPaths.length > 1 && selectedPaths.includes(entry.path);
+    const multi =
+      selectedPaths.length > 1 && selectedPaths.includes(entry.path);
     const targets = multi ? selectionEntries() : [entry];
     const targetPaths = targets.map((t) => t.path);
     const countSuffix = multi ? ` (${targets.length})` : "";
@@ -533,17 +576,23 @@ export function FileTree() {
           <>
             <ContextMenuItem onSelect={() => beginNewEntry(entry.path, false)}>
               New File
-              <ContextMenuShortcut><KbdCombo combo="⌘N" /></ContextMenuShortcut>
+              <ContextMenuShortcut>
+                <KbdCombo combo="⌘N" />
+              </ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onSelect={() => beginNewEntry(entry.path, true)}>
               New Folder
-              <ContextMenuShortcut><KbdCombo combo="⌥⌘N" /></ContextMenuShortcut>
+              <ContextMenuShortcut>
+                <KbdCombo combo="⌥⌘N" />
+              </ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuSeparator />
           </>
         ) : (
           <>
-            <ContextMenuItem onSelect={() => handleOpenFile(entry.path, entry.name)}>
+            <ContextMenuItem
+              onSelect={() => handleOpenFile(entry.path, entry.name)}
+            >
               Open
             </ContextMenuItem>
             <ContextMenuSeparator />
@@ -551,7 +600,9 @@ export function FileTree() {
         )}
         <ContextMenuItem onSelect={() => handleRevealInFinder(entry.path)}>
           Reveal in Finder
-          <ContextMenuShortcut><KbdCombo combo="⌥⌘R" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⌥⌘R" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         {!isDir && (
           <ContextMenuItem onSelect={() => handleOpenInDefaultApp(entry.path)}>
@@ -566,30 +617,42 @@ export function FileTree() {
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => setClipboard(targetPaths, true)}>
           Cut{countSuffix}
-          <ContextMenuShortcut><KbdCombo combo="⌘X" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⌘X" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem onSelect={() => setClipboard(targetPaths, false)}>
           Copy{countSuffix}
-          <ContextMenuShortcut><KbdCombo combo="⌘C" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⌘C" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem onSelect={() => void handleDuplicate(entry.path)}>
           Duplicate
-          <ContextMenuShortcut><KbdCombo combo="⌘D" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⌘D" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         {isDir && clipboard && (
           <ContextMenuItem onSelect={() => void handlePaste(entry.path)}>
             Paste
-            <ContextMenuShortcut><KbdCombo combo="⌘V" /></ContextMenuShortcut>
+            <ContextMenuShortcut>
+              <KbdCombo combo="⌘V" />
+            </ContextMenuShortcut>
           </ContextMenuItem>
         )}
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => handleCopyPath(targetPaths)}>
           Copy Path{countSuffix}
-          <ContextMenuShortcut><KbdCombo combo="⌥⌘C" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⌥⌘C" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem onSelect={() => handleCopyRelativePath(targetPaths)}>
           Copy Relative Path{countSuffix}
-          <ContextMenuShortcut><KbdCombo combo="⇧⌥⌘C" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⇧⌥⌘C" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => void handleAddToGitignore(entry.path)}>
@@ -597,12 +660,18 @@ export function FileTree() {
         </ContextMenuItem>
         <ContextMenuItem onSelect={() => beginRename(entry.path)}>
           Rename
-          <ContextMenuShortcut><KbdCombo combo="↵" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="↵" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem
           onSelect={() =>
             setDeleteTargets(
-              targets.map((t) => ({ path: t.path, name: t.name, isDir: t.is_dir })),
+              targets.map((t) => ({
+                path: t.path,
+                name: t.name,
+                isDir: t.is_dir,
+              })),
             )
           }
         >
@@ -630,7 +699,9 @@ export function FileTree() {
       {rootPath && clipboard && (
         <ContextMenuItem onSelect={() => void handlePaste(rootPath)}>
           Paste
-          <ContextMenuShortcut><KbdCombo combo="⌘V" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⌘V" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
       )}
       <ContextMenuSeparator />
@@ -645,7 +716,9 @@ export function FileTree() {
         </ContextMenuItem>
       )}
       <ContextMenuSeparator />
-      <ContextMenuItem onSelect={() => collapseAll()}>Collapse All</ContextMenuItem>
+      <ContextMenuItem onSelect={() => collapseAll()}>
+        Collapse All
+      </ContextMenuItem>
     </ContextMenuContent>
   );
 
@@ -703,7 +776,12 @@ export function FileTree() {
                 Empty folder
               </div>
             ) : (
-              <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+              <div
+                style={{
+                  height: virtualizer.getTotalSize(),
+                  position: "relative",
+                }}
+              >
                 {virtualizer.getVirtualItems().map((virtualRow) => {
                   const row = flat[virtualRow.index];
 
@@ -721,14 +799,22 @@ export function FileTree() {
                         initialValue=""
                         onCommit={(name) => {
                           if (row.ghost!.isDir) {
-                            void handleNewFolderCommit(row.ghost!.parentDir, name);
+                            void handleNewFolderCommit(
+                              row.ghost!.parentDir,
+                              name,
+                            );
                           } else {
-                            void handleNewFileCommit(row.ghost!.parentDir, name);
+                            void handleNewFileCommit(
+                              row.ghost!.parentDir,
+                              name,
+                            );
                           }
                         }}
                         onCancel={endNewEntry}
                         onClick={() => {}}
-                        style={{ transform: `translateY(${virtualRow.start}px)` }}
+                        style={{
+                          transform: `translateY(${virtualRow.start}px)`,
+                        }}
                       />
                     );
                   }
@@ -746,7 +832,8 @@ export function FileTree() {
                   const isSelected = selectedPaths.includes(node.entry.path);
                   const isActive = !isDir && node.entry.path === activeFilePath;
                   const isCut =
-                    clipboard?.isCut === true && clipboard.paths.includes(node.entry.path);
+                    clipboard?.isCut === true &&
+                    clipboard.paths.includes(node.entry.path);
                   const isRenaming = pendingRenamePath === node.entry.path;
 
                   return (
@@ -774,21 +861,33 @@ export function FileTree() {
                             name={node.entry.name}
                             title={node.entry.path}
                             editingMode={isRenaming ? "rename" : undefined}
-                            initialValue={isRenaming ? node.entry.name : undefined}
-                            onCommit={(name) => void handleRenameCommit(node.entry.path, name)}
+                            initialValue={
+                              isRenaming ? node.entry.name : undefined
+                            }
+                            onCommit={(name) =>
+                              void handleRenameCommit(node.entry.path, name)
+                            }
                             onCancel={endRename}
                             isCut={isCut}
                             dataPath={node.entry.path}
-                            isDropTarget={isDir && dropTargetPath === node.entry.path}
-                            isDragging={dragState.draggedItem?.path === node.entry.path}
+                            isDropTarget={
+                              isDir && dropTargetPath === node.entry.path
+                            }
+                            isDragging={
+                              dragState.draggedItem?.path === node.entry.path
+                            }
                             gitColor={gitColor}
                             onClick={(e) => handleRowClick(node, e)}
                             onRename={() => beginRename(node.entry.path)}
-                            style={{ transform: `translateY(${virtualRow.start}px)` }}
+                            style={{
+                              transform: `translateY(${virtualRow.start}px)`,
+                            }}
                           />
                         </div>
                       </ContextMenuTrigger>
-                      <ContextMenuContent>{rowMenuItems(node.entry)}</ContextMenuContent>
+                      <ContextMenuContent>
+                        {rowMenuItems(node.entry)}
+                      </ContextMenuContent>
                     </ContextMenu>
                   );
                 })}
@@ -819,7 +918,9 @@ export function FileTree() {
               })),
             );
           }}
-          onOpenChange={(open) => { if (!open) setDeleteTargets(null); }}
+          onOpenChange={(open) => {
+            if (!open) setDeleteTargets(null);
+          }}
         />
       )}
     </div>
@@ -868,7 +969,9 @@ async function pathExists(path: string): Promise<boolean> {
     const lastSlash = path.lastIndexOf("/");
     const parent = lastSlash > 0 ? path.slice(0, lastSlash) : "/";
     const name = path.slice(lastSlash + 1);
-    const entries = await invoke<Array<{ name: string }>>("read_directory", { path: parent });
+    const entries = await invoke<Array<{ name: string }>>("read_directory", {
+      path: parent,
+    });
     return entries.some((e) => e.name === name);
   } catch {
     return false;

@@ -6,7 +6,11 @@ import type { EditorColorTheme } from "@/features/editor/themes/types";
  * theme shares one background; only syntax varies). Mirrors the visual-preview
  * approach of the Layouts picker's LayoutThumbnail.
  */
-export function CodeEditorThemeThumbnail({ theme }: { theme: EditorColorTheme }) {
+export function CodeEditorThemeThumbnail({
+  theme,
+}: {
+  theme: EditorColorTheme;
+}) {
   const c = theme.colors;
   return (
     <div
@@ -17,7 +21,9 @@ export function CodeEditorThemeThumbnail({ theme }: { theme: EditorColorTheme })
         className="h-full w-full px-2.5 py-2 font-mono leading-[1.6]"
         style={{ fontSize: "9px", color: c.fg }}
       >
-        <div style={{ color: c.comment, fontStyle: "italic" }}>// {theme.name} syntax preview</div>
+        <div style={{ color: c.comment, fontStyle: "italic" }}>
+          // {theme.name} syntax preview
+        </div>
         <div>
           <span style={{ color: c.keyword, fontStyle: "italic" }}>import</span>{" "}
           <span style={{ color: c.operator }}>{"{"}</span>{" "}
@@ -31,7 +37,9 @@ export function CodeEditorThemeThumbnail({ theme }: { theme: EditorColorTheme })
         </div>
         <div>
           <span style={{ color: c.keyword, fontStyle: "italic" }}>export</span>{" "}
-          <span style={{ color: c.keyword, fontStyle: "italic" }}>function</span>{" "}
+          <span style={{ color: c.keyword, fontStyle: "italic" }}>
+            function
+          </span>{" "}
           <span style={{ color: c.func }}>render</span>
           <span style={{ color: c.operator }}>(</span>
           <span style={{ color: c.variable }}>node</span>

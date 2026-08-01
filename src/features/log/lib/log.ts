@@ -30,9 +30,7 @@ export function logEvent(entry: LogEventInput): void {
     }
     const { status, payload, ...rest } = entry;
     const merged: Record<string, unknown> | undefined =
-      status !== undefined
-        ? { ...(payload ?? {}), status }
-        : payload;
+      status !== undefined ? { ...(payload ?? {}), status } : payload;
     useLogStore.getState().actions.append({ ...rest, payload: merged });
   } catch {
     // Never let the log layer throw into the host call site.

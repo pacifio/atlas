@@ -17,7 +17,9 @@ import { useWorkspaceGitStore } from "../stores/workspace-git-store";
 export function useWorkspaceGitPrefetch() {
   // Re-runs only when the SET of workspace paths changes (the signature string
   // is stable otherwise), not on every store mutation.
-  const pathsSig = useWorkspaceStore((s) => s.workspaces.map((w) => w.path).join("\n"));
+  const pathsSig = useWorkspaceStore((s) =>
+    s.workspaces.map((w) => w.path).join("\n"),
+  );
 
   useEffect(() => {
     if (!pathsSig) return;

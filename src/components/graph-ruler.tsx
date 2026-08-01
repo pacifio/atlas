@@ -53,13 +53,12 @@ export function GraphRuler({
 
     const { x: vx, y: vy, scale } = viewport;
     // Target ~70px between major ticks on screen.
-    const step = niceStep((70 / scale) || 1);
+    const step = niceStep(70 / scale || 1);
     const screenStep = step * scale;
     const worldToScreenX = (wx: number) => wx * scale + vx;
     const worldToScreenY = (wy: number) => wy * scale + vy;
 
-    ctx.font =
-      "9px Inter, -apple-system, system-ui, sans-serif";
+    ctx.font = "9px Inter, -apple-system, system-ui, sans-serif";
     ctx.textBaseline = "middle";
 
     // ── Band backgrounds ──
@@ -68,7 +67,7 @@ export function GraphRuler({
     ctx.fillRect(0, 0, BAND, height); // left
 
     // ── Top ruler (X) ──
-    const firstX = Math.ceil((-vx / scale) / step) * step;
+    const firstX = Math.ceil(-vx / scale / step) * step;
     const lastX = (width - vx) / scale;
     ctx.fillStyle = LABEL_COL;
     ctx.textAlign = "left";
@@ -93,7 +92,7 @@ export function GraphRuler({
     }
 
     // ── Left ruler (Y) — rotated labels ──
-    const firstY = Math.ceil((-vy / scale) / step) * step;
+    const firstY = Math.ceil(-vy / scale / step) * step;
     const lastY = (height - vy) / scale;
     for (let wy = firstY; wy <= lastY; wy += step) {
       const sy = worldToScreenY(wy);

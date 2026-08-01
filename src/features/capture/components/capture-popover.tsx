@@ -61,15 +61,30 @@ interface Props {
 type View =
   | { kind: "main" }
   /** Cloud create: the import disclosure, with the registration still pending. */
-  | { kind: "cloud-confirm"; orgId: string; slug: string; preview: ImportPreview }
+  | {
+      kind: "cloud-confirm";
+      orgId: string;
+      slug: string;
+      preview: ImportPreview;
+    }
   /** Bound Cloud Workspace whose history import awaits approval. */
   | { kind: "import-confirm"; preview: ImportPreview }
   /** Local→Cloud promotion: pick the destination. */
   | { kind: "promote-form" }
   /** Local→Cloud promotion: the disclosure. */
-  | { kind: "promote-confirm"; orgId: string; slug: string; preview: PromotionPreview };
+  | {
+      kind: "promote-confirm";
+      orgId: string;
+      slug: string;
+      preview: PromotionPreview;
+    };
 
-export function CapturePopover({ projectPath, health, onChanged, onClose }: Props) {
+export function CapturePopover({
+  projectPath,
+  health,
+  onChanged,
+  onClose,
+}: Props) {
   const signedIn = useAuthStore.use.snapshot().status === "signed-in";
   const organisations = useOrgStore.use.organisations();
   // Cloud talks to the server, so only server-linked Organisations qualify.
@@ -81,7 +96,9 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
   const [detection, setDetection] = useState<Detection | null>(null);
   /** `undefined` while the read is in flight, `null` once it failed — the
    *  Cloud "Continue" button needs the difference to gate honestly. */
-  const [importPreview, setImportPreview] = useState<ImportPreview | null | undefined>(undefined);
+  const [importPreview, setImportPreview] = useState<
+    ImportPreview | null | undefined
+  >(undefined);
   const [view, setView] = useState<View>({ kind: "main" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,7 +111,9 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
         // Read-only and cheap — the "history N sessions on disk" row and both
         // disclosure steps feed off it. A failure lands as `null`, which the
         // Cloud path surfaces with a retry instead of silently no-opping.
-        invoke<ImportPreview>("capture_import_preview", { projectPath }).catch(() => null),
+        invoke<ImportPreview>("capture_import_preview", { projectPath }).catch(
+          () => null,
+        ),
       ]);
       setBinding(current);
       setDetection(detected);
@@ -112,7 +131,9 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
   const retryPreview = useCallback(async () => {
     setImportPreview(undefined);
     try {
-      setImportPreview(await invoke<ImportPreview>("capture_import_preview", { projectPath }));
+      setImportPreview(
+        await invoke<ImportPreview>("capture_import_preview", { projectPath }),
+      );
     } catch {
       setImportPreview(null);
     }
@@ -147,7 +168,9 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
   return (
     <div className="w-[340px] rounded-lg border border-[var(--border-default)] bg-[var(--bg-overlay)] p-3 text-[12px] shadow-[var(--shadow-overlay)]">
       <header className="flex items-center justify-between pb-2">
-        <span className="font-medium text-[var(--text-primary)]">Session capture</span>
+        <span className="font-medium text-[var(--text-primary)]">
+          Session capture
+        </span>
         <StatusPill binding={binding} />
       </header>
 
@@ -166,7 +189,8 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
             busy={busy}
             run={run}
             onReviewImport={() =>
-              importPreview && setView({ kind: "import-confirm", preview: importPreview })
+              importPreview &&
+              setView({ kind: "import-confirm", preview: importPreview })
             }
             onPromote={() => setView({ kind: "promote-form" })}
           />
@@ -185,7 +209,12 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
               // Belt to the button's braces — Continue is disabled until the
               // preview is in, so this guard should never fire.
               if (!importPreview) return;
-              setView({ kind: "cloud-confirm", orgId, slug, preview: importPreview });
+              setView({
+                kind: "cloud-confirm",
+                orgId,
+                slug,
+                preview: importPreview,
+              });
             }}
           />
         ))}
@@ -223,7 +252,9 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
           busy={busy}
           onCancel={() => setView({ kind: "main" })}
           onConfirm={async () => {
-            const ok = await run(() => invoke("capture_import_confirm", { projectPath }));
+            const ok = await run(() =>
+              invoke("capture_import_confirm", { projectPath }),
+            );
             if (ok) setView({ kind: "main" });
           }}
         />
@@ -240,9 +271,12 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
             setBusy(true);
             setError(null);
             try {
-              const preview = await invoke<PromotionPreview>("capture_promotion_preview", {
-                projectPath,
-              });
+              const preview = await invoke<PromotionPreview>(
+                "capture_promotion_preview",
+                {
+                  projectPath,
+                },
+              );
               setView({ kind: "promote-confirm", orgId, slug, preview });
             } catch (e) {
               setError(String(e));
@@ -319,7 +353,9 @@ function DisclosureStep({
 }) {
   return (
     <div className="space-y-2">
-      <p className="text-[12px] font-medium text-[var(--text-primary)]">{title}</p>
+      <p className="text-[12px] font-medium text-[var(--text-primary)]">
+        {title}
+      </p>
       <ul className="space-y-0.5 rounded bg-[var(--bg-raised)] px-2 py-1.5">
         {lines.map((line) => (
           <li key={line} className="text-[11px] text-[var(--text-secondary)]">
@@ -328,7 +364,8 @@ function DisclosureStep({
         ))}
       </ul>
       <p className="text-[11px] text-[var(--text-tertiary)]">
-        This makes the above visible to your Organisation. Nothing is sent until you confirm.
+        This makes the above visible to your Organisation. Nothing is sent until
+        you confirm.
       </p>
       <div className="flex justify-end gap-2 pt-1">
         <GhostButton label="Cancel" onClick={onCancel} disabled={busy} />
@@ -352,7 +389,9 @@ function HealthDetail({ health }: { health: CaptureHealth | null }) {
     <ul
       className={cn(
         "mb-2 space-y-1.5 rounded px-2 py-1.5",
-        stopped ? "bg-[var(--status-error-muted)]" : "bg-[var(--status-warning-muted)]",
+        stopped
+          ? "bg-[var(--status-error-muted)]"
+          : "bg-[var(--status-warning-muted)]",
       )}
     >
       {health.issues.map((issue, index) => (
@@ -367,7 +406,9 @@ function HealthDetail({ health }: { health: CaptureHealth | null }) {
           >
             {issue.reason}
           </p>
-          {issue.nextStep && <p className="text-[var(--text-tertiary)]">{issue.nextStep}</p>}
+          {issue.nextStep && (
+            <p className="text-[var(--text-tertiary)]">{issue.nextStep}</p>
+          )}
         </li>
       ))}
     </ul>
@@ -383,9 +424,14 @@ function StatusPill({ binding }: { binding: Binding | null }) {
     <span className="flex items-center gap-1 text-[11px] text-[var(--text-secondary)]">
       <CircleDot
         size={11}
-        className={binding.enabled ? "text-[var(--status-info)]" : "text-[var(--text-tertiary)]"}
+        className={
+          binding.enabled
+            ? "text-[var(--status-info)]"
+            : "text-[var(--text-tertiary)]"
+        }
       />
-      {binding.enabled ? "Capturing" : "Paused"} · {binding.mode === "cloud" ? "Cloud" : "Local"}
+      {binding.enabled ? "Capturing" : "Paused"} ·{" "}
+      {binding.mode === "cloud" ? "Cloud" : "Local"}
     </span>
   );
 }
@@ -427,8 +473,16 @@ function BoundState({
     <div className="space-y-2">
       {binding.mode === "cloud" && binding.slug && (
         <dl className="space-y-0.5 rounded bg-[var(--bg-raised)] px-2 py-1.5 text-[11px]">
-          <Row label="Shared as" value={orgName ? `${orgName} / ${binding.slug}` : binding.slug} />
-          {pending > 0 && <Row label="Queue" value={`${pending} pending — sends when online`} />}
+          <Row
+            label="Shared as"
+            value={orgName ? `${orgName} / ${binding.slug}` : binding.slug}
+          />
+          {pending > 0 && (
+            <Row
+              label="Queue"
+              value={`${pending} pending — sends when online`}
+            />
+          )}
         </dl>
       )}
 
@@ -439,7 +493,9 @@ function BoundState({
       {detection && !detection.isGitRepository && (
         <GitInitOffer
           busy={busy}
-          onGitInit={() => void run(() => invoke("capture_git_init", { projectPath }))}
+          onGitInit={() =>
+            void run(() => invoke("capture_git_init", { projectPath }))
+          }
         />
       )}
 
@@ -470,7 +526,9 @@ function BoundState({
           <button
             type="button"
             disabled={busy}
-            onClick={() => void run(() => invoke("capture_retry_failed", { projectPath }))}
+            onClick={() =>
+              void run(() => invoke("capture_retry_failed", { projectPath }))
+            }
             className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-[var(--text-primary)] underline underline-offset-2 transition-colors duration-150 hover:no-underline focus-visible:ring-1 focus-visible:ring-[var(--border-focus)] active:scale-[0.97] disabled:opacity-50"
           >
             <RefreshCw size={10} />
@@ -495,14 +553,20 @@ function BoundState({
           <GhostButton
             label="Pause capture"
             disabled={busy}
-            onClick={() => void run(() => invoke("capture_disable", { projectPath }))}
+            onClick={() =>
+              void run(() => invoke("capture_disable", { projectPath }))
+            }
           />
         ) : (
           <PrimaryButton
             busy={busy}
             // Always "local": the command rejects "cloud" outright, and an
             // existing Cloud binding keeps its mode on re-enable regardless.
-            onClick={() => void run(() => invoke("capture_enable", { projectPath, mode: "local" }))}
+            onClick={() =>
+              void run(() =>
+                invoke("capture_enable", { projectPath, mode: "local" }),
+              )
+            }
             label="Resume capture"
           />
         )}
@@ -584,7 +648,11 @@ function UnboundState({
 
       {tab === "create" ? (
         <>
-          <div role="radiogroup" aria-label="Where sessions are stored" className="space-y-1">
+          <div
+            role="radiogroup"
+            aria-label="Where sessions are stored"
+            className="space-y-1"
+          >
             <ModeOption
               selected={mode === "local"}
               disabled={false}
@@ -620,7 +688,9 @@ function UnboundState({
           {detection && !detection.isGitRepository && (
             <GitInitOffer
               busy={busy}
-              onGitInit={() => void run(() => invoke("capture_git_init", { projectPath }))}
+              onGitInit={() =>
+                void run(() => invoke("capture_git_init", { projectPath }))
+              }
             />
           )}
 
@@ -649,7 +719,9 @@ function UnboundState({
               disabled={!cloudReady}
               onClick={() => {
                 if (mode === "local") {
-                  void run(() => invoke("capture_enable", { projectPath, mode: "local" }));
+                  void run(() =>
+                    invoke("capture_enable", { projectPath, mode: "local" }),
+                  );
                 } else {
                   // No mutation yet — the disclosure step owns all of them.
                   onCloudEnable(orgId, slug.trim());
@@ -721,7 +793,11 @@ type SlugState =
  * name is gone when the network merely blinked is a lie they will act on — so
  * it reads as "couldn't check" with a retry, and it never blocks submitting.
  */
-function useSlugAvailability(projectPath: string, orgId: string, slug: string): SlugState {
+function useSlugAvailability(
+  projectPath: string,
+  orgId: string,
+  slug: string,
+): SlugState {
   const [state, setState] = useState<SlugState>({ kind: "idle" });
   const [nonce, setNonce] = useState(0);
   const seq = useRef(0);
@@ -735,12 +811,17 @@ function useSlugAvailability(projectPath: string, orgId: string, slug: string): 
     setState({ kind: "checking" });
     const mine = ++seq.current;
     const timer = setTimeout(() => {
-      invoke<SlugAvailability>("capture_slug_available", { projectPath, orgId, slug: trimmed })
+      invoke<SlugAvailability>("capture_slug_available", {
+        projectPath,
+        orgId,
+        slug: trimmed,
+      })
         .then((availability) => {
           if (mine !== seq.current) return;
           if (availability === "available") setState({ kind: "available" });
           else if (availability === "taken") setState({ kind: "taken" });
-          else setState({ kind: "unknown", retry: () => setNonce((n) => n + 1) });
+          else
+            setState({ kind: "unknown", retry: () => setNonce((n) => n + 1) });
         })
         .catch(() => {
           if (mine === seq.current) {
@@ -801,7 +882,9 @@ function CloudFields({
       )}
 
       <label className="flex items-center gap-2">
-        <span className="w-[70px] shrink-0 text-[11px] text-[var(--text-tertiary)]">Slug</span>
+        <span className="w-[70px] shrink-0 text-[11px] text-[var(--text-tertiary)]">
+          Slug
+        </span>
         <input
           value={slug}
           onChange={(e) => onSlugChange(e.target.value)}
@@ -823,7 +906,10 @@ function SlugStatus({ state }: { state: SlugState }) {
     <p className="flex items-center gap-1 pl-[78px] text-[11px]">
       {state.kind === "checking" && (
         <>
-          <Loader2 size={10} className="animate-spin text-[var(--text-tertiary)]" />
+          <Loader2
+            size={10}
+            className="animate-spin text-[var(--text-tertiary)]"
+          />
           <span className="text-[var(--text-tertiary)]">checking…</span>
         </>
       )}
@@ -836,7 +922,9 @@ function SlugStatus({ state }: { state: SlugState }) {
       {state.kind === "taken" && (
         <>
           <X size={10} className="text-[var(--status-error)]" />
-          <span className="text-[var(--status-error)]">taken in this Organisation</span>
+          <span className="text-[var(--status-error)]">
+            taken in this Organisation
+          </span>
         </>
       )}
       {state.kind === "unknown" && (
@@ -880,7 +968,9 @@ function ConnectTab({
   onCancel: () => void;
 }) {
   const [orgId, setOrgId] = useState<string>(cloudOrgs[0]?.remoteId ?? "");
-  const [options, setOptions] = useState<ConnectOptions | null | undefined>(undefined);
+  const [options, setOptions] = useState<ConnectOptions | null | undefined>(
+    undefined,
+  );
   const [selected, setSelected] = useState<string | null>(null);
   const seq = useRef(0);
 
@@ -919,7 +1009,9 @@ function ConnectTab({
     <div className="space-y-2">
       {cloudOrgs.length > 1 && (
         <label className="flex items-center gap-2">
-          <span className="shrink-0 text-[11px] text-[var(--text-tertiary)]">Organisation</span>
+          <span className="shrink-0 text-[11px] text-[var(--text-tertiary)]">
+            Organisation
+          </span>
           <select
             value={orgId}
             onChange={(e) => setOrgId(e.target.value)}
@@ -945,7 +1037,8 @@ function ConnectTab({
         </p>
       ) : options.workspaces.length === 0 ? (
         <p className="rounded bg-[var(--bg-raised)] px-2 py-2 text-[11px] text-[var(--text-tertiary)]">
-          This Organisation has no Workspaces yet. Create one from the Create tab instead.
+          This Organisation has no Workspaces yet. Create one from the Create
+          tab instead.
         </p>
       ) : (
         <>
@@ -968,7 +1061,9 @@ function ConnectTab({
                 onClick={() => setSelected(remote.id)}
                 className={cn(
                   "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-[var(--border-focus)] active:bg-[var(--bg-active)]",
-                  selected === remote.id ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
+                  selected === remote.id
+                    ? "bg-[var(--bg-selected)]"
+                    : "hover:bg-[var(--bg-hover)]",
                 )}
               >
                 <span className="shrink-0">
@@ -1043,14 +1138,19 @@ function PromoteForm({
     if (!orgId && cloudOrgs[0]) setOrgId(cloudOrgs[0].remoteId);
   }, [orgId, cloudOrgs]);
   const ready =
-    !!orgId && slug.trim().length > 0 && slugState.kind !== "taken" && slugState.kind !== "checking";
+    !!orgId &&
+    slug.trim().length > 0 &&
+    slugState.kind !== "taken" &&
+    slugState.kind !== "checking";
 
   return (
     <div className="space-y-2">
-      <p className="text-[12px] font-medium text-[var(--text-primary)]">Promote to Cloud</p>
+      <p className="text-[12px] font-medium text-[var(--text-primary)]">
+        Promote to Cloud
+      </p>
       <p className="text-[11px] text-[var(--text-tertiary)]">
-        Everything captured here joins your Organisation's timeline. You'll see exactly what
-        before anything is sent.
+        Everything captured here joins your Organisation's timeline. You'll see
+        exactly what before anything is sent.
       </p>
       <CloudFields
         cloudOrgs={cloudOrgs}
@@ -1165,7 +1265,9 @@ function ModeOption({
       </span>
       <span className="min-w-0">
         <span className="block text-[var(--text-primary)]">{label}</span>
-        <span className="block text-[11px] text-[var(--text-tertiary)]">{hint}</span>
+        <span className="block text-[11px] text-[var(--text-tertiary)]">
+          {hint}
+        </span>
       </span>
     </button>
   );
@@ -1189,7 +1291,10 @@ function Detected({
 
   return (
     <dl className="space-y-0.5 rounded bg-[var(--bg-raised)] px-2 py-1.5 text-[11px]">
-      <Row label="Folder" value={detection.root.split("/").pop() ?? detection.root} />
+      <Row
+        label="Folder"
+        value={detection.root.split("/").pop() ?? detection.root}
+      />
       {detection.gitUrl && <Row label="Origin" value={detection.gitUrl} />}
       {detection.rootCommitSha && (
         <Row
@@ -1197,7 +1302,9 @@ function Detected({
           value={`${detection.rootCommitSha.slice(0, 7)}${detection.isShallow ? " (shallow)" : ""}`}
         />
       )}
-      {!detection.isGitRepository && <Row label="Git" value="not a repository" />}
+      {!detection.isGitRepository && (
+        <Row label="Git" value="not a repository" />
+      )}
       {detection.isGitRepository && !detection.hasCommits && (
         <Row label="Git" value="no commits yet" />
       )}
@@ -1227,14 +1334,23 @@ function Row({ label, value }: { label: string; value: string }) {
  * one. Sessions are captured in any directory; git is what lets a commit be
  * traced back to the Session that produced it.
  */
-function GitInitOffer({ busy, onGitInit }: { busy: boolean; onGitInit: () => void }) {
+function GitInitOffer({
+  busy,
+  onGitInit,
+}: {
+  busy: boolean;
+  onGitInit: () => void;
+}) {
   return (
     <div className="flex items-start gap-2 rounded border border-dashed border-[var(--border-default)] px-2 py-1.5">
-      <GitBranch size={12} className="mt-0.5 shrink-0 text-[var(--text-tertiary)]" />
+      <GitBranch
+        size={12}
+        className="mt-0.5 shrink-0 text-[var(--text-tertiary)]"
+      />
       <div className="min-w-0">
         <p className="text-[11px] text-[var(--text-secondary)]">
-          Sessions are recorded here already. Initialise git to also link them to the commits
-          they produce.
+          Sessions are recorded here already. Initialise git to also link them
+          to the commits they produce.
         </p>
         <button
           type="button"
@@ -1251,9 +1367,16 @@ function GitInitOffer({ busy, onGitInit }: { busy: boolean; onGitInit: () => voi
 
 // ── Formatting ──────────────────────────────────────────────────────────────
 
-function dateRange(earliest: string | null, latest: string | null): string | null {
+function dateRange(
+  earliest: string | null,
+  latest: string | null,
+): string | null {
   if (!earliest || !latest) return null;
-  const options: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" };
+  const options: Intl.DateTimeFormatOptions = {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  };
   const from = new Date(earliest).toLocaleDateString(undefined, options);
   const to = new Date(latest).toLocaleDateString(undefined, options);
   return from === to ? from : `${from} – ${to}`;
@@ -1262,6 +1385,7 @@ function dateRange(earliest: string | null, latest: string | null): string | nul
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }

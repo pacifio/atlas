@@ -14,7 +14,11 @@ interface PanelSkeletonProps {
  * sees structure rather than a spinner while a panel's chunk + initial
  * data load.
  */
-export function PanelSkeleton({ rows = 6, label, className }: PanelSkeletonProps) {
+export function PanelSkeleton({
+  rows = 6,
+  label,
+  className,
+}: PanelSkeletonProps) {
   return (
     <div className={cn("h-full flex flex-col gap-2 p-3", className)}>
       {label && (

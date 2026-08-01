@@ -47,13 +47,20 @@ const MarkdownBlock = memo(function MarkdownBlock({
     );
   }
   return (
-    <CachedMarkdown source={source} className={cn("[display:contents]", className)} />
+    <CachedMarkdown
+      source={source}
+      className={cn("[display:contents]", className)}
+    />
   );
 });
 
 /** rAF-coalesced block split: at most one split per frame while streaming; a
  *  synchronous, memoized split when settled. */
-function useBlocks(source: string, streaming: boolean, whole: boolean): string[] {
+function useBlocks(
+  source: string,
+  streaming: boolean,
+  whole: boolean,
+): string[] {
   const [blocks, setBlocks] = useState<string[]>(() =>
     whole ? [source] : splitTopLevelBlocks(source),
   );

@@ -7,7 +7,11 @@ interface AtlasIconProps {
   alt?: string;
 }
 
-export function AtlasIcon({ size = 32, className, alt = "Atlas" }: AtlasIconProps) {
+export function AtlasIcon({
+  size = 32,
+  className,
+  alt = "Atlas",
+}: AtlasIconProps) {
   return (
     <img
       src={atlasIconUrl}

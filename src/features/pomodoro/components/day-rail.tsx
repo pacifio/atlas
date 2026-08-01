@@ -13,7 +13,8 @@ export function DayRail() {
   const [activeTag, setActiveTag] = useState<string | null>(null);
 
   const filtered = days.filter((d) => {
-    if (q && !(d.summary ?? "").toLowerCase().includes(q.toLowerCase())) return false;
+    if (q && !(d.summary ?? "").toLowerCase().includes(q.toLowerCase()))
+      return false;
     return true;
   });
 

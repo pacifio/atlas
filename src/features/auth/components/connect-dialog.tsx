@@ -118,7 +118,10 @@ export function ConnectDialog() {
                       >
                         {copied ? (
                           <>
-                            <Check size={12} className="text-[var(--status-success)]" />
+                            <Check
+                              size={12}
+                              className="text-[var(--status-success)]"
+                            />
                             Copied
                           </>
                         ) : (

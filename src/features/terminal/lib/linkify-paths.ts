@@ -44,7 +44,11 @@ export function splitLinks(text: string): PathRun[] {
   while ((u = URL_RE.exec(text)) !== null) {
     const trimmed = u[0].replace(TRAILING_PUNCT, "");
     if (trimmed.length < 2) continue;
-    matches.push({ start: u.index, end: u.index + trimmed.length, kind: "url" });
+    matches.push({
+      start: u.index,
+      end: u.index + trimmed.length,
+      kind: "url",
+    });
   }
 
   PATH_RE.lastIndex = 0;
@@ -55,7 +59,8 @@ export function splitLinks(text: string): PathRun[] {
     const start = p.index;
     const end = p.index + raw.length;
     // Drop paths that fall inside an already-matched URL.
-    if (matches.some((m) => m.kind === "url" && start < m.end && end > m.start)) continue;
+    if (matches.some((m) => m.kind === "url" && start < m.end && end > m.start))
+      continue;
     matches.push({ start, end, kind: "path" });
   }
 
@@ -66,7 +71,8 @@ export function splitLinks(text: string): PathRun[] {
   let last = 0;
   for (const m of matches) {
     if (m.start < last) continue; // overlap guard (URLs win, added first)
-    if (m.start > last) out.push({ text: text.slice(last, m.start), kind: "text" });
+    if (m.start > last)
+      out.push({ text: text.slice(last, m.start), kind: "text" });
     out.push({
       text: text.slice(m.start, m.end),
       kind: m.kind,

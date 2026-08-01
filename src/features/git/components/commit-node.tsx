@@ -73,7 +73,7 @@ export const CommitRowView = memo(function CommitRowView({
         "group flex items-center cursor-pointer select-none",
         selected
           ? "bg-[var(--accent-primary)]/15 text-[var(--text-primary)]"
-          : "hover:bg-[var(--bg-hover)] text-[var(--text-secondary)]"
+          : "hover:bg-[var(--bg-hover)] text-[var(--text-secondary)]",
       )}
       style={{ height: ROW_HEIGHT }}
     >
@@ -108,7 +108,7 @@ export const CommitRowView = memo(function CommitRowView({
       <div
         className={cn(
           "flex-1 min-w-0 flex items-center gap-2 pl-0",
-          compact ? "pr-3" : "pr-4"
+          compact ? "pr-3" : "pr-4",
         )}
       >
         {/* Refs + message — flexes to fill remaining space */}
@@ -118,7 +118,7 @@ export const CommitRowView = memo(function CommitRowView({
               key={`${r.kind}:${r.name}`}
               className={cn(
                 "px-1 h-[14px] rounded-sm border text-[9px] font-mono leading-none flex items-center shrink-0",
-                badgeClass(r.kind, r.isCurrent)
+                badgeClass(r.kind, r.isCurrent),
               )}
               title={`${r.kind}: ${r.name}`}
             >
@@ -128,7 +128,7 @@ export const CommitRowView = memo(function CommitRowView({
           <span
             className={cn(
               "text-[12px] truncate",
-              selected ? "text-[var(--text-primary)] font-medium" : ""
+              selected ? "text-[var(--text-primary)] font-medium" : "",
             )}
           >
             {row.message}

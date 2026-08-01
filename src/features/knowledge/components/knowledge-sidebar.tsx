@@ -72,7 +72,12 @@ export function KnowledgeSidebar({
   width = 260,
 }: KnowledgeSidebarProps) {
   const [clonedRepos, setClonedRepos] = useState<
-    Array<{ name: string; display_name: string; path: string; has_readme: boolean }>
+    Array<{
+      name: string;
+      display_name: string;
+      path: string;
+      has_readme: boolean;
+    }>
   >([]);
 
   // Imperative handle on the KnowledgeTree so the header can drive
@@ -83,10 +88,14 @@ export function KnowledgeSidebar({
   const [recentsCollapsed, setRecentsCollapsed] = useState(false);
 
   const loadRepos = useCallback(() => {
-    invoke<Array<{ name: string; display_name: string; path: string; has_readme: boolean }>>(
-      "list_cloned_repos",
-      { projectPath },
-    )
+    invoke<
+      Array<{
+        name: string;
+        display_name: string;
+        path: string;
+        has_readme: boolean;
+      }>
+    >("list_cloned_repos", { projectPath })
       .then(setClonedRepos)
       .catch(() => {});
   }, [projectPath]);
@@ -296,7 +305,6 @@ export function KnowledgeSidebar({
             )}
           </div>
         )}
-
       </div>
 
       {/* Repositories — bottom section */}
@@ -339,7 +347,9 @@ export function KnowledgeSidebar({
                     className="text-text-muted shrink-0"
                     strokeWidth={1.5}
                   />
-                  <span className="truncate flex-1 text-left">{repo.display_name}</span>
+                  <span className="truncate flex-1 text-left">
+                    {repo.display_name}
+                  </span>
                   <button
                     type="button"
                     onClick={(e) => {

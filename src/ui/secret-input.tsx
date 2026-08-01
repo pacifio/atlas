@@ -10,11 +10,10 @@ import { cn } from "@/lib/utils";
  * Controlled like a normal input via `value`/`onChange`. `onSubmit` fires on
  * Enter. `copyable` enables the inline copy button (copies the current value).
  */
-export interface SecretInputProps
-  extends Omit<
-    React.InputHTMLAttributes<HTMLInputElement>,
-    "type" | "onSubmit"
-  > {
+export interface SecretInputProps extends Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  "type" | "onSubmit"
+> {
   value: string;
   onValueChange?: (next: string) => void;
   onSubmit?: () => void;

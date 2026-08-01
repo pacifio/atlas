@@ -1,4 +1,11 @@
-import { Check, Download, Loader2, LogIn, RefreshCw, TriangleAlert } from "lucide-react";
+import {
+  Check,
+  Download,
+  Loader2,
+  LogIn,
+  RefreshCw,
+  TriangleAlert,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useClaudeSetupStore } from "../stores/claude-setup-store";
 
@@ -24,7 +31,10 @@ export function ClaudeSetupBanner() {
     case "checking":
       content = (
         <StatusPill>
-          <Loader2 size={11} className="animate-spin text-[var(--accent-primary)]" />
+          <Loader2
+            size={11}
+            className="animate-spin text-[var(--accent-primary)]"
+          />
           <span>Checking Claude Code…</span>
         </StatusPill>
       );
@@ -42,7 +52,10 @@ export function ClaudeSetupBanner() {
     case "installing":
       content = (
         <StatusPill>
-          <Loader2 size={11} className="animate-spin text-[var(--accent-primary)]" />
+          <Loader2
+            size={11}
+            className="animate-spin text-[var(--accent-primary)]"
+          />
           <span>Installing Claude Code…</span>
         </StatusPill>
       );
@@ -79,7 +92,10 @@ export function ClaudeSetupBanner() {
     case "authing":
       content = (
         <ActionPill onClick={() => void refreshStatus()} variant="muted">
-          <Loader2 size={11} className="animate-spin text-[var(--accent-primary)]" />
+          <Loader2
+            size={11}
+            className="animate-spin text-[var(--accent-primary)]"
+          />
           <span>Waiting for sign-in…</span>
           <RefreshCw size={11} className="ml-1 opacity-70" />
         </ActionPill>

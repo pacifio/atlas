@@ -26,7 +26,10 @@ export function UsageBarChart({ data }: { data: MissionControlUsage }) {
           Review: p.review.inputTokens + p.review.outputTokens,
         }))
         .filter((r) => r.Claude + r.Codex + r.Review > 0)
-        .sort((a, b) => b.Claude + b.Codex + b.Review - (a.Claude + a.Codex + a.Review))
+        .sort(
+          (a, b) =>
+            b.Claude + b.Codex + b.Review - (a.Claude + a.Codex + a.Review),
+        )
         .slice(0, 12),
     [data.projects],
   );
@@ -40,15 +43,24 @@ export function UsageBarChart({ data }: { data: MissionControlUsage }) {
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={rows} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} vertical={false} />
+            <BarChart
+              data={rows}
+              margin={{ top: 8, right: 8, left: 4, bottom: 0 }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke={CHART.grid}
+                vertical={false}
+              />
               <XAxis
                 dataKey="name"
                 tick={{ fill: CHART.axis, fontSize: CHART.tickFont }}
                 tickLine={false}
                 axisLine={{ stroke: CHART.grid }}
                 interval={0}
-                tickFormatter={(s: string) => (s.length > 10 ? `${s.slice(0, 9)}…` : s)}
+                tickFormatter={(s: string) =>
+                  s.length > 10 ? `${s.slice(0, 9)}…` : s
+                }
               />
               <YAxis
                 tick={{ fill: CHART.axis, fontSize: CHART.tickFont }}
@@ -57,10 +69,29 @@ export function UsageBarChart({ data }: { data: MissionControlUsage }) {
                 width={44}
                 tickFormatter={(v: number) => fmtTokens(v)}
               />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
-              <Bar dataKey="Claude" stackId="a" fill={AGENT_COLOR.claude} isAnimationActive={false} />
-              <Bar dataKey="Codex" stackId="a" fill={AGENT_COLOR.codex} isAnimationActive={false} />
-              <Bar dataKey="Review" stackId="a" fill={AGENT_COLOR.review} radius={[2, 2, 0, 0]} isAnimationActive={false} />
+              <Tooltip
+                content={<ChartTooltip />}
+                cursor={{ fill: "rgba(255,255,255,0.03)" }}
+              />
+              <Bar
+                dataKey="Claude"
+                stackId="a"
+                fill={AGENT_COLOR.claude}
+                isAnimationActive={false}
+              />
+              <Bar
+                dataKey="Codex"
+                stackId="a"
+                fill={AGENT_COLOR.codex}
+                isAnimationActive={false}
+              />
+              <Bar
+                dataKey="Review"
+                stackId="a"
+                fill={AGENT_COLOR.review}
+                radius={[2, 2, 0, 0]}
+                isAnimationActive={false}
+              />
             </BarChart>
           </ResponsiveContainer>
         )}

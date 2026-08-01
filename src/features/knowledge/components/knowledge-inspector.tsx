@@ -160,10 +160,7 @@ export function KnowledgeInspector({
               Pages linking here · {backlinks.length}
             </div>
             {backlinks.length === 0 ? (
-              <div
-                className="text-text-muted italic"
-                style={{ fontSize: 11 }}
-              >
+              <div className="text-text-muted italic" style={{ fontSize: 11 }}>
                 No backlinks yet. Reference this page from another note with
                 <span className="mono"> [[note-id]] </span>
                 and it'll show up here.
@@ -187,10 +184,20 @@ export function KnowledgeInspector({
                       textAlign: "left",
                       cursor: "pointer",
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "var(--bg-hover)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "transparent";
+                    }}
                   >
-                    <span style={{ fontSize: 14, lineHeight: 1, color: "var(--text-tertiary)" }}>
+                    <span
+                      style={{
+                        fontSize: 14,
+                        lineHeight: 1,
+                        color: "var(--text-tertiary)",
+                      }}
+                    >
                       ›
                     </span>
                     <div style={{ minWidth: 0 }}>

@@ -58,7 +58,13 @@ export function scanTargets(): HintTarget[] {
     const rect = el.getBoundingClientRect();
     // Off-screen or zero-size → not a hint target.
     if (rect.width < 4 || rect.height < 4) continue;
-    if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= vh || rect.left >= vw) continue;
+    if (
+      rect.bottom <= 0 ||
+      rect.right <= 0 ||
+      rect.top >= vh ||
+      rect.left >= vw
+    )
+      continue;
 
     const style = getComputedStyle(el);
     if (isHidden(el, style)) continue;
@@ -80,8 +86,14 @@ export function scanTargets(): HintTarget[] {
   const cx = vw / 2;
   const cy = vh / 2;
   deduped.sort((a, b) => {
-    const da = Math.hypot(a.rect.left + a.rect.width / 2 - cx, a.rect.top + a.rect.height / 2 - cy);
-    const db = Math.hypot(b.rect.left + b.rect.width / 2 - cx, b.rect.top + b.rect.height / 2 - cy);
+    const da = Math.hypot(
+      a.rect.left + a.rect.width / 2 - cx,
+      a.rect.top + a.rect.height / 2 - cy,
+    );
+    const db = Math.hypot(
+      b.rect.left + b.rect.width / 2 - cx,
+      b.rect.top + b.rect.height / 2 - cy,
+    );
     return da - db;
   });
 

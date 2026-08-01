@@ -116,7 +116,8 @@ export const useNodeSetupStore = createSelectors(
       const progressUnlisten = await listenNodeInstallProgress((p) => {
         set((s) => {
           const next = [...s.installLog, p.line];
-          if (next.length > LOG_LINE_CAP) next.splice(0, next.length - LOG_LINE_CAP);
+          if (next.length > LOG_LINE_CAP)
+            next.splice(0, next.length - LOG_LINE_CAP);
           return { installLog: next };
         });
       });
@@ -135,7 +136,10 @@ export const useNodeSetupStore = createSelectors(
           // cached/failed agent spawns and re-run ACP discovery.
           resetAgent();
           void useClaudeSetupStore.getState().actions.refreshStatus();
-          setTimeout(() => set({ phase: "ok", reason: null }), SUCCESS_FLASH_MS);
+          setTimeout(
+            () => set({ phase: "ok", reason: null }),
+            SUCCESS_FLASH_MS,
+          );
         } else {
           logEvent({
             source: "atlas",
@@ -146,7 +150,8 @@ export const useNodeSetupStore = createSelectors(
           });
           set({
             phase: "failed",
-            installError: p.error ?? "Node install failed. See the log for details.",
+            installError:
+              p.error ?? "Node install failed. See the log for details.",
           });
         }
       });

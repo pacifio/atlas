@@ -26,12 +26,34 @@ export interface DiffLine {
 export function getLanguage(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   const map: Record<string, string> = {
-    ts: "TypeScript", tsx: "TypeScript", js: "JavaScript", jsx: "JavaScript",
-    py: "Python", rs: "Rust", go: "Go", rb: "Ruby", java: "Java",
-    c: "C", h: "C", cpp: "C++", hpp: "C++", swift: "Swift", kt: "Kotlin",
-    css: "CSS", scss: "CSS", html: "HTML", json: "JSON", toml: "TOML",
-    yaml: "YAML", yml: "YAML", md: "Markdown", mdx: "Markdown",
-    sh: "Shell", sql: "SQL", xml: "XML", svg: "XML",
+    ts: "TypeScript",
+    tsx: "TypeScript",
+    js: "JavaScript",
+    jsx: "JavaScript",
+    py: "Python",
+    rs: "Rust",
+    go: "Go",
+    rb: "Ruby",
+    java: "Java",
+    c: "C",
+    h: "C",
+    cpp: "C++",
+    hpp: "C++",
+    swift: "Swift",
+    kt: "Kotlin",
+    css: "CSS",
+    scss: "CSS",
+    html: "HTML",
+    json: "JSON",
+    toml: "TOML",
+    yaml: "YAML",
+    yml: "YAML",
+    md: "Markdown",
+    mdx: "Markdown",
+    sh: "Shell",
+    sql: "SQL",
+    xml: "XML",
+    svg: "XML",
   };
   return map[ext] ?? ext.toUpperCase();
 }
@@ -45,10 +67,12 @@ export function parseDiff(raw: string): DiffFile[] {
     const lines = section.split("\n");
     const headerMatch = lines[0]?.match(/a\/(.+?) b\/(.+)/);
     const path = headerMatch?.[2] ?? headerMatch?.[1] ?? "unknown";
-    let additions = 0, deletions = 0;
+    let additions = 0,
+      deletions = 0;
     const hunks: DiffHunk[] = [];
     let currentHunk: DiffHunk | null = null;
-    let oldLine = 0, newLine = 0;
+    let oldLine = 0,
+      newLine = 0;
 
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
@@ -56,16 +80,46 @@ export function parseDiff(raw: string): DiffFile[] {
       if (hunkMatch) {
         oldLine = parseInt(hunkMatch[1], 10);
         newLine = parseInt(hunkMatch[2], 10);
-        currentHunk = { header: line, oldStart: oldLine, newStart: newLine, lines: [] };
+        currentHunk = {
+          header: line,
+          oldStart: oldLine,
+          newStart: newLine,
+          lines: [],
+        };
         hunks.push(currentHunk);
         continue;
       }
       if (!currentHunk) continue;
-      if (line.startsWith("+")) { currentHunk.lines.push({ type: "add", content: line.slice(1), newLine: newLine++ }); additions++; }
-      else if (line.startsWith("-")) { currentHunk.lines.push({ type: "remove", content: line.slice(1), oldLine: oldLine++ }); deletions++; }
-      else if (line.startsWith(" ")) { currentHunk.lines.push({ type: "context", content: line.slice(1), oldLine: oldLine++, newLine: newLine++ }); }
+      if (line.startsWith("+")) {
+        currentHunk.lines.push({
+          type: "add",
+          content: line.slice(1),
+          newLine: newLine++,
+        });
+        additions++;
+      } else if (line.startsWith("-")) {
+        currentHunk.lines.push({
+          type: "remove",
+          content: line.slice(1),
+          oldLine: oldLine++,
+        });
+        deletions++;
+      } else if (line.startsWith(" ")) {
+        currentHunk.lines.push({
+          type: "context",
+          content: line.slice(1),
+          oldLine: oldLine++,
+          newLine: newLine++,
+        });
+      }
     }
-    files.push({ path, additions, deletions, hunks, language: getLanguage(path) });
+    files.push({
+      path,
+      additions,
+      deletions,
+      hunks,
+      language: getLanguage(path),
+    });
   }
   return files;
 }
@@ -75,14 +129,18 @@ export type VirtualRow =
   | { kind: "diff-line"; line: DiffLine; fileIndex: number }
   | { kind: "file-footer"; fileIndex: number };
 
-export function buildRows(files: DiffFile[], collapsedFiles: Set<string>): VirtualRow[] {
+export function buildRows(
+  files: DiffFile[],
+  collapsedFiles: Set<string>,
+): VirtualRow[] {
   const rows: VirtualRow[] = [];
   for (let fi = 0; fi < files.length; fi++) {
     const file = files[fi];
     rows.push({ kind: "file-header", file, fileIndex: fi });
     if (collapsedFiles.has(file.path)) continue;
     for (const hunk of file.hunks) {
-      for (const line of hunk.lines) rows.push({ kind: "diff-line", line, fileIndex: fi });
+      for (const line of hunk.lines)
+        rows.push({ kind: "diff-line", line, fileIndex: fi });
     }
     rows.push({ kind: "file-footer", fileIndex: fi });
   }

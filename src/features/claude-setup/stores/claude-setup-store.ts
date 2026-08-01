@@ -155,7 +155,8 @@ export const useClaudeSetupStore = createSelectors(
           source: "atlas",
           kind: "claude-status",
           summary: `claude status: installed=${status.installed} authed=${status.authenticated} (${status.auth_summary ?? "no detail"})`,
-          status: status.installed && status.authenticated ? "success" : "failure",
+          status:
+            status.installed && status.authenticated ? "success" : "failure",
           payload: {
             installed: status.installed,
             authenticated: status.authenticated,
@@ -210,7 +211,8 @@ export const useClaudeSetupStore = createSelectors(
       const progressUnlisten = await listenClaudeInstallProgress((p) => {
         set((s) => {
           const next = [...s.installLog, p.line];
-          if (next.length > LOG_LINE_CAP) next.splice(0, next.length - LOG_LINE_CAP);
+          if (next.length > LOG_LINE_CAP)
+            next.splice(0, next.length - LOG_LINE_CAP);
           return { installLog: next };
         });
       });
@@ -319,7 +321,8 @@ export const useClaudeSetupStore = createSelectors(
           logEvent({
             source: "atlas",
             kind: "claude-signin-subprocess-failed",
-            summary: p.message ?? "Sign-in subprocess didn't complete successfully.",
+            summary:
+              p.message ?? "Sign-in subprocess didn't complete successfully.",
             status: "failure",
             payload: { methodId, message: p.message },
           });
@@ -336,7 +339,8 @@ export const useClaudeSetupStore = createSelectors(
         logEvent({
           source: "atlas",
           kind: "claude-signin-subprocess-done",
-          summary: "Sign-in subprocess exited successfully; probing claude_status…",
+          summary:
+            "Sign-in subprocess exited successfully; probing claude_status…",
           status: "success",
           payload: { methodId },
         });

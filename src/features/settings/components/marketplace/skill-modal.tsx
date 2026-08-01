@@ -105,7 +105,9 @@ export function SkillDescriptions({
     <div className="flex flex-col gap-3.5">
       {skills.map((s) => (
         <div key={s.name}>
-          <div className="text-[12px] font-medium text-text-primary">{s.name}</div>
+          <div className="text-[12px] font-medium text-text-primary">
+            {s.name}
+          </div>
           {s.description && (
             <div className="mt-0.5 text-[12px] leading-relaxed text-text-tertiary">
               {s.description}

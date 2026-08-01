@@ -71,7 +71,10 @@ export const useMembersStore = createSelectors(
     const roster = (orgId: string): OrgRoster => get().byOrg[orgId] ?? EMPTY;
     const patch = (orgId: string, next: Partial<OrgRoster>) =>
       set((s) => ({
-        byOrg: { ...s.byOrg, [orgId]: { ...(s.byOrg[orgId] ?? EMPTY), ...next } },
+        byOrg: {
+          ...s.byOrg,
+          [orgId]: { ...(s.byOrg[orgId] ?? EMPTY), ...next },
+        },
       }));
 
     return {
@@ -81,7 +84,8 @@ export const useMembersStore = createSelectors(
           if (!orgId) return;
           const current = roster(orgId);
           const fresh =
-            current.loadedAt !== null && Date.now() - current.loadedAt < FRESH_MS;
+            current.loadedAt !== null &&
+            Date.now() - current.loadedAt < FRESH_MS;
           if (!opts?.force && (fresh || inFlight.has(orgId))) return;
           if (inFlight.has(orgId)) return;
 
@@ -120,7 +124,9 @@ export const useMembersStore = createSelectors(
         setRole: async (orgId, memberId, role) => {
           const before = roster(orgId).members;
           patch(orgId, {
-            members: before.map((m) => (m.id === memberId ? { ...m, role } : m)),
+            members: before.map((m) =>
+              m.id === memberId ? { ...m, role } : m,
+            ),
           });
           try {
             await auth.updateMemberRole(orgId, memberId, role);
@@ -155,7 +161,9 @@ export const useMembersStore = createSelectors(
             });
             return invitation;
           } catch (e) {
-            toast.error(typeof e === "string" ? e : "Couldn't send that invite.");
+            toast.error(
+              typeof e === "string" ? e : "Couldn't send that invite.",
+            );
             return null;
           }
         },

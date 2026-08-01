@@ -70,7 +70,11 @@ function positionPopup(popup: Popup, rect: DOMRect | null) {
   popup.el.style.top = `${top}px`;
 }
 
-function render(popup: Popup, items: SlashItem[], command: (it: SlashItem) => void) {
+function render(
+  popup: Popup,
+  items: SlashItem[],
+  command: (it: SlashItem) => void,
+) {
   // Forwarding the ref through ReactRenderer is finicky; use a plain
   // root + ref callback so onKeyDown can dispatch synchronously.
   const Menu = SlashMenu as ComponentType<{
@@ -78,9 +82,7 @@ function render(popup: Popup, items: SlashItem[], command: (it: SlashItem) => vo
     command: (it: SlashItem) => void;
     ref?: React.Ref<SlashMenuRef>;
   }>;
-  popup.root.render(
-    <Menu items={items} command={command} ref={popup.ref} />,
-  );
+  popup.root.render(<Menu items={items} command={command} ref={popup.ref} />);
 }
 
 export interface SlashExtensionOptions {

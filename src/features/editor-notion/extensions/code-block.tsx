@@ -58,7 +58,11 @@ function CodeBlockView({ node, updateAttributes }: NodeViewProps) {
           onClick={handleCopy}
           title="Copy"
         >
-          {copied ? <Check size={11} strokeWidth={1.7} /> : <Copy size={11} strokeWidth={1.7} />}
+          {copied ? (
+            <Check size={11} strokeWidth={1.7} />
+          ) : (
+            <Copy size={11} strokeWidth={1.7} />
+          )}
           {copied ? " Copied" : ""}
         </button>
       </div>
@@ -66,9 +70,7 @@ function CodeBlockView({ node, updateAttributes }: NodeViewProps) {
           types — wrap in <pre> for the design's monospace block frame
           and let lowlight paint hljs token classes inside. */}
       <pre>
-        <NodeViewContent
-          className={`hljs language-${language}`}
-        />
+        <NodeViewContent className={`hljs language-${language}`} />
       </pre>
     </NodeViewWrapper>
   );

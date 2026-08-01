@@ -11,5 +11,8 @@ export function fmtCost(n: number): string {
 
 export function fmtDate(ms: number | null): string {
   if (!ms) return "—";
-  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return new Date(ms).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 }

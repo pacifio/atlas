@@ -45,7 +45,10 @@ interface ReviewState {
   /** Fatal error that aborted the run. */
   streamError: string | null;
   /** A source preset requested from elsewhere (Source Control). */
-  pendingSource: { mode: "working" | "staged" | "commit" | "branch"; sha?: string } | null;
+  pendingSource: {
+    mode: "working" | "staged" | "commit" | "branch";
+    sha?: string;
+  } | null;
   actions: {
     init: (project: string) => Promise<void>;
     refreshRecords: (project: string) => Promise<void>;
@@ -58,7 +61,10 @@ interface ReviewState {
     start: (project: string) => Promise<void>;
     cancel: () => void;
     selectRecord: (record: ReviewRecord | null) => void;
-    requestReview: (mode: "working" | "staged" | "commit" | "branch", sha?: string) => void;
+    requestReview: (
+      mode: "working" | "staged" | "commit" | "branch",
+      sha?: string,
+    ) => void;
     consumePending: () => void;
   };
 }
@@ -110,7 +116,9 @@ export const useReviewStore = createSelectors(
                 break;
               case "file_done":
                 set((s) => ({
-                  pendingFiles: s.pendingFiles.filter((p) => p !== e.verdict.path),
+                  pendingFiles: s.pendingFiles.filter(
+                    (p) => p !== e.verdict.path,
+                  ),
                   liveFiles: [
                     ...s.liveFiles.filter((f) => f.path !== e.verdict.path),
                     e.verdict,
@@ -130,7 +138,10 @@ export const useReviewStore = createSelectors(
                   liveFiles: [],
                   pendingFiles: [],
                   selectedRecord: e.record,
-                  records: [e.record, ...s.records.filter((r) => r.id !== e.record.id)],
+                  records: [
+                    e.record,
+                    ...s.records.filter((r) => r.id !== e.record.id),
+                  ],
                 }));
                 break;
               case "error":
@@ -147,7 +158,8 @@ export const useReviewStore = createSelectors(
         set({ providers, providersLoaded: true });
 
         const saved = localStorage.getItem(LS_PROVIDER);
-        const provider = saved && providers.includes(saved) ? saved : providers[0] ?? null;
+        const provider =
+          saved && providers.includes(saved) ? saved : (providers[0] ?? null);
         if (provider) {
           await get().actions.setProvider(provider);
         }
@@ -173,7 +185,8 @@ export const useReviewStore = createSelectors(
         const { selectedProvider } = get();
         if (!selectedProvider) {
           // Nothing selected yet (or was cleared) — pick the first available.
-          if (providers.length > 0) await get().actions.setProvider(providers[0]);
+          if (providers.length > 0)
+            await get().actions.setProvider(providers[0]);
         } else if (!providers.includes(selectedProvider)) {
           // The selected provider's key was removed — switch or clear.
           if (providers.length > 0) {
@@ -196,8 +209,11 @@ export const useReviewStore = createSelectors(
         const models = curateModels(provider, liveIds);
         const saved = localStorage.getItem(lsModelKey(provider));
         const selectedModel =
-          saved && models.includes(saved) ? saved : defaultModelFor(provider, models);
-        if (selectedModel) localStorage.setItem(lsModelKey(provider), selectedModel);
+          saved && models.includes(saved)
+            ? saved
+            : defaultModelFor(provider, models);
+        if (selectedModel)
+          localStorage.setItem(lsModelKey(provider), selectedModel);
         set({ models, selectedModel, loadingModels: false });
       },
 
@@ -224,7 +240,13 @@ export const useReviewStore = createSelectors(
           selectedRecord: null,
         });
         try {
-          await review.start(id, project, selectedProvider, selectedModel, source);
+          await review.start(
+            id,
+            project,
+            selectedProvider,
+            selectedModel,
+            source,
+          );
         } catch (err) {
           if (get().activeId === id && get().streaming) {
             set({ streaming: false, streamError: String(err) });
@@ -240,7 +262,8 @@ export const useReviewStore = createSelectors(
         }
       },
 
-      selectRecord: (record) => set({ selectedRecord: record, streamError: null }),
+      selectRecord: (record) =>
+        set({ selectedRecord: record, streamError: null }),
 
       requestReview: (mode, sha) => set({ pendingSource: { mode, sha } }),
 

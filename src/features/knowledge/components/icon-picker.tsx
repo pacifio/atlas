@@ -14,19 +14,90 @@ interface IconPickerProps {
 const GROUPS: Array<{ label: string; emojis: string[] }> = [
   {
     label: "Documents",
-    emojis: ["📄", "📝", "📖", "📕", "📗", "📘", "📙", "📚", "📓", "📔", "📋", "📑", "📰", "🗒️", "🗂️", "🗃️", "🗄️"],
+    emojis: [
+      "📄",
+      "📝",
+      "📖",
+      "📕",
+      "📗",
+      "📘",
+      "📙",
+      "📚",
+      "📓",
+      "📔",
+      "📋",
+      "📑",
+      "📰",
+      "🗒️",
+      "🗂️",
+      "🗃️",
+      "🗄️",
+    ],
   },
   {
     label: "Symbols",
-    emojis: ["✦", "✧", "✩", "✪", "✫", "★", "☆", "❖", "◆", "◇", "●", "○", "▲", "△", "■", "□", "▪", "▫"],
+    emojis: [
+      "✦",
+      "✧",
+      "✩",
+      "✪",
+      "✫",
+      "★",
+      "☆",
+      "❖",
+      "◆",
+      "◇",
+      "●",
+      "○",
+      "▲",
+      "△",
+      "■",
+      "□",
+      "▪",
+      "▫",
+    ],
   },
   {
     label: "Tech",
-    emojis: ["💻", "🖥️", "⌨️", "🖱️", "💾", "💿", "🧠", "⚙️", "🔧", "🛠️", "🔩", "🧪", "🧬", "🧮", "📡", "🛰️"],
+    emojis: [
+      "💻",
+      "🖥️",
+      "⌨️",
+      "🖱️",
+      "💾",
+      "💿",
+      "🧠",
+      "⚙️",
+      "🔧",
+      "🛠️",
+      "🔩",
+      "🧪",
+      "🧬",
+      "🧮",
+      "📡",
+      "🛰️",
+    ],
   },
   {
     label: "Concepts",
-    emojis: ["💡", "🔥", "⚡", "✨", "🌟", "🎯", "🚀", "🛸", "🌐", "🧭", "🗺️", "📌", "📍", "🎨", "🏗️", "🧱"],
+    emojis: [
+      "💡",
+      "🔥",
+      "⚡",
+      "✨",
+      "🌟",
+      "🎯",
+      "🚀",
+      "🛸",
+      "🌐",
+      "🧭",
+      "🗺️",
+      "📌",
+      "📍",
+      "🎨",
+      "🏗️",
+      "🧱",
+    ],
   },
   {
     label: "People",
@@ -38,7 +109,12 @@ const GROUPS: Array<{ label: string; emojis: string[] }> = [
   },
 ];
 
-export function IconPicker({ value, anchorRect, onPick, onClose }: IconPickerProps) {
+export function IconPicker({
+  value,
+  anchorRect,
+  onPick,
+  onClose,
+}: IconPickerProps) {
   const [draft, setDraft] = useState(value ?? "");
   const popRef = useRef<HTMLDivElement>(null);
 
@@ -122,8 +198,7 @@ export function IconPicker({ value, anchorRect, onPick, onClose }: IconPickerPro
                   width: 30,
                   height: 30,
                   borderRadius: 5,
-                  background:
-                    value === e ? "var(--bg-active)" : "transparent",
+                  background: value === e ? "var(--bg-active)" : "transparent",
                   border: 0,
                   fontSize: 18,
                   lineHeight: 1,
@@ -133,10 +208,12 @@ export function IconPicker({ value, anchorRect, onPick, onClose }: IconPickerPro
                   justifyContent: "center",
                 }}
                 onMouseEnter={(ev) => {
-                  if (value !== e) ev.currentTarget.style.background = "var(--bg-hover)";
+                  if (value !== e)
+                    ev.currentTarget.style.background = "var(--bg-hover)";
                 }}
                 onMouseLeave={(ev) => {
-                  if (value !== e) ev.currentTarget.style.background = "transparent";
+                  if (value !== e)
+                    ev.currentTarget.style.background = "transparent";
                 }}
               >
                 {e}

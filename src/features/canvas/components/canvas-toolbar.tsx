@@ -23,7 +23,11 @@ interface ToolDef {
 // pan, click selects) is always active; create-tools auto-revert to it. Connect
 // nodes by dragging between their edge handles (no tool needed).
 const TOOLS: ToolDef[] = [
-  { tool: "ai", icon: Sparkles, label: "Ask AI — click the canvas to generate a diagram" },
+  {
+    tool: "ai",
+    icon: Sparkles,
+    label: "Ask AI — click the canvas to generate a diagram",
+  },
   { tool: "note", icon: StickyNote, label: "Note" },
   { tool: "text", icon: Type, label: "Text" },
 ];
@@ -31,7 +35,11 @@ const TOOLS: ToolDef[] = [
 /** Flowchart shapes — each drops that geometry on the next canvas click. */
 const SHAPES: ToolDef[] = [
   { tool: "shape:rectangle", icon: Square, label: "Rectangle" },
-  { tool: "shape:rounded", icon: RectangleHorizontal, label: "Rounded rectangle" },
+  {
+    tool: "shape:rounded",
+    icon: RectangleHorizontal,
+    label: "Rounded rectangle",
+  },
   { tool: "shape:ellipse", icon: Circle, label: "Ellipse / circle" },
   { tool: "shape:diamond", icon: Diamond, label: "Diamond" },
 ];
@@ -66,13 +74,23 @@ export function CanvasToolbar({
       )}
     >
       {TOOLS.map((t) => (
-        <ToolButton key={t.tool} def={t} active={activeTool === t.tool} onClick={() => onTool(t.tool)} />
+        <ToolButton
+          key={t.tool}
+          def={t}
+          active={activeTool === t.tool}
+          onClick={() => onTool(t.tool)}
+        />
       ))}
 
       <div className="my-0.5 h-px w-5 bg-white/10" />
 
       {SHAPES.map((t) => (
-        <ToolButton key={t.tool} def={t} active={activeTool === t.tool} onClick={() => onTool(t.tool)} />
+        <ToolButton
+          key={t.tool}
+          def={t}
+          active={activeTool === t.tool}
+          onClick={() => onTool(t.tool)}
+        />
       ))}
 
       <div className="my-0.5 h-px w-5 bg-white/10" />

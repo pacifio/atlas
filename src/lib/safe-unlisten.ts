@@ -27,6 +27,8 @@ export function safeUnlisten(un: UnlistenFn | null | undefined): void {
 }
 
 /** Resolve a pending `listen(...)` promise and unlisten it safely. */
-export function safeUnlistenPromise(p: Promise<UnlistenFn> | null | undefined): void {
+export function safeUnlistenPromise(
+  p: Promise<UnlistenFn> | null | undefined,
+): void {
   p?.then(safeUnlisten).catch(() => {});
 }

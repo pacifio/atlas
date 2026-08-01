@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import {
+  useQuery,
+  useQueryClient,
+  keepPreviousData,
+} from "@tanstack/react-query";
 import { BarChart3, Zap, Clock } from "lucide-react";
 import { useUsageStore } from "../stores/usage-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
@@ -41,7 +45,7 @@ export function UsageBar() {
         acpSessionId: sess.acpSessionId,
         status: sess.status,
       };
-    })
+    }),
   );
   const acpSessionId = chatSession?.acpSessionId ?? null;
   const isStreaming = chatSession?.status === "running";
@@ -75,7 +79,7 @@ export function UsageBar() {
       (e) => {
         if (e.payload.cwd !== cwd) return;
         queryClient.invalidateQueries({ queryKey });
-      }
+      },
     );
     return () => {
       unlistenPromise.then((u) => u());
@@ -119,7 +123,11 @@ export function UsageBar() {
     requestCountFallback,
   ]);
 
-  const totalTokens = display.inputTokens + display.outputTokens + display.cacheCreation + display.cacheRead;
+  const totalTokens =
+    display.inputTokens +
+    display.outputTokens +
+    display.cacheCreation +
+    display.cacheRead;
   const elapsed = Math.floor((Date.now() - sessionStart) / 60000);
 
   return (
@@ -137,7 +145,9 @@ export function UsageBar() {
         {display.model && (
           <>
             <span>·</span>
-            <span className="truncate max-w-[120px]" title={display.model}>{display.model}</span>
+            <span className="truncate max-w-[120px]" title={display.model}>
+              {display.model}
+            </span>
           </>
         )}
       </button>
@@ -150,31 +160,53 @@ export function UsageBar() {
         >
           <div className="flex items-center gap-1.5 text-[11px] font-semibold text-text-secondary">
             <BarChart3 size={12} />
-            {display.source === "claude" ? "Claude Code Session" : "Session Usage"}
+            {display.source === "claude"
+              ? "Claude Code Session"
+              : "Session Usage"}
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <UsageStat label="Input" value={display.inputTokens.toLocaleString()} />
-            <UsageStat label="Output" value={display.outputTokens.toLocaleString()} />
+            <UsageStat
+              label="Input"
+              value={display.inputTokens.toLocaleString()}
+            />
+            <UsageStat
+              label="Output"
+              value={display.outputTokens.toLocaleString()}
+            />
             {display.source === "claude" && (
               <>
-                <UsageStat label="Cache write" value={display.cacheCreation.toLocaleString()} />
-                <UsageStat label="Cache read" value={display.cacheRead.toLocaleString()} />
+                <UsageStat
+                  label="Cache write"
+                  value={display.cacheCreation.toLocaleString()}
+                />
+                <UsageStat
+                  label="Cache read"
+                  value={display.cacheRead.toLocaleString()}
+                />
               </>
             )}
             <UsageStat label="Requests" value={String(display.requestCount)} />
-            <UsageStat label="Cost" value={`$${display.totalCost.toFixed(4)}`} />
+            <UsageStat
+              label="Cost"
+              value={`$${display.totalCost.toFixed(4)}`}
+            />
           </div>
 
           {display.model && (
-            <div className="text-[9px] font-mono text-text-tertiary truncate" title={display.model}>
+            <div
+              className="text-[9px] font-mono text-text-tertiary truncate"
+              title={display.model}
+            >
               model: {display.model}
             </div>
           )}
 
           <div className="flex items-center gap-1 text-[9px] text-text-tertiary pt-1 border-t border-border-subtle">
             <Clock size={9} />
-            {display.source === "claude" ? "Live from .jsonl" : `Session: ${elapsed}m`}
+            {display.source === "claude"
+              ? "Live from .jsonl"
+              : `Session: ${elapsed}m`}
           </div>
         </div>
       )}
@@ -186,7 +218,9 @@ function UsageStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border border-border-default bg-bg-primary px-2 py-1">
       <div className="text-[11px] font-mono text-text-primary">{value}</div>
-      <div className="text-[8px] text-text-tertiary uppercase tracking-wide">{label}</div>
+      <div className="text-[8px] text-text-tertiary uppercase tracking-wide">
+        {label}
+      </div>
     </div>
   );
 }

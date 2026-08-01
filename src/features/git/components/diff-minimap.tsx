@@ -45,7 +45,10 @@ function rowKind(r: DiffRow): Kind {
  * mutation (no React re-render per scroll event). When the rendered content is
  * taller than the strip, the canvas pans with the editor scroll (Atom-style).
  */
-export const DiffMinimap = memo(function DiffMinimap({ rows, scrollRef }: DiffMinimapProps) {
+export const DiffMinimap = memo(function DiffMinimap({
+  rows,
+  scrollRef,
+}: DiffMinimapProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const indicatorRef = useRef<HTMLDivElement>(null);
@@ -68,7 +71,10 @@ export const DiffMinimap = memo(function DiffMinimap({ rows, scrollRef }: DiffMi
       // Bound the canvas pixel height to a safe limit; shrink the line height
       // (denser blobs) for very large diffs rather than overflow the canvas.
       const maxLogical = Math.floor(16384 / dpr);
-      const lineH = n * LINE_H > maxLogical ? Math.max(1, Math.floor(maxLogical / n)) : LINE_H;
+      const lineH =
+        n * LINE_H > maxLogical
+          ? Math.max(1, Math.floor(maxLogical / n))
+          : LINE_H;
       const charH = Math.max(1, lineH - 1);
       const contentH = n * lineH;
       geom.current = { lineH, contentH };
@@ -95,14 +101,22 @@ export const DiffMinimap = memo(function DiffMinimap({ rows, scrollRef }: DiffMi
         const side = row.right ?? row.left;
         if (!side) continue;
         // Tabs → 2 cols so indentation reads; runs of non-space become blocks.
-        const text = side.segments.map((s) => s.text).join("").replace(/\t/g, "  ");
+        const text = side.segments
+          .map((s) => s.text)
+          .join("")
+          .replace(/\t/g, "  ");
         ctx.fillStyle = TEXT[kind];
         runRe.lastIndex = 0;
         let m: RegExpExecArray | null;
         while ((m = runRe.exec(text))) {
           const rx = m.index * CHAR_W;
           if (rx >= WIDTH) break;
-          ctx.fillRect(rx, y, Math.min(m[0].length * CHAR_W, WIDTH - rx), charH);
+          ctx.fillRect(
+            rx,
+            y,
+            Math.min(m[0].length * CHAR_W, WIDTH - rx),
+            charH,
+          );
         }
       }
     };

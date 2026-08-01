@@ -167,7 +167,12 @@ export const useMemoryGraphStore = createSelectors(
 
       setQuery: (q) => set({ query: q }),
       clearQuery: () =>
-        set({ query: "", results: [], matchedIds: new Set(), selectedId: null }),
+        set({
+          query: "",
+          results: [],
+          matchedIds: new Set(),
+          selectedId: null,
+        }),
       select: (id) => set({ selectedId: id }),
     },
   })),

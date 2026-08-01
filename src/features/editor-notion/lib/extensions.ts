@@ -69,7 +69,8 @@ export function buildExtensions(opts: BuildExtensionsOpts = {}) {
       HTMLAttributes: { rel: "noopener noreferrer" },
     }),
     Placeholder.configure({
-      placeholder: opts.placeholder ?? "Press '/' for blocks, or just start writing…",
+      placeholder:
+        opts.placeholder ?? "Press '/' for blocks, or just start writing…",
       emptyEditorClass: "is-editor-empty",
       emptyNodeClass: "is-empty",
     }),

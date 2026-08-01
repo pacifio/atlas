@@ -101,7 +101,10 @@ function fallbackTokenize(
     let i = 0;
     const CHUNK = 200;
     const w2 = window as Window & {
-      requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number;
+      requestIdleCallback?: (
+        cb: () => void,
+        opts?: { timeout?: number },
+      ) => number;
     };
     const step = () => {
       const end = Math.min(unique.length, i + CHUNK);

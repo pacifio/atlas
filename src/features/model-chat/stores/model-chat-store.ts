@@ -61,7 +61,11 @@ interface ModelChatState {
     deleteSession: (id: string) => Promise<void>;
     setProvider: (id: string, provider: string) => void;
     setModel: (id: string, model: string) => void;
-    send: (id: string, text: string, attachments?: ComposerAttachment[]) => Promise<void>;
+    send: (
+      id: string,
+      text: string,
+      attachments?: ComposerAttachment[],
+    ) => Promise<void>;
     stop: (id: string) => void;
   };
 }
@@ -212,7 +216,12 @@ export const useModelChatStore = createSelectors(
         setModel: (id, model) =>
           set((st) =>
             st.sessions[id]
-              ? { sessions: { ...st.sessions, [id]: { ...st.sessions[id], model } } }
+              ? {
+                  sessions: {
+                    ...st.sessions,
+                    [id]: { ...st.sessions[id], model },
+                  },
+                }
               : st,
           ),
 
@@ -245,7 +254,10 @@ export const useModelChatStore = createSelectors(
             streaming: { ...st.streaming, [id]: true },
             streamToSession: { ...st.streamToSession, [streamId]: id },
             attachmentsByMsg: attachments?.length
-              ? { ...st.attachmentsByMsg, [userMsg.id]: attachments.map((a) => a.dataUrl) }
+              ? {
+                  ...st.attachmentsByMsg,
+                  [userMsg.id]: attachments.map((a) => a.dataUrl),
+                }
               : st.attachmentsByMsg,
           }));
 
@@ -262,7 +274,12 @@ export const useModelChatStore = createSelectors(
           }));
 
           try {
-            await modelchat.stream(streamId, session.provider, session.model, wire);
+            await modelchat.stream(
+              streamId,
+              session.provider,
+              session.model,
+              wire,
+            );
           } catch (e) {
             // The promise resolves at stream end; a reject here is a hard
             // failure (the `error` event handles in-stream errors).
@@ -299,9 +316,14 @@ export const useModelChatStore = createSelectors(
           const msgs = s.messages.slice();
           const last = msgs[msgs.length - 1];
           if (last && last.role === "assistant") {
-            msgs[msgs.length - 1] = { ...last, content: last.content + e.delta };
+            msgs[msgs.length - 1] = {
+              ...last,
+              content: last.content + e.delta,
+            };
           }
-          return { sessions: { ...st.sessions, [id]: { ...s, messages: msgs } } };
+          return {
+            sessions: { ...st.sessions, [id]: { ...s, messages: msgs } },
+          };
         });
         return;
       }
@@ -311,14 +333,20 @@ export const useModelChatStore = createSelectors(
         if (s) {
           useUsageStore
             .getState()
-            .actions.trackUsage(s.provider, s.model, e.input_tokens, e.output_tokens);
+            .actions.trackUsage(
+              s.provider,
+              s.model,
+              e.input_tokens,
+              e.output_tokens,
+            );
         }
         return;
       }
 
       if (e.kind === "error") {
         const s = getFn().sessions[id];
-        const name = providerById(s?.provider ?? "")?.name ?? s?.provider ?? "Chat";
+        const name =
+          providerById(s?.provider ?? "")?.name ?? s?.provider ?? "Chat";
         toast.error(`${s?.provider ?? "chat"}: ${e.message}`);
         notify().add({
           kind: "chat-error",
@@ -334,7 +362,8 @@ export const useModelChatStore = createSelectors(
 
       if (e.kind === "done") {
         const s = getFn().sessions[id];
-        const name = providerById(s?.provider ?? "")?.name ?? s?.provider ?? "Chat";
+        const name =
+          providerById(s?.provider ?? "")?.name ?? s?.provider ?? "Chat";
         const last = s?.messages[s.messages.length - 1];
         const snippet = (last?.role === "assistant" ? last.content : "").trim();
         if (snippet) {

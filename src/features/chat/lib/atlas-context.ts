@@ -56,10 +56,16 @@ export function stripInjectedContext(text: string): string {
 export function splitAtlasContext(content: string): SplitContext {
   const idx = content.indexOf(ATLAS_CONTEXT_MARKER);
   if (idx === -1) {
-    return { prose: stripInjectedContext(content), context: null, blockCount: 0 };
+    return {
+      prose: stripInjectedContext(content),
+      context: null,
+      blockCount: 0,
+    };
   }
   const prose = stripInjectedContext(content.slice(0, idx));
-  const context = content.slice(idx + ATLAS_CONTEXT_MARKER.length).replace(/\n+$/, "");
+  const context = content
+    .slice(idx + ATLAS_CONTEXT_MARKER.length)
+    .replace(/\n+$/, "");
   if (context.length === 0) return { prose, context: null, blockCount: 0 };
   const matches = context.match(/^## /gm);
   return {

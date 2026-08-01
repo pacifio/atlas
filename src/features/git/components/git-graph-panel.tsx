@@ -11,21 +11,13 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import * as Dialog from "@radix-ui/react-dialog";
-import {
-  RefreshCw,
-  GitBranch,
-  Maximize2,
-  Minimize2,
-} from "lucide-react";
+import { RefreshCw, GitBranch, Maximize2, Minimize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useGitStore } from "@/features/git/stores/git-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { CommitRowView } from "./commit-node";
-import {
-  ROW_HEIGHT,
-  type BuiltGraph,
-} from "../lib/git-graph";
+import { ROW_HEIGHT, type BuiltGraph } from "../lib/git-graph";
 
 const DEFAULT_LIMIT = 1000;
 
@@ -77,7 +69,9 @@ export function GitGraphPanel() {
     let unlisten: (() => void) | null = null;
     listen("atlas:git-changed", () => {
       if (cancelled) return;
-      queryClient.invalidateQueries({ queryKey: ["git-graph-signature", path] });
+      queryClient.invalidateQueries({
+        queryKey: ["git-graph-signature", path],
+      });
     }).then((un) => {
       if (cancelled) un();
       else unlisten = un;
@@ -237,7 +231,7 @@ function GraphView({
             onClick={onRefresh}
             className={cn(
               "p-1 rounded hover:bg-bg-hover text-text-tertiary hover:text-text-primary transition-colors cursor-pointer",
-              refreshing && "animate-spin"
+              refreshing && "animate-spin",
             )}
             title="Refresh"
           >
@@ -253,13 +247,19 @@ function GraphView({
           className="absolute inset-0 overflow-auto hide-scrollbar"
         >
           {isLoading && (
-            <div className="px-3 py-3 text-[11px] text-text-tertiary">Loading…</div>
+            <div className="px-3 py-3 text-[11px] text-text-tertiary">
+              Loading…
+            </div>
           )}
           {rows.length === 0 && !isLoading && (
-            <div className="px-3 py-3 text-[11px] text-text-tertiary">No commits.</div>
+            <div className="px-3 py-3 text-[11px] text-text-tertiary">
+              No commits.
+            </div>
           )}
           {rows.length > 0 && (
-            <div style={{ height: totalSize, width: "100%", position: "relative" }}>
+            <div
+              style={{ height: totalSize, width: "100%", position: "relative" }}
+            >
               {items.map((v) => {
                 const row = rows[v.index];
                 return (

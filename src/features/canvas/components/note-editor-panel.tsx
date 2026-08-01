@@ -23,7 +23,11 @@ interface NoteEditorPanelProps {
  * emoji. Save follows the KB lesson: gate on the editor's live `isDirty()` and
  * flush on close / blur / unmount — never on a store-content baseline.
  */
-export function NoteEditorPanel({ noteId, projectPath, onClose }: NoteEditorPanelProps) {
+export function NoteEditorPanel({
+  noteId,
+  projectPath,
+  onClose,
+}: NoteEditorPanelProps) {
   const nodes = useCanvasStore.use.nodes();
   const { updateNote, deleteNote } = useCanvasStore.use.actions();
   const note = nodes.find((n) => n.id === noteId) ?? null;
@@ -97,7 +101,9 @@ export function NoteEditorPanel({ noteId, projectPath, onClose }: NoteEditorPane
           <button
             type="button"
             title="Change icon"
-            onClick={(e) => setIconAnchor(e.currentTarget.getBoundingClientRect())}
+            onClick={(e) =>
+              setIconAnchor(e.currentTarget.getBoundingClientRect())
+            }
             className="flex h-5 w-5 items-center justify-center rounded-md bg-white/10 hover:bg-white/15 transition-colors cursor-pointer shrink-0"
           >
             {note.icon ? (

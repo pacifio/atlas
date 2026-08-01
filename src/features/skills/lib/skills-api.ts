@@ -147,7 +147,9 @@ export const skills = {
 
   /** Promote a project skill to the global library + re-project at global scope. */
   promote: (name: string, projectPath: string) =>
-    afterSkillMutation(invoke<SkillMeta>("skills_promote", { name, projectPath })),
+    afterSkillMutation(
+      invoke<SkillMeta>("skills_promote", { name, projectPath }),
+    ),
 
   /** Freeze every Atlas symlink projection into a real copy (uninstall safety). */
   freeze: (scope: Scope, projectPath?: string | null) =>

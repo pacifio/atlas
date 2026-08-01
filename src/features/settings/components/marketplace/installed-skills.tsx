@@ -100,10 +100,12 @@ export function InstalledSkills({
 
   const seed = installedCache.get(cacheKeyFor(scope, effectiveProject));
   const [view, setView] = useState<ReconcileView | null>(seed?.view ?? null);
-  const [packList, setPackList] = useState<InstalledPack[]>(seed?.packList ?? []);
-  const [packProjected, setPackProjected] = useState<Record<string, Set<string>>>(
-    seed?.packProjected ?? {},
+  const [packList, setPackList] = useState<InstalledPack[]>(
+    seed?.packList ?? [],
   );
+  const [packProjected, setPackProjected] = useState<
+    Record<string, Set<string>>
+  >(seed?.packProjected ?? {});
   const [target, setTarget] = useState<ModalTarget>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -135,13 +137,21 @@ export function InstalledSkills({
     setPackList(pl);
     const entries = await Promise.all(
       pl.map(async (p) => {
-        const views = await packsApi.projections(scope, p.pack.name, effectiveProject);
+        const views = await packsApi.projections(
+          scope,
+          p.pack.name,
+          effectiveProject,
+        );
         return [p.pack.name, new Set(views.map((x) => x.tool))] as const;
       }),
     );
     const projected = Object.fromEntries(entries);
     setPackProjected(projected);
-    installedCache.set(key, { view: v, packList: pl, packProjected: projected });
+    installedCache.set(key, {
+      view: v,
+      packList: pl,
+      packProjected: projected,
+    });
   }, [scope, effectiveProject, projectMissing]);
 
   useEffect(() => {
@@ -162,7 +172,8 @@ export function InstalledSkills({
   // unit). Packs that ship NO skills (commands/agents/rules only) still appear
   // as their own rows so they don't vanish.
   const skills = useMemo(
-    () => [...(view?.skills ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
+    () =>
+      [...(view?.skills ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
     [view],
   );
   const packsNoSkills = useMemo(
@@ -188,8 +199,16 @@ export function InstalledSkills({
       setError(null);
       try {
         if (on)
-          await packsApi.project(scope, packName, toolId, null, false, effectiveProject);
-        else await packsApi.unproject(scope, packName, toolId, effectiveProject);
+          await packsApi.project(
+            scope,
+            packName,
+            toolId,
+            null,
+            false,
+            effectiveProject,
+          );
+        else
+          await packsApi.unproject(scope, packName, toolId, effectiveProject);
         await refresh();
       } catch (e) {
         setError(String(e));
@@ -214,7 +233,14 @@ export function InstalledSkills({
       try {
         if (status === "synced")
           await skillsApi.unproject(scope, name, toolId, effectiveProject);
-        else await skillsApi.project(scope, name, toolId, status === "drifted", effectiveProject);
+        else
+          await skillsApi.project(
+            scope,
+            name,
+            toolId,
+            status === "drifted",
+            effectiveProject,
+          );
         await refresh();
       } catch (e) {
         setError(String(e));
@@ -333,21 +359,44 @@ export function InstalledSkills({
                     onClick={() => setTarget({ kind: "pack", pack: p })}
                     className="flex w-full items-center h-[40px] border-b border-border-subtle px-3 text-left transition-colors hover:bg-bg-hover"
                   >
-                    <span className={cn(COL.name, "flex items-center gap-2 min-w-0")}>
-                      <Package size={13} className="shrink-0 text-text-tertiary" />
+                    <span
+                      className={cn(
+                        COL.name,
+                        "flex items-center gap-2 min-w-0",
+                      )}
+                    >
+                      <Package
+                        size={13}
+                        className="shrink-0 text-text-tertiary"
+                      />
                       <span className="truncate text-[12px] text-text-primary">
                         {p.pack.name}
                       </span>
                     </span>
-                    <span className={cn(COL.origin, "truncate font-mono text-[10px] text-text-tertiary")}>
+                    <span
+                      className={cn(
+                        COL.origin,
+                        "truncate font-mono text-[10px] text-text-tertiary",
+                      )}
+                    >
                       {p.source}
                     </span>
-                    <span className={cn(COL.tools, "truncate text-[10px] text-text-tertiary")}>
+                    <span
+                      className={cn(
+                        COL.tools,
+                        "truncate text-[10px] text-text-tertiary",
+                      )}
+                    >
                       {proj.size > 0
                         ? `${proj.size} tool${proj.size > 1 ? "s" : ""}`
                         : kindCounts(p.pack.components) || "—"}
                     </span>
-                    <span className={cn(COL.chevron, "flex justify-end text-text-tertiary")}>
+                    <span
+                      className={cn(
+                        COL.chevron,
+                        "flex justify-end text-text-tertiary",
+                      )}
+                    >
                       <ChevronRight size={14} />
                     </span>
                   </button>
@@ -386,13 +435,28 @@ export function InstalledSkills({
                         </span>
                       )}
                     </span>
-                    <span className={cn(COL.origin, "truncate text-[11px] text-text-tertiary")}>
+                    <span
+                      className={cn(
+                        COL.origin,
+                        "truncate text-[11px] text-text-tertiary",
+                      )}
+                    >
                       {origin}
                     </span>
-                    <span className={cn(COL.tools, "text-[11px] text-text-secondary tabular-nums")}>
+                    <span
+                      className={cn(
+                        COL.tools,
+                        "text-[11px] text-text-secondary tabular-nums",
+                      )}
+                    >
                       {onCount > 0 ? `${onCount} on` : "off"}
                     </span>
-                    <span className={cn(COL.chevron, "flex justify-end text-text-tertiary")}>
+                    <span
+                      className={cn(
+                        COL.chevron,
+                        "flex justify-end text-text-tertiary",
+                      )}
+                    >
                       <ChevronRight size={14} />
                     </span>
                   </button>
@@ -409,7 +473,9 @@ export function InstalledSkills({
       {target?.kind === "pack" && (
         <PackManageModal
           pack={packByName.get(target.pack.pack.name) ?? target.pack}
-          packSkills={(view?.skills ?? []).filter((s) => s.pack === target.pack.pack.name)}
+          packSkills={(view?.skills ?? []).filter(
+            (s) => s.pack === target.pack.pack.name,
+          )}
           tools={tools}
           projected={mergeOptimistic(
             packProjected[target.pack.pack.name] ?? new Set<string>(),
@@ -419,7 +485,9 @@ export function InstalledSkills({
           busy={busy}
           scope={scope}
           effectiveProject={effectiveProject}
-          onToggle={(toolId, on) => void togglePackTool(target.pack.pack.name, toolId, on)}
+          onToggle={(toolId, on) =>
+            void togglePackTool(target.pack.pack.name, toolId, on)
+          }
           onUpdated={() => void refresh()}
           onUninstall={() => void uninstallPack(target.pack.pack.name)}
           onClose={() => {
@@ -439,7 +507,9 @@ export function InstalledSkills({
           detectedFor={detectedFor}
           busy={busy}
           optimistic={optimistic}
-          onToggle={(toolId, status) => void toggleSkillTool(target.skill.name, toolId, status)}
+          onToggle={(toolId, status) =>
+            void toggleSkillTool(target.skill.name, toolId, status)
+          }
           onOpen={() => void openSkill(target.skill.name)}
           onPromote={() => void promoteSkill(target.skill.name)}
           onUninstall={() => void uninstallSkill(target.skill.name)}
@@ -512,13 +582,20 @@ function ToolToggles({
         const readOnly = status === "pack" || status === "conflict";
         return (
           <div key={t.id} className="flex items-center justify-between">
-            <span className="text-[12px] text-text-secondary">{t.displayName}</span>
+            <span className="text-[12px] text-text-secondary">
+              {t.displayName}
+            </span>
             {!detected ? (
-              <span className="text-[10px] text-text-ghost" title="Tool not detected in this scope">
+              <span
+                className="text-[10px] text-text-ghost"
+                title="Tool not detected in this scope"
+              >
                 n/a
               </span>
             ) : readOnly ? (
-              <span className="text-[10px] text-text-tertiary capitalize">{status}</span>
+              <span className="text-[10px] text-text-tertiary capitalize">
+                {status}
+              </span>
             ) : (
               <OnOff
                 on={on}
@@ -598,7 +675,11 @@ function PackManageModal({
               projectedTools={projected}
               onDone={onUpdated}
             />
-            <ModalAction icon={Copy} label="Copy as markdown" onClick={copyMarkdown} />
+            <ModalAction
+              icon={Copy}
+              label="Copy as markdown"
+              onClick={copyMarkdown}
+            />
             <ModalAction
               icon={Github}
               label="View on GitHub"
@@ -616,7 +697,10 @@ function PackManageModal({
       }
     >
       <SkillDescriptions
-        skills={packSkills.map((s) => ({ name: s.name, description: s.description }))}
+        skills={packSkills.map((s) => ({
+          name: s.name,
+          description: s.description,
+        }))}
         fallback="This pack ships no skills (commands / agents / rules only)."
       />
     </SkillModalShell>
@@ -673,7 +757,11 @@ function SkillManageModal({
             onClick={(t, status) => onToggle(t.id, status)}
           />
           <div className="flex flex-col gap-2 border-t border-border-default pt-3">
-            <ModalAction icon={ExternalLink} label="Open in editor" onClick={onOpen} />
+            <ModalAction
+              icon={ExternalLink}
+              label="Open in editor"
+              onClick={onOpen}
+            />
             {scope === "project" && (
               <ModalAction
                 icon={ArrowUpCircle}
@@ -693,7 +781,9 @@ function SkillManageModal({
         </div>
       }
     >
-      <SkillDescriptions skills={[{ name: skill.name, description: skill.description }]} />
+      <SkillDescriptions
+        skills={[{ name: skill.name, description: skill.description }]}
+      />
     </SkillModalShell>
   );
 }
@@ -731,10 +821,22 @@ function PackUpdate({
   const apply = async () => {
     setState("updating");
     try {
-      const res = await packsApi.install(scope, source, false, effectiveProject);
+      const res = await packsApi.install(
+        scope,
+        source,
+        false,
+        effectiveProject,
+      );
       if (res.state === "updated") {
         for (const toolId of projectedTools)
-          await packsApi.project(scope, name, toolId, null, true, effectiveProject);
+          await packsApi.project(
+            scope,
+            name,
+            toolId,
+            null,
+            true,
+            effectiveProject,
+          );
       }
       onDone();
       setState("uptodate");
@@ -747,12 +849,27 @@ function PackUpdate({
   const base =
     "flex w-full items-center gap-2 rounded-md border border-border-default px-2.5 py-2 text-[12px] font-medium text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary";
   if (state === "checking")
-    return <span className={base}><Loader2 size={13} className="animate-spin" /> Checking…</span>;
+    return (
+      <span className={base}>
+        <Loader2 size={13} className="animate-spin" /> Checking…
+      </span>
+    );
   if (state === "updating")
-    return <span className={base}><Loader2 size={13} className="animate-spin" /> Updating…</span>;
-  if (state === "uptodate")
-    return <span className={base}>Up to date</span>;
+    return (
+      <span className={base}>
+        <Loader2 size={13} className="animate-spin" /> Updating…
+      </span>
+    );
+  if (state === "uptodate") return <span className={base}>Up to date</span>;
   if (state === "available")
-    return <button onClick={apply} className={base}><ArrowUpCircle size={13} /> Update available</button>;
-  return <button onClick={check} className={base}><RefreshCw size={13} /> Check for update</button>;
+    return (
+      <button onClick={apply} className={base}>
+        <ArrowUpCircle size={13} /> Update available
+      </button>
+    );
+  return (
+    <button onClick={check} className={base}>
+      <RefreshCw size={13} /> Check for update
+    </button>
+  );
 }

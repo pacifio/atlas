@@ -23,7 +23,10 @@ export function StatCard({
     >
       <div className="flex items-center gap-1.5">
         {accent && (
-          <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: accent }} />
+          <span
+            className="h-1.5 w-1.5 rounded-full shrink-0"
+            style={{ backgroundColor: accent }}
+          />
         )}
         <span className="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
           {label}
@@ -32,7 +35,11 @@ export function StatCard({
       <span className="text-[20px] font-mono tabular-nums text-[var(--text-primary)] leading-none">
         {value}
       </span>
-      {sub && <span className="text-[10px] text-[var(--text-tertiary)] font-mono">{sub}</span>}
+      {sub && (
+        <span className="text-[10px] text-[var(--text-tertiary)] font-mono">
+          {sub}
+        </span>
+      )}
     </div>
   );
 }

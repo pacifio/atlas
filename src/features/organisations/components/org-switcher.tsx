@@ -44,7 +44,11 @@ function OrgAvatar({ org, size = 20 }: { org: Organisation; size?: number }) {
       }}
     >
       {org.logo ? (
-        <img src={org.logo} alt="" className="h-full w-full rounded-[5px] object-cover" />
+        <img
+          src={org.logo}
+          alt=""
+          className="h-full w-full rounded-[5px] object-cover"
+        />
       ) : (
         initials(org.name)
       )}
@@ -90,9 +94,13 @@ export function OrgSwitcher() {
     org: Organisation,
   ): { ok: true } | { ok: false; reason: string } => {
     if (!(org.syncEnabled && org.remoteId)) return { ok: true };
-    if (!signedIn) return { ok: false, reason: "Sign in to open this synced organisation" };
+    if (!signedIn)
+      return { ok: false, reason: "Sign in to open this synced organisation" };
     if (myOrgIds && !myOrgIds.has(org.remoteId)) {
-      return { ok: false, reason: "This account isn't a member of this organisation" };
+      return {
+        ok: false,
+        reason: "This account isn't a member of this organisation",
+      };
     }
     return { ok: true };
   };
@@ -114,7 +122,8 @@ export function OrgSwitcher() {
   const [membersOpen, setMembersOpen] = useState(false);
 
   const active =
-    organisations.find((o) => o.id === activeOrganisationId) ?? organisations[0];
+    organisations.find((o) => o.id === activeOrganisationId) ??
+    organisations[0];
   /** Members are a SERVER surface, so this needs both halves: an org that
    *  actually exists server-side, AND a live credential to talk to it with.
    *  Signing out does not un-sync an org — you stay in it, and every member
@@ -169,7 +178,10 @@ export function OrgSwitcher() {
           >
             <OrgAvatar org={active} size={16} />
             <span className="text-left truncate">{active.name}</span>
-            <ChevronsUpDown size={12} className="text-[var(--text-tertiary)] shrink-0" />
+            <ChevronsUpDown
+              size={12}
+              className="text-[var(--text-tertiary)] shrink-0"
+            />
           </button>
         </DropdownMenu.Trigger>
 
@@ -206,7 +218,10 @@ export function OrgSwitcher() {
                   }}
                   className="flex items-center justify-center h-5 w-5 rounded-full border border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors shrink-0 cursor-pointer disabled:opacity-50"
                 >
-                  <RefreshCw size={10} className={refreshing ? "animate-spin" : ""} />
+                  <RefreshCw
+                    size={10}
+                    className={refreshing ? "animate-spin" : ""}
+                  />
                 </button>
               )}
             </div>
@@ -256,7 +271,9 @@ export function OrgSwitcher() {
                     )}
                   >
                     <OrgAvatar org={org} size={18} />
-                    <span className="flex-1 text-left truncate">{org.name}</span>
+                    <span className="flex-1 text-left truncate">
+                      {org.name}
+                    </span>
                     {/* A locked org offers no row actions — you can't manage an
                         org this account has no access to. */}
                     {/* Rename (pencil) — appears on hover; doesn't switch/close. */}
@@ -290,10 +307,16 @@ export function OrgSwitcher() {
                       </button>
                     )}
                     {!access.ok ? (
-                      <Lock size={11} className="text-[var(--text-tertiary)] shrink-0" />
+                      <Lock
+                        size={11}
+                        className="text-[var(--text-tertiary)] shrink-0"
+                      />
                     ) : (
                       isActive && (
-                        <Check size={13} className="text-[var(--text-secondary)] shrink-0" />
+                        <Check
+                          size={13}
+                          className="text-[var(--text-secondary)] shrink-0"
+                        />
                       )
                     )}
                   </DropdownMenu.Item>
@@ -312,7 +335,10 @@ export function OrgSwitcher() {
               }}
               className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] outline-none hover:bg-[var(--bg-active)] hover:text-[var(--text-primary)] cursor-pointer shrink-0"
             >
-              <Plus size={13} className="text-[var(--text-tertiary)] shrink-0" />
+              <Plus
+                size={13}
+                className="text-[var(--text-tertiary)] shrink-0"
+              />
               <span className="flex-1 text-left">Create organisation…</span>
             </DropdownMenu.Item>
 
@@ -326,8 +352,13 @@ export function OrgSwitcher() {
                 }}
                 className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] outline-none hover:bg-[var(--bg-active)] hover:text-[var(--text-primary)] cursor-pointer shrink-0"
               >
-                <Users size={13} className="text-[var(--text-tertiary)] shrink-0" />
-                <span className="flex-1 text-left">Invite &amp; Manage members</span>
+                <Users
+                  size={13}
+                  className="text-[var(--text-tertiary)] shrink-0"
+                />
+                <span className="flex-1 text-left">
+                  Invite &amp; Manage members
+                </span>
               </DropdownMenu.Item>
             ) : (
               <div
@@ -339,7 +370,9 @@ export function OrgSwitcher() {
                 className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] text-[var(--text-secondary)] opacity-40 cursor-not-allowed select-none shrink-0"
               >
                 <Users size={13} className="shrink-0" />
-                <span className="flex-1 text-left">Invite &amp; Manage members</span>
+                <span className="flex-1 text-left">
+                  Invite &amp; Manage members
+                </span>
               </div>
             )}
 
@@ -353,7 +386,10 @@ export function OrgSwitcher() {
                 title="Syncing…"
                 className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] text-[var(--text-secondary)] select-none"
               >
-                <Loader2 size={13} className="shrink-0 animate-spin text-[var(--text-tertiary)]" />
+                <Loader2
+                  size={13}
+                  className="shrink-0 animate-spin text-[var(--text-tertiary)]"
+                />
                 <span className="flex-1 text-left truncate">
                   Syncing {active.name}…
                 </span>
@@ -363,11 +399,17 @@ export function OrgSwitcher() {
                 title="This organisation is synced with your Atlas account"
                 className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] text-[var(--text-secondary)] select-none"
               >
-                <Cloud size={13} className="shrink-0 text-[var(--text-tertiary)]" />
+                <Cloud
+                  size={13}
+                  className="shrink-0 text-[var(--text-tertiary)]"
+                />
                 <span className="flex-1 text-left truncate">
                   {active.name} is synced
                 </span>
-                <Check size={12} className="shrink-0 text-[var(--text-secondary)]" />
+                <Check
+                  size={12}
+                  className="shrink-0 text-[var(--text-secondary)]"
+                />
               </div>
             ) : (
               <DropdownMenu.Item
@@ -458,7 +500,12 @@ function DeleteOrgDialog({
             This permanently removes the organisation
             {projectCount > 0 && (
               <>
-                {" "}and its <span className="text-[var(--text-primary)]">{projectCount} project{projectCount === 1 ? "" : "s"}</span> (plus their chats)
+                {" "}
+                and its{" "}
+                <span className="text-[var(--text-primary)]">
+                  {projectCount} project{projectCount === 1 ? "" : "s"}
+                </span>{" "}
+                (plus their chats)
               </>
             )}{" "}
             from Atlas. Your actual project files on disk are not touched. This

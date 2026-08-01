@@ -5,11 +5,15 @@ function isFocusTarget(el: HTMLElement): boolean {
   if (tag === "input" || tag === "textarea" || tag === "select") return true;
   if (el.isContentEditable) return true;
   // CodeMirror's editable surface.
-  if (el.classList.contains("cm-content") || el.closest(".cm-editor")) return true;
+  if (el.classList.contains("cm-content") || el.closest(".cm-editor"))
+    return true;
   return false;
 }
 
-export function activate(el: HTMLElement, opts: { focusOnly?: boolean } = {}): void {
+export function activate(
+  el: HTMLElement,
+  opts: { focusOnly?: boolean } = {},
+): void {
   el.scrollIntoView({ block: "nearest", inline: "nearest" });
 
   if (opts.focusOnly || isFocusTarget(el)) {

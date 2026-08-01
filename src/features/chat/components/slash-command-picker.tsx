@@ -78,32 +78,162 @@ export interface SlashCommandPickerProps {
 // the actual command logic and emits the response into the chat thread.
 
 export const SLASH_COMMANDS: SlashCommand[] = [
-  { name: "login",            signature: "/login",            description: "Sign in to your Anthropic account.",                                    handler: "atlas-login" },
-  { name: "logout",           signature: "/logout",           description: "Sign out from your Anthropic account.",                                  handler: "passthrough" },
-  { name: "agents",           signature: "/agents",           description: "Manage agent configurations.",                                            handler: "passthrough" },
-  { name: "add-dir",          signature: "/add-dir <path>",   description: "Add a working directory for file access in this session.",                handler: "passthrough" },
-  { name: "clear",            signature: "/clear [name]",     description: "Start a new conversation with empty context.",                            handler: "passthrough" },
-  { name: "compact",          signature: "/compact",          description: "Summarize the conversation to free up context.",                          handler: "passthrough" },
-  { name: "model",            signature: "/model [model]",    description: "Set the AI model for the current session.",                               handler: "passthrough" },
-  { name: "effort",           signature: "/effort [level]",   description: "Set the model effort level (low/medium/high/xhigh/max).",                 handler: "passthrough" },
-  { name: "context",          signature: "/context",          description: "Visualize current context usage.",                                        handler: "passthrough" },
-  { name: "memory",           signature: "/memory",           description: "Edit CLAUDE.md memory files and auto-memory entries.",                    handler: "passthrough" },
-  { name: "resume",           signature: "/resume [session]", description: "Resume a previous conversation.",                                         handler: "passthrough" },
-  { name: "rewind",           signature: "/rewind",           description: "Rewind the conversation or code to a previous point.",                    handler: "passthrough" },
-  { name: "diff",             signature: "/diff",             description: "Open an interactive diff viewer for uncommitted changes.",                handler: "passthrough" },
-  { name: "permissions",      signature: "/permissions",      description: "Manage allow / ask / deny rules for tool permissions.",                   handler: "passthrough" },
-  { name: "config",           signature: "/config",           description: "Open the Settings interface.",                                            handler: "passthrough" },
-  { name: "status",           signature: "/status",           description: "Show version, model, account, and connectivity.",                         handler: "passthrough" },
-  { name: "usage",            signature: "/usage",            description: "Show session cost, plan usage limits, and activity stats.",               handler: "passthrough" },
-  { name: "doctor",           signature: "/doctor",           description: "Diagnose and verify your Claude Code installation.",                      handler: "passthrough" },
-  { name: "mcp",              signature: "/mcp",              description: "Manage MCP server connections and OAuth.",                                handler: "passthrough" },
-  { name: "hooks",            signature: "/hooks",            description: "View hook configurations for tool events.",                               handler: "passthrough" },
-  { name: "ide",              signature: "/ide",              description: "Manage IDE integrations and show status.",                                handler: "passthrough" },
-  { name: "init",             signature: "/init",             description: "Initialize project with a CLAUDE.md guide.",                              handler: "passthrough" },
-  { name: "review",           signature: "/review [PR]",      description: "Review a pull request locally in the current session.",                   handler: "passthrough" },
-  { name: "security-review",  signature: "/security-review",  description: "Analyze pending changes for security vulnerabilities.",                   handler: "passthrough" },
-  { name: "feedback",         signature: "/feedback",         description: "Submit feedback, report a bug, or share the conversation.",               handler: "passthrough" },
-  { name: "help",             signature: "/help",             description: "Show help and available commands.",                                       handler: "passthrough" },
+  {
+    name: "login",
+    signature: "/login",
+    description: "Sign in to your Anthropic account.",
+    handler: "atlas-login",
+  },
+  {
+    name: "logout",
+    signature: "/logout",
+    description: "Sign out from your Anthropic account.",
+    handler: "passthrough",
+  },
+  {
+    name: "agents",
+    signature: "/agents",
+    description: "Manage agent configurations.",
+    handler: "passthrough",
+  },
+  {
+    name: "add-dir",
+    signature: "/add-dir <path>",
+    description: "Add a working directory for file access in this session.",
+    handler: "passthrough",
+  },
+  {
+    name: "clear",
+    signature: "/clear [name]",
+    description: "Start a new conversation with empty context.",
+    handler: "passthrough",
+  },
+  {
+    name: "compact",
+    signature: "/compact",
+    description: "Summarize the conversation to free up context.",
+    handler: "passthrough",
+  },
+  {
+    name: "model",
+    signature: "/model [model]",
+    description: "Set the AI model for the current session.",
+    handler: "passthrough",
+  },
+  {
+    name: "effort",
+    signature: "/effort [level]",
+    description: "Set the model effort level (low/medium/high/xhigh/max).",
+    handler: "passthrough",
+  },
+  {
+    name: "context",
+    signature: "/context",
+    description: "Visualize current context usage.",
+    handler: "passthrough",
+  },
+  {
+    name: "memory",
+    signature: "/memory",
+    description: "Edit CLAUDE.md memory files and auto-memory entries.",
+    handler: "passthrough",
+  },
+  {
+    name: "resume",
+    signature: "/resume [session]",
+    description: "Resume a previous conversation.",
+    handler: "passthrough",
+  },
+  {
+    name: "rewind",
+    signature: "/rewind",
+    description: "Rewind the conversation or code to a previous point.",
+    handler: "passthrough",
+  },
+  {
+    name: "diff",
+    signature: "/diff",
+    description: "Open an interactive diff viewer for uncommitted changes.",
+    handler: "passthrough",
+  },
+  {
+    name: "permissions",
+    signature: "/permissions",
+    description: "Manage allow / ask / deny rules for tool permissions.",
+    handler: "passthrough",
+  },
+  {
+    name: "config",
+    signature: "/config",
+    description: "Open the Settings interface.",
+    handler: "passthrough",
+  },
+  {
+    name: "status",
+    signature: "/status",
+    description: "Show version, model, account, and connectivity.",
+    handler: "passthrough",
+  },
+  {
+    name: "usage",
+    signature: "/usage",
+    description: "Show session cost, plan usage limits, and activity stats.",
+    handler: "passthrough",
+  },
+  {
+    name: "doctor",
+    signature: "/doctor",
+    description: "Diagnose and verify your Claude Code installation.",
+    handler: "passthrough",
+  },
+  {
+    name: "mcp",
+    signature: "/mcp",
+    description: "Manage MCP server connections and OAuth.",
+    handler: "passthrough",
+  },
+  {
+    name: "hooks",
+    signature: "/hooks",
+    description: "View hook configurations for tool events.",
+    handler: "passthrough",
+  },
+  {
+    name: "ide",
+    signature: "/ide",
+    description: "Manage IDE integrations and show status.",
+    handler: "passthrough",
+  },
+  {
+    name: "init",
+    signature: "/init",
+    description: "Initialize project with a CLAUDE.md guide.",
+    handler: "passthrough",
+  },
+  {
+    name: "review",
+    signature: "/review [PR]",
+    description: "Review a pull request locally in the current session.",
+    handler: "passthrough",
+  },
+  {
+    name: "security-review",
+    signature: "/security-review",
+    description: "Analyze pending changes for security vulnerabilities.",
+    handler: "passthrough",
+  },
+  {
+    name: "feedback",
+    signature: "/feedback",
+    description: "Submit feedback, report a bug, or share the conversation.",
+    handler: "passthrough",
+  },
+  {
+    name: "help",
+    signature: "/help",
+    description: "Show help and available commands.",
+    handler: "passthrough",
+  },
 ];
 
 // ── Component ───────────────────────────────────────────────────────────────
@@ -114,7 +244,10 @@ const GAP = 6;
 export const SlashCommandPicker = forwardRef<
   SlashCommandPickerHandle,
   SlashCommandPickerProps
->(function SlashCommandPicker({ open, query, anchor, onSelect, onClose, commands, footerLabel }, ref) {
+>(function SlashCommandPicker(
+  { open, query, anchor, onSelect, onClose, commands, footerLabel },
+  ref,
+) {
   const [active, setActive] = useState(0);
 
   useEffect(() => {

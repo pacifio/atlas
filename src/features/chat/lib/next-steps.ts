@@ -32,7 +32,12 @@ export function extractNextSteps(content: string): string[] {
   if (!m) return [];
   return m[1]
     .split("\n")
-    .map((l) => l.trim().replace(/^[-*+\d.)\s]+/, "").trim())
+    .map((l) =>
+      l
+        .trim()
+        .replace(/^[-*+\d.)\s]+/, "")
+        .trim(),
+    )
     .filter(Boolean)
     .map((l) => (l.length > 120 ? l.slice(0, 117) + "…" : l))
     .slice(0, 3);

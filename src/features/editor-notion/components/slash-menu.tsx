@@ -53,69 +53,145 @@ interface SlashMenuProps {
 export const SLASH_ITEMS: SlashItem[] = [
   // ── Basic ────────────────────────────────────────────────────────
   {
-    id: "p", group: "Basic", title: "Text", hint: "Plain paragraph", icon: Type,
+    id: "p",
+    group: "Basic",
+    title: "Text",
+    hint: "Plain paragraph",
+    icon: Type,
     command: ({ editor, range }) =>
       editor.chain().focus().deleteRange(range).setParagraph().run(),
   },
   {
-    id: "h1", group: "Basic", title: "Heading 1", hint: "Big section title", kbd: "# space", icon: Heading1,
+    id: "h1",
+    group: "Basic",
+    title: "Heading 1",
+    hint: "Big section title",
+    kbd: "# space",
+    icon: Heading1,
     command: ({ editor, range }) =>
-      editor.chain().focus().deleteRange(range).setNode("heading", { level: 1 }).run(),
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .setNode("heading", { level: 1 })
+        .run(),
   },
   {
-    id: "h2", group: "Basic", title: "Heading 2", hint: "Medium section", kbd: "## space", icon: Heading2,
+    id: "h2",
+    group: "Basic",
+    title: "Heading 2",
+    hint: "Medium section",
+    kbd: "## space",
+    icon: Heading2,
     command: ({ editor, range }) =>
-      editor.chain().focus().deleteRange(range).setNode("heading", { level: 2 }).run(),
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .setNode("heading", { level: 2 })
+        .run(),
   },
   {
-    id: "h3", group: "Basic", title: "Heading 3", hint: "Small section", kbd: "### space", icon: Heading3,
+    id: "h3",
+    group: "Basic",
+    title: "Heading 3",
+    hint: "Small section",
+    kbd: "### space",
+    icon: Heading3,
     command: ({ editor, range }) =>
-      editor.chain().focus().deleteRange(range).setNode("heading", { level: 3 }).run(),
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .setNode("heading", { level: 3 })
+        .run(),
   },
   {
-    id: "ul", group: "Basic", title: "Bullet list", hint: "Bulleted items", kbd: "- space", icon: List,
+    id: "ul",
+    group: "Basic",
+    title: "Bullet list",
+    hint: "Bulleted items",
+    kbd: "- space",
+    icon: List,
     command: ({ editor, range }) =>
       editor.chain().focus().deleteRange(range).toggleBulletList().run(),
   },
   {
-    id: "ol", group: "Basic", title: "Numbered list", hint: "Ordered items", kbd: "1. space", icon: ListOrdered,
+    id: "ol",
+    group: "Basic",
+    title: "Numbered list",
+    hint: "Ordered items",
+    kbd: "1. space",
+    icon: ListOrdered,
     command: ({ editor, range }) =>
       editor.chain().focus().deleteRange(range).toggleOrderedList().run(),
   },
   // ── Rich ─────────────────────────────────────────────────────────
   {
-    id: "todo", group: "Rich", title: "To-do", hint: "Checkboxes", kbd: "[] space", icon: CheckSquare,
+    id: "todo",
+    group: "Rich",
+    title: "To-do",
+    hint: "Checkboxes",
+    kbd: "[] space",
+    icon: CheckSquare,
     command: ({ editor, range }) =>
       editor.chain().focus().deleteRange(range).toggleTaskList().run(),
   },
   {
-    id: "toggle", group: "Rich", title: "Toggle", hint: "Collapsible section", icon: Quote,
+    id: "toggle",
+    group: "Rich",
+    title: "Toggle",
+    hint: "Collapsible section",
+    icon: Quote,
     command: ({ editor, range }) =>
       editor.chain().focus().deleteRange(range).setToggle().run(),
   },
   {
-    id: "quote", group: "Rich", title: "Quote", hint: "Indented quote", kbd: "> space", icon: Quote,
+    id: "quote",
+    group: "Rich",
+    title: "Quote",
+    hint: "Indented quote",
+    kbd: "> space",
+    icon: Quote,
     command: ({ editor, range }) =>
       editor.chain().focus().deleteRange(range).toggleBlockquote().run(),
   },
   {
-    id: "callout", group: "Rich", title: "Callout", hint: "Highlighted block", icon: Quote,
+    id: "callout",
+    group: "Rich",
+    title: "Callout",
+    hint: "Highlighted block",
+    icon: Quote,
     command: ({ editor, range }) =>
       editor.chain().focus().deleteRange(range).setCallout().run(),
   },
   {
-    id: "divider", group: "Rich", title: "Divider", hint: "Horizontal rule", kbd: "---", icon: Minus,
+    id: "divider",
+    group: "Rich",
+    title: "Divider",
+    hint: "Horizontal rule",
+    kbd: "---",
+    icon: Minus,
     command: ({ editor, range }) =>
       editor.chain().focus().deleteRange(range).setHorizontalRule().run(),
   },
   {
-    id: "code", group: "Rich", title: "Code block", hint: "Syntax-highlighted", kbd: "``` space", icon: Code,
+    id: "code",
+    group: "Rich",
+    title: "Code block",
+    hint: "Syntax-highlighted",
+    kbd: "``` space",
+    icon: Code,
     command: ({ editor, range }) =>
       editor.chain().focus().deleteRange(range).toggleCodeBlock().run(),
   },
   // ── Embed ────────────────────────────────────────────────────────
   {
-    id: "table", group: "Embed", title: "Table", hint: "Inline grid", icon: TableIcon,
+    id: "table",
+    group: "Embed",
+    title: "Table",
+    hint: "Inline grid",
+    icon: TableIcon,
     command: ({ editor, range }) =>
       editor
         .chain()
@@ -125,20 +201,37 @@ export const SLASH_ITEMS: SlashItem[] = [
         .run(),
   },
   {
-    id: "img", group: "Embed", title: "Image", hint: "Paste a URL", icon: ImageIcon,
+    id: "img",
+    group: "Embed",
+    title: "Image",
+    hint: "Paste a URL",
+    icon: ImageIcon,
     // Phase D will wire a real image upload. For now insert a placeholder
     // link that the user can swap to a URL.
     command: ({ editor, range }) =>
-      editor.chain().focus().deleteRange(range).insertContent("![alt](url)").run(),
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent("![alt](url)")
+        .run(),
   },
   {
-    id: "mention", group: "Embed", title: "Mention", hint: "Person, page or commit", kbd: "@", icon: AtSign,
+    id: "mention",
+    group: "Embed",
+    title: "Mention",
+    hint: "Person, page or commit",
+    kbd: "@",
+    icon: AtSign,
     command: ({ editor, range }) =>
       editor.chain().focus().deleteRange(range).insertContent("@").run(),
   },
 ];
 
-export function filterSlashItems(query: string, items: SlashItem[] = SLASH_ITEMS): SlashItem[] {
+export function filterSlashItems(
+  query: string,
+  items: SlashItem[] = SLASH_ITEMS,
+): SlashItem[] {
   if (!query) return items;
   const q = query.toLowerCase();
   return items.filter(
@@ -167,7 +260,9 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(
             return true;
           }
           if (event.key === "ArrowUp") {
-            setSelectedIndex((i) => (i - 1 + items.length) % Math.max(1, items.length));
+            setSelectedIndex(
+              (i) => (i - 1 + items.length) % Math.max(1, items.length),
+            );
             return true;
           }
           if (event.key === "Enter" || event.key === "Tab") {

@@ -107,7 +107,11 @@ export function NewSessionSheet() {
                 </Field>
                 <Field
                   label="Tags"
-                  hint={tags.length ? `${tags.length} selected` : "categorize this session"}
+                  hint={
+                    tags.length
+                      ? `${tags.length} selected`
+                      : "categorize this session"
+                  }
                 >
                   <TagInput value={tags} onChange={setTags} known={knownTags} />
                 </Field>
@@ -139,8 +143,12 @@ export function NewSessionSheet() {
                               : "border-border-default hover:bg-bg-hover",
                           )}
                         >
-                          <div className="text-[13px] font-medium text-text-primary">{p.label}</div>
-                          <div className="text-[11px] text-text-tertiary mt-0.5">{p.sub}</div>
+                          <div className="text-[13px] font-medium text-text-primary">
+                            {p.label}
+                          </div>
+                          <div className="text-[11px] text-text-tertiary mt-0.5">
+                            {p.sub}
+                          </div>
                         </button>
                       );
                     })}
@@ -154,7 +162,9 @@ export function NewSessionSheet() {
                         min={5}
                         max={180}
                         value={customFocus}
-                        onChange={(e) => setCustomFocus(parseInt(e.target.value || "0"))}
+                        onChange={(e) =>
+                          setCustomFocus(parseInt(e.target.value || "0"))
+                        }
                         className="w-full h-9 px-3 bg-bg-input border border-border-default rounded text-[13px] text-text-primary outline-none focus:border-border-focus tabular-nums"
                       />
                     </Field>
@@ -164,7 +174,9 @@ export function NewSessionSheet() {
                         min={1}
                         max={60}
                         value={customBreak}
-                        onChange={(e) => setCustomBreak(parseInt(e.target.value || "0"))}
+                        onChange={(e) =>
+                          setCustomBreak(parseInt(e.target.value || "0"))
+                        }
                         className="w-full h-9 px-3 bg-bg-input border border-border-default rounded text-[13px] text-text-primary outline-none focus:border-border-focus tabular-nums"
                       />
                     </Field>
@@ -172,7 +184,11 @@ export function NewSessionSheet() {
                 )}
                 <Field label="Cycles" hint={`≈ ${fmtDur(totalMin)} total`}>
                   <div className="flex items-center gap-2.5">
-                    <StepperBtn onClick={() => setCycles((c) => Math.max(1, c - 1))}>−</StepperBtn>
+                    <StepperBtn
+                      onClick={() => setCycles((c) => Math.max(1, c - 1))}
+                    >
+                      −
+                    </StepperBtn>
                     <div className="flex gap-1 flex-1">
                       {Array.from({ length: 8 }, (_, i) => {
                         const filled = i < cycles;
@@ -188,7 +204,11 @@ export function NewSessionSheet() {
                         );
                       })}
                     </div>
-                    <StepperBtn onClick={() => setCycles((c) => Math.min(8, c + 1))}>+</StepperBtn>
+                    <StepperBtn
+                      onClick={() => setCycles((c) => Math.min(8, c + 1))}
+                    >
+                      +
+                    </StepperBtn>
                     <span className="text-[13px] font-semibold text-text-primary min-w-[18px] text-right tabular-nums">
                       {cycles}
                     </span>
@@ -239,7 +259,9 @@ export function NewSessionSheet() {
                         <div
                           key={i}
                           className="flex gap-0.5"
-                          style={{ flex: `${focusMin + (i < cycles - 1 ? breakMin : 0)} 1 0` }}
+                          style={{
+                            flex: `${focusMin + (i < cycles - 1 ? breakMin : 0)} 1 0`,
+                          }}
                         >
                           <div
                             className="bg-text-primary rounded-sm flex items-center justify-center text-[10px] text-bg-primary font-semibold tabular-nums"
@@ -322,7 +344,9 @@ function Stepper({ step }: { step: number }) {
             >
               {l}
             </span>
-            {i < labels.length - 1 && <div className="w-6 h-px bg-border-default mx-1" />}
+            {i < labels.length - 1 && (
+              <div className="w-6 h-px bg-border-default mx-1" />
+            )}
           </div>
         );
       })}
@@ -345,7 +369,9 @@ function Field({
         <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider">
           {label}
         </span>
-        {hint && <span className="text-[11px] text-text-tertiary/70">{hint}</span>}
+        {hint && (
+          <span className="text-[11px] text-text-tertiary/70">{hint}</span>
+        )}
       </div>
       {children}
     </label>

@@ -36,10 +36,18 @@ interface TerminalActions {
   actions: {
     initTab: (tabId: string) => void;
     addTerminalToPane: (tabId: string, paneId: string) => void;
-    splitPane: (tabId: string, paneId: string, direction: SplitDirection) => void;
+    splitPane: (
+      tabId: string,
+      paneId: string,
+      direction: SplitDirection,
+    ) => void;
     closeTerminalInPane: (tabId: string, paneId: string, ptyId: string) => void;
     closePane: (tabId: string, paneId: string) => void;
-    setActiveTerminalInPane: (tabId: string, paneId: string, ptyId: string) => void;
+    setActiveTerminalInPane: (
+      tabId: string,
+      paneId: string,
+      ptyId: string,
+    ) => void;
     setActivePane: (tabId: string, paneId: string) => void;
     setTerminalBusy: (ptyId: string, busy: boolean) => void;
     /** Drop several terminal tabs (used when a workspace is DISCARDED). PTYs
@@ -62,12 +70,22 @@ function findPane(node: TreeNode, paneId: string): PaneNode | null {
   return null;
 }
 
-function splitPaneInTree(node: TreeNode, paneId: string, direction: SplitDirection, newPane: PaneNode): boolean {
+function splitPaneInTree(
+  node: TreeNode,
+  paneId: string,
+  direction: SplitDirection,
+  newPane: PaneNode,
+): boolean {
   if (node.type === "split") {
     for (let i = 0; i < node.children.length; i++) {
       const child = node.children[i];
       if (child.type === "pane" && child.id === paneId) {
-        node.children[i] = { type: "split", id: genId("split"), direction, children: [child, newPane] };
+        node.children[i] = {
+          type: "split",
+          id: genId("split"),
+          direction,
+          children: [child, newPane],
+        };
         return true;
       }
       if (splitPaneInTree(child, paneId, direction, newPane)) return true;
@@ -105,7 +123,12 @@ export const useTerminalStore = createSelectors(
           const paneId = genId("pane");
           set((s) => {
             s.tabs[tabId] = {
-              root: { type: "pane", id: paneId, terminals: [ptyId], activeTerminalId: ptyId },
+              root: {
+                type: "pane",
+                id: paneId,
+                terminals: [ptyId],
+                activeTerminalId: ptyId,
+              },
               activePaneId: paneId,
             };
           });
@@ -129,9 +152,19 @@ export const useTerminalStore = createSelectors(
             if (!t) return;
             const newPtyId = genId("pty");
             const newPaneId = genId("pane");
-            const newPane: PaneNode = { type: "pane", id: newPaneId, terminals: [newPtyId], activeTerminalId: newPtyId };
+            const newPane: PaneNode = {
+              type: "pane",
+              id: newPaneId,
+              terminals: [newPtyId],
+              activeTerminalId: newPtyId,
+            };
             if (t.root.type === "pane" && t.root.id === paneId) {
-              t.root = { type: "split", id: genId("split"), direction, children: [t.root, newPane] };
+              t.root = {
+                type: "split",
+                id: genId("split"),
+                direction,
+                children: [t.root, newPane],
+              };
             } else {
               splitPaneInTree(t.root, paneId, direction, newPane);
             }
@@ -149,7 +182,10 @@ export const useTerminalStore = createSelectors(
             pane.terminals = pane.terminals.filter((id) => id !== ptyId);
             if (pane.terminals.length === 0) {
               const result = removePaneFromTree(t.root, paneId);
-              if (!result) { delete s.tabs[tabId]; return; }
+              if (!result) {
+                delete s.tabs[tabId];
+                return;
+              }
               t.root = result;
               if (t.activePaneId === paneId) {
                 t.activePaneId = collectPanes(t.root)[0]?.id ?? null;
@@ -157,7 +193,10 @@ export const useTerminalStore = createSelectors(
             } else if (pane.activeTerminalId === ptyId) {
               // Activate the LEFT neighbour (the tab that was at closedIdx-1);
               // items before the closed one keep their indices after filtering.
-              const nextIdx = Math.min(Math.max(0, closedIdx - 1), pane.terminals.length - 1);
+              const nextIdx = Math.min(
+                Math.max(0, closedIdx - 1),
+                pane.terminals.length - 1,
+              );
               pane.activeTerminalId = pane.terminals[nextIdx];
             }
           });
@@ -168,7 +207,10 @@ export const useTerminalStore = createSelectors(
             const t = s.tabs[tabId];
             if (!t) return;
             const result = removePaneFromTree(t.root, paneId);
-            if (!result) { delete s.tabs[tabId]; return; }
+            if (!result) {
+              delete s.tabs[tabId];
+              return;
+            }
             t.root = result;
             if (t.activePaneId === paneId) {
               t.activePaneId = collectPanes(t.root)[0]?.id ?? null;
@@ -204,6 +246,6 @@ export const useTerminalStore = createSelectors(
             for (const id of tabIds) delete s.tabs[id];
           }),
       },
-    }))
-  )
+    })),
+  ),
 );

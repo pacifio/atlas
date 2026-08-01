@@ -60,8 +60,14 @@ export interface CommitFile {
 }
 
 /** Files changed by a single commit (for the diff viewer's commit browser). */
-export function gitCommitChangedFiles(repoPath: string, sha: string): Promise<CommitFile[]> {
-  return invoke<CommitFile[]>("git_commit_changed_files", { path: repoPath, sha });
+export function gitCommitChangedFiles(
+  repoPath: string,
+  sha: string,
+): Promise<CommitFile[]> {
+  return invoke<CommitFile[]>("git_commit_changed_files", {
+    path: repoPath,
+    sha,
+  });
 }
 
 export function gitDiffLineStatus(
@@ -69,7 +75,11 @@ export function gitDiffLineStatus(
   file: string,
   staged: boolean,
 ): Promise<DiffLineStatus> {
-  return invoke<DiffLineStatus>("git_diff_line_status", { path: repoPath, file, staged });
+  return invoke<DiffLineStatus>("git_diff_line_status", {
+    path: repoPath,
+    file,
+    staged,
+  });
 }
 
 /**

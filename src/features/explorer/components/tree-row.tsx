@@ -194,8 +194,14 @@ export function TreeRow({
           down chevron (its children then carry their own dots). A changed file
           shows the dot in its (otherwise empty) gutter slot. */}
       {!isEditing && gitColor && (!isDir || !isExpanded) ? (
-        <span className="w-3 shrink-0 flex items-center justify-center" aria-hidden>
-          <span className="rounded-full" style={{ width: 6, height: 6, background: gitColor }} />
+        <span
+          className="w-3 shrink-0 flex items-center justify-center"
+          aria-hidden
+        >
+          <span
+            className="rounded-full"
+            style={{ width: 6, height: 6, background: gitColor }}
+          />
         </span>
       ) : isDir ? (
         <ChevronRight

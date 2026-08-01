@@ -16,7 +16,12 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { useChatStore } from "../stores/chat-store";
 import { agents } from "../lib/agents-api";
-import { CLAUDE_PERMISSION_MODE_LABEL, AGENT_LABEL, agentTypeFromPluginId, type SwitchableAgent } from "@/types/agent";
+import {
+  CLAUDE_PERMISSION_MODE_LABEL,
+  AGENT_LABEL,
+  agentTypeFromPluginId,
+  type SwitchableAgent,
+} from "@/types/agent";
 import { AgentMark } from "@/components/agent-mark";
 import { ProviderModelPills } from "./provider-model-pills";
 import { loadCerseiEffort, loadCerseiCompress } from "../lib/cersei-model-pref";
@@ -32,7 +37,10 @@ import { loadCachedAcpModels } from "../lib/acp-models-cache";
 // `MentionPicker` only mounts when the user types `@`, so we let its chunk
 // load purely on demand — no eager preload (that would add a wasted Vite
 // roundtrip in dev for every MessageInput mount).
-import type { ChatInput as ChatInputComponent, ChatInputHandle } from "./chat-input";
+import type {
+  ChatInput as ChatInputComponent,
+  ChatInputHandle,
+} from "./chat-input";
 import type {
   MentionPicker as MentionPickerComponent,
   MentionPickerHandle,
@@ -76,8 +84,9 @@ const chatInputPromise: Promise<typeof import("./chat-input")> =
 const mentionPickerPromise: Promise<
   typeof import("@/features/mentions/components/mention-picker")
 > = import("@/features/mentions/components/mention-picker");
-const slashCommandPickerPromise: Promise<typeof import("./slash-command-picker")> =
-  import("./slash-command-picker");
+const slashCommandPickerPromise: Promise<
+  typeof import("./slash-command-picker")
+> = import("./slash-command-picker");
 
 // Module-level frozen empty array so selectors that return a "default empty
 // queue" hand back a stable reference instead of allocating per render.
@@ -86,7 +95,9 @@ const EMPTY_QUEUE: readonly string[] = Object.freeze([]);
 /** Read an image `File` (clipboard paste) into a base64 attachment. Returns
  *  null for non-images. The `data:` URI prefix is stripped — the wire shape
  *  carries raw base64 + mime separately. */
-async function fileToImageAttachment(file: File): Promise<ImageAttachment | null> {
+async function fileToImageAttachment(
+  file: File,
+): Promise<ImageAttachment | null> {
   if (!file.type.startsWith("image/")) return null;
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -134,9 +145,12 @@ interface MessageInputProps {
  */
 function acpModeColor(modeId: string | undefined): string {
   const id = (modeId ?? "").toLowerCase();
-  if (/full|bypass|\ball\b|danger|yolo|unrestricted/.test(id)) return "var(--status-error)";
-  if (/read.?only|\bplan\b|ask|suggest/.test(id)) return "var(--accent-primary)";
-  if (/auto|default|edit|accept|agent|workspace/.test(id)) return "var(--status-success)";
+  if (/full|bypass|\ball\b|danger|yolo|unrestricted/.test(id))
+    return "var(--status-error)";
+  if (/read.?only|\bplan\b|ask|suggest/.test(id))
+    return "var(--accent-primary)";
+  if (/auto|default|edit|accept|agent|workspace/.test(id))
+    return "var(--status-success)";
   return "var(--text-tertiary)";
 }
 
@@ -207,9 +221,19 @@ function CerseiMemoryPill() {
       className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer tabular-nums disabled:cursor-default"
     >
       {indexing ? (
-        <Loader2 size={11} className="animate-spin text-[var(--accent-primary)]" />
+        <Loader2
+          size={11}
+          className="animate-spin text-[var(--accent-primary)]"
+        />
       ) : (
-        <Database size={11} className={status?.indexed ? "text-[var(--accent-primary)]" : "text-[var(--text-tertiary)]"} />
+        <Database
+          size={11}
+          className={
+            status?.indexed
+              ? "text-[var(--accent-primary)]"
+              : "text-[var(--text-tertiary)]"
+          }
+        />
       )}
       {label}
     </button>
@@ -239,7 +263,11 @@ function EffortPill({ tabId }: { tabId: string }) {
     >
       <Brain
         size={11}
-        className={active ? "text-[var(--accent-primary)]" : "text-[var(--text-tertiary)]"}
+        className={
+          active
+            ? "text-[var(--accent-primary)]"
+            : "text-[var(--text-tertiary)]"
+        }
       />
       {active ? `Think: ${effort}` : "Think"}
     </button>
@@ -252,7 +280,9 @@ function EffortPill({ tabId }: { tabId: string }) {
  *  own session's usage/compaction changes. */
 function CerseiUsagePill({ tabId }: { tabId: string }) {
   const usage = useChatStore((s) => s.sessions[tabId]?.usage);
-  const compacting = useChatStore((s) => s.sessions[tabId]?.compacting ?? false);
+  const compacting = useChatStore(
+    (s) => s.sessions[tabId]?.compacting ?? false,
+  );
   if (compacting) {
     return (
       <span
@@ -268,7 +298,10 @@ function CerseiUsagePill({ tabId }: { tabId: string }) {
   const total = (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
   if (total === 0) return null;
   const tokens = total >= 1000 ? `${(total / 1000).toFixed(1)}K` : `${total}`;
-  const cost = usage.cost && usage.cost > 0 ? ` · $${usage.cost.toFixed(usage.cost < 1 ? 3 : 2)}` : "";
+  const cost =
+    usage.cost && usage.cost > 0
+      ? ` · $${usage.cost.toFixed(usage.cost < 1 ? 3 : 2)}`
+      : "";
   return (
     <span
       className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-tertiary)] select-none tabular-nums"
@@ -288,8 +321,12 @@ function CerseiUsagePill({ tabId }: { tabId: string }) {
  */
 function AcpModePicker({ tabId }: { tabId: string }) {
   const currentMode = useChatStore((s) => s.sessions[tabId]?.acpCurrentMode);
-  const availableModes = useChatStore((s) => s.sessions[tabId]?.acpAvailableModes);
-  const pending = useChatStore((s) => s.sessions[tabId]?.acpModesPending ?? false);
+  const availableModes = useChatStore(
+    (s) => s.sessions[tabId]?.acpAvailableModes,
+  );
+  const pending = useChatStore(
+    (s) => s.sessions[tabId]?.acpModesPending ?? false,
+  );
   const { setAcpMode } = useChatStore.use.actions();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -297,7 +334,8 @@ function AcpModePicker({ tabId }: { tabId: string }) {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
@@ -353,7 +391,7 @@ function AcpModePicker({ tabId }: { tabId: string }) {
                   "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors",
                   active
                     ? "bg-[var(--bg-selected)]"
-                    : "hover:bg-[var(--bg-hover)]"
+                    : "hover:bg-[var(--bg-hover)]",
                 )}
               >
                 <span
@@ -364,7 +402,10 @@ function AcpModePicker({ tabId }: { tabId: string }) {
                   <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
                     {m.name}
                     {active && (
-                      <Check size={11} className="text-[var(--accent-primary)]" />
+                      <Check
+                        size={11}
+                        className="text-[var(--accent-primary)]"
+                      />
                     )}
                   </span>
                   {m.description && (
@@ -391,14 +432,19 @@ function AcpModePicker({ tabId }: { tabId: string }) {
  */
 /** Claude Code advertises its default model as "Recommended"; show "Default". */
 function modelLabel(m: { id: string; name: string }): string {
-  if (m.name.trim().toLowerCase() === "recommended" || m.id === "default") return "Default";
+  if (m.name.trim().toLowerCase() === "recommended" || m.id === "default")
+    return "Default";
   return m.name;
 }
 
 function AcpModelPicker({ tabId }: { tabId: string }) {
   const currentModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel);
-  const availableModels = useChatStore((s) => s.sessions[tabId]?.acpAvailableModels);
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
+  const availableModels = useChatStore(
+    (s) => s.sessions[tabId]?.acpAvailableModels,
+  );
+  const agentType = useChatStore(
+    (s) => s.sessions[tabId]?.agentType ?? "claude-code",
+  );
   const { setAcpModel } = useChatStore.use.actions();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -407,7 +453,8 @@ function AcpModelPicker({ tabId }: { tabId: string }) {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
@@ -448,14 +495,22 @@ function AcpModelPicker({ tabId }: { tabId: string }) {
         title="Model"
       >
         <Cpu size={11} className="shrink-0 text-[var(--text-tertiary)]" />
-        <span className="max-w-[120px] truncate">{current ? modelLabel(current) : (currentModel ?? "Model")}</span>
-        <ChevronDown size={10} className="shrink-0 text-[var(--text-tertiary)]" />
+        <span className="max-w-[120px] truncate">
+          {current ? modelLabel(current) : (currentModel ?? "Model")}
+        </span>
+        <ChevronDown
+          size={10}
+          className="shrink-0 text-[var(--text-tertiary)]"
+        />
       </button>
       {open && (
         <div className="absolute bottom-full left-0 mb-1.5 z-50 w-[260px] overflow-hidden rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-lg">
           {/* Search combobox */}
           <div className="flex items-center gap-1.5 h-8 border-b border-[var(--border-subtle)] px-2.5">
-            <Search size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+            <Search
+              size={12}
+              className="shrink-0 text-[var(--text-tertiary)]"
+            />
             <input
               autoFocus
               value={q}
@@ -467,7 +522,9 @@ function AcpModelPicker({ tabId }: { tabId: string }) {
           </div>
           <div className="max-h-[280px] overflow-y-auto hide-scrollbar p-1">
             {filtered.length === 0 ? (
-              <div className="px-2.5 py-2 text-[11px] text-[var(--text-tertiary)]">No models</div>
+              <div className="px-2.5 py-2 text-[11px] text-[var(--text-tertiary)]">
+                No models
+              </div>
             ) : (
               filtered.map((m) => {
                 const active = m.id === currentModel;
@@ -480,21 +537,28 @@ function AcpModelPicker({ tabId }: { tabId: string }) {
                     }}
                     className={cn(
                       "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                      active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
+                      active
+                        ? "bg-[var(--bg-selected)]"
+                        : "hover:bg-[var(--bg-hover)]",
                     )}
                   >
                     <span className="flex-1 min-w-0">
                       <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
                         <span className="truncate">{modelLabel(m)}</span>
                         {active && (
-                          <Check size={11} className="shrink-0 text-[var(--accent-primary)]" />
+                          <Check
+                            size={11}
+                            className="shrink-0 text-[var(--accent-primary)]"
+                          />
                         )}
                       </span>
-                      {m.description && m.description.trim().toLowerCase() !== "recommended" && (
-                        <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)] line-clamp-2">
-                          {m.description}
-                        </span>
-                      )}
+                      {m.description &&
+                        m.description.trim().toLowerCase() !==
+                          "recommended" && (
+                          <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)] line-clamp-2">
+                            {m.description}
+                          </span>
+                        )}
                     </span>
                   </button>
                 );
@@ -530,13 +594,13 @@ export function MessageInput({
   // Codex/other ACP agents advertise their own permission modes; show the
   // picker only when this session actually has modes (Claude uses its own pill).
   const hasAcpModes = useChatStore(
-    (s) => (s.sessions[tabId]?.acpAvailableModes?.length ?? 0) > 0
+    (s) => (s.sessions[tabId]?.acpAvailableModes?.length ?? 0) > 0,
   );
   // Show the picker as soon as the agent is non-Claude — even before its modes
   // load — so the composer can render a loading pill instead of nothing during
   // the agent spawn + new_session boot.
   const acpModesPending = useChatStore(
-    (s) => s.sessions[tabId]?.acpModesPending ?? false
+    (s) => s.sessions[tabId]?.acpModesPending ?? false,
   );
   // Self-heal the mode picker. chat-panel seeds the modes when a session is
   // first bound, but that path can be missed (resumed/restored sessions, an
@@ -565,7 +629,7 @@ export function MessageInput({
             tabId,
             snap.current_mode,
             snap.available_modes,
-            agentTypeFromPluginId(snap.plugin_id)
+            agentTypeFromPluginId(snap.plugin_id),
           );
         }
       } catch (err) {
@@ -591,25 +655,33 @@ export function MessageInput({
   // component otherwise would re-render on every streaming chunk because it
   // sits inside the active chat panel.
   const permissionMode = useChatStore(
-    (s) => s.sessions[tabId]?.claudePermissionMode ?? "default"
+    (s) => s.sessions[tabId]?.claudePermissionMode ?? "default",
   );
   const agentType = useChatStore(
-    (s) => s.sessions[tabId]?.agentType ?? "claude-code"
+    (s) => s.sessions[tabId]?.agentType ?? "claude-code",
   );
   // `agentType` widened to a SwitchableAgent (drops "custom") for the composer
   // sub-components (skill/session scope, agent switcher) + the label lookup.
   const switchableAgent: SwitchableAgent =
-    agentType === "codex" ? "codex" : agentType === "cersei" ? "cersei" : "claude-code";
+    agentType === "codex"
+      ? "codex"
+      : agentType === "cersei"
+        ? "cersei"
+        : "claude-code";
   // Native Cersei agent only: BYOK provider + model selection for the composer.
-  const cerseiProvider = useChatStore((s) => s.sessions[tabId]?.cerseiProvider ?? "");
-  const cerseiModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel ?? "");
+  const cerseiProvider = useChatStore(
+    (s) => s.sessions[tabId]?.cerseiProvider ?? "",
+  );
+  const cerseiModel = useChatStore(
+    (s) => s.sessions[tabId]?.acpCurrentModel ?? "",
+  );
   const onCerseiProvider = useCallback(
     (id: string) => setCerseiProvider(tabId, id),
-    [tabId, setCerseiProvider]
+    [tabId, setCerseiProvider],
   );
   const onCerseiModel = useCallback(
     (id: string) => setCerseiModel(tabId, id),
-    [tabId, setCerseiModel]
+    [tabId, setCerseiModel],
   );
   // The composer may settle on a provider/model before the session is bound
   // (the `agents_set_model` push no-ops until then). Re-push once the binding
@@ -633,7 +705,9 @@ export function MessageInput({
   const cerseiEffort = useChatStore((s) => s.sessions[tabId]?.cerseiEffort);
   const cerseiBound = useChatStore((s) => {
     const sess = s.sessions[tabId];
-    return sess?.agentType === "cersei" && !!sess.acpAgentId && !!sess.acpSessionId
+    return sess?.agentType === "cersei" &&
+      !!sess.acpAgentId &&
+      !!sess.acpSessionId
       ? `${sess.acpAgentId}::${sess.acpSessionId}`
       : null;
   });
@@ -649,17 +723,24 @@ export function MessageInput({
   useEffect(() => {
     if (agentType !== "cersei") return;
     const on = cerseiCompress ?? loadCerseiCompress();
-    if (cerseiBound || cerseiCompress === undefined) setCerseiCompress(tabId, on);
+    if (cerseiBound || cerseiCompress === undefined)
+      setCerseiCompress(tabId, on);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, agentType, cerseiBound]);
   // ACP-reported slash commands for this session (Codex). Claude keeps its
   // curated catalogue (the picker's default).
-  const availableCommands = useChatStore((s) => s.sessions[tabId]?.availableCommands);
+  const availableCommands = useChatStore(
+    (s) => s.sessions[tabId]?.availableCommands,
+  );
   const agentSlashCommands = useMemo<SlashCommand[] | undefined>(() => {
     if (agentType !== "codex") return undefined;
     const fromAgent: SlashCommand[] = (availableCommands ?? [])
       .map((c) => {
-        const o = (c ?? {}) as { name?: string; description?: string; input?: unknown };
+        const o = (c ?? {}) as {
+          name?: string;
+          description?: string;
+          input?: unknown;
+        };
         const name = (o.name ?? "").replace(/^\//, "");
         return {
           name,
@@ -712,12 +793,15 @@ export function MessageInput({
   // fallback — instead the placeholder div below holds the layout slot at
   // the same height so the swap is invisible (no reflow, no mount/unmount
   // of an interactive element mid-typing).
-  const [LazyChatInput, setLazyChatInput] =
-    useState<typeof ChatInputComponent | null>(null);
-  const [LazyMentionPicker, setLazyMentionPicker] =
-    useState<typeof MentionPickerComponent | null>(null);
-  const [LazySlashPicker, setLazySlashPicker] =
-    useState<typeof SlashCommandPickerComponent | null>(null);
+  const [LazyChatInput, setLazyChatInput] = useState<
+    typeof ChatInputComponent | null
+  >(null);
+  const [LazyMentionPicker, setLazyMentionPicker] = useState<
+    typeof MentionPickerComponent | null
+  >(null);
+  const [LazySlashPicker, setLazySlashPicker] = useState<
+    typeof SlashCommandPickerComponent | null
+  >(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -747,7 +831,7 @@ export function MessageInput({
     if (focusedOnceRef.current) return;
     focusedOnceRef.current = true;
     window.dispatchEvent(
-      new CustomEvent("atlas:chat-input-focused", { detail: { tabId } })
+      new CustomEvent("atlas:chat-input-focused", { detail: { tabId } }),
     );
   }, [tabId]);
 
@@ -771,7 +855,9 @@ export function MessageInput({
   // Codex sign-in pill is handled in ChatComposer (it owns that probe state).
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
+      const detail = (
+        e as CustomEvent<{ sessionId?: string; agentType?: string }>
+      ).detail;
       if (detail?.agentType !== "claude-code") return;
       const sess = useChatStore.getState().sessions[tabId];
       if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;
@@ -781,23 +867,22 @@ export function MessageInput({
     return () => window.removeEventListener("atlas:auth-required", handler);
   }, [tabId, openLoginDialog]);
 
-  const handleMentionSelect = useCallback(
-    (mention: MentionData) => {
-      const t = triggerRef.current;
-      if (!t) return;
-      inputRef.current?.insertMention(mention, t.from, t.to);
-      // Trigger naturally closes when the doc no longer has an `@…` before
-      // the caret; the plugin will fire the null transition for us.
-    },
-    []
-  );
+  const handleMentionSelect = useCallback((mention: MentionData) => {
+    const t = triggerRef.current;
+    if (!t) return;
+    inputRef.current?.insertMention(mention, t.from, t.to);
+    // Trigger naturally closes when the doc no longer has an `@…` before
+    // the caret; the plugin will fire the null transition for us.
+  }, []);
 
   // ── Drag-and-drop OS files onto the composer → attach as mention chips ──
   const composerRef = useRef<HTMLDivElement>(null);
   const handleDropFiles = useCallback(
     (paths: string[]) => {
       const root =
-        projectPath && !projectPath.endsWith("/") ? `${projectPath}/` : projectPath;
+        projectPath && !projectPath.endsWith("/")
+          ? `${projectPath}/`
+          : projectPath;
       for (const abs of paths) {
         // Relative-to-project display name when the file lives inside the
         // project; otherwise just the basename (dropped files can be anywhere).
@@ -815,7 +900,7 @@ export function MessageInput({
       }
       requestAnimationFrame(() => inputRef.current?.focus());
     },
-    [projectPath]
+    [projectPath],
   );
   const { isDropTarget } = useComposerFileDrop({
     targetRef: composerRef,
@@ -873,7 +958,10 @@ export function MessageInput({
   const pickFilesOrPhotos = useCallback(async () => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const picked = await open({ multiple: true, title: "Attach files or photos" });
+      const picked = await open({
+        multiple: true,
+        title: "Attach files or photos",
+      });
       if (!picked) return;
       const paths = (Array.isArray(picked) ? picked : [picked]) as string[];
       const images: ImageAttachment[] = [];
@@ -923,8 +1011,20 @@ export function MessageInput({
           {
             name: "Media",
             extensions: [
-              "png", "jpg", "jpeg", "gif", "webp", "heic", "bmp", "svg",
-              "mp4", "mov", "webm", "m4v", "avi", "mkv",
+              "png",
+              "jpg",
+              "jpeg",
+              "gif",
+              "webp",
+              "heic",
+              "bmp",
+              "svg",
+              "mp4",
+              "mov",
+              "webm",
+              "m4v",
+              "avi",
+              "mkv",
             ],
           },
         ],
@@ -958,29 +1058,36 @@ export function MessageInput({
   // `screencapture` CLI (region selection or whole desktop), then attaches the
   // PNG — inline (multimodal) when the agent supports images, else as an @file
   // chip pointing at the saved `.atlas/screenshots/…` path.
-  const handleTakeScreenshot = useCallback(async (mode: "region" | "full") => {
-    try {
-      // Let the "+" menu fully close first so it (and any dropdown) isn't caught
-      // in a whole-desktop capture.
-      await new Promise((r) => setTimeout(r, 250));
-      const proj = useProjectStore.getState().currentProject?.path ?? null;
-      const res = await invoke<{ path: string; mimeType: string; dataBase64: string } | null>(
-        "capture_screenshot",
-        { mode, projectPath: proj },
-      );
-      if (!res) return; // cancelled (Esc during region select)
-      if (imageSupported) {
-        setStagedImages((prev) => [...prev, { mimeType: res.mimeType, dataBase64: res.dataBase64 }]);
-      } else {
-        handleDropFiles([res.path]);
+  const handleTakeScreenshot = useCallback(
+    async (mode: "region" | "full") => {
+      try {
+        // Let the "+" menu fully close first so it (and any dropdown) isn't caught
+        // in a whole-desktop capture.
+        await new Promise((r) => setTimeout(r, 250));
+        const proj = useProjectStore.getState().currentProject?.path ?? null;
+        const res = await invoke<{
+          path: string;
+          mimeType: string;
+          dataBase64: string;
+        } | null>("capture_screenshot", { mode, projectPath: proj });
+        if (!res) return; // cancelled (Esc during region select)
+        if (imageSupported) {
+          setStagedImages((prev) => [
+            ...prev,
+            { mimeType: res.mimeType, dataBase64: res.dataBase64 },
+          ]);
+        } else {
+          handleDropFiles([res.path]);
+        }
+        requestAnimationFrame(() => inputRef.current?.focus());
+      } catch (err) {
+        toast.error(
+          `Screenshot failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
-      requestAnimationFrame(() => inputRef.current?.focus());
-    } catch (err) {
-      toast.error(
-        `Screenshot failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }, [imageSupported, handleDropFiles]);
+    },
+    [imageSupported, handleDropFiles],
+  );
 
   // "+" menu → "Add from GitHub". Shorthand for the GitHub panel's search+clone:
   // download the repo into `<project>/.atlas/repos`, lock the composer while it
@@ -1000,7 +1107,8 @@ export function MessageInput({
         cloneUrl: repo.clone_url,
         repoName: repo.full_name.replace(/\//g, "-"),
       });
-      const folderName = dest.split("/").pop() || repo.full_name.replace(/\//g, "-");
+      const folderName =
+        dest.split("/").pop() || repo.full_name.replace(/\//g, "-");
       const mention: MentionRepo = {
         kind: "repo",
         id: dest,
@@ -1041,18 +1149,23 @@ export function MessageInput({
   // straight to the picked agent: an empty chat flips in place; a started chat
   // clears + rebinds in the SAME tab (singleton model — the abandoned turn
   // persists to the history sidebar).
-  const handleSwitchAgent = useCallback((next: SwitchableAgent) => {
-    const chat = useChatStore.getState();
-    const sess = chat.sessions[tabId];
-    if ((sess?.agentType ?? "claude-code") === next) return;
-    if ((sess?.messages.length ?? 0) === 0) {
-      chat.actions.switchChatAgent(tabId, next);
-    } else {
-      chat.actions.clearSession(tabId);
-      chat.actions.switchChatAgent(tabId, next);
-    }
-    window.dispatchEvent(new CustomEvent("atlas:chat-focus", { detail: { tabId } }));
-  }, [tabId]);
+  const handleSwitchAgent = useCallback(
+    (next: SwitchableAgent) => {
+      const chat = useChatStore.getState();
+      const sess = chat.sessions[tabId];
+      if ((sess?.agentType ?? "claude-code") === next) return;
+      if ((sess?.messages.length ?? 0) === 0) {
+        chat.actions.switchChatAgent(tabId, next);
+      } else {
+        chat.actions.clearSession(tabId);
+        chat.actions.switchChatAgent(tabId, next);
+      }
+      window.dispatchEvent(
+        new CustomEvent("atlas:chat-focus", { detail: { tabId } }),
+      );
+    },
+    [tabId],
+  );
 
   // Clipboard images (screenshots) → staged attachments. Returning false
   // lets chat-input's default file-paste (native pasteboard → quoted paths)
@@ -1124,7 +1237,7 @@ export function MessageInput({
       setSlashTrigger(null);
       onSend(`/${cmd.name}`, []);
     },
-    [openLoginDialog, onSend, disabled]
+    [openLoginDialog, onSend, disabled],
   );
 
   // Forward Up/Down/Enter/Esc/Backspace from CodeMirror to whichever
@@ -1182,7 +1295,7 @@ export function MessageInput({
           return false;
       }
     },
-    []
+    [],
   );
 
   // Auto-focus the composer whenever this panel mounts (tab switch back into
@@ -1246,7 +1359,8 @@ export function MessageInput({
   // the ACTIVE session reacts, so it doesn't fan out to every mounted chat tab.
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ text: string; tabId?: string }>).detail;
+      const detail = (e as CustomEvent<{ text: string; tabId?: string }>)
+        .detail;
       if (!detail?.text) return;
       if (detail.tabId) {
         // Tab-targeted insert (KB "send selection to chat"). The sender
@@ -1303,7 +1417,17 @@ export function MessageInput({
     // The value→draft sync effect will collapse the empty value into a
     // `delete s.drafts[tabId]` on the next commit, so no explicit
     // clearDraft call is needed.
-  }, [value, running, onSend, onStop, enqueueMessage, tabId, disabled, stagedImages, githubSyncing]);
+  }, [
+    value,
+    running,
+    onSend,
+    onStop,
+    enqueueMessage,
+    tabId,
+    disabled,
+    stagedImages,
+    githubSyncing,
+  ]);
 
   const trimmed = value.trim();
   // Tri-state button:
@@ -1322,7 +1446,9 @@ export function MessageInput({
   // composer no longer mirrors the setup phase here (the setup pill above the
   // input already communicates install/auth state). Only the queue hint
   // overrides it.
-  const effectivePlaceholder = running ? "Type to queue the next message…" : placeholder;
+  const effectivePlaceholder = running
+    ? "Type to queue the next message…"
+    : placeholder;
 
   return (
     <div className="px-4 pb-4 pt-2 bg-transparent">
@@ -1416,7 +1542,9 @@ export function MessageInput({
                     />
                     <button
                       onClick={() =>
-                        setStagedImages((prev) => prev.filter((_, j) => j !== i))
+                        setStagedImages((prev) =>
+                          prev.filter((_, j) => j !== i),
+                        )
                       }
                       className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-4 h-4 rounded-full bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                       title="Remove image"
@@ -1469,7 +1597,9 @@ export function MessageInput({
             <div className="flex items-center gap-1">
               <ComposerAddMenu
                 disabled={disabled || githubSyncing !== null}
-                projectPath={useProjectStore.getState().currentProject?.path ?? null}
+                projectPath={
+                  useProjectStore.getState().currentProject?.path ?? null
+                }
                 agentId={switchableAgent}
                 imageSupported={imageSupported}
                 onAddFilesOrPhotos={() => void pickFilesOrPhotos()}
@@ -1488,30 +1618,37 @@ export function MessageInput({
                 className="flex items-center gap-1.5 px-1.5 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] select-none"
                 title="Coding agent (switch with ⌥/ on a new chat)"
               >
-                <AgentMark agentType={agentType} className="!h-4 !w-4 !text-[9px] !rounded" />
+                <AgentMark
+                  agentType={agentType}
+                  className="!h-4 !w-4 !text-[9px] !rounded"
+                />
                 {AGENT_LABEL[switchableAgent]}
               </span>
               {agentType === "claude-code" && (
-              <button
-                onClick={() => cycleClaudePermissionMode(tabId)}
-                className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                title="Cycle permission mode (⇧⇥)"
-              >
-                <span
-                  className={cn(
-                    "w-1.5 h-1.5 rounded-full shrink-0",
-                    permissionMode === "default" && "bg-[var(--text-tertiary)]",
-                    permissionMode === "acceptEdits" && "bg-[var(--status-success)]",
-                    permissionMode === "plan" && "bg-[var(--accent-primary)]",
-                    permissionMode === "bypassPermissions" && "bg-[var(--status-error)]"
-                  )}
-                />
-                {CLAUDE_PERMISSION_MODE_LABEL[permissionMode]}
-              </button>
+                <button
+                  onClick={() => cycleClaudePermissionMode(tabId)}
+                  className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                  title="Cycle permission mode (⇧⇥)"
+                >
+                  <span
+                    className={cn(
+                      "w-1.5 h-1.5 rounded-full shrink-0",
+                      permissionMode === "default" &&
+                        "bg-[var(--text-tertiary)]",
+                      permissionMode === "acceptEdits" &&
+                        "bg-[var(--status-success)]",
+                      permissionMode === "plan" && "bg-[var(--accent-primary)]",
+                      permissionMode === "bypassPermissions" &&
+                        "bg-[var(--status-error)]",
+                    )}
+                  />
+                  {CLAUDE_PERMISSION_MODE_LABEL[permissionMode]}
+                </button>
               )}
-              {agentType !== "claude-code" && (hasAcpModes || acpModesPending) && (
-                <AcpModePicker tabId={tabId} />
-              )}
+              {agentType !== "claude-code" &&
+                (hasAcpModes || acpModesPending) && (
+                  <AcpModePicker tabId={tabId} />
+                )}
               {/* ACP first-party model picker — Claude Code / Codex advertise
                   their models in `session/new` (the native agent uses the BYOK
                   ProviderModelPills below instead). Renders nothing if empty. */}
@@ -1539,7 +1676,7 @@ export function MessageInput({
                   "flex items-center justify-center w-7 h-7 rounded-full transition-colors",
                   buttonEnabled
                     ? "bg-[var(--text-primary)] text-[var(--bg-primary)] hover:bg-[var(--text-secondary)] cursor-pointer"
-                    : "bg-[var(--bg-elevated)] text-[var(--text-tertiary)] cursor-not-allowed"
+                    : "bg-[var(--bg-elevated)] text-[var(--text-tertiary)] cursor-not-allowed",
                 )}
                 title={
                   mode === "stop"
@@ -1547,8 +1684,8 @@ export function MessageInput({
                       ? "Stopping… (waiting for the agent to wind down)"
                       : "Stop generation"
                     : mode === "queue"
-                    ? "Queue message (sends after current finishes)"
-                    : "Send to agent (⌘↵)"
+                      ? "Queue message (sends after current finishes)"
+                      : "Send to agent (⌘↵)"
                 }
               >
                 {mode === "stop" ? (
@@ -1593,7 +1730,10 @@ export function MessageInput({
           footerLabel={agentType === "codex" ? "Codex commands" : undefined}
         />
       )}
-      <CodexLoginDialog open={codexLoginOpen} onOpenChange={setCodexLoginOpen} />
+      <CodexLoginDialog
+        open={codexLoginOpen}
+        onOpenChange={setCodexLoginOpen}
+      />
     </div>
   );
 }

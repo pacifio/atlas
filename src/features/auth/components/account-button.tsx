@@ -56,7 +56,9 @@ export function AccountButton() {
         // label or border — the pointer is most of what says it is pressable.
         // Matches the title bar's project-name button beside it.
         "cursor-pointer hover:bg-[#ffffff08] outline-none focus:outline-none",
-        signedIn || connecting ? "text-[#ccc]" : "text-[#555] hover:text-[#aaa]",
+        signedIn || connecting
+          ? "text-[#ccc]"
+          : "text-[#555] hover:text-[#aaa]",
       )}
     >
       {starting || connecting ? (

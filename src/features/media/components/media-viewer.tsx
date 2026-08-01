@@ -34,7 +34,8 @@ export function MediaViewer({ filePath }: MediaViewerProps) {
   useEffect(() => {
     refreshMtime();
     window.addEventListener("atlas:window-active", refreshMtime);
-    return () => window.removeEventListener("atlas:window-active", refreshMtime);
+    return () =>
+      window.removeEventListener("atlas:window-active", refreshMtime);
   }, [refreshMtime]);
 
   const src = useMemo(() => {

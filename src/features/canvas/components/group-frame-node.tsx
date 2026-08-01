@@ -4,5 +4,7 @@ import { memo } from "react";
  *  non-interactive React Flow node placed FIRST in the node array (and thus
  *  painted below every real node), so nodes always sit above the border. */
 export const GroupFrameNode = memo(function GroupFrameNode() {
-  return <div className="h-full w-full rounded-lg border border-dashed border-white/30" />;
+  return (
+    <div className="h-full w-full rounded-lg border border-dashed border-white/30" />
+  );
 });

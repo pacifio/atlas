@@ -18,7 +18,10 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { openFile } from "@/lib/open-file";
 import { openGitDiff } from "@/features/git/lib/git-diff-api";
-import { useGitStore, type GitFileStatus } from "@/features/git/stores/git-store";
+import {
+  useGitStore,
+  type GitFileStatus,
+} from "@/features/git/stores/git-store";
 import type { ChatMessage, TurnFile } from "@/types/agent";
 
 /** Compact token count: 1.2k / 42.1k / 1.0M. */
@@ -175,8 +178,7 @@ export const TurnSummaryCard = memo(function TurnSummaryCard({
       toast.error("Pick a BYOK model in the composer first to draw diagrams");
       return;
     }
-    const projectPath =
-      useProjectStore.getState().currentProject?.path ?? "/";
+    const projectPath = useProjectStore.getState().currentProject?.path ?? "/";
     const editedPaths = edits.map((f) => f.path);
     const prompt = [
       "Draw a clear architecture/flow diagram of the changes just made" +
@@ -194,16 +196,14 @@ export const TurnSummaryCard = memo(function TurnSummaryCard({
     // the loading state and can keep chatting with the diagram afterward.
     const groupId = canvas.createAiGroup(anchor, byok.provider, byok.model);
     canvas.requestOpenAiThread(groupId);
-    void useCanvasAiStore
-      .getState()
-      .actions.generate({
-        groupId,
-        anchor,
-        prompt,
-        provider: byok.provider,
-        model: byok.model,
-        projectPath,
-      });
+    void useCanvasAiStore.getState().actions.generate({
+      groupId,
+      anchor,
+      prompt,
+      provider: byok.provider,
+      model: byok.model,
+      projectPath,
+    });
     // Reveal the Spaces tab so the user watches it draw.
     const layout = useLayoutStore.getState().actions;
     layout.addTab({
@@ -277,29 +277,31 @@ export const TurnSummaryCard = memo(function TurnSummaryCard({
           </div>
           <div className="flex flex-wrap gap-1.5">
             {chips.map((chip, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() =>
-                window.dispatchEvent(
-                  // Stamp the ORIGIN tab id so only this chat session sends it —
-                  // the listener is a global window event and every mounted
-                  // ChatPanel hears it, so without this every session would fire.
-                  new CustomEvent("atlas:chat-send", { detail: { text: chip, tabId } }),
-                )
-              }
-              className={cn(
-                "group flex items-center gap-1.5 rounded-full border border-[var(--border-default)]",
-                "bg-[var(--bg-secondary)] px-3 py-1 text-[11px] text-[var(--text-secondary)]",
-                "transition-colors hover:border-[var(--border-focus)] hover:text-[var(--text-primary)]",
-              )}
-            >
-              <span className="max-w-[280px] truncate">{chip}</span>
-              <ArrowRight
-                size={11}
-                className="shrink-0 text-[var(--text-tertiary)] group-hover:text-[var(--accent-primary)]"
-              />
-            </button>
+              <button
+                key={i}
+                type="button"
+                onClick={() =>
+                  window.dispatchEvent(
+                    // Stamp the ORIGIN tab id so only this chat session sends it —
+                    // the listener is a global window event and every mounted
+                    // ChatPanel hears it, so without this every session would fire.
+                    new CustomEvent("atlas:chat-send", {
+                      detail: { text: chip, tabId },
+                    }),
+                  )
+                }
+                className={cn(
+                  "group flex items-center gap-1.5 rounded-full border border-[var(--border-default)]",
+                  "bg-[var(--bg-secondary)] px-3 py-1 text-[11px] text-[var(--text-secondary)]",
+                  "transition-colors hover:border-[var(--border-focus)] hover:text-[var(--text-primary)]",
+                )}
+              >
+                <span className="max-w-[280px] truncate">{chip}</span>
+                <ArrowRight
+                  size={11}
+                  className="shrink-0 text-[var(--text-tertiary)] group-hover:text-[var(--accent-primary)]"
+                />
+              </button>
             ))}
           </div>
         </div>
@@ -332,9 +334,7 @@ export const TurnSummaryCard = memo(function TurnSummaryCard({
           )
         )}
         <ActionButton
-          icon={
-            <span className="inline-block h-2 w-2 rounded-full bg-white" />
-          }
+          icon={<span className="inline-block h-2 w-2 rounded-full bg-white" />}
           label="Save to KB"
           onClick={saveToKb}
         />
@@ -364,7 +364,12 @@ function TurnFileList({ files }: { files: TurnFile[] }) {
   return (
     <>
       {files.map((f) => (
-        <FileRow key={`${f.kind}:${f.path}`} file={f} repoPath={repoPath} gitFiles={gitFiles} />
+        <FileRow
+          key={`${f.kind}:${f.path}`}
+          file={f}
+          repoPath={repoPath}
+          gitFiles={gitFiles}
+        />
       ))}
     </>
   );
@@ -407,7 +412,8 @@ const FileRow = memo(function FileRow({
     }
   };
   const openInDiff = () => {
-    if (repoPath && rel) openGitDiff(repoPath, rel, scEntry?.staged ?? false, null);
+    if (repoPath && rel)
+      openGitDiff(repoPath, rel, scEntry?.staged ?? false, null);
   };
 
   // Clicking the path itself runs the primary action (diff when tracked, else
@@ -419,7 +425,10 @@ const FileRow = memo(function FileRow({
       <FileStatusBadge file={file} />
       <button
         type="button"
-        onClick={(e) => { e.stopPropagation(); openPrimary(); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          openPrimary();
+        }}
         className="min-w-0 truncate text-left text-[var(--text-secondary)] underline-offset-2 transition-colors hover:text-[var(--text-primary)] hover:underline"
       >
         {file.path}
@@ -428,10 +437,22 @@ const FileRow = memo(function FileRow({
       {/* Actions — icons, revealed on row hover. */}
       <span className="ml-auto flex shrink-0 items-center gap-2 pl-2 opacity-0 transition-opacity group-hover:opacity-100">
         {inSourceControl && (
-          <FileAction icon={<GitCompare size={12} />} title="Open diff" onClick={openInDiff} />
+          <FileAction
+            icon={<GitCompare size={12} />}
+            title="Open diff"
+            onClick={openInDiff}
+          />
         )}
-        <FileAction icon={<Code size={12} />} title="Open in editor" onClick={openInEditor} />
-        <FileAction icon={<FolderOpen size={12} />} title="Reveal in Finder" onClick={openInFinder} />
+        <FileAction
+          icon={<Code size={12} />}
+          title="Open in editor"
+          onClick={openInEditor}
+        />
+        <FileAction
+          icon={<FolderOpen size={12} />}
+          title="Reveal in Finder"
+          onClick={openInFinder}
+        />
       </span>
 
       {isEdit && (file.added > 0 || file.removed > 0) && (
@@ -440,7 +461,9 @@ const FileRow = memo(function FileRow({
             <span className="text-[var(--status-success)]">+{file.added}</span>
           )}
           {file.removed > 0 && (
-            <span className="ml-1 text-[var(--status-error)]">−{file.removed}</span>
+            <span className="ml-1 text-[var(--status-error)]">
+              −{file.removed}
+            </span>
           )}
         </span>
       )}
@@ -450,7 +473,15 @@ const FileRow = memo(function FileRow({
 
 /** A tiny icon button for a per-file open action (Diff / Editor / Finder).
  *  `title` provides the tooltip that the removed text label used to convey. */
-function FileAction({ icon, title, onClick }: { icon: React.ReactNode; title: string; onClick: () => void }) {
+function FileAction({
+  icon,
+  title,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"

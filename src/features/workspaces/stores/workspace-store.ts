@@ -194,7 +194,9 @@ function teardownHot(id: string): void {
   useLayoutStore.getState().actions.removeWorkspaceView(id);
   void invoke("fileindex_close_project", { workspaceId: id }).catch(() => {});
   void invoke("git_watch_stop", { workspaceId: id }).catch(() => {});
-  void invoke("recent_files_close_project", { workspaceId: id }).catch(() => {});
+  void invoke("recent_files_close_project", { workspaceId: id }).catch(
+    () => {},
+  );
   void invoke("mention_cache_clear", { workspaceId: id }).catch(() => {});
 }
 
@@ -277,7 +279,9 @@ export const useWorkspaceStore = createSelectors(
           const candidates = mounted
             .filter(evictable)
             .sort((a, b) =>
-              (byId(a)?.lastActiveAt ?? "").localeCompare(byId(b)?.lastActiveAt ?? ""),
+              (byId(a)?.lastActiveAt ?? "").localeCompare(
+                byId(b)?.lastActiveAt ?? "",
+              ),
             );
           if (candidates.length === 0) break; // all pinned/running — exceed cap
           const lru = candidates[0];
@@ -321,7 +325,10 @@ export const useWorkspaceStore = createSelectors(
         //    immediately even though the real `activeWorkspaceId` lags behind.
         const pinnedNow = get().sidebarPinned;
         const wasOpen = get().sidebarOpen && !pinnedNow;
-        set({ optimisticActiveId: id, ...(pinnedNow ? {} : { sidebarOpen: false }) });
+        set({
+          optimisticActiveId: id,
+          ...(pinnedNow ? {} : { sidebarOpen: false }),
+        });
 
         // A switch already in flight → don't DROP the click; remember the latest
         // target and run it when the current one settles (coalesce). The close +
@@ -369,7 +376,10 @@ export const useWorkspaceStore = createSelectors(
             // The snapshot is then taken AFTER the flush so it reflects the
             // just-saved state. `flushAll` swallows per-store errors, so a bad
             // flush can't block the switch.
-            await flushAll({ workspaceId: activeWorkspaceId, path: outgoingPath });
+            await flushAll({
+              workspaceId: activeWorkspaceId,
+              path: outgoingPath,
+            });
             captureSnapshot(activeWorkspaceId);
           }
 
@@ -459,9 +469,8 @@ export const useWorkspaceStore = createSelectors(
 
         if (isActive) {
           // Switch to the most-recently-active remaining workspace, or clear.
-          const next = [...remaining].sort(
-            (a, b) =>
-              (b.lastActiveAt ?? "").localeCompare(a.lastActiveAt ?? ""),
+          const next = [...remaining].sort((a, b) =>
+            (b.lastActiveAt ?? "").localeCompare(a.lastActiveAt ?? ""),
           )[0];
           if (next) {
             set({ activeWorkspaceId: null });
@@ -551,7 +560,10 @@ export const useWorkspaceStore = createSelectors(
           orgId: activeOrgId(),
         };
         // Open the new group straight into inline-rename so the user can name it.
-        set((s) => ({ groups: [...s.groups, group], editingGroupId: group.id }));
+        set((s) => ({
+          groups: [...s.groups, group],
+          editingGroupId: group.id,
+        }));
         scheduleAppStateSave();
         return group.id;
       },
@@ -575,13 +587,17 @@ export const useWorkspaceStore = createSelectors(
       },
       pinGroup: (id) => {
         set((s) => ({
-          groups: s.groups.map((g) => (g.id === id ? { ...g, pinned: true } : g)),
+          groups: s.groups.map((g) =>
+            g.id === id ? { ...g, pinned: true } : g,
+          ),
         }));
         scheduleAppStateSave();
       },
       unpinGroup: (id) => {
         set((s) => ({
-          groups: s.groups.map((g) => (g.id === id ? { ...g, pinned: false } : g)),
+          groups: s.groups.map((g) =>
+            g.id === id ? { ...g, pinned: false } : g,
+          ),
         }));
         scheduleAppStateSave();
       },
@@ -592,15 +608,21 @@ export const useWorkspaceStore = createSelectors(
           const sidebarPinned = !s.sidebarPinned;
           try {
             localStorage.setItem(SIDEBAR_PINNED_KEY, sidebarPinned ? "1" : "0");
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
           // Pinning docks it into view immediately; unpinning leaves the
           // (now overlay) sidebar in whatever open state it was.
-          return sidebarPinned ? { sidebarPinned, sidebarOpen: true } : { sidebarPinned };
+          return sidebarPinned
+            ? { sidebarPinned, sidebarOpen: true }
+            : { sidebarPinned };
         }),
       setSidebarPinned: (pinned) => {
         try {
           localStorage.setItem(SIDEBAR_PINNED_KEY, pinned ? "1" : "0");
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
         set({ sidebarPinned: pinned });
       },
 

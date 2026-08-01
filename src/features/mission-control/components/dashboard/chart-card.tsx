@@ -28,14 +28,20 @@ export function ChartCard({
     >
       <div className="flex items-center justify-between px-3.5 pt-3 pb-1 shrink-0">
         <div className="min-w-0">
-          <div className="text-[12px] font-medium text-[var(--text-primary)] truncate">{title}</div>
+          <div className="text-[12px] font-medium text-[var(--text-primary)] truncate">
+            {title}
+          </div>
           {subtitle && (
-            <div className="text-[10px] text-[var(--text-tertiary)] truncate">{subtitle}</div>
+            <div className="text-[10px] text-[var(--text-tertiary)] truncate">
+              {subtitle}
+            </div>
           )}
         </div>
         {right}
       </div>
-      <div className={cn("flex-1 min-h-0 px-2 pb-2", bodyClassName)}>{children}</div>
+      <div className={cn("flex-1 min-h-0 px-2 pb-2", bodyClassName)}>
+        {children}
+      </div>
     </div>
   );
 }

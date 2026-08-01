@@ -98,7 +98,12 @@ export const useSharedMemoryStore = createSelectors(
         if (!projectPath) return;
         await sharedMemory.clear(projectPath);
         if (get().projectPath !== projectPath) return;
-        set({ state: EMPTY_STATE, events: [], queryResults: [], queryText: "" });
+        set({
+          state: EMPTY_STATE,
+          events: [],
+          queryResults: [],
+          queryText: "",
+        });
       },
     },
   })),

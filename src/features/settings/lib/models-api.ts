@@ -58,10 +58,16 @@ export const models = {
   reindex: (cwd: string) => invoke<void>("force_reindex", { cwd }),
 };
 
-export const listenModelProgress = (cb: (p: DownloadProgress) => void): Promise<UnlistenFn> =>
-  listen<DownloadProgress>("atlas:model-download:progress", (e) => cb(e.payload));
+export const listenModelProgress = (
+  cb: (p: DownloadProgress) => void,
+): Promise<UnlistenFn> =>
+  listen<DownloadProgress>("atlas:model-download:progress", (e) =>
+    cb(e.payload),
+  );
 
-export const listenModelDone = (cb: (d: DownloadDone) => void): Promise<UnlistenFn> =>
+export const listenModelDone = (
+  cb: (d: DownloadDone) => void,
+): Promise<UnlistenFn> =>
   listen<DownloadDone>("atlas:model-download:done", (e) => cb(e.payload));
 
 /** Fires whenever the catalog's on-disk / selection state changes. */

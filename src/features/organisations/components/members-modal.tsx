@@ -131,7 +131,8 @@ export function MembersModal({
   const invalidInvites = pendingInvites.filter((e) => !isEmail(e));
 
   const submitInvite = async () => {
-    if (!orgId || pendingInvites.length === 0 || invalidInvites.length > 0) return;
+    if (!orgId || pendingInvites.length === 0 || invalidInvites.length > 0)
+      return;
     setInviting(true);
     // Sequential, not Promise.all: every /api/auth/* path shares one
     // 100-req/60s budget, and a partial failure should still leave the invites
@@ -178,9 +179,7 @@ export function MembersModal({
           className="fixed top-8.5 left-4 right-4 bottom-6 rounded-xl border border-[var(--border-default)] bg-[var(--bg-sidebar)] overflow-hidden flex flex-col shadow-[var(--shadow-overlay)] focus:outline-none"
           style={{ zIndex: "var(--z-modal)" as unknown as number }}
         >
-          <Dialog.Title className="sr-only">
-            Members of {org.name}
-          </Dialog.Title>
+          <Dialog.Title className="sr-only">Members of {org.name}</Dialog.Title>
 
           {/* Header — mirrors the git-graph fullscreen bar. */}
           <div className="flex items-center justify-between px-3 h-[32px] shrink-0 border-b border-border-subtle">
@@ -335,7 +334,9 @@ export function MembersModal({
                           snapshot.status === "signed-in" &&
                           snapshot.user?.id === m.userId
                         }
-                        onRole={(role) => orgId && void setRole(orgId, m.id, role)}
+                        onRole={(role) =>
+                          orgId && void setRole(orgId, m.id, role)
+                        }
                         onRemove={() => orgId && void remove(orgId, m)}
                       />
                     ))
@@ -401,7 +402,9 @@ function MemberRow({
             <span className="block truncate text-[12px] text-text-primary">
               {member.name || member.email}
               {isSelf && (
-                <span className="ml-1.5 text-[10px] text-text-tertiary">You</span>
+                <span className="ml-1.5 text-[10px] text-text-tertiary">
+                  You
+                </span>
               )}
             </span>
             {member.name && (
@@ -491,16 +494,28 @@ function InviteRow({
   return (
     <div className="border-b border-border-subtle">
       <div className="w-full flex items-center h-[40px] px-3 text-left transition-colors hover:bg-bg-hover">
-        <span className={cn(COL.person, "min-w-0 truncate text-[12px] text-text-primary")}>
+        <span
+          className={cn(
+            COL.person,
+            "min-w-0 truncate text-[12px] text-text-primary",
+          )}
+        >
           {invite.email}
         </span>
         <span className={cn(COL.role, "text-[11px] text-text-secondary")}>
           {invite.role ? ROLE_LABELS[invite.role] : "—"}
         </span>
-        <span className={cn(COL.joined, "text-[10px] text-text-tertiary capitalize")}>
+        <span
+          className={cn(
+            COL.joined,
+            "text-[10px] text-text-tertiary capitalize",
+          )}
+        >
           {invite.status}
         </span>
-        <span className={cn(COL.actions, "flex items-center justify-end gap-0.5")}>
+        <span
+          className={cn(COL.actions, "flex items-center justify-end gap-0.5")}
+        >
           {invite.acceptUrl && (
             <button
               onClick={() =>

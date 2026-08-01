@@ -141,7 +141,10 @@ function parseLarge(source: string): Promise<string> {
     p = new Promise<string>((resolve) => {
       const startedAt = performance.now();
       const w2 = window as Window & {
-        requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number;
+        requestIdleCallback?: (
+          cb: () => void,
+          opts?: { timeout?: number },
+        ) => number;
       };
       const schedule = () =>
         typeof w2.requestIdleCallback === "function"
@@ -224,7 +227,8 @@ export function CachedMarkdown({ source, className }: CachedMarkdownProps) {
       if (copyBtn instanceof HTMLElement) {
         e.preventDefault();
         const pre = copyBtn.closest("pre");
-        const text = pre?.querySelector("code")?.textContent ?? pre?.textContent ?? "";
+        const text =
+          pre?.querySelector("code")?.textContent ?? pre?.textContent ?? "";
         void navigator.clipboard.writeText(text).catch(() => {});
         copyBtn.textContent = "Copied";
         window.setTimeout(() => {
@@ -235,7 +239,11 @@ export function CachedMarkdown({ source, className }: CachedMarkdownProps) {
       // External links: open in the system browser via the opener plugin
       // rather than letting an `<a>` navigate the WKWebView away from Atlas.
       const anchor = target?.closest?.("a");
-      if (anchor instanceof HTMLAnchorElement && anchor.href && /^https?:/i.test(anchor.href)) {
+      if (
+        anchor instanceof HTMLAnchorElement &&
+        anchor.href &&
+        /^https?:/i.test(anchor.href)
+      ) {
         e.preventDefault();
         const href = anchor.href;
         void import("@tauri-apps/plugin-opener")

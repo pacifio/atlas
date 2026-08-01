@@ -1,10 +1,5 @@
 import { useProjectStore } from "../stores/project-store";
-import {
-  FolderOpen,
-  Clock,
-  X,
-  Folder,
-} from "lucide-react";
+import { FolderOpen, Clock, X, Folder } from "lucide-react";
 import { AtlasIcon } from "@/components/atlas-icon";
 
 export function WelcomeScreen() {
@@ -42,9 +37,16 @@ export function WelcomeScreen() {
           onClick={handleOpenFolder}
           className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md border border-[var(--border-default)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)] transition-colors text-left group"
         >
-          <FolderOpen size={14} className="text-[var(--accent-primary)] shrink-0" />
-          <span className="text-[12px] font-medium text-[var(--text-primary)]">Open Folder</span>
-          <span className="text-[10px] text-[var(--text-tertiary)] ml-auto font-mono">⌘O</span>
+          <FolderOpen
+            size={14}
+            className="text-[var(--accent-primary)] shrink-0"
+          />
+          <span className="text-[12px] font-medium text-[var(--text-primary)]">
+            Open Folder
+          </span>
+          <span className="text-[10px] text-[var(--text-tertiary)] ml-auto font-mono">
+            ⌘O
+          </span>
         </button>
 
         {/* Recent projects */}
@@ -93,11 +95,14 @@ export function WelcomeScreen() {
         {/* Hint */}
         <div className="text-center">
           <span className="text-[10px] text-[var(--text-tertiary)]">
-            Press <kbd className="px-1 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[9px] font-mono">⌘K</kbd> for command palette
+            Press{" "}
+            <kbd className="px-1 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[9px] font-mono">
+              ⌘K
+            </kbd>{" "}
+            for command palette
           </span>
         </div>
       </div>
     </div>
   );
 }
-

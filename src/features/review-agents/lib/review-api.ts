@@ -99,12 +99,16 @@ export const listenReview = (
 /** Serialize a single file's verdict to markdown for sharing with the agent. */
 export function fileToMarkdown(file: FileVerdict): string {
   const lines: string[] = [];
-  lines.push(`Please review and address the following in \`${file.path}\` (risk: ${file.risk}):`);
+  lines.push(
+    `Please review and address the following in \`${file.path}\` (risk: ${file.risk}):`,
+  );
   lines.push("");
   if (file.summary) lines.push(file.summary, "");
   for (const i of file.key_issues) {
     const at = typeof i.start_line === "number" ? `:${i.start_line}` : "";
-    lines.push(`- **${i.issue_header}** (\`${i.relevant_file}${at}\`) — ${i.issue_content}`);
+    lines.push(
+      `- **${i.issue_header}** (\`${i.relevant_file}${at}\`) — ${i.issue_content}`,
+    );
   }
   return lines.join("\n");
 }
@@ -122,11 +126,21 @@ export function reportToMarkdown(record: ReviewRecord): string {
     meta.push(`**Effort:** ${r.estimated_effort_to_review}/5`);
   meta.push(`**Tests:** ${r.relevant_tests}`);
   if (meta.length) lines.push(meta.join(" · "), "");
-  if (r.security_concerns && r.security_concerns.trim().toLowerCase() !== "no") {
+  if (
+    r.security_concerns &&
+    r.security_concerns.trim().toLowerCase() !== "no"
+  ) {
     lines.push(`**Security:** ${r.security_concerns}`, "");
   }
   if (r.architecture_mermaid.trim()) {
-    lines.push("## Architecture", "", "```mermaid", r.architecture_mermaid.trim(), "```", "");
+    lines.push(
+      "## Architecture",
+      "",
+      "```mermaid",
+      r.architecture_mermaid.trim(),
+      "```",
+      "",
+    );
   }
   if (r.files.length) {
     lines.push("## Files", "");
@@ -135,13 +149,17 @@ export function reportToMarkdown(record: ReviewRecord): string {
       if (f.summary) lines.push(f.summary);
       for (const i of f.key_issues) {
         const at = typeof i.start_line === "number" ? `:${i.start_line}` : "";
-        lines.push(`- **${i.issue_header}** (\`${i.relevant_file}${at}\`) — ${i.issue_content}`);
+        lines.push(
+          `- **${i.issue_header}** (\`${i.relevant_file}${at}\`) — ${i.issue_content}`,
+        );
       }
       lines.push("");
     }
   }
   if (r.not_reviewed.length) {
-    lines.push(`_Not individually reviewed (${r.not_reviewed.length}): ${r.not_reviewed.join(", ")}_`);
+    lines.push(
+      `_Not individually reviewed (${r.not_reviewed.length}): ${r.not_reviewed.join(", ")}_`,
+    );
   }
   return lines.join("\n");
 }

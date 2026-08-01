@@ -58,7 +58,11 @@ function freshTabId(): string {
  * load flow (focus-if-open, reuse-idle-tab-else-new) so it can be invoked from
  * anywhere (e.g. the workspace switcher's Chats section).
  */
-export async function openAgentSession({ acpSessionId, title, cwd }: OpenOpts): Promise<void> {
+export async function openAgentSession({
+  acpSessionId,
+  title,
+  cwd,
+}: OpenOpts): Promise<void> {
   const chat = useChatStore.getState();
   const layout = useLayoutStore.getState();
   const { addTab, setActiveTab } = layout.actions;
@@ -92,10 +96,13 @@ export async function openAgentSession({ acpSessionId, title, cwd }: OpenOpts): 
   //    idle (load in place — the "open in the agent chat tab" behaviour);
   //    otherwise open a FRESH tab so we never overwrite a running/other session.
   const activeId = layout.activeTabId;
-  const activeTab = activeId ? layout.tabs.find((t) => t.id === activeId) : undefined;
+  const activeTab = activeId
+    ? layout.tabs.find((t) => t.id === activeId)
+    : undefined;
   const activeSession = activeId ? chat.sessions[activeId] : undefined;
   const reuse =
-    activeTab?.type === "chat" && (!activeSession || activeSession.status === "idle");
+    activeTab?.type === "chat" &&
+    (!activeSession || activeSession.status === "idle");
   const targetTabId = reuse && activeId ? activeId : freshTabId();
 
   if (targetTabId !== activeId) {
@@ -187,7 +194,9 @@ export function openNewAgentChat(): void {
   const { clearSession, createSession } = chat.actions;
 
   const focus = (id: string) =>
-    window.dispatchEvent(new CustomEvent("atlas:chat-focus", { detail: { tabId: id } }));
+    window.dispatchEvent(
+      new CustomEvent("atlas:chat-focus", { detail: { tabId: id } }),
+    );
 
   // Prefer the ACTIVE chat tab; fall back to the first chat tab. Multiple chat
   // tabs can coexist (handleOpenAgent spawns a new one when the current chat is
@@ -203,7 +212,9 @@ export function openNewAgentChat(): void {
     // Stop an in-flight turn before resetting so it doesn't keep streaming into
     // an orphaned (hidden) session. Its transcript still persists → history.
     if (s?.status === "running" && s.acpAgentId && s.acpSessionId) {
-      agents.cancel({ agent_id: s.acpAgentId, session_id: s.acpSessionId }).catch(() => {});
+      agents
+        .cancel({ agent_id: s.acpAgentId, session_id: s.acpSessionId })
+        .catch(() => {});
     }
     // Cancel any in-flight history load targeting this tab BEFORE clearing, so a
     // resolving `loadSession → replaceMessages` chain can't repaint the freshly
@@ -220,7 +231,14 @@ export function openNewAgentChat(): void {
 
   // No chat tab open yet → create the one and only one.
   const id = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  addTab({ id, type: "chat", title: "Agents", closable: true, dirty: false, data: {} });
+  addTab({
+    id,
+    type: "chat",
+    title: "Agents",
+    closable: true,
+    dirty: false,
+    data: {},
+  });
   createSession(id);
   setActiveTab(id);
 }

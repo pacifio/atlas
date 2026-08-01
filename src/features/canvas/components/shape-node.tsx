@@ -32,7 +32,14 @@ function ShapeSvg({ type, stroke }: { type: ShapeType; stroke: string }) {
       ) : type === "diamond" ? (
         <polygon points="50,1 99,50 50,99 1,50" {...common} />
       ) : (
-        <rect x={1} y={1} width={98} height={98} rx={type === "rounded" ? 14 : 0} {...common} />
+        <rect
+          x={1}
+          y={1}
+          width={98}
+          height={98}
+          rx={type === "rounded" ? 14 : 0}
+          {...common}
+        />
       )}
     </svg>
   );
@@ -40,9 +47,14 @@ function ShapeSvg({ type, stroke }: { type: ShapeType; stroke: string }) {
 
 /** Geometric flowchart shape. Connectable from any side (shared handles); the
  *  only editable content is a centered text label (double-click to edit). */
-export const ShapeNode = memo(function ShapeNode({ id, data, selected }: NodeProps) {
+export const ShapeNode = memo(function ShapeNode({
+  id,
+  data,
+  selected,
+}: NodeProps) {
   const d = data as ShapeNodeData;
-  const { updateNote, moveNote, beginInteraction } = useCanvasStore.use.actions();
+  const { updateNote, moveNote, beginInteraction } =
+    useCanvasStore.use.actions();
   const ref = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState(false);
 
@@ -71,7 +83,10 @@ export const ShapeNode = memo(function ShapeNode({ id, data, selected }: NodePro
   return (
     // React Flow owns the box size (so NodeResizer can drive it); the shape fills
     // it. Size is persisted to the store via onResize.
-    <div className="group relative h-full w-full" onDoubleClick={() => setEditing(true)}>
+    <div
+      className="group relative h-full w-full"
+      onDoubleClick={() => setEditing(true)}
+    >
       <NodeResizer
         isVisible={selected}
         minWidth={40}
@@ -96,7 +111,9 @@ export const ShapeNode = memo(function ShapeNode({ id, data, selected }: NodePro
             // An empty contentEditable has no line box, so the caret can't render;
             // a min line-height gives it one when the shape has no text yet.
             "min-h-[1.25em] min-w-[2px]",
-            editing ? "nodrag cursor-text select-text" : "cursor-default select-none",
+            editing
+              ? "nodrag cursor-text select-text"
+              : "cursor-default select-none",
           )}
           contentEditable={editing}
           suppressContentEditableWarning

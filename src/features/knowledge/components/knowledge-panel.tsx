@@ -3,7 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useKnowledgeStore } from "../stores/knowledge-store";
-import { useKnowledgeMetaStore, usePageMeta } from "../stores/knowledge-meta-store";
+import {
+  useKnowledgeMetaStore,
+  usePageMeta,
+} from "../stores/knowledge-meta-store";
 import {
   useKnowledgeLinksStore,
   useBacklinks,
@@ -67,7 +70,12 @@ export function KnowledgePanel() {
   const [activeRepoName, setActiveRepoName] = useState<string | null>(null);
   const [repoReadme, setRepoReadme] = useState<string | null>(null);
   const [clonedRepos, setClonedRepos] = useState<
-    Array<{ name: string; display_name: string; path: string; has_readme: boolean }>
+    Array<{
+      name: string;
+      display_name: string;
+      path: string;
+      has_readme: boolean;
+    }>
   >([]);
   // KB panel layout is hoisted into layout-store so tab switches don't
   // reset sidebar/inspector visibility or column widths — same model the
@@ -88,10 +96,7 @@ export function KnowledgePanel() {
   // the panel border; mousedown captures pointer + listens for global
   // mousemove until release. `from` is the side being resized.
   const startResize = useCallback(
-    (
-      e: React.MouseEvent,
-      from: "sidebar" | "inspector",
-    ) => {
+    (e: React.MouseEvent, from: "sidebar" | "inspector") => {
       e.preventDefault();
       const startX = e.clientX;
       const startW = from === "sidebar" ? sidebarWidth : inspectorWidth;
@@ -115,7 +120,12 @@ export function KnowledgePanel() {
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
-    [sidebarWidth, inspectorWidth, setKnowledgeSidebarWidth, setKnowledgeInspectorWidth],
+    [
+      sidebarWidth,
+      inspectorWidth,
+      setKnowledgeSidebarWidth,
+      setKnowledgeInspectorWidth,
+    ],
   );
   const [recentIds, setRecentIds] = useState<string[]>([]);
   const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
@@ -138,8 +148,11 @@ export function KnowledgePanel() {
     clearDocCache();
   }, [currentProject?.path]);
 
-  const { bind: bindMeta, unbind: unbindMeta, drop: dropMeta } =
-    useKnowledgeMetaStore.use.actions();
+  const {
+    bind: bindMeta,
+    unbind: unbindMeta,
+    drop: dropMeta,
+  } = useKnowledgeMetaStore.use.actions();
   const {
     bind: bindLinks,
     unbind: unbindLinks,
@@ -153,17 +166,28 @@ export function KnowledgePanel() {
       loadEntries(currentProject.path);
       void bindMeta(currentProject.path);
       void bindLinks(currentProject.path);
-      invoke<Array<{ name: string; display_name: string; path: string; has_readme: boolean }>>(
-        "list_cloned_repos",
-        { projectPath: currentProject.path },
-      )
+      invoke<
+        Array<{
+          name: string;
+          display_name: string;
+          path: string;
+          has_readme: boolean;
+        }>
+      >("list_cloned_repos", { projectPath: currentProject.path })
         .then(setClonedRepos)
         .catch(() => {});
     } else {
       unbindMeta();
       unbindLinks();
     }
-  }, [currentProject?.path, loadEntries, bindMeta, unbindMeta, bindLinks, unbindLinks]);
+  }, [
+    currentProject?.path,
+    loadEntries,
+    bindMeta,
+    unbindMeta,
+    bindLinks,
+    unbindLinks,
+  ]);
 
   useEffect(() => {
     setIsDirty(false);
@@ -173,7 +197,10 @@ export function KnowledgePanel() {
   useEffect(() => {
     if (!activeEntryId) return;
     setRecentIds((prev) => {
-      const next = [activeEntryId, ...prev.filter((id) => id !== activeEntryId)];
+      const next = [
+        activeEntryId,
+        ...prev.filter((id) => id !== activeEntryId),
+      ];
       return next.slice(0, RECENTS_MAX);
     });
   }, [activeEntryId]);
@@ -263,7 +290,12 @@ export function KnowledgePanel() {
   // (so it doesn't hijack the shortcut for other tabs / the app).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === "f") {
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key === "f"
+      ) {
         if (!rootRef.current?.contains(document.activeElement)) return;
         e.preventDefault();
         setFinderOpen(true);
@@ -323,14 +355,21 @@ export function KnowledgePanel() {
     const other = paths.filter((p) => !/\.(md|markdown)$/i.test(p));
     if (md.length) {
       try {
-        const res = await invoke<{ notes_imported: number; files_copied: number }>(
-          "import_into_knowledge",
-          { projectPath: currentProject.path, sources: md },
-        );
+        const res = await invoke<{
+          notes_imported: number;
+          files_copied: number;
+        }>("import_into_knowledge", {
+          projectPath: currentProject.path,
+          sources: md,
+        });
         await loadEntries(currentProject.path);
-        toast.success(`Imported ${res.notes_imported} note${res.notes_imported === 1 ? "" : "s"}`);
+        toast.success(
+          `Imported ${res.notes_imported} note${res.notes_imported === 1 ? "" : "s"}`,
+        );
       } catch (e) {
-        toast.error(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
+        toast.error(
+          `Import failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     }
     other.forEach(openInCodeMirror);
@@ -344,17 +383,24 @@ export function KnowledgePanel() {
     const dir = await open({ directory: true });
     if (!dir || Array.isArray(dir)) return;
     try {
-      const res = await invoke<{ notes_imported: number; files_copied: number }>(
-        "import_into_knowledge",
-        { projectPath: currentProject.path, sources: [dir] },
-      );
+      const res = await invoke<{
+        notes_imported: number;
+        files_copied: number;
+      }>("import_into_knowledge", {
+        projectPath: currentProject.path,
+        sources: [dir],
+      });
       await loadEntries(currentProject.path);
       toast.success(
         `Imported ${res.notes_imported} note${res.notes_imported === 1 ? "" : "s"}` +
-          (res.files_copied ? ` + ${res.files_copied} file${res.files_copied === 1 ? "" : "s"}` : ""),
+          (res.files_copied
+            ? ` + ${res.files_copied} file${res.files_copied === 1 ? "" : "s"}`
+            : ""),
       );
     } catch (e) {
-      toast.error(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(
+        `Import failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }, [currentProject, loadEntries]);
 
@@ -507,7 +553,11 @@ export function KnowledgePanel() {
   );
 
   return (
-    <div ref={rootRef} className="relative h-full flex" style={{ background: "var(--bg-canvas)" }}>
+    <div
+      ref={rootRef}
+      className="relative h-full flex"
+      style={{ background: "var(--bg-canvas)" }}
+    >
       {finderOpen && (
         <KnowledgeFinder
           entries={sidebarEntries}
@@ -569,10 +619,12 @@ export function KnowledgePanel() {
           <>
             <RepoTopbar
               name={
-                clonedRepos.find((r) => r.name === activeRepoName)?.display_name ??
-                activeRepoName
+                clonedRepos.find((r) => r.name === activeRepoName)
+                  ?.display_name ?? activeRepoName
               }
-              path={clonedRepos.find((r) => r.name === activeRepoName)?.path ?? ""}
+              path={
+                clonedRepos.find((r) => r.name === activeRepoName)?.path ?? ""
+              }
               onToggleSidebar={toggleKnowledgeSidebar}
               sidebarHidden={!showSidebar}
               onToggleInspector={toggleKnowledgeInspector}
@@ -590,7 +642,11 @@ export function KnowledgePanel() {
                 </div>
               </div>
             ) : (
-              <RepoEmpty path={clonedRepos.find((r) => r.name === activeRepoName)?.path ?? ""} />
+              <RepoEmpty
+                path={
+                  clonedRepos.find((r) => r.name === activeRepoName)?.path ?? ""
+                }
+              />
             )}
           </>
         ) : activeEntry ? (
@@ -688,7 +744,8 @@ export function KnowledgePanel() {
                             cursor: "pointer",
                           }}
                           onMouseEnter={(e) => {
-                            e.currentTarget.style.background = "var(--bg-hover)";
+                            e.currentTarget.style.background =
+                              "var(--bg-hover)";
                           }}
                           onMouseLeave={(e) => {
                             e.currentTarget.style.background = "var(--bg-base)";
@@ -749,7 +806,11 @@ export function KnowledgePanel() {
             style={{ width: 4, marginLeft: -2, marginRight: -2, zIndex: 5 }}
           />
           <KnowledgeInspector
-            outline={outline.map((h) => ({ id: h.id, label: h.label, level: h.level }))}
+            outline={outline.map((h) => ({
+              id: h.id,
+              label: h.label,
+              level: h.level,
+            }))}
             activeHeadingId={activeHeadingId}
             onJumpToHeading={(id) => {
               if (!editorInstance) return;
@@ -863,7 +924,9 @@ function PageHeaderWithIcon({
             position: "relative",
             cursor: "pointer",
           }}
-          onClick={(e) => setCoverAnchor(e.currentTarget.getBoundingClientRect())}
+          onClick={(e) =>
+            setCoverAnchor(e.currentTarget.getBoundingClientRect())
+          }
           title="Click to change cover"
         />
       ) : null}
@@ -881,7 +944,9 @@ function PageHeaderWithIcon({
         {!cover && (
           <button
             type="button"
-            onClick={(e) => setCoverAnchor(e.currentTarget.getBoundingClientRect())}
+            onClick={(e) =>
+              setCoverAnchor(e.currentTarget.getBoundingClientRect())
+            }
             style={{
               background: "transparent",
               border: 0,
@@ -902,7 +967,9 @@ function PageHeaderWithIcon({
       <div className="flex items-start" style={{ gap: 14, marginTop: 10 }}>
         <button
           title="Change icon"
-          onClick={(e) => setIconAnchor(e.currentTarget.getBoundingClientRect())}
+          onClick={(e) =>
+            setIconAnchor(e.currentTarget.getBoundingClientRect())
+          }
           style={{
             width: 44,
             height: 44,
@@ -993,7 +1060,12 @@ function RepoTopbar({
   return (
     <div
       className="flex items-center shrink-0 border-b border-border-subtle"
-      style={{ height: 36, gap: 8, padding: "0 14px", background: "var(--bg-canvas)" }}
+      style={{
+        height: 36,
+        gap: 8,
+        padding: "0 14px",
+        background: "var(--bg-canvas)",
+      }}
     >
       {onToggleSidebar && (
         <button
@@ -1012,7 +1084,10 @@ function RepoTopbar({
       >
         {name}
       </span>
-      <span className="pill pill-bare" style={{ height: 18, fontSize: 9.5, padding: "0 6px" }}>
+      <span
+        className="pill pill-bare"
+        style={{ height: 18, fontSize: 9.5, padding: "0 6px" }}
+      >
         REPO
       </span>
       <button
@@ -1067,4 +1142,3 @@ function RepoEmpty({ path }: { path: string }) {
     </div>
   );
 }
-

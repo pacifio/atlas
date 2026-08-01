@@ -1,11 +1,5 @@
 import { useMemo } from "react";
-import {
-  Bell,
-  Shield,
-  AlertTriangle,
-  X,
-  Sparkles,
-} from "lucide-react";
+import { Bell, Shield, AlertTriangle, X, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
 import { AtlasIcon } from "@/components/atlas-icon";
@@ -20,7 +14,8 @@ import {
 function dayBucket(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
-  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const startOf = (x: Date) =>
+    new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const days = Math.round((startOf(now) - startOf(d)) / 86_400_000);
   if (days <= 0) return "Today";
   if (days === 1) return "Yesterday";
@@ -88,9 +83,15 @@ export function NotificationPanel() {
             <div className="grid h-full place-items-center px-6">
               <div className="text-center">
                 <div className="mx-auto grid h-11 w-11 place-items-center rounded-2xl border border-border-subtle bg-white/[0.03]">
-                  <Bell size={18} className="text-text-tertiary" strokeWidth={1.5} />
+                  <Bell
+                    size={18}
+                    className="text-text-tertiary"
+                    strokeWidth={1.5}
+                  />
                 </div>
-                <p className="mt-3 text-[12px] text-text-tertiary">No notifications</p>
+                <p className="mt-3 text-[12px] text-text-tertiary">
+                  No notifications
+                </p>
               </div>
             </div>
           ) : (
@@ -177,12 +178,20 @@ function NotificationIcon({ n }: { n: AppNotification }) {
   if (n.kind === "permission")
     return <Shield size={15} className="text-accent" strokeWidth={1.5} />;
   if (n.kind === "agent-failed" || n.kind === "chat-error")
-    return <AlertTriangle size={15} className="text-[var(--status-error)]" strokeWidth={1.5} />;
+    return (
+      <AlertTriangle
+        size={15}
+        className="text-[var(--status-error)]"
+        strokeWidth={1.5}
+      />
+    );
   if (n.kind === "chat-done" && n.provider)
     return <ProviderLogo id={n.provider} size={16} />;
   if (n.source === "agent")
     return <AtlasIcon size={16} className="rounded-[5px]" />;
-  return <Sparkles size={15} className="text-text-secondary" strokeWidth={1.5} />;
+  return (
+    <Sparkles size={15} className="text-text-secondary" strokeWidth={1.5} />
+  );
 }
 
 /** Best-effort: bring the originating chat into view. */

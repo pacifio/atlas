@@ -69,9 +69,13 @@ export function useFileTreeDragDrop(opts: {
   const itemRef = useRef<DraggedItem | null>(null);
   const overRef = useRef<string | null>(null);
   const draggingRef = useRef(false);
-  const pendingRef = useRef<{ x: number; y: number; item: DraggedItem } | null>(null);
+  const pendingRef = useRef<{ x: number; y: number; item: DraggedItem } | null>(
+    null,
+  );
   const previewRef = useRef<HTMLDivElement | null>(null);
-  const autoExpandRef = useRef<{ path: string; timeoutId: number } | null>(null);
+  const autoExpandRef = useRef<{ path: string; timeoutId: number } | null>(
+    null,
+  );
   const detachRef = useRef<(() => void) | null>(null);
 
   const clearAutoExpand = useCallback(() => {
@@ -120,63 +124,72 @@ export function useFileTreeDragDrop(opts: {
 
   // Resolve the destination directory under the cursor. Returns a real
   // directory path, the ROOT_DROP sentinel, or null (no valid target).
-  const resolveTarget = useCallback((x: number, y: number, dragged: DraggedItem) => {
-    const el = document.elementFromPoint(x, y);
-    const rowEl = el?.closest<HTMLElement>("[data-tree-path]");
-    if (rowEl) {
-      const path = rowEl.getAttribute("data-tree-path");
-      if (!path) return null;
-      const isDir = rowEl.getAttribute("data-tree-is-dir") === "true";
-      // Refuse dropping a folder onto itself or a descendant.
-      if (path === dragged.path || (dragged.isDir && path.startsWith(dragged.path + "/"))) {
-        return null;
+  const resolveTarget = useCallback(
+    (x: number, y: number, dragged: DraggedItem) => {
+      const el = document.elementFromPoint(x, y);
+      const rowEl = el?.closest<HTMLElement>("[data-tree-path]");
+      if (rowEl) {
+        const path = rowEl.getAttribute("data-tree-path");
+        if (!path) return null;
+        const isDir = rowEl.getAttribute("data-tree-is-dir") === "true";
+        // Refuse dropping a folder onto itself or a descendant.
+        if (
+          path === dragged.path ||
+          (dragged.isDir && path.startsWith(dragged.path + "/"))
+        ) {
+          return null;
+        }
+        if (isDir) {
+          scheduleAutoExpand(path);
+          return path;
+        }
+        // Over a file → target its parent directory.
+        clearAutoExpand();
+        const parent = dirOfPath(path);
+        return parent === rootRef.current ? ROOT_DROP : parent;
       }
-      if (isDir) {
-        scheduleAutoExpand(path);
-        return path;
+      if (el?.closest("[data-tree-root]")) {
+        clearAutoExpand();
+        return ROOT_DROP;
       }
-      // Over a file → target its parent directory.
       clearAutoExpand();
-      const parent = dirOfPath(path);
-      return parent === rootRef.current ? ROOT_DROP : parent;
-    }
-    if (el?.closest("[data-tree-root]")) {
-      clearAutoExpand();
-      return ROOT_DROP;
-    }
-    clearAutoExpand();
-    return null;
-  }, [scheduleAutoExpand, clearAutoExpand]);
+      return null;
+    },
+    [scheduleAutoExpand, clearAutoExpand],
+  );
 
-  const beginDrag = useCallback((x: number, y: number, item: DraggedItem) => {
-    draggingRef.current = true;
-    itemRef.current = item;
+  const beginDrag = useCallback(
+    (x: number, y: number, item: DraggedItem) => {
+      draggingRef.current = true;
+      itemRef.current = item;
 
-    const preview = document.createElement("div");
-    preview.textContent = item.name;
-    preview.style.cssText = [
-      "position:fixed",
-      "pointer-events:none",
-      "z-index:9999",
-      "padding:3px 9px",
-      "border-radius:6px",
-      "font-size:12px",
-      "font-family:var(--font-mono,monospace)",
-      "line-height:1.4",
-      "white-space:nowrap",
-      "color:var(--text-secondary)",
-      "background:var(--bg-elevated)",
-      "border:1px solid var(--border-default)",
-      "box-shadow:0 4px 14px rgba(0,0,0,0.3)",
-      "backdrop-filter:blur(12px)",
-    ].join(";");
-    document.body.appendChild(preview);
-    previewRef.current = preview;
-    document.body.style.cursor = "grabbing";
-    positionPreview(x, y);
+      const preview = document.createElement("div");
+      preview.textContent = item.name;
+      preview.style.cssText = [
+        "position:fixed",
+        "pointer-events:none",
+        "z-index:9999",
+        "padding:3px 9px",
+        "border-radius:6px",
+        "font-size:12px",
+        "font-family:var(--font-mono,monospace)",
+        "line-height:1.4",
+        "white-space:nowrap",
+        "color:var(--text-secondary)",
+        "background:var(--bg-elevated)",
+        "border:1px solid var(--border-default)",
+        "box-shadow:0 4px 14px rgba(0,0,0,0.3)",
+        "backdrop-filter:blur(12px)",
+      ].join(";");
+      document.body.appendChild(preview);
+      previewRef.current = preview;
+      document.body.style.cursor = "grabbing";
+      positionPreview(x, y);
 
-    setDragState({ isDragging: true, draggedItem: item, dragOverPath: null });
-  }, [positionPreview]);
+      setDragState({ isDragging: true, draggedItem: item, dragOverPath: null });
+    },
+    [positionPreview],
+  );
 
   const onContainerMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -190,12 +203,19 @@ export function useFileTreeDragDrop(opts: {
       if (!path) return;
       const isDir = rowEl.getAttribute("data-tree-is-dir") === "true";
       const name = path.slice(path.lastIndexOf("/") + 1);
-      pendingRef.current = { x: e.clientX, y: e.clientY, item: { path, name, isDir } };
+      pendingRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        item: { path, name, isDir },
+      };
 
       const onMouseMove = (ev: MouseEvent) => {
         const pending = pendingRef.current;
         if (pending && !draggingRef.current) {
-          if (Math.hypot(ev.clientX - pending.x, ev.clientY - pending.y) > DRAG_THRESHOLD) {
+          if (
+            Math.hypot(ev.clientX - pending.x, ev.clientY - pending.y) >
+            DRAG_THRESHOLD
+          ) {
             beginDrag(ev.clientX, ev.clientY, pending.item);
           }
           return;
@@ -228,7 +248,10 @@ export function useFileTreeDragDrop(opts: {
             ce.stopPropagation();
             ce.preventDefault();
           };
-          window.addEventListener("click", suppress, { capture: true, once: true });
+          window.addEventListener("click", suppress, {
+            capture: true,
+            once: true,
+          });
           window.setTimeout(() => {
             window.removeEventListener("click", suppress, { capture: true });
           }, 0);

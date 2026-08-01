@@ -43,8 +43,7 @@ export interface AuthRunDone {
 export const agents = {
   listPlugins: () => invoke<PluginSpec[]>("agents_list_plugins"),
   listRunning: () => invoke<AgentInfo[]>("agents_list_running"),
-  spawn: (pluginId: string) =>
-    invoke<AgentInfo>("agents_spawn", { pluginId }),
+  spawn: (pluginId: string) => invoke<AgentInfo>("agents_spawn", { pluginId }),
   kill: (agentId: AgentId) => invoke<void>("agents_kill", { agentId }),
 
   newSession: (agentId: AgentId, cwd: string) =>
@@ -91,7 +90,7 @@ export const agents = {
     agentId: AgentId,
     sessionId: AcpSessionId,
     requestId: string,
-    decision: PermissionDecision
+    decision: PermissionDecision,
   ) =>
     invoke<void>("agents_respond_permission", {
       agentId,
@@ -111,7 +110,8 @@ export const agents = {
 };
 
 /** Whether Codex has stored credentials (`~/.codex/auth.json`). */
-export const codexStatus = (): Promise<boolean> => invoke<boolean>("codex_status");
+export const codexStatus = (): Promise<boolean> =>
+  invoke<boolean>("codex_status");
 
 export const listenAuthRunDone = (
   handler: (p: AuthRunDone) => void,
@@ -123,7 +123,7 @@ export const listenAuthRunDone = (
  * `agent_id` + `session_id` so the consumer can route to the right tab.
  */
 export const listenAgents = (
-  handler: (env: AgentDelta) => void
+  handler: (env: AgentDelta) => void,
 ): Promise<UnlistenFn> =>
   listen<AgentDelta>("atlas:agents", (e) => handler(e.payload));
 
@@ -195,6 +195,8 @@ export function resetAgent(pluginId?: string): void {
 }
 
 // Back-compat thin wrappers (default = Claude) for existing callers.
-export const ensureDefaultAgent = (): Promise<AgentInfo> => ensureAgent(DEFAULT_PLUGIN_ID);
-export const getDefaultAgentSync = (): AgentInfo | null => getAgentSync(DEFAULT_PLUGIN_ID);
+export const ensureDefaultAgent = (): Promise<AgentInfo> =>
+  ensureAgent(DEFAULT_PLUGIN_ID);
+export const getDefaultAgentSync = (): AgentInfo | null =>
+  getAgentSync(DEFAULT_PLUGIN_ID);
 export const resetDefaultAgent = (): void => resetAgent(DEFAULT_PLUGIN_ID);

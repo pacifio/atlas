@@ -145,9 +145,7 @@ function ChoiceButton({
       className={cn(
         "group flex items-start gap-3 rounded-sm border border-border-default bg-bg-base px-3 py-2.5 text-left",
         "transition-colors",
-        runnable
-          ? "hover:bg-bg-hover"
-          : "opacity-50 cursor-not-allowed",
+        runnable ? "hover:bg-bg-hover" : "opacity-50 cursor-not-allowed",
       )}
     >
       <span className="flex-1 min-w-0">

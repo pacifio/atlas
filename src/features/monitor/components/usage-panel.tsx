@@ -20,12 +20,23 @@ const OTHERS_COLOR = "var(--text-ghost)";
 const TOKEN_TYPES = [
   { key: "input_tokens", label: "Input", color: "var(--text-primary)" },
   { key: "output_tokens", label: "Output", color: "var(--text-secondary)" },
-  { key: "cache_creation_tokens", label: "Cache write", color: "var(--status-info)" },
-  { key: "cache_read_tokens", label: "Cache read", color: "var(--text-tertiary)" },
+  {
+    key: "cache_creation_tokens",
+    label: "Cache write",
+    color: "var(--status-info)",
+  },
+  {
+    key: "cache_read_tokens",
+    label: "Cache read",
+    color: "var(--text-tertiary)",
+  },
 ] as const;
 
 const sessionTokens = (s: SessionUsage) =>
-  s.input_tokens + s.output_tokens + s.cache_creation_tokens + s.cache_read_tokens;
+  s.input_tokens +
+  s.output_tokens +
+  s.cache_creation_tokens +
+  s.cache_read_tokens;
 
 export function UsagePanel() {
   const cwd = useProjectStore((s) => s.currentProject?.path ?? null);
@@ -56,7 +67,8 @@ export function UsagePanel() {
 
   const { totals, sessions } = data;
   const useCost = totals.total_cost_usd > 0;
-  const metric = (s: SessionUsage) => (useCost ? s.total_cost_usd : sessionTokens(s));
+  const metric = (s: SessionUsage) =>
+    useCost ? s.total_cost_usd : sessionTokens(s);
 
   // Donut: top 5 sessions + "others".
   const top = sessions.slice(0, 5);
@@ -66,10 +78,14 @@ export function UsagePanel() {
     value: metric(s),
     color: SESSION_COLORS[i] ?? OTHERS_COLOR,
   }));
-  if (restMetric > 0) segments.push({ label: "others", value: restMetric, color: OTHERS_COLOR });
+  if (restMetric > 0)
+    segments.push({ label: "others", value: restMetric, color: OTHERS_COLOR });
 
   const totalTokens =
-    totals.input_tokens + totals.output_tokens + totals.cache_creation_tokens + totals.cache_read_tokens;
+    totals.input_tokens +
+    totals.output_tokens +
+    totals.cache_creation_tokens +
+    totals.cache_read_tokens;
 
   return (
     <div className="h-full overflow-y-auto hide-scrollbar px-3 py-3 space-y-4">
@@ -96,17 +112,26 @@ export function UsagePanel() {
       <div className="space-y-1.5">
         <div className="flex h-2 w-full overflow-hidden rounded-full bg-[var(--border-default)]">
           {TOKEN_TYPES.map((t) => {
-            const pct = totalTokens > 0 ? (totals[t.key] / totalTokens) * 100 : 0;
+            const pct =
+              totalTokens > 0 ? (totals[t.key] / totalTokens) * 100 : 0;
             return pct > 0 ? (
-              <div key={t.key} style={{ width: `${pct}%`, background: t.color }} />
+              <div
+                key={t.key}
+                style={{ width: `${pct}%`, background: t.color }}
+              />
             ) : null;
           })}
         </div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-1">
           {TOKEN_TYPES.map((t) => (
             <div key={t.key} className="flex items-center gap-1.5 min-w-0">
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: t.color }} />
-              <span className="text-[10px] text-text-tertiary truncate flex-1 min-w-0">{t.label}</span>
+              <span
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ background: t.color }}
+              />
+              <span className="text-[10px] text-text-tertiary truncate flex-1 min-w-0">
+                {t.label}
+              </span>
               <span className="text-[10px] font-mono tabular-nums text-text-secondary shrink-0">
                 {fmtTokens(totals[t.key])}
               </span>
@@ -163,8 +188,12 @@ export function UsagePanel() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-border-default bg-bg-secondary px-2 py-1.5 flex flex-col gap-0.5 min-w-0">
-      <span className="text-[9px] text-text-tertiary uppercase tracking-wider truncate">{label}</span>
-      <span className="text-[12px] font-mono tabular-nums text-text-primary truncate">{value}</span>
+      <span className="text-[9px] text-text-tertiary uppercase tracking-wider truncate">
+        {label}
+      </span>
+      <span className="text-[12px] font-mono tabular-nums text-text-primary truncate">
+        {value}
+      </span>
     </div>
   );
 }

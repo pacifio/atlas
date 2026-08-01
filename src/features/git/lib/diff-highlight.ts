@@ -6,7 +6,11 @@
 //
 // See `diff-highlight-core.ts` for the per-line (not per-file) tradeoff.
 
-import { hljsIdForLanguage, tokenizeLine, type DiffToken } from "./diff-highlight-core";
+import {
+  hljsIdForLanguage,
+  tokenizeLine,
+  type DiffToken,
+} from "./diff-highlight-core";
 
 export type { DiffToken };
 

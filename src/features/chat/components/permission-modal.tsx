@@ -31,7 +31,8 @@ function isReject(kind: string) {
 // never names the wrong agent. Ordered longest-first to avoid partial matches.
 const AGENT_BRANDS = ["Claude Code", "Codex", "Claude"];
 function relabelAgentBrand(label: string, agentType: AgentType): string {
-  const display = (AGENT_LABEL as Record<string, string>)[agentType] ?? "the agent";
+  const display =
+    (AGENT_LABEL as Record<string, string>)[agentType] ?? "the agent";
   let out = label;
   for (const brand of AGENT_BRANDS) {
     if (brand === display) continue;
@@ -55,7 +56,10 @@ interface PermissionModalProps {
  * Cancelled requests (ESC / click outside) resolve as `cancelled` on the wire
  * so the agent backs off correctly.
  */
-export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) {
+export function PermissionModal({
+  tabId,
+  onSendMessage,
+}: PermissionModalProps) {
   // Narrow subscription: only this tab's acpSessionId and the head of its
   // permission queue, so the card stays idle until a request actually arrives.
   const acpSessionId = useChatStore((s) => s.sessions[tabId]?.acpSessionId);
@@ -65,7 +69,9 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
   const queueLength = useChatStore((s) =>
     acpSessionId ? (s.pendingPermissions[acpSessionId]?.length ?? 0) : 0,
   );
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
+  const agentType = useChatStore(
+    (s) => s.sessions[tabId]?.agentType ?? "claude-code",
+  );
   const popPermission = useChatStore.use.actions().popPermission;
 
   const [draft, setDraft] = useState("");
@@ -85,7 +91,12 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
     if (!current) return;
     const send = (decision: Parameters<typeof agents.respondPermission>[3]) => {
       agents
-        .respondPermission(current.agentId, current.acpSessionId, current.requestId, decision)
+        .respondPermission(
+          current.agentId,
+          current.acpSessionId,
+          current.requestId,
+          decision,
+        )
         .catch((e) => toast.error(`Permission send failed: ${e}`))
         .finally(() => popPermission(current.acpSessionId, current.requestId));
     };
@@ -122,19 +133,29 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
 
   const resolve = (optId: string) => {
     agents
-      .respondPermission(current.agentId, current.acpSessionId, current.requestId, {
-        kind: "selected",
-        option_id: optId,
-      })
+      .respondPermission(
+        current.agentId,
+        current.acpSessionId,
+        current.requestId,
+        {
+          kind: "selected",
+          option_id: optId,
+        },
+      )
       .catch((e) => toast.error(`Permission send failed: ${e}`))
       .finally(() => popPermission(current.acpSessionId, current.requestId));
   };
 
   const cancel = () => {
     agents
-      .respondPermission(current.agentId, current.acpSessionId, current.requestId, {
-        kind: "cancelled",
-      })
+      .respondPermission(
+        current.agentId,
+        current.acpSessionId,
+        current.requestId,
+        {
+          kind: "cancelled",
+        },
+      )
       .catch((e) => toast.error(`Permission cancel failed: ${e}`))
       .finally(() => popPermission(current.acpSessionId, current.requestId));
   };
@@ -151,7 +172,8 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
   const title = current.toolCall.title ?? current.toolCall.kind ?? "Tool call";
   const planMarkdown = extractPlanMarkdown(current.toolCall);
   const questions = extractQuestions(current.toolCall);
-  const queueNote = queueLength > 1 ? `${queueLength - 1} more pending after this` : null;
+  const queueNote =
+    queueLength > 1 ? `${queueLength - 1} more pending after this` : null;
 
   // Numbered option list — shared by both layouts.
   const optionList = (
@@ -190,9 +212,12 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
             <div className="flex items-start gap-3 border-b border-border-default px-4 py-3">
               <ClipboardList className="mt-0.5 size-4 text-accent" />
               <div className="flex-1">
-                <Dialog.Title className="text-sm font-medium">Review plan</Dialog.Title>
+                <Dialog.Title className="text-sm font-medium">
+                  Review plan
+                </Dialog.Title>
                 <Dialog.Description className="mt-0.5 text-xs text-text-secondary">
-                  The agent proposed a plan before continuing. Review it, then approve or reject.
+                  The agent proposed a plan before continuing. Review it, then
+                  approve or reject.
                 </Dialog.Description>
               </div>
               {queueNote && (
@@ -208,7 +233,9 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
                 </div>
               </section>
               <aside className="flex w-[320px] shrink-0 flex-col border-l border-border-default">
-                <div className="min-h-0 min-w-0 flex-1 overflow-auto px-4 py-3">{optionList}</div>
+                <div className="min-h-0 min-w-0 flex-1 overflow-auto px-4 py-3">
+                  {optionList}
+                </div>
                 <div className="flex items-center justify-end gap-2 border-t border-border-default px-4 py-2.5">
                   <button
                     type="button"
@@ -246,7 +273,9 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
     // ACP options with no corresponding answer choice (e.g. an explicit
     // reject/cancel) — surfaced below so the user can still decline.
     const specLabels = new Set(
-      questions.flatMap((q) => q.options.map((o) => o.label.trim().toLowerCase())),
+      questions.flatMap((q) =>
+        q.options.map((o) => o.label.trim().toLowerCase()),
+      ),
     );
     const extraOptions = current.options.filter(
       (o) => !specLabels.has(o.name.trim().toLowerCase()),
@@ -273,7 +302,9 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
                 </div>
               )}
               {queueNote && (
-                <div className="mt-0.5 text-[11px] text-text-secondary">{queueNote}</div>
+                <div className="mt-0.5 text-[11px] text-text-secondary">
+                  {queueNote}
+                </div>
               )}
             </div>
           </div>
@@ -283,7 +314,9 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
             <div className="mx-3 mt-2 space-y-1 rounded-md border border-border-default bg-bg-base px-3 py-2">
               {questions.slice(1).map((q, i) => (
                 <div key={i} className="text-[11px] text-text-secondary">
-                  {q.header && <span className="text-text-tertiary">{q.header}: </span>}
+                  {q.header && (
+                    <span className="text-text-tertiary">{q.header}: </span>
+                  )}
                   {q.question}
                 </div>
               ))}
@@ -343,7 +376,9 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
               <span className="font-mono text-text-primary">{title}</span>?
             </div>
             {queueNote && (
-              <div className="mt-0.5 text-[11px] text-text-secondary">{queueNote}</div>
+              <div className="mt-0.5 text-[11px] text-text-secondary">
+                {queueNote}
+              </div>
             )}
           </div>
         </div>
@@ -410,7 +445,9 @@ function PermissionOption({
         <span
           className={cn(
             "flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold",
-            isPrimary ? "bg-[var(--bg-base)]/15 text-[var(--bg-base)]" : "bg-bg-elevated text-text-secondary",
+            isPrimary
+              ? "bg-[var(--bg-base)]/15 text-[var(--bg-base)]"
+              : "bg-bg-elevated text-text-secondary",
           )}
         >
           {index}
@@ -419,7 +456,9 @@ function PermissionOption({
       <Icon className="size-3.5 shrink-0" />
       <span className="min-w-0 flex-1 font-medium break-words">{label}</span>
       {isPrimary && (
-        <Kbd className="border-[var(--bg-base)]/20 bg-[var(--bg-base)]/10 text-[var(--bg-base)]">↵</Kbd>
+        <Kbd className="border-[var(--bg-base)]/20 bg-[var(--bg-base)]/10 text-[var(--bg-base)]">
+          ↵
+        </Kbd>
       )}
     </button>
   );
@@ -453,7 +492,9 @@ function QuestionOption({
         {index}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block font-medium break-words text-text-primary">{label}</span>
+        <span className="block font-medium break-words text-text-primary">
+          {label}
+        </span>
         {description && (
           <span className="mt-0.5 block text-[11px] font-normal leading-snug text-text-secondary break-words">
             {description}
@@ -466,8 +507,10 @@ function QuestionOption({
 
 function ToolCallPreview({ tc }: { tc: PendingPermission["toolCall"] }) {
   const inputValue =
-    (tc as Record<string, unknown>).rawInput ?? (tc as Record<string, unknown>).input;
-  const formatted = inputValue !== undefined ? safeStringify(inputValue, 2) : null;
+    (tc as Record<string, unknown>).rawInput ??
+    (tc as Record<string, unknown>).input;
+  const formatted =
+    inputValue !== undefined ? safeStringify(inputValue, 2) : null;
   if (!formatted) return null;
   return (
     <div className="mx-3 mt-2 rounded-md border border-border-default bg-bg-base px-3 py-2">

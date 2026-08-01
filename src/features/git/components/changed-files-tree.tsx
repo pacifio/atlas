@@ -1,5 +1,11 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, ChevronDown, GitCommit, GitBranch, Search } from "lucide-react";
+import {
+  ChevronRight,
+  ChevronDown,
+  GitCommit,
+  GitBranch,
+  Search,
+} from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -30,7 +36,7 @@ function CommitPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const selected = commit ? log.find((c) => c.hash === commit) ?? null : null;
+  const selected = commit ? (log.find((c) => c.hash === commit) ?? null) : null;
   const label = commit
     ? selected
       ? `${selected.short_hash} · ${selected.message}`
@@ -68,15 +74,27 @@ function CommitPicker({
             <span className="max-w-[70px] truncate">{branch}</span>
           </span>
         )}
-        <span className="min-w-0 flex-1 truncate text-left font-mono">{label}</span>
-        <ChevronDown size={11} className="shrink-0 text-[var(--text-tertiary)]" />
+        <span className="min-w-0 flex-1 truncate text-left font-mono">
+          {label}
+        </span>
+        <ChevronDown
+          size={11}
+          className="shrink-0 text-[var(--text-tertiary)]"
+        />
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden />
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setOpen(false)}
+            aria-hidden
+          />
           <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-md border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-overlay)]">
             <div className="flex h-7 items-center gap-1.5 border-b border-[var(--border-subtle)] px-2">
-              <Search size={11} className="shrink-0 text-[var(--text-tertiary)]" />
+              <Search
+                size={11}
+                className="shrink-0 text-[var(--text-tertiary)]"
+              />
               <input
                 autoFocus
                 value={q}
@@ -92,7 +110,9 @@ function CommitPicker({
                 onClick={() => pick("")}
                 className={cn(
                   "flex w-full items-center px-2 py-1.5 text-left text-[10px] hover:bg-[var(--bg-hover)]",
-                  !commit ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]",
+                  !commit
+                    ? "text-[var(--text-primary)]"
+                    : "text-[var(--text-secondary)]",
                 )}
               >
                 Working tree
@@ -104,15 +124,21 @@ function CommitPicker({
                   onClick={() => pick(c.hash)}
                   className={cn(
                     "flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[10px] hover:bg-[var(--bg-hover)]",
-                    c.hash === commit ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]",
+                    c.hash === commit
+                      ? "text-[var(--text-primary)]"
+                      : "text-[var(--text-secondary)]",
                   )}
                 >
-                  <span className="shrink-0 font-mono text-[var(--text-tertiary)]">{c.short_hash}</span>
+                  <span className="shrink-0 font-mono text-[var(--text-tertiary)]">
+                    {c.short_hash}
+                  </span>
                   <span className="min-w-0 flex-1 truncate">{c.message}</span>
                 </button>
               ))}
               {filtered.length === 0 && (
-                <div className="px-2 py-2 text-[10px] text-[var(--text-tertiary)]">No commits</div>
+                <div className="px-2 py-2 text-[10px] text-[var(--text-tertiary)]">
+                  No commits
+                </div>
               )}
             </div>
           </div>
@@ -208,11 +234,7 @@ function collapseChains(dir: DirNode) {
     if (child.isDir) collapseChains(child);
   }
   // Root keeps its (empty) name; only fold interior dirs.
-  if (
-    dir.name !== "" &&
-    dir.children.length === 1 &&
-    dir.children[0].isDir
-  ) {
+  if (dir.name !== "" && dir.children.length === 1 && dir.children[0].isDir) {
     const only = dir.children[0];
     dir.name = `${dir.name}/${only.name}`;
     dir.path = only.path;
@@ -233,7 +255,11 @@ interface FlatRow {
   depth: number;
 }
 
-function flatten(dir: DirNode, collapsed: Set<string>, depth: number): FlatRow[] {
+function flatten(
+  dir: DirNode,
+  collapsed: Set<string>,
+  depth: number,
+): FlatRow[] {
   const out: FlatRow[] = [];
   for (const child of dir.children) {
     out.push({ node: child, depth });
@@ -258,7 +284,8 @@ export const ChangedFilesTree = memo(function ChangedFilesTree({
 
   // Populate the commit picker (recent history) on first mount.
   useEffect(() => {
-    if (repoPath && log.length === 0) void gitActions.loadLog(repoPath).catch(() => {});
+    if (repoPath && log.length === 0)
+      void gitActions.loadLog(repoPath).catch(() => {});
   }, [repoPath, log.length, gitActions]);
 
   // In commit-browse mode, list the files that commit changed.
@@ -269,7 +296,8 @@ export const ChangedFilesTree = memo(function ChangedFilesTree({
     staleTime: 30_000,
   });
 
-  const openFile = (path: string) => openGitDiff(repoPath, path, staged, commit);
+  const openFile = (path: string) =>
+    openGitDiff(repoPath, path, staged, commit);
 
   // Switch the whole diff tab to a different commit (or the working tree) for
   // the currently-open file.
@@ -279,7 +307,10 @@ export const ChangedFilesTree = memo(function ChangedFilesTree({
   const tree = useMemo(() => {
     const seen = new Set<string>();
     const source: { path: string; status: string }[] = commit
-      ? (commitFilesQuery.data ?? []).map((f) => ({ path: f.path, status: f.status }))
+      ? (commitFilesQuery.data ?? []).map((f) => ({
+          path: f.path,
+          status: f.status,
+        }))
       : files
           .filter((f) => f.staged === staged)
           .map((f) => ({ path: f.path, status: f.status }));
@@ -293,10 +324,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree({
     return buildTree(scoped);
   }, [files, staged, currentFile, commit, commitFilesQuery.data]);
 
-  const rows = useMemo(
-    () => flatten(tree, collapsed, 0),
-    [tree, collapsed],
-  );
+  const rows = useMemo(() => flatten(tree, collapsed, 0), [tree, collapsed]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -318,13 +346,23 @@ export const ChangedFilesTree = memo(function ChangedFilesTree({
     <div className="flex h-full w-full flex-col border-r border-[var(--border-default)] bg-[var(--bg-secondary)]">
       <div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-[var(--border-default)] px-2">
         <GitCommit size={12} className="shrink-0 text-[var(--text-tertiary)]" />
-        <CommitPicker commit={commit} branch={branch} log={log} onPick={onPickCommit} />
+        <CommitPicker
+          commit={commit}
+          branch={branch}
+          log={log}
+          onPick={onPickCommit}
+        />
         <span className="shrink-0 text-[10px] tabular-nums text-[var(--text-tertiary)]">
           {rows.filter((r) => !r.node.isDir).length}
         </span>
       </div>
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto hide-scrollbar py-1">
-        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 overflow-auto hide-scrollbar py-1"
+      >
+        <div
+          style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+        >
           {virtualizer.getVirtualItems().map((vr) => {
             const { node, depth } = rows[vr.index];
             const pad = 6 + depth * 12;
@@ -342,7 +380,11 @@ export const ChangedFilesTree = memo(function ChangedFilesTree({
                   className={`${common.className} text-[11px] text-[var(--text-tertiary)]`}
                   style={common.style}
                 >
-                  {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                  {open ? (
+                    <ChevronDown size={11} />
+                  ) : (
+                    <ChevronRight size={11} />
+                  )}
                   <span className="truncate font-mono">{node.name}</span>
                 </button>
               );

@@ -99,7 +99,9 @@ export function MergeBranchDialog({
       // MERGE_HEAD is set), so an error here usually means "conflicts to
       // resolve" rather than an outright failure.
       if (wasConflicts) {
-        toast.warning(`Merged ${selected} with conflicts — resolve them to finish`);
+        toast.warning(
+          `Merged ${selected} with conflicts — resolve them to finish`,
+        );
       } else {
         toast.error(String(e));
       }
@@ -134,7 +136,9 @@ export function MergeBranchDialog({
             </Dialog.Title>
             <Dialog.Description className="text-[11px] text-text-tertiary mt-1">
               Choose a branch to merge into{" "}
-              <span className="font-mono">{branch || "the current branch"}</span>
+              <span className="font-mono">
+                {branch || "the current branch"}
+              </span>
               .
             </Dialog.Description>
           </div>
@@ -170,7 +174,10 @@ export function MergeBranchDialog({
                 >
                   <Check
                     size={12}
-                    className={cn("shrink-0", isSel ? "text-accent" : "opacity-0")}
+                    className={cn(
+                      "shrink-0",
+                      isSel ? "text-accent" : "opacity-0",
+                    )}
                   />
                   <span className="truncate flex-1 font-mono">{b.name}</span>
                   {b.isRemote && (

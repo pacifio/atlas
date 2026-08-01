@@ -1,5 +1,11 @@
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, GitBranch, Search, TriangleAlert } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  GitBranch,
+  Search,
+  TriangleAlert,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -40,7 +46,8 @@ export function SessionList({ sessions, loading, onOpen }: Props) {
 
   const branches = useMemo(() => {
     const all = new Set<string>();
-    for (const session of sessions) for (const b of session.branches) all.add(b);
+    for (const session of sessions)
+      for (const b of session.branches) all.add(b);
     return [...all].sort();
   }, [sessions]);
 
@@ -109,7 +116,9 @@ export function SessionList({ sessions, loading, onOpen }: Props) {
           groups.map(([day, rows]) => (
             <section key={day}>
               <header className="sticky top-0 z-10 flex items-baseline justify-between bg-[var(--bg-surface)] py-2">
-                <h2 className="text-[12px] font-medium text-[var(--text-primary)]">{day}</h2>
+                <h2 className="text-[12px] font-medium text-[var(--text-primary)]">
+                  {day}
+                </h2>
                 <span className="text-[11px] text-[var(--text-tertiary)]">
                   {rows.length} session{rows.length === 1 ? "" : "s"}
                 </span>
@@ -117,7 +126,11 @@ export function SessionList({ sessions, loading, onOpen }: Props) {
               <ul>
                 {clusterRows(rows).map((item) =>
                   item.kind === "single" ? (
-                    <SessionRow key={item.session.id} session={item.session} onOpen={onOpen} />
+                    <SessionRow
+                      key={item.session.id}
+                      session={item.session}
+                      onOpen={onOpen}
+                    />
                   ) : (
                     <ClusterRow
                       key={`${day}:${item.title}`}
@@ -204,9 +217,15 @@ function ClusterRow({
         className="group flex w-full items-center gap-2 rounded px-2 py-2 text-left transition-colors duration-150 hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--border-focus)] active:bg-[var(--bg-active)]"
       >
         {expanded ? (
-          <ChevronDown size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+          <ChevronDown
+            size={12}
+            className="shrink-0 text-[var(--text-tertiary)]"
+          />
         ) : (
-          <ChevronRight size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+          <ChevronRight
+            size={12}
+            className="shrink-0 text-[var(--text-tertiary)]"
+          />
         )}
         <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--text-secondary)]">
           {item.title}
@@ -244,7 +263,11 @@ function SessionRow({
         className="group flex w-full items-center gap-3 rounded px-2 py-2 text-left transition-colors duration-150 hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--border-focus)] active:bg-[var(--bg-active)]"
       >
         <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--text-primary)]">
-          {session.title ?? <span className="text-[var(--text-tertiary)]">Untitled session</span>}
+          {session.title ?? (
+            <span className="text-[var(--text-tertiary)]">
+              Untitled session
+            </span>
+          )}
         </span>
 
         {/* The board spans every project, so a row that does not name its own
@@ -323,7 +346,13 @@ export function prettyModel(model: string | null): string | null {
   return raw;
 }
 
-export function AgentBadge({ agent, className }: { agent: string; className?: string }) {
+export function AgentBadge({
+  agent,
+  className,
+}: {
+  agent: string;
+  className?: string;
+}) {
   const tone = agent.includes("claude")
     ? "text-[var(--agent-claude-chip)] bg-[var(--agent-claude-chip-bg)]"
     : agent.includes("codex")
@@ -356,7 +385,9 @@ function Empty({ filtered }: { filtered: boolean }) {
   return (
     <div className="py-12 text-center">
       <p className="text-[12px] text-[var(--text-secondary)]">
-        {filtered ? "No sessions match this filter." : "No sessions captured yet."}
+        {filtered
+          ? "No sessions match this filter."
+          : "No sessions captured yet."}
       </p>
       {!filtered && (
         <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">
@@ -385,8 +416,11 @@ function groupByDay(sessions: BoardSession[]): Array<[string, BoardSession[]]> {
 }
 
 function dayLabel(date: Date): string {
-  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const days = Math.round((startOfDay(new Date()) - startOfDay(date)) / 86_400_000);
+  const startOfDay = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round(
+    (startOfDay(new Date()) - startOfDay(date)) / 86_400_000,
+  );
   if (days === 0) return "Today";
   if (days === 1) return "Yesterday";
   return date.toLocaleDateString(undefined, {
@@ -394,6 +428,7 @@ function dayLabel(date: Date): string {
     day: "numeric",
     month: "short",
     // The year only earns its space once it is ambiguous.
-    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+    year:
+      date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
   });
 }

@@ -123,7 +123,12 @@ export function CommitFlow({
                 className="absolute left-0 w-full"
                 style={{ transform: `translateY(${i * ROW_HEIGHT}px)` }}
               >
-                <CommitRowView row={row} selected={i === 0} compact onSelect={() => {}} />
+                <CommitRowView
+                  row={row}
+                  selected={i === 0}
+                  compact
+                  onSelect={() => {}}
+                />
               </div>
             ))}
           </div>

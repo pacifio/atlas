@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Bot,
@@ -148,7 +155,8 @@ export function SessionDetail({ detail, projectPath, focusCommitSha }: Props) {
       // which row was the destination. The ring says "this one", then gets out
       // of the way.
       setLanded(pendingJump);
-      if (visible[index]?.kind === "checkpoint") setActiveCheckpoint(pendingJump);
+      if (visible[index]?.kind === "checkpoint")
+        setActiveCheckpoint(pendingJump);
       setPendingJump(null);
     }
   }, [pendingJump, visible, renderCount]);
@@ -172,7 +180,8 @@ export function SessionDetail({ detail, projectPath, focusCommitSha }: Props) {
     const arrival = `${detail.summary.id}:${focusCommitSha}`;
     if (honouredFocus.current === arrival) return;
     const target = detail.entries.find(
-      (entry) => entry.kind === "checkpoint" && entry.commitSha === focusCommitSha,
+      (entry) =>
+        entry.kind === "checkpoint" && entry.commitSha === focusCommitSha,
     );
     if (target) {
       honouredFocus.current = arrival;
@@ -182,7 +191,11 @@ export function SessionDetail({ detail, projectPath, focusCommitSha }: Props) {
 
   return (
     <div className="flex h-full min-h-0">
-      <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="min-h-0 flex-1 overflow-y-auto px-6 py-4"
+      >
         <Header detail={detail} />
 
         {visible.length === 0 ? (
@@ -236,11 +249,14 @@ export function SessionDetail({ detail, projectPath, focusCommitSha }: Props) {
               <button
                 type="button"
                 onClick={() =>
-                  setRenderCount((count) => Math.min(count + WINDOW_CHUNK, visible.length))
+                  setRenderCount((count) =>
+                    Math.min(count + WINDOW_CHUNK, visible.length),
+                  )
                 }
                 className="mt-4 w-full rounded border border-[var(--border-default)] py-1.5 text-[11px] text-[var(--text-tertiary)] transition-colors duration-150 hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)] focus-visible:ring-1 focus-visible:ring-[var(--border-focus)] active:scale-[0.99]"
               >
-                {visible.length - renderCount} more entries — scroll or click to load
+                {visible.length - renderCount} more entries — scroll or click to
+                load
               </button>
             )}
           </>
@@ -269,7 +285,8 @@ export function SessionDetail({ detail, projectPath, focusCommitSha }: Props) {
  *  themselves carry their names and failure chips in their own rows. */
 function GutterNode({ entry }: { entry: TimelineEntry }) {
   const failed = entry.kind === "tool_call" && entry.toolStatus === "failed";
-  const orphaned = entry.kind === "checkpoint" && entry.linkState === "orphaned";
+  const orphaned =
+    entry.kind === "checkpoint" && entry.linkState === "orphaned";
   const Icon =
     entry.kind === "prompt"
       ? User
@@ -343,7 +360,9 @@ function Header({ detail }: { detail: Detail }) {
               <span className="text-[var(--stat-added)]">+{s.insertions}</span>
             )}
             {s.insertions > 0 && s.deletions > 0 && " / "}
-            {s.deletions > 0 && <span className="text-[var(--stat-removed)]">-{s.deletions}</span>}
+            {s.deletions > 0 && (
+              <span className="text-[var(--stat-removed)]">-{s.deletions}</span>
+            )}
           </span>
         )}
       </div>
@@ -354,8 +373,8 @@ function Header({ detail }: { detail: Detail }) {
         <p className="mt-2 flex items-start gap-1.5 rounded bg-[var(--status-warning-muted)] px-2 py-1.5 text-[11px] text-[var(--status-warning)]">
           <TriangleAlert size={12} className="mt-px shrink-0" />
           <span>
-            {s.attentionReason ?? "Part of this session could not be recorded."} Content that
-            could not be scrubbed was not stored.
+            {s.attentionReason ?? "Part of this session could not be recorded."}{" "}
+            Content that could not be scrubbed was not stored.
           </span>
         </p>
       )}
@@ -383,7 +402,13 @@ function Entry({
     case "thinking":
       return <Thinking entry={entry} projectPath={projectPath} />;
     case "tool_call":
-      return <ToolCall entry={entry} projectPath={projectPath} expandAll={expandAllTools} />;
+      return (
+        <ToolCall
+          entry={entry}
+          projectPath={projectPath}
+          expandAll={expandAllTools}
+        />
+      );
     case "checkpoint":
       return <Checkpoint entry={entry} />;
   }
@@ -459,7 +484,10 @@ function Prompt({
   projectPath: string;
   calls: number;
 }) {
-  const meta = [relative(entry.at), calls > 0 ? `${calls} call${calls === 1 ? "" : "s"}` : null]
+  const meta = [
+    relative(entry.at),
+    calls > 0 ? `${calls} call${calls === 1 ? "" : "s"}` : null,
+  ]
     .filter((part): part is string => part !== null)
     .join(" · ");
 
@@ -474,7 +502,9 @@ function Prompt({
           />
         </Clamp>
       </div>
-      {meta && <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">{meta}</p>}
+      {meta && (
+        <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">{meta}</p>
+      )}
     </div>
   );
 }
@@ -482,7 +512,13 @@ function Prompt({
 /** What the agent said back. Unboxed, so the conversation reads as prose —
  *  and through the app's cached markdown renderer, so code fences and lists
  *  in agent output stop reading as prose soup. */
-function Response({ entry, projectPath }: { entry: TimelineEntry; projectPath: string }) {
+function Response({
+  entry,
+  projectPath,
+}: {
+  entry: TimelineEntry;
+  projectPath: string;
+}) {
   return (
     <div className="py-0.5">
       <Clamp>
@@ -504,7 +540,13 @@ function Response({ entry, projectPath }: { entry: TimelineEntry; projectPath: s
  * never what someone opened the timeline to read — but throwing it away would
  * lose the only record of *why* the agent did what it did.
  */
-function Thinking({ entry, projectPath }: { entry: TimelineEntry; projectPath: string }) {
+function Thinking({
+  entry,
+  projectPath,
+}: {
+  entry: TimelineEntry;
+  projectPath: string;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <div>
@@ -582,15 +624,23 @@ function ToolCall({
           </span>
         )}
         {open ? (
-          <ChevronDown size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+          <ChevronDown
+            size={12}
+            className="shrink-0 text-[var(--text-tertiary)]"
+          />
         ) : (
-          <ChevronRight size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+          <ChevronRight
+            size={12}
+            className="shrink-0 text-[var(--text-tertiary)]"
+          />
         )}
       </button>
 
       {open && (
         <div className="mt-1 space-y-1.5 border-l border-[var(--border-default)] pl-3">
-          {entry.paths.length > 1 && <Block label="Files" text={entry.paths.join("\n")} />}
+          {entry.paths.length > 1 && (
+            <Block label="Files" text={entry.paths.join("\n")} />
+          )}
           {entry.arguments && (
             <Block
               label="Arguments"
@@ -644,12 +694,18 @@ function Block({
   const [full, setFull] = useState<string | null>(null);
   return (
     <div>
-      <p className="text-[10px] uppercase tracking-wide text-[var(--text-tertiary)]">{label}</p>
+      <p className="text-[10px] uppercase tracking-wide text-[var(--text-tertiary)]">
+        {label}
+      </p>
       <pre className="mt-0.5 max-h-[280px] overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--bg-raised)] px-2 py-1.5 font-mono text-[11px] text-[var(--text-secondary)]">
         {full ?? text}
       </pre>
       {blobRef && projectPath && full === null && (
-        <ShowFull projectPath={projectPath} blobRef={blobRef} onLoaded={setFull} />
+        <ShowFull
+          projectPath={projectPath}
+          blobRef={blobRef}
+          onLoaded={setFull}
+        />
       )}
     </div>
   );
@@ -682,57 +738,63 @@ function Checkpoint({ entry }: { entry: TimelineEntry }) {
             : "border-[var(--border-default)] bg-[var(--bg-raised)]",
         )}
       >
-      <span className="shrink-0 font-mono text-[11px] text-[var(--text-tertiary)]">
-        {entry.commitSha?.slice(0, 7)}
-      </span>
+        <span className="shrink-0 font-mono text-[11px] text-[var(--text-tertiary)]">
+          {entry.commitSha?.slice(0, 7)}
+        </span>
 
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-[12px]",
-          orphaned ? "text-[var(--text-secondary)]" : "text-[var(--text-primary)]",
-        )}
-      >
-        {entry.commitSubject ?? (
-          // The Checkpoint is a real record even when git can no longer resolve
-          // it — a moved repository or a pruned commit must not erase it.
-          <span className="text-[var(--text-tertiary)]">
-            {orphaned ? "Commit no longer reachable" : "Subject unavailable"}
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-[12px]",
+            orphaned
+              ? "text-[var(--text-secondary)]"
+              : "text-[var(--text-primary)]",
+          )}
+        >
+          {entry.commitSubject ?? (
+            // The Checkpoint is a real record even when git can no longer resolve
+            // it — a moved repository or a pruned commit must not erase it.
+            <span className="text-[var(--text-tertiary)]">
+              {orphaned ? "Commit no longer reachable" : "Subject unavailable"}
+            </span>
+          )}
+        </span>
+
+        {/* A squash or a conflict-resolved rebase leaves the subject and the diff
+         *  stat intact, so without saying so outright an orphaned Checkpoint reads
+         *  exactly like a live one — the "wrong link" this whole subsystem exists
+         *  to avoid. The state is named on the row, not inferred from a border. */}
+        {orphaned && (
+          <span
+            className="shrink-0 rounded bg-[var(--status-warning-muted)] px-1.5 py-px text-[10px] text-[var(--status-warning)]"
+            title="This commit is no longer in history — rewritten or squashed. The Session record is kept."
+          >
+            orphaned
           </span>
         )}
-      </span>
 
-      {/* A squash or a conflict-resolved rebase leaves the subject and the diff
-       *  stat intact, so without saying so outright an orphaned Checkpoint reads
-       *  exactly like a live one — the "wrong link" this whole subsystem exists
-       *  to avoid. The state is named on the row, not inferred from a border. */}
-      {orphaned && (
-        <span
-          className="shrink-0 rounded bg-[var(--status-warning-muted)] px-1.5 py-px text-[10px] text-[var(--status-warning)]"
-          title="This commit is no longer in history — rewritten or squashed. The Session record is kept."
-        >
-          orphaned
-        </span>
-      )}
+        {/* Suppressed when orphaned: the branch no longer contains this commit,
+         *  so showing it would assert exactly the link that was lost. */}
+        {entry.branch && !orphaned && (
+          <span className="hidden shrink-0 font-mono text-[10px] text-[var(--text-tertiary)] md:block">
+            {entry.branch}
+          </span>
+        )}
 
-      {/* Suppressed when orphaned: the branch no longer contains this commit,
-       *  so showing it would assert exactly the link that was lost. */}
-      {entry.branch && !orphaned && (
-        <span className="hidden shrink-0 font-mono text-[10px] text-[var(--text-tertiary)] md:block">
-          {entry.branch}
-        </span>
-      )}
-
-      {(entry.insertions > 0 || entry.deletions > 0) && (
-        <span className="shrink-0 font-mono text-[11px]">
-          {entry.insertions > 0 && (
-            <span className="text-[var(--stat-added)]">+{entry.insertions}</span>
-          )}
-          {entry.insertions > 0 && entry.deletions > 0 && (
-            <span className="text-[var(--text-ghost)]"> / </span>
-          )}
-          {entry.deletions > 0 && (
-            <span className="text-[var(--stat-removed)]">-{entry.deletions}</span>
-          )}
+        {(entry.insertions > 0 || entry.deletions > 0) && (
+          <span className="shrink-0 font-mono text-[11px]">
+            {entry.insertions > 0 && (
+              <span className="text-[var(--stat-added)]">
+                +{entry.insertions}
+              </span>
+            )}
+            {entry.insertions > 0 && entry.deletions > 0 && (
+              <span className="text-[var(--text-ghost)]"> / </span>
+            )}
+            {entry.deletions > 0 && (
+              <span className="text-[var(--stat-removed)]">
+                -{entry.deletions}
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -764,7 +826,11 @@ function Body({
         … {compact(entry.bodyBytes)} bytes not shown
       </span>
       {entry.bodyRef && (
-        <ShowFull projectPath={projectPath} blobRef={entry.bodyRef} onLoaded={setFull} />
+        <ShowFull
+          projectPath={projectPath}
+          blobRef={entry.bodyRef}
+          onLoaded={setFull}
+        />
       )}
     </>
   );
@@ -772,7 +838,10 @@ function Body({
   if (markdown) {
     return (
       <div className="break-words">
-        <CachedMarkdown source={full ?? entry.text ?? ""} className={className} />
+        <CachedMarkdown
+          source={full ?? entry.text ?? ""}
+          className={className}
+        />
         {truncated && <p className="mt-1 -ml-1">{notice}</p>}
       </div>
     );
@@ -822,7 +891,11 @@ function ShowFull({
   };
 
   if (error) {
-    return <span className="ml-1.5 text-[11px] text-[var(--text-tertiary)]">{error}</span>;
+    return (
+      <span className="ml-1.5 text-[11px] text-[var(--text-tertiary)]">
+        {error}
+      </span>
+    );
   }
   return (
     <button
@@ -869,7 +942,11 @@ function Rail({
   return (
     <aside className="w-[240px] shrink-0 overflow-y-auto border-l border-[var(--border-default)] px-4 py-4">
       {checkpoints.length > 0 ? (
-        <JumpTo checkpoints={checkpoints} activeId={activeCheckpoint} onJump={onJump} />
+        <JumpTo
+          checkpoints={checkpoints}
+          activeId={activeCheckpoint}
+          onJump={onJump}
+        />
       ) : (
         /* Zero is a fact worth one quiet sentence, not an empty rail — the
          * difference between "imported, so never linked" and "nothing was
@@ -882,7 +959,9 @@ function Rail({
       )}
 
       <section>
-        <h3 className="pb-1.5 text-[11px] font-medium text-[var(--text-primary)]">Filters</h3>
+        <h3 className="pb-1.5 text-[11px] font-medium text-[var(--text-primary)]">
+          Filters
+        </h3>
         <Toggle
           label="Prompts"
           count={detail.counts.prompts}
@@ -930,8 +1009,12 @@ function Rail({
               onChange={(e) => onFailedOnlyChange(e.target.checked)}
               className="size-3 accent-[var(--status-error)]"
             />
-            <span className="flex-1 text-[12px] text-[var(--status-error)]">Failed</span>
-            <span className="text-[11px] text-[var(--status-error)]">{failedCount}</span>
+            <span className="flex-1 text-[12px] text-[var(--status-error)]">
+              Failed
+            </span>
+            <span className="text-[11px] text-[var(--status-error)]">
+              {failedCount}
+            </span>
           </label>
         )}
 
@@ -954,7 +1037,9 @@ function Rail({
       </section>
 
       <section className="mt-5">
-        <h3 className="pb-1.5 text-[11px] font-medium text-[var(--text-primary)]">View</h3>
+        <h3 className="pb-1.5 text-[11px] font-medium text-[var(--text-primary)]">
+          View
+        </h3>
         <label className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 transition-colors duration-150 hover:bg-[var(--bg-hover)]">
           <input
             type="checkbox"
@@ -1004,14 +1089,19 @@ function JumpTo({
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between gap-2 rounded border border-[var(--border-default)] px-2 py-1.5 transition-colors duration-150 hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--border-focus)] active:bg-[var(--bg-active)]"
       >
-        <span className="text-[11px] font-medium text-[var(--text-primary)]">Jump to</span>
+        <span className="text-[11px] font-medium text-[var(--text-primary)]">
+          Jump to
+        </span>
         <span className="flex items-center gap-1.5 text-[11px] text-[var(--text-tertiary)]">
           {activeIndex >= 0 && checkpoints.length > 1
             ? `${activeIndex + 1} of ${checkpoints.length}`
             : `${checkpoints.length} checkpoint${checkpoints.length === 1 ? "" : "s"}`}
           <ChevronDown
             size={11}
-            className={cn("transition-transform duration-150 ease-out", open && "rotate-180")}
+            className={cn(
+              "transition-transform duration-150 ease-out",
+              open && "rotate-180",
+            )}
           />
         </span>
       </button>
@@ -1049,7 +1139,9 @@ function JumpTo({
                   <span
                     className={cn(
                       "mt-px w-3 shrink-0 text-right font-mono text-[10px] tabular-nums",
-                      active ? "text-[var(--text-secondary)]" : "text-[var(--text-ghost)]",
+                      active
+                        ? "text-[var(--text-secondary)]"
+                        : "text-[var(--text-ghost)]",
                     )}
                   >
                     {index + 1}
@@ -1101,13 +1193,19 @@ function Toggle({
         onChange={(e) => onChange(e.target.checked)}
         className="size-3 accent-[var(--accent-primary)]"
       />
-      <span className="flex-1 text-[12px] text-[var(--text-secondary)]">{label}</span>
+      <span className="flex-1 text-[12px] text-[var(--text-secondary)]">
+        {label}
+      </span>
       <span className="text-[11px] text-[var(--text-tertiary)]">{count}</span>
     </label>
   );
 }
 
-function passes(entry: TimelineEntry, filters: TimelineFilters, failedOnly: boolean): boolean {
+function passes(
+  entry: TimelineEntry,
+  filters: TimelineFilters,
+  failedOnly: boolean,
+): boolean {
   switch (entry.kind) {
     case "prompt":
       return filters.prompts;
@@ -1116,7 +1214,9 @@ function passes(entry: TimelineEntry, filters: TimelineFilters, failedOnly: bool
     case "thinking":
       return filters.thinking;
     case "tool_call":
-      return filters.toolCalls && (!failedOnly || entry.toolStatus === "failed");
+      return (
+        filters.toolCalls && (!failedOnly || entry.toolStatus === "failed")
+      );
     case "checkpoint":
       return filters.checkpoints;
   }

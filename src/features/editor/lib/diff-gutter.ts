@@ -30,7 +30,10 @@ const ADDED = new BarMarker("cm-changebar-added");
 const CHANGED = new BarMarker("cm-changebar-changed");
 const DELETED = new BarMarker("cm-changebar-deleted");
 
-function buildMarkers(doc: Text, status: DiffLineStatus): RangeSet<GutterMarker> {
+function buildMarkers(
+  doc: Text,
+  status: DiffLineStatus,
+): RangeSet<GutterMarker> {
   const total = doc.lines;
   const entries: { pos: number; marker: GutterMarker }[] = [];
   const add = (lineNo: number, marker: GutterMarker) => {
@@ -101,6 +104,9 @@ export function diffGutter(): Extension {
 }
 
 /** Convenience: dispatch a line-status update onto a view. */
-export function applyDiffStatus(view: EditorView, status: DiffLineStatus): void {
+export function applyDiffStatus(
+  view: EditorView,
+  status: DiffLineStatus,
+): void {
   view.dispatch({ effects: setDiffStatus.of(status) });
 }

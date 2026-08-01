@@ -7,7 +7,14 @@
 
 import { useEffect, useMemo } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { Share2, SlidersHorizontal, FileText, Server, Cpu, Check } from "lucide-react";
+import {
+  Share2,
+  SlidersHorizontal,
+  FileText,
+  Server,
+  Cpu,
+  Check,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ProviderModelSelector } from "./provider-pickers";
 import { useByokStore } from "@/features/settings/stores/byok-store";
@@ -90,8 +97,8 @@ export function MemorySharingControls({
           >
             <div className="eyebrow mb-2">Recent-session handoff</div>
             <p className="mb-2.5 text-[11px] leading-snug text-text-tertiary">
-              How the previous session's tail is summarized before it is injected
-              into the next agent.
+              How the previous session's tail is summarized before it is
+              injected into the next agent.
             </p>
 
             <div className="inline-flex items-center gap-0.5 rounded-full border border-border-default bg-bg-elevated p-0.5">

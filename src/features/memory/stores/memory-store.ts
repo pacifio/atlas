@@ -3,7 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { createSelectors } from "@/lib/create-selectors";
 import type { AgentMemory, MemorySubTab } from "../lib/memory-types";
 import { memoryPolicy, type Policy } from "../lib/memory-policy-api";
-import { memoryTimeline, type MemoryTimeline } from "../lib/memory-timeline-api";
+import {
+  memoryTimeline,
+  type MemoryTimeline,
+} from "../lib/memory-timeline-api";
 
 /**
  * Module-level cache for the Memory module. The Memory tab isn't persistent —
@@ -113,8 +116,14 @@ export const useMemoryStore = createSelectors(
         if (!force && s.project === projectPath && s.agentMemory) return; // cache hit
         set({ agentMemoryLoading: true });
         try {
-          const data = await invoke<AgentMemory>("agent_memory_read", { projectPath });
-          set({ agentMemory: data, agentMemoryLoading: false, project: projectPath });
+          const data = await invoke<AgentMemory>("agent_memory_read", {
+            projectPath,
+          });
+          set({
+            agentMemory: data,
+            agentMemoryLoading: false,
+            project: projectPath,
+          });
         } catch {
           set({ agentMemory: null, agentMemoryLoading: false });
         }
@@ -122,7 +131,12 @@ export const useMemoryStore = createSelectors(
 
       loadPolicies: async (projectPath, force = false) => {
         const s = get();
-        if (!force && s.project === projectPath && s.policies && s.policyPhase === "ready") {
+        if (
+          !force &&
+          s.project === projectPath &&
+          s.policies &&
+          s.policyPhase === "ready"
+        ) {
           return; // cache hit — no re-index
         }
         set({ policyPhase: "loading", policyError: null });
@@ -175,15 +189,19 @@ export const useMemoryStore = createSelectors(
           set({ timelineLoading: false });
           if (!hadData) set({ timeline: null });
         } finally {
-          if (get().timelineRefreshing === projectPath) set({ timelineRefreshing: null });
+          if (get().timelineRefreshing === projectPath)
+            set({ timelineRefreshing: null });
         }
       },
 
-      setPolicyPhase: (phase, error = null) => set({ policyPhase: phase, policyError: error }),
+      setPolicyPhase: (phase, error = null) =>
+        set({ policyPhase: phase, policyError: error }),
       setPolicies: (rows) => set({ policies: rows, policyPhase: "ready" }),
       updatePolicyValue: (id, value) =>
         set((st) => ({
-          policies: st.policies?.map((p) => (p.id === id ? { ...p, value } : p)) ?? null,
+          policies:
+            st.policies?.map((p) => (p.id === id ? { ...p, value } : p)) ??
+            null,
         })),
     },
   })),

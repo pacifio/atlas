@@ -183,8 +183,7 @@ export const PROVIDERS: ProviderDef[] = [
     name: "Azure OpenAI",
     env: "AZURE_API_KEY",
     category: "Gateway",
-    docsUrl:
-      "https://learn.microsoft.com/azure/ai-services/openai/quickstart",
+    docsUrl: "https://learn.microsoft.com/azure/ai-services/openai/quickstart",
   },
 
   // ── Embeddings & audio ───────────────────────────────────────────

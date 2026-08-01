@@ -12,7 +12,8 @@ function matchKey(e: KeyboardEvent, key: string) {
   if (e.key.toLowerCase() === k) return true;
   // Option/Alt on macOS substitutes the typed character (e.g. option+b → "∫"),
   // so fall back to event.code (e.g. "KeyB").
-  if (k.length === 1 && /[a-z]/.test(k) && e.code === `Key${key.toUpperCase()}`) return true;
+  if (k.length === 1 && /[a-z]/.test(k) && e.code === `Key${key.toUpperCase()}`)
+    return true;
   if (k === "[" && e.code === "BracketLeft") return true;
   if (k === "]" && e.code === "BracketRight") return true;
   // Punctuation that Option also rewrites (split-view shortcuts ⌥;/⌥'/⌘\).
@@ -24,7 +25,7 @@ function matchKey(e: KeyboardEvent, key: string) {
 }
 
 export function useHotkeys(
-  bindings: Array<{ combo: KeyCombo; action: () => void }>
+  bindings: Array<{ combo: KeyCombo; action: () => void }>,
 ) {
   const bindingsRef = useRef(bindings);
   bindingsRef.current = bindings;

@@ -21,7 +21,10 @@ import { timeAgo } from "@/lib/time-ago";
 import { openFile } from "@/lib/open-file";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { MessageItem } from "@/features/chat/components/message-item";
-import { ChatInput, type ChatInputHandle } from "@/features/chat/components/chat-input";
+import {
+  ChatInput,
+  type ChatInputHandle,
+} from "@/features/chat/components/chat-input";
 import { CHAT_PROVIDERS } from "@/features/settings/lib/providers";
 import { useByokStore } from "@/features/settings/stores/byok-store";
 import { useMemoryChatStore, type ChatMode } from "../stores/memory-chat-store";
@@ -34,16 +37,18 @@ type ProviderOpt = { id: string; name: string };
 // on-device model (Local) or a BYOK provider (Provider), chosen per chat.
 
 function openProviderSettings() {
-  void import("@/features/layout/stores/layout-store").then(({ useLayoutStore }) => {
-    useLayoutStore.getState().actions.addTab({
-      id: "settings",
-      type: "settings",
-      title: "Settings",
-      closable: true,
-      dirty: false,
-      data: { section: "providers" },
-    });
-  });
+  void import("@/features/layout/stores/layout-store").then(
+    ({ useLayoutStore }) => {
+      useLayoutStore.getState().actions.addTab({
+        id: "settings",
+        type: "settings",
+        title: "Settings",
+        closable: true,
+        dirty: false,
+        data: { section: "providers" },
+      });
+    },
+  );
 }
 
 export function MemoryChatView() {
@@ -61,7 +66,11 @@ export function MemoryChatView() {
   }, [init, byokLoaded, loadByok]);
 
   const configured: ProviderOpt[] = useMemo(
-    () => CHAT_PROVIDERS.filter((p) => !!byokKeys[p.id]).map((p) => ({ id: p.id, name: p.name })),
+    () =>
+      CHAT_PROVIDERS.filter((p) => !!byokKeys[p.id]).map((p) => ({
+        id: p.id,
+        name: p.name,
+      })),
     [byokKeys],
   );
   const localReady = phase === "ready";
@@ -71,7 +80,7 @@ export function MemoryChatView() {
   const makeNew = () =>
     newSession({
       mode: localReady ? "local" : "provider",
-      provider: localReady ? "" : configured[0]?.id ?? "",
+      provider: localReady ? "" : (configured[0]?.id ?? ""),
     });
 
   if (!showChat) {
@@ -147,14 +156,22 @@ function Sidebar({ onNew }: { onNew: () => void }) {
               >
                 <span className="shrink-0 inline-flex h-[15px] items-center">
                   {streaming[m.id] ? (
-                    <Loader2 size={10} className="animate-spin text-[var(--accent-primary,#60a5fa)]" />
+                    <Loader2
+                      size={10}
+                      className="animate-spin text-[var(--accent-primary,#60a5fa)]"
+                    />
                   ) : (
-                    <MessageSquare size={11} className="text-[var(--text-tertiary)]" />
+                    <MessageSquare
+                      size={11}
+                      className="text-[var(--text-tertiary)]"
+                    />
                   )}
                 </span>
                 <div className="flex-1 min-w-0 flex flex-col gap-0.5">
                   <div className="flex items-start gap-1.5">
-                    <span className="text-[11px] leading-snug line-clamp-2 flex-1">{m.title}</span>
+                    <span className="text-[11px] leading-snug line-clamp-2 flex-1">
+                      {m.title}
+                    </span>
                     <button
                       type="button"
                       onClick={(e) => {
@@ -211,7 +228,9 @@ function Conversation({
 
   const messages = session?.messages ?? [];
   const modelLabel =
-    session?.mode === "provider" ? `${session.provider} · ${session.model}` : "memory · local";
+    session?.mode === "provider"
+      ? `${session.provider} · ${session.model}`
+      : "memory · local";
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -220,7 +239,10 @@ function Conversation({
 
   return (
     <div className="flex min-w-0 min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto [overflow-anchor:none]">
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-y-auto [overflow-anchor:none]"
+      >
         {messages.length === 0 ? (
           <div className="h-full grid place-items-center text-[12px] text-[var(--text-tertiary)]">
             Ask about this codebase’s memory…
@@ -232,7 +254,11 @@ function Conversation({
                 <MessageItem
                   message={m}
                   model={m.role === "assistant" ? modelLabel : null}
-                  streaming={isStreaming && i === messages.length - 1 && m.role === "assistant"}
+                  streaming={
+                    isStreaming &&
+                    i === messages.length - 1 &&
+                    m.role === "assistant"
+                  }
                   isLastInGroup
                 />
                 {m.role === "assistant" && sourcesByMsg[m.id]?.length > 0 && (
@@ -276,7 +302,8 @@ function CodebaseIndexBanner({
   const status = useMemoryChatStore.use.codebaseStatus();
   const building = useMemoryChatStore.use.codebaseBuilding();
   const progress = useMemoryChatStore.use.codebaseProgress();
-  const { loadCodebaseStatus, buildCodebaseIndex } = useMemoryChatStore.use.actions();
+  const { loadCodebaseStatus, buildCodebaseIndex } =
+    useMemoryChatStore.use.actions();
 
   useEffect(() => {
     if (projectPath) void loadCodebaseStatus(projectPath);
@@ -289,17 +316,26 @@ function CodebaseIndexBanner({
     // local summaries when the local model is ready, else structural-only.
     const opts =
       mode === "provider" && provider && model
-        ? ({ mode: "incremental", backend: "provider", provider, model } as const)
+        ? ({
+            mode: "incremental",
+            backend: "provider",
+            provider,
+            model,
+          } as const)
         : localReady
           ? ({ mode: "incremental", backend: "local" } as const)
           : ({ mode: "incremental", backend: "structural" } as const);
     void buildCodebaseIndex(projectPath, opts);
   };
 
-  const lead = status?.indexed ? `Codebase: ${status.fileCount} files` : "Codebase not indexed";
+  const lead = status?.indexed
+    ? `Codebase: ${status.fileCount} files`
+    : "Codebase not indexed";
   const rest = status?.indexed
     ? (status.summaryCount ? ` · ${status.summaryCount} summarized` : "") +
-      (status.builtAtMs ? ` · updated ${timeAgo(new Date(status.builtAtMs).toISOString(), { suffix: true })}` : "")
+      (status.builtAtMs
+        ? ` · updated ${timeAgo(new Date(status.builtAtMs).toISOString(), { suffix: true })}`
+        : "")
     : " — answers may be outdated";
 
   return (
@@ -307,7 +343,9 @@ function CodebaseIndexBanner({
       <span className="flex min-w-0 items-center gap-2 truncate">
         <Boxes size={12} className="shrink-0 text-[var(--text-tertiary)]" />
         <span className="truncate">
-          <span className="font-semibold text-[var(--text-primary)]">{lead}</span>
+          <span className="font-semibold text-[var(--text-primary)]">
+            {lead}
+          </span>
           {rest && <span className="text-[var(--text-tertiary)]">{rest}</span>}
         </span>
       </span>
@@ -329,7 +367,11 @@ function CodebaseIndexBanner({
   );
 }
 
-function phaseLabel(p: { phase: string; current: number; total: number }): string {
+function phaseLabel(p: {
+  phase: string;
+  current: number;
+  total: number;
+}): string {
   if (p.phase === "scanning") return "Scanning…";
   if (p.phase === "summarizing") return `Summarizing ${p.current}/${p.total}`;
   if (p.phase === "embedding") return "Embedding…";
@@ -358,7 +400,10 @@ function Sources({ sources }: { sources: SourceRef[] }) {
             type="button"
             title={tip}
             onClick={() => openFile(s.filePath as string)}
-            className={cn(base, "hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer")}
+            className={cn(
+              base,
+              "hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer",
+            )}
           >
             <FileText size={9} />
             <span className="max-w-[160px] truncate">{s.title}</span>
@@ -382,7 +427,12 @@ function ModeToggle({
   providerReady: boolean;
   onMode: (m: ChatMode) => void;
 }) {
-  const seg = (m: ChatMode, label: string, Icon: typeof Cpu, enabled: boolean) => (
+  const seg = (
+    m: ChatMode,
+    label: string,
+    Icon: typeof Cpu,
+    enabled: boolean,
+  ) => (
     <button
       type="button"
       disabled={!enabled}
@@ -419,8 +469,20 @@ function ArcProgress({ pct, size = 13 }: { pct: number; size?: number }) {
   const clamped = Math.max(0, Math.min(100, pct));
   const off = c * (1 - clamped / 100);
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90 shrink-0">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth="2" stroke="var(--border-default)" />
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      className="-rotate-90 shrink-0"
+    >
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="none"
+        strokeWidth="2"
+        stroke="var(--border-default)"
+      />
       <circle
         cx={size / 2}
         cy={size / 2}
@@ -446,7 +508,9 @@ function InstallButton() {
   const error = useMemoryChatStore.use.modelError();
   const { downloadModel } = useMemoryChatStore.use.actions();
   const pct =
-    progress && progress.total > 0 ? Math.round((progress.received / progress.total) * 100) : 0;
+    progress && progress.total > 0
+      ? Math.round((progress.received / progress.total) * 100)
+      : 0;
 
   const pill =
     "inline-flex items-center gap-1.5 h-[26px] px-2.5 rounded-full border border-border-default bg-bg-elevated text-[10px] font-medium text-text-secondary";
@@ -469,8 +533,15 @@ function InstallButton() {
     <button
       type="button"
       onClick={() => void downloadModel()}
-      title={phase === "download-failed" ? error ?? "Download failed — retry" : "Download the local model"}
-      className={cn(pill, "shadow-[0_2px_8px_rgba(0,0,0,0.35)] hover:bg-bg-hover hover:text-text-primary transition-colors cursor-pointer")}
+      title={
+        phase === "download-failed"
+          ? (error ?? "Download failed — retry")
+          : "Download the local model"
+      }
+      className={cn(
+        pill,
+        "shadow-[0_2px_8px_rgba(0,0,0,0.35)] hover:bg-bg-hover hover:text-text-primary transition-colors cursor-pointer",
+      )}
     >
       <Download size={12} /> Install model
     </button>
@@ -493,7 +564,11 @@ function BackendPill() {
       }
       className="inline-flex items-center gap-1 h-[26px] px-2 rounded-full border border-border-default bg-bg-elevated text-[10px] font-medium text-text-tertiary"
     >
-      {metal ? <Zap size={11} className="text-text-secondary" /> : <Cpu size={11} />}
+      {metal ? (
+        <Zap size={11} className="text-text-secondary" />
+      ) : (
+        <Cpu size={11} />
+      )}
       {metal ? "Metal" : "CPU"}
     </span>
   );
@@ -557,54 +632,67 @@ function Composer({
       <div className="mx-auto w-full max-w-[760px]">
         {/* Tip peeks above the rounded input and tucks behind it (separate
             rounded-top surface, contrasting shade, no border). */}
-        <CodebaseIndexBanner mode={mode} provider={provider} model={model} localReady={localReady} />
-        <div className="relative z-10 overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--bg-secondary)] shadow-[0_8px_24px_rgba(0,0,0,0.35)] focus-within:border-[var(--border-focus)]">
-        <ChatInput
-          ref={inputRef}
-          placeholder={disabled ? "Open a project to chat with its memory…" : "Ask about features, policies, changes…"}
-          onChange={(v) => setHasText(v.trim().length > 0)}
-          onSubmit={submit}
+        <CodebaseIndexBanner
+          mode={mode}
+          provider={provider}
+          model={model}
+          localReady={localReady}
         />
-        <div className="flex items-center justify-between gap-2 px-2 pb-2 pt-1">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <ModeToggle
-              mode={mode}
-              localReady={localReady}
-              providerReady={providerReady}
-              onMode={(m) => setMode(sessionId, m)}
-            />
-            {mode === "provider" && (
-              <ProviderModelSelector
-                configured={configured}
-                provider={provider}
-                model={model}
-                onProvider={(p) => setProvider(sessionId, p)}
-                onModel={(m) => setModel(sessionId, m)}
+        <div className="relative z-10 overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--bg-secondary)] shadow-[0_8px_24px_rgba(0,0,0,0.35)] focus-within:border-[var(--border-focus)]">
+          <ChatInput
+            ref={inputRef}
+            placeholder={
+              disabled
+                ? "Open a project to chat with its memory…"
+                : "Ask about features, policies, changes…"
+            }
+            onChange={(v) => setHasText(v.trim().length > 0)}
+            onSubmit={submit}
+          />
+          <div className="flex items-center justify-between gap-2 px-2 pb-2 pt-1">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <ModeToggle
+                mode={mode}
+                localReady={localReady}
+                providerReady={providerReady}
+                onMode={(m) => setMode(sessionId, m)}
               />
-            )}
-            {mode === "local" && localReady && <BackendPill />}
-          </div>
-          {needsInstall ? (
-            <InstallButton />
-          ) : (
-            <button
-              type="button"
-              onClick={submit}
-              disabled={!running && (!hasText || disabled || !canSend)}
-              className={cn(
-                "flex items-center justify-center w-7 h-7 shrink-0 rounded-full transition-colors",
-                running
-                  ? "bg-[var(--bg-elevated,var(--bg-tertiary))] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                  : !hasText || disabled || !canSend
-                    ? "bg-[var(--bg-elevated,var(--bg-tertiary))] text-[var(--text-tertiary)] cursor-not-allowed"
-                    : "bg-[var(--text-primary)] text-[var(--bg-base)] hover:opacity-90",
+              {mode === "provider" && (
+                <ProviderModelSelector
+                  configured={configured}
+                  provider={provider}
+                  model={model}
+                  onProvider={(p) => setProvider(sessionId, p)}
+                  onModel={(m) => setModel(sessionId, m)}
+                />
               )}
-              aria-label={running ? "Stop" : "Send"}
-            >
-              {running ? <Square size={11} strokeWidth={3} fill="currentColor" /> : <ArrowUp size={14} strokeWidth={2.5} />}
-            </button>
-          )}
-        </div>
+              {mode === "local" && localReady && <BackendPill />}
+            </div>
+            {needsInstall ? (
+              <InstallButton />
+            ) : (
+              <button
+                type="button"
+                onClick={submit}
+                disabled={!running && (!hasText || disabled || !canSend)}
+                className={cn(
+                  "flex items-center justify-center w-7 h-7 shrink-0 rounded-full transition-colors",
+                  running
+                    ? "bg-[var(--bg-elevated,var(--bg-tertiary))] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                    : !hasText || disabled || !canSend
+                      ? "bg-[var(--bg-elevated,var(--bg-tertiary))] text-[var(--text-tertiary)] cursor-not-allowed"
+                      : "bg-[var(--text-primary)] text-[var(--bg-base)] hover:opacity-90",
+                )}
+                aria-label={running ? "Stop" : "Send"}
+              >
+                {running ? (
+                  <Square size={11} strokeWidth={3} fill="currentColor" />
+                ) : (
+                  <ArrowUp size={14} strokeWidth={2.5} />
+                )}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -643,7 +731,9 @@ function SetupGate({ byokLoaded }: { byokLoaded: boolean }) {
   }
 
   const pct =
-    progress && progress.total > 0 ? Math.round((progress.received / progress.total) * 100) : null;
+    progress && progress.total > 0
+      ? Math.round((progress.received / progress.total) * 100)
+      : null;
 
   return (
     <div className="h-full grid place-items-center p-8">
@@ -652,10 +742,13 @@ function SetupGate({ byokLoaded }: { byokLoaded: boolean }) {
           <Sparkles size={22} className="text-[var(--text-tertiary)]" />
         </div>
         <div>
-          <p className="text-sm font-medium text-[var(--text-primary)]">Chat with your codebase memory</p>
+          <p className="text-sm font-medium text-[var(--text-primary)]">
+            Chat with your codebase memory
+          </p>
           <p className="text-xs text-[var(--text-tertiary)] mt-1.5 leading-relaxed">
-            Ask about this project’s features, policies and changes. Run it on-device with a small
-            local model (~470&nbsp;MB), or use one of your configured providers.
+            Ask about this project’s features, policies and changes. Run it
+            on-device with a small local model (~470&nbsp;MB), or use one of
+            your configured providers.
           </p>
         </div>
 
@@ -694,7 +787,9 @@ function SetupGate({ byokLoaded }: { byokLoaded: boolean }) {
         )}
 
         {phase === "download-failed" && (
-          <p className="text-[11px] text-[var(--danger,#e5484d)]">{error ?? "Download failed"}</p>
+          <p className="text-[11px] text-[var(--danger,#e5484d)]">
+            {error ?? "Download failed"}
+          </p>
         )}
       </div>
     </div>

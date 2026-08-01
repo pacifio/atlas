@@ -11,7 +11,9 @@ export async function pickAndAddWorkspace(): Promise<void> {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const selected = await open({ directory: true });
     if (selected) {
-      await useWorkspaceStore.getState().actions.addWorkspace(selected as string);
+      await useWorkspaceStore
+        .getState()
+        .actions.addWorkspace(selected as string);
     }
   } catch {
     // dialog not available (e.g. non-Tauri context) — no-op

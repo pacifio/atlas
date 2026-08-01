@@ -12,25 +12,29 @@ import { GitCommit, GitCompare, Github, CheckCheck } from "lucide-react";
 // active branches — keeping it lazy stops the right panel from blocking
 // the post-`hydrate` render.
 const GitManagerPanel = lazy(() =>
-  import("@/features/git/components/git-manager/git-manager-panel").then((m) => ({
-    default: m.GitManagerPanel,
-  }))
+  import("@/features/git/components/git-manager/git-manager-panel").then(
+    (m) => ({
+      default: m.GitManagerPanel,
+    }),
+  ),
 );
 // xyflow + the layout pass are heavy; load only when the user opens the tab.
 const GitGraphPanel = lazy(() =>
   import("@/features/git/components/git-graph-panel").then((m) => ({
     default: m.GitGraphPanel,
-  }))
+  })),
 );
 const GithubPanel = lazy(() =>
   import("@/features/github/components/github-panel").then((m) => ({
     default: m.GithubPanel,
-  }))
+  })),
 );
 const ReviewAgentsPanel = lazy(() =>
-  import("@/features/review-agents/components/review-agents-panel").then((m) => ({
-    default: m.ReviewAgentsPanel,
-  }))
+  import("@/features/review-agents/components/review-agents-panel").then(
+    (m) => ({
+      default: m.ReviewAgentsPanel,
+    }),
+  ),
 );
 
 const sections = [
@@ -55,7 +59,7 @@ export function RightPanel() {
               "flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap",
               activeSection === s.id
                 ? "text-text-primary bg-bg-selected"
-                : "text-text-tertiary hover:text-text-secondary hover:bg-bg-hover"
+                : "text-text-tertiary hover:text-text-secondary hover:bg-bg-hover",
             )}
           >
             <s.icon size={12} />
@@ -68,13 +72,17 @@ export function RightPanel() {
         className={cn(
           "flex-1 min-h-0",
           // Git Graph owns its own scrolling (via ReactFlow); other panels scroll vertically.
-          activeSection === "git-graph" ? "overflow-hidden" : "overflow-auto hide-scrollbar",
+          activeSection === "git-graph"
+            ? "overflow-hidden"
+            : "overflow-auto hide-scrollbar",
         )}
       >
         <Suspense
           fallback={
             <PanelSkeleton
-              label={activeSection === "changes" ? "Loading changes…" : "Loading…"}
+              label={
+                activeSection === "changes" ? "Loading changes…" : "Loading…"
+              }
             />
           }
         >

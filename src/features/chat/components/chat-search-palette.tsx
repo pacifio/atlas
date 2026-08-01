@@ -25,10 +25,8 @@ export function ChatSearchPalette({
   // Only user messages, with their original indices.
   const userMessages = useMemo(
     () =>
-      messages
-        .map((m, i) => ({ m, i }))
-        .filter(({ m }) => m.role === "user"),
-    [messages]
+      messages.map((m, i) => ({ m, i })).filter(({ m }) => m.role === "user"),
+    [messages],
   );
 
   const filtered = useMemo(() => {
@@ -75,7 +73,7 @@ export function ChatSearchPalette({
             "w-[560px] max-h-[440px] rounded-xl overflow-hidden",
             "bg-[var(--bg-secondary)] border border-[var(--border-default)]",
             "shadow-[var(--shadow-overlay)]",
-            "flex flex-col"
+            "flex flex-col",
           )}
           onOpenAutoFocus={(e) => {
             e.preventDefault();
@@ -84,7 +82,10 @@ export function ChatSearchPalette({
         >
           <Dialog.Title className="sr-only">Find user message</Dialog.Title>
           <div className="flex items-center gap-2 px-4 h-[44px] border-b border-[var(--border-default)] shrink-0">
-            <Search size={14} className="text-[var(--text-tertiary)] shrink-0" />
+            <Search
+              size={14}
+              className="text-[var(--text-tertiary)] shrink-0"
+            />
             <input
               ref={inputRef}
               value={query}
@@ -124,15 +125,18 @@ export function ChatSearchPalette({
                       "w-full flex items-start gap-3 px-4 py-2 text-left cursor-pointer",
                       active
                         ? "bg-[var(--bg-selected)]"
-                        : "hover:bg-[var(--bg-hover)]"
+                        : "hover:bg-[var(--bg-hover)]",
                     )}
                   >
                     <span
                       className={cn(
-                        "mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 bg-[var(--accent-primary-muted)]"
+                        "mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 bg-[var(--accent-primary-muted)]",
                       )}
                     >
-                      <User size={10} className="text-[var(--accent-primary)]" />
+                      <User
+                        size={10}
+                        className="text-[var(--accent-primary)]"
+                      />
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">

@@ -15,7 +15,12 @@ interface Props {
  * chips followed by an inline "+ Add" affordance. Suggestions for
  * existing (known) tags not yet selected appear below.
  */
-export function TagInput({ value, onChange, known, placeholder = "tag name" }: Props) {
+export function TagInput({
+  value,
+  onChange,
+  known,
+  placeholder = "tag name",
+}: Props) {
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);

@@ -43,15 +43,17 @@ export async function switchOrg(id: string): Promise<void> {
   try {
     const wsActions = useWorkspaceStore.getState().actions;
     const projectActions = useProjectStore.getState().actions;
-    const outgoingActiveWs =
-      useWorkspaceStore.getState().activeWorkspaceId;
+    const outgoingActiveWs = useWorkspaceStore.getState().activeWorkspaceId;
     const outgoingPath =
       useProjectStore.getState().currentProject?.path ?? null;
 
     // 1) Remember the outgoing org's active workspace so switching back
     //    restores the user where they left off.
     if (activeOrganisationId) {
-      orgActions.setActiveWorkspaceForOrg(activeOrganisationId, outgoingActiveWs);
+      orgActions.setActiveWorkspaceForOrg(
+        activeOrganisationId,
+        outgoingActiveWs,
+      );
     }
 
     // 2) Flush the active workspace's unsaved state (KB buffer, editor tabs)
@@ -130,7 +132,10 @@ export async function deleteOrgAndData(id: string): Promise<boolean> {
   // anyway"). A non-admin who stays a member on the server may see it return on
   // the next sync; that is the accepted tradeoff. Only signed-in, only if the
   // org was ever linked.
-  if (target?.remoteId && useAuthStore.getState().snapshot.status === "signed-in") {
+  if (
+    target?.remoteId &&
+    useAuthStore.getState().snapshot.status === "signed-in"
+  ) {
     try {
       await auth.deleteOrg(target.remoteId);
     } catch (e) {

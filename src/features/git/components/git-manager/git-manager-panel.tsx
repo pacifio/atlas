@@ -168,7 +168,9 @@ function ToolbarBtn({
       {busy ? <Loader2 size={12} className="animate-spin" /> : icon}
       {label && <span>{label}</span>}
       {badge !== undefined && (
-        <span className="font-mono text-[9px] text-text-secondary">{badge}</span>
+        <span className="font-mono text-[9px] text-text-secondary">
+          {badge}
+        </span>
       )}
     </button>
   );

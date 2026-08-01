@@ -58,7 +58,8 @@ export function parseToken(value: string, caret: number): TokenInfo | null {
   // / ; separator. (Matching the trailing separator char covers all of them.)
   const before = value.slice(0, start).trimEnd();
   const commandPosition = before === "" || /[|&;]$/.test(before);
-  const kind: TokenKind = commandPosition && !isPathLike(token) ? "command" : "path";
+  const kind: TokenKind =
+    commandPosition && !isPathLike(token) ? "command" : "path";
 
   const slash = token.lastIndexOf("/");
   const dirPart = slash >= 0 ? token.slice(0, slash + 1) : "";

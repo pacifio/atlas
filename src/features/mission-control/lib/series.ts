@@ -6,7 +6,10 @@ export function bucketTokens(d: DailyBucket): number {
 }
 
 /** Filter the daily series to the last `rangeDays` (null = all time). */
-export function filterDaily(daily: DailyBucket[], rangeDays: number | null): DailyBucket[] {
+export function filterDaily(
+  daily: DailyBucket[],
+  rangeDays: number | null,
+): DailyBucket[] {
   if (rangeDays == null) return daily;
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - rangeDays);
@@ -43,7 +46,11 @@ export function consumptionShares(
   data: MissionControlUsage,
 ): Array<{ name: string; path: string; value: number }> {
   return data.projects
-    .map((p) => ({ name: p.projectName, path: p.projectPath, value: p.totalTokens }))
+    .map((p) => ({
+      name: p.projectName,
+      path: p.projectPath,
+      value: p.totalTokens,
+    }))
     .filter((s) => s.value > 0)
     .sort((a, b) => b.value - a.value);
 }

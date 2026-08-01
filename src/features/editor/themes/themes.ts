@@ -248,11 +248,19 @@ const vesper: EditorColorTheme = {
   },
 };
 
-export const EDITOR_THEMES: EditorColorTheme[] = [atlas, dracula, oneDark, monokai, vesper];
+export const EDITOR_THEMES: EditorColorTheme[] = [
+  atlas,
+  dracula,
+  oneDark,
+  monokai,
+  vesper,
+];
 
 export const DEFAULT_EDITOR_THEME_ID = "atlas";
 
-export function getEditorTheme(id: string | undefined | null): EditorColorTheme {
+export function getEditorTheme(
+  id: string | undefined | null,
+): EditorColorTheme {
   return EDITOR_THEMES.find((t) => t.id === id) ?? atlas;
 }
 
@@ -264,7 +272,9 @@ export function getEditorTheme(id: string | undefined | null): EditorColorTheme 
  * background to `--bg-base`, ignoring whatever `bg`/`gutterBg`/`contextBg` a
  * theme declares. Uses the CSS var (not a literal) so it tracks the interface.
  */
-export function resolveEditorColors(theme: EditorColorTheme): EditorThemeColors {
+export function resolveEditorColors(
+  theme: EditorColorTheme,
+): EditorThemeColors {
   return {
     ...theme.colors,
     bg: "var(--bg-base)",

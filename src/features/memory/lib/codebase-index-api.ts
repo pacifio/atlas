@@ -25,14 +25,24 @@ export interface CodebaseIndexProgress {
 
 export const codebaseIndex = {
   status(projectPath: string): Promise<CodebaseIndexStatus> {
-    return invoke<CodebaseIndexStatus>("codebase_index_status", { projectPath });
+    return invoke<CodebaseIndexStatus>("codebase_index_status", {
+      projectPath,
+    });
   },
-  build(projectPath: string, opts: CodebaseBuildOpts): Promise<CodebaseIndexStatus> {
-    return invoke<CodebaseIndexStatus>("codebase_index_build", { projectPath, opts });
+  build(
+    projectPath: string,
+    opts: CodebaseBuildOpts,
+  ): Promise<CodebaseIndexStatus> {
+    return invoke<CodebaseIndexStatus>("codebase_index_build", {
+      projectPath,
+      opts,
+    });
   },
 };
 
 export const listenCodebaseIndexProgress = (
   handler: (p: CodebaseIndexProgress) => void,
 ): Promise<UnlistenFn> =>
-  listen<CodebaseIndexProgress>("atlas:codebase-index:progress", (e) => handler(e.payload));
+  listen<CodebaseIndexProgress>("atlas:codebase-index:progress", (e) =>
+    handler(e.payload),
+  );

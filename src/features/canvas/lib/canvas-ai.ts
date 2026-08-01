@@ -3,7 +3,12 @@
 // with any BYOK text model); the model only ever emits ops, never prose that we
 // render. Mirrors the diagram-DSL approach: tempIds + relative coords.
 
-import type { AiOp, CanvasEdge, CanvasNode, ShapeType } from "../stores/canvas-store";
+import type {
+  AiOp,
+  CanvasEdge,
+  CanvasNode,
+  ShapeType,
+} from "../stores/canvas-store";
 
 /** System prompt handed to the BYOK model on every generate/modify turn. */
 export const CANVAS_AI_SYSTEM = `You are Atlas's diagramming copilot for an infinite canvas. You turn a request into a diagram/flowchart/notes by emitting a STRICT JSON program of operations — never prose.
@@ -39,12 +44,17 @@ export function parseOps(reply: string): AiOp[] {
   // Last resort: the widest {...} span.
   const first = reply.indexOf("{");
   const last = reply.lastIndexOf("}");
-  if (first !== -1 && last > first) candidates.push(reply.slice(first, last + 1));
+  if (first !== -1 && last > first)
+    candidates.push(reply.slice(first, last + 1));
 
   for (const c of candidates) {
     try {
       const obj = JSON.parse(c) as { ops?: unknown };
-      const ops = Array.isArray(obj?.ops) ? obj.ops : Array.isArray(obj) ? obj : null;
+      const ops = Array.isArray(obj?.ops)
+        ? obj.ops
+        : Array.isArray(obj)
+          ? obj
+          : null;
       if (ops) return sanitize(ops as unknown[]);
     } catch {
       /* try next candidate */
@@ -63,7 +73,8 @@ function sanitize(raw: unknown[]): AiOp[] {
     const o = r as Record<string, unknown>;
     switch (o.op) {
       case "add_node": {
-        if (typeof o.tempId !== "string" || !NODE_KINDS.has(o.kind as string)) break;
+        if (typeof o.tempId !== "string" || !NODE_KINDS.has(o.kind as string))
+          break;
         const shapeType = SHAPES.has(o.shapeType as string)
           ? (o.shapeType as ShapeType)
           : undefined;
@@ -95,7 +106,9 @@ function sanitize(raw: unknown[]): AiOp[] {
             text: str(o.text),
             title: str(o.title),
             body: str(o.body),
-            shapeType: SHAPES.has(o.shapeType as string) ? (o.shapeType as ShapeType) : undefined,
+            shapeType: SHAPES.has(o.shapeType as string)
+              ? (o.shapeType as ShapeType)
+              : undefined,
           });
         break;
       case "delete_node":
@@ -117,10 +130,16 @@ function num(v: unknown): number | undefined {
 }
 
 /** Current members of a group, compacted for a "modify this diagram" prompt. */
-export function serializeGroup(nodes: CanvasNode[], edges: CanvasEdge[], groupId: string): string {
+export function serializeGroup(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  groupId: string,
+): string {
   const members = nodes.filter((n) => n.groupId === groupId);
   const ids = new Set(members.map((n) => n.id));
-  const es = edges.filter((e) => e.groupId === groupId || (ids.has(e.source) && ids.has(e.target)));
+  const es = edges.filter(
+    (e) => e.groupId === groupId || (ids.has(e.source) && ids.has(e.target)),
+  );
   const shape = {
     nodes: members.map((n) => ({
       id: n.id,

@@ -1,11 +1,35 @@
 import { useEffect, useRef, useCallback } from "react";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } from "@codemirror/view";
-import { EditorState, Compartment, Transaction, type Extension } from "@codemirror/state";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { bracketMatching, foldGutter, indentOnInput, syntaxHighlighting } from "@codemirror/language";
+import {
+  EditorView,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  drawSelection,
+} from "@codemirror/view";
+import {
+  EditorState,
+  Compartment,
+  Transaction,
+  type Extension,
+} from "@codemirror/state";
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+} from "@codemirror/commands";
+import {
+  bracketMatching,
+  foldGutter,
+  indentOnInput,
+  syntaxHighlighting,
+} from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { getEditorTheme } from "../themes/themes";
-import { buildEditorChromeTheme, buildHighlightStyle } from "../themes/build-cm-theme";
+import {
+  buildEditorChromeTheme,
+  buildHighlightStyle,
+} from "../themes/build-cm-theme";
 import { useEditorStore } from "../stores/editor-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
@@ -32,7 +56,10 @@ const blameCompartment = new Compartment();
 
 function themeExtensions(themeId: string | undefined | null): Extension {
   const theme = getEditorTheme(themeId);
-  return [buildEditorChromeTheme(theme), syntaxHighlighting(buildHighlightStyle(theme))];
+  return [
+    buildEditorChromeTheme(theme),
+    syntaxHighlighting(buildHighlightStyle(theme)),
+  ];
 }
 
 // Language extension loader — lazy imports for tree-shaking
@@ -105,12 +132,21 @@ interface EditorPanelProps {
   containerHeight: number;
 }
 
-export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelProps) {
+export function EditorPanel({
+  tabId,
+  filePath,
+  containerHeight,
+}: EditorPanelProps) {
   const path = filePath ?? "";
   const isUntitled = path.startsWith("untitled:");
   const buffer = useEditorStore((s) => s.buffers[path]);
-  const { openBuffer, setDirty, markSaved, reloadBuffer, markExternallyChanged } =
-    useEditorStore.use.actions();
+  const {
+    openBuffer,
+    setDirty,
+    markSaved,
+    reloadBuffer,
+    markExternallyChanged,
+  } = useEditorStore.use.actions();
   const projectPath = useProjectStore.use.currentProject()?.path ?? "";
   const layoutActions = useLayoutStore.use.actions();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -133,7 +169,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     void (async () => {
       try {
         const content = await invoke<string>("read_file_content", { path });
-        const mtime = await invoke<number>("file_mtime_ms", { path }).catch(() => 0);
+        const mtime = await invoke<number>("file_mtime_ms", { path }).catch(
+          () => 0,
+        );
         openBuffer(path, content, mtime);
       } catch {
         openBuffer(path, `// Failed to read: ${path}`);
@@ -160,7 +198,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
         if (!chosen) return; // user cancelled
         const newPath = chosen as string;
         await invoke("write_file_content", { path: newPath, content });
-        const mtime = await invoke<number>("file_mtime_ms", { path: newPath }).catch(() => 0);
+        const mtime = await invoke<number>("file_mtime_ms", {
+          path: newPath,
+        }).catch(() => 0);
         // Carry the freshly-saved content over to the new buffer key.
         openBuffer(newPath, content, mtime);
         markSaved(newPath, content, mtime);
@@ -188,7 +228,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     }
     try {
       await invoke("write_file_content", { path, content });
-      const mtime = await invoke<number>("file_mtime_ms", { path }).catch(() => 0);
+      const mtime = await invoke<number>("file_mtime_ms", { path }).catch(
+        () => 0,
+      );
       markSaved(path, content, mtime);
       logEvent({
         source: "editor",
@@ -214,7 +256,15 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     } catch (err) {
       console.error("Save failed:", err);
     }
-  }, [path, markSaved, isUntitled, projectPath, openBuffer, layoutActions, tabId]);
+  }, [
+    path,
+    markSaved,
+    isUntitled,
+    projectPath,
+    openBuffer,
+    layoutActions,
+    tabId,
+  ]);
 
   onSaveRef.current = handleSave;
 
@@ -275,7 +325,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     if (!path || isUntitled) return;
     const buf = useEditorStore.getState().buffers[path];
     if (!buf) return;
-    const mtime = await invoke<number>("file_mtime_ms", { path }).catch(() => 0);
+    const mtime = await invoke<number>("file_mtime_ms", { path }).catch(
+      () => 0,
+    );
     if (!mtime || mtime <= buf.diskMtimeMs) return;
     let content: string;
     try {
@@ -286,7 +338,8 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     // Re-read the buffer: it may have changed (dirty/gone) during the awaits.
     const cur = useEditorStore.getState().buffers[path];
     if (!cur) return;
-    const liveDoc = viewRef.current?.state.doc.toString() ?? cur.originalContent;
+    const liveDoc =
+      viewRef.current?.state.doc.toString() ?? cur.originalContent;
     if (content === liveDoc) {
       // Content matches what's shown (e.g. our own save) — just record mtime.
       reloadBuffer(path, content, mtime);
@@ -300,7 +353,14 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     replaceViewDoc(content);
     refreshDiffGutter();
     refreshBlameRef.current();
-  }, [path, isUntitled, reloadBuffer, markExternallyChanged, replaceViewDoc, refreshDiffGutter]);
+  }, [
+    path,
+    isUntitled,
+    reloadBuffer,
+    markExternallyChanged,
+    replaceViewDoc,
+    refreshDiffGutter,
+  ]);
   const revalidateRef = useRef(revalidate);
   revalidateRef.current = revalidate;
 
@@ -314,7 +374,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     } catch {
       return;
     }
-    const mtime = await invoke<number>("file_mtime_ms", { path }).catch(() => 0);
+    const mtime = await invoke<number>("file_mtime_ms", { path }).catch(
+      () => 0,
+    );
     reloadBuffer(path, content, mtime);
     replaceViewDoc(content);
     refreshDiffGutter();
@@ -342,7 +404,10 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   useEffect(() => {
     if (!buffer || isUntitled) return;
     void revalidateRef.current();
-    const un = listen("atlas:explorer:changed", () => void revalidateRef.current());
+    const un = listen(
+      "atlas:explorer:changed",
+      () => void revalidateRef.current(),
+    );
     const onActive = () => void revalidateRef.current();
     window.addEventListener("atlas:window-active", onActive);
     return () => {
@@ -366,7 +431,8 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     // Seed from the freshest store content — a disk revalidation may have
     // reloaded the buffer between mount and this (async) view creation.
     const originalContent =
-      useEditorStore.getState().buffers[path]?.originalContent ?? buffer.originalContent;
+      useEditorStore.getState().buffers[path]?.originalContent ??
+      buffer.originalContent;
     let cancelled = false;
 
     (async () => {
@@ -376,12 +442,18 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
       const view = new EditorView({
         doc: originalContent,
         extensions: [
-          themeCompartment.of(themeExtensions(useProjectStore.getState().settings.codeEditorTheme)),
+          themeCompartment.of(
+            themeExtensions(
+              useProjectStore.getState().settings.codeEditorTheme,
+            ),
+          ),
           langExt,
           lineNumbers(),
           diffGutter(),
           blameCompartment.of(
-            useProjectStore.getState().settings.gitBlameInline ? blameInline() : [],
+            useProjectStore.getState().settings.gitBlameInline
+              ? blameInline()
+              : [],
           ),
           highlightActiveLine(),
           drawSelection(),
@@ -391,7 +463,13 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
           history(),
           highlightSelectionMatches(),
           keymap.of([
-            { key: "Mod-s", run: () => { onSaveRef.current(); return true; } },
+            {
+              key: "Mod-s",
+              run: () => {
+                onSaveRef.current();
+                return true;
+              },
+            },
             indentWithTab,
             ...defaultKeymap,
             ...historyKeymap,
@@ -403,7 +481,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
               if (dirtyTimerRef.current) clearTimeout(dirtyTimerRef.current);
               dirtyTimerRef.current = setTimeout(() => {
                 const current = update.view.state.doc.toString();
-                const orig = useEditorStore.getState().buffers[path]?.originalContent ?? "";
+                const orig =
+                  useEditorStore.getState().buffers[path]?.originalContent ??
+                  "";
                 setDirty(path, current !== orig);
               }, DIRTY_CHECK_DEBOUNCE);
             }
@@ -443,7 +523,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: themeCompartment.reconfigure(themeExtensions(codeEditorTheme)) });
+    view.dispatch({
+      effects: themeCompartment.reconfigure(themeExtensions(codeEditorTheme)),
+    });
   }, [codeEditorTheme]);
 
   // Live-toggle inline blame: reconfigure the compartment in place; turning it
@@ -453,7 +535,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     const view = viewRef.current;
     if (!view) return;
     view.dispatch({
-      effects: blameCompartment.reconfigure(gitBlameInline ? blameInline() : []),
+      effects: blameCompartment.reconfigure(
+        gitBlameInline ? blameInline() : [],
+      ),
     });
     if (gitBlameInline) refreshBlameRef.current();
   }, [gitBlameInline]);
@@ -466,12 +550,19 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     );
   }
 
-  const editorHeight = containerHeight > TOOLBAR_HEIGHT
-    ? containerHeight - TOOLBAR_HEIGHT
-    : window.innerHeight - 140;
+  const editorHeight =
+    containerHeight > TOOLBAR_HEIGHT
+      ? containerHeight - TOOLBAR_HEIGHT
+      : window.innerHeight - 140;
 
   return (
-    <div style={{ background: "#000000", height: containerHeight || "100%", overflow: "hidden" }}>
+    <div
+      style={{
+        background: "#000000",
+        height: containerHeight || "100%",
+        overflow: "hidden",
+      }}
+    >
       {/* Breadcrumb toolbar */}
       <div
         className="flex items-center px-3 border-b border-border-default bg-bg-primary overflow-hidden"
@@ -502,10 +593,17 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   );
 }
 
-function Breadcrumbs({ filePath, projectPath }: { filePath: string; projectPath: string }) {
-  const relative = projectPath && filePath.startsWith(projectPath)
-    ? filePath.slice(projectPath.length + 1)
-    : filePath;
+function Breadcrumbs({
+  filePath,
+  projectPath,
+}: {
+  filePath: string;
+  projectPath: string;
+}) {
+  const relative =
+    projectPath && filePath.startsWith(projectPath)
+      ? filePath.slice(projectPath.length + 1)
+      : filePath;
   const segments = relative.split("/").filter(Boolean);
 
   return (
@@ -514,8 +612,15 @@ function Breadcrumbs({ filePath, projectPath }: { filePath: string; projectPath:
         const isLast = i === segments.length - 1;
         return (
           <span key={i} className="flex items-center shrink-0">
-            {i > 0 && <ChevronRight size={10} className="text-text-tertiary mx-0.5 shrink-0" />}
-            <span className={`text-[11px] font-mono ${isLast ? "text-text-primary" : "text-text-tertiary"}`}>
+            {i > 0 && (
+              <ChevronRight
+                size={10}
+                className="text-text-tertiary mx-0.5 shrink-0"
+              />
+            )}
+            <span
+              className={`text-[11px] font-mono ${isLast ? "text-text-primary" : "text-text-tertiary"}`}
+            >
               {segment}
             </span>
           </span>

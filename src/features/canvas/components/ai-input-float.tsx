@@ -44,7 +44,14 @@ export function AiInputFloat({
     const prompt = text.trim();
     if (!prompt || !provider || !model) return;
     const groupId = createAiGroup(flow, provider, model);
-    void generate({ groupId, anchor: flow, prompt, provider, model, projectPath });
+    void generate({
+      groupId,
+      anchor: flow,
+      prompt,
+      provider,
+      model,
+      projectPath,
+    });
     onClose();
   };
 

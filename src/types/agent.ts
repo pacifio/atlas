@@ -14,7 +14,11 @@ export const AGENT_PLUGIN_ID: Record<SwitchableAgent, string> = {
 };
 
 /** The coding agents Atlas ships, in switch order (for option+/). */
-export const SWITCHABLE_AGENTS: SwitchableAgent[] = ["claude-code", "codex", "cersei"];
+export const SWITCHABLE_AGENTS: SwitchableAgent[] = [
+  "claude-code",
+  "codex",
+  "cersei",
+];
 
 export const AGENT_LABEL: Record<SwitchableAgent, string> = {
   "claude-code": "Claude Code",
@@ -48,7 +52,9 @@ export function hasInFlightToolCalls(
 ): boolean {
   if (!session) return false;
   return session.messages.some((m) =>
-    m.toolCalls.some((tc) => tc.status === "pending" || tc.status === "running"),
+    m.toolCalls.some(
+      (tc) => tc.status === "pending" || tc.status === "running",
+    ),
   );
 }
 export type MessageRole = "user" | "assistant" | "system" | "tool";
@@ -65,7 +71,10 @@ export const CLAUDE_PERMISSION_MODES: ClaudePermissionMode[] = [
   "bypassPermissions",
 ];
 
-export const CLAUDE_PERMISSION_MODE_LABEL: Record<ClaudePermissionMode, string> = {
+export const CLAUDE_PERMISSION_MODE_LABEL: Record<
+  ClaudePermissionMode,
+  string
+> = {
   default: "Default",
   acceptEdits: "Accept Edits",
   plan: "Plan Mode",

@@ -8,7 +8,10 @@ async function htmlToImage() {
 }
 
 /** Capture a DOM node to a PNG/JPEG data URL on the AMOLED background. */
-async function capture(node: HTMLElement, kind: "png" | "jpeg"): Promise<string> {
+async function capture(
+  node: HTMLElement,
+  kind: "png" | "jpeg",
+): Promise<string> {
   // Fonts must be ready or text renders as fallback in the capture.
   if (document.fonts?.ready) await document.fonts.ready;
   const { toPng, toJpeg } = await htmlToImage();
@@ -16,9 +19,12 @@ async function capture(node: HTMLElement, kind: "png" | "jpeg"): Promise<string>
     backgroundColor: "#000000",
     pixelRatio: 2,
     // Skip anything explicitly marked non-exportable (e.g. interactive controls).
-    filter: (el: HTMLElement) => !(el.dataset && el.dataset.noexport === "true"),
+    filter: (el: HTMLElement) =>
+      !(el.dataset && el.dataset.noexport === "true"),
   };
-  return kind === "png" ? toPng(node, opts) : toJpeg(node, { ...opts, quality: 0.95 });
+  return kind === "png"
+    ? toPng(node, opts)
+    : toJpeg(node, { ...opts, quality: 0.95 });
 }
 
 function dataUrlToBytes(dataUrl: string): number[] {
@@ -29,7 +35,10 @@ function dataUrlToBytes(dataUrl: string): number[] {
   return out;
 }
 
-async function pickSave(defaultName: string, ext: string): Promise<string | null> {
+async function pickSave(
+  defaultName: string,
+  ext: string,
+): Promise<string | null> {
   const { save } = await import("@tauri-apps/plugin-dialog");
   const chosen = await save({
     defaultPath: defaultName,
@@ -45,7 +54,10 @@ export async function exportJpeg(node: HTMLElement): Promise<void> {
   const dataUrl = await capture(node, "jpeg");
   const target = await pickSave(`atlas-console-${stamp()}.jpg`, "jpg");
   if (!target) return;
-  await invoke("mission_control_write_file", { targetPath: target, bytes: dataUrlToBytes(dataUrl) });
+  await invoke("mission_control_write_file", {
+    targetPath: target,
+    bytes: dataUrlToBytes(dataUrl),
+  });
 }
 
 /** Export the dashboard node as a multi-page PDF (image-per-page slices). */
@@ -92,7 +104,10 @@ export async function exportMarkdown(data: MissionControlUsage): Promise<void> {
   const md = buildMarkdown(data);
   const target = await pickSave(`atlas-console-${stamp()}.md`, "md");
   if (!target) return;
-  await invoke("mission_control_export_markdown", { targetPath: target, markdown: md });
+  await invoke("mission_control_export_markdown", {
+    targetPath: target,
+    markdown: md,
+  });
 }
 
 function buildMarkdown(data: MissionControlUsage): string {
@@ -100,26 +115,42 @@ function buildMarkdown(data: MissionControlUsage): string {
   const lines: string[] = [];
   lines.push(`# Atlas — Console Report`);
   lines.push("");
-  lines.push(`_Generated ${new Date(data.generatedAt).toLocaleString()} · ${data.projects.length} projects_`);
+  lines.push(
+    `_Generated ${new Date(data.generatedAt).toLocaleString()} · ${data.projects.length} projects_`,
+  );
   lines.push("");
   lines.push(`## Totals`);
   lines.push("");
   lines.push(`| Metric | Value |`);
   lines.push(`| --- | --- |`);
   lines.push(`| Total tokens | ${fmtTokens(t.totalTokens)} |`);
-  lines.push(`| Claude input / output | ${fmtTokens(t.claudeInput)} / ${fmtTokens(t.claudeOutput)} |`);
+  lines.push(
+    `| Claude input / output | ${fmtTokens(t.claudeInput)} / ${fmtTokens(t.claudeOutput)} |`,
+  );
   lines.push(`| Claude cache | ${fmtTokens(t.claudeCache)} |`);
-  lines.push(`| Requests / sessions | ${fmtTokens(t.claudeRequests)} / ${t.claudeSessions} |`);
-  lines.push(`| Codex tokens | ${fmtTokens(t.codexTokens)} (${t.codexSessions} threads) |`);
-  lines.push(`| Review tokens / runs | ${fmtTokens(t.reviewInput + t.reviewOutput)} / ${t.reviewRuns} |`);
-  lines.push(`| BYOK tokens / calls | ${fmtTokens(t.byokInput + t.byokOutput)} / ${t.byokRequests} |`);
+  lines.push(
+    `| Requests / sessions | ${fmtTokens(t.claudeRequests)} / ${t.claudeSessions} |`,
+  );
+  lines.push(
+    `| Codex tokens | ${fmtTokens(t.codexTokens)} (${t.codexSessions} threads) |`,
+  );
+  lines.push(
+    `| Review tokens / runs | ${fmtTokens(t.reviewInput + t.reviewOutput)} / ${t.reviewRuns} |`,
+  );
+  lines.push(
+    `| BYOK tokens / calls | ${fmtTokens(t.byokInput + t.byokOutput)} / ${t.byokRequests} |`,
+  );
   lines.push(`| Total cost | ${fmtCost(t.totalCostUsd)} |`);
   lines.push("");
   lines.push(`## Per project`);
   lines.push("");
-  lines.push(`| Project | Claude (in/out) | Cost | Requests | Codex | Review |`);
+  lines.push(
+    `| Project | Claude (in/out) | Cost | Requests | Codex | Review |`,
+  );
   lines.push(`| --- | --- | --- | --- | --- | --- |`);
-  for (const p of [...data.projects].sort((a, b) => b.totalTokens - a.totalTokens)) {
+  for (const p of [...data.projects].sort(
+    (a, b) => b.totalTokens - a.totalTokens,
+  )) {
     lines.push(
       `| ${p.projectName} | ${fmtTokens(p.claude.inputTokens)} / ${fmtTokens(p.claude.outputTokens)} | ${fmtCost(p.claude.costUsd)} | ${fmtTokens(p.claude.requests)} | ${fmtTokens(p.codex.tokens)} | ${fmtTokens(p.review.inputTokens + p.review.outputTokens)} |`,
     );

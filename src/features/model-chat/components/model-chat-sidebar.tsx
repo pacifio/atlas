@@ -1,5 +1,11 @@
 import { useMemo, useState } from "react";
-import { Plus, Search, Trash2, PanelLeftClose, MessageSquare } from "lucide-react";
+import {
+  Plus,
+  Search,
+  Trash2,
+  PanelLeftClose,
+  MessageSquare,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
 import { ProviderLogo, hasProviderLogo } from "@/components/provider-logo";
@@ -71,7 +77,10 @@ export function ModelChatSidebar({ onNew }: { onNew: () => void }) {
                 <div className="flex items-start gap-1.5">
                   <span className="shrink-0 inline-flex h-[15px] items-center justify-center">
                     {streaming[m.id] ? (
-                      <AtlasLoader size={8} className="text-[var(--accent-primary)]" />
+                      <AtlasLoader
+                        size={8}
+                        className="text-[var(--accent-primary)]"
+                      />
                     ) : m.provider && hasProviderLogo(m.provider) ? (
                       <ProviderLogo id={m.provider} size={13} />
                     ) : (

@@ -1,11 +1,30 @@
-import { lazy, Suspense, memo, useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useChatStore } from "../stores/chat-store";
 import { appendNextStepsDirective } from "../lib/next-steps";
-import { agents, ensureAgent, CODEX_PLUGIN_ID, CERSEI_PLUGIN_ID, DEFAULT_PLUGIN_ID, codexStatus } from "../lib/agents-api";
+import {
+  agents,
+  ensureAgent,
+  CODEX_PLUGIN_ID,
+  CERSEI_PLUGIN_ID,
+  DEFAULT_PLUGIN_ID,
+  codexStatus,
+} from "../lib/agents-api";
 import { loadCachedAcpModes } from "../lib/acp-modes-cache";
 import { warmAcpModels, otherAcpAgent } from "../lib/warm-acp-models";
 import type { ImageAttachment, SessionKey } from "@/types/agents";
-import { hasInFlightToolCalls, isBusyAgentStatus, agentTypeFromPluginId } from "@/types/agent";
+import {
+  hasInFlightToolCalls,
+  isBusyAgentStatus,
+  agentTypeFromPluginId,
+} from "@/types/agent";
 import {
   composePrompt,
   type MentionData,
@@ -246,7 +265,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
                   tabId,
                   snap.current_mode,
                   modes,
-                  agentTypeFromPluginId(snap.plugin_id)
+                  agentTypeFromPluginId(snap.plugin_id),
                 );
             }
             // Seed the ACP model picker (Claude Code / Codex) from the snapshot's
@@ -261,13 +280,15 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           }
         } catch (err) {
           console.warn("snapshot for modes failed:", err);
-          if (!cancelled) useChatStore.getState().actions.setAcpModesPending(tabId, false);
+          if (!cancelled)
+            useChatStore.getState().actions.setAcpModesPending(tabId, false);
         }
       } catch (err) {
         console.warn("Agent session creation failed:", err);
         // Bind failed (agent not installed / spawn error) — clear the spinner so
         // the picker doesn't hang in a loading state forever.
-        if (!cancelled) useChatStore.getState().actions.setAcpModesPending(tabId, false);
+        if (!cancelled)
+          useChatStore.getState().actions.setAcpModesPending(tabId, false);
       } finally {
         pending = false;
       }
@@ -317,7 +338,10 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     let cancelled = false;
     void (async () => {
       try {
-        const snap = await agents.snapshot({ agent_id: agentId, session_id: acpSessionId });
+        const snap = await agents.snapshot({
+          agent_id: agentId,
+          session_id: acpSessionId,
+        });
         if (cancelled) return;
         const models = snap.available_models ?? [];
         console.debug("[acp-models] backfill", {
@@ -325,7 +349,9 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           models: models.length,
         });
         if (models.length > 0) {
-          useChatStore.getState().actions.setAcpModels(tabId, snap.current_model, models);
+          useChatStore
+            .getState()
+            .actions.setAcpModels(tabId, snap.current_model, models);
         } else {
           // ACP `session/load` doesn't re-advertise models, so resumed
           // sessions get an empty snapshot. Fall back to the per-agent cache —
@@ -340,7 +366,11 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           if (cached && cached.availableModels.length > 0) {
             useChatStore
               .getState()
-              .actions.setAcpModels(tabId, cached.currentModel, cached.availableModels);
+              .actions.setAcpModels(
+                tabId,
+                cached.currentModel,
+                cached.availableModels,
+              );
           }
         }
       } catch {
@@ -444,7 +474,8 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   // the latest logic while keeping a constant identity. This is the H1 fix:
   // ChatPanel still re-renders per chunk, but its heavy composer subtree bails.
   const onSendStable = useCallback(
-    (content: string, mentions: MentionData[]) => handleSendRef.current?.(content, mentions),
+    (content: string, mentions: MentionData[]) =>
+      handleSendRef.current?.(content, mentions),
     [],
   );
   const onStopStable = useCallback(() => handleStopRef.current?.(), []);
@@ -488,7 +519,8 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   // the prior behaviour.
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ text?: string; tabId?: string }>).detail;
+      const detail = (e as CustomEvent<{ text?: string; tabId?: string }>)
+        .detail;
       if (detail?.tabId != null && detail.tabId !== tabId) return;
       if (detail?.text && handleSendRef.current) {
         handleSendRef.current(detail.text, []);
@@ -802,7 +834,9 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             tabId={tabId}
             onSend={onSendStable}
             onStop={onStopStable}
-            running={isBusyAgentStatus(session.status) || hasInFlightToolCalls(session)}
+            running={
+              isBusyAgentStatus(session.status) || hasInFlightToolCalls(session)
+            }
             stopping={!!session.stopping}
             showJumpToBottom={showJumpToBottom}
             jumpCount={jumpCount}
@@ -939,7 +973,9 @@ const ChatComposer = memo(function ChatComposer({
   useEffect(() => {
     if (isClaude) return;
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
+      const detail = (
+        e as CustomEvent<{ sessionId?: string; agentType?: string }>
+      ).detail;
       if (detail?.agentType !== "codex") return;
       const sess = useChatStore.getState().sessions[tabId];
       if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;

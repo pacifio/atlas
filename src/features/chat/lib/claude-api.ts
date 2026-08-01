@@ -53,10 +53,14 @@ export function listCodexSessions(cwd: string): Promise<ClaudeSessionMeta[]> {
  * persisted JSON transcript under the app config dir.
  */
 export function listCerseiSessions(cwd: string): Promise<ClaudeSessionMeta[]> {
-  return invoke<ClaudeSessionMeta[]>("cersei_list_sessions", { projectPath: cwd });
+  return invoke<ClaudeSessionMeta[]>("cersei_list_sessions", {
+    projectPath: cwd,
+  });
 }
 
-export function readClaudeSession(filePath: string): Promise<ChatMessageDump[]> {
+export function readClaudeSession(
+  filePath: string,
+): Promise<ChatMessageDump[]> {
   return invoke<ChatMessageDump[]>("read_claude_session", { filePath });
 }
 
@@ -69,7 +73,10 @@ export function deleteClaudeSession(filePath: string): Promise<void> {
  * the app config dir (not `~/.claude/projects`), so they need their own command
  * — `delete_claude_session` rejects any path outside the Claude projects dir.
  */
-export function cerseiDeleteSession(cwd: string, sessionId: string): Promise<void> {
+export function cerseiDeleteSession(
+  cwd: string,
+  sessionId: string,
+): Promise<void> {
   return invoke<void>("cersei_delete_session", { projectPath: cwd, sessionId });
 }
 
@@ -95,7 +102,7 @@ export interface ClaudeSessionStats {
 
 export function getClaudeSessionStats(
   cwd: string,
-  sessionId: string
+  sessionId: string,
 ): Promise<ClaudeSessionStats> {
   return invoke<ClaudeSessionStats>("claude_session_stats", { cwd, sessionId });
 }

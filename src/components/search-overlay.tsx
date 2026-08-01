@@ -32,7 +32,12 @@ export function SearchOverlay({
   const rootPath = useExplorerStore.use.rootPath();
   const { addTab } = useLayoutStore.use.actions();
   const session = useSessionStore.use.session();
-  const { addSearchHistory, removeSearchHistory, clearSearchHistory, saveSession } = useSessionStore.use.actions();
+  const {
+    addSearchHistory,
+    removeSearchHistory,
+    clearSearchHistory,
+    saveSession,
+  } = useSessionStore.use.actions();
   const currentProject = useProjectStore.use.currentProject();
 
   useEffect(() => {
@@ -65,7 +70,9 @@ export function SearchOverlay({
   };
 
   const openResult = (result: SearchResult) => {
-    const fullPath = rootPath ? `${rootPath}/${result.file_path}` : result.file_path;
+    const fullPath = rootPath
+      ? `${rootPath}/${result.file_path}`
+      : result.file_path;
     addTab({
       id: `editor-${fullPath}`,
       type: "editor",
@@ -97,14 +104,17 @@ export function SearchOverlay({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/60" style={{ zIndex: 99998 }} />
+        <Dialog.Overlay
+          className="fixed inset-0 bg-black/60"
+          style={{ zIndex: 99998 }}
+        />
         <Dialog.Content
           className={cn(
             "fixed top-[15%] left-1/2 -translate-x-1/2",
             "w-[600px] max-h-[500px] rounded-xl overflow-hidden",
             "bg-[var(--bg-secondary)] border border-[var(--border-default)]",
             "shadow-[var(--shadow-overlay)]",
-            "flex flex-col"
+            "flex flex-col",
           )}
           style={{ zIndex: 99999 }}
           onOpenAutoFocus={(e) => {
@@ -113,7 +123,10 @@ export function SearchOverlay({
           }}
         >
           <div className="flex items-center gap-2 px-4 h-[44px] shrink-0 border-b border-[var(--border-default)]">
-            <Search size={14} className="text-[var(--text-tertiary)] shrink-0" />
+            <Search
+              size={14}
+              className="text-[var(--text-tertiary)] shrink-0"
+            />
             <input
               ref={inputRef}
               value={query}
@@ -123,7 +136,9 @@ export function SearchOverlay({
               className="flex-1 bg-transparent border-none outline-none text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]"
             />
             {searching && (
-              <span className="text-[10px] text-[var(--text-tertiary)]">Searching...</span>
+              <span className="text-[10px] text-[var(--text-tertiary)]">
+                Searching...
+              </span>
             )}
           </div>
 
@@ -133,44 +148,64 @@ export function SearchOverlay({
                 No results found
               </div>
             )}
-            {!query.trim() && !hasSearched && session.searchHistory.length > 0 && (
-              <div className="py-1">
-                <div className="flex items-center justify-between px-4 py-1">
-                  <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wide font-semibold">Recent searches</span>
-                  <button
-                    onClick={() => { clearSearchHistory(); if (currentProject) saveSession(currentProject.path); }}
-                    className="text-[9px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] cursor-pointer"
-                  >
-                    Clear all
-                  </button>
-                </div>
-                {session.searchHistory.slice(0, 8).map((q, i) => (
-                  <div
-                    key={`${q}-${i}`}
-                    className="flex items-center px-4 py-1.5 hover:bg-[var(--bg-hover)] group"
-                  >
+            {!query.trim() &&
+              !hasSearched &&
+              session.searchHistory.length > 0 && (
+                <div className="py-1">
+                  <div className="flex items-center justify-between px-4 py-1">
+                    <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wide font-semibold">
+                      Recent searches
+                    </span>
                     <button
-                      onClick={() => { setQuery(q); performSearch(q); }}
-                      className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                      onClick={() => {
+                        clearSearchHistory();
+                        if (currentProject) saveSession(currentProject.path);
+                      }}
+                      className="text-[9px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] cursor-pointer"
                     >
-                      <Clock size={11} className="text-[var(--text-tertiary)] shrink-0" />
-                      <span className="text-[11px] text-[var(--text-secondary)] font-mono truncate">{q}</span>
-                    </button>
-                    <button
-                      onClick={() => { removeSearchHistory(q); if (currentProject) saveSession(currentProject.path); }}
-                      className="opacity-0 group-hover:opacity-100 p-0.5 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] shrink-0"
-                    >
-                      <X size={9} />
+                      Clear all
                     </button>
                   </div>
-                ))}
-              </div>
-            )}
-            {!query.trim() && !hasSearched && session.searchHistory.length === 0 && (
-              <div className="px-4 py-6 text-center text-xs text-[var(--text-tertiary)]">
-                Type to search across all files
-              </div>
-            )}
+                  {session.searchHistory.slice(0, 8).map((q, i) => (
+                    <div
+                      key={`${q}-${i}`}
+                      className="flex items-center px-4 py-1.5 hover:bg-[var(--bg-hover)] group"
+                    >
+                      <button
+                        onClick={() => {
+                          setQuery(q);
+                          performSearch(q);
+                        }}
+                        className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                      >
+                        <Clock
+                          size={11}
+                          className="text-[var(--text-tertiary)] shrink-0"
+                        />
+                        <span className="text-[11px] text-[var(--text-secondary)] font-mono truncate">
+                          {q}
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          removeSearchHistory(q);
+                          if (currentProject) saveSession(currentProject.path);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] shrink-0"
+                      >
+                        <X size={9} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            {!query.trim() &&
+              !hasSearched &&
+              session.searchHistory.length === 0 && (
+                <div className="px-4 py-6 text-center text-xs text-[var(--text-tertiary)]">
+                  Type to search across all files
+                </div>
+              )}
             {results.map((result, i) => (
               <button
                 key={`${result.file_path}:${result.line}:${i}`}
@@ -178,11 +213,14 @@ export function SearchOverlay({
                 onMouseEnter={() => setSelectedIndex(i)}
                 className={cn(
                   "w-full text-left px-4 py-1.5 transition-colors",
-                  i === selectedIndex ? "bg-[var(--bg-hover)]" : ""
+                  i === selectedIndex ? "bg-[var(--bg-hover)]" : "",
                 )}
               >
                 <div className="flex items-center gap-2">
-                  <FileCode size={12} className="text-[var(--text-tertiary)] shrink-0" />
+                  <FileCode
+                    size={12}
+                    className="text-[var(--text-tertiary)] shrink-0"
+                  />
                   <span className="text-[11px] text-[var(--accent-primary)] font-mono truncate">
                     {result.file_path}
                   </span>

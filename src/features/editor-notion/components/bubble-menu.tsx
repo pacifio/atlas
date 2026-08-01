@@ -63,10 +63,7 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
           e.preventDefault();
           props.onClick();
         }}
-        className={cn(
-          "atlas-bubble-btn",
-          props.isActive && "is-active",
-        )}
+        className={cn("atlas-bubble-btn", props.isActive && "is-active")}
       >
         <Icon size={13} strokeWidth={1.7} />
       </button>
@@ -156,7 +153,9 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
             icon: LinkIcon,
             isActive: editor.isActive("link"),
             onClick: () => {
-              const existing = editor.getAttributes("link").href as string | undefined;
+              const existing = editor.getAttributes("link").href as
+                | string
+                | undefined;
               setLinkUrl(existing ?? "");
               setLinkOpen(true);
             },
@@ -165,13 +164,15 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
             title: "H1",
             icon: Heading1,
             isActive: editor.isActive("heading", { level: 1 }),
-            onClick: () => editor.chain().focus().toggleHeading({ level: 1 }).run(),
+            onClick: () =>
+              editor.chain().focus().toggleHeading({ level: 1 }).run(),
           })}
           {tool({
             title: "H2",
             icon: Heading2,
             isActive: editor.isActive("heading", { level: 2 }),
-            onClick: () => editor.chain().focus().toggleHeading({ level: 2 }).run(),
+            onClick: () =>
+              editor.chain().focus().toggleHeading({ level: 2 }).run(),
           })}
           {tool({
             title: "Bullet list",

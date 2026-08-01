@@ -12,7 +12,8 @@ export function useElementSize(ref: RefObject<HTMLElement | null>): {
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const r = entries[0]?.contentRect;
-      if (r) setSize({ width: Math.round(r.width), height: Math.round(r.height) });
+      if (r)
+        setSize({ width: Math.round(r.width), height: Math.round(r.height) });
     });
     ro.observe(el);
     return () => ro.disconnect();

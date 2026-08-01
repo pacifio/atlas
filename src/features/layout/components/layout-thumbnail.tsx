@@ -25,7 +25,8 @@ const TYPE_ICON: Partial<Record<TabType, LucideIcon>> = {
 };
 
 function ColIcon({ type }: { type: TabType }) {
-  if (type === "chat") return <AtlasIcon size={12} className="rounded-[2px] opacity-80" />;
+  if (type === "chat")
+    return <AtlasIcon size={12} className="rounded-[2px] opacity-80" />;
   const Icon = TYPE_ICON[type] ?? MessageSquare;
   return <Icon size={12} className="text-[var(--text-tertiary)]" />;
 }

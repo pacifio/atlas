@@ -16,6 +16,9 @@ export interface BlameLine {
   committed: boolean;
 }
 
-export function gitBlameFile(repoPath: string, file: string): Promise<BlameLine[]> {
+export function gitBlameFile(
+  repoPath: string,
+  file: string,
+): Promise<BlameLine[]> {
   return invoke<BlameLine[]>("git_blame_file", { path: repoPath, file });
 }

@@ -34,7 +34,13 @@ function loadModelIds(provider: string): Promise<string[]> {
   return p;
 }
 
-function PickerDropdown({ trigger, children }: { trigger: React.ReactNode; children: React.ReactNode }) {
+function PickerDropdown({
+  trigger,
+  children,
+}: {
+  trigger: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
@@ -75,10 +81,18 @@ function ModelCombo({
   }, [models, q]);
 
   return (
-    <Popover.Root open={open} onOpenChange={(o) => { setOpen(o); if (!o) setQ(""); }}>
+    <Popover.Root
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) setQ("");
+      }}
+    >
       <Popover.Trigger asChild>
         <button className="flex min-w-0 items-center gap-1.5 h-[26px] rounded-full border border-border-default bg-bg-elevated px-2 text-[10px] font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors outline-none cursor-pointer">
-          {loading && <Loader2 size={11} className="animate-spin text-text-tertiary" />}
+          {loading && (
+            <Loader2 size={11} className="animate-spin text-text-tertiary" />
+          )}
           <span className="max-w-[160px] truncate font-mono">
             {value || (loading ? "Loading…" : "Select model")}
           </span>
@@ -112,11 +126,16 @@ function ModelCombo({
               filtered.map((id) => (
                 <button
                   key={id}
-                  onClick={() => { onSelect(id); setOpen(false); }}
+                  onClick={() => {
+                    onSelect(id);
+                    setOpen(false);
+                  }}
                   className="flex w-full items-center gap-2 px-2.5 h-[26px] text-left text-[11px] font-mono text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none"
                 >
                   <span className="flex-1 truncate">{id}</span>
-                  {id === value && <Check size={11} className="text-text-primary" />}
+                  {id === value && (
+                    <Check size={11} className="text-text-primary" />
+                  )}
                 </button>
               ))
             )}
@@ -177,7 +196,9 @@ export function ProviderModelSelector({
           <>
             {provider && <ProviderLogo id={provider} size={13} />}
             <span className="max-w-[100px] truncate">
-              {provider ? providerById(provider)?.name ?? provider : "Provider"}
+              {provider
+                ? (providerById(provider)?.name ?? provider)
+                : "Provider"}
             </span>
             <ChevronDown size={11} className="text-text-tertiary" />
           </>
@@ -191,11 +212,18 @@ export function ProviderModelSelector({
           >
             <ProviderLogo id={p.id} size={14} />
             <span className="flex-1 truncate">{p.name}</span>
-            {p.id === provider && <Check size={12} className="text-text-primary" />}
+            {p.id === provider && (
+              <Check size={12} className="text-text-primary" />
+            )}
           </DropdownMenu.Item>
         ))}
       </PickerDropdown>
-      <ModelCombo models={models} value={model} loading={loading} onSelect={onModel} />
+      <ModelCombo
+        models={models}
+        value={model}
+        loading={loading}
+        onSelect={onModel}
+      />
     </>
   );
 }

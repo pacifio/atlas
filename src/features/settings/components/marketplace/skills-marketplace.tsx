@@ -17,7 +17,16 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { Boxes, Check, Copy, Download, Github, Loader2, Search, X } from "lucide-react";
+import {
+  Boxes,
+  Check,
+  Copy,
+  Download,
+  Github,
+  Loader2,
+  Search,
+  X,
+} from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 
@@ -25,11 +34,7 @@ import { cn } from "@/lib/utils";
 import { packs as packsApi } from "@/features/packs/lib/packs-api";
 import { skills as skillsApi } from "@/features/skills/lib/skills-api";
 import { SKILLS_CHANGED_EVENT } from "@/features/skills/lib/skills-events";
-import {
-  SkillModalShell,
-  SkillDescriptions,
-  ModalAction,
-} from "./skill-modal";
+import { SkillModalShell, SkillDescriptions, ModalAction } from "./skill-modal";
 import type {
   ComponentKind,
   Pack,
@@ -37,7 +42,14 @@ import type {
   Scope,
 } from "@/features/packs/lib/types";
 
-const POPULAR_SEEDS = ["agent", "react", "design", "review", "database", "python"];
+const POPULAR_SEEDS = [
+  "agent",
+  "react",
+  "design",
+  "review",
+  "database",
+  "python",
+];
 const POPULAR_LS_KEY = "atlas:skills:popular:v1";
 
 // Cache the first popular fetch so re-entering Discover (or restarting the app)
@@ -69,7 +81,12 @@ async function runInstall(
   notifyInstalling();
   try {
     // Install just THIS skill (not the whole repo) — the registry is skill-level.
-    await packsApi.installSkill(scope, hit.source, hit.skillId || hit.name, projectPath);
+    await packsApi.installSkill(
+      scope,
+      hit.source,
+      hit.skillId || hit.name,
+      projectPath,
+    );
   } catch (e) {
     toast.error(`Couldn't install ${hit.name}: ${String(e)}`);
   } finally {
@@ -132,7 +149,9 @@ export function SkillsMarketplace({
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PackSearchHit[]>([]);
-  const [popular, setPopular] = useState<PackSearchHit[]>(() => loadPopularCache() ?? []);
+  const [popular, setPopular] = useState<PackSearchHit[]>(
+    () => loadPopularCache() ?? [],
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Re-render whenever the module-level install registry changes.
@@ -147,7 +166,9 @@ export function SkillsMarketplace({
   // The set of installed skill NAMES (each registry hit is one skill; `skillId`
   // is its name). We check installed-state per skill, NOT per source repo — a
   // repo holds many skills, so "is the repo installed" wrongly marks all of them.
-  const [installedSkills, setInstalledSkills] = useState<Set<string>>(new Set());
+  const [installedSkills, setInstalledSkills] = useState<Set<string>>(
+    new Set(),
+  );
 
   const refreshInstalled = useCallback(async () => {
     try {
@@ -245,7 +266,9 @@ export function SkillsMarketplace({
           spellCheck={false}
           className="min-w-0 flex-1 bg-transparent text-[11px] text-text-primary outline-none placeholder:text-text-tertiary"
         />
-        {loading && <Loader2 size={11} className="animate-spin text-text-tertiary" />}
+        {loading && (
+          <Loader2 size={11} className="animate-spin text-text-tertiary" />
+        )}
         {query && (
           <button
             type="button"
@@ -269,7 +292,9 @@ export function SkillsMarketplace({
           {/* sticky header */}
           <div className="sticky top-0 z-10 flex items-center h-[28px] border-b border-border-default bg-bg-base px-3 text-[10px] uppercase tracking-wider text-text-tertiary">
             <span className={cn(COL.rank, "text-right pr-2")}>#</span>
-            <span className={COL.skill}>{query.trim() ? "Results" : "Popular"}</span>
+            <span className={COL.skill}>
+              {query.trim() ? "Results" : "Popular"}
+            </span>
             <span className={COL.source}>Source</span>
             <span className={cn(COL.installs, "text-right")}>Installs</span>
             <span className={COL.action} />
@@ -306,7 +331,12 @@ export function SkillsMarketplace({
                   >
                     {i + 1}
                   </span>
-                  <span className={cn(COL.skill, "truncate text-[12px] text-text-primary")}>
+                  <span
+                    className={cn(
+                      COL.skill,
+                      "truncate text-[12px] text-text-primary",
+                    )}
+                  >
                     {hit.name}
                   </span>
                   <span
@@ -377,7 +407,11 @@ function InstallButton({
       onClick={onClick}
       className="inline-flex items-center gap-1.5 rounded-md border border-border-default px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-50"
     >
-      {installing ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+      {installing ? (
+        <Loader2 size={12} className="animate-spin" />
+      ) : (
+        <Download size={12} />
+      )}
       Install
     </button>
   );
@@ -400,7 +434,7 @@ function SkillDetailModal({
 }) {
   // Seed synchronously from cache so a re-opened modal paints instantly.
   const [preview, setPreview] = useState<Pack | null>(
-    hit ? previewCache.get(hit.source) ?? null : null,
+    hit ? (previewCache.get(hit.source) ?? null) : null,
   );
   const [loading, setLoading] = useState(false);
 
@@ -445,7 +479,11 @@ function SkillDetailModal({
   }, [preview]);
 
   const modalSkills = useMemo(
-    () => skillComponents.map((c) => ({ name: c.name, description: c.description })),
+    () =>
+      skillComponents.map((c) => ({
+        name: c.name,
+        description: c.description,
+      })),
     [skillComponents],
   );
 
@@ -454,7 +492,8 @@ function SkillDetailModal({
   const copyMarkdown = () => {
     if (!hit) return;
     const lines = [`# ${hit.name}`, ""];
-    if (preview?.manifest?.description) lines.push(preview.manifest.description, "");
+    if (preview?.manifest?.description)
+      lines.push(preview.manifest.description, "");
     for (const c of skillComponents) {
       lines.push(`## ${c.name}`);
       if (c.description) lines.push("", c.description);
@@ -469,7 +508,11 @@ function SkillDetailModal({
       open={!!hit}
       onClose={onClose}
       title={hit?.name ?? ""}
-      subtitle={hit ? `${hit.source} · ${hit.installs.toLocaleString()} installs` : undefined}
+      subtitle={
+        hit
+          ? `${hit.source} · ${hit.installs.toLocaleString()} installs`
+          : undefined
+      }
       actions={
         <div className="flex flex-col gap-2">
           <ModalAction
@@ -480,7 +523,11 @@ function SkillDetailModal({
             disabled={installed}
             onClick={onInstall}
           />
-          <ModalAction icon={Copy} label="Copy as markdown" onClick={copyMarkdown} />
+          <ModalAction
+            icon={Copy}
+            label="Copy as markdown"
+            onClick={copyMarkdown}
+          />
           {hit && (
             <ModalAction
               icon={Github}

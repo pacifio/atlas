@@ -14,9 +14,17 @@ interface MarkdownProps {
  * Shared Markdown renderer used by the chat assistant bubbles and the canvas
  * note cards/inspector. Styled overrides match the Atlas design tokens.
  */
-export const Markdown = memo(function Markdown({ children, className }: MarkdownProps) {
+export const Markdown = memo(function Markdown({
+  children,
+  className,
+}: MarkdownProps) {
   return (
-    <div className={cn("prose-chat text-[var(--text-primary)] leading-relaxed break-words select-text", className)}>
+    <div
+      className={cn(
+        "prose-chat text-[var(--text-primary)] leading-relaxed break-words select-text",
+        className,
+      )}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
@@ -68,19 +76,39 @@ export const Markdown = memo(function Markdown({ children, className }: Markdown
             );
           },
           ul(props) {
-            return <ul className="list-disc pl-5 space-y-0.5 my-2">{props.children}</ul>;
+            return (
+              <ul className="list-disc pl-5 space-y-0.5 my-2">
+                {props.children}
+              </ul>
+            );
           },
           ol(props) {
-            return <ol className="list-decimal pl-5 space-y-0.5 my-2">{props.children}</ol>;
+            return (
+              <ol className="list-decimal pl-5 space-y-0.5 my-2">
+                {props.children}
+              </ol>
+            );
           },
           h1(props) {
-            return <h1 className="text-base font-semibold mt-3 mb-1">{props.children}</h1>;
+            return (
+              <h1 className="text-base font-semibold mt-3 mb-1">
+                {props.children}
+              </h1>
+            );
           },
           h2(props) {
-            return <h2 className="text-sm font-semibold mt-3 mb-1">{props.children}</h2>;
+            return (
+              <h2 className="text-sm font-semibold mt-3 mb-1">
+                {props.children}
+              </h2>
+            );
           },
           h3(props) {
-            return <h3 className="text-sm font-semibold mt-2 mb-1">{props.children}</h3>;
+            return (
+              <h3 className="text-sm font-semibold mt-2 mb-1">
+                {props.children}
+              </h3>
+            );
           },
           p(props) {
             return <p className="my-1.5">{props.children}</p>;
@@ -95,12 +123,18 @@ export const Markdown = memo(function Markdown({ children, className }: Markdown
           table(props) {
             return (
               <div className="my-3 rounded-md border border-[var(--border-default)] overflow-hidden">
-                <table className="w-full text-[12px] border-collapse">{props.children}</table>
+                <table className="w-full text-[12px] border-collapse">
+                  {props.children}
+                </table>
               </div>
             );
           },
           thead(props) {
-            return <thead className="bg-[var(--bg-elevated)]">{props.children}</thead>;
+            return (
+              <thead className="bg-[var(--bg-elevated)]">
+                {props.children}
+              </thead>
+            );
           },
           th(props) {
             return (
@@ -111,7 +145,9 @@ export const Markdown = memo(function Markdown({ children, className }: Markdown
           },
           tr(props) {
             return (
-              <tr className="border-b border-[var(--border-subtle)] last:border-b-0">{props.children}</tr>
+              <tr className="border-b border-[var(--border-subtle)] last:border-b-0">
+                {props.children}
+              </tr>
             );
           },
           td(props) {

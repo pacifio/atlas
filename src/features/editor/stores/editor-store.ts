@@ -37,14 +37,35 @@ interface EditorActions {
 function detectLanguage(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   const map: Record<string, string> = {
-    ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
-    rs: "rust", py: "python", go: "go", rb: "ruby", java: "java",
-    json: "json", toml: "toml", yaml: "yaml", yml: "yaml",
-    md: "markdown", html: "html", css: "css", scss: "scss",
-    sh: "shell", zsh: "shell", bash: "shell",
-    sql: "sql", xml: "xml", svg: "xml",
-    c: "c", cpp: "cpp", h: "c", hpp: "cpp",
-    swift: "swift", kt: "kotlin",
+    ts: "typescript",
+    tsx: "typescript",
+    js: "javascript",
+    jsx: "javascript",
+    rs: "rust",
+    py: "python",
+    go: "go",
+    rb: "ruby",
+    java: "java",
+    json: "json",
+    toml: "toml",
+    yaml: "yaml",
+    yml: "yaml",
+    md: "markdown",
+    html: "html",
+    css: "css",
+    scss: "scss",
+    sh: "shell",
+    zsh: "shell",
+    bash: "shell",
+    sql: "sql",
+    xml: "xml",
+    svg: "xml",
+    c: "c",
+    cpp: "cpp",
+    h: "c",
+    hpp: "cpp",
+    swift: "swift",
+    kt: "kotlin",
   };
   return map[ext] ?? "plaintext";
 }
@@ -109,7 +130,8 @@ export const useEditorStore = createSelectors(
             delete s.buffers[path];
             if (s.activeBufferPath === path) {
               const keys = Object.keys(s.buffers);
-              s.activeBufferPath = keys.length > 0 ? keys[keys.length - 1] : null;
+              s.activeBufferPath =
+                keys.length > 0 ? keys[keys.length - 1] : null;
             }
           }),
         setActive: (path) =>
@@ -117,6 +139,6 @@ export const useEditorStore = createSelectors(
             s.activeBufferPath = path;
           }),
       },
-    }))
-  )
+    })),
+  ),
 );

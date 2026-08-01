@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useWorkspaceGitStore, type GitSummary } from "../stores/workspace-git-store";
+import {
+  useWorkspaceGitStore,
+  type GitSummary,
+} from "../stores/workspace-git-store";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
@@ -37,7 +40,10 @@ import { openAgentSession } from "@/features/chat/lib/open-agent-session";
 import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { AgentIcons } from "@/components/agent-icons";
-import { useRecentChatsStore, type RecentChat } from "../stores/recent-chats-store";
+import {
+  useRecentChatsStore,
+  type RecentChat,
+} from "../stores/recent-chats-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { OrgSwitcher } from "@/features/organisations/components/org-switcher";
@@ -59,14 +65,21 @@ const HEADER_H = 26;
 
 /** Git status dot: green = clean tree, yellow = dirty, gray = non-repo/unknown. */
 function GitDot({ summary }: { summary?: GitSummary }) {
-  const color = !summary || !summary.isRepo
-    ? "var(--text-tertiary)"
-    : summary.dirty
-      ? "var(--status-warning, #CD9731)"
-      : "var(--accent-positive, #3fb950)";
+  const color =
+    !summary || !summary.isRepo
+      ? "var(--text-tertiary)"
+      : summary.dirty
+        ? "var(--status-warning, #CD9731)"
+        : "var(--accent-positive, #3fb950)";
   return (
     <span
-      title={!summary?.isRepo ? "Not a git repo" : summary.dirty ? "Working tree dirty" : "Working tree clean"}
+      title={
+        !summary?.isRepo
+          ? "Not a git repo"
+          : summary.dirty
+            ? "Working tree dirty"
+            : "Working tree clean"
+      }
       className="shrink-0 h-2 w-2 rounded-full"
       style={{ backgroundColor: color }}
     />
@@ -79,10 +92,14 @@ function NumStatPill({ summary }: { summary?: GitSummary }) {
   return (
     <span className="flex items-center gap-1.5 rounded-full bg-[var(--bg-elevated)] px-1.5 py-[1px] font-mono text-[9px] shrink-0">
       {summary && summary.additions > 0 && (
-        <span className="text-[var(--accent-positive,#3fb950)]">+{summary.additions}</span>
+        <span className="text-[var(--accent-positive,#3fb950)]">
+          +{summary.additions}
+        </span>
       )}
       {summary && summary.deletions > 0 && (
-        <span className="text-[var(--accent-negative,#f85149)]">−{summary.deletions}</span>
+        <span className="text-[var(--accent-negative,#f85149)]">
+          −{summary.deletions}
+        </span>
       )}
     </span>
   );
@@ -101,7 +118,17 @@ function WorkspaceRow({
   groups: WorkspaceGroup[];
   indented?: boolean;
 }) {
-  const { switchTo, closeWorkspace, pin, unpin, setGroup, addGroup, rename, beginRenameWorkspace, endRenameWorkspace } = useWorkspaceStore.use.actions();
+  const {
+    switchTo,
+    closeWorkspace,
+    pin,
+    unpin,
+    setGroup,
+    addGroup,
+    rename,
+    beginRenameWorkspace,
+    endRenameWorkspace,
+  } = useWorkspaceStore.use.actions();
   // Inline-rename lives in the store (like group rename) so it survives the
   // virtualized row remounting. The name shown is the user-chosen workspace
   // label (defaults to the directory name) — renaming only relabels the row,
@@ -169,10 +196,15 @@ function WorkspaceRow({
           />
         ) : (
           <span
-            onDoubleClick={(e) => { e.stopPropagation(); beginRenameWorkspace(ws.id); }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              beginRenameWorkspace(ws.id);
+            }}
             className={cn(
               "block truncate text-[12px] leading-tight pr-16",
-              active ? "text-[var(--text-primary)] font-medium" : "text-[var(--text-secondary)]",
+              active
+                ? "text-[var(--text-primary)] font-medium"
+                : "text-[var(--text-secondary)]",
             )}
           >
             {ws.name}
@@ -192,7 +224,11 @@ function WorkspaceRow({
       {/* Pin + more — absolute BOTTOM-RIGHT, on hover (pin stays if pinned). */}
       <div className="absolute bottom-1 right-1.5 flex items-center gap-0.5">
         <button
-          onClick={(e) => { e.stopPropagation(); if (ws.pinned) unpin(ws.id); else pin(ws.id); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (ws.pinned) unpin(ws.id);
+            else pin(ws.id);
+          }}
           className={cn(
             "p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] transition-opacity",
             ws.pinned ? "opacity-100" : "opacity-0 group-hover:opacity-100",
@@ -201,118 +237,205 @@ function WorkspaceRow({
         >
           {ws.pinned ? <PinOff size={11} /> : <Pin size={11} />}
         </button>
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger asChild>
-          <button
-            onClick={(e) => e.stopPropagation()}
-            className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity outline-none"
-            title="More"
-          >
-            <MoreHorizontal size={12} />
-          </button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content align="end" sideOffset={4} onClick={(e) => e.stopPropagation()}
-            // On close Radix restores focus to the trigger button. When the
-            // close is caused by selecting "Rename", that focus-return lands
-            // AFTER the rename input has mounted+autofocused, blurring it
-            // instantly → commitRename → edit mode exits. Suppressing the
-            // close auto-focus lets the input keep focus.
-            onCloseAutoFocus={(e) => e.preventDefault()}
-            className="z-[var(--z-max)] min-w-[148px] rounded-md border border-[var(--border-default)] bg-black py-0.5 shadow-[var(--shadow-overlay)] text-[11px] text-[var(--text-secondary)]">
-            <DropdownMenu.Item
-              onSelect={() => beginRenameWorkspace(ws.id)}
-              className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default">
-              <Pencil size={11} /> Rename
-            </DropdownMenu.Item>
-            <DropdownMenu.Item
-              onSelect={() => {
-                void navigator.clipboard
-                  .writeText(ws.path)
-                  .then(() => toast.success("Path copied"))
-                  .catch(() => toast.error("Couldn't copy path"));
-              }}
-              className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default">
-              <Copy size={11} /> Copy path
-            </DropdownMenu.Item>
-            <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border-default)]" />
-            <DropdownMenu.Sub>
-              <DropdownMenu.SubTrigger className="flex items-center justify-between px-2.5 h-6 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default">
-                Move to group <ChevronRight size={11} />
-              </DropdownMenu.SubTrigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.SubContent className="z-[var(--z-max)] min-w-[140px] rounded-md border border-[var(--border-default)] bg-black py-0.5 shadow-[var(--shadow-overlay)] text-[11px] text-[var(--text-secondary)]">
-                  {groups.map((g) => (
-                    <DropdownMenu.Item key={g.id} onSelect={() => setGroup(ws.id, g.id)}
-                      className="px-2.5 h-6 flex items-center outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default">
-                      {g.name}
-                    </DropdownMenu.Item>
-                  ))}
-                  <DropdownMenu.Item onSelect={() => { const gid = addGroup("New Group"); setGroup(ws.id, gid); }}
-                    className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default">
-                    <FolderPlus size={11} /> New group
-                  </DropdownMenu.Item>
-                  {ws.groupId && (
-                    <>
-                      <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border-default)]" />
-                      <DropdownMenu.Item onSelect={() => setGroup(ws.id, null)}
-                        className="px-2.5 h-6 flex items-center outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default">
-                        Remove from group
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <button
+              onClick={(e) => e.stopPropagation()}
+              className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity outline-none"
+              title="More"
+            >
+              <MoreHorizontal size={12} />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              align="end"
+              sideOffset={4}
+              onClick={(e) => e.stopPropagation()}
+              // On close Radix restores focus to the trigger button. When the
+              // close is caused by selecting "Rename", that focus-return lands
+              // AFTER the rename input has mounted+autofocused, blurring it
+              // instantly → commitRename → edit mode exits. Suppressing the
+              // close auto-focus lets the input keep focus.
+              onCloseAutoFocus={(e) => e.preventDefault()}
+              className="z-[var(--z-max)] min-w-[148px] rounded-md border border-[var(--border-default)] bg-black py-0.5 shadow-[var(--shadow-overlay)] text-[11px] text-[var(--text-secondary)]"
+            >
+              <DropdownMenu.Item
+                onSelect={() => beginRenameWorkspace(ws.id)}
+                className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
+              >
+                <Pencil size={11} /> Rename
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                onSelect={() => {
+                  void navigator.clipboard
+                    .writeText(ws.path)
+                    .then(() => toast.success("Path copied"))
+                    .catch(() => toast.error("Couldn't copy path"));
+                }}
+                className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
+              >
+                <Copy size={11} /> Copy path
+              </DropdownMenu.Item>
+              <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border-default)]" />
+              <DropdownMenu.Sub>
+                <DropdownMenu.SubTrigger className="flex items-center justify-between px-2.5 h-6 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default">
+                  Move to group <ChevronRight size={11} />
+                </DropdownMenu.SubTrigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.SubContent className="z-[var(--z-max)] min-w-[140px] rounded-md border border-[var(--border-default)] bg-black py-0.5 shadow-[var(--shadow-overlay)] text-[11px] text-[var(--text-secondary)]">
+                    {groups.map((g) => (
+                      <DropdownMenu.Item
+                        key={g.id}
+                        onSelect={() => setGroup(ws.id, g.id)}
+                        className="px-2.5 h-6 flex items-center outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
+                      >
+                        {g.name}
                       </DropdownMenu.Item>
-                    </>
-                  )}
-                </DropdownMenu.SubContent>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Sub>
-            <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border-default)]" />
-            <DropdownMenu.Item onSelect={() => void closeWorkspace(ws.id)}
-              className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--status-error,#f44)] cursor-default">
-              <X size={11} /> Remove from list
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
+                    ))}
+                    <DropdownMenu.Item
+                      onSelect={() => {
+                        const gid = addGroup("New Group");
+                        setGroup(ws.id, gid);
+                      }}
+                      className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
+                    >
+                      <FolderPlus size={11} /> New group
+                    </DropdownMenu.Item>
+                    {ws.groupId && (
+                      <>
+                        <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border-default)]" />
+                        <DropdownMenu.Item
+                          onSelect={() => setGroup(ws.id, null)}
+                          className="px-2.5 h-6 flex items-center outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
+                        >
+                          Remove from group
+                        </DropdownMenu.Item>
+                      </>
+                    )}
+                  </DropdownMenu.SubContent>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Sub>
+              <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border-default)]" />
+              <DropdownMenu.Item
+                onSelect={() => void closeWorkspace(ws.id)}
+                className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--status-error,#f44)] cursor-default"
+              >
+                <X size={11} /> Remove from list
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
       </div>
     </div>
   );
 }
 
-function GroupHeaderRow({ group, collapsed, onToggle }: { group: WorkspaceGroup; collapsed: boolean; onToggle: () => void }) {
-  const { pinGroup, unpinGroup, removeGroup, renameGroup, beginRenameGroup, endRenameGroup } = useWorkspaceStore.use.actions();
+function GroupHeaderRow({
+  group,
+  collapsed,
+  onToggle,
+}: {
+  group: WorkspaceGroup;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  const {
+    pinGroup,
+    unpinGroup,
+    removeGroup,
+    renameGroup,
+    beginRenameGroup,
+    endRenameGroup,
+  } = useWorkspaceStore.use.actions();
   // Editing lives in the store (not local state) so it survives the virtualized
   // row remounting, and so a freshly-created group opens straight into rename.
   const editing = useWorkspaceStore.use.editingGroupId() === group.id;
   const [name, setName] = useState(group.name);
   // Seed the field each time we enter edit mode.
-  useEffect(() => { if (editing) setName(group.name); }, [editing, group.name]);
-  const commit = () => { const n = name.trim(); if (n) renameGroup(group.id, n); endRenameGroup(); };
+  useEffect(() => {
+    if (editing) setName(group.name);
+  }, [editing, group.name]);
+  const commit = () => {
+    const n = name.trim();
+    if (n) renameGroup(group.id, n);
+    endRenameGroup();
+  };
   return (
-    <div data-hint style={{ height: HEADER_H }} className="group/h flex items-center gap-1 pl-1 pr-1.5 rounded-md cursor-pointer hover:bg-[var(--bg-hover)] transform-gpu [backface-visibility:hidden]" onClick={editing ? undefined : onToggle}>
-      {collapsed ? <ChevronRight size={12} className="text-[var(--text-tertiary)]" /> : <ChevronDown size={12} className="text-[var(--text-tertiary)]" />}
+    <div
+      data-hint
+      style={{ height: HEADER_H }}
+      className="group/h flex items-center gap-1 pl-1 pr-1.5 rounded-md cursor-pointer hover:bg-[var(--bg-hover)] transform-gpu [backface-visibility:hidden]"
+      onClick={editing ? undefined : onToggle}
+    >
+      {collapsed ? (
+        <ChevronRight size={12} className="text-[var(--text-tertiary)]" />
+      ) : (
+        <ChevronDown size={12} className="text-[var(--text-tertiary)]" />
+      )}
       <Folder size={11} className="text-[var(--text-tertiary)] shrink-0" />
       {editing ? (
-        <input autoFocus value={name} onClick={(e) => e.stopPropagation()} onFocus={(e) => e.target.select()} onChange={(e) => setName(e.target.value)} onBlur={commit}
-          onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") commit(); if (e.key === "Escape") endRenameGroup(); }}
-          className="flex-1 min-w-0 bg-transparent outline-none text-[10px] font-semibold uppercase tracking-wide text-[var(--text-secondary)]" />
+        <input
+          autoFocus
+          value={name}
+          onClick={(e) => e.stopPropagation()}
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") endRenameGroup();
+          }}
+          className="flex-1 min-w-0 bg-transparent outline-none text-[10px] font-semibold uppercase tracking-wide text-[var(--text-secondary)]"
+        />
       ) : (
-        <span onDoubleClick={(e) => { e.stopPropagation(); beginRenameGroup(group.id); }}
-          className="flex-1 min-w-0 truncate text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+        <span
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            beginRenameGroup(group.id);
+          }}
+          className="flex-1 min-w-0 truncate text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]"
+        >
           {group.name}
         </span>
       )}
       {!editing && (
-        <button onClick={(e) => { e.stopPropagation(); beginRenameGroup(group.id); }}
-          className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover/h:opacity-100 transition-opacity" title="Rename group">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            beginRenameGroup(group.id);
+          }}
+          className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover/h:opacity-100 transition-opacity"
+          title="Rename group"
+        >
           <Pencil size={10} />
         </button>
       )}
-      <button onClick={(e) => { e.stopPropagation(); if (group.pinned) unpinGroup(group.id); else pinGroup(group.id); }}
-        className={cn("p-0.5 rounded hover:bg-[var(--bg-elevated)] transition-opacity", group.pinned ? "opacity-100 text-[var(--accent-primary)]" : "opacity-0 group-hover/h:opacity-100 text-[var(--text-tertiary)]")}
-        title={group.pinned ? "Unpin group" : "Pin group"}>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          if (group.pinned) unpinGroup(group.id);
+          else pinGroup(group.id);
+        }}
+        className={cn(
+          "p-0.5 rounded hover:bg-[var(--bg-elevated)] transition-opacity",
+          group.pinned
+            ? "opacity-100 text-[var(--accent-primary)]"
+            : "opacity-0 group-hover/h:opacity-100 text-[var(--text-tertiary)]",
+        )}
+        title={group.pinned ? "Unpin group" : "Pin group"}
+      >
         {group.pinned ? <PinOff size={10} /> : <Pin size={10} />}
       </button>
-      <button onClick={(e) => { e.stopPropagation(); removeGroup(group.id); }}
-        className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover/h:opacity-100 transition-opacity" title="Delete group">
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          removeGroup(group.id);
+        }}
+        className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover/h:opacity-100 transition-opacity"
+        title="Delete group"
+      >
         <X size={10} />
       </button>
     </div>
@@ -343,10 +466,15 @@ function SectionHeaderRow({
       ) : (
         <ChevronDown size={12} className="text-[var(--text-tertiary)]" />
       )}
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">{label}</span>
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+        {label}
+      </span>
       {action && (
         <button
-          onClick={(e) => { e.stopPropagation(); action.onClick(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            action.onClick();
+          }}
           title={action.title}
           className="ml-auto p-0.5 rounded text-[var(--text-tertiary)] opacity-0 group-hover/s:opacity-100 hover:bg-[var(--bg-elevated)] hover:text-[var(--status-error,#f44)] transition-opacity outline-none"
         >
@@ -357,12 +485,27 @@ function SectionHeaderRow({
   );
 }
 
-function RecentProjectRow({ name, path, onOpen }: { name: string; path: string; onOpen: () => void }) {
+function RecentProjectRow({
+  name,
+  path,
+  onOpen,
+}: {
+  name: string;
+  path: string;
+  onOpen: () => void;
+}) {
   return (
-    <div data-hint onClick={onOpen} style={{ height: ROW_CARD, paddingLeft: 10 }}
-      className="group flex items-center gap-2.5 pr-1.5 rounded-md cursor-pointer hover:bg-[var(--bg-hover)]" title={path}>
+    <div
+      data-hint
+      onClick={onOpen}
+      style={{ height: ROW_CARD, paddingLeft: 10 }}
+      className="group flex items-center gap-2.5 pr-1.5 rounded-md cursor-pointer hover:bg-[var(--bg-hover)]"
+      title={path}
+    >
       <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--text-secondary)]" />
-      <span className="flex-1 min-w-0 truncate text-[12px] text-[var(--text-secondary)]">{name}</span>
+      <span className="flex-1 min-w-0 truncate text-[12px] text-[var(--text-secondary)]">
+        {name}
+      </span>
     </div>
   );
 }
@@ -376,15 +519,32 @@ function relTime(ms: number): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
-function ChatRow({ chat, running, onOpen }: { chat: RecentChat; running: boolean; onOpen: () => void }) {
+function ChatRow({
+  chat,
+  running,
+  onOpen,
+}: {
+  chat: RecentChat;
+  running: boolean;
+  onOpen: () => void;
+}) {
   // Cersei (the Atlas native agent) gets its own brand mark — falling through
   // to the Claude icon mislabeled Atlas chats in this panel.
-  const AgentIcon = chat.agentType === "codex" ? AgentIcons.Codex : AgentIcons.Claude;
+  const AgentIcon =
+    chat.agentType === "codex" ? AgentIcons.Codex : AgentIcons.Claude;
   return (
-    <div data-hint onClick={onOpen} style={{ height: CHAT_CARD, paddingLeft: 6 }}
-      className="group relative flex items-start gap-2 pr-1.5 py-1.5 border-b border-[var(--border-subtle)] cursor-pointer hover:bg-[var(--bg-hover)] transform-gpu [backface-visibility:hidden]" title={chat.projectPath}>
+    <div
+      data-hint
+      onClick={onOpen}
+      style={{ height: CHAT_CARD, paddingLeft: 6 }}
+      className="group relative flex items-start gap-2 pr-1.5 py-1.5 border-b border-[var(--border-subtle)] cursor-pointer hover:bg-[var(--bg-hover)] transform-gpu [backface-visibility:hidden]"
+      title={chat.projectPath}
+    >
       {running ? (
-        <AtlasLoader size={11} className="mt-0.5 shrink-0 text-[var(--accent-primary)]" />
+        <AtlasLoader
+          size={11}
+          className="mt-0.5 shrink-0 text-[var(--accent-primary)]"
+        />
       ) : chat.agentType === "cersei" ? (
         <AtlasIcon size={14} className="mt-0.5 shrink-0" />
       ) : (
@@ -393,7 +553,9 @@ function ChatRow({ chat, running, onOpen }: { chat: RecentChat; running: boolean
       <div
         className={cn(
           "min-w-0 flex-1 text-[12px] leading-[1.3] line-clamp-2 break-words",
-          running ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]",
+          running
+            ? "text-[var(--text-primary)]"
+            : "text-[var(--text-secondary)]",
         )}
       >
         {stripInjectedContext(chat.title) || chat.projectName}
@@ -462,16 +624,28 @@ export function WorkspaceSidebar() {
   const toggle = (id: string) => setCollapsed((c) => ({ ...c, [id]: !c[id] }));
 
   // Pinned + Projects (STATIC registry order — clicking never reorders).
-  const pinned = useMemo(() => workspaces.filter((w) => w.pinned), [workspaces]);
-  const projects = useMemo(() => workspaces.filter((w) => !w.pinned), [workspaces]);
+  const pinned = useMemo(
+    () => workspaces.filter((w) => w.pinned),
+    [workspaces],
+  );
+  const projects = useMemo(
+    () => workspaces.filter((w) => !w.pinned),
+    [workspaces],
+  );
   const sortedGroups = useMemo(
-    () => [...groups].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || a.order - b.order),
+    () =>
+      [...groups].sort(
+        (a, b) => Number(!!b.pinned) - Number(!!a.pinned) || a.order - b.order,
+      ),
     [groups],
   );
 
   // Recent projects = picker recents NOT already in the registry. Excludes
   // projects open in ANY org (recents are global) so nothing double-lists.
-  const openPaths = useMemo(() => new Set(allWorkspaces.map((w) => w.path)), [allWorkspaces]);
+  const openPaths = useMemo(
+    () => new Set(allWorkspaces.map((w) => w.path)),
+    [allWorkspaces],
+  );
   const recents = useMemo(
     () => recentProjects.filter((r) => !openPaths.has(r.path)),
     [recentProjects, openPaths],
@@ -506,45 +680,98 @@ export function WorkspaceSidebar() {
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
     if (pinned.length) {
-      out.push({ kind: "section", id: "sec:pinned", label: "Pinned", key: "s:pinned" });
-      if (!collapsed["sec:pinned"]) for (const ws of pinned) out.push({ kind: "ws", ws, indented: false, key: ws.id });
+      out.push({
+        kind: "section",
+        id: "sec:pinned",
+        label: "Pinned",
+        key: "s:pinned",
+      });
+      if (!collapsed["sec:pinned"])
+        for (const ws of pinned)
+          out.push({ kind: "ws", ws, indented: false, key: ws.id });
     }
-    out.push({ kind: "section", id: "sec:projects", label: "Projects", key: "s:projects" });
+    out.push({
+      kind: "section",
+      id: "sec:projects",
+      label: "Projects",
+      key: "s:projects",
+    });
     if (!collapsed["sec:projects"]) {
-      const inGroup = (gid: string) => projects.filter((w) => w.groupId === gid);
+      const inGroup = (gid: string) =>
+        projects.filter((w) => w.groupId === gid);
       for (const g of sortedGroups) {
         const members = inGroup(g.id);
-        out.push({ kind: "group", group: g, count: members.length, key: `g:${g.id}` });
-        if (!collapsed[g.id]) for (const ws of members) out.push({ kind: "ws", ws, indented: true, key: ws.id });
+        out.push({
+          kind: "group",
+          group: g,
+          count: members.length,
+          key: `g:${g.id}`,
+        });
+        if (!collapsed[g.id])
+          for (const ws of members)
+            out.push({ kind: "ws", ws, indented: true, key: ws.id });
       }
-      for (const ws of projects.filter((w) => !w.groupId)) out.push({ kind: "ws", ws, indented: false, key: ws.id });
+      for (const ws of projects.filter((w) => !w.groupId))
+        out.push({ kind: "ws", ws, indented: false, key: ws.id });
     }
     if (recents.length) {
-      out.push({ kind: "section", id: "sec:recent", label: "Recent", key: "s:recent" });
-      if (!collapsed["sec:recent"]) for (const r of recents) out.push({ kind: "recent", name: r.name, path: r.path, key: `r:${r.path}` });
+      out.push({
+        kind: "section",
+        id: "sec:recent",
+        label: "Recent",
+        key: "s:recent",
+      });
+      if (!collapsed["sec:recent"])
+        for (const r of recents)
+          out.push({
+            kind: "recent",
+            name: r.name,
+            path: r.path,
+            key: `r:${r.path}`,
+          });
     }
     if (orgRecentChats.length) {
-      out.push({ kind: "section", id: "sec:chats", label: "Chats", key: "s:chats" });
+      out.push({
+        kind: "section",
+        id: "sec:chats",
+        label: "Chats",
+        key: "s:chats",
+      });
       // Active (live-running) chats float to the top of the stack; the rest keep
       // their most-recent-first order. Capacity (15) is enforced by the store.
       const ordered = [
         ...orgRecentChats.filter(isChatRunning),
         ...orgRecentChats.filter((c) => !isChatRunning(c)),
       ];
-      if (!collapsed["sec:chats"]) for (const c of ordered) out.push({ kind: "chat", chat: c, key: `c:${c.tabId}` });
+      if (!collapsed["sec:chats"])
+        for (const c of ordered)
+          out.push({ kind: "chat", chat: c, key: `c:${c.tabId}` });
     }
     return out;
-  }, [pinned, projects, sortedGroups, collapsed, recents, orgRecentChats, isChatRunning]);
+  }, [
+    pinned,
+    projects,
+    sortedGroups,
+    collapsed,
+    recents,
+    orgRecentChats,
+    isChatRunning,
+  ]);
 
   // Collapse-all / expand-all: collapses every section + group, or expands all.
   const allCollapsibleIds = useMemo(
     () => [...sectionIds, ...groups.map((g) => g.id)],
     [sectionIds, groups],
   );
-  const allCollapsed = allCollapsibleIds.length > 0 && allCollapsibleIds.every((id) => collapsed[id]);
+  const allCollapsed =
+    allCollapsibleIds.length > 0 &&
+    allCollapsibleIds.every((id) => collapsed[id]);
   const toggleAll = () => {
     if (allCollapsed) setCollapsed({});
-    else setCollapsed(Object.fromEntries(allCollapsibleIds.map((id) => [id, true])));
+    else
+      setCollapsed(
+        Object.fromEntries(allCollapsibleIds.map((id) => [id, true])),
+      );
   };
 
   // ── Git summaries: cached at module scope (`workspace-git-store`) so opening
@@ -572,28 +799,49 @@ export function WorkspaceSidebar() {
 
   // Fetch git summaries for the visible workspace rows.
   const items = virtualizer.getVirtualItems();
-  const visiblePaths = items.map((v) => { const r = rows[v.index]; return r?.kind === "ws" ? r.ws.path : null; }).filter(Boolean).join("|");
+  const visiblePaths = items
+    .map((v) => {
+      const r = rows[v.index];
+      return r?.kind === "ws" ? r.ws.path : null;
+    })
+    .filter(Boolean)
+    .join("|");
   useEffect(() => {
     for (const p of visiblePaths.split("|")) if (p) ensureSummary(p);
   }, [visiblePaths, ensureSummary]);
 
-  const openChat = useCallback(async (chat: RecentChat) => {
-    // 1. Focus the chat's project workspace (register it if new).
-    const ws = useWorkspaceStore.getState().workspaces.find((w) => w.path === chat.projectPath);
-    if (ws) await useWorkspaceStore.getState().actions.switchTo(ws.id);
-    else await addWorkspace(chat.projectPath);
-    // 2. Open THIS session (by acp session id — not the tab id, which is reused
-    //    across many sessions). openAgentSession focuses it if already open,
-    //    else loads it into the agent chat.
-    await openAgentSession({
-      acpSessionId: chat.acpSessionId,
-      title: chat.title,
-      cwd: chat.projectPath,
-    });
-  }, [addWorkspace]);
+  const openChat = useCallback(
+    async (chat: RecentChat) => {
+      // 1. Focus the chat's project workspace (register it if new).
+      const ws = useWorkspaceStore
+        .getState()
+        .workspaces.find((w) => w.path === chat.projectPath);
+      if (ws) await useWorkspaceStore.getState().actions.switchTo(ws.id);
+      else await addWorkspace(chat.projectPath);
+      // 2. Open THIS session (by acp session id — not the tab id, which is reused
+      //    across many sessions). openAgentSession focuses it if already open,
+      //    else loads it into the agent chat.
+      await openAgentSession({
+        acpSessionId: chat.acpSessionId,
+        title: chat.title,
+        cwd: chat.projectPath,
+      });
+    },
+    [addWorkspace],
+  );
 
-  const openTabSingleton = (type: "mission-control" | "log" | "settings", title: string) =>
-    addTab({ id: type === "mission-control" ? "mission-control" : type, type, title, closable: true, dirty: false, data: {} });
+  const openTabSingleton = (
+    type: "mission-control" | "log" | "settings",
+    title: string,
+  ) =>
+    addTab({
+      id: type === "mission-control" ? "mission-control" : type,
+      type,
+      title,
+      closable: true,
+      dirty: false,
+      data: {},
+    });
 
   return (
     <aside
@@ -623,7 +871,11 @@ export function WorkspaceSidebar() {
               ? "text-[var(--accent-primary)]"
               : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]",
           )}
-          title={sidebarPinned ? "Unpin sidebar (float as overlay)" : "Pin sidebar (dock into layout)"}
+          title={
+            sidebarPinned
+              ? "Unpin sidebar (float as overlay)"
+              : "Pin sidebar (dock into layout)"
+          }
         >
           {sidebarPinned ? <PinOff size={13} /> : <Pin size={13} />}
         </button>
@@ -632,7 +884,11 @@ export function WorkspaceSidebar() {
           className="p-1 rounded-full text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)] outline-none"
           title={allCollapsed ? "Expand all" : "Collapse all"}
         >
-          {allCollapsed ? <ChevronsUpDown size={13} /> : <ChevronsDownUp size={13} />}
+          {allCollapsed ? (
+            <ChevronsUpDown size={13} />
+          ) : (
+            <ChevronsDownUp size={13} />
+          )}
         </button>
         <AddProjectMenu />
       </div>
@@ -649,27 +905,55 @@ export function WorkspaceSidebar() {
 
       {/* Header actions. */}
       <div className="px-1.5 pb-1 shrink-0 space-y-0.5">
-        <HeaderButton icon={<AtlasIcon size={14} className="rounded-[3px]" />} label="Console" onClick={() => openTabSingleton("mission-control", "Console")} />
-        <HeaderButton icon={<ScrollText size={13} />} label="See Logs" onClick={() => openTabSingleton("log", "Log")} />
+        <HeaderButton
+          icon={<AtlasIcon size={14} className="rounded-[3px]" />}
+          label="Console"
+          onClick={() => openTabSingleton("mission-control", "Console")}
+        />
+        <HeaderButton
+          icon={<ScrollText size={13} />}
+          label="See Logs"
+          onClick={() => openTabSingleton("log", "Log")}
+        />
         <HeaderButton
           icon={<Zap size={13} />}
           label="Skills"
           onClick={() => openSettingsSection("skills")}
         />
-        <HeaderButton icon={<Settings size={13} />} label="Settings" onClick={() => openTabSingleton("settings", "Settings")} />
+        <HeaderButton
+          icon={<Settings size={13} />}
+          label="Settings"
+          onClick={() => openTabSingleton("settings", "Settings")}
+        />
       </div>
 
       {/* Virtualized list. */}
-      <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto hide-scrollbar px-1.5 pb-2">
+      <div
+        ref={parentRef}
+        className="flex-1 min-h-0 overflow-y-auto hide-scrollbar px-1.5 pb-2"
+      >
         {rows.length === 0 ? (
-          <div className="px-2 py-3 text-[11px] text-[var(--text-tertiary)]">No projects yet.</div>
+          <div className="px-2 py-3 text-[11px] text-[var(--text-tertiary)]">
+            No projects yet.
+          </div>
         ) : (
-          <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+          <div
+            style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+          >
             {items.map((v) => {
               const row = rows[v.index];
               if (!row) return null;
               return (
-                <div key={row.key} style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${v.start}px)` }}>
+                <div
+                  key={row.key}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${v.start}px)`,
+                  }}
+                >
                   {row.kind === "section" ? (
                     <SectionHeaderRow
                       label={row.label}
@@ -677,20 +961,49 @@ export function WorkspaceSidebar() {
                       onToggle={() => toggle(row.id)}
                       action={
                         row.id === "sec:recent"
-                          ? { icon: <Trash2 size={11} />, title: "Clear recent projects", onClick: () => clearRecents() }
+                          ? {
+                              icon: <Trash2 size={11} />,
+                              title: "Clear recent projects",
+                              onClick: () => clearRecents(),
+                            }
                           : row.id === "sec:chats"
-                            ? { icon: <Trash2 size={11} />, title: "Clear chats", onClick: () => orgRecentChats.forEach((c) => removeChat(c.tabId)) }
+                            ? {
+                                icon: <Trash2 size={11} />,
+                                title: "Clear chats",
+                                onClick: () =>
+                                  orgRecentChats.forEach((c) =>
+                                    removeChat(c.tabId),
+                                  ),
+                              }
                             : undefined
                       }
                     />
                   ) : row.kind === "group" ? (
-                    <GroupHeaderRow group={row.group} collapsed={!!collapsed[row.group.id]} onToggle={() => toggle(row.group.id)} />
+                    <GroupHeaderRow
+                      group={row.group}
+                      collapsed={!!collapsed[row.group.id]}
+                      onToggle={() => toggle(row.group.id)}
+                    />
                   ) : row.kind === "ws" ? (
-                    <WorkspaceRow ws={row.ws} active={row.ws.id === displayActiveId} summary={summaries[row.ws.path]} groups={groups} indented={row.indented} />
+                    <WorkspaceRow
+                      ws={row.ws}
+                      active={row.ws.id === displayActiveId}
+                      summary={summaries[row.ws.path]}
+                      groups={groups}
+                      indented={row.indented}
+                    />
                   ) : row.kind === "recent" ? (
-                    <RecentProjectRow name={row.name} path={row.path} onOpen={() => void addWorkspace(row.path)} />
+                    <RecentProjectRow
+                      name={row.name}
+                      path={row.path}
+                      onOpen={() => void addWorkspace(row.path)}
+                    />
                   ) : (
-                    <ChatRow chat={row.chat} running={isChatRunning(row.chat)} onOpen={() => void openChat(row.chat)} />
+                    <ChatRow
+                      chat={row.chat}
+                      running={isChatRunning(row.chat)}
+                      onOpen={() => void openChat(row.chat)}
+                    />
                   )}
                 </div>
               );
@@ -702,10 +1015,20 @@ export function WorkspaceSidebar() {
   );
 }
 
-function HeaderButton({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+function HeaderButton({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
   return (
-    <button onClick={onClick}
-      className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors">
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
+    >
       <span className="text-[var(--text-tertiary)]">{icon}</span>
       {label}
     </button>
@@ -720,10 +1043,16 @@ function AddProjectMenu() {
   const { clearRecents } = useProjectStore.use.actions();
   const [query, setQuery] = useState("");
   const filtered = recentProjects.filter(
-    (p) => p.name.toLowerCase().includes(query.toLowerCase()) || p.path.toLowerCase().includes(query.toLowerCase()),
+    (p) =>
+      p.name.toLowerCase().includes(query.toLowerCase()) ||
+      p.path.toLowerCase().includes(query.toLowerCase()),
   );
   return (
-    <DropdownMenu.Root onOpenChange={(o) => { if (!o) setQuery(""); }}>
+    <DropdownMenu.Root
+      onOpenChange={(o) => {
+        if (!o) setQuery("");
+      }}
+    >
       <DropdownMenu.Trigger asChild>
         <button
           className="flex items-center justify-center h-6 w-6 rounded-full border border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors cursor-pointer"
@@ -735,36 +1064,69 @@ function AddProjectMenu() {
       <DropdownMenu.Portal>
         {/* Compact menu primitive — mirrors the source-control "filter files"
          *  dropdown: 26px rows, px-3 on both sides, border-b search header. */}
-        <DropdownMenu.Content align="end" sideOffset={4}
-          className="z-[var(--z-max)] w-[280px] max-h-[360px] rounded-lg border border-[var(--border-default)] bg-[#000] shadow-xl text-[var(--text-secondary)] flex flex-col overflow-hidden">
-          <DropdownMenu.Item onSelect={() => void pickAndAddWorkspace()}
-            className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default shrink-0">
-            <FolderOpen size={13} className="text-[var(--text-tertiary)] shrink-0" />
+        <DropdownMenu.Content
+          align="end"
+          sideOffset={4}
+          className="z-[var(--z-max)] w-[280px] max-h-[360px] rounded-lg border border-[var(--border-default)] bg-[#000] shadow-xl text-[var(--text-secondary)] flex flex-col overflow-hidden"
+        >
+          <DropdownMenu.Item
+            onSelect={() => void pickAndAddWorkspace()}
+            className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default shrink-0"
+          >
+            <FolderOpen
+              size={13}
+              className="text-[var(--text-tertiary)] shrink-0"
+            />
             <span className="flex-1 text-left">Open Folder…</span>
           </DropdownMenu.Item>
           {recentProjects.length > 0 && (
             <>
-              <div className="flex items-center gap-1.5 px-3 h-[30px] border-y border-[var(--border-default)] shrink-0" onKeyDown={(e) => e.stopPropagation()}>
-                <Search size={11} className="text-[var(--text-tertiary)] shrink-0" />
-                <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects…"
-                  className="flex-1 bg-transparent outline-none text-[10px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]" />
+              <div
+                className="flex items-center gap-1.5 px-3 h-[30px] border-y border-[var(--border-default)] shrink-0"
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <Search
+                  size={11}
+                  className="text-[var(--text-tertiary)] shrink-0"
+                />
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search projects…"
+                  className="flex-1 bg-transparent outline-none text-[10px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]"
+                />
               </div>
-              <div className="px-3 pt-1.5 pb-0.5 text-[9px] uppercase tracking-wide text-[var(--text-tertiary)] shrink-0">Recent</div>
+              <div className="px-3 pt-1.5 pb-0.5 text-[9px] uppercase tracking-wide text-[var(--text-tertiary)] shrink-0">
+                Recent
+              </div>
               <div className="overflow-y-auto py-1 hide-scrollbar">
                 {filtered.length === 0 ? (
-                  <div className="px-3 py-2 text-[10px] text-[var(--text-tertiary)] text-center">No matches</div>
+                  <div className="px-3 py-2 text-[10px] text-[var(--text-tertiary)] text-center">
+                    No matches
+                  </div>
                 ) : (
                   filtered.map((p) => (
-                    <DropdownMenu.Item key={p.path} onSelect={() => void addWorkspace(p.path)}
-                      className="w-full flex items-center gap-2 px-3 h-[26px] text-[11px] outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default">
-                      <Folder size={12} className="text-[var(--text-tertiary)] shrink-0" />
-                      <span className="truncate font-mono text-left flex-1">{p.name}</span>
+                    <DropdownMenu.Item
+                      key={p.path}
+                      onSelect={() => void addWorkspace(p.path)}
+                      className="w-full flex items-center gap-2 px-3 h-[26px] text-[11px] outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
+                    >
+                      <Folder
+                        size={12}
+                        className="text-[var(--text-tertiary)] shrink-0"
+                      />
+                      <span className="truncate font-mono text-left flex-1">
+                        {p.name}
+                      </span>
                     </DropdownMenu.Item>
                   ))
                 )}
               </div>
-              <DropdownMenu.Item onSelect={() => clearRecents()}
-                className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] outline-none border-t border-[var(--border-default)] text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--status-error,#f44)] cursor-pointer shrink-0">
+              <DropdownMenu.Item
+                onSelect={() => clearRecents()}
+                className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] outline-none border-t border-[var(--border-default)] text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--status-error,#f44)] cursor-pointer shrink-0"
+              >
                 <Trash2 size={12} className="shrink-0" />
                 <span className="flex-1 text-left">Clear recent projects</span>
               </DropdownMenu.Item>
