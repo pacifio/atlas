@@ -21,6 +21,7 @@ const BrowserPanel = lazy(() => import("@/features/browser/components/browser-pa
 const MediaViewer = lazy(() => import("@/features/media/components/media-viewer").then(m => ({ default: m.MediaViewer })));
 const SvgViewer = lazy(() => import("@/features/svg/components/svg-viewer").then(m => ({ default: m.SvgViewer })));
 const PdfViewer = lazy(() => import("@/features/pdf/components/pdf-viewer").then(m => ({ default: m.PdfViewer })));
+const NotebookViewer = lazy(() => import("@/features/notebook/components/notebook-viewer").then(m => ({ default: m.NotebookViewer })));
 const GitDiffPanel = lazy(() => import("@/features/git/components/git-diff-panel").then(m => ({ default: m.GitDiffPanel })));
 const CanvasPanel = lazy(() => import("@/features/canvas/components/canvas-panel").then(m => ({ default: m.CanvasPanel })));
 const KnowledgePanel = lazy(() => import("@/features/knowledge/components/knowledge-panel").then(m => ({ default: m.KnowledgePanel })));
@@ -62,6 +63,7 @@ import {
   Columns2,
   LayoutDashboard,
   Layers,
+  NotebookText,
 } from "lucide-react";
 import type { TabType } from "@/lib/constants";
 
@@ -83,6 +85,7 @@ const tabIcons: Record<TabType, React.ElementType> = {
   media: Code,
   svg: Code,
   pdf: FileText,
+  notebook: NotebookText,
   unsupported: Code,
   pomodoro: Timer,
   "mission-control": LayoutDashboard,
@@ -576,6 +579,8 @@ function TabContent({ tab }: { tab: Tab }) {
       return <SvgViewer filePath={tab.data.filePath as string} />;
     case "pdf":
       return <PdfViewer filePath={tab.data.filePath as string} tabId={tab.id} />;
+    case "notebook":
+      return <NotebookViewer filePath={tab.data.filePath as string} />;
     case "diff":
       return (
         <GitDiffPanel

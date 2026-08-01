@@ -8,7 +8,7 @@
  * binary bytes into CodeMirror.
  */
 
-export type FileKind = "text" | "image" | "svg" | "video" | "audio" | "pdf" | "unsupported";
+export type FileKind = "text" | "image" | "svg" | "video" | "audio" | "pdf" | "notebook" | "unsupported";
 
 // Extensions the CodeMirror editor handles (or can usefully attempt — even
 // without a language extension, plaintext display is fine).
@@ -50,6 +50,10 @@ const AUDIO_EXTS = new Set([
 
 const PDF_EXTS = new Set(["pdf"]);
 
+// Jupyter notebooks are JSON but need cell-aware rendering (markdown/code
+// cells + outputs), not raw JSON in CodeMirror, so they get their own kind.
+const NOTEBOOK_EXTS = new Set(["ipynb"]);
+
 // SVG is both renderable (it's an image) AND text (copyable source), so it gets
 // its own viewer instead of the code editor or the raster image viewer.
 const SVG_EXTS = new Set(["svg"]);
@@ -79,6 +83,7 @@ export function classifyFile(path: string): FileKind {
     if (VIDEO_EXTS.has(ext)) return "video";
     if (AUDIO_EXTS.has(ext)) return "audio";
     if (PDF_EXTS.has(ext)) return "pdf";
+    if (NOTEBOOK_EXTS.has(ext)) return "notebook";
   }
   // Extensionless files like LICENSE, Makefile, Dockerfile.
   if (!ext && EXTENSIONLESS_TEXT_NAMES.has(base)) return "text";

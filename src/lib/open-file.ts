@@ -62,10 +62,13 @@ export async function openFileOrReveal(path: string): Promise<void> {
   openWithKind(path, kind);
 }
 
-function tabTypeFor(kind: FileKind): "editor" | "media" | "svg" | "pdf" | "unsupported" {
+function tabTypeFor(
+  kind: FileKind,
+): "editor" | "media" | "svg" | "pdf" | "notebook" | "unsupported" {
   if (kind === "text") return "editor";
   if (kind === "image" || kind === "video" || kind === "audio") return "media";
   if (kind === "svg") return "svg";
   if (kind === "pdf") return "pdf";
+  if (kind === "notebook") return "notebook";
   return "unsupported";
 }
