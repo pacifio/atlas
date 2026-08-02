@@ -93,9 +93,8 @@ export function FeedbackPanel() {
         : (i - 1 + CATEGORIES.length) % CATEGORIES.length;
     a.setCategory(CATEGORIES[next].id);
     requestAnimationFrame(() => {
-      radioRef.current
-        ?.querySelectorAll<HTMLButtonElement>("[role=radio]")
-        [next]?.focus();
+      const buttons = radioRef.current?.querySelectorAll<HTMLButtonElement>("[role=radio]");
+      buttons?.[next]?.focus();
     });
   };
 

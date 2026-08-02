@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { forwardRef } from "react";
 
-interface ScrollAreaProps extends React.HTMLAttributes<HTMLDivElement> {}
+type ScrollAreaProps = React.HTMLAttributes<HTMLDivElement>;
 
 const ScrollArea = forwardRef<HTMLDivElement, ScrollAreaProps>(
   ({ className, children, ...props }, ref) => {

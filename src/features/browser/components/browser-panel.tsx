@@ -336,7 +336,9 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
       });
       const { useKnowledgeStore } = await import("@/features/knowledge/stores/knowledge-store");
       useKnowledgeStore.getState().actions.loadEntries(currentProject.path);
-    } catch {}
+    } catch {
+      // Saving is best-effort; the browser view remains usable if it fails.
+    }
   };
 
   const copySelection = () => {

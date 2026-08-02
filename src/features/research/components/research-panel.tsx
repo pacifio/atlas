@@ -85,7 +85,9 @@ export function ResearchPanel() {
         paperId: paper.id,
         paperTitle: paper.title,
       });
-    } catch {}
+    } catch {
+      // Download failures are reflected by the cleared in-flight state below.
+    }
     setDownloadingIds((s) => { const n = new Set(s); n.delete(paper.id); return n; });
   };
 
@@ -115,7 +117,9 @@ export function ResearchPanel() {
       const { useKnowledgeStore } = await import("@/features/knowledge/stores/knowledge-store");
       useKnowledgeStore.getState().actions.loadEntries(currentProject.path);
       setSavedIds((s) => new Set(s).add(paper.id));
-    } catch {}
+    } catch {
+      // Saving is best-effort; the research view remains usable if it fails.
+    }
   };
 
   const openInBrowser = (url: string) => {

@@ -71,7 +71,7 @@ bun run dev             # Vite only, no Tauri shell. Fast for pure UI work, but 
 bun run format          # Prettier on src/
 ```
 
-`bun run lint` fails on a clean checkout — there's no ESLint 9 flat config in the repo yet. Use `bunx tsc --noEmit` as the frontend gate.
+Run `bun run lint` for the frontend ESLint checks. Use `bunx tsc --noEmit` as the TypeScript gate.
 
 ## Fork, branch, PR
 

@@ -90,7 +90,7 @@ export function createPathLinkProvider(term: Terminal, terminalId: string): ILin
               })
               .catch(() => {});
           },
-          hover: (_e, _t) => {
+          hover: () => {
             hoveredLink = links.find((l) => l.text === raw) ?? null;
             refreshHoverDecor();
           },

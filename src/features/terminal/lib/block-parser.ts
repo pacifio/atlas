@@ -59,8 +59,10 @@ const PW_PROMPT_RE =
 function looksLikePasswordPrompt(output: string): boolean {
   const plain = output
     // OSC … BEL/ST
+    // eslint-disable-next-line no-control-regex
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
     // CSI …
+    // eslint-disable-next-line no-control-regex
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
   const trimmed = plain.replace(/[ \t\r]+$/, "");
   const lastLine = trimmed.slice(trimmed.lastIndexOf("\n") + 1);
@@ -255,6 +257,7 @@ export class BlockStreamParser {
   private handleOsc(body: string): boolean {
     // OSC 7 — working directory: "7;file://host/abs/path"
     if (body.startsWith("7;")) {
+      // eslint-disable-next-line no-control-regex
       const m = body.match(/file:\/\/[^/]*(\/[^\x07]*)/);
       if (m) {
         const next = decodeURIComponent(m[1]);

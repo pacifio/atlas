@@ -32,7 +32,7 @@ interface ModelsState {
   };
 }
 
-let unlistens: UnlistenFn[] = [];
+const unlistens: UnlistenFn[] = [];
 let started = false;
 
 export const useModelsStore = createSelectors(
