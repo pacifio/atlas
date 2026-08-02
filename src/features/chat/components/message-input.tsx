@@ -42,7 +42,10 @@ import type {
   SlashCommandPickerHandle,
   SlashCommand,
 } from "./slash-command-picker";
-import { commandRequiresArgs } from "./slash-command-picker";
+import {
+  commandRequiresArgs,
+  normalizeAcpSlashCommands,
+} from "./slash-command-picker";
 import { CodexLoginDialog } from "./codex-login-dialog";
 import { PlanDock } from "./plan-dock";
 import { RetryPill } from "./retry-pill";
@@ -655,34 +658,31 @@ export function MessageInput({
     if (cerseiBound || cerseiCompress === undefined) setCerseiCompress(tabId, on);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, agentType, cerseiBound]);
-  // ACP-reported slash commands for this session (Codex). Claude keeps its
-  // curated catalogue (the picker's default).
+  // ACP-reported slash commands are session-scoped. Preserve the curated
+  // catalogue until an ACP agent advertises its own list; native Cersei
+  // intentionally continues to use that catalogue unchanged.
   const availableCommands = useChatStore((s) => s.sessions[tabId]?.availableCommands);
   const agentSlashCommands = useMemo<SlashCommand[] | undefined>(() => {
-    if (agentType !== "codex") return undefined;
-    const fromAgent: SlashCommand[] = (availableCommands ?? [])
-      .map((c) => {
-        const o = (c ?? {}) as { name?: string; description?: string; input?: unknown };
-        const name = (o.name ?? "").replace(/^\//, "");
-        return {
-          name,
-          signature: o.input != null ? `/${name} <args>` : `/${name}`,
-          description: o.description ?? "",
-          handler: "passthrough" as const,
-        };
-      })
-      .filter((c) => c.name && c.name !== "login");
-    // Custom Atlas-handled command (not advertised by codex-acp): opens the
-    // Codex sign-in modal — mirrors Claude's `/login`.
-    return [
-      {
-        name: "login",
-        signature: "/login",
-        description: "Sign in to Codex (ChatGPT or API key).",
-        handler: "codex-login" as const,
-      },
-      ...fromAgent,
-    ];
+    if (agentType === "cersei" || availableCommands === undefined) return undefined;
+
+    const login = agentType === "claude-code"
+      ? {
+          name: "login",
+          signature: "/login",
+          description: "Sign in to your Anthropic account.",
+          handler: "atlas-login" as const,
+        }
+      : agentType === "codex"
+        ? {
+            name: "login",
+            signature: "/login",
+            description: "Sign in to Codex (ChatGPT or API key).",
+            handler: "codex-login" as const,
+          }
+        : null;
+
+    const commands = normalizeAcpSlashCommands(availableCommands);
+    return login ? [login, ...commands] : commands;
   }, [agentType, availableCommands]);
   const queue = useChatStore((s) => s.queues[tabId] ?? EMPTY_QUEUE);
 

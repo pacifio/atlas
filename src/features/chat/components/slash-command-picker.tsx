@@ -48,6 +48,34 @@ export function commandRequiresArgs(cmd: SlashCommand): boolean {
   return /<[^>]+>/.test(cmd.signature);
 }
 
+/** Convert untyped ACP command payloads into picker rows. Invalid records,
+ * duplicate names, and `/login` are omitted because Atlas owns login flows
+ * for its supported ACP agents. */
+export function normalizeAcpSlashCommands(commands: unknown[]): SlashCommand[] {
+  const seen = new Set<string>();
+
+  return commands.flatMap((command) => {
+    if (!command || typeof command !== "object") return [];
+    const value = command as {
+      name?: unknown;
+      description?: unknown;
+      input?: unknown;
+    };
+    if (typeof value.name !== "string") return [];
+
+    const name = value.name.trim().replace(/^\/+/, "");
+    if (!name || name === "login" || seen.has(name)) return [];
+    seen.add(name);
+
+    return [{
+      name,
+      signature: value.input != null ? `/${name} <args>` : `/${name}`,
+      description: typeof value.description === "string" ? value.description : "",
+      handler: "passthrough" as const,
+    }];
+  });
+}
+
 export interface SlashCommandPickerHandle {
   moveDown(): void;
   moveUp(): void;
