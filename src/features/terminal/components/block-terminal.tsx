@@ -73,6 +73,9 @@ function renderHL(text: string, query: string): ReactNode {
 interface BlockTerminalProps {
   isActive: boolean;
   onFocus: () => void;
+  /** The terminal tab id (layout/terminal store), used to bind pending focus
+   *  requests to the correct terminal tab. */
+  tabId: string;
   /** The layout terminal id (terminal-store), used to report busy state to the
    *  tab strip. Distinct from the internal PTY session id. */
   terminalKey: string;
@@ -104,10 +107,11 @@ const XTERM_THEME = {
  * The React command input sends lines to the shell; when an alt-screen app is
  * running, keystrokes go to xterm instead.
  */
-export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalProps) {
+export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTerminalProps) {
   const [blocks, setBlocks] = useState<TerminalBlock[]>([]);
   const [altScreen, setAltScreen] = useState(false);
   const [cwd, setCwd] = useState<string>("");
+  const [surfaceReady, setSurfaceReady] = useState(false);
   const [git, setGit] = useState<TermGit | null>(null);
   const [search, setSearch] = useState({ open: false, query: "" });
   const [matchCount, setMatchCount] = useState(0);
@@ -117,6 +121,7 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
   const parserRef = useRef<BlockStreamParser | null>(null);
   const decoderRef = useRef(new TextDecoder());
   const ptyRef = useRef<string | null>(null);
+  const focusPendingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const commandInputRef = useRef<CommandInputHandle>(null);
   // zsh integration ZDOTDIR (for relaunching root shells with integration).
@@ -131,6 +136,9 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
   const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null);
   const fitRef = useRef<import("@xterm/addon-fit").FitAddon | null>(null);
   const xtermHostRef = useRef<HTMLDivElement>(null);
+
+  const pendingFocus = useTerminalStore((s) => s.pendingFocus);
+  const { clearPendingTerminalFocus } = useTerminalStore.use.actions();
 
   useEffect(() => {
     let disposed = false;
@@ -186,6 +194,7 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
       }
       xtermRef.current = term;
       fitRef.current = fit;
+      setSurfaceReady(true);
 
       let cols = 80;
       let rows = 24;
@@ -296,23 +305,35 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
     if (el && !altScreen) el.scrollTop = el.scrollHeight;
   }, [blocks, altScreen]);
 
+  const focusTerminalSurface = useCallback(() => {
+    if (!isActive) return;
+    onFocus();
+    if (altScreen) {
+      if (!surfaceReady) return;
+      xtermRef.current?.focus();
+    } else {
+      commandInputRef.current?.focus();
+    }
+  }, [altScreen, isActive, onFocus, surfaceReady]);
   // Focus the right surface: xterm while an alt-screen app runs, else the input.
   useEffect(() => {
     if (!isActive) return;
-    if (altScreen) xtermRef.current?.focus();
-    else commandInputRef.current?.focus();
-  }, [isActive, altScreen]);
+    focusTerminalSurface();
+  }, [isActive, altScreen, surfaceReady, focusTerminalSurface]);
 
   // External focus request (⌘J / focus-terminal shortcut).
   useEffect(() => {
-    const handler = () => {
-      if (!isActive) return;
-      if (parserRef.current?.altScreen) xtermRef.current?.focus();
-      else commandInputRef.current?.focus();
-    };
-    window.addEventListener("atlas:focus-terminal", handler);
-    return () => window.removeEventListener("atlas:focus-terminal", handler);
-  }, [isActive]);
+    if (!pendingFocus || pendingFocus.tabId !== tabId || !isActive) return;
+    focusPendingRef.current = true;
+  }, [isActive, pendingFocus, tabId]);
+
+  useEffect(() => {
+    if (!focusPendingRef.current) return;
+    if (!isActive || !surfaceReady) return;
+    focusTerminalSurface();
+    focusPendingRef.current = false;
+    clearPendingTerminalFocus();
+  }, [altScreen, clearPendingTerminalFocus, focusTerminalSurface, isActive, surfaceReady]);
 
   // A command is running when the live (last) block is still open. Surface it
   // as a spinner in the footer and report it to the tab strip via the store.
