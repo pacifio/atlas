@@ -20,7 +20,19 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
-    }
+    },
+    // Empty on purpose. Left unset, TypeScript auto-includes every package
+    // under `node_modules/@types` — which since `@types/node` arrived (for the
+    // test config) meant `process`, `Buffer` and `__dirname` typechecked clean
+    // in `src/`, where none of them exist at runtime. Types reached through
+    // `import` are unaffected; only ambient globals are gated here.
+    "types": []
   },
-  "include": ["src"]
+  // Tests are excluded here and typechecked by `tsconfig.test.json` instead.
+  // Keeping them out is what lets this config stay free of `@types/node`: the
+  // frontend runs in a WebView with no `process`, `Buffer` or `__dirname`, so
+  // pulling Node's globals in app scope would let code that crashes at runtime
+  // typecheck clean. Test files legitimately need them.
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

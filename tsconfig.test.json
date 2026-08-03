@@ -1,0 +1,12 @@
+{
+  // Typechecks test code only. Split from `tsconfig.json` so that Node's
+  // globals are available to tests (which read the repo off disk and hook
+  // `process` events) without being available to `src/` app code, which runs
+  // in a WebView where none of them exist.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["tests", "src/**/*.test.ts", "src/**/*.test.tsx", "vitest.config.ts"],
+  "exclude": []
+}

@@ -156,7 +156,8 @@ Run `bump.sh` once per release, on the version branch, before opening the PR int
 ## Verification
 
 ```bash
-bunx tsc --noEmit                  # frontend typecheck
+bun run typecheck                  # frontend typecheck (app + test code)
+bun run test                       # frontend and cross-cutting tests
 cd src-tauri && cargo check        # Rust typecheck, including every crates/* dependency
 ```
 
@@ -170,7 +171,31 @@ cd crates/atlas-acp && cargo run --example smoke          # ACP transport smoke 
 
 Run `cargo test` from inside the directory of any crate you touched.
 
-There's no frontend test runner. UI work is verified by running the app and using the feature in a window.
+Frontend tests run under Vitest:
+
+```bash
+bun run test                            # everything
+bun run test src/lib/time-ago.test.ts   # one file
+bun run test:watch                      # re-run on save
+```
+
+Tests live next to the code they cover (`src/lib/time-ago.test.ts`), except for
+ones that check the repo as a whole, which live in `tests/`. Two of those run on
+every PR and are worth knowing about:
+
+- `tests/ipc-contract.test.ts` — every `invoke("name")` in the frontend resolves
+  to a registered `#[tauri::command]`, and every command is wired into
+  `generate_handler!`. Rename a command without updating its callers and this is
+  what tells you, instead of a dead button at runtime.
+- `tests/ci-coverage.test.ts` — every crate in `crates/` is in the CI matrix, so
+  a new crate can't merge with its tests unrun.
+
+For a new IPC module, copy the pattern in
+`src/features/settings/lib/byok-api.test.ts`: mock `invoke` and assert the
+command name and payload. Whether the command *exists* is already covered.
+
+Rendering and interaction still need a real window — Vitest covers logic and the
+IPC seam, not the UI itself.
 
 ## Pull request checklist
 

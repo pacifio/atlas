@@ -2,58 +2,137 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      # Version branches (0.2.5, 0.10.0, …). Not for the check itself — work
+      # lands here via PRs that were already checked — but so the branch owns a
+      # warm dependency cache. A pull request can restore caches from its base
+      # branch, and with no run ever having happened on a version branch there
+      # was nothing to restore: every contributor's first run rebuilt all 920
+      # crates from scratch, which is ~16 minutes on the app job versus ~2.
+      - '[0-9]+.[0-9]+.[0-9]+'
   pull_request:
 
+# A new push to the same branch makes the previous run's answer irrelevant.
+# Cancelling keeps queue times down when several PRs are in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Incremental compilation only pays off across repeated local rebuilds; a CI
+  # job compiles once and throws the machine away, so it is pure overhead here.
+  CARGO_INCREMENTAL: 0
+  # `line-tables-only` rather than the default full debug info: it is most of
+  # the build-time and artifact-size saving while still giving panics real file
+  # and line numbers, which is the whole point of reading a failed CI log.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
 jobs:
-  atlas-redact:
-    name: atlas-redact tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: crates/atlas-redact
-      - name: Test
-        working-directory: crates/atlas-redact
-        run: cargo test
-      - name: Clippy
-        working-directory: crates/atlas-redact
-        run: cargo clippy --all-targets -- -D warnings
-
-  atlas-checkpoint:
-    name: atlas-checkpoint tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: crates/atlas-checkpoint
-      # The integration seam drives real git repositories.
-      - name: Configure git identity for test repos
-        run: |
-          git config --global user.name "CI"
-          git config --global user.email "ci@example.invalid"
-      - name: Test
-        working-directory: crates/atlas-checkpoint
-        run: cargo test
-      - name: Clippy
-        working-directory: crates/atlas-checkpoint
-        run: cargo clippy --all-targets -- -D warnings
-
-  typecheck:
-    name: frontend typecheck
+  frontend:
+    name: frontend
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - name: Install
         run: bun install --frozen-lockfile
+      # Two configs: app code (`src/`, no Node globals) and test code
+      # (Node globals allowed). See the comments in tsconfig.json.
       - name: Typecheck
-        run: bunx tsc --noEmit
+        run: bun run typecheck
+      # Covers the Rust/TypeScript IPC contract, which nothing else can see —
+      # `tsc` treats a command name as an opaque string.
+      - name: Test
+        run: bun run test
+      # Typechecking is not a build. Rollup resolves imports, runs the chunk
+      # splitter and evaluates anything at module scope, so a broken dynamic
+      # import or a bad alias fails here and nowhere earlier.
+      - name: Build
+        run: bun run build
+
+  app:
+    # The Tauri app itself — the only thing here that compiles the ~350
+    # `#[tauri::command]` handlers and the `generate_handler!` registration.
+    # Without this job every other check can be green while the app does not
+    # build at all; `crates` only covers the libraries underneath it.
+    #
+    # Runs on macOS because that is the supported platform (see CONTRIBUTING),
+    # and because Tauri on Linux would additionally need webkit2gtk/gtk3
+    # system packages installed before it could compile.
+    #
+    # This is the slowest job in the pipeline by a wide margin on a cold cache.
+    name: app (src-tauri)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Configure git identity for test repos
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+      # Compiles the app and its command surface, then runs its 194 tests.
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test
+
+  crates:
+    # Every crate is a standalone package with its own Cargo.lock, so each gets
+    # its own job and its own cache. Adding a crate here is a one-line change,
+    # and `tests/ci-coverage.test.ts` fails the build if a new crate is left
+    # out of this list.
+    #
+    # `clippy: true` marks the crates that are currently warning-clean under
+    # `-D warnings`. The rest are not yet; flip the flag as each is cleaned up
+    # rather than weakening the gate for the ones that already pass.
+    name: ${{ matrix.crate }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Report every failing crate in one run instead of stopping at the first.
+      fail-fast: false
+      matrix:
+        include:
+          - crate: atlas-acp
+          - crate: atlas-agentkit
+          - crate: atlas-agents
+          - crate: atlas-bus
+          - crate: atlas-cersei
+          - crate: atlas-checkpoint
+            clippy: true
+          - crate: atlas-codeindex
+          - crate: atlas-embed
+          - crate: atlas-gitdiff
+          - crate: atlas-kb-server
+          - crate: atlas-memory
+          - crate: atlas-redact
+            clippy: true
+          - crate: atlas-review
+          - crate: atlas-terminal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/${{ matrix.crate }}
+      # Several suites build real git repositories in a tempdir, and `git
+      # commit` refuses to run without an identity. Set for every crate so
+      # adding such a test to another crate doesn't fail mysteriously.
+      - name: Configure git identity for test repos
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+      - name: Test
+        working-directory: crates/${{ matrix.crate }}
+        run: cargo test
+      - name: Clippy
+        if: matrix.clippy
+        working-directory: crates/${{ matrix.crate }}
+        run: cargo clippy --all-targets -- -D warnings

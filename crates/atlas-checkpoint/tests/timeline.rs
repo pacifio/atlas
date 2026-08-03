@@ -304,7 +304,7 @@ fn the_writer_keeps_writing_while_a_reader_is_open() {
 #[test]
 fn recent_checkpoints_are_newest_first_and_carry_their_session_title() {
     let dir = tempfile::tempdir().unwrap();
-    let (mut store, session_id) = seeded(dir.path());
+    let (store, session_id) = seeded(dir.path());
 
     for (i, sha) in ["aaaaaaa1111111111111111111111111111111111", "bbbbbbb2222222222222222222222222222222222"]
         .iter()
@@ -356,7 +356,7 @@ fn recent_checkpoints_are_newest_first_and_carry_their_session_title() {
 #[test]
 fn recent_checkpoints_are_scoped_to_their_workspace() {
     let dir = tempfile::tempdir().unwrap();
-    let (mut store, session_id) = seeded(dir.path());
+    let (store, session_id) = seeded(dir.path());
     store
         .upsert_checkpoint(CheckpointInput {
             session_id: &session_id,

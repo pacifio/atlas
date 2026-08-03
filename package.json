@@ -12,7 +12,10 @@
     "build:app": "node scripts/with-posthog-env.mjs tauri build --bundles app",
     "build:app:dmg": "node scripts/with-posthog-env.mjs tauri build --bundles app,dmg",
     "lint": "eslint src/",
-    "format": "prettier --write src/"
+    "format": "prettier --write src/",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json"
   },
   "overrides": {
     "@codemirror/view": "^6.43.0",
@@ -111,15 +114,21 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4",
     "@tauri-apps/cli": "^2.11.2",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/hast": "^3.0.4",
     "@types/matter-js": "^0.20.2",
+    "@types/node": "^26.1.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4",
     "eslint": "^9",
+    "happy-dom": "^20.11.1",
     "prettier": "^3",
     "tailwindcss": "^4",
     "typescript": "^5.7",
-    "vite": "^6"
+    "vite": "^6",
+    "vitest": "^4.1.10"
   }
 }
