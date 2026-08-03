@@ -331,7 +331,10 @@ function Conversation({
                       transform: `translateY(${vItem.start}px)`,
                     }}
                   >
-                    <MessageAttachments messageId={m.id} />
+                    <MessageAttachments
+                      messageId={m.id}
+                      mirrored={m.role === "user"}
+                    />
                     <MessageItem
                       message={m}
                       model={m.role === "assistant" ? session.model : null}
@@ -771,11 +774,24 @@ function ModelCombo({
 }
 
 /** Thumbnails for images attached to a user message (transient, in-memory). */
-function MessageAttachments({ messageId }: { messageId: string }) {
+function MessageAttachments({
+  messageId,
+  mirrored = false,
+}: {
+  messageId: string;
+  /** User turns render right-aligned (see `MessageItem`), so their
+   *  attachment strip has to follow the card instead of hugging the left. */
+  mirrored?: boolean;
+}) {
   const urls = useModelChatStore((s) => s.attachmentsByMsg[messageId]);
   if (!urls?.length) return null;
   return (
-    <div className="flex flex-wrap gap-2 px-2 pt-4">
+    <div
+      className={cn(
+        "flex flex-wrap gap-2 px-2 pt-4",
+        mirrored && "justify-end",
+      )}
+    >
       {urls.map((u, i) => (
         <img
           key={i}
