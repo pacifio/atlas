@@ -525,7 +525,7 @@ export function App() {
         const proj = useProjectStore.getState().currentProject;
         const projectName = proj?.name ?? "Atlas";
         sendNotification({
-          title: `Atlas — ${projectName}`,
+          title: `Atlas: ${projectName}`,
           body: "Agent task finished.",
         });
       } catch (e) {
@@ -550,7 +550,7 @@ export function App() {
         const proj = useProjectStore.getState().currentProject;
         const projectName = proj?.name ?? "Atlas";
         sendNotification({
-          title: `Atlas — ${projectName} needs permission`,
+          title: `Atlas: ${projectName} needs permission`,
           body: `Approve "${toolTitle}" to continue.`,
         });
       } catch (e) {
