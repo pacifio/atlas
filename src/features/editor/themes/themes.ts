@@ -1,50 +1,124 @@
 import type { EditorColorTheme, EditorThemeColors } from "./types";
 
 /**
- * Built-in editor color themes. `atlas` reproduces the exact original
- * "monochrome + #ffff00 accent" look (values lifted verbatim from the old
- * atlasTheme/atlasHighlightStyle + diff-syntax.css + diff-view.tsx), so picking
- * it returns the app to its historical appearance. The others are the standard
- * dark palettes (Dracula, One Dark, Monokai, Vesper).
+ * Built-in editor color themes. `atlas` is the default; `atlas-mono` keeps the
+ * historical monochrome look for anyone who prefers it. The others are the
+ * standard dark palettes (Dracula, One Dark, Monokai, Vesper).
+ *
+ * Every theme renders on the interface base surface (see `resolveEditorColors`),
+ * which is AMOLED black or near it in all three Atlas interface themes. Syntax
+ * values are therefore chosen against black, and `themes.test.ts` holds them to
+ * a contrast floor so a new palette can't ship illegible.
  */
 
+/**
+ * The default. Restrained rather than colorful — near-monochrome structure with
+ * the Atlas `#ffff00` accent kept for function names — but with each token
+ * family far enough apart in hue and lightness to actually be *read* as
+ * highlighted code.
+ *
+ * The previous default drew comments at `#555555` and keywords at `#585858`,
+ * both under 3:1 on black and within a hair of each other, so a source file
+ * arrived looking like unhighlighted grey text (issue #75). Everything here
+ * clears 4.5:1 (WCAG AA for body text) against the black it is drawn on;
+ * comments sit lowest on purpose, subdued but legible.
+ */
 const atlas: EditorColorTheme = {
   id: "atlas",
   name: "Atlas",
-  description: "Monochrome AMOLED black with a single yellow accent.",
+  description: "AMOLED black with restrained syntax hues and the Atlas yellow accent.",
   dark: true,
   colors: {
     bg: "#000000",
-    fg: "#b3b3b3",
-    caret: "#b3b3b3",
+    fg: "#d4d4d4",
+    caret: "#d4d4d4",
     gutterBg: "#000000",
-    gutterFg: "#222222",
-    activeLineGutterFg: "#777777",
+    // Line numbers are reference furniture, not prose: dim enough to recede,
+    // still above the 3:1 floor for meaningful non-text UI.
+    gutterFg: "#666666",
+    activeLineGutterFg: "#d4d4d4",
     activeLineBg: "#ffffff0a",
     selectionBg: "#303030",
     matchBracketBg: "#2d2d2d",
     matchBracketOutline: "#3d3d3d",
     foldBg: "#1a1a1a",
     foldBorder: "#2a2a2a",
-    foldFg: "#555555",
+    foldFg: "#8a8a8a",
 
-    comment: "#555555",
-    keyword: "#585858",
-    string: "#aaaaaa",
-    number: "#aaaaaa",
-    type: "#cccccc",
+    comment: "#8f8f8f",
+    keyword: "#c9a2f5",
+    string: "#9ecf8a",
+    number: "#e0b070",
+    type: "#7fd1e8",
+    func: "#ffff00",
+    variable: "#eaeaea",
+    operator: "#9a9a9a",
+    tagName: "#7fd1e8",
+    attributeName: "#d9b47a",
+    constant: "#e0b070",
+    regexp: "#e59a72",
+    escape: "#e59a72",
+    definition: "#ffffff",
+    propertyName: "#c8c8c8",
+    bool: "#e0b070",
+    null: "#e0b070",
+
+    addLineBg: "#0d2211",
+    removeLineBg: "#220d0d",
+    contextBg: "#0a0a0a",
+    addSideBg: "rgba(34,197,94,0.13)",
+    removeSideBg: "rgba(244,63,63,0.13)",
+    emphAddBg: "rgba(52,211,153,0.34)",
+    emphRemoveBg: "rgba(244,63,63,0.34)",
+  },
+};
+
+/**
+ * The original Atlas look — hue-free, one yellow accent — kept as a choice for
+ * anyone who wants the editor to match the monochrome interface exactly.
+ *
+ * Same identity as before, but the ramp is spread across readable lightnesses
+ * instead of bunching at the bottom: comments and keywords used to sit under
+ * 3:1 on black. Tokens separate by weight of grey and by italics rather than by
+ * hue, which is the point of the theme.
+ */
+const atlasMono: EditorColorTheme = {
+  id: "atlas-mono",
+  name: "Atlas Mono",
+  description: "Monochrome AMOLED black with a single yellow accent.",
+  dark: true,
+  colors: {
+    bg: "#000000",
+    fg: "#d0d0d0",
+    caret: "#d0d0d0",
+    gutterBg: "#000000",
+    gutterFg: "#666666",
+    activeLineGutterFg: "#d0d0d0",
+    activeLineBg: "#ffffff0a",
+    selectionBg: "#303030",
+    matchBracketBg: "#2d2d2d",
+    matchBracketOutline: "#3d3d3d",
+    foldBg: "#1a1a1a",
+    foldBorder: "#2a2a2a",
+    foldFg: "#8a8a8a",
+
+    comment: "#8a8a8a",
+    keyword: "#e6e6e6",
+    string: "#b0b0b0",
+    number: "#c2c2c2",
+    type: "#d4d4d4",
     func: "#ffff00",
     variable: "#ffffff",
-    operator: "#b3b3b3",
-    tagName: "#cccccc",
-    attributeName: "#777777",
-    constant: "#aaaaaa",
-    regexp: "#999999",
-    escape: "#999999",
+    operator: "#9c9c9c",
+    tagName: "#d4d4d4",
+    attributeName: "#a8a8a8",
+    constant: "#c2c2c2",
+    regexp: "#b0b0b0",
+    escape: "#b0b0b0",
     definition: "#ffffff",
-    propertyName: "#b3b3b3",
-    bool: "#aaaaaa",
-    null: "#aaaaaa",
+    propertyName: "#c8c8c8",
+    bool: "#c2c2c2",
+    null: "#c2c2c2",
 
     addLineBg: "#0d2211",
     removeLineBg: "#220d0d",
@@ -248,7 +322,7 @@ const vesper: EditorColorTheme = {
   },
 };
 
-export const EDITOR_THEMES: EditorColorTheme[] = [atlas, dracula, oneDark, monokai, vesper];
+export const EDITOR_THEMES: EditorColorTheme[] = [atlas, atlasMono, dracula, oneDark, monokai, vesper];
 
 export const DEFAULT_EDITOR_THEME_ID = "atlas";
 

@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } from "@codemirror/view";
-import { EditorState, Compartment, Transaction, type Extension } from "@codemirror/state";
+import { EditorState, Compartment, Transaction } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { bracketMatching, foldGutter, indentOnInput, syntaxHighlighting } from "@codemirror/language";
+import { bracketMatching, foldGutter, indentOnInput } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { getEditorTheme } from "../themes/themes";
-import { buildEditorChromeTheme, buildHighlightStyle } from "../themes/build-cm-theme";
+import { editorThemeExtensions } from "../themes/build-cm-theme";
 import { useEditorStore } from "../stores/editor-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
@@ -16,6 +15,7 @@ import { logEvent } from "@/features/log/lib/log";
 import { diffGutter, applyDiffStatus } from "../lib/diff-gutter";
 import { gitDiffLineStatus } from "@/features/git/lib/git-diff-api";
 import { blameInline, applyBlame } from "../lib/blame-inline";
+import { loadLanguageExtension } from "../lib/languages";
 import { gitBlameFile } from "@/features/git/lib/git-blame-api";
 import { MarkdownFile } from "@/lib/markdown-fileviewer";
 import { cn } from "@/lib/utils";
@@ -31,75 +31,6 @@ const themeCompartment = new Compartment();
 // Inline git blame — live-toggleable via a Compartment so flipping the
 // `gitBlameInline` setting doesn't rebuild the view (buffer/undo survive).
 const blameCompartment = new Compartment();
-
-function themeExtensions(themeId: string | undefined | null): Extension {
-  const theme = getEditorTheme(themeId);
-  return [buildEditorChromeTheme(theme), syntaxHighlighting(buildHighlightStyle(theme))];
-}
-
-// Language extension loader — lazy imports for tree-shaking
-async function getLanguageExtension(lang: string): Promise<Extension> {
-  switch (lang) {
-    case "typescript":
-    case "javascript": {
-      const { javascript } = await import("@codemirror/lang-javascript");
-      return javascript({ typescript: lang === "typescript", jsx: true });
-    }
-    case "rust": {
-      const { rust } = await import("@codemirror/lang-rust");
-      return rust();
-    }
-    case "python": {
-      const { python } = await import("@codemirror/lang-python");
-      return python();
-    }
-    case "go": {
-      const { go } = await import("@codemirror/lang-go");
-      return go();
-    }
-    case "json": {
-      const { json } = await import("@codemirror/lang-json");
-      return json();
-    }
-    case "markdown": {
-      const { markdown } = await import("@codemirror/lang-markdown");
-      return markdown();
-    }
-    case "html": {
-      const { html } = await import("@codemirror/lang-html");
-      return html();
-    }
-    case "css":
-    case "scss": {
-      const { css } = await import("@codemirror/lang-css");
-      return css();
-    }
-    case "java": {
-      const { java } = await import("@codemirror/lang-java");
-      return java();
-    }
-    case "c":
-    case "cpp": {
-      const { cpp } = await import("@codemirror/lang-cpp");
-      return cpp();
-    }
-    case "xml": {
-      const { xml } = await import("@codemirror/lang-xml");
-      return xml();
-    }
-    case "sql": {
-      const { sql } = await import("@codemirror/lang-sql");
-      return sql();
-    }
-    case "yaml":
-    case "toml": {
-      const { yaml } = await import("@codemirror/lang-yaml");
-      return yaml();
-    }
-    default:
-      return [];
-  }
-}
 
 interface EditorPanelProps {
   tabId: string;
@@ -376,13 +307,13 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     let cancelled = false;
 
     (async () => {
-      const langExt = await getLanguageExtension(buffer.language);
+      const langExt = await loadLanguageExtension(buffer.language);
       if (cancelled) return;
 
       const view = new EditorView({
         doc: originalContent,
         extensions: [
-          themeCompartment.of(themeExtensions(useProjectStore.getState().settings.codeEditorTheme)),
+          themeCompartment.of(editorThemeExtensions(useProjectStore.getState().settings.codeEditorTheme)),
           langExt,
           lineNumbers(),
           diffGutter(),
@@ -449,7 +380,7 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: themeCompartment.reconfigure(themeExtensions(codeEditorTheme)) });
+    view.dispatch({ effects: themeCompartment.reconfigure(editorThemeExtensions(codeEditorTheme)) });
   }, [codeEditorTheme]);
 
   // Live-toggle inline blame: reconfigure the compartment in place; turning it

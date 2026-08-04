@@ -374,31 +374,33 @@
 
      These rules sit at the same specificity as the runtime injection so they
      always win when the runtime fails, and harmlessly co-exist when it
-     succeeds. Match colors with `atlasTheme` in editor-panel.tsx. */
+     succeeds. Every fallback hex mirrors the `atlas` theme in
+     `features/editor/themes/themes.ts` — keep the two in step. */
   .cm-editor {
     background-color: var(--cm-bg, #000);
-    color: var(--cm-fg, #b3b3b3);
+    color: var(--cm-fg, #d4d4d4);
     /* `font-size` + `line-height` live on the editor so both .cm-content
        and .cm-gutters measure the SAME row height — CodeMirror reads the
        computed line-height off the content via ResizeObserver to position
        the gutter elements; forcing different metrics on `.cm-content`
        alone desyncs the gutter, leaving line numbers stranded at the top
-       while text sits further down. Keep them at the editor root. */
+       while text sits further down. Keep them at the editor root, and in
+       step with the metrics in `themes/build-cm-theme.ts`. */
     font-family: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
-    font-size: 14px;
-    line-height: 18px;
+    font-size: 13px;
+    line-height: 20px;
   }
   .cm-content {
-    color: var(--cm-fg, #b3b3b3);
-    caret-color: var(--cm-caret, #b3b3b3);
+    color: var(--cm-fg, #d4d4d4);
+    caret-color: var(--cm-caret, #d4d4d4);
   }
   .cm-gutters {
     background-color: var(--cm-gutter-bg, #000);
-    color: var(--cm-gutter-fg, #222);
+    color: var(--cm-gutter-fg, #666);
     border: none;
   }
   .cm-activeLineGutter {
-    color: var(--cm-active-gutter-fg, #777);
+    color: var(--cm-active-gutter-fg, #d4d4d4);
     background-color: transparent;
   }
   .cm-activeLine {
@@ -411,7 +413,7 @@
   }
   .cm-cursor,
   .cm-dropCursor {
-    border-left-color: var(--cm-caret, #b3b3b3);
+    border-left-color: var(--cm-caret, #d4d4d4);
     border-left-width: 2px;
   }
   .cm-matchingBracket {
@@ -421,7 +423,7 @@
   .cm-foldPlaceholder {
     background-color: var(--cm-fold-bg, #1a1a1a);
     border: 1px solid var(--cm-fold-border, #2a2a2a);
-    color: var(--cm-fold-fg, #555);
+    color: var(--cm-fold-fg, #8a8a8a);
   }
 
 
