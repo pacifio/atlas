@@ -331,7 +331,10 @@ function Conversation({
                       transform: `translateY(${vItem.start}px)`,
                     }}
                   >
-                    <MessageAttachments messageId={m.id} />
+                    <MessageAttachments
+                      messageId={m.id}
+                      mirrored={m.role === "user"}
+                    />
                     <MessageItem
                       message={m}
                       model={m.role === "assistant" ? session.model : null}
@@ -395,6 +398,7 @@ function Composer({
   const session = useModelChatStore((s) => s.sessions[sessionId]);
   const { setProvider, setModel } = useModelChatStore.use.actions();
   const projectPath = useProjectStore((s) => s.currentProject?.path ?? null);
+  const enterToSend = useProjectStore((s) => s.settings.enterToSend);
   const provider = session?.provider ?? "";
   const model = session?.model ?? "";
   const providerLocked = (session?.messages.length ?? 0) > 0;
@@ -530,6 +534,7 @@ function Composer({
           placeholder="Ask anything…  (@ to reference, ~ for notes)"
           onChange={(v) => setHasText(v.trim().length > 0)}
           onSubmit={submit}
+          enterToSend={enterToSend}
           onMentionTrigger={setTrigger}
           keyInterceptor={keyInterceptor}
         />
@@ -769,11 +774,24 @@ function ModelCombo({
 }
 
 /** Thumbnails for images attached to a user message (transient, in-memory). */
-function MessageAttachments({ messageId }: { messageId: string }) {
+function MessageAttachments({
+  messageId,
+  mirrored = false,
+}: {
+  messageId: string;
+  /** User turns render right-aligned (see `MessageItem`), so their
+   *  attachment strip has to follow the card instead of hugging the left. */
+  mirrored?: boolean;
+}) {
   const urls = useModelChatStore((s) => s.attachmentsByMsg[messageId]);
   if (!urls?.length) return null;
   return (
-    <div className="flex flex-wrap gap-2 px-2 pt-4">
+    <div
+      className={cn(
+        "flex flex-wrap gap-2 px-2 pt-4",
+        mirrored && "justify-end",
+      )}
+    >
       {urls.map((u, i) => (
         <img
           key={i}

@@ -527,6 +527,7 @@ function Composer({
 
   const inputRef = useRef<ChatInputHandle>(null);
   const [hasText, setHasText] = useState(false);
+  const enterToSend = useProjectStore((s) => s.settings.enterToSend);
 
   // Local selected but model not ready → offer install instead of send.
   const needsInstall = mode === "local" && phase !== "ready";
@@ -564,6 +565,7 @@ function Composer({
           placeholder={disabled ? "Open a project to chat with its memory…" : "Ask about features, policies, changes…"}
           onChange={(v) => setHasText(v.trim().length > 0)}
           onSubmit={submit}
+          enterToSend={enterToSend}
         />
         <div className="flex items-center justify-between gap-2 px-2 pb-2 pt-1">
           <div className="flex min-w-0 items-center gap-1.5">

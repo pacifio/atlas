@@ -10,12 +10,12 @@ import {
   type ReactNode,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Sparkles } from "lucide-react";
 import type { ChatMessage, SwitchableAgent } from "@/types/agent";
 import { AGENT_LABEL } from "@/types/agent";
 import { MessageItem } from "./message-item";
 import { AgentIcons } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
+import { AtlasLoader } from "@/components/atlas-loader";
 import { cn } from "@/lib/utils";
 import { warmMarkdownWorker } from "@/lib/markdown-cache";
 
@@ -155,14 +155,18 @@ function isEmptyMessage(m: ChatMessage): boolean {
 /** Shown in the thread while the turn is running but the agent hasn't emitted
  *  its first token yet — the otherwise-blank wait after sending. Mirrors the
  *  assistant row layout (avatar + label) with an animated "thinking" cue. */
-function WorkingIndicator() {
+function WorkingIndicator({ agentLabel }: { agentLabel: string }) {
   // Mirror MessageItem's layout (px-6 → flex gap-4 max-w-[760px] mx-auto, w-8
   // avatar) so the "Thinking" row lines up with the assistant messages above it.
   return (
-    <div className="group px-6 pb-6 animate-scale-in">
-      <div className="flex gap-4 max-w-[760px] mx-auto">
+    <div
+      className="group px-6 pb-6 animate-scale-in"
+      role="status"
+      aria-label={`${agentLabel} is thinking`}
+    >
+      <div className="flex gap-4 max-w-[760px] mx-auto" aria-hidden="true">
         <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-          <Sparkles size={14} className="text-[var(--text-secondary)] animate-pulse" />
+          <AtlasLoader size={8} className="text-[var(--accent-primary)]" />
         </div>
         <div className="flex h-8 items-center gap-1.5">
           <span className="text-[12px] text-[var(--text-secondary)]">Thinking</span>
@@ -874,7 +878,7 @@ export const MessagesList = forwardRef<MessagesListHandle, MessagesListProps>(
             arrived yet (the 5–8s the model spends before its first chunk). The
             streaming spinner only shows once an assistant message exists, so
             without this the thread looks idle after sending. */}
-        {isStreaming && !streamingId && <WorkingIndicator />}
+        {isStreaming && !streamingId && <WorkingIndicator agentLabel={agentLabel} />}
       </div>
 
       {/* Bottom fade — visual cue that there's more content below the
@@ -895,4 +899,3 @@ export const MessagesList = forwardRef<MessagesListHandle, MessagesListProps>(
     </div>
   );
 });
-

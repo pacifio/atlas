@@ -258,6 +258,15 @@ function GeneralSettings() {
     <div className="space-y-6">
       <SectionTitle title="General" subtitle="Application preferences" />
       <SettingRow
+        label="Enter to send"
+        description="Enter sends your message; Shift+Enter inserts a newline — the Slack/Discord/ChatGPT convention. Turn off to restore the old behavior, where only ⌘/Ctrl+Enter sends and Enter always inserts a newline. ⌘/Ctrl+Enter always sends either way."
+      >
+        <Toggle
+          checked={settings.enterToSend}
+          onChange={(next) => updateSettings({ enterToSend: next })}
+        />
+      </SettingRow>
+      <SettingRow
         label="Auto-add .atlas to .gitignore"
         description="When you open a git-tracked project, Atlas adds `.atlas/` to the project's .gitignore (creating one if needed). Atlas keeps its caches and state in `.atlas/` — keeping it out of version control is almost always what you want. No-op on non-git projects."
       >
@@ -578,6 +587,7 @@ function UpdatesSettings() {
 }
 
 function KeybindingsSettings() {
+  const settings = useProjectStore.use.settings();
   const groups: Array<{
     title: string;
     bindings: Array<{ action: string; keys: string }>;
@@ -632,7 +642,7 @@ function KeybindingsSettings() {
       title: "Chat",
       bindings: [
         { action: "Find in chat", keys: "⌘F" },
-        { action: "Send message", keys: "⌘↵" },
+        { action: "Send message", keys: settings.enterToSend ? "↵" : "⌘↵" },
         { action: "Cycle permission mode", keys: "⇧⇥" },
       ],
     },
