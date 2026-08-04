@@ -1,8 +1,8 @@
 /* Syntax-highlight theme for the git diff view (src/features/git/).
  *
- * Mirrors the code editor's Zed-derived "enterprise" palette (AMOLED black,
- * monochromatic grays, a single #ffff00 accent on function names) — see the
- * CodeMirror HighlightStyle in editor-panel.tsx. lowlight emits highlight.js
+ * Mirrors the code editor's default `atlas` palette (AMOLED black, restrained
+ * syntax hues, a #ffff00 accent on function names) — see the theme registry in
+ * features/editor/themes/themes.ts. lowlight emits highlight.js
  * token classes, so we key the same colors off `.hljs-*` here.
  *
  * Scoped under `.diff-syntax` (specificity 0,2,0) AND intentionally UNLAYERED:
@@ -12,44 +12,44 @@
  * `.hljs` root class to diff spans, so github-dark's root bg/color never apply.
  *
  * Base text color (operators, punctuation, plain identifiers — left unclassed
- * by highlight.js) comes from the row's `text-text-secondary` (#b3b3b3),
- * matching the editor's operator/punctuation color. */
+ * by highlight.js) comes from the row's `text-text-secondary` (#aaaaaa),
+ * close to the editor's operator/punctuation color. */
 
 /* Colors resolve from the active editor theme's CSS custom properties
    (set on :root by applyEditorTheme). The atlas hex values remain as
-   fallbacks so an un-applied theme degrades to the original look. */
+   fallbacks so an un-applied theme degrades to the default `atlas` look. */
 
 .diff-syntax .hljs-comment,
 .diff-syntax .hljs-quote {
-  color: var(--cm-comment, #555);
+  color: var(--cm-comment, #8f8f8f);
   font-style: italic;
 }
 
 .diff-syntax .hljs-keyword,
 .diff-syntax .hljs-built_in {
-  color: var(--cm-keyword, #585858);
+  color: var(--cm-keyword, #c9a2f5);
   font-style: italic;
 }
 
 .diff-syntax .hljs-string,
 .diff-syntax .hljs-meta .hljs-string {
-  color: var(--cm-string, #aaa);
+  color: var(--cm-string, #9ecf8a);
 }
 
 .diff-syntax .hljs-number,
 .diff-syntax .hljs-literal {
-  color: var(--cm-number, #aaa);
+  color: var(--cm-number, #e0b070);
 }
 
 .diff-syntax .hljs-type,
 .diff-syntax .hljs-title.class_,
 .diff-syntax .hljs-class .hljs-title {
-  color: var(--cm-type, #ccc);
+  color: var(--cm-type, #7fd1e8);
 }
 
 /* Bare title (rare fallthrough) reads as a type/name. */
 .diff-syntax .hljs-title {
-  color: var(--cm-type, #ccc);
+  color: var(--cm-type, #7fd1e8);
 }
 
 /* The one accent: function/method names — must out-specify the bare title. */
@@ -59,32 +59,32 @@
 }
 
 .diff-syntax .hljs-variable {
-  color: var(--cm-variable, #fff);
+  color: var(--cm-variable, #eaeaea);
 }
 
 .diff-syntax .hljs-tag,
 .diff-syntax .hljs-name {
-  color: var(--cm-tag, #ccc);
+  color: var(--cm-tag, #7fd1e8);
 }
 
 .diff-syntax .hljs-attr,
 .diff-syntax .hljs-attribute {
-  color: var(--cm-attr, #777);
+  color: var(--cm-attr, #d9b47a);
 }
 
 .diff-syntax .hljs-symbol,
 .diff-syntax .hljs-bullet {
-  color: var(--cm-constant, #aaa);
+  color: var(--cm-constant, #e0b070);
 }
 
 .diff-syntax .hljs-regexp {
-  color: var(--cm-regexp, #999);
+  color: var(--cm-regexp, #e59a72);
 }
 
 .diff-syntax .hljs-property {
-  color: var(--cm-property, #b3b3b3);
+  color: var(--cm-property, #c8c8c8);
 }
 
 .diff-syntax .hljs-meta {
-  color: var(--cm-meta, #777);
+  color: var(--cm-meta, #d9b47a);
 }
