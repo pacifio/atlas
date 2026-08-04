@@ -6,10 +6,15 @@ import type { EditorThemeColors } from "./types";
  * surfaces (`styles/globals.css` `.cm-*` fallback, `styles/diff-syntax.css`
  * `.hljs-*`, and the diff line backgrounds in diff-view.tsx / git-diff-panel.tsx).
  * The CSS references each as `var(--…, <atlas-hex>)`, so if this applier never
- * runs (or loses a production race) the surfaces degrade to the original Atlas
+ * runs (or loses a production race) the surfaces degrade to the default Atlas
  * look rather than breaking.
+ *
+ * Exported for `css-fallbacks.test.ts`, which reads those hand-written `var()`
+ * fallbacks back out of the stylesheets and holds them to the values this
+ * mapping produces for the default theme. Without that, the fallbacks are three
+ * copies of one palette kept in step by memory — and they had already drifted.
  */
-function cssVars(c: EditorThemeColors): Record<string, string> {
+export function editorThemeCssVars(c: EditorThemeColors): Record<string, string> {
   return {
     // chrome (globals.css .cm-* fallback)
     "--cm-bg": c.bg,
@@ -58,7 +63,7 @@ export function applyEditorTheme(id: string | undefined | null): void {
   if (typeof document === "undefined") return;
   const theme = getEditorTheme(id);
   const root = document.documentElement;
-  const vars = cssVars(resolveEditorColors(theme));
+  const vars = editorThemeCssVars(resolveEditorColors(theme));
   for (const [k, v] of Object.entries(vars)) {
     root.style.setProperty(k, v);
   }

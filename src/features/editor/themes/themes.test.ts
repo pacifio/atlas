@@ -17,8 +17,9 @@ import type { EditorColorTheme, EditorThemeColors } from "./types";
  * this stops the next one from regressing the same way.
  *
  * These are contrast ratios, not screenshots: they cover the measurable half of
- * "is this readable" and run in CI. Hue relationships and how a real file
- * *feels* still need eyes on the app — see the manual matrix in the PR.
+ * "is this readable" and run in CI. Hue relationships, and how a real file
+ * actually reads, still need eyes on the app — the repo has no screenshot
+ * infrastructure, so that half stays a manual check at review time.
  */
 
 /** WCAG 2.1 relative luminance of an `#rrggbb` color. */

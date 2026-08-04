@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { history, undo } from "@codemirror/commands";
+import { highlightingFor } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { editorThemeExtensions } from "./build-cm-theme";
 
 /**
@@ -85,8 +87,10 @@ describe("live theme swap", () => {
 
   it("installs both halves of highlighting — a theme alone would not highlight", () => {
     // `editorThemeExtensions` bundles the chrome theme with `syntaxHighlighting`
-    // precisely so a caller cannot install one without the other.
-    const extensions = editorThemeExtensions("atlas");
-    expect(Array.isArray(extensions) && extensions.length).toBe(2);
+    // precisely so a caller cannot install one without the other. Asserting the
+    // bundle's *length* would pass for two chrome themes; ask the resulting
+    // state whether a highlighter is actually answering instead.
+    const state = EditorState.create({ extensions: editorThemeExtensions("atlas") });
+    expect(highlightingFor(state, [tags.comment])).toBeTruthy();
   });
 });

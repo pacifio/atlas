@@ -26,6 +26,18 @@ export const PLAINTEXT = "plaintext";
 
 type LanguageLoader = () => Promise<Extension>;
 
+// Grammars that back more than one language id. Declared once so the two ids
+// cannot drift onto different parsers — the `switch` this replaced shared them
+// through case fall-through.
+const loadCpp: LanguageLoader = async () => {
+  const { cpp } = await import("@codemirror/lang-cpp");
+  return cpp();
+};
+const loadCss: LanguageLoader = async () => {
+  const { css } = await import("@codemirror/lang-css");
+  return css();
+};
+
 /**
  * Lazy per-language imports. Every entry is a dynamic `import()` so Rollup
  * splits each grammar into its own chunk — opening a `.py` file never pays for
@@ -56,14 +68,8 @@ const LANGUAGE_LOADERS = {
     const { java } = await import("@codemirror/lang-java");
     return java();
   },
-  c: async () => {
-    const { cpp } = await import("@codemirror/lang-cpp");
-    return cpp();
-  },
-  cpp: async () => {
-    const { cpp } = await import("@codemirror/lang-cpp");
-    return cpp();
-  },
+  c: loadCpp,
+  cpp: loadCpp,
   json: async () => {
     const { json } = await import("@codemirror/lang-json");
     return json();
@@ -80,19 +86,13 @@ const LANGUAGE_LOADERS = {
     const { html } = await import("@codemirror/lang-html");
     return html();
   },
-  css: async () => {
-    const { css } = await import("@codemirror/lang-css");
-    return css();
-  },
+  css: loadCss,
   // SCSS is highlighted with the CSS grammar. Selectors, properties, values,
   // strings and comments — the bulk of any stylesheet — are shared, so the
   // approximation reads correctly; only Sass-only constructs (`$var`, `@mixin`)
   // fall back to unstyled text. Kept as its own id so the buffer still reports
   // what the file actually is.
-  scss: async () => {
-    const { css } = await import("@codemirror/lang-css");
-    return css();
-  },
+  scss: loadCss,
   xml: async () => {
     const { xml } = await import("@codemirror/lang-xml");
     return xml();
@@ -120,11 +120,12 @@ export type EditorLanguage = LanguageId | typeof PLAINTEXT;
  * dependency, which CONTRIBUTING asks be agreed in the issue first — so they
  * degrade honestly for now.
  *
- * TOML is here rather than on the YAML grammar on purpose. The two look alike
- * but disagree structurally (`[table]` is a YAML flow *sequence*; `k = v` is
- * not a YAML mapping), so YAML-parsed TOML is not "partly highlighted" — it is
- * confidently mis-highlighted, which is worse than plain text for a file you
- * are trying to read.
+ * TOML is listed here rather than left on the YAML grammar it used to borrow.
+ * The two disagree structurally (`[table]` is a YAML flow *sequence*; `k = v`
+ * is not a YAML mapping), so the parse yields nothing to tag: rendering a real
+ * `Cargo.toml` through `yaml()` is pixel-identical to rendering it as
+ * plaintext, comment lines included. Nothing is lost by saying so — and unlike
+ * the old mapping, the buffer no longer claims a language it cannot highlight.
  */
 const UNSUPPORTED: Record<string, typeof PLAINTEXT> = {
   sh: PLAINTEXT,
@@ -147,6 +148,10 @@ const UNSUPPORTED: Record<string, typeof PLAINTEXT> = {
  * of silently opening the file as plain text.
  */
 export const EXTENSION_LANGUAGE: Record<string, EditorLanguage> = {
+  // Spread first so that if one of these later gains a real grammar, the
+  // explicit entry below wins rather than being silently shadowed.
+  ...UNSUPPORTED,
+
   ts: "typescript",
   tsx: "typescript",
   mts: "typescript",
@@ -173,7 +178,6 @@ export const EXTENSION_LANGUAGE: Record<string, EditorLanguage> = {
   yml: "yaml",
   md: "markdown",
   markdown: "markdown",
-  mdx: "markdown",
   html: "html",
   htm: "html",
   css: "css",
@@ -181,7 +185,6 @@ export const EXTENSION_LANGUAGE: Record<string, EditorLanguage> = {
   xml: "xml",
   svg: "xml",
   sql: "sql",
-  ...UNSUPPORTED,
 };
 
 /**
@@ -190,6 +193,13 @@ export const EXTENSION_LANGUAGE: Record<string, EditorLanguage> = {
  * Reads the basename first so a dot in a parent directory (`~/v1.2/README`)
  * can't be mistaken for the file's extension, and treats a leading dot as part
  * of the name — `.env` is a dotfile, not an `env` file.
+ *
+ * Deliberately separate from `classifyFile` in `@/lib/file-types`, which
+ * answers a different question — *which viewer owns this file* — over a
+ * broader allowlist, and counts a dotfile's name as its extension. This table
+ * is a subset of what that one admits: a file only reaches the editor if
+ * `classifyFile` (or the `is_text_file` byte sniff behind it) called it text,
+ * and only then does the grammar question arise.
  */
 function fileExtension(path: string): string {
   const basename = path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);

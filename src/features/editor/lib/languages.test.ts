@@ -45,6 +45,20 @@ describe("language registry", () => {
       expect(orphans).toEqual([]);
     });
 
+    it("never lists an extension as plaintext when a grammar also claims it", () => {
+      // `EXTENSION_LANGUAGE` spreads the plaintext set first so an explicit
+      // entry wins. This is the assertion that keeps that ordering honest: a
+      // language gaining a real loader must not be shadowed by its old
+      // plaintext entry, in either direction.
+      const plaintextExts = Object.entries(EXTENSION_LANGUAGE)
+        .filter(([, language]) => language === PLAINTEXT)
+        .map(([ext]) => ext);
+      const grammarExts = Object.entries(EXTENSION_LANGUAGE)
+        .filter(([, language]) => language !== PLAINTEXT)
+        .map(([ext]) => ext);
+      expect(plaintextExts.filter((ext) => grammarExts.includes(ext))).toEqual([]);
+    });
+
     it("keys are bare, lowercase extensions — `detectLanguage` looks them up that way", () => {
       for (const ext of Object.keys(EXTENSION_LANGUAGE)) {
         expect(ext).toBe(ext.toLowerCase());

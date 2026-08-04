@@ -107,8 +107,8 @@ export function buildEditorChromeTheme(theme: EditorColorTheme): Extension {
  *
  * Child tags inherit their parent's rule (`tags.controlKeyword` is a
  * `tags.keyword`), so the code list stays short while still covering the
- * keyword/operator variants the individual grammars reach for. `themes.test.ts`
- * pins the set that must resolve to a style.
+ * keyword/operator variants the individual grammars reach for.
+ * `build-cm-theme.test.ts` pins the set that must resolve to a style.
  */
 export function buildHighlightStyle(theme: EditorColorTheme): HighlightStyle {
   const c = theme.colors;
@@ -134,8 +134,11 @@ export function buildHighlightStyle(theme: EditorColorTheme): HighlightStyle {
     { tag: tags.null, color: c.null },
     // `atom` is what several grammars use where others use bool/null.
     { tag: tags.atom, color: c.constant },
-    // Shebangs, pragmas, front-matter fences: present, not the content.
-    { tag: tags.meta, color: c.comment },
+    // Shebangs, pragmas, front-matter fences. Uses `attributeName` because
+    // that is what `--cm-meta` already resolves to for the diff viewer's
+    // `.hljs-meta` (see apply-editor-theme.ts) — one concept, one color across
+    // both code surfaces.
+    { tag: tags.meta, color: c.attributeName },
 
     // — Prose (Markdown) —
     // Headings carry the accent because they are the document's structure, the

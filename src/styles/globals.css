@@ -400,7 +400,7 @@
     border: none;
   }
   .cm-activeLineGutter {
-    color: var(--cm-active-gutter-fg, #777);
+    color: var(--cm-active-gutter-fg, #d4d4d4);
     background-color: transparent;
   }
   .cm-activeLine {
@@ -413,7 +413,7 @@
   }
   .cm-cursor,
   .cm-dropCursor {
-    border-left-color: var(--cm-caret, #b3b3b3);
+    border-left-color: var(--cm-caret, #d4d4d4);
     border-left-width: 2px;
   }
   .cm-matchingBracket {
@@ -423,7 +423,7 @@
   .cm-foldPlaceholder {
     background-color: var(--cm-fold-bg, #1a1a1a);
     border: 1px solid var(--cm-fold-border, #2a2a2a);
-    color: var(--cm-fold-fg, #555);
+    color: var(--cm-fold-fg, #8a8a8a);
   }
 
 
