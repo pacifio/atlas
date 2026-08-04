@@ -10,7 +10,11 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { CommandSuggestions, type Suggestion } from "./command-suggestions";
-import { parseToken, applyCompletion, type TokenInfo } from "../lib/command-completion";
+import {
+  parseToken,
+  applyCompletion,
+  type TokenInfo,
+} from "../lib/command-completion";
 
 export interface CommandInputHandle {
   focus: () => void;
@@ -66,12 +70,18 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(
     const [open, setOpen] = useState(false);
     const [activeIndex, setActiveIndex] = useState(0);
     const cmdListRef = useRef<string[] | null>(null); // $PATH commands, fetched once
-    const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+      undefined,
+    );
     const cycleRef = useRef<CycleState | null>(null);
     const cwdRef = useRef(cwd);
     cwdRef.current = cwd;
 
-    useImperativeHandle(ref, () => ({ focus: () => taRef.current?.focus() }), []);
+    useImperativeHandle(
+      ref,
+      () => ({ focus: () => taRef.current?.focus() }),
+      [],
+    );
 
     // Auto-grow the textarea with its content (multi-line via Shift+Enter).
     const resize = useCallback(() => {
@@ -151,11 +161,17 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(
         }
         if (info.token.length < 1) return [];
         try {
-          const res = await invoke<RawPathCompletion[]>("terminal_path_complete", {
-            cwd: cwdRef.current ?? "~",
-            token: info.token,
-          });
-          return res.map((e) => ({ name: e.name, kind: e.is_dir ? "dir" : "file" }));
+          const res = await invoke<RawPathCompletion[]>(
+            "terminal_path_complete",
+            {
+              cwd: cwdRef.current ?? "~",
+              token: info.token,
+            },
+          );
+          return res.map((e) => ({
+            name: e.name,
+            kind: e.is_dir ? "dir" : "file",
+          }));
         } catch {
           return [];
         }
@@ -193,7 +209,9 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(
       const repl =
         c.info.kind === "command"
           ? m.name
-          : c.info.dirPart + m.name.replace(/ /g, "\\ ") + (m.kind === "dir" ? "/" : "");
+          : c.info.dirPart +
+            m.name.replace(/ /g, "\\ ") +
+            (m.kind === "dir" ? "/" : "");
       const v = ta.value;
       const next = v.slice(0, c.info.start) + repl + v.slice(c.replacedEnd);
       c.replacedEnd = c.info.start + repl.length;
@@ -233,7 +251,8 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(
         const ta = taRef.current;
         if (!ta) return;
         const c = cycleRef.current;
-        const info = c?.info ?? parseToken(ta.value, ta.selectionStart ?? ta.value.length);
+        const info =
+          c?.info ?? parseToken(ta.value, ta.selectionStart ?? ta.value.length);
         if (!info) return closeSuggest();
         finalize(info, c?.replacedEnd ?? info.caret, s);
       },
@@ -252,7 +271,12 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(
         if (items.length === 0) return closeSuggest();
         if (items.length === 1) return finalize(info, info.caret, items[0]);
         const index = dir > 0 ? 0 : items.length - 1;
-        cycleRef.current = { info, matches: items, index, replacedEnd: info.caret };
+        cycleRef.current = {
+          info,
+          matches: items,
+          index,
+          replacedEnd: info.caret,
+        };
         setSuggestions(items);
         setOpen(true);
         applyCycle();
@@ -280,7 +304,11 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(
       // interactive prompts (create-next-app, etc.) work. Navigation keys are
       // forwarded raw to the PTY; typed text is sent as a line on Enter.
       if (busy && writeRaw) {
-        if (e.key === "c" && e.ctrlKey && ta.selectionStart === ta.selectionEnd) {
+        if (
+          e.key === "c" &&
+          e.ctrlKey &&
+          ta.selectionStart === ta.selectionEnd
+        ) {
           e.preventDefault();
           onInterrupt();
           return;
@@ -363,7 +391,9 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(
         e.preventDefault();
         closeSuggest();
         histIdxRef.current =
-          histIdxRef.current < 0 ? h.length - 1 : Math.max(0, histIdxRef.current - 1);
+          histIdxRef.current < 0
+            ? h.length - 1
+            : Math.max(0, histIdxRef.current - 1);
         setText(h[histIdxRef.current]);
         return;
       }
@@ -401,9 +431,16 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
-          placeholder={busy ? "Type a response, then press Enter…" : "Run a command…"}
-          className="flex-1 resize-none overflow-hidden border-none bg-transparent p-0 text-[13px] leading-[18px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
-          style={{ fontFamily: 'var(--font-mono, "JetBrains Mono", monospace)' }}
+          placeholder={
+            busy ? "Type a response, then press Enter…" : "Run a command…"
+          }
+          // `min-w-0` lets the textarea actually shrink inside the flex row on
+          // narrow panes; the nowrap placeholder clips instead of wrapping onto
+          // multiple lines (textarea placeholders wrap by default).
+          className="min-w-0 flex-1 resize-none overflow-hidden border-none bg-transparent p-0 text-[13px] leading-[18px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)] placeholder:[white-space:nowrap]"
+          style={{
+            fontFamily: 'var(--font-mono, "JetBrains Mono", monospace)',
+          }}
         />
         <CommandSuggestions
           open={open}

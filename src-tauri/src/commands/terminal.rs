@@ -1,16 +1,40 @@
 use atlas_terminal::TerminalManager;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
-use tokio::sync::{mpsc, Mutex};
+use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::sync::{mpsc, Mutex, Notify};
+
+/// Max bytes per channel message. Big enough to amortize the per-message IPC
+/// crossing, small enough that one message never stalls the JS main thread
+/// (Tabby caps at 100 KB; Ghostty's per-lock parse unit is 64 KiB).
+const MAX_CHUNK: usize = 128 * 1024;
+/// Max unacknowledged chunks in flight to the webview — the JS side acks each
+/// chunk on receipt (before rendering), so this bounds the webview's message
+/// queue depth the way Tabby's 500 KB credit window does. With the window
+/// closed, the batcher stops draining, the bounded reader queue fills, and the
+/// PTY reader thread parks — backpressure reaches the child process.
+const MAX_IN_FLIGHT: usize = 4;
+/// Reader-thread → batcher queue depth, in 64 KiB reads (≤512 KiB buffered).
+const READ_QUEUE_CHUNKS: usize = 8;
+
+/// Per-session credit window shared between the emit task and `terminal_ack`.
+pub struct AckWindow {
+    in_flight: AtomicUsize,
+    notify: Notify,
+}
 
 pub struct TerminalState {
     pub manager: Arc<Mutex<TerminalManager>>,
+    acks: parking_lot::Mutex<HashMap<String, Arc<AckWindow>>>,
 }
 
 impl TerminalState {
     pub fn new() -> Self {
         Self {
             manager: Arc::new(Mutex::new(TerminalManager::new())),
+            acks: parking_lot::Mutex::new(HashMap::new()),
         }
     }
 }
@@ -22,8 +46,9 @@ pub async fn terminal_create(
     cols: u16,
     rows: u16,
     cwd: Option<String>,
+    on_output: Channel<InvokeResponseBody>,
 ) -> Result<String, String> {
-    let (tx, mut rx) = mpsc::unbounded_channel::<atlas_terminal::TerminalOutput>();
+    let (tx, mut rx) = mpsc::channel::<atlas_terminal::TerminalOutput>(READ_QUEUE_CHUNKS);
 
     let id = {
         let mut manager = state.manager.lock().await;
@@ -32,36 +57,78 @@ pub async fn terminal_create(
             .map_err(|e| e.to_string())?
     };
 
-    // Spawn a task to forward PTY output, batching reads at ~16ms intervals (60fps)
+    let window = Arc::new(AckWindow {
+        in_flight: AtomicUsize::new(0),
+        notify: Notify::new(),
+    });
+    state.acks.lock().insert(id.clone(), window.clone());
+
+    // Forward PTY output over the per-session channel as RAW BYTES. The old
+    // path emitted a global `terminal-output` event whose `Vec<u8>` serialized
+    // as a JSON array of numbers — ~4-6 bytes of JSON per PTY byte, decoded
+    // back into a number[] on the JS main thread, for every terminal in every
+    // window. The channel is point-to-point and the payload is an ArrayBuffer.
     let app_handle = app.clone();
     let session_id = id.clone();
     tokio::spawn(async move {
-        let mut buf: Vec<u8> = Vec::with_capacity(8192);
-        loop {
-            // Wait for first chunk
-            match rx.recv().await {
-                Some(output) => buf.extend_from_slice(&output.data),
-                None => break,
+        let mut buf: Vec<u8> = Vec::with_capacity(16 * 1024);
+        'main: loop {
+            if buf.is_empty() {
+                match rx.recv().await {
+                    Some(output) => buf.extend_from_slice(&output.data),
+                    None => break,
+                }
             }
-            // Drain any additional pending data without waiting
-            while let Ok(output) = rx.try_recv() {
-                buf.extend_from_slice(&output.data);
-                // Cap batch size to avoid huge single events
-                if buf.len() > 65536 { break; }
+            // Coalesce whatever else already arrived, up to one chunk.
+            while buf.len() < MAX_CHUNK {
+                match rx.try_recv() {
+                    Ok(output) => buf.extend_from_slice(&output.data),
+                    Err(_) => break,
+                }
             }
-            // Emit batched data
-            let _ = app_handle.emit("terminal-output", &atlas_terminal::TerminalOutput {
-                id: session_id.clone(),
-                data: std::mem::take(&mut buf),
-            });
+            // Credit window: wait for the webview to ack before queueing more.
+            // (`Notify` stores a permit, so an ack landing between the load and
+            // the await is not lost.)
+            while window.in_flight.load(Ordering::Acquire) >= MAX_IN_FLIGHT {
+                window.notify.notified().await;
+                // `terminal_close` force-opens the window; the send below then
+                // fails if the webview side is gone and we exit.
+            }
+            let chunk = if buf.len() > MAX_CHUNK {
+                let rest = buf.split_off(MAX_CHUNK);
+                std::mem::replace(&mut buf, rest)
+            } else {
+                std::mem::take(&mut buf)
+            };
+            window.in_flight.fetch_add(1, Ordering::AcqRel);
+            if on_output.send(InvokeResponseBody::Raw(chunk)).is_err() {
+                break 'main;
+            }
         }
-        let _ = app_handle.emit(
-            "terminal-exit",
-            serde_json::json!({ "id": session_id }),
-        );
+        app_handle
+            .state::<TerminalState>()
+            .acks
+            .lock()
+            .remove(&session_id);
+        let _ = app_handle.emit("terminal-exit", serde_json::json!({ "id": session_id }));
     });
 
     Ok(id)
+}
+
+/// Ack one output chunk — called by the frontend on receipt (before rendering),
+/// re-opening the credit window. Sync + parking_lot: this runs per chunk.
+#[tauri::command]
+pub fn terminal_ack(state: State<'_, TerminalState>, id: String) {
+    let window = state.acks.lock().get(&id).cloned();
+    if let Some(w) = window {
+        let _ = w
+            .in_flight
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+                Some(v.saturating_sub(1))
+            });
+        w.notify.notify_one();
+    }
 }
 
 /// The zsh shell-integration ZDOTDIR, so the frontend can relaunch an
@@ -97,8 +164,16 @@ pub async fn terminal_close(
     state: State<'_, TerminalState>,
     id: String,
 ) -> Result<(), String> {
-    let mut manager = state.manager.lock().await;
-    manager.close(&id);
+    {
+        let mut manager = state.manager.lock().await;
+        manager.close(&id);
+    }
+    // Force-open the credit window so an emit task parked waiting for acks can
+    // run to its exit path (its send fails once the channel is gone).
+    if let Some(w) = state.acks.lock().get(&id).cloned() {
+        w.in_flight.store(0, Ordering::Release);
+        w.notify.notify_one();
+    }
     Ok(())
 }
 

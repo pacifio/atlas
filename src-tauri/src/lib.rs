@@ -323,6 +323,7 @@ pub fn run() {
             commands::terminal::terminal_write,
             commands::terminal::terminal_resize,
             commands::terminal::terminal_close,
+            commands::terminal::terminal_ack,
             commands::terminal::terminal_resolve_path,
             commands::terminal::resolve_path,
             commands::terminal::terminal_path_complete,

@@ -40,7 +40,12 @@ impl TerminalManager {
         cols: u16,
         rows: u16,
         cwd: Option<&str>,
-        sender: mpsc::UnboundedSender<TerminalOutput>,
+        // BOUNDED. When the consumer falls behind, `blocking_send` parks this
+        // session's reader thread, the kernel tty queue fills, and the child's
+        // write() stalls — real flow control instead of unbounded buffering
+        // (the same backpressure shape Ghostty's fixed ring of read buffers
+        // produces). Nothing is ever dropped.
+        sender: mpsc::Sender<TerminalOutput>,
     ) -> anyhow::Result<String> {
         let pty_system = native_pty_system();
         let pair = pty_system.openpty(PtySize {
@@ -108,7 +113,7 @@ impl TerminalManager {
                             id: session_id.clone(),
                             data: buf[..n].to_vec(),
                         };
-                        if sender.send(output).is_err() {
+                        if sender.blocking_send(output).is_err() {
                             break;
                         }
                     }

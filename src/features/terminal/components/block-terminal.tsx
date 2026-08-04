@@ -1,20 +1,35 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { Loader2, CheckCircle2, XCircle, ChevronRight, Folder, Copy, RotateCw, ChevronDown, ChevronUp, Search, X, GitBranch, Lock } from "lucide-react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Channel, invoke } from "@tauri-apps/api/core";
+import {
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  ChevronRight,
+  Folder,
+  Copy,
+  RotateCw,
+  ChevronDown,
+  ChevronUp,
+  Search,
+  X,
+  GitBranch,
+  Lock,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { openFileOrReveal } from "@/lib/open-file";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { resolveTerminalFont } from "../utils/resolve-font";
-import { resolveTerminalOutput, type AnsiSegment } from "../lib/ansi-to-segments";
-import { splitLinks, normalizeUrl } from "../lib/linkify-paths";
+import {
+  resolveTerminalOutput,
+  type AnsiSegment,
+} from "../lib/ansi-to-segments";
+import { linkifySegments, normalizeUrl } from "../lib/linkify-paths";
 import { createTerminalKeymap } from "../lib/terminal-keymap";
 import { createPathLinkProvider } from "../lib/path-link-provider";
 import { BlockStreamParser, type TerminalBlock } from "../lib/block-parser";
 import { CommandInput, type CommandInputHandle } from "./command-input";
 import { useTerminalStore } from "../stores/terminal-store";
-import { safeUnlisten } from "@/lib/safe-unlisten";
 
 /** Compact git status for the input-area badge. */
 interface TermGit {
@@ -61,9 +76,13 @@ function renderHL(text: string, query: string): ReactNode {
     }
     if (idx > i) nodes.push(text.slice(i, idx));
     nodes.push(
-      <mark key={k++} data-term-match className="rounded-[2px] bg-[var(--status-warning)]/40 text-inherit">
+      <mark
+        key={k++}
+        data-term-match
+        className="rounded-[2px] bg-[var(--status-warning)]/40 text-inherit"
+      >
         {text.slice(idx, idx + q.length)}
-      </mark>
+      </mark>,
     );
     i = idx + q.length;
   }
@@ -88,11 +107,22 @@ const XTERM_THEME = {
   // hiding the selected glyphs (opaque #303030 read as nearly invisible).
   selectionBackground: "rgba(97,175,239,0.35)",
   selectionInactiveBackground: "rgba(255,255,255,0.16)",
-  black: "#1a1a1a", red: "#e06c75", green: "#98c379", yellow: "#e5c07b",
-  blue: "#61afef", magenta: "#c678dd", cyan: "#56b6c2", white: "#cccccc",
-  brightBlack: "#5c6370", brightRed: "#e06c75", brightGreen: "#98c379",
-  brightYellow: "#e5c07b", brightBlue: "#61afef", brightMagenta: "#c678dd",
-  brightCyan: "#56b6c2", brightWhite: "#ffffff",
+  black: "#1a1a1a",
+  red: "#e06c75",
+  green: "#98c379",
+  yellow: "#e5c07b",
+  blue: "#61afef",
+  magenta: "#c678dd",
+  cyan: "#56b6c2",
+  white: "#cccccc",
+  brightBlack: "#5c6370",
+  brightRed: "#e06c75",
+  brightGreen: "#98c379",
+  brightYellow: "#e5c07b",
+  brightBlue: "#61afef",
+  brightMagenta: "#c678dd",
+  brightCyan: "#56b6c2",
+  brightWhite: "#ffffff",
 };
 
 /**
@@ -104,7 +134,11 @@ const XTERM_THEME = {
  * The React command input sends lines to the shell; when an alt-screen app is
  * running, keystrokes go to xterm instead.
  */
-export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalProps) {
+export function BlockTerminal({
+  isActive,
+  onFocus,
+  terminalKey,
+}: BlockTerminalProps) {
   const [blocks, setBlocks] = useState<TerminalBlock[]>([]);
   const [altScreen, setAltScreen] = useState(false);
   const [cwd, setCwd] = useState<string>("");
@@ -124,7 +158,9 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
 
   useEffect(() => {
     void invoke<string | null>("terminal_zsh_dir")
-      .then((d) => { zshDirRef.current = d; })
+      .then((d) => {
+        zshDirRef.current = d;
+      })
       .catch(() => {});
   }, []);
 
@@ -134,8 +170,6 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
 
   useEffect(() => {
     let disposed = false;
-    let unOut: (() => void) | null = null;
-    let unExit: (() => void) | null = null;
     const initialCwd = useProjectStore.getState().currentProject?.path ?? "~";
 
     const parser = new BlockStreamParser(initialCwd, () => {
@@ -161,7 +195,11 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
         fontFamily,
         fontSize: 13,
         lineHeight: 1.4,
-        scrollback: 5000,
+        // xterm is only ever VISIBLE for alt-screen apps (vim/htop/less), and
+        // the alt screen has no scrollback — the block list owns history. The
+        // old 5000-line buffer was pure memory + parse cost for a surface
+        // that never scrolls.
+        scrollback: 0,
         cursorBlink: true,
         allowProposedApi: true,
         theme: XTERM_THEME,
@@ -197,12 +235,51 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
         /* keep defaults */
       }
 
-      const id = await invoke<string>("terminal_create", { cols, rows, cwd: initialCwd });
+      // Per-session binary channel. Payloads are raw bytes (ArrayBuffer) —
+      // no JSON number[] round-trip, no global event fan-out. Each chunk is
+      // ACKED IMMEDIATELY on receipt (before any rendering), Tabby-style:
+      // the ack re-opens the Rust credit window, so what it bounds is the
+      // webview's queue depth, not render latency.
+      const outputChannel = new Channel<ArrayBuffer | number[]>();
+      let sessionId: string | null = null;
+      let earlyChunks: (ArrayBuffer | number[])[] = [];
+      const handleChunk = (payload: ArrayBuffer | number[]) => {
+        const bytes =
+          payload instanceof ArrayBuffer
+            ? new Uint8Array(payload)
+            : new Uint8Array(payload);
+        term.write(bytes); // interactive surface
+        parser.push(decoderRef.current.decode(bytes, { stream: true })); // blocks
+      };
+      outputChannel.onmessage = (payload) => {
+        if (disposed) return;
+        if (sessionId === null) {
+          // The channel can deliver before `terminal_create` resolves with the
+          // session id — hold those chunks (acked once we can address the ack).
+          earlyChunks.push(payload);
+          return;
+        }
+        void invoke("terminal_ack", { id: sessionId }).catch(() => {});
+        handleChunk(payload);
+      };
+
+      const id = await invoke<string>("terminal_create", {
+        cols,
+        rows,
+        cwd: initialCwd,
+        onOutput: outputChannel,
+      });
       if (disposed) {
         void invoke("terminal_close", { id }).catch(() => {});
         return;
       }
       ptyRef.current = id;
+      sessionId = id;
+      for (const chunk of earlyChunks) {
+        void invoke("terminal_ack", { id }).catch(() => {});
+        handleChunk(chunk);
+      }
+      earlyChunks = [];
 
       // Interactive-surface parity with the classic terminal: word/line
       // navigation + ⌘C/⌘V/⌘A copy-paste, and ⌘-click file paths.
@@ -223,13 +300,18 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
         if (mod && key === "c") {
           if (term.hasSelection()) {
             e.preventDefault();
-            void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+            void navigator.clipboard
+              .writeText(term.getSelection())
+              .catch(() => {});
           }
           return false;
         }
         if (mod && key === "v") {
           e.preventDefault();
-          void navigator.clipboard.readText().then((t) => t && term.paste(t)).catch(() => {});
+          void navigator.clipboard
+            .readText()
+            .then((t) => t && term.paste(t))
+            .catch(() => {});
           return false;
         }
         if (e.metaKey && key === "a") {
@@ -251,22 +333,13 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
           }).catch(() => {});
         }
       });
-
-      unOut = await listen<{ id: string; data: number[] }>("terminal-output", (e) => {
-        if (e.payload.id !== id || disposed) return;
-        const bytes = new Uint8Array(e.payload.data);
-        term.write(bytes); // interactive surface
-        parser.push(decoderRef.current.decode(bytes, { stream: true })); // blocks
-      });
-      unExit = await listen<{ id: string }>("terminal-exit", () => {});
     })();
 
     return () => {
       disposed = true;
-      safeUnlisten(unOut);
-      safeUnlisten(unExit);
       xtermRef.current?.dispose();
-      if (ptyRef.current) void invoke("terminal_close", { id: ptyRef.current }).catch(() => {});
+      if (ptyRef.current)
+        void invoke("terminal_close", { id: ptyRef.current }).catch(() => {});
     };
   }, []);
 
@@ -284,16 +357,30 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
       } catch {
         return;
       }
-      if (id) void invoke("terminal_resize", { id, cols: t.cols, rows: t.rows }).catch(() => {});
+      if (id)
+        void invoke("terminal_resize", {
+          id,
+          cols: t.cols,
+          rows: t.rows,
+        }).catch(() => {});
     });
     ro.observe(host);
     return () => ro.disconnect();
   }, []);
 
-  // Pin to the bottom as output streams.
+  // Pin to the bottom as output streams — but ONLY while the user is at the
+  // bottom. The old unconditional pin yanked the viewport back down on every
+  // 16 ms flush, making it impossible to scroll up during a long command.
+  const pinnedRef = useRef(true);
+  const onBlocksScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) {
+      pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    }
+  }, []);
   useEffect(() => {
     const el = scrollRef.current;
-    if (el && !altScreen) el.scrollTop = el.scrollHeight;
+    if (el && !altScreen && pinnedRef.current) el.scrollTop = el.scrollHeight;
   }, [blocks, altScreen]);
 
   // Focus the right surface: xterm while an alt-screen app runs, else the input.
@@ -347,7 +434,12 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
           if (cancelled) return;
           setGit(
             s.is_repo
-              ? { branch: s.branch, ahead: s.ahead, behind: s.behind, dirty: s.files.length > 0 }
+              ? {
+                  branch: s.branch,
+                  ahead: s.ahead,
+                  behind: s.behind,
+                  dirty: s.files.length > 0,
+                }
               : null,
           );
         })
@@ -426,15 +518,22 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
     return () => window.removeEventListener("keydown", onKey);
   }, [isActive, altScreen]);
 
-  // Recount matches whenever the query or content changes.
+  // Recount matches whenever the query or content changes. Skip entirely when
+  // there is no query — this used to run a full-subtree querySelectorAll on
+  // every 16 ms streaming flush even with search closed.
   useEffect(() => {
     matchIdxRef.current = -1;
+    if (!search.query) {
+      setMatchCount(0);
+      return;
+    }
     const els = scrollRef.current?.querySelectorAll("[data-term-match]");
     setMatchCount(els ? els.length : 0);
   }, [search.query, blocks]);
 
   const navMatch = useCallback((dir: 1 | -1) => {
-    const els = scrollRef.current?.querySelectorAll<HTMLElement>("[data-term-match]");
+    const els =
+      scrollRef.current?.querySelectorAll<HTMLElement>("[data-term-match]");
     if (!els || !els.length) return;
     matchIdxRef.current = (matchIdxRef.current + dir + els.length) % els.length;
     els.forEach((el) => el.classList.remove("term-match-active"));
@@ -449,7 +548,13 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
   }, []);
 
   return (
-    <div data-block-terminal className="relative flex h-full w-full flex-col bg-[var(--bg-base)]" onClick={onFocus}>
+    <div
+      data-block-terminal
+      // `@container` so the input-row badges respond to the PANE's width, not
+      // the window's — split panes make viewport media queries meaningless.
+      className="@container relative flex h-full w-full flex-col bg-[var(--bg-base)]"
+      onClick={onFocus}
+    >
       {/* Interactive surface — overlays the block list while an alt-screen app runs. */}
       <div
         ref={xtermHostRef}
@@ -467,7 +572,9 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
           <input
             ref={searchInputRef}
             value={search.query}
-            onChange={(e) => setSearch((s) => ({ ...s, query: e.target.value }))}
+            onChange={(e) =>
+              setSearch((s) => ({ ...s, query: e.target.value }))
+            }
             onKeyDown={(e) => {
               if (e.key === "Escape") closeSearch();
               else if (e.key === "Enter") navMatch(e.shiftKey ? -1 : 1);
@@ -478,13 +585,25 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
           <span className="w-10 shrink-0 text-right text-[10px] tabular-nums text-[var(--text-tertiary)]">
             {matchCount}
           </span>
-          <button type="button" onClick={() => navMatch(-1)} className="rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]">
+          <button
+            type="button"
+            onClick={() => navMatch(-1)}
+            className="rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          >
             <ChevronUp size={13} />
           </button>
-          <button type="button" onClick={() => navMatch(1)} className="rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]">
+          <button
+            type="button"
+            onClick={() => navMatch(1)}
+            className="rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          >
             <ChevronDown size={13} />
           </button>
-          <button type="button" onClick={closeSearch} className="rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]">
+          <button
+            type="button"
+            onClick={closeSearch}
+            className="rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          >
             <X size={13} />
           </button>
         </div>
@@ -493,11 +612,19 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
       {/* Block list */}
       <div
         ref={scrollRef}
+        onScroll={onBlocksScroll}
         className="min-h-0 flex-1 overflow-y-auto hide-scrollbar px-3 py-2"
         style={{ visibility: altScreen ? "hidden" : "visible" }}
       >
         {blocks.map((b) => (
-          <BlockCard key={b.id} block={b} onRerun={runCommand} onPassword={writePassword} query={search.query} />
+          <BlockCard
+            key={b.id}
+            block={b}
+            rev={b.rev}
+            onRerun={runCommand}
+            onPassword={writePassword}
+            query={search.query}
+          />
         ))}
       </div>
 
@@ -507,9 +634,15 @@ export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalP
       {!altScreen && (
         <div className="flex min-h-[28px] items-center gap-2 border-t border-[var(--border-default)] bg-[var(--bg-base)] px-3 py-[5px]">
           {busy ? (
-            <Loader2 size={13} className="shrink-0 animate-spin text-[var(--accent-primary)]" />
+            <Loader2
+              size={13}
+              className="shrink-0 animate-spin text-[var(--accent-primary)]"
+            />
           ) : (
-            <ChevronRight size={13} className="shrink-0 text-[var(--accent-primary)]" />
+            <ChevronRight
+              size={13}
+              className="shrink-0 text-[var(--accent-primary)]"
+            />
           )}
           <CommandInput
             ref={commandInputRef}
@@ -565,20 +698,35 @@ function StatusBadge({ cwd, git }: { cwd: string; git: TermGit | null }) {
   const dir = cwd ? cwd.split("/").filter(Boolean).pop() || "/" : "";
   if (!dir) return null;
   return (
-    <div className="ml-auto flex shrink-0 items-center gap-2 text-[10px] text-[var(--text-tertiary)]">
-      <span className="flex items-center gap-1" title={cwd}>
-        <Folder size={9} />
-        {dir}
+    // Progressive disclosure as the PANE narrows (container query against the
+    // terminal root): the git segment goes first, then the whole badge, so the
+    // command input always keeps usable width. Long dir/branch names truncate.
+    <div className="ml-auto hidden shrink-0 items-center gap-2 text-[10px] text-[var(--text-tertiary)] @[300px]:flex">
+      <span className="flex min-w-0 items-center gap-1" title={cwd}>
+        <Folder size={9} className="shrink-0" />
+        <span className="max-w-[96px] truncate">{dir}</span>
       </span>
       {git && (
         <>
-          <span className="h-3 w-px bg-[var(--border-default)]" />
-          <span className="flex items-center gap-1" title={`On branch ${git.branch}`}>
-            <GitBranch size={9} />
-            {git.branch || "(detached)"}
+          <span className="hidden h-3 w-px bg-[var(--border-default)] @[420px]:block" />
+          <span
+            className="hidden min-w-0 items-center gap-1 @[420px]:flex"
+            title={`On branch ${git.branch}`}
+          >
+            <GitBranch size={9} className="shrink-0" />
+            <span className="max-w-[140px] truncate">
+              {git.branch || "(detached)"}
+            </span>
             {git.ahead > 0 && <span>↑{git.ahead}</span>}
             {git.behind > 0 && <span>↓{git.behind}</span>}
-            {git.dirty && <span className="text-[var(--status-warning)]" title="Uncommitted changes">●</span>}
+            {git.dirty && (
+              <span
+                className="text-[var(--status-warning)]"
+                title="Uncommitted changes"
+              >
+                ●
+              </span>
+            )}
           </span>
         </>
       )}
@@ -586,34 +734,56 @@ function StatusBadge({ cwd, git }: { cwd: string; git: TermGit | null }) {
   );
 }
 
-function BlockCard({
+// Render only the tail of very large output — segmenting + DOM-rendering a
+// multi-MB block would freeze the UI. The full (store-capped) text is still
+// available via Copy. Finished blocks show a deeper tail (they resolve once);
+// a RUNNING block resolves on every flush, so its live view is a shorter tail
+// — the full depth appears the moment the command finishes.
+const RENDER_CAP = 192 * 1024;
+const LIVE_TAIL_CAP = 64 * 1024;
+
+/** Memoized: block objects mutate in place while running, so `rev` (bumped by
+ *  the parser on every mutation) is what invalidates a card. Finished blocks
+ *  never re-render during streaming — the per-flush cost is one live card. */
+const BlockCard = memo(function BlockCard({
   block,
+  rev,
   onRerun,
   onPassword,
   query,
 }: {
   block: TerminalBlock;
+  rev: number;
   onRerun: (cmd: string) => void;
   onPassword: (pw: string) => void;
   query: string;
 }) {
-  // Render only the tail of very large output — segmenting + DOM-rendering a
-  // multi-MB block would freeze the UI. The full (already store-capped) text is
-  // still available via Copy.
-  const RENDER_CAP = 96 * 1024;
-  const clipped = block.output.length > RENDER_CAP;
-  const display = clipped ? block.output.slice(-RENDER_CAP) : block.output;
+  const cap = block.running ? LIVE_TAIL_CAP : RENDER_CAP;
+  const clipped = block.output.length > cap;
+  let display = clipped ? block.output.slice(-cap) : block.output;
+  if (clipped) {
+    // Start at a line boundary — a byte-blind cut can land mid-escape-sequence
+    // or mid-line, which mis-styles everything up to the next SGR reset.
+    const nl = display.indexOf("\n");
+    if (nl >= 0 && nl < display.length - 1) display = display.slice(nl + 1);
+  }
   // `resolveTerminalOutput` applies CR / cursor / erase line discipline so a
   // spinner or progress bar that redraws the same line (`\r…`) collapses to one
   // updating line instead of concatenating every frame.
-  const segments = useMemo(() => resolveTerminalOutput(display), [display]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const segments = useMemo(
+    () => resolveTerminalOutput(display),
+    [display, rev],
+  );
   const cwdName = block.cwd ? block.cwd.split("/").filter(Boolean).pop() : "";
   const [collapsed, setCollapsed] = useState(false);
   const [copied, setCopied] = useState(false);
   const hasHeader = block.command !== "";
 
   const duration =
-    !block.running && block.endedAt ? formatDuration(block.endedAt - block.startedAt) : null;
+    !block.running && block.endedAt
+      ? formatDuration(block.endedAt - block.startedAt)
+      : null;
 
   const copyOutput = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -628,11 +798,20 @@ function BlockCard({
       {hasHeader && (
         <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-2.5 h-[28px] text-[12px]">
           {block.running ? (
-            <Loader2 size={12} className="shrink-0 animate-spin text-[var(--accent-primary)]" />
+            <Loader2
+              size={12}
+              className="shrink-0 animate-spin text-[var(--accent-primary)]"
+            />
           ) : block.exitCode && block.exitCode !== 0 ? (
-            <XCircle size={12} className="shrink-0 text-[var(--status-error)]" />
+            <XCircle
+              size={12}
+              className="shrink-0 text-[var(--status-error)]"
+            />
           ) : (
-            <CheckCircle2 size={12} className="shrink-0 text-[var(--status-success)]" />
+            <CheckCircle2
+              size={12}
+              className="shrink-0 text-[var(--status-success)]"
+            />
           )}
           <button
             type="button"
@@ -655,11 +834,25 @@ function BlockCard({
           <div className="ml-auto flex items-center gap-2 text-[10px] text-[var(--text-tertiary)]">
             {/* Hover actions */}
             <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-              <BlockAction title={copied ? "Copied" : "Copy output"} onClick={copyOutput} icon={Copy} />
-              <BlockAction title="Rerun" onClick={(e) => { e.stopPropagation(); onRerun(block.command); }} icon={RotateCw} />
+              <BlockAction
+                title={copied ? "Copied" : "Copy output"}
+                onClick={copyOutput}
+                icon={Copy}
+              />
+              <BlockAction
+                title="Rerun"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRerun(block.command);
+                }}
+                icon={RotateCw}
+              />
               <BlockAction
                 title={collapsed ? "Expand" : "Collapse"}
-                onClick={(e) => { e.stopPropagation(); setCollapsed((c) => !c); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCollapsed((c) => !c);
+                }}
                 icon={ChevronDown}
                 rotated={collapsed}
               />
@@ -671,15 +864,20 @@ function BlockCard({
               </span>
             )}
             {duration && <span>{duration}</span>}
-            {!block.running && block.exitCode != null && block.exitCode !== 0 && (
-              <span className="text-[var(--status-error)]">exit {block.exitCode}</span>
-            )}
+            {!block.running &&
+              block.exitCode != null &&
+              block.exitCode !== 0 && (
+                <span className="text-[var(--status-error)]">
+                  exit {block.exitCode}
+                </span>
+              )}
           </div>
         </div>
       )}
       {!collapsed && (clipped || block.truncated) && (
         <div className="px-3 pt-2 text-[10px] italic text-[var(--text-tertiary)]">
-          earlier output hidden — showing the latest {Math.round(RENDER_CAP / 1024)} KB (Copy gets more)
+          earlier output hidden — showing the latest {Math.round(cap / 1024)} KB
+          (Copy gets more)
         </div>
       )}
       {!collapsed && segments.length > 0 && (
@@ -690,7 +888,7 @@ function BlockCard({
       )}
     </div>
   );
-}
+});
 
 function BlockAction({
   title,
@@ -710,12 +908,23 @@ function BlockAction({
       title={title}
       className="flex h-5 w-5 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
     >
-      <Icon size={11} className={cn("transition-transform", rotated && "-rotate-90")} />
+      <Icon
+        size={11}
+        className={cn("transition-transform", rotated && "-rotate-90")}
+      />
     </button>
   );
 }
 
-function BlockOutput({ segments, cwd, query }: { segments: AnsiSegment[]; cwd: string; query: string }) {
+const BlockOutput = memo(function BlockOutput({
+  segments,
+  cwd,
+  query,
+}: {
+  segments: AnsiSegment[];
+  cwd: string;
+  query: string;
+}) {
   const openPath = useCallback(
     (raw: string) => {
       // Resolve to an absolute path, then open in Atlas if it's a kind we can
@@ -726,7 +935,7 @@ function BlockOutput({ segments, cwd, query }: { segments: AnsiSegment[]; cwd: s
         })
         .catch(() => {});
     },
-    [cwd]
+    [cwd],
   );
   const openLink = useCallback((raw: string) => {
     void import("@tauri-apps/plugin-opener")
@@ -734,41 +943,43 @@ function BlockOutput({ segments, cwd, query }: { segments: AnsiSegment[]; cwd: s
       .catch(() => {});
   }, []);
 
+  // Line-level linkification (a URL styled across several SGR runs — e.g.
+  // Vite's `http://localhost:` + `8080/` — is one clickable target).
+  const runs = useMemo(() => linkifySegments(segments), [segments]);
+
   return (
     <pre className="whitespace-pre-wrap break-words px-3 py-2 font-mono text-[12px] leading-[1.45] text-[var(--text-secondary)]">
-      {segments.flatMap((s, i) =>
-        splitLinks(s.text).map((p, j) =>
-          p.kind === "url" ? (
-            <span
-              key={`${i}-${j}`}
-              style={s.style}
-              title="⌘-click to open in browser"
-              className="cursor-pointer hover:text-[var(--accent-primary)] hover:underline"
-              onClick={(e) => {
-                if (e.metaKey || e.ctrlKey) openLink(p.text);
-              }}
-            >
-              {renderHL(p.text, query)}
-            </span>
-          ) : p.kind === "path" ? (
-            <span
-              key={`${i}-${j}`}
-              style={s.style}
-              title="⌘-click to open"
-              className="cursor-pointer hover:text-[var(--accent-primary)] hover:underline"
-              onClick={(e) => {
-                if (e.metaKey || e.ctrlKey) openPath(p.text);
-              }}
-            >
-              {renderHL(p.text, query)}
-            </span>
-          ) : (
-            <span key={`${i}-${j}`} style={s.style}>
-              {renderHL(p.text, query)}
-            </span>
-          )
-        )
+      {runs.map((r, i) =>
+        r.kind === "url" ? (
+          <span
+            key={i}
+            style={r.style}
+            title="⌘-click to open in browser"
+            className="cursor-pointer hover:text-[var(--accent-primary)] hover:underline"
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey) openLink(r.target ?? r.text);
+            }}
+          >
+            {renderHL(r.text, query)}
+          </span>
+        ) : r.kind === "path" ? (
+          <span
+            key={i}
+            style={r.style}
+            title="⌘-click to open"
+            className="cursor-pointer hover:text-[var(--accent-primary)] hover:underline"
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey) openPath(r.target ?? r.text);
+            }}
+          >
+            {renderHL(r.text, query)}
+          </span>
+        ) : (
+          <span key={i} style={r.style}>
+            {renderHL(r.text, query)}
+          </span>
+        ),
       )}
     </pre>
   );
-}
+});
