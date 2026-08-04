@@ -19,6 +19,7 @@ import { agents } from "../lib/agents-api";
 import { CLAUDE_PERMISSION_MODE_LABEL, AGENT_LABEL, agentTypeFromPluginId, type SwitchableAgent } from "@/types/agent";
 import { AgentMark } from "@/components/agent-mark";
 import { ProviderModelPills } from "./provider-model-pills";
+import { ContextRing, contextLabel } from "./context-ring";
 import { loadCerseiEffort, loadCerseiCompress } from "../lib/cersei-model-pref";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
 // `ChatInput` pulls in CodeMirror (~870 KB) via `cm-mention-extension`.
@@ -277,6 +278,37 @@ function CerseiUsagePill({ tabId }: { tabId: string }) {
       {tokens} tok{cost}
     </span>
   );
+}
+
+/** Live context-window meter for the ACP agents (Claude Code / Codex), which
+ *  stream a cumulative `context_usage` gauge instead of the native agent's
+ *  per-turn token deltas. The ring is fixed-size and the count is tabular, so
+ *  the pill repaints on every gauge delta mid-run without nudging the row.
+ *  Hidden until the first gauge lands; agents that report no window size get
+ *  the empty track plus a bare token count (see `contextLabel`). */
+function ContextUsagePill({ tabId }: { tabId: string }) {
+  const ctx = useChatStore((s) => s.sessions[tabId]?.contextUsage);
+  if (!ctx || (ctx.used <= 0 && ctx.size <= 0)) return null;
+  const label = contextLabel(ctx);
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-tertiary)] select-none tabular-nums"
+    >
+      <ContextRing ctx={ctx} />
+      {fmtCtxTokens(ctx.used)}
+      {ctx.size > 0 && ` / ${fmtCtxTokens(ctx.size)}`}
+    </span>
+  );
+}
+
+/** Compact token count for the context pill: 1.2k / 42.1k / 1.0M. */
+function fmtCtxTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return `${n}`;
 }
 
 /**
@@ -1533,6 +1565,9 @@ export function MessageInput({
               {agentType === "cersei" && <EffortPill tabId={tabId} />}
               {agentType === "cersei" && <CerseiMemoryPill />}
               {agentType === "cersei" && <CerseiUsagePill tabId={tabId} />}
+              {/* ACP agents have no per-turn token split but do stream a
+                  context gauge — same slot, same shape, live during a run. */}
+              {agentType !== "cersei" && <ContextUsagePill tabId={tabId} />}
             </div>
 
             <div className="flex items-center">

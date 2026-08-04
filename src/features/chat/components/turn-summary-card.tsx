@@ -6,7 +6,6 @@ import {
   Workflow,
   Loader2,
   Sparkles,
-  Gauge,
   Clock,
   GitCompare,
   Code,
@@ -20,6 +19,7 @@ import { openFile } from "@/lib/open-file";
 import { openGitDiff } from "@/features/git/lib/git-diff-api";
 import { useGitStore, type GitFileStatus } from "@/features/git/stores/git-store";
 import type { ChatMessage, TurnFile } from "@/types/agent";
+import { ContextRing, contextLabel } from "./context-ring";
 
 /** Compact token count: 1.2k / 42.1k / 1.0M. */
 function fmtTokens(n: number): string {
@@ -309,13 +309,16 @@ export const TurnSummaryCard = memo(function TurnSummaryCard({
           (`--border-subtle`); it bleeds left (`-ml-8`) to meet that rail. */}
       <div className="-ml-8 mt-3 flex flex-wrap items-center justify-end gap-1.5 border-t border-[var(--border-subtle)] pt-3 pl-8">
         {ctx && (ctx.used > 0 || ctx.size > 0) ? (
+          // `role="img"` + the full label: the ring and the abbreviated
+          // "45.2k / 200.0k · $0.12" are one reading, and announcing the
+          // spelled-out label once beats reading the parts separately.
           <span
-            className="mr-auto flex items-center gap-1 text-[10px] text-[var(--text-tertiary)] tabular-nums select-none"
-            title={`${ctx.used.toLocaleString()} of ${ctx.size.toLocaleString()} context tokens used${
-              ctx.cost > 0 ? ` · est. $${ctx.cost.toFixed(4)}` : ""
-            }`}
+            role="img"
+            aria-label={contextLabel(ctx)}
+            title={contextLabel(ctx)}
+            className="mr-auto flex items-center gap-1.5 text-[10px] text-[var(--text-tertiary)] tabular-nums select-none"
           >
-            <Gauge size={10} className="text-[var(--text-tertiary)]" />
+            <ContextRing ctx={ctx} />
             {fmtTokens(ctx.used)}
             {ctx.size > 0 && ` / ${fmtTokens(ctx.size)}`}
             {ctx.cost > 0 && ` · $${ctx.cost.toFixed(ctx.cost < 1 ? 4 : 2)}`}
