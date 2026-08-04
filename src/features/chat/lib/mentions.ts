@@ -375,10 +375,26 @@ export async function searchMentions(
   ctx: MentionContext,
 ): Promise<MentionData[]> {
   if (scope === "past_message") return [];
+  // Past sessions: list the project's Claude transcripts, filtered by title.
+  // (This category used to be a dead row — locked scope returned nothing.)
+  if (scope === "past_session") {
+    const q = stripCategoryAlias(query, "past_session").trim().toLowerCase();
+    const sessions = await listPastSessions(ctx);
+    return sessions
+      .filter((s) => !q || s.title.toLowerCase().includes(q))
+      .slice(0, 30)
+      .map((s) => ({
+        kind: "past_session" as const,
+        id: s.id,
+        displayName: s.title,
+        sessionId: s.id,
+        sessionTitle: s.title,
+        filePath: s.filePath,
+      }));
+  }
   // Skills take the cheaper path: list the canonical store(s) and
-  // substring-filter JS-side (no Rust `mention_search` change needed). Only
-  // reachable when scope is locked to "skill" — i.e. the `#` trigger or the
-  // Skills category — so the unscoped `@` blend stays unchanged.
+  // substring-filter JS-side (no Rust `mention_search` change needed). They
+  // also join the unscoped `@` blend below, capped so they never crowd files.
   // The `#` rail (scope locked to "skill") invokes skills AND pack-delivered
   // components (command/agent/rule) — both inline their body at send time.
   if (scope === "skill") {
@@ -409,18 +425,37 @@ export async function searchMentions(
     await ensureKnowledgeMentionCache(ctx.projectPath);
   }
   try {
-    const results = await invoke<MentionData[]>("mention_search", {
-      query: stripCategoryAlias(query, scope ?? "file"),
+    const stripped = stripCategoryAlias(query, scope ?? "file");
+    // Unscoped `@`: blend the JS-owned kinds (workspaces, skills) alongside
+    // the Rust-ranked kinds so ONE search reaches everything — files, folders,
+    // notes, repos, branches, papers, symbols, workspaces, skills. The JS
+    // kinds are small lists; they're appended after the Rust results and the
+    // picker groups the flat list into per-kind sections for display.
+    if (scope === null) {
+      const [results, skillMatches] = await Promise.all([
+        invoke<MentionData[]>("mention_search", {
+          query: stripped,
+          scope,
+          projectPath: ctx.projectPath,
+          workspaceId: activeWorkspaceId(),
+        }),
+        searchSkills(stripped, ctx).catch(() => [] as MentionSkill[]),
+      ]);
+      const q = stripped.trim();
+      return [
+        ...results,
+        ...searchWorkspaces(stripped, ctx),
+        // Zero-query overview keeps skills to a taster; a real query shows
+        // every matching skill (still bounded by the store size).
+        ...skillMatches.slice(0, q ? 10 : 3),
+      ];
+    }
+    return await invoke<MentionData[]>("mention_search", {
+      query: stripped,
       scope,
       projectPath: ctx.projectPath,
       workspaceId: activeWorkspaceId(),
     });
-    // Blend JS-owned workspaces into the unscoped `@` results (Rust doesn't
-    // know about them). A few entries, so a simple prepend is fine.
-    if (scope === null) {
-      return [...searchWorkspaces(stripCategoryAlias(query, "file"), ctx), ...results];
-    }
-    return results;
   } catch (e) {
     console.warn("mention_search invoke failed:", e);
     return [];

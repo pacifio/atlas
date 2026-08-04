@@ -81,13 +81,31 @@ export function openFileIndex(projectPath: string): Promise<FileIndexStatus> {
   return reindexInFlight;
 }
 
+// Throttle for the fast path's background revalidation. The Rust side has its
+// own (shorter) throttle; this one just keeps the per-keystroke ensure calls
+// from firing an IPC each time.
+const REVALIDATE_MS = 15_000;
+const lastRevalidated = new Map<string, number>();
+
 /** Make sure the project is indexed; if the backend has no (or a stale) index,
- *  trigger a reindex. Cheap when already confirmed (no IPC). Returns the status
- *  when it had to look, or `null` on the fast path. */
+ *  trigger a reindex. Cheap when already confirmed (no IPC beyond a throttled
+ *  background revalidate). Returns the status when it had to look, or `null`
+ *  on the fast path. */
 export async function ensureFileIndex(
   projectPath: string | null | undefined,
 ): Promise<FileIndexStatus | null> {
-  if (projectPath && confirmedRoots.has(projectPath)) return null; // fast path
+  if (projectPath && confirmedRoots.has(projectPath)) {
+    // Fast path — but don't vouch for the index forever. A resident Rust
+    // index can go stale (missed watcher event, dir created after the watch
+    // plan); `fileindex_open_project` now does a throttled background
+    // rebuild for resident indexes, so poke it occasionally, fire-and-forget.
+    const now = Date.now();
+    if ((lastRevalidated.get(projectPath) ?? 0) + REVALIDATE_MS <= now) {
+      lastRevalidated.set(projectPath, now);
+      void fileIndex.openProject(projectPath).catch(() => {});
+    }
+    return null;
+  }
   if (reindexInFlight) return reindexInFlight;
   const status = await fileIndex.status().catch(() => FAIL_STATUS);
   if (status.indexed && (!projectPath || status.root === projectPath)) {
