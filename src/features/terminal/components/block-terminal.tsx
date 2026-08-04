@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Loader2, CheckCircle2, XCircle, ChevronRight, Folder, Copy, RotateCw, ChevronDown, ChevronUp, Search, X, GitBranch, Lock } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, ChevronRight, Folder, Copy, RotateCw, ChevronDown, ChevronUp, Search, X, GitBranch, Lock, Square, OctagonX } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { openFileOrReveal } from "@/lib/open-file";
@@ -410,9 +410,20 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
     }).catch(() => {});
   }, []);
 
+  // SIGINT — the ⌃C every shell user reaches for. Goes through the PTY, so the
+  // line discipline signals the whole foreground process group (not just the
+  // leader), which is what makes it work on pipelines.
   const interrupt = useCallback(() => {
     const id = ptyRef.current;
     if (id) void invoke("terminal_write", { id, data: [0x03] }).catch(() => {});
+  }, []);
+
+  // SIGQUIT — the escalation for a process that traps or ignores SIGINT.
+  // Default disposition is terminate, and handlers for it are rare, so this is
+  // the strongest signal available without a backend kill path.
+  const forceQuit = useCallback(() => {
+    const id = ptyRef.current;
+    if (id) void invoke("terminal_write", { id, data: [0x1c] }).catch(() => {});
   }, []);
 
   // Forward raw bytes to the PTY — used by the composer to feed nav keys to a
@@ -540,6 +551,7 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
             busy={busy}
             writeRaw={writeRaw}
           />
+          <StopControl busy={busy} onInterrupt={interrupt} onForceQuit={forceQuit} />
           <StatusBadge cwd={cwd} git={git} />
         </div>
       )}
@@ -578,6 +590,91 @@ function BlockPasswordInput({ onSubmit }: { onSubmit: (pw: string) => void }) {
         style={{ fontFamily: 'var(--font-mono, "JetBrains Mono", monospace)' }}
       />
     </div>
+  );
+}
+
+/** How long a SIGINT gets to land before the control offers the bigger hammer.
+ *  A signal that lands closes the block within a frame or two, so anything
+ *  still running after this has demonstrably ignored it. */
+const ESCALATE_MS = 2500;
+
+/**
+ * Explicit stop control for the running foreground process.
+ *
+ * ⌃C already worked, but only while the composer textarea held focus — there
+ * was no way to see that a control existed, let alone use it after clicking
+ * into the output. This surfaces it as a button for as long as something is
+ * running.
+ *
+ * Two stages. "Stop" sends SIGINT. If the command is still running a couple of
+ * seconds later it has ignored that, so the control escalates to "Force quit"
+ * (SIGQUIT) — a signal almost nothing traps. Both go through the PTY, so the
+ * line discipline signals the entire foreground process group rather than just
+ * the leader. The escalation resets when the command exits, so the next long
+ * job starts from "Stop" again.
+ */
+function StopControl({
+  busy,
+  onInterrupt,
+  onForceQuit,
+}: {
+  busy: boolean;
+  onInterrupt: () => void;
+  onForceQuit: () => void;
+}) {
+  const [stopRequested, setStopRequested] = useState(false);
+  const [escalated, setEscalated] = useState(false);
+
+  useEffect(() => {
+    if (!busy) {
+      setStopRequested(false);
+      setEscalated(false);
+      return;
+    }
+    if (!stopRequested || escalated) return;
+    const t = window.setTimeout(() => setEscalated(true), ESCALATE_MS);
+    return () => window.clearTimeout(t);
+  }, [busy, stopRequested, escalated]);
+
+  if (!busy) return null;
+
+  const label = escalated ? "Force quit" : "Stop";
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (escalated) {
+          onForceQuit();
+          return;
+        }
+        setStopRequested(true);
+        onInterrupt();
+      }}
+      title={
+        escalated
+          ? "Force quit the running process — sends SIGQUIT (⌃\\)"
+          : "Stop the running process — sends SIGINT (⌃C)"
+      }
+      aria-label={
+        escalated
+          ? "Force quit the running process"
+          : "Stop the running process"
+      }
+      className={cn(
+        "flex h-5 shrink-0 items-center gap-1 rounded border px-1.5",
+        "text-[10px] font-medium leading-none transition-colors cursor-pointer",
+        escalated
+          ? "border-[var(--status-error)]/50 text-[var(--status-error)] hover:bg-[var(--status-error)]/10"
+          : "border-[var(--border-strong)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
+      )}
+    >
+      {escalated ? (
+        <OctagonX size={10} />
+      ) : (
+        <Square size={8} className="fill-current" />
+      )}
+      {label}
+    </button>
   );
 }
 
