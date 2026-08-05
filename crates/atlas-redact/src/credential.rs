@@ -178,9 +178,13 @@ fn segments(key: &str) -> Vec<String> {
             continue;
         }
         let next_lower = chars.peek().is_some_and(|nc| nc.is_ascii_lowercase());
-        if ch.is_ascii_uppercase() && prev_lower && !current.is_empty() {
-            out.push(std::mem::take(&mut current));
-        } else if ch.is_ascii_uppercase() && prev_upper && next_lower && !current.is_empty() {
+        // Word boundary before an uppercase letter: either a lower→upper
+        // transition ("my|Key"), or the start of a new word at the tail of an
+        // uppercase run ("HTTP|Server").
+        let at_boundary = ch.is_ascii_uppercase()
+            && !current.is_empty()
+            && (prev_lower || (prev_upper && next_lower));
+        if at_boundary {
             out.push(std::mem::take(&mut current));
         }
         prev_upper = ch.is_ascii_uppercase();
