@@ -75,6 +75,7 @@ import {
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { ConnectDialog } from "@/features/auth/components/connect-dialog";
 import { clampScale, SCALE_STEP, DEFAULT_SCALE } from "@/features/settings/lib/ui-scale";
+import { FastTabNavigator } from "./features/fast-navigator/components/FastTabNavigator";
 
 // Interface-zoom helpers (⌘+/⌘-/⌘0). They read + write the persisted
 // `uiScale` setting; `updateSettings` applies it to the native WebView zoom.
@@ -1273,6 +1274,7 @@ export function App() {
       <FilePicker open={filePickerOpen} onOpenChange={setFilePickerOpen} />
       <HintOverlay />
       <NotificationPanel />
+      <FastTabNavigator />
       <FeedbackPanel />
       <UpdateAvailableModal />
       <ConnectDialog />

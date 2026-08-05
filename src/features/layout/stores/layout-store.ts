@@ -28,6 +28,7 @@ export interface WorkspaceView {
   focusedGroupId: string;
   tabHistory: string[];
   tabHistoryIndex: number;
+  tabMru: string[];
 }
 
 interface ZenSnapshot {
@@ -110,6 +111,7 @@ interface LayoutState {
   // navigates to a tab; back() / forward() rewind/advance an index.
   tabHistory: string[];
   tabHistoryIndex: number;
+  tabMru: string[];
 }
 
 interface LayoutActions {
@@ -232,6 +234,7 @@ const initialState: LayoutState = {
   tabBarVisible: true,
   tabHistory: ["welcome-chat"],
   tabHistoryIndex: 0,
+  tabMru: ["welcome-chat"]
 };
 
 const DEFAULT_GROUP = "main";
@@ -262,6 +265,14 @@ function pushTabHistory(s: LayoutState, id: string): void {
   s.tabHistory = s.tabHistory.slice(0, s.tabHistoryIndex + 1);
   s.tabHistory.push(id);
   s.tabHistoryIndex = s.tabHistory.length - 1;
+}
+
+// Ctrl/Cmd+Tab MRU order — separate from tabHistory (which is a linear
+// back/forward stack that doesn't reorder on revisit). This DOES reorder:
+// activating an already-recent tab bumps it back to the front.
+function recordTabMru(s: LayoutState, id: string): void {
+  const withoutId = s.tabMru.filter((t) => t !== id);
+  s.tabMru = [id, ...withoutId];
 }
 
 /** Ensure every tab sits in a live column, every column has a valid active
@@ -310,6 +321,7 @@ function welcomeView(wsId: string): WorkspaceView {
     focusedGroupId: DEFAULT_GROUP,
     tabHistory: [id],
     tabHistoryIndex: 0,
+    tabMru: [id],
   };
 }
 
@@ -323,6 +335,7 @@ function captureView(s: LayoutState): WorkspaceView {
     focusedGroupId: s.focusedGroupId,
     tabHistory: [...s.tabHistory],
     tabHistoryIndex: s.tabHistoryIndex,
+    tabMru: [...s.tabMru],
   };
 }
 
@@ -335,6 +348,7 @@ function applyView(s: LayoutState, v: WorkspaceView): void {
   s.focusedGroupId = v.focusedGroupId;
   s.tabHistory = [...v.tabHistory];
   s.tabHistoryIndex = v.tabHistoryIndex;
+  s.tabMru = [...v.tabMru];
 }
 
 export const useLayoutStore = createSelectors(
@@ -453,6 +467,7 @@ export const useLayoutStore = createSelectors(
             s.focusedGroupId = targetGroup;
             s.activeByGroup[targetGroup] = targetId;
             pushTabHistory(s, targetId);
+            recordTabMru(s, targetId)
             syncActiveMirror(s);
           }),
         closeTab: (id) =>
@@ -467,6 +482,8 @@ export const useLayoutStore = createSelectors(
               .findIndex((t) => t.id === id);
             s.tabs.splice(idx, 1);
 
+            s.tabMru = s.tabMru.filter((t) => t !== id);
+
             const remaining = s.tabs.filter((t) => groupOf(t) === grp);
             if (remaining.length === 0) {
               if (s.groupOrder.length > 1) {
@@ -478,11 +495,13 @@ export const useLayoutStore = createSelectors(
                 // Last column emptied — restore the permanent welcome chat.
                 s.tabs.push(WELCOME_TAB(grp));
                 s.activeByGroup[grp] = "welcome-chat";
+                recordTabMru(s, "welcome-chat");
               }
             } else if (s.activeByGroup[grp] === id) {
               // Activate the neighbour at the same slot within the column.
               const next = remaining[Math.min(groupIdxInGroup, remaining.length - 1)];
               s.activeByGroup[grp] = next.id;
+              recordTabMru(s, next.id);
             }
             syncActiveMirror(s);
           }),
@@ -495,6 +514,7 @@ export const useLayoutStore = createSelectors(
             s.focusedGroupId = grp;
             s.activeByGroup[grp] = target;
             pushTabHistory(s, target);
+            recordTabMru(s, target);
             syncActiveMirror(s);
           }),
         toggleTabBar: () =>
@@ -537,6 +557,7 @@ export const useLayoutStore = createSelectors(
             if (!target) return;
             s.activeByGroup[s.focusedGroupId] = target.id;
             pushTabHistory(s, target.id);
+            recordTabMru(s, target.id);
             syncActiveMirror(s);
           }),
         cycleTab: (delta) =>
@@ -548,6 +569,7 @@ export const useLayoutStore = createSelectors(
             const next = groupTabs[(ci + delta + groupTabs.length) % groupTabs.length];
             s.activeByGroup[s.focusedGroupId] = next.id;
             pushTabHistory(s, next.id);
+            recordTabMru(s, next.id)
             syncActiveMirror(s);
           }),
         setFocusedGroup: (groupId) =>
