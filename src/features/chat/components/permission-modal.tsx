@@ -24,7 +24,7 @@ function isReject(kind: string) {
 // codex-acp emits "No, and tell Codex what to do differently"). Rewrite any
 // OTHER agent's brand to the agent actually bound to this session so the card
 // never names the wrong agent. Ordered longest-first to avoid partial matches.
-const AGENT_BRANDS = ["Claude Code", "Codex", "Claude"];
+const AGENT_BRANDS = ["Claude Code", "Codex", "Claude", "OpenCode", "Cursor"];
 function relabelAgentBrand(label: string, agentType: AgentType): string {
   const display = (AGENT_LABEL as Record<string, string>)[agentType] ?? "the agent";
   let out = label;

@@ -86,6 +86,8 @@
   --agent-amp-chip-bg:    rgba(214, 138, 174, 0.10);
   --agent-codex-chip:     #10a37f;
   --agent-codex-chip-bg:  rgba(16, 163, 127, 0.10);
+  --agent-opencode-chip:    #9ca3af;
+  --agent-opencode-chip-bg: rgba(156, 163, 175, 0.10);
 
   /* === Semantic status === */
   --status-success: #4d4d4d;
@@ -248,6 +250,10 @@
 .agent-cursor { --agent: var(--text-primary); --agent-bg: var(--agent-cursor-chip-bg); --agent-chip: var(--agent-cursor-chip); }
 .agent-amp    { --agent: var(--text-primary); --agent-bg: var(--agent-amp-chip-bg);    --agent-chip: var(--agent-amp-chip); }
 .agent-codex  { --agent: var(--text-primary); --agent-bg: rgba(255, 255, 255, 0.06); --agent-chip: var(--text-primary); }
+.agent-opencode { --agent: var(--text-primary); --agent-bg: rgba(255, 255, 255, 0.06); --agent-chip: var(--text-primary); }
+/* The native agent's mark (AtlasIcon) carries its own brand colors; the chip
+   square stays neutral like claude/codex. */
+.agent-cersei { --agent: var(--text-primary); --agent-bg: rgba(255, 255, 255, 0.06); --agent-chip: var(--text-primary); }
 
 .amark {
   width: 22px; height: 22px;

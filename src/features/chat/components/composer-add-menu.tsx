@@ -302,6 +302,8 @@ export function ComposerAddMenu({
                       <AgentIcons.Claude className="size-3" />
                     ) : a === "codex" ? (
                       <AgentIcons.Codex className="size-3" />
+                    ) : a === "opencode" ? (
+                      <AgentIcons.OpenCode className="size-3" />
                     ) : (
                       <AtlasIcon size={12} className="rounded-[2px]" />
                     )}

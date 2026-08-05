@@ -215,6 +215,12 @@ pub(crate) fn explain_spawn_failure(spec: &AgentSpec, err: AcpError) -> AcpError
         "Node.js (which provides `npx`) was not found. Install Node.js \
          (https://nodejs.org) and relaunch Atlas. If it is installed, make sure \
          it is on your login shell's PATH."
+    } else if program == "opencode" {
+        "the OpenCode CLI was not found. Install it from https://opencode.ai \
+         (then optionally run `opencode auth login`) and relaunch Atlas."
+    } else if program == "cursor-agent" {
+        "the Cursor CLI was not found. Install it from https://cursor.com/cli \
+         and run `cursor-agent login`, then relaunch Atlas."
     } else {
         "the agent's runtime executable was not found on PATH"
     };

@@ -94,12 +94,19 @@ impl AgentSpec {
         }
     }
 
-    /// OpenCode ACP bridge. Same placeholder caveat as `codex()`.
+    /// OpenCode — the `opencode` CLI speaks ACP natively over stdio via its
+    /// `acp` subcommand (verified live against 1.3.15: protocol v1,
+    /// `loadSession`, session `list`/`resume`/`fork`, image prompts, and a
+    /// `models` blob + `build`/`plan` modes on `session/new`). Auth is the
+    /// user's own `opencode auth login`; unauthenticated installs still work
+    /// with the free OpenCode Zen models. Model selection uses
+    /// `session/set_model` (it does NOT implement `session/set_config_option`)
+    /// — see `AcpBackend::set_session_model`'s fallback.
     pub fn opencode() -> Self {
         Self {
             spec_id: "opencode".into(),
-            display_name: "OpenCode (ACP)".into(),
-            command: "opencode-acp".into(),
+            display_name: "OpenCode".into(),
+            command: "opencode acp".into(),
         }
     }
 
@@ -467,6 +474,29 @@ impl AgentRegistry {
                 ))
                 .block_task()
                 .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// `session/set_model` — the model-selection RPC agents with a `models`
+    /// blob accept (OpenCode, Cursor; the TS SDK calls it
+    /// `unstable_setSessionModel`). The Rust crate has no typed request for it,
+    /// so it goes out as an `UntypedMessage`. Verified live against
+    /// `opencode acp` 1.3.15 and `cursor-agent` 2026.07.23.
+    pub async fn set_session_model(
+        &self,
+        agent_id: AgentId,
+        session_id: SessionId,
+        model_id: String,
+    ) -> Result<()> {
+        let connection = self.connection(agent_id)?;
+        rpc_timeout("session/set_model", TUNING_RPC_SECS, async {
+            let msg = agent_client_protocol::UntypedMessage::new(
+                "session/set_model",
+                serde_json::json!({ "sessionId": session_id, "modelId": model_id }),
+            )?;
+            connection.send_request(msg).block_task().await?;
             Ok(())
         })
         .await

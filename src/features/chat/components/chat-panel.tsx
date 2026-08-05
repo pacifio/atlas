@@ -3,12 +3,17 @@ import { useChatStore } from "../stores/chat-store";
 import { useDetailPanelStore } from "../stores/detail-panel-store";
 import { appendNextStepsDirective } from "../lib/next-steps";
 import { stripInjectedContext } from "../lib/atlas-context";
-import { agents, ensureAgent, CODEX_PLUGIN_ID, CERSEI_PLUGIN_ID, DEFAULT_PLUGIN_ID, codexStatus } from "../lib/agents-api";
+import { agents, ensureAgent, CODEX_PLUGIN_ID, codexStatus } from "../lib/agents-api";
 import { loadCachedAcpModes } from "../lib/acp-modes-cache";
-import { warmAcpModels, otherAcpAgent } from "../lib/warm-acp-models";
+import { warmAcpModels, otherAcpAgents } from "../lib/warm-acp-models";
 import type { ImageAttachment, SessionKey } from "@/types/agents";
 import type { ChatMessage } from "@/types/agent";
-import { hasInFlightToolCalls, isBusyAgentStatus, agentTypeFromPluginId } from "@/types/agent";
+import {
+  hasInFlightToolCalls,
+  isBusyAgentStatus,
+  agentTypeFromPluginId,
+  pluginIdForAgent,
+} from "@/types/agent";
 import {
   composePrompt,
   type MentionData,
@@ -84,6 +89,7 @@ import {
   FlaskConical,
 } from "lucide-react";
 import { AtlasIcon } from "@/components/atlas-icon";
+import { copyText } from "@/lib/clipboard";
 import { PanelSkeleton } from "@/components/panel-skeleton";
 import { logEvent } from "@/features/log/lib/log";
 import { cn } from "@/lib/utils";
@@ -95,7 +101,7 @@ interface ChatPanelProps {
 }
 
 // Once-per-app-session guard for the background Codex pre-warm (below).
-let codexPrewarmStarted = false;
+let acpPrewarmStarted = false;
 
 /** Rebind a session whose agent process died: respawn the plugin (its spawn
  *  cache was reset on disconnect) and RESUME the same session id where the
@@ -107,12 +113,7 @@ async function rebindDisconnectedSession(tabId: string): Promise<boolean> {
   const cs = useChatStore.getState();
   const sess = cs.sessions[tabId];
   if (!sess) return false;
-  const pluginId =
-    sess.agentType === "codex"
-      ? CODEX_PLUGIN_ID
-      : sess.agentType === "cersei"
-        ? CERSEI_PLUGIN_ID
-        : DEFAULT_PLUGIN_ID;
+  const pluginId = pluginIdForAgent(sess.agentType);
   try {
     const agent = await ensureAgent(pluginId);
     const cwd =
@@ -336,12 +337,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // Bind to THIS session's chosen agent (Claude by default, or Codex),
         // not a single global default — so per-tab agents run in parallel.
         const at = useChatStore.getState().sessions[tabId]?.agentType;
-        const pluginId =
-          at === "codex"
-            ? CODEX_PLUGIN_ID
-            : at === "cersei"
-              ? CERSEI_PLUGIN_ID
-              : DEFAULT_PLUGIN_ID;
+        const pluginId = pluginIdForAgent(at);
         const agent = await ensureAgent(pluginId);
         if (cancelled) return;
         const project = useProjectStore.getState().currentProject;
@@ -354,13 +350,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // (e.g. Codex) session under the newly-chosen agent. The deps now watch
         // agentType, so the effect re-runs and binds the right agent.
         const nowAt = useChatStore.getState().sessions[tabId]?.agentType;
-        const nowPlugin =
-          nowAt === "codex"
-            ? CODEX_PLUGIN_ID
-            : nowAt === "cersei"
-              ? CERSEI_PLUGIN_ID
-              : DEFAULT_PLUGIN_ID;
-        if (nowPlugin !== pluginId) return;
+        if (pluginIdForAgent(nowAt) !== pluginId) return;
         // Apply the tab's permission mode BEFORE exposing the binding.
         // `setAcpBinding` is what flushes any queued send, so if we set the
         // mode after it the first turn can race ahead of (e.g.)
@@ -519,16 +509,16 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     session?.acpAvailableModels?.length,
   ]);
 
-  // While a chat is active on one ACP agent, prefetch the OTHER agent's model
-  // list in the background so switching to it is instant (cached). Fire-and-
+  // While a chat is active on one ACP agent, prefetch the other used agents'
+  // model lists in the background so switching is instant (cached). Fire-and-
   // forget, once per app session per agent.
   useEffect(() => {
     const at = session?.agentType;
     if (!at) return;
-    const other = otherAcpAgent(at);
-    if (!other) return;
+    const others = otherAcpAgents(at);
+    if (others.length === 0) return;
     const cwd = useProjectStore.getState().currentProject?.path ?? "/";
-    void warmAcpModels(other, cwd);
+    for (const other of others) void warmAcpModels(other, cwd);
   }, [session?.agentType]);
 
   // Shift+Tab → cycle the agent permission mode. Registered on the window in
@@ -566,25 +556,33 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   // by an effect that didn't re-run. The create-effect above still seeds the
   // fast path for freshly-created sessions.
 
-  // Pre-warm the Codex agent in the background. The ~3-4s a fresh switch to
-  // Codex pays is dominated by spawning `npx @agentclientprotocol/codex-acp` + the
-  // ACP initialize handshake; `ensureAgent` does exactly that (deduped/cached,
-  // no session, no auth), so paying it ahead of time makes the actual switch
-  // fast. Gated on the user having used Codex before (a persisted modes cache
-  // exists) so we never spawn it for people who only use Claude. Runs once per
-  // app session, deferred so it never competes with the primary (Claude) bind.
+  // Pre-warm secondary ACP agents in the background. The ~3-4s a fresh switch
+  // pays is dominated by spawning the adapter (npx / CLI) + the ACP initialize
+  // handshake; `ensureAgent` does exactly that (deduped/cached, no session, no
+  // auth), so paying it ahead of time makes the actual switch fast. Gated per
+  // agent on the user having used it before (a persisted modes cache exists) so
+  // we never spawn agents someone only ever ignores. Runs once per app session,
+  // deferred and staggered so it never competes with the primary (Claude) bind.
   useEffect(() => {
-    if (codexPrewarmStarted) return;
-    if (!loadCachedAcpModes("codex")) return; // never used Codex → skip
-    codexPrewarmStarted = true;
-    const t = setTimeout(() => {
-      void ensureAgent(CODEX_PLUGIN_ID).catch(() => {
-        // Not installed / not ready — the real switch surfaces a proper error;
-        // allow a later retry by clearing the once-flag.
-        codexPrewarmStarted = false;
-      });
-    }, 1500);
-    return () => clearTimeout(t);
+    if (acpPrewarmStarted) return;
+    acpPrewarmStarted = true;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    (["codex", "opencode"] as const).forEach((at, i) => {
+      if (!loadCachedAcpModes(at)) return; // never used → skip
+      timers.push(
+        setTimeout(
+          () => {
+            void ensureAgent(pluginIdForAgent(at)).catch(() => {
+              // Not installed / not ready — the real switch surfaces a proper
+              // error; allow a later retry by clearing the once-flag.
+              acpPrewarmStarted = false;
+            });
+          },
+          1500 + i * 1000,
+        ),
+      );
+    });
+    return () => timers.forEach(clearTimeout);
   }, []);
 
   // Drain the per-tab queue when the agent transitions back to idle OR
@@ -1052,17 +1050,21 @@ const ChatComposer = memo(function ChatComposer({
   // The Claude install/auth gating only applies to Claude sessions. A Codex
   // chat must not be blocked by Claude's status (Codex inherits its own
   // ~/.codex / OPENAI auth); it surfaces its own errors from the spawn path.
-  const isClaude =
-    useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code") ===
-    "claude-code";
+  const agentType = useChatStore(
+    (s) => s.sessions[tabId]?.agentType ?? "claude-code",
+  );
+  const isClaude = agentType === "claude-code";
+  const isCodex = agentType === "codex";
   const phase = useClaudeSetupStore.use.phase();
 
-  // Codex sign-in state (only for Codex sessions). `null` = still probing.
+  // Codex sign-in state (Codex sessions ONLY — probing ~/.codex/auth.json for
+  // any other agent both wastes a call and, worse, blocks that agent's
+  // composer on Codex's auth state). `null` = still probing.
   const [codexAuthed, setCodexAuthed] = useState<boolean | null>(null);
   // Auth-classified turn failure on a Codex session → surface the sign-in
   // pill (the probe state below) instead of a generic error banner.
   useEffect(() => {
-    if (isClaude) return;
+    if (!isCodex) return;
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
       if (detail?.agentType !== "codex") return;
@@ -1072,10 +1074,10 @@ const ChatComposer = memo(function ChatComposer({
     };
     window.addEventListener("atlas:auth-required", handler);
     return () => window.removeEventListener("atlas:auth-required", handler);
-  }, [isClaude, tabId]);
+  }, [isCodex, tabId]);
   const [codexSigningIn, setCodexSigningIn] = useState(false);
   useEffect(() => {
-    if (isClaude) return;
+    if (!isCodex) return;
     let cancelled = false;
     codexStatus()
       .then((a) => !cancelled && setCodexAuthed(a))
@@ -1083,8 +1085,29 @@ const ChatComposer = memo(function ChatComposer({
     return () => {
       cancelled = true;
     };
-  }, [isClaude]);
-  const codexNeedsAuth = !isClaude && codexAuthed === false;
+  }, [isCodex]);
+  const codexNeedsAuth = isCodex && codexAuthed === false;
+
+  // OpenCode auth is terminal-only (`opencode auth login`) and the agent still
+  // works unauthenticated (free OpenCode Zen models), so nothing is probed and
+  // the composer is never blocked. An auth-classified turn failure just shows
+  // an instruction pill until the tab rebinds or the user dismisses it.
+  const [opencodeAuthHint, setOpencodeAuthHint] = useState(false);
+  useEffect(() => {
+    if (agentType !== "opencode") {
+      setOpencodeAuthHint(false);
+      return;
+    }
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
+      if (detail?.agentType !== "opencode") return;
+      const sess = useChatStore.getState().sessions[tabId];
+      if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;
+      setOpencodeAuthHint(true);
+    };
+    window.addEventListener("atlas:auth-required", handler);
+    return () => window.removeEventListener("atlas:auth-required", handler);
+  }, [agentType, tabId]);
   const signInCodex = async () => {
     setCodexSigningIn(true);
     try {
@@ -1107,7 +1130,8 @@ const ChatComposer = memo(function ChatComposer({
 
   const disabled = (isClaude && phase !== "ready") || codexNeedsAuth;
 
-  const setupVisible = (isClaude && phase !== "ready") || codexNeedsAuth;
+  const setupVisible =
+    (isClaude && phase !== "ready") || codexNeedsAuth || opencodeAuthHint;
   // Node install pill (bundled-nvm). Non-blocking — informs only, doesn't
   // disable the composer. Shown for both agents since `npx` powers both.
   const nodePhase = useNodeSetupStore.use.phase();
@@ -1152,6 +1176,20 @@ const ChatComposer = memo(function ChatComposer({
                   {codexSigningIn
                     ? "Opening OpenAI sign-in…"
                     : "Sign in to Codex with ChatGPT"}
+                </button>
+              )}
+              {opencodeAuthHint && (
+                <button
+                  key="opencode-auth-hint"
+                  onClick={() => {
+                    void copyText("opencode auth login");
+                    setOpencodeAuthHint(false);
+                  }}
+                  title="Copies the command; run it in a terminal, then send again."
+                  className="atlas-pill-in inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[11px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                >
+                  <LogIn size={11} />
+                  OpenCode needs auth — copy `opencode auth login`
                 </button>
               )}
               {showJumpToBottom && (

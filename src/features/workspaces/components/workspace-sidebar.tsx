@@ -469,7 +469,12 @@ function ChatRow({
 }) {
   // Cersei (the Atlas native agent) gets its own brand mark — falling through
   // to the Claude icon mislabeled Atlas chats in this panel.
-  const AgentIcon = chat.agentType === "codex" ? AgentIcons.Codex : AgentIcons.Claude;
+  const AgentIcon =
+    chat.agentType === "codex"
+      ? AgentIcons.Codex
+      : chat.agentType === "opencode"
+        ? AgentIcons.OpenCode
+        : AgentIcons.Claude;
   return (
     <div
       data-hint
@@ -688,6 +693,7 @@ export function WorkspaceSidebar() {
         acpSessionId: chat.acpSessionId,
         title: chat.title,
         cwd: chat.projectPath,
+        agentType: chat.agentType,
       });
     },
     [addWorkspace],

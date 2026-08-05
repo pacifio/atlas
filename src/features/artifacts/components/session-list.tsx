@@ -383,6 +383,13 @@ export function AgentGlyph({
     return (
       <AgentIcons.Codex style={dim} className={cn(!mono && "text-[var(--agent-codex-chip)]")} />
     );
+  if (agent.includes("opencode"))
+    return (
+      <AgentIcons.OpenCode
+        style={dim}
+        className={cn(!mono && "text-[var(--agent-opencode-chip)]")}
+      />
+    );
   if (agent.includes("cersei")) return <AtlasIcon size={size} className="rounded-[3px]" />;
   return (
     <span className="font-mono" style={{ fontSize: size * 0.8 }}>

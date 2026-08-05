@@ -181,12 +181,29 @@ impl AgentBackend for AcpBackend {
         session_id: SessionId,
         model_id: String,
     ) -> AcpResult<()> {
-        // Current adapters (claude-agent-acp / codex-acp) expose the model as a
-        // `config_options` entry (id "model") and accept selection via
-        // `session/set_config_option`, not the legacy `session/set_model`.
-        self.0
-            .set_session_config_option(agent_id, session_id, "model", model_id)
+        // Two model-selection dialects exist in the wild. claude-agent-acp /
+        // codex-acp expose the model as a `config_options` entry (id "model")
+        // and take `session/set_config_option`; OpenCode (and Cursor) return a
+        // `models` blob instead and implement only `session/set_model` —
+        // set_config_option is a hard -32601 there (verified live). Config
+        // option goes first (the established adapters answer it instantly);
+        // on failure the set_model fallback runs, and if BOTH fail the
+        // config-option error is reported since that's the primary dialect.
+        match self
+            .0
+            .set_session_config_option(agent_id, session_id.clone(), "model", model_id.clone())
             .await
+        {
+            Ok(()) => Ok(()),
+            Err(config_err) => match self
+                .0
+                .set_session_model(agent_id, session_id, model_id)
+                .await
+            {
+                Ok(()) => Ok(()),
+                Err(_) => Err(config_err),
+            },
+        }
     }
     fn mark_turn_started(&self, agent_id: AgentId, session_id: &SessionId) -> AcpResult<u64> {
         self.0.mark_turn_started(agent_id, session_id)

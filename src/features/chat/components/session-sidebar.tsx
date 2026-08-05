@@ -14,7 +14,12 @@ import { cn } from "@/lib/utils";
 import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { isBusyAgentStatus, agentTypeFromPluginId } from "@/types/agent";
-import { ClaudeIcon, CodexIcon } from "@/components/agent-icons";
+import { ClaudeIcon, CodexIcon, OpenCodeIcon } from "@/components/agent-icons";
+import {
+  AGENT_LABEL,
+  pluginIdForAgent,
+  type SwitchableAgent,
+} from "@/types/agent";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { timeAgo } from "@/lib/time-ago";
 import { useProjectStore } from "@/features/project/stores/project-store";
@@ -31,16 +36,28 @@ import {
   codexDeleteSession,
   type ClaudeSessionMeta,
 } from "../lib/claude-api";
-import {
-  ensureAgent,
-  getAgentSync,
-  CODEX_PLUGIN_ID,
-  CERSEI_PLUGIN_ID,
-  DEFAULT_PLUGIN_ID,
-} from "../lib/agents-api";
+import { ensureAgent, getAgentSync } from "../lib/agents-api";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { useRecentChatsStore } from "@/features/workspaces/stores/recent-chats-store";
 import { resumeSessionFast, ResumeError } from "../lib/resume-session";
+
+/** Short per-row agent tag. "claude" doubles as the legacy default for rows
+ *  with no metadata, so the mapping from AgentType is centralised here instead
+ *  of repeated ternaries that silently mislabel new agents. */
+type SidebarAgent = "claude" | "codex" | "opencode" | "cersei";
+
+function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
+  if (agentType === "codex" || agentType === "opencode" || agentType === "cersei")
+    return agentType;
+  return "claude";
+}
+
+const AGENT_TYPE_BY_SIDEBAR: Record<SidebarAgent, SwitchableAgent> = {
+  claude: "claude-code",
+  codex: "codex",
+  opencode: "opencode",
+  cersei: "cersei",
+};
 
 /** Compact token count: 1234 → "1.2k", 1_200_000 → "1.2M". */
 function formatTokenCount(n: number): string {
@@ -58,7 +75,7 @@ interface SidebarItem {
   messageCount: number;
   /** Which coding agent ran this session (drives the row icon). Defaults to
    *  "claude" — historical Claude-only sessions + anything without metadata. */
-  agent: "claude" | "codex" | "cersei";
+  agent: SidebarAgent;
   // agent-only
   filePath?: string;
   /** Cumulative tokens processed (native Atlas agent sessions only). */
@@ -385,7 +402,7 @@ export function SessionSidebar({
     // first; a Codex id never collides with a Claude JSONL id.
     const diskById = new Map<
       string,
-      { meta: ClaudeSessionMeta; agent: "claude" | "codex" | "cersei" }
+      { meta: ClaudeSessionMeta; agent: SidebarAgent }
     >();
     for (const d of agentList) diskById.set(d.id, { meta: d, agent: "claude" });
     for (const d of codexList) diskById.set(d.id, { meta: d, agent: "codex" });
@@ -420,12 +437,7 @@ export function SessionSidebar({
     const TWIN_WINDOW_MS = 10 * 60 * 1000;
     for (const [id, live] of Array.from(liveById)) {
       if (!id.startsWith("live-")) continue;
-      const liveAgent =
-        live.agentType === "codex"
-          ? "codex"
-          : live.agentType === "cersei"
-            ? "cersei"
-            : "claude";
+      const liveAgent = sidebarAgentOf(live.agentType);
       const first = normFirstUser(live.firstUserContent ?? "");
       if (!first) continue;
       const diskTs = diskPreviews.get(`${liveAgent}|${first}`);
@@ -490,13 +502,7 @@ export function SessionSidebar({
         // Agent identity: prefer the live session's, else the agent that
         // produced the disk row (Claude JSONL vs Codex rollout). Drives the
         // row icon AND which agent process handleOpenAgent resumes through.
-        agent: live
-          ? live.agentType === "codex"
-            ? "codex"
-            : live.agentType === "cersei"
-              ? "cersei"
-              : "claude"
-          : (diskEntry?.agent ?? "claude"),
+        agent: live ? sidebarAgentOf(live.agentType) : (diskEntry?.agent ?? "claude"),
         filePath: disk?.file_path,
         totalTokens: disk?.total_tokens,
       };
@@ -618,24 +624,15 @@ export function SessionSidebar({
     // Pick the agent that actually ran this session. This was hardcoded to the
     // default (Claude), so clicking a Codex row tried to resume it through the
     // Claude process → `loadSession` failed → it fell back to a blank session.
-    const pluginId =
-      item.agent === "codex"
-        ? CODEX_PLUGIN_ID
-        : item.agent === "cersei"
-          ? CERSEI_PLUGIN_ID
-          : DEFAULT_PLUGIN_ID;
+    const resumedAgentTypeMapped = AGENT_TYPE_BY_SIDEBAR[item.agent];
+    const pluginId = pluginIdForAgent(resumedAgentTypeMapped);
     // The composer's agent label must follow the RESUMED session's real agent,
     // not whatever was selected in this tab. Without this, opening (say) an
     // Atlas/Codex session into a Claude-Code tab left the composer on Claude;
     // the user then "switched" agents, which (correctly) spawns a NEW chat —
     // so resuming forced an annoying detour. `item.agent` is already narrowed
     // to a shipped agent, so map it straight to the composer's SwitchableAgent.
-    const resumedAgentType =
-      item.agent === "codex"
-        ? "codex"
-        : item.agent === "cersei"
-          ? "cersei"
-          : "claude-code";
+    const resumedAgentType = resumedAgentTypeMapped;
 
     // Decide target tab. If the current tab's session is mid-flight
     // (running OR waiting on the user), we MUST NOT overwrite it — the agent is
@@ -955,11 +952,7 @@ export function SessionSidebar({
                   title={
                     item.kind !== "agent"
                       ? "AI Chat"
-                      : item.agent === "codex"
-                        ? "Codex"
-                        : item.agent === "cersei"
-                          ? "Atlas"
-                          : "Claude Code"
+                      : AGENT_LABEL[AGENT_TYPE_BY_SIDEBAR[item.agent]]
                   }
                 >
                   {isRunning ? (
@@ -967,6 +960,8 @@ export function SessionSidebar({
                   ) : item.kind === "agent" ? (
                     item.agent === "codex" ? (
                       <CodexIcon className="size-3" />
+                    ) : item.agent === "opencode" ? (
+                      <OpenCodeIcon className="size-3" />
                     ) : item.agent === "cersei" ? (
                       <AtlasIcon size={12} />
                     ) : (

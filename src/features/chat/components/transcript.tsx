@@ -103,7 +103,9 @@ const BOTTOM_GAP = 28;
 const STICKY_SETTLE_MS = 4000;
 
 function switchable(agentType: string | undefined): SwitchableAgent {
-  return agentType === "codex" || agentType === "cersei" ? agentType : "claude-code";
+  return agentType === "codex" || agentType === "opencode" || agentType === "cersei"
+    ? agentType
+    : "claude-code";
 }
 
 /** Resolved ONCE per thread and handed to every row as a stable element — a
@@ -111,6 +113,7 @@ function switchable(agentType: string | undefined): SwitchableAgent {
  *  pure per-row cost in the scroll path. */
 const AGENT_ICON: Record<SwitchableAgent, React.ReactNode> = {
   codex: <AgentIcons.Codex className="size-3.5 text-[var(--text-secondary)]" />,
+  opencode: <AgentIcons.OpenCode className="size-3.5 text-[var(--text-secondary)]" />,
   cersei: <AtlasIcon size={14} />,
   "claude-code": <AgentIcons.Claude className="size-3.5 text-[var(--text-secondary)]" />,
 };

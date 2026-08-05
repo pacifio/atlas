@@ -1,22 +1,49 @@
 import type { SessionModeInfo } from "./agents";
 
-export type AgentType = "claude-code" | "codex" | "cersei" | "custom";
+export type AgentType = "claude-code" | "codex" | "opencode" | "cersei" | "custom";
 
 /** Switchable (Atlas-shipped) agents — excludes the catch-all "custom". */
-export type SwitchableAgent = "claude-code" | "codex" | "cersei";
+export type SwitchableAgent = "claude-code" | "codex" | "opencode" | "cersei";
 
 /** The coding agents Atlas ships, in switch order (for option+/). */
-export const SWITCHABLE_AGENTS: SwitchableAgent[] = ["claude-code", "codex", "cersei"];
+export const SWITCHABLE_AGENTS: SwitchableAgent[] = [
+  "claude-code",
+  "codex",
+  "opencode",
+  "cersei",
+];
 
 export const AGENT_LABEL: Record<SwitchableAgent, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
+  opencode: "OpenCode",
   cersei: "Atlas",
 };
+
+/** The Rust-side spawnable plugin id for each switchable agent (see
+ *  `AgentSpec::all_known()` in crates/atlas-acp). Single source of truth —
+ *  every agentType→pluginId decision goes through `pluginIdForAgent`. */
+export const PLUGIN_ID_BY_AGENT: Record<SwitchableAgent, string> = {
+  "claude-code": "claude-code-ts",
+  codex: "codex",
+  opencode: "opencode",
+  cersei: "cersei",
+};
+
+export function pluginIdForAgent(agentType: AgentType | undefined): string {
+  if (agentType && agentType !== "custom") return PLUGIN_ID_BY_AGENT[agentType];
+  return PLUGIN_ID_BY_AGENT["claude-code"];
+}
+
+/** ACP-transport agents (out-of-process adapters) — the ones with modes/models
+ *  advertised over ACP and warmable caches. Excludes the native in-process
+ *  agent. */
+export const ACP_AGENTS: SwitchableAgent[] = ["claude-code", "codex", "opencode"];
 
 /** Derive the display agent type from a spawnable plugin id. */
 export function agentTypeFromPluginId(pluginId: string): AgentType {
   if (pluginId === "codex") return "codex";
+  if (pluginId === "opencode") return "opencode";
   if (pluginId === "cersei") return "cersei";
   if (pluginId.startsWith("claude")) return "claude-code";
   return "custom";

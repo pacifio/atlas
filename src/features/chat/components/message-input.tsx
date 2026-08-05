@@ -287,6 +287,15 @@ function CerseiUsagePill({ tabId }: { tabId: string }) {
  * Self-contained: own narrow store selectors + click-outside, so it doesn't
  * widen MessageInput's render surface.
  */
+/** Mode names arrive verbatim from the agent — OpenCode sends lowercase ids as
+ *  names ("build", "plan"). Title-case a single all-lowercase word for display;
+ *  multi-word or already-cased names (Claude's "Accept Edits") pass through. */
+function displayModeName(name: string): string {
+  return /^[a-z][a-z0-9-]*$/.test(name)
+    ? name.charAt(0).toUpperCase() + name.slice(1)
+    : name;
+}
+
 function AcpModePicker({ tabId }: { tabId: string }) {
   const currentMode = useChatStore((s) => s.sessions[tabId]?.acpCurrentMode);
   const availableModes = useChatStore((s) => s.sessions[tabId]?.acpAvailableModes);
@@ -337,7 +346,7 @@ function AcpModePicker({ tabId }: { tabId: string }) {
           className="w-1.5 h-1.5 rounded-full shrink-0"
           style={{ background: acpModeColor(currentMode) }}
         />
-        {current?.name ?? "Mode"}
+        {current ? displayModeName(current.name) : "Mode"}
       </button>
       {open && (
         <div className="absolute bottom-full left-0 mb-1.5 z-50 min-w-[200px] max-w-[280px] rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] p-1 shadow-lg">
@@ -363,7 +372,7 @@ function AcpModePicker({ tabId }: { tabId: string }) {
                 />
                 <span className="flex-1 min-w-0">
                   <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
-                    {m.name}
+                    {displayModeName(m.name)}
                     {active && (
                       <Check size={11} className="text-[var(--accent-primary)]" />
                     )}
@@ -595,7 +604,9 @@ export function MessageInput({
   // `agentType` widened to a SwitchableAgent (drops "custom") for the composer
   // sub-components (skill/session scope, agent switcher) + the label lookup.
   const switchableAgent: SwitchableAgent =
-    agentType === "codex" ? "codex" : agentType === "cersei" ? "cersei" : "claude-code";
+    agentType === "codex" || agentType === "opencode" || agentType === "cersei"
+      ? agentType
+      : "claude-code";
   // Native Cersei agent only: BYOK provider + model selection for the composer.
   const cerseiProvider = useChatStore((s) => s.sessions[tabId]?.cerseiProvider ?? "");
   const cerseiModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel ?? "");
@@ -656,7 +667,12 @@ export function MessageInput({
   // slash commands; its trigger is suppressed at the wiring site below.
   const availableCommands = useChatStore((s) => s.sessions[tabId]?.availableCommands);
   const agentSlashCommands = useMemo<SlashCommand[] | undefined>(() => {
-    if (agentType !== "codex" && agentType !== "claude-code") return undefined;
+    if (
+      agentType !== "codex" &&
+      agentType !== "claude-code" &&
+      agentType !== "opencode"
+    )
+      return undefined;
     const fromAgent: SlashCommand[] = (availableCommands ?? [])
       .map((c) => {
         const o = (c ?? {}) as {
@@ -678,6 +694,9 @@ export function MessageInput({
     // Claude: until the ACP list arrives, `undefined` selects the picker's
     // curated fallback (which carries its own `/login`).
     if (agentType === "claude-code" && fromAgent.length === 0) return undefined;
+    // OpenCode auth is terminal-only (`opencode auth login`) — no host dialog,
+    // so no synthetic `/login`; the composer's auth pill covers it.
+    if (agentType === "opencode") return fromAgent;
     // `/login` is Atlas-handled, not advertised by either adapter: it opens
     // the host sign-in dialog for the bound agent.
     const login: SlashCommand =
@@ -1616,9 +1635,11 @@ export function MessageInput({
           footerLabel={
             agentType === "codex"
               ? "Codex commands"
-              : agentType === "claude-code" && agentSlashCommands
-                ? "Claude Code commands"
-                : undefined
+              : agentType === "opencode"
+                ? "OpenCode commands"
+                : agentType === "claude-code" && agentSlashCommands
+                  ? "Claude Code commands"
+                  : undefined
           }
         />
       )}

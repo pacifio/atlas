@@ -132,9 +132,12 @@ export const listenAgents = (
 // first prompt doesn't pay npx/node cold-start (10–30s); a chat bound to a
 // different agent (e.g. Codex) spawns that agent the first time it's used.
 
-/** The coding agents Atlas ships. claude is the default for new chats. */
+/** The coding agents Atlas ships. claude is the default for new chats.
+ *  Kept in sync with `PLUGIN_ID_BY_AGENT` in `src/types/agent.ts` — prefer
+ *  `pluginIdForAgent(agentType)` over these constants for routing. */
 export const DEFAULT_PLUGIN_ID = "claude-code-ts";
 export const CODEX_PLUGIN_ID = "codex";
+export const OPENCODE_PLUGIN_ID = "opencode";
 /** Atlas's native in-process agent (atlas-cersei). */
 export const CERSEI_PLUGIN_ID = "cersei";
 

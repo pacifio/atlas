@@ -4,12 +4,8 @@ import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
-import {
-  agents,
-  ensureDefaultAgent,
-  getDefaultAgentSync,
-  DEFAULT_PLUGIN_ID,
-} from "./agents-api";
+import { agents, ensureAgent, getAgentSync } from "./agents-api";
+import { pluginIdForAgent, type AgentType } from "@/types/agent";
 import { invalidateLoad } from "./load-tokens";
 import { resumeSessionFast } from "./resume-session";
 
@@ -45,6 +41,10 @@ interface OpenOpts {
   title: string;
   /** Project root for `loadSession`. */
   cwd: string;
+  /** The agent that ran this session. Resuming through the wrong plugin makes
+   *  `loadSession` fail and silently fall back to a blank session — the same
+   *  bug the sidebar fixed. Defaults to Claude for legacy callers. */
+  agentType?: AgentType;
 }
 
 function freshTabId(): string {
@@ -58,7 +58,12 @@ function freshTabId(): string {
  * load flow (focus-if-open, reuse-idle-tab-else-new) so it can be invoked from
  * anywhere (e.g. the workspace switcher's Chats section).
  */
-export async function openAgentSession({ acpSessionId, title, cwd }: OpenOpts): Promise<void> {
+export async function openAgentSession({
+  acpSessionId,
+  title,
+  cwd,
+  agentType,
+}: OpenOpts): Promise<void> {
   const chat = useChatStore.getState();
   const layout = useLayoutStore.getState();
   const { addTab, setActiveTab } = layout.actions;
@@ -128,7 +133,13 @@ export async function openAgentSession({ acpSessionId, title, cwd }: OpenOpts): 
   clearSession(targetTabId);
   if (abandoningCurrent) refreshSessionLists();
   setSessionTitle(targetTabId, title.slice(0, 40));
-  const cached = getDefaultAgentSync();
+  // Resume through the session's OWN agent — loading a Codex/OpenCode session
+  // through the Claude plugin fails and falls back to a blank chat.
+  const pluginId = pluginIdForAgent(agentType);
+  if (agentType && agentType !== "custom") {
+    useChatStore.getState().actions.setSessionAgentType(targetTabId, agentType);
+  }
+  const cached = getAgentSync(pluginId);
   if (cached) setAcpBinding(targetTabId, cached.agent_id, acpSessionId, cwd);
   // The binding above is optimistic — gate sends until the backend really has
   // the session (see `ChatSession.resumePending`).
@@ -138,10 +149,10 @@ export async function openAgentSession({ acpSessionId, title, cwd }: OpenOpts): 
     // Two-stage: paint from disk in ~50ms, bind the agent concurrently. See
     // `resumeSessionFast` for why the old single-await chain felt slow.
     const { agent, snapshot } = await resumeSessionFast({
-      pluginId: DEFAULT_PLUGIN_ID,
+      pluginId,
       sessionId: acpSessionId,
       cwd,
-      ensure: ensureDefaultAgent,
+      ensure: () => ensureAgent(pluginId),
       cb: {
         paint: (msgs) => replaceMessages(targetTabId, msgs),
         onPainted: () => setTranscriptLoading(targetTabId, false),

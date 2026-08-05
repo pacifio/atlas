@@ -117,6 +117,7 @@ export function sessionTitle(title: string | null): string | null {
 export function agentLabel(agent: string): string {
   if (agent.includes("claude")) return "Claude Code";
   if (agent.includes("codex")) return "Codex";
+  if (agent.includes("opencode")) return "OpenCode";
   if (agent.includes("cersei")) return "Atlas";
   return agent;
 }
