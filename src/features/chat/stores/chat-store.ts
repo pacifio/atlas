@@ -638,6 +638,10 @@ export const useChatStore = createSelectors(
             // The provider only applies to the native agent; clear it so the
             // composer re-defaults from BYOK keys if cersei is chosen.
             sess.cerseiProvider = undefined;
+            // Slash commands are per-agent (ACP `available_commands_update`);
+            // the old agent's list must not survive the switch or it renders
+            // under the new agent until its own update lands.
+            sess.availableCommands = undefined;
             if (agentType === "claude-code") {
               // Claude has no ACP modes — clear the old agent's so no stale pill.
               sess.acpAvailableModes = [];
@@ -662,6 +666,8 @@ export const useChatStore = createSelectors(
             if (!sess) return;
             if (sess.agentType !== agentType) {
               sess.agentType = agentType;
+              // Per-agent ACP command list — stale across an agent change.
+              sess.availableCommands = undefined;
               sess.claudePermissionMode =
                 agentType === "claude-code"
                   ? (sess.claudePermissionMode ?? "default")
@@ -806,6 +812,9 @@ export const useChatStore = createSelectors(
               session.currentTurnSeq = 0;
               session.livePlan = undefined;
               session.turnScratch = undefined;
+              // Commands belong to the ACP session being dropped; the next
+              // binding re-advertises its own list.
+              session.availableCommands = undefined;
               // The tab no longer points at the session being resumed, so the
               // send gate must drop with it. A resume that gets superseded
               // (New chat / another sidebar click) bails WITHOUT clearing its own

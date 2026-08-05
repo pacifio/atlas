@@ -648,34 +648,53 @@ export function MessageInput({
     if (cerseiBound || cerseiCompress === undefined) setCerseiCompress(tabId, on);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, agentType, cerseiBound]);
-  // ACP-reported slash commands for this session (Codex). Claude keeps its
-  // curated catalogue (the picker's default).
+  // ACP-reported slash commands for this session. Both adapters advertise
+  // their real command list via `available_commands_update` — Codex's arrives
+  // with the binding, Claude's a few seconds after session/new (the SDK
+  // discovers skills/plugins/MCP prompts first), so Claude falls back to the
+  // curated catalogue until the live list lands. The native agent has no
+  // slash commands; its trigger is suppressed at the wiring site below.
   const availableCommands = useChatStore((s) => s.sessions[tabId]?.availableCommands);
   const agentSlashCommands = useMemo<SlashCommand[] | undefined>(() => {
-    if (agentType !== "codex") return undefined;
+    if (agentType !== "codex" && agentType !== "claude-code") return undefined;
     const fromAgent: SlashCommand[] = (availableCommands ?? [])
       .map((c) => {
-        const o = (c ?? {}) as { name?: string; description?: string; input?: unknown };
+        const o = (c ?? {}) as {
+          name?: string;
+          description?: string;
+          input?: { hint?: string } | null;
+        };
         const name = (o.name ?? "").replace(/^\//, "");
+        const hint = typeof o.input?.hint === "string" ? o.input.hint : null;
         return {
           name,
-          signature: o.input != null ? `/${name} <args>` : `/${name}`,
+          signature:
+            o.input != null ? `/${name} <${hint || "args"}>` : `/${name}`,
           description: o.description ?? "",
           handler: "passthrough" as const,
         };
       })
       .filter((c) => c.name && c.name !== "login");
-    // Custom Atlas-handled command (not advertised by codex-acp): opens the
-    // Codex sign-in modal — mirrors Claude's `/login`.
-    return [
-      {
-        name: "login",
-        signature: "/login",
-        description: "Sign in to Codex (ChatGPT or API key).",
-        handler: "codex-login" as const,
-      },
-      ...fromAgent,
-    ];
+    // Claude: until the ACP list arrives, `undefined` selects the picker's
+    // curated fallback (which carries its own `/login`).
+    if (agentType === "claude-code" && fromAgent.length === 0) return undefined;
+    // `/login` is Atlas-handled, not advertised by either adapter: it opens
+    // the host sign-in dialog for the bound agent.
+    const login: SlashCommand =
+      agentType === "codex"
+        ? {
+            name: "login",
+            signature: "/login",
+            description: "Sign in to Codex (ChatGPT or API key).",
+            handler: "codex-login" as const,
+          }
+        : {
+            name: "login",
+            signature: "/login",
+            description: "Sign in to your Anthropic account.",
+            handler: "atlas-login" as const,
+          };
+    return [login, ...fromAgent];
   }, [agentType, availableCommands]);
   const queue = useChatStore((s) => s.queues[tabId] ?? EMPTY_QUEUE);
 
@@ -757,6 +776,11 @@ export function MessageInput({
   // ── Slash-command picker orchestration ────────────────────────────────
   const [slashTrigger, setSlashTrigger] = useState<SlashTrigger | null>(null);
   const [codexLoginOpen, setCodexLoginOpen] = useState(false);
+  // Close a picker left open across an agent switch — the new agent's
+  // catalogue (or lack of one, for cersei) must not inherit the open state.
+  useEffect(() => {
+    if (agentType === "cersei") setSlashTrigger(null);
+  }, [agentType]);
   const slashPickerRef = useRef<SlashCommandPickerHandle>(null);
   const slashTriggerRef = useRef<SlashTrigger | null>(null);
   slashTriggerRef.current = slashTrigger;
@@ -1442,7 +1466,10 @@ export function MessageInput({
               onChange={setValue}
               onSubmit={submit}
               onMentionTrigger={setTrigger}
-              onSlashTrigger={setSlashTrigger}
+              // The native agent has no slash commands — suppressing the
+              // trigger here (rather than showing an empty picker) keeps "/"
+              // as plain text for cersei.
+              onSlashTrigger={agentType === "cersei" ? undefined : setSlashTrigger}
               onPasteImages={handlePasteImages}
               keyInterceptor={keyInterceptor}
               // All agents (incl. the native Atlas/cersei agent) support skills
@@ -1586,7 +1613,13 @@ export function MessageInput({
           onSelect={handleSlashSelect}
           onClose={() => setSlashTrigger(null)}
           commands={agentSlashCommands}
-          footerLabel={agentType === "codex" ? "Codex commands" : undefined}
+          footerLabel={
+            agentType === "codex"
+              ? "Codex commands"
+              : agentType === "claude-code" && agentSlashCommands
+                ? "Claude Code commands"
+                : undefined
+          }
         />
       )}
       <CodexLoginDialog open={codexLoginOpen} onOpenChange={setCodexLoginOpen} />
