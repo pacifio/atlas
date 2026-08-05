@@ -12,10 +12,13 @@ import {
   RefreshCw,
   Loader2,
   Users,
+  ChartPie,
+  Settings,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
+import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { auth } from "@/features/auth/lib/auth-api";
 import { useOrgStore } from "../stores/org-store";
@@ -97,6 +100,13 @@ export function OrgSwitcher() {
     return { ok: true };
   };
 
+  const { addTab } = useLayoutStore.use.actions();
+  /** Open one of the app-level singleton tabs from this row's quick actions.
+   *  Same ids the sidebar's header buttons used, so an already-open tab is
+   *  focused rather than duplicated. */
+  const openTabSingleton = (type: "mission-control" | "settings", title: string) =>
+    addTab({ id: type, type, title, closable: true, dirty: false, data: {} });
+
   const [open, setOpen] = useState(false);
   // True while a manual list-refresh is in flight (spins the refresh icon).
   const [refreshing, setRefreshing] = useState(false);
@@ -172,6 +182,29 @@ export function OrgSwitcher() {
             <ChevronsUpDown size={12} className="text-[var(--text-tertiary)] shrink-0" />
           </button>
         </DropdownMenu.Trigger>
+
+        {/* Quick actions — the org row has spare width to its right, so the two
+         *  app-level destinations that aren't workspace-scoped (Console,
+         *  Settings) live here as icons instead of eating two full rows in the
+         *  header list below. */}
+        <div className="ml-auto flex items-center gap-0.5 shrink-0">
+          <button
+            onClick={() => openTabSingleton("mission-control", "Console")}
+            title="Console"
+            aria-label="Console"
+            className="flex items-center justify-center h-[22px] w-[22px] rounded-full border border-[var(--border-default)] text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors cursor-pointer"
+          >
+            <ChartPie size={13} />
+          </button>
+          <button
+            onClick={() => openTabSingleton("settings", "Settings")}
+            title="Settings"
+            aria-label="Settings"
+            className="flex items-center justify-center h-[22px] w-[22px] rounded-full border border-[var(--border-default)] text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors cursor-pointer"
+          >
+            <Settings size={13} />
+          </button>
+        </div>
 
         <DropdownMenu.Portal>
           <DropdownMenu.Content

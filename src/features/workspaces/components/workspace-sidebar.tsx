@@ -9,7 +9,6 @@ import {
   FolderOpen,
   X,
   ScrollText,
-  Settings,
   Zap,
   Pin,
   PinOff,
@@ -175,7 +174,7 @@ const WorkspaceRow = memo(function WorkspaceRow({
             else pin(ws.id);
           }}
           className={cn(
-            "p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] transition-opacity",
+            "p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] transition-opacity cursor-pointer",
             ws.pinned ? "opacity-100" : "opacity-0 group-hover:opacity-100",
           )}
           title={ws.pinned ? "Unpin" : "Pin"}
@@ -186,7 +185,7 @@ const WorkspaceRow = memo(function WorkspaceRow({
           <DropdownMenu.Trigger asChild>
             <button
               onClick={(e) => e.stopPropagation()}
-              className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity outline-none"
+              className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity outline-none cursor-pointer"
               title="More"
             >
               <MoreHorizontal size={12} />
@@ -345,7 +344,7 @@ function GroupHeaderRow({
             e.stopPropagation();
             beginRenameGroup(group.id);
           }}
-          className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover/h:opacity-100 transition-opacity"
+          className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover/h:opacity-100 transition-opacity cursor-pointer"
           title="Rename group"
         >
           <Pencil size={10} />
@@ -358,7 +357,7 @@ function GroupHeaderRow({
           else pinGroup(group.id);
         }}
         className={cn(
-          "p-0.5 rounded hover:bg-[var(--bg-elevated)] transition-opacity",
+          "p-0.5 rounded hover:bg-[var(--bg-elevated)] transition-opacity cursor-pointer",
           group.pinned
             ? "opacity-100 text-[var(--accent-primary)]"
             : "opacity-0 group-hover/h:opacity-100 text-[var(--text-tertiary)]",
@@ -372,7 +371,7 @@ function GroupHeaderRow({
           e.stopPropagation();
           removeGroup(group.id);
         }}
-        className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover/h:opacity-100 transition-opacity"
+        className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover/h:opacity-100 transition-opacity cursor-pointer"
         title="Delete group"
       >
         <X size={10} />
@@ -415,7 +414,7 @@ function SectionHeaderRow({
             action.onClick();
           }}
           title={action.title}
-          className="ml-auto p-0.5 rounded text-[var(--text-tertiary)] opacity-0 group-hover/s:opacity-100 hover:bg-[var(--bg-elevated)] hover:text-[var(--status-error,#f44)] transition-opacity outline-none"
+          className="ml-auto p-0.5 rounded text-[var(--text-tertiary)] opacity-0 group-hover/s:opacity-100 hover:bg-[var(--bg-elevated)] hover:text-[var(--status-error,#f44)] transition-opacity outline-none cursor-pointer"
         >
           {action.icon}
         </button>
@@ -732,7 +731,7 @@ export function WorkspaceSidebar() {
         <button
           onClick={toggleSidebarPinned}
           className={cn(
-            "p-1 rounded-full outline-none transition-colors hover:bg-[var(--bg-hover)]",
+            "p-1 rounded-full outline-none transition-colors hover:bg-[var(--bg-hover)] cursor-pointer",
             sidebarPinned
               ? "text-[var(--accent-primary)]"
               : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]",
@@ -745,7 +744,7 @@ export function WorkspaceSidebar() {
         </button>
         <button
           onClick={toggleAll}
-          className="p-1 rounded-full text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)] outline-none"
+          className="p-1 rounded-full text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)] outline-none cursor-pointer"
           title={allCollapsed ? "Expand all" : "Collapse all"}
         >
           {allCollapsed ? <ChevronsUpDown size={13} /> : <ChevronsDownUp size={13} />}
@@ -763,13 +762,9 @@ export function WorkspaceSidebar() {
        *  answerable without opening anything. */}
       <CaptureControl />
 
-      {/* Header actions. */}
+      {/* Header actions. Console and Settings moved up into the org row as
+       *  icon buttons; what stays here is the workspace-scoped set. */}
       <div className="px-1.5 pb-1 shrink-0 space-y-0.5">
-        <HeaderButton
-          icon={<AtlasIcon size={14} className="rounded-[3px]" />}
-          label="Console"
-          onClick={() => openTabSingleton("mission-control", "Console")}
-        />
         <HeaderButton
           icon={<ScrollText size={13} />}
           label="See Logs"
@@ -780,12 +775,10 @@ export function WorkspaceSidebar() {
           label="Skills"
           onClick={() => openSettingsSection("skills")}
         />
-        <HeaderButton
-          icon={<Settings size={13} />}
-          label="Settings"
-          onClick={() => openTabSingleton("settings", "Settings")}
-        />
       </div>
+
+      {/* Separates the fixed header actions from the scrolling project list. */}
+      <div className="mx-1.5 mb-1 shrink-0 border-t border-[var(--border-default)]" />
 
       {/* Virtualized list. */}
       <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto hide-scrollbar px-1.5 pb-2">
@@ -877,7 +870,7 @@ function HeaderButton({
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
+      className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
     >
       <span className="text-[var(--text-tertiary)]">{icon}</span>
       {label}
