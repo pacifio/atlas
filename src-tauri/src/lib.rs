@@ -322,6 +322,7 @@ pub fn run() {
             commands::terminal::terminal_zsh_dir,
             commands::terminal::terminal_write,
             commands::terminal::terminal_resize,
+            commands::terminal::terminal_kill_foreground,
             commands::terminal::terminal_close,
             commands::terminal::terminal_ack,
             commands::terminal::terminal_resolve_path,
