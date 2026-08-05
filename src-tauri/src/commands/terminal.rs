@@ -160,6 +160,15 @@ pub async fn terminal_resize(
 }
 
 #[tauri::command]
+pub async fn terminal_kill_foreground(
+    state: State<'_, TerminalState>,
+    id: String,
+) -> Result<bool, String> {
+    let manager = state.manager.lock().await;
+    manager.kill_foreground(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn terminal_close(
     state: State<'_, TerminalState>,
     id: String,

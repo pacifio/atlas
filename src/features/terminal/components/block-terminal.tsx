@@ -29,6 +29,7 @@ import { createTerminalKeymap } from "../lib/terminal-keymap";
 import { createPathLinkProvider } from "../lib/path-link-provider";
 import { BlockStreamParser, type TerminalBlock } from "../lib/block-parser";
 import { CommandInput, type CommandInputHandle } from "./command-input";
+import { TerminalStopControl } from "./terminal-stop-control";
 import { useTerminalStore } from "../stores/terminal-store";
 
 /** Compact git status for the input-area badge. */
@@ -486,6 +487,21 @@ export function BlockTerminal({
     if (id) void invoke("terminal_write", { id, data: [0x03] }).catch(() => {});
   }, []);
 
+  const forceStop = useCallback(async () => {
+    const id = ptyRef.current;
+    if (!id) return false;
+    return invoke<boolean>("terminal_kill_foreground", { id });
+  }, []);
+
+  const restoreBlockSurface = useCallback(() => {
+    if (!parserRef.current?.altScreen) return;
+    // A SIGKILL gives the app no chance to emit its alternate-screen leave
+    // sequence. Apply it locally so the shell prompt is visible again.
+    const leaveAltScreen = "\x1b[?1049l";
+    xtermRef.current?.write(leaveAltScreen);
+    parserRef.current.push(leaveAltScreen);
+  }, []);
+
   // Forward raw bytes to the PTY — used by the composer to feed nav keys to a
   // running interactive prompt (arrows / Tab / Esc).
   const writeRaw = useCallback((data: number[]) => {
@@ -558,7 +574,9 @@ export function BlockTerminal({
       {/* Interactive surface — overlays the block list while an alt-screen app runs. */}
       <div
         ref={xtermHostRef}
-        className="absolute inset-0 z-10 bg-[#000] px-1 py-1"
+        // Keep Atlas's footer outside the app-controlled terminal viewport so
+        // the stop control never covers top/htop clocks, menus, or editor UI.
+        className="absolute inset-x-0 top-0 bottom-[29px] z-10 bg-[#000] px-1 py-1"
         style={{
           visibility: altScreen ? "visible" : "hidden",
           pointerEvents: altScreen ? "auto" : "none",
@@ -628,22 +646,26 @@ export function BlockTerminal({
         ))}
       </div>
 
-      {/* Command input (hidden while an interactive app owns the screen).
-          min-h-[28px] + items-center matches the neighbouring panel footers /
-          the terminal pane header so the top borders line up. */}
-      {!altScreen && (
-        <div className="flex min-h-[28px] items-center gap-2 border-t border-[var(--border-default)] bg-[var(--bg-base)] px-3 py-[5px]">
-          {busy ? (
-            <Loader2
-              size={13}
-              className="shrink-0 animate-spin text-[var(--accent-primary)]"
-            />
-          ) : (
-            <ChevronRight
-              size={13}
-              className="shrink-0 text-[var(--accent-primary)]"
-            />
-          )}
+      {/* Atlas-owned footer stays visible below both block and alternate-screen
+          modes. Keeping process controls outside the PTY viewport prevents them
+          from obscuring application content. */}
+      <div className="relative z-20 flex min-h-[29px] items-center gap-2 border-t border-[var(--border-default)] bg-[var(--bg-base)] px-3 py-[5px]">
+        {busy || altScreen ? (
+          <Loader2
+            size={13}
+            className="shrink-0 animate-spin text-[var(--accent-primary)]"
+          />
+        ) : (
+          <ChevronRight
+            size={13}
+            className="shrink-0 text-[var(--accent-primary)]"
+          />
+        )}
+        {altScreen ? (
+          <span className="min-w-0 flex-1 truncate text-[11px] text-[var(--text-tertiary)]">
+            Interactive process
+          </span>
+        ) : (
           <CommandInput
             ref={commandInputRef}
             onSubmit={runCommand}
@@ -652,9 +674,15 @@ export function BlockTerminal({
             busy={busy}
             writeRaw={writeRaw}
           />
-          <StatusBadge cwd={cwd} git={git} />
-        </div>
-      )}
+        )}
+        <TerminalStopControl
+          active={busy || altScreen}
+          onInterrupt={interrupt}
+          onForceStop={forceStop}
+          onForceStopped={restoreBlockSurface}
+        />
+        {!altScreen && <StatusBadge cwd={cwd} git={git} />}
+      </div>
     </div>
   );
 }
