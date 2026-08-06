@@ -107,16 +107,7 @@ function detectTrigger(view: EditorView): SlashTrigger | null {
   };
 }
 
-/** Replace the doc range that holds the `/query` text with empty (used by
- *  the picker when an atlas-local command runs — we don't want the literal
- *  `/login` sitting in the composer afterwards). */
-export function clearSlashRange(
-  view: EditorView,
-  from: number,
-  to: number,
-): void {
-  view.dispatch({
-    changes: { from, to, insert: "" },
-    selection: { anchor: from },
-  });
-}
+// `clearSlashRange` used to live here. It moved to `./cm-clear-range` — it
+// needs no CodeMirror value import, and having the eager `message-input.tsx`
+// import it from THIS module (which does) dragged the whole CodeMirror vendor
+// chunk onto the boot path. See that file's header.

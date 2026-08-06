@@ -49,7 +49,8 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import { logEvent } from "@/features/log/lib/log";
-import { warmMarkdownWorker } from "@/lib/markdown-cache";
+import { warmMarkdownWorker, primeMarkdownRenderer } from "@/lib/markdown-cache";
+import { primeMarkdown } from "@/lib/markdown";
 import { useNotificationsStore } from "@/features/notifications/stores/notifications-store";
 import { NotificationPanel } from "@/features/notifications/components/notification-panel";
 import { FeedbackPanel } from "@/features/feedback/components/feedback-panel";
@@ -296,6 +297,12 @@ export function App() {
               });
           }
           signalReady();
+          // First paint is done — pull in the main-thread markdown renderer
+          // now so the first small chat block still parses synchronously. It
+          // is deliberately NOT a static import (it would land in the eager
+          // entry chunk); see `primeMarkdownRenderer`.
+          primeMarkdownRenderer();
+          primeMarkdown();
         }
       }
     })();

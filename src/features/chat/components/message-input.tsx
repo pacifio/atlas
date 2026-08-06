@@ -66,7 +66,11 @@ import { useProjectStore } from "@/features/project/stores/project-store";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import type { MentionTrigger } from "../lib/cm-mention-extension";
 import type { SlashTrigger } from "../lib/cm-slash-extension";
-import { clearSlashRange } from "../lib/cm-slash-extension";
+// Value import — MUST come from the CodeMirror-free module, not from
+// `cm-slash-extension` (see `cm-clear-range.ts`), or the composer's dynamic
+// `import("./chat-input")` boundary below is defeated and the CodeMirror
+// vendor chunk lands in the eager boot graph.
+import { clearSlashRange } from "../lib/cm-clear-range";
 import type { MentionData } from "../lib/mentions";
 
 // Start the CodeMirror chunk download at module-evaluation time. Vite still

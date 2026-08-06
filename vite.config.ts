@@ -132,7 +132,37 @@ export default defineConfig(async () => ({
       output: {
         manualChunks: (id) => {
           if (!id.includes("node_modules")) return undefined;
-          if (id.includes("@codemirror") || id.includes("@lezer")) {
+          // Never route a STYLESHEET into a vendor JS chunk. `highlight.js/
+          // styles/github-dark.css` matched the markdown rule below, which
+          // made the entry emit a bare `import "./vendor-markdown.js"` purely
+          // to attach that CSS — 554 KB of JS parsed before first paint for a
+          // theme file, even after every real JS edge had been cut.
+          if (id.endsWith(".css")) return undefined;
+          // Tiny shared utils get their OWN chunk, and this rule must come
+          // first. `cn()` (clsx + tailwind-merge) is used all over the eager
+          // boot path AND by react-pdf; left unassigned, Rollup folded clsx
+          // into the `vendor-pdf` manual chunk, so the entry imported a single
+          // 200-byte function from a 482 KB chunk and `index.html` preloaded
+          // all of pdfjs before first paint — silently defeating the lazy
+          // `PdfViewer` boundary in center-panel.tsx.
+          if (
+            id.includes("/node_modules/clsx/") ||
+            id.includes("/node_modules/tailwind-merge/")
+          ) {
+            return "vendor-utils";
+          }
+          // Language grammars are dynamically imported per-language in
+          // editor/lib/languages.ts. Leaving them unassigned lets Rollup give
+          // each its own chunk; folding them into `vendor-codemirror` (as the
+          // old blanket `@codemirror`/`@lezer` match did) collapsed all 13
+          // lazy boundaries into one chunk, so opening a JSON file loaded
+          // every grammar. `@lezer/{common,highlight,lr}` are core runtime,
+          // not grammars, and stay with the editor chunk.
+          if (id.includes("@codemirror/lang-")) return undefined;
+          if (
+            id.includes("@codemirror") ||
+            /@lezer\/(common|highlight|lr)\//.test(id)
+          ) {
             return "vendor-codemirror";
           }
           if (id.includes("@xterm") || id.includes("/xterm/") || id.includes("/xterm-")) {

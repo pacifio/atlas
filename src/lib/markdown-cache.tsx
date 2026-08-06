@@ -13,7 +13,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { isTypingHot } from "./input-activity";
-import { parseMarkdown } from "./markdown-render";
 import MarkdownWorker from "./markdown.worker?worker";
 import "highlight.js/styles/github-dark.css";
 import { cn } from "./utils";
@@ -59,12 +58,60 @@ function cacheSet(src: string, html: string): void {
   }
 }
 
-/** Synchronous parse on the main thread, with caching. Used for small blocks,
- *  cache misses already in hand, and the worker-unavailable fallback. */
-function renderToHtmlSync(src: string): string {
+// ── Main-thread renderer (lazily loaded) ───────────────────────────────────
+//
+// `markdown-render.ts` pulls the whole unified/remark/rehype/highlight.js
+// pipeline — ~554 KB. `App.tsx` imports `warmMarkdownWorker` from this module
+// on the boot path, so a STATIC import here put that entire stack in the eager
+// entry chunk, parsed before React's first paint, as a second copy of what
+// `markdown.worker.ts` already carries. Loading it through `import()` keeps it
+// out of the entry's static graph (Vite only preloads that graph) while
+// `primeMarkdownRenderer()` still gets it resident well before the first chat
+// block renders, so the synchronous small-block path below behaves as before.
+
+type RenderModule = typeof import("./markdown-render");
+
+let renderMod: RenderModule | null = null;
+let renderModPromise: Promise<RenderModule> | null = null;
+
+function ensureRenderer(): Promise<RenderModule> {
+  if (!renderModPromise) {
+    renderModPromise = import("./markdown-render").then((m) => {
+      renderMod = m;
+      return m;
+    });
+  }
+  return renderModPromise;
+}
+
+/** Start loading the main-thread renderer chunk. Safe to call repeatedly. */
+export function primeMarkdownRenderer(): void {
+  void ensureRenderer();
+}
+
+/** Synchronous parse on the main thread, with caching — but only if the
+ *  renderer chunk is already resident. Returns `null` when it isn't, so the
+ *  caller can route the block through the worker instead of blocking on a
+ *  module load. */
+function renderToHtmlSyncIfReady(src: string): string | null {
   const cached = cacheGet(src);
   if (cached !== undefined) return cached;
-  const html = parseMarkdown(src);
+  if (!renderMod) {
+    void ensureRenderer();
+    return null;
+  }
+  const html = renderMod.parseMarkdown(src);
+  cacheSet(src, html);
+  return html;
+}
+
+/** Main-thread parse, loading the renderer chunk first if needed. The
+ *  worker-unavailable fallback path — correctness over latency. */
+async function renderToHtmlAsync(src: string): Promise<string> {
+  const cached = cacheGet(src);
+  if (cached !== undefined) return cached;
+  const m = await ensureRenderer();
+  const html = m.parseMarkdown(src);
   cacheSet(src, html);
   return html;
 }
@@ -103,7 +150,7 @@ function ensureWorker(): Worker | null {
       workerBroken = true;
       const stranded = Array.from(waiters.values());
       waiters.clear();
-      for (const w of stranded) w.finish(renderToHtmlSync(w.source));
+      for (const w of stranded) void renderToHtmlAsync(w.source).then(w.finish);
     };
   } catch {
     workerBroken = true;
@@ -118,6 +165,9 @@ function ensureWorker(): Worker | null {
  *  (or hit the 3s watchdog → main-thread sync fallback). The echoed reply
  *  carries an id no waiter is registered for, so it's harmlessly ignored. */
 export function warmMarkdownWorker(): void {
+  // Same idea for the main-thread renderer: get its chunk resident before the
+  // first small block wants a synchronous parse.
+  void ensureRenderer();
   const w = ensureWorker();
   if (w) {
     try {
@@ -214,7 +264,7 @@ function parseLarge(source: string, priority: number): Promise<string> {
           window.setTimeout(() => {
             if (!settled) {
               workerBroken = true;
-              finish(renderToHtmlSync(source));
+              void renderToHtmlAsync(source).then(finish);
             }
           }, 3000);
           w.postMessage({ id, source });
@@ -238,7 +288,7 @@ function parseLarge(source: string, priority: number): Promise<string> {
           schedule();
           return;
         }
-        resolve(renderToHtmlSync(source));
+        void renderToHtmlAsync(source).then(resolve);
       }
       schedule();
     });
@@ -294,8 +344,10 @@ export function CachedMarkdown({
     const hit = cacheGet(source);
     if (hit !== undefined) return hit;
     // Small blocks parse synchronously (cheap, no flash); large blocks defer
-    // to the worker via the effect below.
-    if (source.length <= SYNC_LIMIT) return renderToHtmlSync(source);
+    // to the worker via the effect below. A small block ALSO defers when the
+    // renderer chunk hasn't loaded yet — the effect routes it to the worker,
+    // which carries its own copy of the pipeline and needs nothing from here.
+    if (source.length <= SYNC_LIMIT) return renderToHtmlSyncIfReady(source);
     return null;
   });
   const ref = useRef<HTMLDivElement>(null);
@@ -307,11 +359,15 @@ export function CachedMarkdown({
       return;
     }
     if (source.length <= SYNC_LIMIT) {
-      const fresh = renderToHtmlSync(source);
-      if (fresh !== html) setHtml(fresh);
-      return;
+      const fresh = renderToHtmlSyncIfReady(source);
+      if (fresh !== null) {
+        if (fresh !== html) setHtml(fresh);
+        return;
+      }
+      // Renderer chunk still loading — fall through to the worker path.
     }
-    // Large block → parse off the main thread, then swap in the HTML.
+    // Large block (or a small one before the renderer lands) → parse off the
+    // main thread, then swap in the HTML.
     let cancelled = false;
     void parseLarge(source, priority).then((result) => {
       if (!cancelled) setHtml(result);
