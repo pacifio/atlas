@@ -56,6 +56,18 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   const [renderMode, setRenderMode] = useState<"editor" | "preview">("editor");
   const resolvedFileType = (buffer?.language ?? path.split(".").pop()?.toLowerCase() ?? "").toLowerCase();
   const isMarkdownFile = resolvedFileType === "markdown";
+  // Preview is a markdown-only concept. Deriving (not just gating the toggle)
+  // matters twice over: a stale "preview" renderMode from a previous markdown
+  // file must not blank the editor for the next file, and the preview pane
+  // must never MOUNT for other file types — react-markdown with rehypeRaw
+  // parses arbitrary source text as HTML, and any literal `<input ref={…}>`
+  // in a .tsx file is a fatal React error (string refs), which is exactly how
+  // opening files used to crash the app.
+  const effectiveMode = isMarkdownFile ? renderMode : "editor";
+  // A tab can be reused for another file; each file starts in the editor.
+  useEffect(() => {
+    setRenderMode("editor");
+  }, [path]);
 
   // Load file content from disk — unless this is an untitled scratch
   // buffer (Cmd+N), in which case we seed an empty buffer in-memory
@@ -471,14 +483,18 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
       >
         <div
           ref={containerRef}
-          style={{display: renderMode === "editor" ? "block" : "none", height: editorHeight, overflow: "hidden" }}
+          style={{display: effectiveMode === "editor" ? "block" : "none", height: editorHeight, overflow: "hidden" }}
         />
-        <div
-          style={{ display: renderMode === "preview" ? "block" : "none", height: editorHeight }}
-          className="overflow-auto bg-bg-primary px-4 py-3"
-        >
-          {buffer && <MarkdownFile trusted={true} className="max-w-none">{buffer.originalContent}</MarkdownFile>}
-        </div>
+        {/* Mounted on demand, not display:none — a hidden mount would still
+            markdown-parse every non-markdown buffer on open (see above). */}
+        {effectiveMode === "preview" && (
+          <div
+            style={{ height: editorHeight }}
+            className="overflow-auto bg-bg-primary px-4 py-3"
+          >
+            {buffer && <MarkdownFile trusted={true} className="max-w-none">{buffer.originalContent}</MarkdownFile>}
+          </div>
+        )}
       </div>
     </div>
   );

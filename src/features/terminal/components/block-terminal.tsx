@@ -681,6 +681,13 @@ export function BlockTerminal({
           onForceStop={forceStop}
           onForceStopped={restoreBlockSurface}
         />
+        {/* Divider between the stop control and the cwd/git badge — same rule
+            the badge draws between its dir and branch segments. Only when both
+            neighbours are visible: stop control needs `busy`, the badge hides
+            in alt-screen and below the 300px container query. */}
+        {busy && !altScreen && (
+          <span className="hidden h-3 w-px shrink-0 bg-[var(--border-default)] @[300px]:block" />
+        )}
         {!altScreen && <StatusBadge cwd={cwd} git={git} />}
       </div>
     </div>

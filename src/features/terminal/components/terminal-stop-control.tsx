@@ -76,7 +76,7 @@ export function TerminalStopControl({
         force
           ? "text-[var(--status-error)] hover:bg-[var(--status-error)]/10"
           : "text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
-        pending && "cursor-wait",
+        pending ? "cursor-wait" : "cursor-pointer",
         className,
       )}
     >

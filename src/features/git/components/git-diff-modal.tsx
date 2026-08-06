@@ -90,6 +90,9 @@ export function GitDiffModal({
               only={files}
               textSources={textSources}
               onSelectFile={setActive}
+              // The editor tab opens BEHIND this full-screen modal — close it
+              // so the jump actually lands where the user is looking.
+              onOpenInEditor={() => onOpenChange(false)}
             />
           </div>
         </Dialog.Content>

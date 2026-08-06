@@ -101,6 +101,9 @@ interface GitDiffPanelProps {
   /** Handle tree clicks instead of opening the Git Diff module tab — see
    *  `ChangedFilesTree.onSelect`. */
   onSelectFile?: (path: string) => void;
+  /** Fired after "Open in editor" — a modal host closes itself here, or the
+   *  editor tab lands invisibly behind it. */
+  onOpenInEditor?: () => void;
 }
 
 function sideBg(side: DiffSide | null, isLeft: boolean): string | undefined {
@@ -311,6 +314,7 @@ export function GitDiffPanel({
   only,
   textSources,
   onSelectFile,
+  onOpenInEditor,
 }: GitDiffPanelProps) {
   const storeRepo = useGitStore.use.repoPath();
   const repoPath = repoPathProp || storeRepo || "";
@@ -536,7 +540,10 @@ export function GitDiffPanel({
             <RefreshCw size={11} />
           </button>
           <button
-            onClick={() => void openFile(`${repoPath}/${file}`)}
+            onClick={() => {
+              void openFile(`${repoPath}/${file}`);
+              onOpenInEditor?.();
+            }}
             className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
             title="Open in editor"
           >
