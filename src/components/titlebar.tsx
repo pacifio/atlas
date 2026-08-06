@@ -4,6 +4,7 @@ import { useProjectStore } from "@/features/project/stores/project-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { useNotificationsStore } from "@/features/notifications/stores/notifications-store";
+import { useChatStore } from "@/features/chat/stores/chat-store";
 import { PanelLeft, PanelRight, Bell, Layers, ArrowDownToLine, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
@@ -392,6 +393,13 @@ function NotificationButton() {
       (i) => !i.read && (i.kind === "agent-failed" || i.kind === "chat-error"),
     ),
   );
+  // LIVE attention state: any session (any workspace) blocked on a permission
+  // decision. Derived from the chat store rather than unread flags so it shows
+  // even after the panel was opened, and clears itself the moment the prompt
+  // is answered.
+  const needsAttention = useChatStore((s) =>
+    Object.values(s.pendingPermissions).some((reqs) => reqs.length > 0),
+  );
 
   return (
     <button
@@ -400,13 +408,22 @@ function NotificationButton() {
       title="Notifications"
     >
       <Bell size={14} />
-      {hasUnread && (
+      {(hasUnread || needsAttention) && (
         <span
           className={cn(
             "absolute -top-[1px] -right-[1px] w-[7px] h-[7px] rounded-full ring-1 ring-[var(--bg-base)] pointer-events-none",
-            hasError ? "bg-[var(--status-error)]" : "bg-white",
+            // Priority: error > needs-attention (green) > plain unread.
+            hasError
+              ? "bg-[var(--status-error)]"
+              : needsAttention
+                ? "bg-[var(--status-success)] animate-pulse"
+                : "bg-white",
           )}
-          aria-label="Unread notifications"
+          aria-label={
+            needsAttention
+              ? "An agent needs your attention"
+              : "Unread notifications"
+          }
         />
       )}
     </button>

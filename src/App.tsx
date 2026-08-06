@@ -38,6 +38,8 @@ import {
 import { useRecentChatsStore } from "@/features/workspaces/stores/recent-chats-store";
 import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
+import { requestCloseTab } from "@/features/chat/lib/close-tab";
+import { jumpToSession } from "@/features/chat/lib/tab-workspace";
 import { refreshCachedAcpModels } from "@/features/chat/lib/warm-acp-models";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
@@ -139,7 +141,7 @@ export function App() {
   useEffect(() => {
     const unlisten = listen("atlas:close-active-tab", () => {
       const current = useLayoutStore.getState().activeTabId;
-      if (current) useLayoutStore.getState().actions.closeTab(current);
+      if (current) requestCloseTab(current);
     });
     return () => {
       void unlisten.then((off) => off());
@@ -316,7 +318,6 @@ export function App() {
     toggleTabBar,
     addTab,
     setActiveTab,
-    closeTab,
     activateTabByIndex,
     cycleTab,
     addGroup,
@@ -511,7 +512,18 @@ export function App() {
         /* permission unavailable — notifications silently no-op */
       }
     })();
-    const notifyAgentDone = async () => {
+    // Name the SESSION's workspace, not the active project — a finish in
+    // workspace B while A is focused used to read "Atlas — A".
+    const sessionProjectName = (acpSessionId: string): string => {
+      const sess = Object.values(useChatStore.getState().sessions).find(
+        (s) => s.acpSessionId === acpSessionId,
+      );
+      const byPath = useWorkspaceStore
+        .getState()
+        .workspaces.find((w) => w.path === sess?.workingDirectory)?.name;
+      return byPath ?? useProjectStore.getState().currentProject?.name ?? "Atlas";
+    };
+    const notifyAgentDone = async (acpSessionId: string) => {
       if (windowFocused) return;
       try {
         if (permissionState === "unknown") {
@@ -521,10 +533,8 @@ export function App() {
           permissionState = granted ? "granted" : "denied";
         }
         if (permissionState !== "granted") return;
-        const proj = useProjectStore.getState().currentProject;
-        const projectName = proj?.name ?? "Atlas";
         sendNotification({
-          title: `Atlas — ${projectName}`,
+          title: `Atlas — ${sessionProjectName(acpSessionId)}`,
           body: "Agent task finished.",
         });
       } catch (e) {
@@ -536,7 +546,10 @@ export function App() {
     // permission_request and the window isn't focused. Shares the
     // permission state machine and focus tracker above so we never
     // double-prompt for OS notification access.
-    const notifyPermissionRequested = async (toolTitle: string) => {
+    const notifyPermissionRequested = async (
+      toolTitle: string,
+      acpSessionId: string,
+    ) => {
       if (windowFocused) return;
       try {
         if (permissionState === "unknown") {
@@ -546,10 +559,8 @@ export function App() {
           permissionState = granted ? "granted" : "denied";
         }
         if (permissionState !== "granted") return;
-        const proj = useProjectStore.getState().currentProject;
-        const projectName = proj?.name ?? "Atlas";
         sendNotification({
-          title: `Atlas — ${projectName} needs permission`,
+          title: `Atlas — ${sessionProjectName(acpSessionId)} needs permission`,
           body: `Approve "${toolTitle}" to continue.`,
         });
       } catch (e) {
@@ -668,6 +679,40 @@ export function App() {
     };
     const notify = () => useNotificationsStore.getState().actions;
 
+    // In-app toast for events from a session the user ISN'T looking at (another
+    // tab or another workspace) — the OS notification only fires when the whole
+    // window is unfocused, so without this a background workspace's permission
+    // prompt was invisible until the user happened to switch. Click jumps to
+    // the owning workspace + tab.
+    const toastBackgroundSession = (
+      tabId: string | undefined,
+      acpSessionId: string,
+      title: string,
+      body: string,
+      kind: "attention" | "done" | "failed",
+    ) => {
+      if (!tabId) return;
+      if (useLayoutStore.getState().activeTabId === tabId) return;
+      const wsName = (() => {
+        const path = useChatStore.getState().sessions[tabId]?.workingDirectory;
+        if (!path) return null;
+        const ws = useWorkspaceStore.getState();
+        const w = ws.workspaces.find((x) => x.path === path);
+        return w && w.id !== ws.activeWorkspaceId ? w.name : null;
+      })();
+      const fn =
+        kind === "failed" ? toast.error : kind === "done" ? toast.success : toast;
+      fn(wsName ? `${title} — ${wsName}` : title, {
+        id: `bg-session-${kind}-${acpSessionId}`,
+        description: body,
+        duration: kind === "attention" ? 15000 : 5000,
+        action: {
+          label: "Open",
+          onClick: () => void jumpToSession(tabId),
+        },
+      });
+    };
+
     // After a native-agent turn that may have changed files, refresh the
     // project's codebase index (incremental + structural — cheap, no LLM) so
     // `search_memory` and the Memory tab stay current. Debounced per project so
@@ -766,7 +811,7 @@ export function App() {
             (typeof tc?.title === "string" && tc.title) ||
             (typeof tc?.kind === "string" && tc.kind) ||
             "tool call";
-          void notifyPermissionRequested(toolTitle);
+          void notifyPermissionRequested(toolTitle, env.session_id);
           {
             const info = agentSessionInfo(env.session_id);
             notify().add({
@@ -777,6 +822,13 @@ export function App() {
               sessionId: env.session_id,
               tabId: info.tabId,
             });
+            toastBackgroundSession(
+              info.tabId,
+              env.session_id,
+              info.title || "Agent needs permission",
+              `Approve "${toolTitle}" to continue.`,
+              "attention",
+            );
           }
           return;
         }
@@ -830,7 +882,7 @@ export function App() {
           // user-cancelled turns — that's a click the user just made,
           // they don't need to be told about it.
           if (env.stop_reason !== "cancelled") {
-            void notifyAgentDone();
+            void notifyAgentDone(env.session_id);
             const info = agentSessionInfo(env.session_id);
             notify().add({
               kind: "agent-done",
@@ -840,6 +892,13 @@ export function App() {
               sessionId: env.session_id,
               tabId: info.tabId,
             });
+            toastBackgroundSession(
+              info.tabId,
+              env.session_id,
+              info.title || "Agent",
+              "Task finished.",
+              "done",
+            );
           }
           return;
         case "turn_failed": {
@@ -855,6 +914,13 @@ export function App() {
             sessionId: env.session_id,
             tabId: info.tabId,
           });
+          toastBackgroundSession(
+            info.tabId,
+            env.session_id,
+            info.title || "Agent failed",
+            (env as { error?: string }).error || "The agent run failed.",
+            "failed",
+          );
           return;
         }
         default:
@@ -1144,7 +1210,7 @@ export function App() {
       combo: { key: "w", meta: true },
       action: () => {
         const current = useLayoutStore.getState().activeTabId;
-        if (current) closeTab(current);
+        if (current) requestCloseTab(current);
       },
     },
     {

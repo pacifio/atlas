@@ -11,6 +11,7 @@ import { timeAgo } from "@/lib/time-ago";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { ProviderLogo } from "@/components/provider-logo";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { jumpToSession } from "@/features/chat/lib/tab-workspace";
 import {
   useNotificationsStore,
   type AppNotification,
@@ -189,7 +190,10 @@ function NotificationIcon({ n }: { n: AppNotification }) {
 function focusNotification(n: AppNotification) {
   const layout = useLayoutStore.getState();
   if (n.source === "agent" && n.tabId) {
-    layout.actions.setActiveTab(n.tabId);
+    // Workspace-aware: a bare setActiveTab on a tab from ANOTHER workspace
+    // falls back to tabs[0] of the current one — jumpToSession switches to the
+    // owning workspace first.
+    void jumpToSession(n.tabId);
     return;
   }
   if (n.source === "chat" && n.sessionId) {

@@ -27,6 +27,7 @@ import { MessageInput } from "./message-input";
 import { SessionSidebar } from "./session-sidebar";
 import { ChatHeader } from "./chat-header";
 import { openNewAgentChat } from "../lib/open-agent-session";
+import { workspacePathForTab } from "../lib/tab-workspace";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchTextDiff } from "@/features/git/lib/git-diff-api";
 import { getEditParts, getFilePathFromInput } from "../lib/tool-files";
@@ -342,8 +343,15 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         const pluginId = pluginIdForAgent(at);
         const agent = await ensureAgent(pluginId);
         if (cancelled) return;
-        const project = useProjectStore.getState().currentProject;
-        const cwd = project?.path ?? "/";
+        // Resolve cwd from THIS tab's workspace, not the global currentProject:
+        // background workspaces keep their chat panels mounted, so a bind that
+        // fires after a workspace switch (failed-bind retry, agent change)
+        // would otherwise create the session against the WRONG repo — and a
+        // "/" fallback would dodge the running-workspace eviction guard.
+        const cwd =
+          workspacePathForTab(tabId) ??
+          useProjectStore.getState().currentProject?.path ??
+          "/";
         const key = await agents.newSession(agent.agent_id, cwd);
         if (cancelled) return;
         // Guard against an agent switch that landed mid-bind: if the tab's

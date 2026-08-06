@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo, memo, lazy, Suspense, Fragment } from "react";
 import { cn } from "@/lib/utils";
+import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useLayoutStore, type Tab, type WorkspaceView } from "../stores/layout-store";
@@ -257,7 +258,6 @@ const TabColumn = memo(function TabColumn({
   const tabBarVisible = useLayoutStore.use.tabBarVisible();
   const {
     setActiveTab,
-    closeTab,
     addTab,
     navigateTabBack,
     navigateTabForward,
@@ -366,7 +366,7 @@ const TabColumn = memo(function TabColumn({
                   </span>
                   {tab.closable && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                      onClick={(e) => { e.stopPropagation(); requestCloseTab(tab.id); }}
                       title="Close tab"
                       className={cn(
                         "absolute right-1.5 top-1/2 -translate-y-1/2",
