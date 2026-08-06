@@ -5,7 +5,12 @@ import { useChatStore } from "@/features/chat/stores/chat-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { ensureAgent, getAgentSync } from "./agents-api";
-import { isBusyAgentStatus, pluginIdForAgent, type AgentType } from "@/types/agent";
+import {
+  isBusyAgentStatus,
+  pluginIdForAgent,
+  type AgentType,
+  type SwitchableAgent,
+} from "@/types/agent";
 import { invalidateLoad } from "./load-tokens";
 import { resumeSessionFast } from "./resume-session";
 
@@ -189,12 +194,16 @@ export async function openAgentSession({
  * "new chat" must never stop or orphan a live turn. We open a fresh tab beside
  * it instead (multiple chat tabs already coexist — `openAgentSession` spawns one
  * whenever the active chat is running). Only an IDLE chat is reset in place.
+ *
+ * `agent` binds the fresh session to a specific agent — the busy branch of the
+ * ⌥/ cycle and the composer's agent switcher route here so switching agents
+ * mid-turn spawns a new chat instead of killing the live one.
  */
-export function openNewAgentChat(): void {
+export function openNewAgentChat(agent?: SwitchableAgent): void {
   const layout = useLayoutStore.getState();
   const chat = useChatStore.getState();
   const { addTab, setActiveTab } = layout.actions;
-  const { clearSession, createSession } = chat.actions;
+  const { clearSession, createSession, switchChatAgent } = chat.actions;
 
   const focus = (id: string) =>
     window.dispatchEvent(new CustomEvent("atlas:chat-focus", { detail: { tabId: id } }));
@@ -214,6 +223,7 @@ export function openNewAgentChat(): void {
     // cleared blank session with the old transcript.
     invalidateLoad(existing.id);
     clearSession(existing.id);
+    if (agent) switchChatAgent(existing.id, agent);
     focus(existing.id);
     // The abandoned conversation persists to disk per-turn, but its live row was
     // the sidebar's only handle on it until a disk refetch. Re-list now so it
@@ -226,5 +236,7 @@ export function openNewAgentChat(): void {
   const id = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   addTab({ id, type: "chat", title: "Agents", closable: true, dirty: false, data: {} });
   createSession(id);
+  if (agent) switchChatAgent(id, agent);
   setActiveTab(id);
+  focus(id);
 }

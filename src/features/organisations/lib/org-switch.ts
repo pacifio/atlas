@@ -11,6 +11,11 @@ import { toast } from "sonner";
 import { auth } from "@/features/auth/lib/auth-api";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useOrgStore } from "../stores/org-store";
+import {
+  busySessions,
+  cancelBusySessions,
+  useStopAgentsConfirmStore,
+} from "@/features/workspaces/lib/stop-agents-confirm";
 
 /** Minimum time the "Loading Organisation…" overlay stays up, so a fast switch
  *  doesn't flash it. */
@@ -38,6 +43,24 @@ export async function switchOrg(id: string): Promise<void> {
   if (!target) return;
 
   switchingOrg = true;
+
+  // Running agents die with the outgoing org's teardown — never silently.
+  // Warn first (before the overlay, so the dialog is readable); "Go back"
+  // aborts the switch entirely. Only the mounted (= outgoing) org's sessions
+  // can be busy, so an unscoped count is the outgoing org's count.
+  const busy = busySessions().length;
+  if (busy > 0) {
+    const ok = await useStopAgentsConfirmStore.getState().actions.ask({
+      count: busy,
+      actionLabel: "Switching organisations",
+      confirmLabel: "Stop agents & switch",
+    });
+    if (!ok) {
+      switchingOrg = false;
+      return;
+    }
+  }
+
   orgActions.setSwitching(true);
   const startedAt = Date.now();
 
@@ -63,7 +86,12 @@ export async function switchOrg(id: string): Promise<void> {
     }
     await flushAppStateSave();
 
-    // 3) Tear down the whole outgoing hot set + clear the active workspace.
+    // 3) Cancel any still-running turns BEFORE dropping their sessions —
+    //    `drop_session` alone never tells the adapter subprocess, which would
+    //    keep editing files headless after the teardown.
+    await cancelBusySessions();
+
+    //    Tear down the whole outgoing hot set + clear the active workspace.
     //    Setting the project to null fires the App-level Rust lifecycle
     //    effects' null-branch (file index / git watch / recent files / mention
     //    cache all close), stopping the old org's watchers.

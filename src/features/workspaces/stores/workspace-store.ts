@@ -19,6 +19,11 @@ import { useChatStore } from "@/features/chat/stores/chat-store";
 import { useTerminalStore } from "@/features/terminal/stores/terminal-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { isWorkspaceRunning } from "../lib/agent-activity";
+import {
+  busySessions,
+  cancelBusySessions,
+  useStopAgentsConfirmStore,
+} from "../lib/stop-agents-confirm";
 import { markFileIndexClosedFor } from "@/features/file-picker/lib/file-picker-api";
 
 /** The active org id, used to tag newly-created workspaces/groups so they
@@ -185,6 +190,13 @@ let pendingSwitchTarget: string | null = null;
  * caller manages those.
  */
 function teardownHot(id: string): void {
+  // For the ACTIVE workspace the layout mirror is the live tab set and
+  // `viewsByWs[id]` may be stale (it's only refreshed on switch-away) — commit
+  // first, or tabs opened since the last switch are missed and their chat
+  // sessions leak as headless backend actors.
+  if (id === useWorkspaceStore.getState().activeWorkspaceId) {
+    useLayoutStore.getState().actions.commitWorkspaceView(id);
+  }
   const view = useLayoutStore.getState().viewsByWs[id];
   const tabIds = view ? view.tabs.map((t) => t.id) : [];
   if (tabIds.length) {
@@ -452,6 +464,23 @@ export const useWorkspaceStore = createSelectors(
 
         const isActive = id === activeWorkspaceId;
         const closingPath = closing.path;
+
+        // Closing kills this workspace's running agents — confirm, then cancel
+        // their turns so the adapters actually stop (drop alone leaves them
+        // editing files headless).
+        const busy = busySessions(closingPath).length;
+        if (busy > 0) {
+          const ok = await useStopAgentsConfirmStore
+            .getState()
+            .actions.ask({
+              count: busy,
+              actionLabel: "Closing this workspace",
+              confirmLabel: "Stop agents & close",
+            });
+          if (!ok) return;
+          await cancelBusySessions(closingPath);
+        }
+
         if (isActive) {
           // Active workspace: the layout mirror is its tabs, so flush is correct.
           await flushAll({ workspaceId: id, path: closingPath });

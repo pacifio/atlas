@@ -396,7 +396,7 @@ async fn run_driver(
             agent_client_protocol::on_receive_notification!(),
         )
         .on_receive_request(
-            async move |request: RequestPermissionRequest, responder, _connection| {
+            async move |request: RequestPermissionRequest, responder, connection| {
                 // Auto-reject permission requests for cancelled
                 // sessions. The agent gets a clean `Cancelled`
                 // outcome (so its turn can wind down per ACP spec)
@@ -445,14 +445,24 @@ async fn run_driver(
                     turn,
                 );
 
-                let outcome = rx.await.unwrap_or_else(|_| {
-                    // Sender dropped (registry kill, app shutdown, cancel_turn) —
-                    // ACP spec: treat as Cancelled.
-                    RequestPermissionOutcome::Cancelled
-                });
-                pending_for_handler.remove(&request_id);
-
-                responder.respond(RequestPermissionResponse::new(outcome))
+                // Await the user's decision OUTSIDE the dispatch loop. `on_*`
+                // handlers block the loop until they return (see the crate's
+                // ordering docs) — awaiting a human here froze every OTHER
+                // session multiplexed on this driver (all projects using this
+                // plugin): their deltas, prompt results, and permission
+                // requests all sat unread until this modal was answered.
+                // Spawning frees the loop immediately; the responder is moved
+                // into the task and answers whenever the user clicks.
+                let pending = pending_for_handler.clone();
+                connection.spawn(async move {
+                    let outcome = rx.await.unwrap_or_else(|_| {
+                        // Sender dropped (registry kill, app shutdown,
+                        // cancel_turn) — ACP spec: treat as Cancelled.
+                        RequestPermissionOutcome::Cancelled
+                    });
+                    pending.remove(&request_id);
+                    responder.respond(RequestPermissionResponse::new(outcome))
+                })
             },
             agent_client_protocol::on_receive_request!(),
         )

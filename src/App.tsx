@@ -13,7 +13,7 @@ import { useChatStore } from "@/features/chat/stores/chat-store";
 import { listenAgents, resetAgentByAgentId } from "@/features/chat/lib/agents-api";
 import type { PendingPermission } from "@/types/acp";
 import type { AgentDelta } from "@/types/agents";
-import { SWITCHABLE_AGENTS } from "@/types/agent";
+import { SWITCHABLE_AGENTS, isBusyAgentStatus } from "@/types/agent";
 import { FilePicker } from "@/features/file-picker/components/file-picker";
 import { HintOverlay } from "@/features/hint-nav/components/hint-overlay";
 import { BrowserOverlayWatcher } from "@/features/browser/components/browser-overlay-watcher";
@@ -53,6 +53,7 @@ import { NotificationPanel } from "@/features/notifications/components/notificat
 import { FeedbackPanel } from "@/features/feedback/components/feedback-panel";
 import { UpdateAvailableModal } from "@/features/updater/components/update-available-modal";
 import { LoadingOrganisationOverlay } from "@/features/organisations/components/loading-organisation-overlay";
+import { StopAgentsDialog } from "@/features/workspaces/components/stop-agents-dialog";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
 import {
@@ -1197,12 +1198,14 @@ export function App() {
           (sess?.agentType ?? "claude-code") as (typeof SWITCHABLE_AGENTS)[number],
         );
         const next = SWITCHABLE_AGENTS[(Math.max(curIdx, 0) + 1) % SWITCHABLE_AGENTS.length];
-        // Empty chat flips agent in place. A started chat always starts a fresh
-        // session in the SAME tab bound to the next agent (singleton model —
-        // never a new tab, even mid-stream; the abandoned turn persists to the
-        // history sidebar).
+        // Empty chat flips agent in place; a started-but-idle chat resets in
+        // place bound to the next agent. A BUSY chat is never cleared — that
+        // would orphan the live turn (deltas drop, Stop disappears) — so the
+        // switch opens a fresh tab beside it instead.
         if ((sess?.messages.length ?? 0) === 0) {
           chat.actions.switchChatAgent(tab.id, next);
+        } else if (isBusyAgentStatus(sess?.status)) {
+          openNewAgentChat(next);
         } else {
           chat.actions.clearSession(tab.id);
           chat.actions.switchChatAgent(tab.id, next);
@@ -1297,6 +1300,7 @@ export function App() {
       <UpdateAvailableModal />
       <ConnectDialog />
       <LoadingOrganisationOverlay />
+      <StopAgentsDialog />
       <BrowserOverlayWatcher />
       <Toaster
         position="bottom-right"

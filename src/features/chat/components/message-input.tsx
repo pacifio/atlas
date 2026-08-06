@@ -16,7 +16,8 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { useChatStore } from "../stores/chat-store";
 import { agents } from "../lib/agents-api";
-import { CLAUDE_PERMISSION_MODE_LABEL, AGENT_LABEL, agentTypeFromPluginId, type SwitchableAgent } from "@/types/agent";
+import { CLAUDE_PERMISSION_MODE_LABEL, AGENT_LABEL, agentTypeFromPluginId, isBusyAgentStatus, type SwitchableAgent } from "@/types/agent";
+import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { AgentMark } from "@/components/agent-mark";
 import { ProviderModelPills } from "./provider-model-pills";
 import { loadCerseiEffort, loadCerseiCompress } from "../lib/cersei-model-pref";
@@ -1081,15 +1082,18 @@ export function MessageInput({
   }, []);
 
   // "+" menu footer → agent switcher. Mirrors the ⌥/ cycle (App.tsx) but jumps
-  // straight to the picked agent: an empty chat flips in place; a started chat
-  // clears + rebinds in the SAME tab (singleton model — the abandoned turn
-  // persists to the history sidebar).
+  // straight to the picked agent: an empty chat flips in place; a started-but-
+  // idle chat clears + rebinds in the SAME tab. A BUSY chat is never cleared
+  // (that orphans the live turn) — the switch opens a fresh tab beside it.
   const handleSwitchAgent = useCallback((next: SwitchableAgent) => {
     const chat = useChatStore.getState();
     const sess = chat.sessions[tabId];
     if ((sess?.agentType ?? "claude-code") === next) return;
     if ((sess?.messages.length ?? 0) === 0) {
       chat.actions.switchChatAgent(tabId, next);
+    } else if (isBusyAgentStatus(sess?.status)) {
+      openNewAgentChat(next);
+      return;
     } else {
       chat.actions.clearSession(tabId);
       chat.actions.switchChatAgent(tabId, next);
