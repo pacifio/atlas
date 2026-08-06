@@ -604,7 +604,10 @@ export function MessageInput({
   // `agentType` widened to a SwitchableAgent (drops "custom") for the composer
   // sub-components (skill/session scope, agent switcher) + the label lookup.
   const switchableAgent: SwitchableAgent =
-    agentType === "codex" || agentType === "opencode" || agentType === "cersei"
+    agentType === "codex" ||
+    agentType === "opencode" ||
+    agentType === "cursor" ||
+    agentType === "cersei"
       ? agentType
       : "claude-code";
   // Native Cersei agent only: BYOK provider + model selection for the composer.
@@ -670,7 +673,8 @@ export function MessageInput({
     if (
       agentType !== "codex" &&
       agentType !== "claude-code" &&
-      agentType !== "opencode"
+      agentType !== "opencode" &&
+      agentType !== "cursor"
     )
       return undefined;
     const fromAgent: SlashCommand[] = (availableCommands ?? [])
@@ -694,9 +698,9 @@ export function MessageInput({
     // Claude: until the ACP list arrives, `undefined` selects the picker's
     // curated fallback (which carries its own `/login`).
     if (agentType === "claude-code" && fromAgent.length === 0) return undefined;
-    // OpenCode auth is terminal-only (`opencode auth login`) — no host dialog,
-    // so no synthetic `/login`; the composer's auth pill covers it.
-    if (agentType === "opencode") return fromAgent;
+    // OpenCode / Cursor auth is terminal-only — no host dialog, so no
+    // synthetic `/login`; the composer's auth pill covers both.
+    if (agentType === "opencode" || agentType === "cursor") return fromAgent;
     // `/login` is Atlas-handled, not advertised by either adapter: it opens
     // the host sign-in dialog for the bound agent.
     const login: SlashCommand =
@@ -1637,9 +1641,11 @@ export function MessageInput({
               ? "Codex commands"
               : agentType === "opencode"
                 ? "OpenCode commands"
-                : agentType === "claude-code" && agentSlashCommands
-                  ? "Claude Code commands"
-                  : undefined
+                : agentType === "cursor"
+                  ? "Cursor commands"
+                  : agentType === "claude-code" && agentSlashCommands
+                    ? "Claude Code commands"
+                    : undefined
           }
         />
       )}

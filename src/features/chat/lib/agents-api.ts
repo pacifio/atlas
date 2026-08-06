@@ -138,6 +138,7 @@ export const listenAgents = (
 export const DEFAULT_PLUGIN_ID = "claude-code-ts";
 export const CODEX_PLUGIN_ID = "codex";
 export const OPENCODE_PLUGIN_ID = "opencode";
+export const CURSOR_PLUGIN_ID = "cursor";
 /** Atlas's native in-process agent (atlas-cersei). */
 export const CERSEI_PLUGIN_ID = "cersei";
 

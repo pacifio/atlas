@@ -13,6 +13,8 @@ import {
   isBusyAgentStatus,
   agentTypeFromPluginId,
   pluginIdForAgent,
+  AGENT_LABEL,
+  type SwitchableAgent,
 } from "@/types/agent";
 import {
   composePrompt,
@@ -567,7 +569,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     if (acpPrewarmStarted) return;
     acpPrewarmStarted = true;
     const timers: ReturnType<typeof setTimeout>[] = [];
-    (["codex", "opencode"] as const).forEach((at, i) => {
+    (["codex", "opencode", "cursor"] as const).forEach((at, i) => {
       if (!loadCachedAcpModes(at)) return; // never used → skip
       timers.push(
         setTimeout(
@@ -1088,26 +1090,33 @@ const ChatComposer = memo(function ChatComposer({
   }, [isCodex]);
   const codexNeedsAuth = isCodex && codexAuthed === false;
 
-  // OpenCode auth is terminal-only (`opencode auth login`) and the agent still
-  // works unauthenticated (free OpenCode Zen models), so nothing is probed and
-  // the composer is never blocked. An auth-classified turn failure just shows
-  // an instruction pill until the tab rebinds or the user dismisses it.
-  const [opencodeAuthHint, setOpencodeAuthHint] = useState(false);
+  // OpenCode / Cursor auth is terminal-only (`opencode auth login` /
+  // `cursor-agent login`) and neither agent should block the composer
+  // (OpenCode works unauthenticated with the free Zen models; Cursor errors
+  // surface per-turn), so nothing is probed. An auth-classified turn failure
+  // just shows an instruction pill until the tab rebinds or it's dismissed.
+  const terminalLoginCommand =
+    agentType === "opencode"
+      ? "opencode auth login"
+      : agentType === "cursor"
+        ? "cursor-agent login"
+        : null;
+  const [terminalAuthHint, setTerminalAuthHint] = useState(false);
   useEffect(() => {
-    if (agentType !== "opencode") {
-      setOpencodeAuthHint(false);
+    if (!terminalLoginCommand) {
+      setTerminalAuthHint(false);
       return;
     }
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
-      if (detail?.agentType !== "opencode") return;
+      if (detail?.agentType !== agentType) return;
       const sess = useChatStore.getState().sessions[tabId];
       if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;
-      setOpencodeAuthHint(true);
+      setTerminalAuthHint(true);
     };
     window.addEventListener("atlas:auth-required", handler);
     return () => window.removeEventListener("atlas:auth-required", handler);
-  }, [agentType, tabId]);
+  }, [agentType, terminalLoginCommand, tabId]);
   const signInCodex = async () => {
     setCodexSigningIn(true);
     try {
@@ -1131,7 +1140,7 @@ const ChatComposer = memo(function ChatComposer({
   const disabled = (isClaude && phase !== "ready") || codexNeedsAuth;
 
   const setupVisible =
-    (isClaude && phase !== "ready") || codexNeedsAuth || opencodeAuthHint;
+    (isClaude && phase !== "ready") || codexNeedsAuth || terminalAuthHint;
   // Node install pill (bundled-nvm). Non-blocking — informs only, doesn't
   // disable the composer. Shown for both agents since `npx` powers both.
   const nodePhase = useNodeSetupStore.use.phase();
@@ -1178,18 +1187,19 @@ const ChatComposer = memo(function ChatComposer({
                     : "Sign in to Codex with ChatGPT"}
                 </button>
               )}
-              {opencodeAuthHint && (
+              {terminalAuthHint && terminalLoginCommand && (
                 <button
-                  key="opencode-auth-hint"
+                  key="terminal-auth-hint"
                   onClick={() => {
-                    void copyText("opencode auth login");
-                    setOpencodeAuthHint(false);
+                    void copyText(terminalLoginCommand);
+                    setTerminalAuthHint(false);
                   }}
                   title="Copies the command; run it in a terminal, then send again."
                   className="atlas-pill-in inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[11px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
                 >
                   <LogIn size={11} />
-                  OpenCode needs auth — copy `opencode auth login`
+                  {AGENT_LABEL[agentType as SwitchableAgent] ?? "Agent"} needs auth —
+                  copy `{terminalLoginCommand}`
                 </button>
               )}
               {showJumpToBottom && (

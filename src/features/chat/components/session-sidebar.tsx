@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { isBusyAgentStatus, agentTypeFromPluginId } from "@/types/agent";
-import { ClaudeIcon, CodexIcon, OpenCodeIcon } from "@/components/agent-icons";
+import { ClaudeIcon, CodexIcon, OpenCodeIcon, CursorIcon } from "@/components/agent-icons";
 import {
   AGENT_LABEL,
   pluginIdForAgent,
@@ -44,10 +44,15 @@ import { resumeSessionFast, ResumeError } from "../lib/resume-session";
 /** Short per-row agent tag. "claude" doubles as the legacy default for rows
  *  with no metadata, so the mapping from AgentType is centralised here instead
  *  of repeated ternaries that silently mislabel new agents. */
-type SidebarAgent = "claude" | "codex" | "opencode" | "cersei";
+type SidebarAgent = "claude" | "codex" | "opencode" | "cursor" | "cersei";
 
 function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
-  if (agentType === "codex" || agentType === "opencode" || agentType === "cersei")
+  if (
+    agentType === "codex" ||
+    agentType === "opencode" ||
+    agentType === "cursor" ||
+    agentType === "cersei"
+  )
     return agentType;
   return "claude";
 }
@@ -56,6 +61,7 @@ const AGENT_TYPE_BY_SIDEBAR: Record<SidebarAgent, SwitchableAgent> = {
   claude: "claude-code",
   codex: "codex",
   opencode: "opencode",
+  cursor: "cursor",
   cersei: "cersei",
 };
 
@@ -962,6 +968,8 @@ export function SessionSidebar({
                       <CodexIcon className="size-3" />
                     ) : item.agent === "opencode" ? (
                       <OpenCodeIcon className="size-3" />
+                    ) : item.agent === "cursor" ? (
+                      <CursorIcon className="size-3" />
                     ) : item.agent === "cersei" ? (
                       <AtlasIcon size={12} />
                     ) : (

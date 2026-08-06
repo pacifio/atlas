@@ -110,12 +110,31 @@ impl AgentSpec {
         }
     }
 
+    /// Cursor — `cursor-agent acp` speaks stock ACP v1 over stdio (verified
+    /// live against 2026.07.23 + the official doc, which names the binary
+    /// `agent`; the installed CLI ships it as `cursor-agent`). Models arrive
+    /// in the `session/new` `models` blob and switch via `session/set_model`
+    /// (its `set_config_option` takes plain-string values our typed request
+    /// can't produce — the backend's set_model fallback covers it). Modes are
+    /// agent/plan/ask. Auth is the user's own `cursor-agent login`
+    /// (method id `cursor_login`); quota exhaustion on free plans arrives as a
+    /// NORMAL assistant message, not an error. Slash commands were never
+    /// observed (`available_commands_update` may simply not fire).
+    pub fn cursor() -> Self {
+        Self {
+            spec_id: "cursor".into(),
+            display_name: "Cursor".into(),
+            command: "cursor-agent acp".into(),
+        }
+    }
+
     pub fn all_known() -> Vec<AgentSpec> {
         vec![
             Self::claude_code_ts(),
             Self::claude_code_rs(),
             Self::codex(),
             Self::opencode(),
+            Self::cursor(),
         ]
     }
 }

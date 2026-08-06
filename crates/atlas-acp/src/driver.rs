@@ -475,6 +475,11 @@ async fn run_driver(
             let mut meta = Map::new();
             meta.insert("terminal-auth".into(), Value::Bool(true));
             meta.insert("terminal_output".into(), Value::Bool(true));
+            // Cursor-only capability (Zed sends it too): opts into
+            // parameterized model ids like `gpt-5.4[reasoning=medium]`.
+            // Unknown meta keys are ignored per the ACP spec, so sending it
+            // unconditionally beats plumbing a per-spec meta field.
+            meta.insert("parameterizedModelPicker".into(), Value::Bool(true));
             caps.meta = Some(meta);
 
             let init_result = connection

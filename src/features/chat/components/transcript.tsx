@@ -103,7 +103,10 @@ const BOTTOM_GAP = 28;
 const STICKY_SETTLE_MS = 4000;
 
 function switchable(agentType: string | undefined): SwitchableAgent {
-  return agentType === "codex" || agentType === "opencode" || agentType === "cersei"
+  return agentType === "codex" ||
+    agentType === "opencode" ||
+    agentType === "cursor" ||
+    agentType === "cersei"
     ? agentType
     : "claude-code";
 }
@@ -114,6 +117,7 @@ function switchable(agentType: string | undefined): SwitchableAgent {
 const AGENT_ICON: Record<SwitchableAgent, React.ReactNode> = {
   codex: <AgentIcons.Codex className="size-3.5 text-[var(--text-secondary)]" />,
   opencode: <AgentIcons.OpenCode className="size-3.5 text-[var(--text-secondary)]" />,
+  cursor: <AgentIcons.Cursor className="size-3.5 text-[var(--text-secondary)]" />,
   cersei: <AtlasIcon size={14} />,
   "claude-code": <AgentIcons.Claude className="size-3.5 text-[var(--text-secondary)]" />,
 };
