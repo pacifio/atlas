@@ -13,7 +13,7 @@ import { useChatStore } from "@/features/chat/stores/chat-store";
 import { listenAgents, resetAgentByAgentId } from "@/features/chat/lib/agents-api";
 import type { PendingPermission } from "@/types/acp";
 import type { AgentDelta } from "@/types/agents";
-import { SWITCHABLE_AGENTS, isBusyAgentStatus } from "@/types/agent";
+import { cycleChatAgent } from "@/features/chat/lib/switch-agent";
 import { FilePicker } from "@/features/file-picker/components/file-picker";
 import { HintOverlay } from "@/features/hint-nav/components/hint-overlay";
 import { BrowserOverlayWatcher } from "@/features/browser/components/browser-overlay-watcher";
@@ -1265,25 +1265,7 @@ export function App() {
         const layout = useLayoutStore.getState();
         const tab = layout.tabs.find((t) => t.id === layout.activeTabId);
         if (!tab || tab.type !== "chat") return;
-        const chat = useChatStore.getState();
-        const sess = chat.sessions[tab.id];
-        const curIdx = SWITCHABLE_AGENTS.indexOf(
-          (sess?.agentType ?? "claude-code") as (typeof SWITCHABLE_AGENTS)[number],
-        );
-        const next = SWITCHABLE_AGENTS[(Math.max(curIdx, 0) + 1) % SWITCHABLE_AGENTS.length];
-        // Empty chat flips agent in place; a started-but-idle chat resets in
-        // place bound to the next agent. A BUSY chat is never cleared — that
-        // would orphan the live turn (deltas drop, Stop disappears) — so the
-        // switch opens a fresh tab beside it instead.
-        if ((sess?.messages.length ?? 0) === 0) {
-          chat.actions.switchChatAgent(tab.id, next);
-        } else if (isBusyAgentStatus(sess?.status)) {
-          openNewAgentChat(next);
-        } else {
-          chat.actions.clearSession(tab.id);
-          chat.actions.switchChatAgent(tab.id, next);
-          window.dispatchEvent(new CustomEvent("atlas:chat-focus", { detail: { tabId: tab.id } }));
-        }
+        cycleChatAgent(tab.id);
       },
     },
     {

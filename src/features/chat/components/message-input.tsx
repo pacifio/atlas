@@ -16,8 +16,12 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { useChatStore } from "../stores/chat-store";
 import { agents } from "../lib/agents-api";
-import { CLAUDE_PERMISSION_MODE_LABEL, AGENT_LABEL, agentTypeFromPluginId, isBusyAgentStatus, type SwitchableAgent } from "@/types/agent";
-import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
+import { CLAUDE_PERMISSION_MODE_LABEL, AGENT_LABEL, agentTypeFromPluginId, type SwitchableAgent } from "@/types/agent";
+import {
+  cycleChatAgent,
+  nextAgentForTab,
+  switchAgentForTab,
+} from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
 import { ProviderModelPills } from "./provider-model-pills";
 import { loadCerseiEffort, loadCerseiCompress } from "../lib/cersei-model-pref";
@@ -1085,25 +1089,12 @@ export function MessageInput({
     requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
 
-  // "+" menu footer → agent switcher. Mirrors the ⌥/ cycle (App.tsx) but jumps
-  // straight to the picked agent: an empty chat flips in place; a started-but-
-  // idle chat clears + rebinds in the SAME tab. A BUSY chat is never cleared
-  // (that orphans the live turn) — the switch opens a fresh tab beside it.
-  const handleSwitchAgent = useCallback((next: SwitchableAgent) => {
-    const chat = useChatStore.getState();
-    const sess = chat.sessions[tabId];
-    if ((sess?.agentType ?? "claude-code") === next) return;
-    if ((sess?.messages.length ?? 0) === 0) {
-      chat.actions.switchChatAgent(tabId, next);
-    } else if (isBusyAgentStatus(sess?.status)) {
-      openNewAgentChat(next);
-      return;
-    } else {
-      chat.actions.clearSession(tabId);
-      chat.actions.switchChatAgent(tabId, next);
-    }
-    window.dispatchEvent(new CustomEvent("atlas:chat-focus", { detail: { tabId } }));
-  }, [tabId]);
+  // "+" menu footer → agent switcher. Same helper as ⌥/ and the agent pill,
+  // but jumps straight to the picked agent instead of cycling.
+  const handleSwitchAgent = useCallback(
+    (next: SwitchableAgent) => switchAgentForTab(tabId, next),
+    [tabId],
+  );
 
   // Clipboard images (screenshots) → staged attachments. Returning false
   // lets chat-input's default file-paste (native pasteboard → quoted paths)
@@ -1536,15 +1527,16 @@ export function MessageInput({
                 currentAgent={switchableAgent}
                 onSwitchAgent={handleSwitchAgent}
               />
-              {/* Which coding agent this chat is bound to (Claude / Codex).
-                  Switch with ⌥/ (only on a fresh chat). */}
-              <span
-                className="flex items-center gap-1.5 px-1.5 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] select-none"
-                title="Coding agent (switch with ⌥/ on a new chat)"
+              {/* Which coding agent this chat is bound to. Click cycles to the
+                  next agent, exactly like ⌥/ (same helper). */}
+              <button
+                onClick={() => cycleChatAgent(tabId)}
+                className="flex items-center gap-1.5 px-1.5 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                title={`Coding agent — click to switch to ${AGENT_LABEL[nextAgentForTab(tabId)]} (⌥/)`}
               >
                 <AgentMark agentType={agentType} className="!h-4 !w-4 !text-[9px] !rounded" />
                 {AGENT_LABEL[switchableAgent]}
-              </span>
+              </button>
               {agentType === "claude-code" && (
               <button
                 onClick={() => cycleClaudePermissionMode(tabId)}
