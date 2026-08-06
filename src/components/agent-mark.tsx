@@ -13,6 +13,7 @@ const AGENT_CLASS: Record<AgentType, string> = {
   codex: "agent-codex",
   opencode: "agent-opencode",
   cursor: "agent-cursor",
+  kilo: "agent-kilo",
   cersei: "agent-cersei",
   custom: "",
 };
@@ -23,6 +24,7 @@ function AgentGlyph({ agentType, size }: { agentType: AgentType; size: "sm" | "l
   if (agentType === "codex") return <AgentIcons.Codex className={cls} />;
   if (agentType === "opencode") return <AgentIcons.OpenCode className={cls} />;
   if (agentType === "cursor") return <AgentIcons.Cursor className={cls} />;
+  if (agentType === "kilo") return <AgentIcons.Kilo className={cls} />;
   // Atlas's native agent — its own brand mark.
   if (agentType === "cersei") return <AtlasIcon size={size === "lg" ? 18 : 14} />;
   return <span className="font-mono">?</span>;

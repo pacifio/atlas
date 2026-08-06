@@ -475,7 +475,9 @@ function ChatRow({
         ? AgentIcons.OpenCode
         : chat.agentType === "cursor"
           ? AgentIcons.Cursor
-          : AgentIcons.Claude;
+          : chat.agentType === "kilo"
+            ? AgentIcons.Kilo
+            : AgentIcons.Claude;
   return (
     <div
       data-hint

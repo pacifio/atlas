@@ -107,10 +107,29 @@ export function CursorIcon({ title = "Cursor", ...props }: IconProps) {
   );
 }
 
+/** Kilo Code mark — PLACEHOLDER bold-K glyph (inherits `currentColor`) until
+ *  the official brand SVG is dropped in (same flow as Cursor's was). */
+export function KiloIcon({ title = "Kilo", ...props }: IconProps) {
+  return (
+    <svg
+      width="1em"
+      height="1em"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+      {...props}
+    >
+      {title ? <title>{title}</title> : null}
+      <path d="M5 2h4v8.2L16.6 2h5.1l-8.6 9.5L22 22h-5.1l-6.4-8.2-1.5 1.6V22H5V2z" />
+    </svg>
+  );
+}
+
 /** Grouped export so callers can do `<AgentIcons.Claude />` / `.Codex`. */
 export const AgentIcons = {
   Claude: ClaudeIcon,
   Codex: CodexIcon,
   OpenCode: OpenCodeIcon,
   Cursor: CursorIcon,
+  Kilo: KiloIcon,
 };

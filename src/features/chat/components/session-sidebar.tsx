@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { isBusyAgentStatus, agentTypeFromPluginId } from "@/types/agent";
-import { ClaudeIcon, CodexIcon, OpenCodeIcon, CursorIcon } from "@/components/agent-icons";
+import { ClaudeIcon, CodexIcon, OpenCodeIcon, CursorIcon, KiloIcon } from "@/components/agent-icons";
 import {
   AGENT_LABEL,
   pluginIdForAgent,
@@ -31,9 +31,11 @@ import {
   listClaudeSessions,
   listCodexSessions,
   listCerseiSessions,
+  listKiloSessions,
   deleteClaudeSession,
   cerseiDeleteSession,
   codexDeleteSession,
+  kiloDeleteSession,
   type ClaudeSessionMeta,
 } from "../lib/claude-api";
 import { ensureAgent, getAgentSync } from "../lib/agents-api";
@@ -44,13 +46,14 @@ import { resumeSessionFast, ResumeError } from "../lib/resume-session";
 /** Short per-row agent tag. "claude" doubles as the legacy default for rows
  *  with no metadata, so the mapping from AgentType is centralised here instead
  *  of repeated ternaries that silently mislabel new agents. */
-type SidebarAgent = "claude" | "codex" | "opencode" | "cursor" | "cersei";
+type SidebarAgent = "claude" | "codex" | "opencode" | "cursor" | "kilo" | "cersei";
 
 function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
   if (
     agentType === "codex" ||
     agentType === "opencode" ||
     agentType === "cursor" ||
+    agentType === "kilo" ||
     agentType === "cersei"
   )
     return agentType;
@@ -62,6 +65,7 @@ const AGENT_TYPE_BY_SIDEBAR: Record<SidebarAgent, SwitchableAgent> = {
   codex: "codex",
   opencode: "opencode",
   cursor: "cursor",
+  kilo: "kilo",
   cersei: "cersei",
 };
 
@@ -323,6 +327,23 @@ export function SessionSidebar({
     placeholderData: keepPreviousData,
   });
 
+  // Kilo sessions — SQLite at ~/.local/share/kilo/kilo.db, same no-watcher
+  // poll + merge treatment as Codex.
+  const kiloQueryKey = ["kilo-sessions", cwd] as const;
+  const {
+    data: kiloList = [],
+    isSuccess: kiloReady,
+    isPlaceholderData: kiloPlaceholder,
+  } = useQuery({
+    queryKey: kiloQueryKey,
+    queryFn: () => listKiloSessions(cwd),
+    enabled: cwd.length > 0,
+    staleTime: 30_000,
+    refetchInterval: 4000,
+    refetchIntervalInBackground: false,
+    placeholderData: keepPreviousData,
+  });
+
   // Start (or replace) the Rust file watcher for this cwd. The single
   // `atlas:sessions-changed` listener below dispatches against `queryKey`
   // closed over the current cwd, so the listener doesn't have to be
@@ -349,10 +370,12 @@ export function SessionSidebar({
     const key = ["claude-sessions", cwd] as const;
     const codexKey = ["codex-sessions", cwd] as const;
     const cerseiKey = ["cersei-sessions", cwd] as const;
+    const kiloKey = ["kilo-sessions", cwd] as const;
     const invalidate = () => {
       queryClient.invalidateQueries({ queryKey: key });
       queryClient.invalidateQueries({ queryKey: codexKey });
       queryClient.invalidateQueries({ queryKey: cerseiKey });
+      queryClient.invalidateQueries({ queryKey: kiloKey });
     };
     const unlistenPromise = listen<{ cwd: string }>(
       "atlas:sessions-changed",
@@ -413,6 +436,7 @@ export function SessionSidebar({
     for (const d of agentList) diskById.set(d.id, { meta: d, agent: "claude" });
     for (const d of codexList) diskById.set(d.id, { meta: d, agent: "codex" });
     for (const d of cerseiList) diskById.set(d.id, { meta: d, agent: "cersei" });
+    for (const d of kiloList) diskById.set(d.id, { meta: d, agent: "kilo" });
 
     // An unbound live row (`live-<tabId>` key — after an agent switch or
     // clearSession dropped the binding but kept messages, or during the
@@ -519,7 +543,7 @@ export function SessionSidebar({
     return agents
       .filter((a) => a.messageCount > 0)
       .sort((a, b) => (b.lastUpdated ?? "").localeCompare(a.lastUpdated ?? ""));
-  }, [agentList, codexList, cerseiList, tabSummaries]);
+  }, [agentList, codexList, cerseiList, kiloList, tabSummaries]);
 
   // Self-heal the workspace panel's persisted "Chats" list for THIS project.
   // That list (`atlas-recent-chats`) is recorded on agent activity and never
@@ -531,12 +555,14 @@ export function SessionSidebar({
   // old project's lists.
   useEffect(() => {
     if (!cwd) return;
-    if (!agentReady || !codexReady || !cerseiReady) return;
-    if (agentPlaceholder || codexPlaceholder || cerseiPlaceholder) return;
+    if (!agentReady || !codexReady || !cerseiReady || !kiloReady) return;
+    if (agentPlaceholder || codexPlaceholder || cerseiPlaceholder || kiloPlaceholder)
+      return;
     const diskIds = new Set<string>([
       ...agentList.map((d) => d.id),
       ...codexList.map((d) => d.id),
       ...cerseiList.map((d) => d.id),
+      ...kiloList.map((d) => d.id),
     ]);
     const liveAcp = new Set<string>();
     const liveTabs = new Set<string>();
@@ -563,12 +589,15 @@ export function SessionSidebar({
     agentReady,
     codexReady,
     cerseiReady,
+    kiloReady,
     agentPlaceholder,
     codexPlaceholder,
     cerseiPlaceholder,
+    kiloPlaceholder,
     agentList,
     codexList,
     cerseiList,
+    kiloList,
     tabSummaries,
   ]);
 
@@ -691,6 +720,7 @@ export function SessionSidebar({
       queryClient.invalidateQueries({ queryKey });
       queryClient.invalidateQueries({ queryKey: codexQueryKey });
       queryClient.invalidateQueries({ queryKey: cerseiQueryKey });
+      queryClient.invalidateQueries({ queryKey: kiloQueryKey });
     }
     // Relabel the composer to the resumed session's agent (no-op if already
     // matching). Keeps the existing binding — does NOT spawn a new chat.
@@ -814,6 +844,9 @@ export function SessionSidebar({
         await cerseiDeleteSession(cwd, item.id);
       } else if (item.agent === "codex") {
         await codexDeleteSession(item.id);
+      } else if (item.agent === "kilo") {
+        // Kilo rows soft-archive in ~/.local/share/kilo/kilo.db by id.
+        await kiloDeleteSession(item.id);
       } else if (item.filePath) {
         await deleteClaudeSession(item.filePath);
       } else {
@@ -836,6 +869,7 @@ export function SessionSidebar({
       queryClient.invalidateQueries({ queryKey });
       queryClient.invalidateQueries({ queryKey: codexQueryKey });
       queryClient.invalidateQueries({ queryKey: cerseiQueryKey });
+      queryClient.invalidateQueries({ queryKey: kiloQueryKey });
     }
   };
 
@@ -970,6 +1004,8 @@ export function SessionSidebar({
                       <OpenCodeIcon className="size-3" />
                     ) : item.agent === "cursor" ? (
                       <CursorIcon className="size-3" />
+                    ) : item.agent === "kilo" ? (
+                      <KiloIcon className="size-3" />
                     ) : item.agent === "cersei" ? (
                       <AtlasIcon size={12} />
                     ) : (

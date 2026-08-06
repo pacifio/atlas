@@ -119,6 +119,7 @@ export function agentLabel(agent: string): string {
   if (agent.includes("codex")) return "Codex";
   if (agent.includes("opencode")) return "OpenCode";
   if (agent.includes("cursor")) return "Cursor";
+  if (agent.includes("kilo")) return "Kilo";
   if (agent.includes("cersei")) return "Atlas";
   return agent;
 }

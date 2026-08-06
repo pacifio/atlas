@@ -397,6 +397,13 @@ export function AgentGlyph({
         className={cn(!mono && "text-[var(--agent-cursor-chip)]")}
       />
     );
+  if (agent.includes("kilo"))
+    return (
+      <AgentIcons.Kilo
+        style={dim}
+        className={cn(!mono && "text-[var(--agent-kilo-chip)]")}
+      />
+    );
   if (agent.includes("cersei")) return <AtlasIcon size={size} className="rounded-[3px]" />;
   return (
     <span className="font-mono" style={{ fontSize: size * 0.8 }}>

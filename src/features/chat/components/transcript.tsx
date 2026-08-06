@@ -106,6 +106,7 @@ function switchable(agentType: string | undefined): SwitchableAgent {
   return agentType === "codex" ||
     agentType === "opencode" ||
     agentType === "cursor" ||
+    agentType === "kilo" ||
     agentType === "cersei"
     ? agentType
     : "claude-code";
@@ -118,6 +119,7 @@ const AGENT_ICON: Record<SwitchableAgent, React.ReactNode> = {
   codex: <AgentIcons.Codex className="size-3.5 text-[var(--text-secondary)]" />,
   opencode: <AgentIcons.OpenCode className="size-3.5 text-[var(--text-secondary)]" />,
   cursor: <AgentIcons.Cursor className="size-3.5 text-[var(--text-secondary)]" />,
+  kilo: <AgentIcons.Kilo className="size-3.5 text-[var(--text-secondary)]" />,
   cersei: <AtlasIcon size={14} />,
   "claude-code": <AgentIcons.Claude className="size-3.5 text-[var(--text-secondary)]" />,
 };

@@ -616,6 +616,7 @@ export function MessageInput({
     agentType === "codex" ||
     agentType === "opencode" ||
     agentType === "cursor" ||
+    agentType === "kilo" ||
     agentType === "cersei"
       ? agentType
       : "claude-code";
@@ -683,7 +684,8 @@ export function MessageInput({
       agentType !== "codex" &&
       agentType !== "claude-code" &&
       agentType !== "opencode" &&
-      agentType !== "cursor"
+      agentType !== "cursor" &&
+      agentType !== "kilo"
     )
       return undefined;
     const fromAgent: SlashCommand[] = (availableCommands ?? [])
@@ -707,9 +709,10 @@ export function MessageInput({
     // Claude: until the ACP list arrives, `undefined` selects the picker's
     // curated fallback (which carries its own `/login`).
     if (agentType === "claude-code" && fromAgent.length === 0) return undefined;
-    // OpenCode / Cursor auth is terminal-only — no host dialog, so no
-    // synthetic `/login`; the composer's auth pill covers both.
-    if (agentType === "opencode" || agentType === "cursor") return fromAgent;
+    // OpenCode / Cursor / Kilo auth is terminal-only — no host dialog, so no
+    // synthetic `/login`; the composer's auth pill covers them.
+    if (agentType === "opencode" || agentType === "cursor" || agentType === "kilo")
+      return fromAgent;
     // `/login` is Atlas-handled, not advertised by either adapter: it opens
     // the host sign-in dialog for the bound agent.
     const login: SlashCommand =

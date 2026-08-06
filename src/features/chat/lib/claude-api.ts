@@ -56,6 +56,22 @@ export function listCerseiSessions(cwd: string): Promise<ClaudeSessionMeta[]> {
   return invoke<ClaudeSessionMeta[]>("cersei_list_sessions", { projectPath: cwd });
 }
 
+/**
+ * Kilo Code sessions for `cwd`, shaped like {@link ClaudeSessionMeta}. Read
+ * from Kilo's SQLite store (`~/.local/share/kilo/kilo.db`); `id` is the real
+ * ACP session id (`ses_…`) so it resumes via `session/load` (full replay);
+ * `file_path` is always empty (no per-session transcript file).
+ */
+export function listKiloSessions(cwd: string): Promise<ClaudeSessionMeta[]> {
+  return invoke<ClaudeSessionMeta[]>("list_kilo_sessions", { projectPath: cwd });
+}
+
+/** Archive (soft-delete) a Kilo session — sets `time_archived`, the flag both
+ *  Kilo's own UIs and our listing filter on. Reversible from the Kilo CLI. */
+export function kiloDeleteSession(sessionId: string): Promise<void> {
+  return invoke<void>("kilo_delete_session", { sessionId });
+}
+
 export function readClaudeSession(filePath: string): Promise<ChatMessageDump[]> {
   return invoke<ChatMessageDump[]>("read_claude_session", { filePath });
 }

@@ -5,11 +5,18 @@ export type AgentType =
   | "codex"
   | "opencode"
   | "cursor"
+  | "kilo"
   | "cersei"
   | "custom";
 
 /** Switchable (Atlas-shipped) agents — excludes the catch-all "custom". */
-export type SwitchableAgent = "claude-code" | "codex" | "opencode" | "cursor" | "cersei";
+export type SwitchableAgent =
+  | "claude-code"
+  | "codex"
+  | "opencode"
+  | "cursor"
+  | "kilo"
+  | "cersei";
 
 /** The coding agents Atlas ships, in switch order (for option+/). */
 export const SWITCHABLE_AGENTS: SwitchableAgent[] = [
@@ -17,6 +24,7 @@ export const SWITCHABLE_AGENTS: SwitchableAgent[] = [
   "codex",
   "opencode",
   "cursor",
+  "kilo",
   "cersei",
 ];
 
@@ -25,6 +33,7 @@ export const AGENT_LABEL: Record<SwitchableAgent, string> = {
   codex: "Codex",
   opencode: "OpenCode",
   cursor: "Cursor",
+  kilo: "Kilo",
   cersei: "Atlas",
 };
 
@@ -36,6 +45,7 @@ export const PLUGIN_ID_BY_AGENT: Record<SwitchableAgent, string> = {
   codex: "codex",
   opencode: "opencode",
   cursor: "cursor",
+  kilo: "kilo",
   cersei: "cersei",
 };
 
@@ -52,6 +62,7 @@ export const ACP_AGENTS: SwitchableAgent[] = [
   "codex",
   "opencode",
   "cursor",
+  "kilo",
 ];
 
 /** Derive the display agent type from a spawnable plugin id. */
@@ -59,6 +70,7 @@ export function agentTypeFromPluginId(pluginId: string): AgentType {
   if (pluginId === "codex") return "codex";
   if (pluginId === "opencode") return "opencode";
   if (pluginId === "cursor") return "cursor";
+  if (pluginId === "kilo") return "kilo";
   if (pluginId === "cersei") return "cersei";
   if (pluginId.startsWith("claude")) return "claude-code";
   return "custom";

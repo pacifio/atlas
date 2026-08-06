@@ -221,6 +221,10 @@ pub(crate) fn explain_spawn_failure(spec: &AgentSpec, err: AcpError) -> AcpError
     } else if program == "cursor-agent" {
         "the Cursor CLI was not found. Install it from https://cursor.com/cli \
          and run `cursor-agent login`, then relaunch Atlas."
+    } else if program == "kilo" {
+        "the Kilo Code CLI was not found. Install it with \
+         `npm install -g @kilocode/cli` (or `brew install Kilo-Org/tap/kilo`) \
+         and run `kilo auth login`, then relaunch Atlas."
     } else {
         "the agent's runtime executable was not found on PATH"
     };

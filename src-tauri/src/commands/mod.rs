@@ -17,6 +17,7 @@ pub mod fileindex;
 pub mod canvas;
 pub mod capture;
 pub mod claude;
+pub mod kilo;
 pub mod clipboard;
 pub mod codebase_index;
 pub mod fs;

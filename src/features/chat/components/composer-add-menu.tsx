@@ -306,6 +306,8 @@ export function ComposerAddMenu({
                       <AgentIcons.OpenCode className="size-3" />
                     ) : a === "cursor" ? (
                       <AgentIcons.Cursor className="size-3" />
+                    ) : a === "kilo" ? (
+                      <AgentIcons.Kilo className="size-3" />
                     ) : (
                       <AtlasIcon size={12} className="rounded-[2px]" />
                     )}

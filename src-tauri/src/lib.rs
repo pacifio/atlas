@@ -582,6 +582,8 @@ pub fn run() {
             commands::agent_memory::agent_memory_read,
             commands::agent_memory::list_codex_sessions,
             commands::agent_memory::codex_delete_session,
+            commands::kilo::list_kilo_sessions,
+            commands::kilo::kilo_delete_session,
             commands::memory_graph::memory_embed_status,
             commands::memory_graph::memory_embed_download,
             commands::memory_graph::memory_index_build,

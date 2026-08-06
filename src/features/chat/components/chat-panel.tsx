@@ -577,7 +577,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     if (acpPrewarmStarted) return;
     acpPrewarmStarted = true;
     const timers: ReturnType<typeof setTimeout>[] = [];
-    (["codex", "opencode", "cursor"] as const).forEach((at, i) => {
+    (["codex", "opencode", "cursor", "kilo"] as const).forEach((at, i) => {
       if (!loadCachedAcpModes(at)) return; // never used → skip
       timers.push(
         setTimeout(
@@ -1108,7 +1108,9 @@ const ChatComposer = memo(function ChatComposer({
       ? "opencode auth login"
       : agentType === "cursor"
         ? "cursor-agent login"
-        : null;
+        : agentType === "kilo"
+          ? "kilo auth login"
+          : null;
   const [terminalAuthHint, setTerminalAuthHint] = useState(false);
   useEffect(() => {
     if (!terminalLoginCommand) {

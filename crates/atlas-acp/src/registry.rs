@@ -128,6 +128,28 @@ impl AgentSpec {
         }
     }
 
+    /// Kilo Code — `kilo acp` (npm `@kilocode/cli`, an OpenCode fork) speaks
+    /// ACP v1 as NDJSON over stdio (probed live against 7.4.20). It is on the
+    /// newer config-options dialect: `session/new`/`load` return NO
+    /// `modes`/`models` blobs — modes, models (~300, `provider/model`) and a
+    /// reasoning-effort level all arrive as `configOptions` selects (see
+    /// `schema.rs`'s normalisers). `session/set_mode` and
+    /// `session/set_config_option` both work (the backend's set-model ladder
+    /// succeeds on its first rung). `loadSession: true` with FULL transcript
+    /// replay; ACP session ids are Kilo's real `ses_…` ids
+    /// (`~/.local/share/kilo/kilo.db`). No terminal methods — shell output
+    /// streams as `tool_call_update` content. Auth is the user's own
+    /// `kilo auth login` (method id `kilo-login`); NOTE its `terminal-auth`
+    /// meta still says `command: "opencode"` (fork residue) — never exec it
+    /// verbatim. The embedded HTTP server makes `session/new` take ~1s extra.
+    pub fn kilo() -> Self {
+        Self {
+            spec_id: "kilo".into(),
+            display_name: "Kilo Code".into(),
+            command: "kilo acp".into(),
+        }
+    }
+
     pub fn all_known() -> Vec<AgentSpec> {
         vec![
             Self::claude_code_ts(),
@@ -135,6 +157,7 @@ impl AgentSpec {
             Self::codex(),
             Self::opencode(),
             Self::cursor(),
+            Self::kilo(),
         ]
     }
 }
@@ -311,8 +334,18 @@ impl AgentRegistry {
         self.register_session(agent_id, session_id)?;
         // Project the (non_exhaustive, unstable-gated) `modes` blob to JSON the
         // same way `new_session` does, so the manager can seed the available
-        // session-mode list for the resumed session.
-        let modes = resp.modes.as_ref().and_then(|m| serde_json::to_value(m).ok());
+        // session-mode list for the resumed session. Config-options-dialect
+        // agents (Kilo) advertise modes only as a `configOptions` select —
+        // fall back to normalising that (mirrors `NewSessionInfo::from`).
+        let modes = resp
+            .modes
+            .as_ref()
+            .and_then(|m| serde_json::to_value(m).ok())
+            .or_else(|| {
+                serde_json::to_value(&resp.config_options)
+                    .ok()
+                    .and_then(|co| crate::schema::modes_blob_from_config_options(&co))
+            });
         Ok(modes)
     }
 
