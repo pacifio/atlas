@@ -4,8 +4,8 @@ import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
-import { agents, ensureAgent, getAgentSync } from "./agents-api";
-import { pluginIdForAgent, type AgentType } from "@/types/agent";
+import { ensureAgent, getAgentSync } from "./agents-api";
+import { isBusyAgentStatus, pluginIdForAgent, type AgentType } from "@/types/agent";
 import { invalidateLoad } from "./load-tokens";
 import { resumeSessionFast } from "./resume-session";
 
@@ -184,12 +184,11 @@ export async function openAgentSession({
  * The fresh session is NOT added to history until the user actually submits
  * (the sidebar filters on `userMessageCount > 0`).
  *
- * New chat ALWAYS resets the current tab in place — even mid-stream — because
- * jumping to a new tab breaks the flow and scrambles the thread. Nothing is
- * lost: the Rust SessionWorker keeps running independently of this frontend
- * reset and persists the turn's transcript to disk, so the abandoned chat
- * reappears in the history sidebar. We DO cancel that in-flight turn first so a
- * chat the user walked away from doesn't keep burning tokens invisibly.
+ * If the current chat is BUSY (running, or waiting on a permission), it is left
+ * completely alone — Atlas's whole point is many agents working concurrently, so
+ * "new chat" must never stop or orphan a live turn. We open a fresh tab beside
+ * it instead (multiple chat tabs already coexist — `openAgentSession` spawns one
+ * whenever the active chat is running). Only an IDLE chat is reset in place.
  */
 export function openNewAgentChat(): void {
   const layout = useLayoutStore.getState();
@@ -208,14 +207,8 @@ export function openNewAgentChat(): void {
     ? layout.tabs.find((t) => t.id === layout.activeTabId && t.type === "chat")
     : undefined;
   const existing = activeChatTab ?? layout.tabs.find((t) => t.type === "chat");
-  if (existing) {
+  if (existing && !isBusyAgentStatus(chat.sessions[existing.id]?.status)) {
     setActiveTab(existing.id);
-    const s = chat.sessions[existing.id];
-    // Stop an in-flight turn before resetting so it doesn't keep streaming into
-    // an orphaned (hidden) session. Its transcript still persists → history.
-    if (s?.status === "running" && s.acpAgentId && s.acpSessionId) {
-      agents.cancel({ agent_id: s.acpAgentId, session_id: s.acpSessionId }).catch(() => {});
-    }
     // Cancel any in-flight history load targeting this tab BEFORE clearing, so a
     // resolving `loadSession → replaceMessages` chain can't repaint the freshly
     // cleared blank session with the old transcript.
@@ -229,7 +222,7 @@ export function openNewAgentChat(): void {
     return;
   }
 
-  // No chat tab open yet → create the one and only one.
+  // No chat tab open, or the current chat is mid-turn → fresh tab.
   const id = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   addTab({ id, type: "chat", title: "Agents", closable: true, dirty: false, data: {} });
   createSession(id);

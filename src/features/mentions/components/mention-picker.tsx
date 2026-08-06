@@ -574,10 +574,11 @@ export const MentionPicker = forwardRef<
       className={cn(
         "atlas-mention-picker",
         "rounded-lg overflow-hidden",
-        // Frosted AMOLED panel — border + bg + blur live on this ONE
-        // element (a transformed/filtered ancestor would flatten the
-        // backdrop blur; see the frosted-panel house pattern).
-        "bg-black/55 backdrop-blur-3xl backdrop-saturate-150 border border-white/10",
+        // Solid AMOLED panel. Deliberately NOT frosted: backdrop-blur (plus a
+        // grain overlay) made the compositor re-blend this layer against the
+        // composer beneath it, which glitched against the blinking caret and
+        // shifting message layout. Opaque black has no such coupling.
+        "bg-black border border-white/10",
         "shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_8px_24px_rgba(0,0,0,0.6)]",
         "flex flex-col",
       )}
@@ -592,18 +593,6 @@ export const MentionPicker = forwardRef<
         zIndex: 9999,
       }}
     >
-      {/* Film grain over the frosted glass. Pointer-transparent and clipped
-          by the panel's rounded overflow-hidden. Plain opacity, NO blend
-          mode — mix-blend forced the compositor to re-blend the whole layer
-          against the scrolling rows every frame. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 z-10 opacity-[0.06]"
-        style={{
-          backgroundImage: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='120' height='120' filter='url(%23n)'/></svg>")`,
-          backgroundSize: "120px 120px",
-        }}
-      />
       {rows.length === 0 || (rows.length === 1 && rows[0].type === "header") ? (
         <div className="flex-1 px-3 py-6 text-center text-[11px] text-text-tertiary leading-snug">
           {indexing &&
