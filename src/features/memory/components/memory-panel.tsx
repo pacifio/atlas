@@ -29,7 +29,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { PanelSkeleton } from "@/components/panel-skeleton";
 import { Markdown } from "@/lib/markdown";
 import { timeAgo } from "@/lib/time-ago";
-import { ClaudeIcon, CodexIcon } from "@/components/agent-icons";
+import { ClaudeIcon, CodexIcon, OpenCodeIcon, CursorIcon, KiloIcon } from "@/components/agent-icons";
+import { CaptureSessionsView } from "./capture-sessions-view";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useMemoryStore } from "../stores/memory-store";
@@ -74,6 +75,19 @@ export function MemoryPanel() {
     invoke<unknown[]>("cersei_list_sessions", { projectPath })
       .then((s) => setCerseiCount(s.length))
       .catch(() => setCerseiCount(0));
+  }, [projectPath, sub]);
+
+  // Capture-backed agents (OpenCode / Cursor / Kilo) — their sessions live in
+  // Atlas's own capture store; one GROUP BY gives all the badge counts.
+  const [captureCounts, setCaptureCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!projectPath) {
+      setCaptureCounts({});
+      return;
+    }
+    invoke<Record<string, number>>("capture_agent_session_counts", { projectPath })
+      .then(setCaptureCounts)
+      .catch(() => setCaptureCounts({}));
   }, [projectPath, sub]);
 
   return (
@@ -125,6 +139,7 @@ export function MemoryPanel() {
               claudeCount={claudeCount}
               codexCount={codexCount}
               cerseiCount={cerseiCount}
+              captureCounts={captureCounts}
             />
           </PillGroup>
         </div>
@@ -162,6 +177,8 @@ export function MemoryPanel() {
           )
         ) : sub === "cersei" ? (
           <AtlasMemoryView projectPath={projectPath} />
+        ) : sub === "opencode" || sub === "cursor" || sub === "kilo" ? (
+          <CaptureSessionsView projectPath={projectPath} agent={sub} />
         ) : loading && !data ? (
           <PanelSkeleton rows={8} />
         ) : !projectPath ? (
@@ -228,7 +245,16 @@ function Centered({ children }: { children: React.ReactNode }) {
 
 // ── Coding-agent combobox ────────────────────────────────────────────────────
 
-type AgentSub = "claude" | "codex" | "cersei";
+type AgentSub = "claude" | "codex" | "cersei" | "opencode" | "cursor" | "kilo";
+
+const AGENT_SUBS: readonly AgentSub[] = [
+  "claude",
+  "codex",
+  "cersei",
+  "opencode",
+  "cursor",
+  "kilo",
+];
 
 interface CodingAgentOption {
   sub: AgentSub;
@@ -247,23 +273,29 @@ function CodingAgentMenu({
   claudeCount,
   codexCount,
   cerseiCount,
+  captureCounts,
 }: {
   sub: string;
   setSub: (s: AgentSub) => void;
   claudeCount: number;
   codexCount: number;
   cerseiCount: number;
+  /** Per-plugin-id session counts from the capture store (opencode/cursor/kilo). */
+  captureCounts: Record<string, number>;
 }) {
   const options = useMemo<CodingAgentOption[]>(
     () => [
       { sub: "cersei", label: "Atlas", icon: <AtlasIcon size={14} />, count: cerseiCount },
       { sub: "claude", label: "Claude Code", icon: <ClaudeIcon className="size-3.5" />, count: claudeCount },
       { sub: "codex", label: "Codex", icon: <CodexIcon className="size-3.5" />, count: codexCount },
+      { sub: "opencode", label: "OpenCode", icon: <OpenCodeIcon className="size-3.5" />, count: captureCounts["opencode"] ?? 0 },
+      { sub: "cursor", label: "Cursor", icon: <CursorIcon className="size-3.5" />, count: captureCounts["cursor"] ?? 0 },
+      { sub: "kilo", label: "Kilo", icon: <KiloIcon className="size-3.5" />, count: captureCounts["kilo"] ?? 0 },
     ],
-    [claudeCount, codexCount, cerseiCount],
+    [claudeCount, codexCount, cerseiCount, captureCounts],
   );
 
-  const isAgentActive = sub === "claude" || sub === "codex" || sub === "cersei";
+  const isAgentActive = AGENT_SUBS.includes(sub as AgentSub);
   // Remember the last agent so the pill keeps its identity while the user is on
   // a non-agent tab (Graph/Policy/…).
   const [lastAgent, setLastAgent] = useState<AgentSub>(

@@ -128,7 +128,13 @@ export function MemoryTimelineView() {
         const s = timeline?.sessions.find((x) => x.id === id.slice(8));
         if (s) {
           const sub =
-            s.agent === "codex" ? "codex" : s.agent === "cersei" ? "cersei" : "claude";
+            s.agent === "codex" ||
+            s.agent === "cersei" ||
+            s.agent === "opencode" ||
+            s.agent === "cursor" ||
+            s.agent === "kilo"
+              ? s.agent
+              : "claude";
           navigateToMemory(sub, s.id);
         }
         return;
@@ -138,6 +144,9 @@ export function MemoryTimelineView() {
       if (doc.startsWith("codex:")) navigateToMemory("codex", doc);
       else if (doc.startsWith("claude:")) navigateToMemory("claude", doc);
       else if (doc.startsWith("cersei:")) navigateToMemory("cersei", doc);
+      else if (doc.startsWith("opencode:")) navigateToMemory("opencode", doc);
+      else if (doc.startsWith("cursor:")) navigateToMemory("cursor", doc);
+      else if (doc.startsWith("kilo:")) navigateToMemory("kilo", doc);
     },
     [timeline, navigateToMemory],
   );

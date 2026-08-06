@@ -1,7 +1,7 @@
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
-import { ClaudeIcon, CodexIcon } from "@/components/agent-icons";
+import { ClaudeIcon, CodexIcon, OpenCodeIcon, CursorIcon, KiloIcon } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
 
 export interface PanelItem {
@@ -76,6 +76,12 @@ export function MemoryTimelinePanel({
                     <CodexIcon className="size-3 shrink-0 opacity-70" />
                   ) : it.source === "cersei" ? (
                     <AtlasIcon size={12} className="shrink-0 opacity-70" />
+                  ) : it.source === "opencode" ? (
+                    <OpenCodeIcon className="size-3 shrink-0 opacity-70" />
+                  ) : it.source === "cursor" ? (
+                    <CursorIcon className="size-3 shrink-0 opacity-70" />
+                  ) : it.source === "kilo" ? (
+                    <KiloIcon className="size-3 shrink-0 opacity-70" />
                   ) : (
                     <ClaudeIcon className="size-3 shrink-0 opacity-70" />
                   )}

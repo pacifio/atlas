@@ -278,15 +278,18 @@ function GraphReady({
   }, [selectedId, onSelect]);
 
   // Jump from the detail card to the source memory: Claude file, Codex thread,
-  // or native Atlas (cersei) session.
+  // native Atlas (cersei) session, or a capture-backed agent session view
+  // (opencode/cursor/kilo). Anything else (codebase/shared/note) → Claude tab.
   const openSource = () => {
     if (!selected) return;
     const sub =
-      selected.source === "codex"
-        ? "codex"
-        : selected.source === "cersei"
-          ? "cersei"
-          : "claude";
+      selected.source === "codex" ||
+      selected.source === "cersei" ||
+      selected.source === "opencode" ||
+      selected.source === "cursor" ||
+      selected.source === "kilo"
+        ? selected.source
+        : "claude";
     navigateToMemory(sub, selected.id);
   };
 
@@ -450,8 +453,12 @@ function GraphReady({
             <button
               onClick={openSource}
               title={
-                selected.source === "codex"
-                  ? "Open this session in the Codex tab"
+                selected.source === "codex" ||
+                selected.source === "cersei" ||
+                selected.source === "opencode" ||
+                selected.source === "cursor" ||
+                selected.source === "kilo"
+                  ? "Open this session in its agent tab"
                   : "Open this file in the Claude Code tab"
               }
               className="group absolute left-[26px] bottom-3 max-w-[340px] text-left rounded-lg border border-[var(--border-default)] hover:border-[var(--border-strong)] bg-[var(--bg-elevated)]/90 backdrop-blur-sm shadow-[var(--shadow-overlay)] p-3 transition-colors cursor-pointer"
@@ -518,13 +525,20 @@ function GraphReady({
 }
 
 function SourceDot({ source }: { source: string }) {
+  const color =
+    source === "codex"
+      ? "var(--status-info)"
+      : source === "opencode"
+        ? "var(--agent-opencode-chip)"
+        : source === "cursor"
+          ? "var(--agent-cursor-chip)"
+          : source === "kilo"
+            ? "var(--agent-kilo-chip)"
+            : "var(--accent-primary)";
   return (
     <span
       className="w-1.5 h-1.5 rounded-full shrink-0"
-      style={{
-        background:
-          source === "codex" ? "var(--status-info)" : "var(--accent-primary)",
-      }}
+      style={{ background: color }}
     />
   );
 }

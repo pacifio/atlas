@@ -422,6 +422,7 @@ pub fn run() {
             commands::capture::capture_retry_failed,
             commands::capture::capture_retry_watcher,
             commands::capture::artifacts_sessions,
+            commands::capture::capture_agent_session_counts,
             commands::capture::artifacts_session,
             commands::capture::artifacts_payload,
             commands::capture::capture_commit_sessions,
