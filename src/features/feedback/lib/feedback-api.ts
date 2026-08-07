@@ -7,11 +7,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-export type FeedbackCategory =
-  | "issue"
-  | "feature_request"
-  | "improvement"
-  | "other";
+export type FeedbackCategory = "issue" | "feature_request" | "improvement" | "other";
 
 export const CATEGORIES: ReadonlyArray<{
   id: FeedbackCategory;
@@ -64,8 +60,7 @@ export interface FeedbackReceipt {
 }
 
 export const feedback = {
-  submit: (input: FeedbackPayload) =>
-    invoke<FeedbackReceipt>("feedback_submit", { input }),
+  submit: (input: FeedbackPayload) => invoke<FeedbackReceipt>("feedback_submit", { input }),
 
   /**
    * Native macOS capture. `"region"` lets the user drag a region *or* press

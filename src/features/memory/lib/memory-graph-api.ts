@@ -45,7 +45,5 @@ export const listenMemoryEmbedProgress = (
 ): Promise<UnlistenFn> =>
   listen<DownloadProgress>("atlas:memory-embed:progress", (e) => handler(e.payload));
 
-export const listenMemoryEmbedDone = (
-  handler: (p: DownloadDone) => void,
-): Promise<UnlistenFn> =>
+export const listenMemoryEmbedDone = (handler: (p: DownloadDone) => void): Promise<UnlistenFn> =>
   listen<DownloadDone>("atlas:memory-embed:done", (e) => handler(e.payload));

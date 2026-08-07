@@ -17,22 +17,15 @@ import { isBusyAgentStatus, type PlanStep } from "@/types/agent";
  *   turn is no longer busy.
  */
 function planCurrentStep(steps: PlanStep[]): PlanStep | undefined {
-  return (
-    steps.find((s) => s.status === "in_progress") ??
-    steps.find((s) => s.status === "pending")
-  );
+  return steps.find((s) => s.status === "in_progress") ?? steps.find((s) => s.status === "pending");
 }
 
 function StepIcon({ status }: { status: PlanStep["status"] }) {
   if (status === "completed")
     return <CheckCircle2 size={12} className="text-[var(--status-success)]" />;
   if (status === "in_progress")
-    return (
-      <Loader2 size={12} className="animate-spin text-[var(--accent-primary)]" />
-    );
-  return (
-    <div className="h-3 w-3 rounded-full border border-[var(--border-strong)]" />
-  );
+    return <Loader2 size={12} className="animate-spin text-[var(--accent-primary)]" />;
+  return <div className="h-3 w-3 rounded-full border border-[var(--border-strong)]" />;
 }
 
 export const PlanDock = memo(function PlanDock({ tabId }: { tabId: string }) {
@@ -80,10 +73,7 @@ export const PlanDock = memo(function PlanDock({ tabId }: { tabId: string }) {
           <span className="flex min-w-0 items-center gap-1.5 text-[var(--text-secondary)]">
             <span className="text-[var(--text-tertiary)]">·</span>
             {busy && current.status === "in_progress" && (
-              <Loader2
-                size={11}
-                className="shrink-0 animate-spin text-[var(--accent-primary)]"
-              />
+              <Loader2 size={11} className="shrink-0 animate-spin text-[var(--accent-primary)]" />
             )}
             <span className="truncate">{current.description}</span>
           </span>

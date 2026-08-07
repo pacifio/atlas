@@ -147,9 +147,7 @@ export function ConnectDialog() {
 
                 <div className="flex items-center gap-2 px-1 pt-4 text-xs text-text-secondary">
                   <Loader2 size={14} className="animate-spin" />
-                  {starting
-                    ? "Starting…"
-                    : "Waiting for you to approve in the browser…"}
+                  {starting ? "Starting…" : "Waiting for you to approve in the browser…"}
                 </div>
               </>
             )}

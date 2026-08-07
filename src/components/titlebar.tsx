@@ -57,12 +57,9 @@ export function Titlebar() {
   // switch or rename re-labels immediately.
   const organisations = useOrgStore.use.organisations();
   const activeOrganisationId = useOrgStore.use.activeOrganisationId();
-  const orgName =
-    organisations.find((o) => o.id === activeOrganisationId)?.name ?? null;
+  const orgName = organisations.find((o) => o.id === activeOrganisationId)?.name ?? null;
   const displayName =
-    (currentProject
-      ? workspaces.find((w) => w.path === currentProject.path)?.name
-      : undefined) ??
+    (currentProject ? workspaces.find((w) => w.path === currentProject.path)?.name : undefined) ??
     currentProject?.name ??
     "Atlas";
   const { windowRef, isFullscreen } = useTauriWindow();
@@ -121,11 +118,7 @@ export function Titlebar() {
         <WorkspaceToggle />
         {currentProject && <LeftPanelToggle />}
         {/* `org / project` pill — click to copy the workspace path. */}
-        <ProjectLabel
-          name={displayName}
-          orgName={orgName}
-          path={currentProject?.path}
-        />
+        <ProjectLabel name={displayName} orgName={orgName} path={currentProject?.path} />
       </div>
 
       {/* The account button sits OUTSIDE the `currentProject` guard on purpose:
@@ -298,7 +291,15 @@ function ArcProgress({ value }: { value: number }) {
   const off = c * (1 - Math.max(0, Math.min(1, value)));
   return (
     <svg width={14} height={14} viewBox="0 0 16 16" className="-rotate-90">
-      <circle cx="8" cy="8" r={r} fill="none" stroke="currentColor" strokeOpacity={0.25} strokeWidth={2} />
+      <circle
+        cx="8"
+        cy="8"
+        r={r}
+        fill="none"
+        stroke="currentColor"
+        strokeOpacity={0.25}
+        strokeWidth={2}
+      />
       <circle
         cx="8"
         cy="8"
@@ -343,7 +344,9 @@ function UpdateButton() {
           toast.success(`You're on the latest version (${status.currentVersion}).`);
         }
       })
-      .catch((e) => toast.error(`Update check failed: ${e instanceof Error ? e.message : String(e)}`));
+      .catch((e) =>
+        toast.error(`Update check failed: ${e instanceof Error ? e.message : String(e)}`),
+      );
   };
 
   const title = checking
@@ -369,7 +372,11 @@ function UpdateButton() {
       {checking ? (
         <Loader2 size={14} className="animate-spin" />
       ) : downloading ? (
-        progress != null ? <ArcProgress value={progress} /> : <Loader2 size={14} className="animate-spin" />
+        progress != null ? (
+          <ArcProgress value={progress} />
+        ) : (
+          <Loader2 size={14} className="animate-spin" />
+        )
       ) : (
         <ArrowDownToLine size={14} />
       )}
@@ -389,9 +396,7 @@ function NotificationButton() {
   // would create a new reference every render and trigger an infinite loop.
   const hasUnread = useNotificationsStore((s) => s.items.some((i) => !i.read));
   const hasError = useNotificationsStore((s) =>
-    s.items.some(
-      (i) => !i.read && (i.kind === "agent-failed" || i.kind === "chat-error"),
-    ),
+    s.items.some((i) => !i.read && (i.kind === "agent-failed" || i.kind === "chat-error")),
   );
   // LIVE attention state: any session (any workspace) blocked on a permission
   // decision. Derived from the chat store rather than unread flags so it shows
@@ -419,11 +424,7 @@ function NotificationButton() {
                 ? "bg-[var(--status-success)] animate-pulse"
                 : "bg-white",
           )}
-          aria-label={
-            needsAttention
-              ? "An agent needs your attention"
-              : "Unread notifications"
-          }
+          aria-label={needsAttention ? "An agent needs your attention" : "Unread notifications"}
         />
       )}
     </button>

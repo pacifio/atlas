@@ -1,11 +1,5 @@
 import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
-import {
-  ChevronRight,
-  File as FileIcon,
-  Folder,
-  FolderOpen,
-  type LucideIcon,
-} from "lucide-react";
+import { ChevronRight, File as FileIcon, Folder, FolderOpen, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { INDENT_PER_LEVEL, ROW_HEIGHT } from "../lib/tree-constants";
 
@@ -212,17 +206,9 @@ export function TreeRow({
 
       {isDir ? (
         isExpanded ? (
-          <FolderOpen
-            size={13}
-            className="shrink-0 text-text-tertiary"
-            strokeWidth={1.5}
-          />
+          <FolderOpen size={13} className="shrink-0 text-text-tertiary" strokeWidth={1.5} />
         ) : (
-          <Folder
-            size={13}
-            className="shrink-0 text-text-tertiary"
-            strokeWidth={1.5}
-          />
+          <Folder size={13} className="shrink-0 text-text-tertiary" strokeWidth={1.5} />
         )
       ) : leafIconNode ? (
         <span
@@ -232,11 +218,7 @@ export function TreeRow({
           {leafIconNode}
         </span>
       ) : (
-        <LeafIcon
-          size={13}
-          className="shrink-0 text-text-tertiary"
-          strokeWidth={1.5}
-        />
+        <LeafIcon size={13} className="shrink-0 text-text-tertiary" strokeWidth={1.5} />
       )}
 
       {isEditing ? (

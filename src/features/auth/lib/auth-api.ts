@@ -141,8 +141,7 @@ export const auth = {
    * offline). A rejection here never signs the user out — only a real 401 inside
    * Rust does, through the one path that may.
    */
-  createOrg: (name: string, slug: string) =>
-    invoke<CreatedOrg>("auth_create_org", { name, slug }),
+  createOrg: (name: string, slug: string) => invoke<CreatedOrg>("auth_create_org", { name, slug }),
   /**
    * Is an organisation handle free? — the create-form typeahead probe (§6.2).
    *
@@ -152,8 +151,7 @@ export const auth = {
    * **Advisory only** — the server's unique index is the real guard, so
    * {@link auth.createOrg} can still fail on a race after a `true` here.
    */
-  checkOrgSlug: (slug: string) =>
-    invoke<boolean>("auth_check_org_slug", { slug }),
+  checkOrgSlug: (slug: string) => invoke<boolean>("auth_check_org_slug", { slug }),
   /**
    * Force a server re-pull of the account's organisations and re-broadcast the
    * snapshot — the manual refresh behind the org list. The merge is driven off
@@ -168,8 +166,7 @@ export const auth = {
    * string — the caller removes the org locally either way. A rejection never
    * signs the user out; only a real 401 inside Rust does.
    */
-  deleteOrg: (remoteId: string) =>
-    invoke<void>("auth_delete_org", { remoteId }),
+  deleteOrg: (remoteId: string) => invoke<void>("auth_delete_org", { remoteId }),
 
   // ── Members (ATL-36) ──────────────────────────────────────────────────────
   // Every one of these rejects with a user-facing string; none can sign the
@@ -177,12 +174,10 @@ export const auth = {
   // SERVER org id — the local org's `remoteId`, never its local `id`.
 
   /** The org's members. */
-  listMembers: (orgId: string) =>
-    invoke<OrgMember[]>("auth_list_members", { orgId }),
+  listMembers: (orgId: string) => invoke<OrgMember[]>("auth_list_members", { orgId }),
   /** Pending + past invitations. Admin-scoped: a non-admin rejects, and the
    *  caller should render an empty invitations tab rather than an error. */
-  listInvitations: (orgId: string) =>
-    invoke<OrgInvitation[]>("auth_list_invitations", { orgId }),
+  listInvitations: (orgId: string) => invoke<OrgInvitation[]>("auth_list_invitations", { orgId }),
   /**
    * Invite by email. Email delivery is deferred server-side, so the resolved
    * `acceptUrl` is the ONLY way the invitee learns of the invite — surface it
@@ -244,15 +239,11 @@ export interface CreatedOrg {
 }
 
 /** Every auth transition, broadcast to every window. */
-export const listenAuthChanged = (
-  handler: (snapshot: AuthSnapshot) => void,
-): Promise<UnlistenFn> =>
+export const listenAuthChanged = (handler: (snapshot: AuthSnapshot) => void): Promise<UnlistenFn> =>
   listen<AuthSnapshot>("atlas:auth-changed", (e) => handler(e.payload));
 
 /** A grant that ended without a token (denied, expired, unreachable). */
-export const listenAuthError = (
-  handler: (e: { message: string }) => void,
-): Promise<UnlistenFn> =>
+export const listenAuthError = (handler: (e: { message: string }) => void): Promise<UnlistenFn> =>
   listen<{ message: string }>("atlas:auth-error", (e) => handler(e.payload));
 
 /**
@@ -270,6 +261,4 @@ export const listenAuthError = (
 export const listenAuthSignedOut = (
   handler: (e: { message: string }) => void,
 ): Promise<UnlistenFn> =>
-  listen<{ message: string }>("atlas:auth-signed-out", (e) =>
-    handler(e.payload),
-  );
+  listen<{ message: string }>("atlas:auth-signed-out", (e) => handler(e.payload));

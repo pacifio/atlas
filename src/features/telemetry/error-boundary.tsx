@@ -46,8 +46,7 @@ export class TelemetryErrorBoundary extends React.Component<Props, State> {
           justifyContent: "center",
           background: "#000",
           color: "#fff",
-          fontFamily:
-            "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+          fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
           WebkitUserSelect: "none",
         }}
       >
@@ -63,8 +62,8 @@ export class TelemetryErrorBoundary extends React.Component<Props, State> {
               margin: "0 0 16px",
             }}
           >
-            The interface crashed. Reloading usually fixes it — your work in
-            progress is preserved on disk.
+            The interface crashed. Reloading usually fixes it — your work in progress is preserved
+            on disk.
           </p>
           <button
             type="button"

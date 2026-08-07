@@ -1,7 +1,13 @@
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
-import { ClaudeIcon, CodexIcon, OpenCodeIcon, CursorIcon, KiloIcon } from "@/components/agent-icons";
+import {
+  ClaudeIcon,
+  CodexIcon,
+  OpenCodeIcon,
+  CursorIcon,
+  KiloIcon,
+} from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
 
 export interface PanelItem {
@@ -36,7 +42,11 @@ export function MemoryTimelinePanel({
   if (!open) return null;
   return (
     <>
-      <div className="absolute inset-0 z-20 bg-black/10 animate-fade-in" onClick={onClose} aria-hidden />
+      <div
+        className="absolute inset-0 z-20 bg-black/10 animate-fade-in"
+        onClick={onClose}
+        aria-hidden
+      />
       <aside
         className={cn(
           "absolute right-0 top-0 bottom-0 z-30 w-[330px] flex flex-col",
@@ -46,7 +56,9 @@ export function MemoryTimelinePanel({
       >
         <div className="flex items-start gap-2 px-3 h-[40px] shrink-0 border-b border-[var(--border-default)]">
           <div className="flex-1 min-w-0 pt-1">
-            <div className="text-[11px] font-medium text-[var(--text-primary)] truncate">{title}</div>
+            <div className="text-[11px] font-medium text-[var(--text-primary)] truncate">
+              {title}
+            </div>
             <div className="text-[9px] text-[var(--text-tertiary)] truncate">{subtitle}</div>
           </div>
           <button
@@ -85,7 +97,9 @@ export function MemoryTimelinePanel({
                   ) : (
                     <ClaudeIcon className="size-3 shrink-0 opacity-70" />
                   )}
-                  <span className="text-[11px] text-[var(--text-primary)] truncate flex-1">{it.title}</span>
+                  <span className="text-[11px] text-[var(--text-primary)] truncate flex-1">
+                    {it.title}
+                  </span>
                   {it.score !== undefined && (
                     <span className="text-[9px] text-[var(--text-tertiary)] tabular-nums">
                       {Math.round(it.score * 100)}%
@@ -95,7 +109,9 @@ export function MemoryTimelinePanel({
                 <div className="flex items-center gap-1.5 text-[9px] text-[var(--text-tertiary)]">
                   <span className="truncate flex-1">{it.note}</span>
                   {it.ts_ms > 0 && (
-                    <span className="shrink-0">{timeAgo(new Date(it.ts_ms).toISOString(), { suffix: true })}</span>
+                    <span className="shrink-0">
+                      {timeAgo(new Date(it.ts_ms).toISOString(), { suffix: true })}
+                    </span>
                   )}
                 </div>
               </button>

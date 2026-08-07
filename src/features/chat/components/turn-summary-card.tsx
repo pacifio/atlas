@@ -55,12 +55,7 @@ function FileStatusBadge({ file }: { file: TurnFile }) {
     }
   }
   return (
-    <span
-      className={cn(
-        "w-3 shrink-0 text-center font-mono text-[10px] font-semibold",
-        color,
-      )}
-    >
+    <span className={cn("w-3 shrink-0 text-center font-mono text-[10px] font-semibold", color)}>
       {letter}
     </span>
   );
@@ -130,8 +125,7 @@ export const TurnSummaryCard = memo(function TurnSummaryCard({
   const totalRemoved = edits.reduce((s, f) => s + f.removed, 0);
 
   const ctx = message.contextUsage;
-  if (files.length === 0 && chips.length === 0 && !loadingChips && !ctx)
-    return null;
+  if (files.length === 0 && chips.length === 0 && !loadingChips && !ctx) return null;
 
   const saveToKb = async () => {
     const project = useProjectStore.getState().currentProject;
@@ -175,8 +169,7 @@ export const TurnSummaryCard = memo(function TurnSummaryCard({
       toast.error("Pick a BYOK model in the composer first to draw diagrams");
       return;
     }
-    const projectPath =
-      useProjectStore.getState().currentProject?.path ?? "/";
+    const projectPath = useProjectStore.getState().currentProject?.path ?? "/";
     const editedPaths = edits.map((f) => f.path);
     const prompt = [
       "Draw a clear architecture/flow diagram of the changes just made" +
@@ -194,16 +187,14 @@ export const TurnSummaryCard = memo(function TurnSummaryCard({
     // the loading state and can keep chatting with the diagram afterward.
     const groupId = canvas.createAiGroup(anchor, byok.provider, byok.model);
     canvas.requestOpenAiThread(groupId);
-    void useCanvasAiStore
-      .getState()
-      .actions.generate({
-        groupId,
-        anchor,
-        prompt,
-        provider: byok.provider,
-        model: byok.model,
-        projectPath,
-      });
+    void useCanvasAiStore.getState().actions.generate({
+      groupId,
+      anchor,
+      prompt,
+      provider: byok.provider,
+      model: byok.model,
+      projectPath,
+    });
     // Reveal the Spaces tab so the user watches it draw.
     const layout = useLayoutStore.getState().actions;
     layout.addTab({
@@ -242,14 +233,10 @@ export const TurnSummaryCard = memo(function TurnSummaryCard({
             {(totalAdded > 0 || totalRemoved > 0) && (
               <span className="ml-auto font-mono text-[10px]">
                 {totalAdded > 0 && (
-                  <span className="text-[var(--status-success)]">
-                    +{totalAdded}
-                  </span>
+                  <span className="text-[var(--status-success)]">+{totalAdded}</span>
                 )}
                 {totalRemoved > 0 && (
-                  <span className="ml-1 text-[var(--status-error)]">
-                    −{totalRemoved}
-                  </span>
+                  <span className="ml-1 text-[var(--status-error)]">−{totalRemoved}</span>
                 )}
               </span>
             )}
@@ -277,29 +264,29 @@ export const TurnSummaryCard = memo(function TurnSummaryCard({
           </div>
           <div className="flex flex-wrap gap-1.5">
             {chips.map((chip, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() =>
-                window.dispatchEvent(
-                  // Stamp the ORIGIN tab id so only this chat session sends it —
-                  // the listener is a global window event and every mounted
-                  // ChatPanel hears it, so without this every session would fire.
-                  new CustomEvent("atlas:chat-send", { detail: { text: chip, tabId } }),
-                )
-              }
-              className={cn(
-                "group flex items-center gap-1.5 rounded-full border border-[var(--border-default)]",
-                "bg-[var(--bg-secondary)] px-3 py-1 text-[11px] text-[var(--text-secondary)]",
-                "transition-colors hover:border-[var(--border-focus)] hover:text-[var(--text-primary)]",
-              )}
-            >
-              <span className="max-w-[280px] truncate">{chip}</span>
-              <ArrowRight
-                size={11}
-                className="shrink-0 text-[var(--text-tertiary)] group-hover:text-[var(--accent-primary)]"
-              />
-            </button>
+              <button
+                key={i}
+                type="button"
+                onClick={() =>
+                  window.dispatchEvent(
+                    // Stamp the ORIGIN tab id so only this chat session sends it —
+                    // the listener is a global window event and every mounted
+                    // ChatPanel hears it, so without this every session would fire.
+                    new CustomEvent("atlas:chat-send", { detail: { text: chip, tabId } }),
+                  )
+                }
+                className={cn(
+                  "group flex items-center gap-1.5 rounded-full border border-[var(--border-default)]",
+                  "bg-[var(--bg-secondary)] px-3 py-1 text-[11px] text-[var(--text-secondary)]",
+                  "transition-colors hover:border-[var(--border-focus)] hover:text-[var(--text-primary)]",
+                )}
+              >
+                <span className="max-w-[280px] truncate">{chip}</span>
+                <ArrowRight
+                  size={11}
+                  className="shrink-0 text-[var(--text-tertiary)] group-hover:text-[var(--accent-primary)]"
+                />
+              </button>
             ))}
           </div>
         </div>
@@ -332,23 +319,14 @@ export const TurnSummaryCard = memo(function TurnSummaryCard({
           )
         )}
         <ActionButton
-          icon={
-            <span className="inline-block h-2 w-2 rounded-full bg-white" />
-          }
+          icon={<span className="inline-block h-2 w-2 rounded-full bg-white" />}
           label="Save to KB"
           onClick={saveToKb}
         />
         {canDiagram && (
-          <ActionButton
-            icon={<Workflow size={12} />}
-            label="Draw diagram"
-            onClick={drawDiagram}
-          />
+          <ActionButton icon={<Workflow size={12} />} label="Draw diagram" onClick={drawDiagram} />
         )}
-        <CommitFlow
-          editedPaths={edits.map((f) => f.path)}
-          turnText={message.content}
-        />
+        <CommitFlow editedPaths={edits.map((f) => f.path)} turnText={message.content} />
       </div>
     </div>
   );
@@ -388,9 +366,7 @@ const FileRow = memo(function FileRow({
   // entry — an edit is "in source control" only when git actually tracks a
   // change for it (so we can open the correct staged/worktree diff).
   const rel =
-    repoPath && file.path.startsWith(repoPath + "/")
-      ? file.path.slice(repoPath.length + 1)
-      : null;
+    repoPath && file.path.startsWith(repoPath + "/") ? file.path.slice(repoPath.length + 1) : null;
   const scEntry = rel ? gitFiles.find((g) => g.path === rel) : undefined;
   const inSourceControl = isEdit && !!scEntry && !!repoPath && !!rel;
 
@@ -401,9 +377,7 @@ const FileRow = memo(function FileRow({
     try {
       await revealItemInDir(file.path);
     } catch (err) {
-      toast.error(
-        `Couldn't reveal in Finder: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      toast.error(`Couldn't reveal in Finder: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
   const openInDiff = () => {
@@ -419,7 +393,10 @@ const FileRow = memo(function FileRow({
       <FileStatusBadge file={file} />
       <button
         type="button"
-        onClick={(e) => { e.stopPropagation(); openPrimary(); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          openPrimary();
+        }}
         className="min-w-0 truncate text-left text-[var(--text-secondary)] underline-offset-2 transition-colors hover:text-[var(--text-primary)] hover:underline"
       >
         {file.path}
@@ -431,14 +408,16 @@ const FileRow = memo(function FileRow({
           <FileAction icon={<GitCompare size={12} />} title="Open diff" onClick={openInDiff} />
         )}
         <FileAction icon={<Code size={12} />} title="Open in editor" onClick={openInEditor} />
-        <FileAction icon={<FolderOpen size={12} />} title="Reveal in Finder" onClick={openInFinder} />
+        <FileAction
+          icon={<FolderOpen size={12} />}
+          title="Reveal in Finder"
+          onClick={openInFinder}
+        />
       </span>
 
       {isEdit && (file.added > 0 || file.removed > 0) && (
         <span className="shrink-0 font-mono text-[10px]">
-          {file.added > 0 && (
-            <span className="text-[var(--status-success)]">+{file.added}</span>
-          )}
+          {file.added > 0 && <span className="text-[var(--status-success)]">+{file.added}</span>}
           {file.removed > 0 && (
             <span className="ml-1 text-[var(--status-error)]">−{file.removed}</span>
           )}
@@ -450,7 +429,15 @@ const FileRow = memo(function FileRow({
 
 /** A tiny icon button for a per-file open action (Diff / Editor / Finder).
  *  `title` provides the tooltip that the removed text label used to convey. */
-function FileAction({ icon, title, onClick }: { icon: React.ReactNode; title: string; onClick: () => void }) {
+function FileAction({
+  icon,
+  title,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"

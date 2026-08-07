@@ -67,10 +67,8 @@ export async function switchOrg(id: string): Promise<void> {
   try {
     const wsActions = useWorkspaceStore.getState().actions;
     const projectActions = useProjectStore.getState().actions;
-    const outgoingActiveWs =
-      useWorkspaceStore.getState().activeWorkspaceId;
-    const outgoingPath =
-      useProjectStore.getState().currentProject?.path ?? null;
+    const outgoingActiveWs = useWorkspaceStore.getState().activeWorkspaceId;
+    const outgoingPath = useProjectStore.getState().currentProject?.path ?? null;
 
     // 1) Remember the outgoing org's active workspace so switching back
     //    restores the user where they left off.
@@ -189,10 +187,7 @@ export async function deleteOrgAndData(id: string): Promise<boolean> {
  * `activeWorkspaceId` if it still exists, else the most-recently-active
  * workspace in that org, else none (empty org).
  */
-function resolveTargetWorkspace(
-  orgId: string,
-  savedActiveWs: string | undefined,
-): string | null {
+function resolveTargetWorkspace(orgId: string, savedActiveWs: string | undefined): string | null {
   const { workspaces } = useWorkspaceStore.getState();
   const inOrg = workspaces.filter((w) => w.orgId === orgId);
   if (savedActiveWs && inOrg.some((w) => w.id === savedActiveWs)) {

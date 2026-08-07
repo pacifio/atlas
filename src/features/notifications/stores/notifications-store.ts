@@ -35,8 +35,7 @@ export type NewNotification = Omit<AppNotification, "id" | "timestamp" | "read">
 const MAX_ITEMS = 100;
 
 const uid = () =>
-  globalThis.crypto?.randomUUID?.() ??
-  `n-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+  globalThis.crypto?.randomUUID?.() ?? `n-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
 
 interface NotificationsState {
   items: AppNotification[];
@@ -70,8 +69,7 @@ export const useNotificationsStore = createSelectors(
             ...s.items,
           ].slice(0, MAX_ITEMS),
         })),
-      dismiss: (id) =>
-        set((s) => ({ items: s.items.filter((i) => i.id !== id) })),
+      dismiss: (id) => set((s) => ({ items: s.items.filter((i) => i.id !== id) })),
       clearAll: () => set({ items: [] }),
       markAllRead: () =>
         set((s) => ({ items: s.items.map((i) => (i.read ? i : { ...i, read: true })) })),

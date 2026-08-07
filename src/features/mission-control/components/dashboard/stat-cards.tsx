@@ -8,9 +8,7 @@ export function StatCards({ data }: { data: MissionControlUsage }) {
   const t = data.totals;
   const totalIn = t.claudeInput;
   const totalOut = t.claudeOutput;
-  const byokSince = data.byokSince
-    ? new Date(data.byokSince).toLocaleDateString()
-    : null;
+  const byokSince = data.byokSince ? new Date(data.byokSince).toLocaleDateString() : null;
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
@@ -31,11 +29,7 @@ export function StatCards({ data }: { data: MissionControlUsage }) {
         value={fmtTokens(t.claudeRequests)}
         sub={`${t.claudeSessions} sessions`}
       />
-      <StatCard
-        label="Cache Tokens"
-        value={fmtTokens(t.claudeCache)}
-        sub="creation + read"
-      />
+      <StatCard label="Cache Tokens" value={fmtTokens(t.claudeCache)} sub="creation + read" />
       <StatCard
         label="Codex"
         value={fmtTokens(t.codexTokens)}
@@ -51,18 +45,10 @@ export function StatCards({ data }: { data: MissionControlUsage }) {
       <StatCard
         label="BYOK"
         value={fmtTokens(t.byokInput + t.byokOutput)}
-        sub={
-          byokSince
-            ? `${t.byokRequests} calls · since ${byokSince}`
-            : `${t.byokRequests} calls`
-        }
+        sub={byokSince ? `${t.byokRequests} calls · since ${byokSince}` : `${t.byokRequests} calls`}
         accent={AGENT_COLOR.byok}
       />
-      <StatCard
-        label="Projects"
-        value={String(data.projects.length)}
-        sub="tracked"
-      />
+      <StatCard label="Projects" value={String(data.projects.length)} sub="tracked" />
     </div>
   );
 }

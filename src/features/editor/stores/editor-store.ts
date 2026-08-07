@@ -106,6 +106,6 @@ export const useEditorStore = createSelectors(
             s.activeBufferPath = path;
           }),
       },
-    }))
-  )
+    })),
+  ),
 );

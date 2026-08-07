@@ -95,7 +95,10 @@ export const DiffMinimap = memo(function DiffMinimap({ rows, scrollRef }: DiffMi
         const side = row.right ?? row.left;
         if (!side) continue;
         // Tabs → 2 cols so indentation reads; runs of non-space become blocks.
-        const text = side.segments.map((s) => s.text).join("").replace(/\t/g, "  ");
+        const text = side.segments
+          .map((s) => s.text)
+          .join("")
+          .replace(/\t/g, "  ");
         ctx.fillStyle = TEXT[kind];
         runRe.lastIndex = 0;
         let m: RegExpExecArray | null;

@@ -38,8 +38,7 @@ export interface MemoryTimeline {
 
 export const memoryTimeline = {
   /** Fresh compute (git + sqlite). Also persists a disk cache on the Rust side. */
-  load: (projectPath: string) =>
-    invoke<MemoryTimeline>("memory_timeline", { projectPath }),
+  load: (projectPath: string) => invoke<MemoryTimeline>("memory_timeline", { projectPath }),
   /** Instant read of the last-persisted timeline (null if none). */
   loadCached: (projectPath: string) =>
     invoke<MemoryTimeline | null>("memory_timeline_cached", { projectPath }),

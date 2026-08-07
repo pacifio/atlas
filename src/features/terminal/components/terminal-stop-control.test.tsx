@@ -1,12 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { TerminalStopControl } from "./terminal-stop-control";
 
@@ -41,18 +35,12 @@ describe("TerminalStopControl", () => {
       />,
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Stop process (Ctrl+C)" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Stop process (Ctrl+C)" }));
     expect(onInterrupt).toHaveBeenCalledOnce();
-    expect(
-      screen.getByRole("button", { name: "Waiting for process to stop" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Waiting for process to stop" })).toBeDisabled();
 
     act(() => vi.advanceTimersByTime(1500));
-    expect(
-      screen.getByRole("button", { name: "Force stop process" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Force stop process" })).toBeEnabled();
   });
 
   it("runs post-kill cleanup only when a foreground process was killed", async () => {
@@ -68,14 +56,10 @@ describe("TerminalStopControl", () => {
       />,
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Stop process (Ctrl+C)" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Stop process (Ctrl+C)" }));
     act(() => vi.advanceTimersByTime(1500));
     await act(async () => {
-      fireEvent.click(
-        screen.getByRole("button", { name: "Force stop process" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "Force stop process" }));
     });
 
     expect(onForceStop).toHaveBeenCalledOnce();
@@ -91,9 +75,7 @@ describe("TerminalStopControl", () => {
     };
     const { rerender } = render(<TerminalStopControl active {...props} />);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Stop process (Ctrl+C)" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Stop process (Ctrl+C)" }));
     rerender(<TerminalStopControl active={false} {...props} />);
     act(() => vi.advanceTimersByTime(1500));
 

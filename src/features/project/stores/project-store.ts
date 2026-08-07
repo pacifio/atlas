@@ -262,12 +262,27 @@ export async function loadProjectStores(path: string): Promise<void> {
   // IPC of the batch. The awaited pair below is the actual critical path:
   // tabs/splits (first paint of the center panel) and the KB meta bind (cheap;
   // the @-/~ mention picker shows raw note-ids without it).
-  void useExplorerStore.getState().actions.openFolder(path).catch((e) => console.error("Explorer failed:", e));
-  void useGitStore.getState().actions.loadStatus(path).catch((e) => console.error("Git failed:", e));
-  void useSessionStore.getState().actions.loadSession(path).catch((e) => console.error("Session load failed:", e));
+  void useExplorerStore
+    .getState()
+    .actions.openFolder(path)
+    .catch((e) => console.error("Explorer failed:", e));
+  void useGitStore
+    .getState()
+    .actions.loadStatus(path)
+    .catch((e) => console.error("Git failed:", e));
+  void useSessionStore
+    .getState()
+    .actions.loadSession(path)
+    .catch((e) => console.error("Session load failed:", e));
   await Promise.all([
-    useKnowledgeMetaStore.getState().actions.bind(path).catch((e) => console.error("Knowledge bind failed:", e)),
-    useLayoutStore.getState().actions.loadEditorState(path).catch((e) => console.error("Editor state load failed:", e)),
+    useKnowledgeMetaStore
+      .getState()
+      .actions.bind(path)
+      .catch((e) => console.error("Knowledge bind failed:", e)),
+    useLayoutStore
+      .getState()
+      .actions.loadEditorState(path)
+      .catch((e) => console.error("Editor state load failed:", e)),
   ]);
 
   // Load the full KB entries OFF the switch critical path. This is the single
@@ -278,7 +293,9 @@ export async function loadProjectStores(path: string): Promise<void> {
   // while still warming the @-/~ mention cache shortly after open. Fire-and-
   // forget; a stale project is harmless (entries are keyed by path).
   const warmEntries = () => {
-    void useKnowledgeStore.getState().actions.loadEntries(path)
+    void useKnowledgeStore
+      .getState()
+      .actions.loadEntries(path)
       .catch((e) => console.error("Knowledge entries load failed:", e));
   };
   if (typeof requestIdleCallback === "function") {
@@ -370,7 +387,7 @@ export const useProjectStore = createSelectors(
         // setting existed) get the modern default rather than `undefined`.
         const settings: AppSettings = {
           ...DEFAULT_SETTINGS,
-          ...(payload.settings ?? {}),
+          ...payload.settings,
         };
         set({
           currentProject: null,
@@ -420,9 +437,7 @@ export const useProjectStore = createSelectors(
         // flight (the `switching` guard), so auto-switching here would swallow
         // the CLI switch and strand the user on the persisted workspace. The
         // caller switches to the CLI project instead.
-        const active =
-          activeWorkspaceId &&
-          workspaces.find((w) => w.id === activeWorkspaceId);
+        const active = activeWorkspaceId && workspaces.find((w) => w.id === activeWorkspaceId);
         if (active && !opts?.skipActiveSwitch) {
           maybeEnsureAtlasGitignore(active.path, settings);
           void useWorkspaceStore.getState().actions.switchTo(active.id);

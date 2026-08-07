@@ -75,15 +75,20 @@ export const useSessionStore = createSelectors(
         set((s) => ({
           session: {
             ...s.session,
-            searchHistory: [query, ...s.session.searchHistory.filter((q) => q !== query)].slice(0, 20),
+            searchHistory: [query, ...s.session.searchHistory.filter((q) => q !== query)].slice(
+              0,
+              20,
+            ),
           },
         })),
       removeSearchHistory: (query) =>
         set((s) => ({
-          session: { ...s.session, searchHistory: s.session.searchHistory.filter((q) => q !== query) },
+          session: {
+            ...s.session,
+            searchHistory: s.session.searchHistory.filter((q) => q !== query),
+          },
         })),
-      clearSearchHistory: () =>
-        set((s) => ({ session: { ...s.session, searchHistory: [] } })),
+      clearSearchHistory: () => set((s) => ({ session: { ...s.session, searchHistory: [] } })),
       saveSession: async (projectPath) => {
         try {
           const data = JSON.stringify(get().session);
@@ -109,5 +114,5 @@ export const useSessionStore = createSelectors(
         }
       },
     },
-  }))
+  })),
 );

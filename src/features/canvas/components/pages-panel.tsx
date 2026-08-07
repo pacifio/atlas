@@ -26,7 +26,7 @@ export function PagesPanel({ width = 240 }: { width?: number }) {
     .slice()
     .sort((a, b) => a.order - b.order);
 
-  const iconEntry = iconFor ? tree.find((e) => e.id === iconFor.id) ?? null : null;
+  const iconEntry = iconFor ? (tree.find((e) => e.id === iconFor.id) ?? null) : null;
 
   const renderEntry = (entry: PageTreeEntry): React.ReactNode => {
     const active = entry.id === activePageId;

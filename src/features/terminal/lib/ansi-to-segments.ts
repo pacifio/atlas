@@ -18,8 +18,22 @@ export interface AnsiSegment {
 
 // Standard 16-color palette (xterm-ish, tuned to read on the black terminal bg).
 const PALETTE_16 = [
-  "#1a1a1a", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#cccccc",
-  "#5c6370", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
+  "#1a1a1a",
+  "#e06c75",
+  "#98c379",
+  "#e5c07b",
+  "#61afef",
+  "#c678dd",
+  "#56b6c2",
+  "#cccccc",
+  "#5c6370",
+  "#e06c75",
+  "#98c379",
+  "#e5c07b",
+  "#61afef",
+  "#c678dd",
+  "#56b6c2",
+  "#ffffff",
 ];
 
 function color256(n: number): string {
@@ -232,4 +246,3 @@ export function resolveTerminalOutput(input: string): AnsiSegment[] {
   }
   return out;
 }
-

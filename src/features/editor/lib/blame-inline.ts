@@ -126,9 +126,7 @@ const blameDecorations = ViewPlugin.fromClass(
     }
 
     update(update: ViewUpdate) {
-      const blameChanged = update.transactions.some((tr) =>
-        tr.effects.some((e) => e.is(setBlame)),
-      );
+      const blameChanged = update.transactions.some((tr) => tr.effects.some((e) => e.is(setBlame)));
       if (update.docChanged || update.selectionSet || update.focusChanged || blameChanged) {
         this.decorations = this.build(update.view);
       }

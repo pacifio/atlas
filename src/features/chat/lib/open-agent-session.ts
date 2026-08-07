@@ -19,11 +19,7 @@ import { resumeSessionFast } from "./resume-session";
 function activeCwd(): string {
   const project = useProjectStore.getState().currentProject;
   const ws = useWorkspaceStore.getState();
-  return (
-    project?.path ??
-    ws.workspaces.find((w) => w.id === ws.activeWorkspaceId)?.path ??
-    ""
-  );
+  return project?.path ?? ws.workspaces.find((w) => w.id === ws.activeWorkspaceId)?.path ?? "";
 }
 
 /** Nudge the history sidebar to refetch all three agent session lists. The
@@ -104,8 +100,7 @@ export async function openAgentSession({
   const activeId = layout.activeTabId;
   const activeTab = activeId ? layout.tabs.find((t) => t.id === activeId) : undefined;
   const activeSession = activeId ? chat.sessions[activeId] : undefined;
-  const reuse =
-    activeTab?.type === "chat" && (!activeSession || activeSession.status === "idle");
+  const reuse = activeTab?.type === "chat" && (!activeSession || activeSession.status === "idle");
   const targetTabId = reuse && activeId ? activeId : freshTabId();
 
   if (targetTabId !== activeId) {
@@ -131,8 +126,7 @@ export async function openAgentSession({
     reuse &&
     targetTabId === activeId &&
     !!activeSession &&
-    ((activeSession.userMessageCount ?? 0) > 0 ||
-      activeSession.messages.length > 0);
+    ((activeSession.userMessageCount ?? 0) > 0 || activeSession.messages.length > 0);
 
   // Optimistic bind + spinner, then hydrate from the (cached) Rust session.
   clearSession(targetTabId);
@@ -172,9 +166,7 @@ export async function openAgentSession({
   } catch (err) {
     setTranscriptLoading(targetTabId, false);
     setResumePending(targetTabId, false);
-    toast.error(
-      `Couldn't open session: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    toast.error(`Couldn't open session: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

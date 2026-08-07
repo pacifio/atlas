@@ -553,10 +553,7 @@ export function App() {
     // permission_request and the window isn't focused. Shares the
     // permission state machine and focus tracker above so we never
     // double-prompt for OS notification access.
-    const notifyPermissionRequested = async (
-      toolTitle: string,
-      acpSessionId: string,
-    ) => {
+    const notifyPermissionRequested = async (toolTitle: string, acpSessionId: string) => {
       if (windowFocused) return;
       try {
         if (permissionState === "unknown") {
@@ -707,8 +704,7 @@ export function App() {
         const w = ws.workspaces.find((x) => x.path === path);
         return w && w.id !== ws.activeWorkspaceId ? w.name : null;
       })();
-      const fn =
-        kind === "failed" ? toast.error : kind === "done" ? toast.success : toast;
+      const fn = kind === "failed" ? toast.error : kind === "done" ? toast.success : toast;
       fn(wsName ? `${title} — ${wsName}` : title, {
         id: `bg-session-${kind}-${acpSessionId}`,
         description: body,

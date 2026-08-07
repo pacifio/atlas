@@ -394,8 +394,7 @@ export const useGitStore = createSelectors(
             try {
               const ip = await invoke<InProgress>("git_inprogress", { path: p });
               set((s) => {
-                s.inProgress =
-                  ip.merge || ip.rebase || ip.cherryPick || ip.revert ? ip : null;
+                s.inProgress = ip.merge || ip.rebase || ip.cherryPick || ip.revert ? ip : null;
               });
             } catch {
               /* ignore */
@@ -504,8 +503,18 @@ export const useGitStore = createSelectors(
           commit: async (summary, description, amend = false) => {
             const p = repo();
             if (!p) return;
-            await invoke("git_commit_ex", { path: p, summary, description: description ?? null, amend });
-            logEvent({ source: "git", kind: "commit", summary: summary.slice(0, 120), payload: {} });
+            await invoke("git_commit_ex", {
+              path: p,
+              summary,
+              description: description ?? null,
+              amend,
+            });
+            logEvent({
+              source: "git",
+              kind: "commit",
+              summary: summary.slice(0, 120),
+              payload: {},
+            });
             // Commit clears the staged set and moves HEAD — refresh the
             // status/diff now; the watcher still reconciles branch ahead/behind.
             await get().actions.refreshStatusNow(p);

@@ -25,10 +25,19 @@ export const useHintStore = createSelectors(
     immer((set) => ({
       open: false,
       actions: {
-        open: () => set((s) => { s.open = true; }),
-        close: () => set((s) => { s.open = false; }),
-        toggle: () => set((s) => { s.open = !s.open; }),
+        open: () =>
+          set((s) => {
+            s.open = true;
+          }),
+        close: () =>
+          set((s) => {
+            s.open = false;
+          }),
+        toggle: () =>
+          set((s) => {
+            s.open = !s.open;
+          }),
       },
-    }))
-  )
+    })),
+  ),
 );

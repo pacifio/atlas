@@ -65,25 +65,20 @@ export const useWorkspaceGitStore = createSelectors(
         const p = e.payload?.project;
         if (p && fetched.has(p)) get().actions.refresh(p);
       });
-      void listen<{ dirs?: string[]; fullRefresh?: boolean }>(
-        "atlas:explorer:changed",
-        (e) => {
-          const refresh = get().actions.refresh;
-          // Opaque batch (rename, etc.): we can't pinpoint dirs — refresh every
-          // cached workspace.
-          if (e.payload?.fullRefresh || !e.payload?.dirs?.length) {
-            for (const p of fetched) scheduleRefresh(p, refresh);
-            return;
-          }
-          // Match each touched dir to the workspace whose root contains it.
-          for (const p of fetched) {
-            const hit = e.payload.dirs.some(
-              (d) => d === p || d.startsWith(p + "/"),
-            );
-            if (hit) scheduleRefresh(p, refresh);
-          }
-        },
-      );
+      void listen<{ dirs?: string[]; fullRefresh?: boolean }>("atlas:explorer:changed", (e) => {
+        const refresh = get().actions.refresh;
+        // Opaque batch (rename, etc.): we can't pinpoint dirs — refresh every
+        // cached workspace.
+        if (e.payload?.fullRefresh || !e.payload?.dirs?.length) {
+          for (const p of fetched) scheduleRefresh(p, refresh);
+          return;
+        }
+        // Match each touched dir to the workspace whose root contains it.
+        for (const p of fetched) {
+          const hit = e.payload.dirs.some((d) => d === p || d.startsWith(p + "/"));
+          if (hit) scheduleRefresh(p, refresh);
+        }
+      });
     }
 
     async function load(path: string) {

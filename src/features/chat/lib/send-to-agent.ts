@@ -25,8 +25,6 @@ export function sendToAgentChat(text: string): void {
   layout.actions.setActiveTab(tabId);
 
   requestAnimationFrame(() =>
-    window.dispatchEvent(
-      new CustomEvent("atlas:chat-insert", { detail: { text: next, tabId } }),
-    ),
+    window.dispatchEvent(new CustomEvent("atlas:chat-insert", { detail: { text: next, tabId } })),
   );
 }

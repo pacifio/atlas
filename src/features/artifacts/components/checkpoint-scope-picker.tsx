@@ -233,10 +233,7 @@ export function CheckpointScopePicker({
 }
 
 /** Subject of the single selected Checkpoint, for the strip's muted detail. */
-function firstSelectedSubject(
-  checkpoints: TimelineEntry[],
-  selected: Set<string>,
-): string {
+function firstSelectedSubject(checkpoints: TimelineEntry[], selected: Set<string>): string {
   const hit = checkpoints.find((c) => c.commitSha && selected.has(c.commitSha));
   return hit?.commitSubject || hit?.commitSha?.slice(0, 7) || "1 checkpoint";
 }

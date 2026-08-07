@@ -58,8 +58,7 @@ export function MembersModal({
 }) {
   const orgId = org?.remoteId ?? null;
   const byOrg = useMembersStore.use.byOrg();
-  const { load, setRole, remove, invite, cancelInvite } =
-    useMembersStore.use.actions();
+  const { load, setRole, remove, invite, cancelInvite } = useMembersStore.use.actions();
   const snapshot = useAuthStore.use.snapshot();
 
   const roster = (orgId && byOrg[orgId]) || null;
@@ -113,8 +112,7 @@ export function MembersModal({
     const q = query.trim().toLowerCase();
     if (!q) return members;
     return members.filter(
-      (m) =>
-        m.name.toLowerCase().includes(q) || m.email.toLowerCase().includes(q),
+      (m) => m.name.toLowerCase().includes(q) || m.email.toLowerCase().includes(q),
     );
   }, [members, query]);
 
@@ -179,15 +177,12 @@ export function MembersModal({
           className="fixed top-8.5 left-4 right-4 bottom-6 rounded-xl border border-[var(--border-default)] bg-[var(--bg-sidebar)] overflow-hidden flex flex-col shadow-[var(--shadow-overlay)] focus:outline-none"
           style={{ zIndex: "var(--z-modal)" as unknown as number }}
         >
-          <Dialog.Title className="sr-only">
-            Members of {org.name}
-          </Dialog.Title>
+          <Dialog.Title className="sr-only">Members of {org.name}</Dialog.Title>
 
           {/* Header — mirrors the git-graph fullscreen bar. */}
           <div className="flex items-center justify-between px-3 h-[32px] shrink-0 border-b border-border-subtle">
             <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
-              {org.name} · {members.length}{" "}
-              {members.length === 1 ? "member" : "members"}
+              {org.name} · {members.length} {members.length === 1 ? "member" : "members"}
             </span>
             <div className="flex items-center gap-0.5">
               <button
@@ -232,9 +227,7 @@ export function MembersModal({
                 )}
               >
                 {label}
-                <span className="text-[9px] text-text-tertiary tabular-nums">
-                  {count}
-                </span>
+                <span className="text-[9px] text-text-tertiary tabular-nums">{count}</span>
               </button>
             ))}
             <div className="flex-1" />
@@ -270,11 +263,7 @@ export function MembersModal({
                 }
               />
               <button
-                disabled={
-                  pendingInvites.length === 0 ||
-                  invalidInvites.length > 0 ||
-                  inviting
-                }
+                disabled={pendingInvites.length === 0 || invalidInvites.length > 0 || inviting}
                 title={
                   invalidInvites.length > 0
                     ? `Not a valid email: ${invalidInvites.join(", ")}`
@@ -283,11 +272,7 @@ export function MembersModal({
                 onClick={() => void submitInvite()}
                 className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[11px] font-medium leading-none text-text-primary cursor-pointer transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40 shrink-0"
               >
-                {inviting ? (
-                  <Loader2 size={11} className="animate-spin" />
-                ) : (
-                  <UserPlus size={11} />
-                )}
+                {inviting ? <Loader2 size={11} className="animate-spin" /> : <UserPlus size={11} />}
                 Invite
                 {pendingInvites.length > 1 && ` ${pendingInvites.length}`}
               </button>
@@ -299,13 +284,9 @@ export function MembersModal({
             <div className="absolute inset-0 overflow-auto hide-scrollbar">
               <div style={{ minWidth: TABLE_MIN_W }}>
                 <div className="sticky top-0 z-10 flex items-center h-[28px] border-b border-border-default bg-bg-base px-3 text-[10px] uppercase tracking-wider text-text-tertiary">
-                  <span className={COL.person}>
-                    {tab === "members" ? "Person" : "Email"}
-                  </span>
+                  <span className={COL.person}>{tab === "members" ? "Person" : "Email"}</span>
                   <span className={COL.role}>Role</span>
-                  <span className={COL.joined}>
-                    {tab === "members" ? "Joined" : "Status"}
-                  </span>
+                  <span className={COL.joined}>{tab === "members" ? "Joined" : "Status"}</span>
                   <span className={COL.actions} />
                 </div>
 
@@ -332,10 +313,7 @@ export function MembersModal({
                         key={m.id}
                         member={m}
                         isAdmin={isAdmin}
-                        isSelf={
-                          snapshot.status === "signed-in" &&
-                          snapshot.user?.id === m.userId
-                        }
+                        isSelf={snapshot.status === "signed-in" && snapshot.user?.id === m.userId}
                         onRole={(role) => orgId && void setRole(orgId, m.id, role)}
                         onRemove={() => orgId && void remove(orgId, m)}
                       />
@@ -401,14 +379,10 @@ function MemberRow({
           <span className="min-w-0">
             <span className="block truncate text-[12px] text-text-primary">
               {member.name || member.email}
-              {isSelf && (
-                <span className="ml-1.5 text-[10px] text-text-tertiary">You</span>
-              )}
+              {isSelf && <span className="ml-1.5 text-[10px] text-text-tertiary">You</span>}
             </span>
             {member.name && (
-              <span className="block truncate text-[10px] text-text-tertiary">
-                {member.email}
-              </span>
+              <span className="block truncate text-[10px] text-text-tertiary">{member.email}</span>
             )}
           </span>
         </span>
@@ -504,9 +478,7 @@ function InviteRow({
         <span className={cn(COL.actions, "flex items-center justify-end gap-0.5")}>
           {invite.acceptUrl && (
             <button
-              onClick={() =>
-                void copy(invite.acceptUrl!, "Invite link copied.")
-              }
+              onClick={() => void copy(invite.acceptUrl!, "Invite link copied.")}
               className="p-1 rounded text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors cursor-pointer"
               title="Copy invite link"
             >
@@ -607,10 +579,7 @@ function EmailChipsInput({
                 : "border-error text-error",
             )}
           >
-            <AccountAvatar
-              user={{ id: email, name: "", email, avatarPath: null }}
-              size={14}
-            />
+            <AccountAvatar user={{ id: email, name: "", email, avatarPath: null }} size={14} />
             <span className="truncate">{email}</span>
             <button
               onClick={(e) => {

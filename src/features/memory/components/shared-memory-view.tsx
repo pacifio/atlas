@@ -74,14 +74,7 @@ const str = (v: unknown): string => (v == null ? "" : String(v));
 /** One-line summary of an event's payload for the Detail column. */
 function eventDetail(e: MemoryEvent): string {
   const p = e.payload ?? {};
-  return (
-    str(p.text) ||
-    str(p.summary) ||
-    str(p.path) ||
-    str(e.key) ||
-    str(p.status) ||
-    ""
-  );
+  return str(p.text) || str(p.summary) || str(p.path) || str(e.key) || str(p.status) || "";
 }
 
 function eventTime(ts: number): string {
@@ -117,14 +110,8 @@ export function SharedMemoryView({ projectPath, className }: Props) {
   const plans = useMemo(() => events.filter((e) => e.kind === "plan_set"), [events]);
 
   // Filter options derived from the data actually present.
-  const agentOptions = useMemo(
-    () => [...new Set(events.map((e) => e.agent))].sort(),
-    [events],
-  );
-  const kindOptions = useMemo(
-    () => [...new Set(events.map((e) => e.kind))].sort(),
-    [events],
-  );
+  const agentOptions = useMemo(() => [...new Set(events.map((e) => e.agent))].sort(), [events]);
+  const kindOptions = useMemo(() => [...new Set(events.map((e) => e.kind))].sort(), [events]);
 
   const q = query.trim().toLowerCase();
   const baseMatch = (e: MemoryEvent) =>
@@ -268,7 +255,12 @@ function EventRow({
           expanded ? "bg-[var(--bg-elevated)]/50" : "hover:bg-[var(--bg-hover)]",
         )}
       >
-        <span className={cn(EVENT_COL.seq, "font-mono text-[10px] tabular-nums text-[var(--text-ghost)]")}>
+        <span
+          className={cn(
+            EVENT_COL.seq,
+            "font-mono text-[10px] tabular-nums text-[var(--text-ghost)]",
+          )}
+        >
           {e.seq}
         </span>
         <span className={cn(EVENT_COL.time, "text-[10px] text-[var(--text-tertiary)]")}>
@@ -285,7 +277,12 @@ function EventRow({
             {eventDetail(e) || <span className="text-[var(--text-ghost)]">—</span>}
           </span>
         </span>
-        <span className={cn(EVENT_COL.chevron, "flex items-center justify-end text-[var(--text-tertiary)]")}>
+        <span
+          className={cn(
+            EVENT_COL.chevron,
+            "flex items-center justify-end text-[var(--text-tertiary)]",
+          )}
+        >
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
       </button>
@@ -304,9 +301,7 @@ function EventDetail({ event: e }: { event: MemoryEvent }) {
         <MetaChip label="Agent" value={agentMeta(e.agent).label} />
         {e.key && <MetaChip label="Key" value={e.key} mono />}
         <MetaChip label="When" value={fmtDateTime(e.ts)} />
-        {e.sessionId && (
-          <MetaChip label="Session" value={e.sessionId.slice(0, 8)} mono />
-        )}
+        {e.sessionId && <MetaChip label="Session" value={e.sessionId.slice(0, 8)} mono />}
       </div>
       {detail && (
         <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-base)] px-3 py-2">
@@ -372,7 +367,12 @@ function PlanRow({
           expanded ? "bg-[var(--bg-elevated)]/50" : "hover:bg-[var(--bg-hover)]",
         )}
       >
-        <span className={cn(PLAN_COL.seq, "font-mono text-[10px] tabular-nums text-[var(--text-ghost)]")}>
+        <span
+          className={cn(
+            PLAN_COL.seq,
+            "font-mono text-[10px] tabular-nums text-[var(--text-ghost)]",
+          )}
+        >
           {e.seq}
         </span>
         <span className={cn(PLAN_COL.time, "text-[10px] text-[var(--text-tertiary)]")}>
@@ -389,7 +389,12 @@ function PlanRow({
             {firstLine || <span className="text-[var(--text-ghost)]">—</span>}
           </span>
         </span>
-        <span className={cn(PLAN_COL.chevron, "flex items-center justify-end text-[var(--text-tertiary)]")}>
+        <span
+          className={cn(
+            PLAN_COL.chevron,
+            "flex items-center justify-end text-[var(--text-tertiary)]",
+          )}
+        >
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
       </button>
@@ -626,23 +631,12 @@ function StatusChip({ status }: { status: string }) {
   );
 }
 
-function MetaChip({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
+function MetaChip({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className="text-[9px] uppercase tracking-wider text-[var(--text-ghost)]">{label}</span>
       <span
-        className={cn(
-          "text-[11px] text-[var(--text-secondary)]",
-          mono && "font-mono text-[10px]",
-        )}
+        className={cn("text-[11px] text-[var(--text-secondary)]", mono && "font-mono text-[10px]")}
       >
         {value}
       </span>
@@ -683,8 +677,8 @@ function EmptyState() {
           No shared memory yet
         </span>
         <p className="max-w-[34ch] text-[12px] leading-[1.5] text-[var(--text-tertiary)]">
-          As agents plan, decide, and edit files, their work is captured here as
-          events and shared with every agent on this project.
+          As agents plan, decide, and edit files, their work is captured here as events and shared
+          with every agent on this project.
         </p>
       </div>
     </div>

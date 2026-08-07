@@ -2,12 +2,7 @@ import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { ChevronRight, Loader2, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  agents,
-  ensureAgent,
-  CODEX_PLUGIN_ID,
-  type AuthMethodWire,
-} from "../lib/agents-api";
+import { agents, ensureAgent, CODEX_PLUGIN_ID, type AuthMethodWire } from "../lib/agents-api";
 import { logEvent } from "@/features/log/lib/log";
 
 /**
@@ -77,11 +72,23 @@ export function CodexLoginDialog({
         await agents.authenticate(agentId, method.id);
       }
       setPhase({ kind: "done" });
-      logEvent({ source: "atlas", kind: "codex-auth", summary: `Codex auth via ${method.id}`, status: "success", payload: { method: method.id } });
+      logEvent({
+        source: "atlas",
+        kind: "codex-auth",
+        summary: `Codex auth via ${method.id}`,
+        status: "success",
+        payload: { method: method.id },
+      });
       setTimeout(() => onOpenChange(false), 700);
     } catch (err) {
       setPhase({ kind: "error", message: String(err) });
-      logEvent({ source: "atlas", kind: "codex-auth", summary: `Codex auth failed (${method.id})`, status: "failure", payload: { method: method.id, error: String(err) } });
+      logEvent({
+        source: "atlas",
+        kind: "codex-auth",
+        summary: `Codex auth failed (${method.id})`,
+        status: "failure",
+        payload: { method: method.id, error: String(err) },
+      });
     }
   };
 
@@ -120,12 +127,16 @@ export function CodexLoginDialog({
             )}
 
             {phase.kind === "done" && (
-              <div className="px-2 py-6 text-xs text-[var(--status-success)]">Signed in to Codex.</div>
+              <div className="px-2 py-6 text-xs text-[var(--status-success)]">
+                Signed in to Codex.
+              </div>
             )}
 
             {phase.kind === "error" && (
               <div className="space-y-3">
-                <p className="px-2 text-xs text-[var(--status-error)] break-words">{phase.message}</p>
+                <p className="px-2 text-xs text-[var(--status-error)] break-words">
+                  {phase.message}
+                </p>
                 <button
                   onClick={() => setPhase({ kind: "loading" })}
                   className="ml-2 rounded-sm border border-border-default px-2.5 py-1 text-xs text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -151,7 +162,9 @@ export function CodexLoginDialog({
                     <span className="flex-1 min-w-0">
                       <span className="block text-xs font-medium text-text-primary">{m.name}</span>
                       {m.description && (
-                        <span className="mt-0.5 block text-[11px] text-text-secondary">{m.description}</span>
+                        <span className="mt-0.5 block text-[11px] text-text-secondary">
+                          {m.description}
+                        </span>
                       )}
                     </span>
                     <ChevronRight className="size-3.5 shrink-0 text-text-tertiary group-hover:text-text-primary transition-colors" />

@@ -33,13 +33,7 @@ import { KnowledgeInspector } from "./knowledge-inspector";
 import { PageProperties } from "./page-properties";
 import { IconPicker } from "./icon-picker";
 import { CoverPicker, gradientCss } from "./cover-picker";
-import {
-  Copy,
-  ExternalLink,
-  GitBranch,
-  PanelLeft,
-  PanelRight,
-} from "lucide-react";
+import { Copy, ExternalLink, GitBranch, PanelLeft, PanelRight } from "lucide-react";
 
 const RECENTS_MAX = 5;
 
@@ -88,10 +82,7 @@ export function KnowledgePanel() {
   // the panel border; mousedown captures pointer + listens for global
   // mousemove until release. `from` is the side being resized.
   const startResize = useCallback(
-    (
-      e: React.MouseEvent,
-      from: "sidebar" | "inspector",
-    ) => {
+    (e: React.MouseEvent, from: "sidebar" | "inspector") => {
       e.preventDefault();
       const startX = e.clientX;
       const startW = from === "sidebar" ? sidebarWidth : inspectorWidth;
@@ -138,8 +129,11 @@ export function KnowledgePanel() {
     clearDocCache();
   }, [currentProject?.path]);
 
-  const { bind: bindMeta, unbind: unbindMeta, drop: dropMeta } =
-    useKnowledgeMetaStore.use.actions();
+  const {
+    bind: bindMeta,
+    unbind: unbindMeta,
+    drop: dropMeta,
+  } = useKnowledgeMetaStore.use.actions();
   const {
     bind: bindLinks,
     unbind: unbindLinks,
@@ -351,7 +345,9 @@ export function KnowledgePanel() {
       await loadEntries(currentProject.path);
       toast.success(
         `Imported ${res.notes_imported} note${res.notes_imported === 1 ? "" : "s"}` +
-          (res.files_copied ? ` + ${res.files_copied} file${res.files_copied === 1 ? "" : "s"}` : ""),
+          (res.files_copied
+            ? ` + ${res.files_copied} file${res.files_copied === 1 ? "" : "s"}`
+            : ""),
       );
     } catch (e) {
       toast.error(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -561,16 +557,12 @@ export function KnowledgePanel() {
       )}
 
       {/* Main */}
-      <main
-        className="flex-1 flex flex-col min-w-0"
-        style={{ background: "var(--bg-base)" }}
-      >
+      <main className="flex-1 flex flex-col min-w-0" style={{ background: "var(--bg-base)" }}>
         {activeRepoName ? (
           <>
             <RepoTopbar
               name={
-                clonedRepos.find((r) => r.name === activeRepoName)?.display_name ??
-                activeRepoName
+                clonedRepos.find((r) => r.name === activeRepoName)?.display_name ?? activeRepoName
               }
               path={clonedRepos.find((r) => r.name === activeRepoName)?.path ?? ""}
               onToggleSidebar={toggleKnowledgeSidebar}
@@ -857,9 +849,7 @@ function PageHeaderWithIcon({
             margin: "0 0 14px",
             background:
               gradient ??
-              (coverUrl
-                ? `center / cover no-repeat url("${coverUrl}")`
-                : "var(--bg-elevated)"),
+              (coverUrl ? `center / cover no-repeat url("${coverUrl}")` : "var(--bg-elevated)"),
             position: "relative",
             cursor: "pointer",
           }}
@@ -1067,4 +1057,3 @@ function RepoEmpty({ path }: { path: string }) {
     </div>
   );
 }
-

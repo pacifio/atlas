@@ -73,15 +73,10 @@ export function AtlasThemesSettings() {
                       {t.name}
                     </span>
                     {selected && (
-                      <span
-                        className="h-2 w-2 shrink-0 rounded-full bg-[#3fb950]"
-                        title="Active"
-                      />
+                      <span className="h-2 w-2 shrink-0 rounded-full bg-[#3fb950]" title="Active" />
                     )}
                   </div>
-                  <p className="text-[10.5px] leading-snug text-text-tertiary">
-                    {t.description}
-                  </p>
+                  <p className="text-[10.5px] leading-snug text-text-tertiary">{t.description}</p>
                 </div>
               </button>
             );
@@ -110,11 +105,7 @@ function CodeLine({
   return (
     <div className="flex h-1.5 items-center gap-1" style={{ paddingLeft: indent * 8 }}>
       {tokens.map((tk, i) => (
-        <span
-          key={i}
-          className="h-1.5 rounded-full"
-          style={{ width: tk.w, background: tk.c }}
-        />
+        <span key={i} className="h-1.5 rounded-full" style={{ width: tk.w, background: tk.c }} />
       ))}
     </div>
   );
@@ -184,13 +175,49 @@ function ThemePreview({ theme }: { theme: AtlasTheme }) {
         </div>
         {/* Code body */}
         <div className="flex flex-1 flex-col gap-[7px] p-2.5">
-          <CodeLine tokens={[{ w: "22%", c: mut }, { w: "34%", c: mut }]} />
-          <CodeLine tokens={[{ w: "18%", c: kw }, { w: "28%", c: id }, { w: "10%", c: punc }]} />
-          <CodeLine indent={1} tokens={[{ w: "26%", c: id }, { w: "14%", c: punc }, { w: "30%", c: kw }]} />
-          <CodeLine indent={2} tokens={[{ w: "16%", c: kw }, { w: "40%", c: id }]} />
-          <CodeLine indent={2} tokens={[{ w: "30%", c: id }, { w: "12%", c: punc }, { w: "22%", c: mut }]} />
+          <CodeLine
+            tokens={[
+              { w: "22%", c: mut },
+              { w: "34%", c: mut },
+            ]}
+          />
+          <CodeLine
+            tokens={[
+              { w: "18%", c: kw },
+              { w: "28%", c: id },
+              { w: "10%", c: punc },
+            ]}
+          />
+          <CodeLine
+            indent={1}
+            tokens={[
+              { w: "26%", c: id },
+              { w: "14%", c: punc },
+              { w: "30%", c: kw },
+            ]}
+          />
+          <CodeLine
+            indent={2}
+            tokens={[
+              { w: "16%", c: kw },
+              { w: "40%", c: id },
+            ]}
+          />
+          <CodeLine
+            indent={2}
+            tokens={[
+              { w: "30%", c: id },
+              { w: "12%", c: punc },
+              { w: "22%", c: mut },
+            ]}
+          />
           <CodeLine indent={1} tokens={[{ w: "12%", c: punc }]} />
-          <CodeLine tokens={[{ w: "20%", c: kw }, { w: "24%", c: id }]} />
+          <CodeLine
+            tokens={[
+              { w: "20%", c: kw },
+              { w: "24%", c: id },
+            ]}
+          />
         </div>
       </div>
 
@@ -199,10 +226,7 @@ function ThemePreview({ theme }: { theme: AtlasTheme }) {
         className="flex w-[24%] shrink-0 flex-col gap-2 p-2"
         style={{ background: s.panel, borderLeft: `1px solid ${s.borderSubtle}` }}
       >
-        <div
-          className="flex flex-col gap-1 rounded p-1.5"
-          style={{ background: s.elevated }}
-        >
+        <div className="flex flex-col gap-1 rounded p-1.5" style={{ background: s.elevated }}>
           <span className="h-1.5 w-full rounded-full" style={{ background: s.textTertiary }} />
           <span className="h-1.5 w-3/4 rounded-full" style={{ background: s.textTertiary }} />
         </div>

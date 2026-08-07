@@ -1,5 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } from "@codemirror/view";
+import {
+  EditorView,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  drawSelection,
+} from "@codemirror/view";
 import { EditorState, Compartment, Transaction } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, foldGutter, indentOnInput } from "@codemirror/language";
@@ -54,7 +60,11 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   const dirtyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [renderMode, setRenderMode] = useState<"editor" | "preview">("editor");
-  const resolvedFileType = (buffer?.language ?? path.split(".").pop()?.toLowerCase() ?? "").toLowerCase();
+  const resolvedFileType = (
+    buffer?.language ??
+    path.split(".").pop()?.toLowerCase() ??
+    ""
+  ).toLowerCase();
   const isMarkdownFile = resolvedFileType === "markdown";
   // Preview is a markdown-only concept. Deriving (not just gating the toggle)
   // matters twice over: a stale "preview" renderMode from a previous markdown
@@ -325,7 +335,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
       const view = new EditorView({
         doc: originalContent,
         extensions: [
-          themeCompartment.of(editorThemeExtensions(useProjectStore.getState().settings.codeEditorTheme)),
+          themeCompartment.of(
+            editorThemeExtensions(useProjectStore.getState().settings.codeEditorTheme),
+          ),
           langExt,
           lineNumbers(),
           diffGutter(),
@@ -340,7 +352,13 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
           history(),
           highlightSelectionMatches(),
           keymap.of([
-            { key: "Mod-s", run: () => { onSaveRef.current(); return true; } },
+            {
+              key: "Mod-s",
+              run: () => {
+                onSaveRef.current();
+                return true;
+              },
+            },
             indentWithTab,
             ...defaultKeymap,
             ...historyKeymap,
@@ -392,7 +410,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: themeCompartment.reconfigure(editorThemeExtensions(codeEditorTheme)) });
+    view.dispatch({
+      effects: themeCompartment.reconfigure(editorThemeExtensions(codeEditorTheme)),
+    });
   }, [codeEditorTheme]);
 
   // Live-toggle inline blame: reconfigure the compartment in place; turning it
@@ -415,9 +435,8 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     );
   }
 
-  const editorHeight = containerHeight > TOOLBAR_HEIGHT
-    ? containerHeight - TOOLBAR_HEIGHT
-    : window.innerHeight - 140;
+  const editorHeight =
+    containerHeight > TOOLBAR_HEIGHT ? containerHeight - TOOLBAR_HEIGHT : window.innerHeight - 140;
 
   return (
     <div style={{ background: "#000000", height: containerHeight || "100%", overflow: "hidden" }}>
@@ -427,9 +446,7 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
         style={{ height: TOOLBAR_HEIGHT }}
       >
         <Breadcrumbs filePath={path} projectPath={projectPath} />
-        {buffer.dirty && (
-          <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0 ml-2" />
-        )}
+        {buffer.dirty && <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0 ml-2" />}
         {/* Right-hand controls. `ml-auto` on the group (rather than on whichever
             child happens to be present) keeps them pinned right no matter which
             of them render — the reload pill is conditional, and hanging the
@@ -455,7 +472,7 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
                   "px-2 h-full rounded-full transition-colors",
                   renderMode === "editor"
                     ? "bg-bg-hover text-text-primary"
-                    : "text-text-secondary hover:text-text-primary"
+                    : "text-text-secondary hover:text-text-primary",
                 )}
               >
                 Edit
@@ -467,7 +484,7 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
                   "px-2 h-full rounded-full transition-colors",
                   renderMode === "preview"
                     ? "bg-bg-hover text-text-primary"
-                    : "text-text-secondary hover:text-text-primary"
+                    : "text-text-secondary hover:text-text-primary",
                 )}
               >
                 Preview
@@ -478,21 +495,24 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
       </div>
 
       {/* CodeMirror container */}
-      <div
-        style={{height:editorHeight, overflow:"hidden"}}
-      >
+      <div style={{ height: editorHeight, overflow: "hidden" }}>
         <div
           ref={containerRef}
-          style={{display: effectiveMode === "editor" ? "block" : "none", height: editorHeight, overflow: "hidden" }}
+          style={{
+            display: effectiveMode === "editor" ? "block" : "none",
+            height: editorHeight,
+            overflow: "hidden",
+          }}
         />
         {/* Mounted on demand, not display:none — a hidden mount would still
             markdown-parse every non-markdown buffer on open (see above). */}
         {effectiveMode === "preview" && (
-          <div
-            style={{ height: editorHeight }}
-            className="overflow-auto bg-bg-primary px-4 py-3"
-          >
-            {buffer && <MarkdownFile trusted={true} className="max-w-none">{buffer.originalContent}</MarkdownFile>}
+          <div style={{ height: editorHeight }} className="overflow-auto bg-bg-primary px-4 py-3">
+            {buffer && (
+              <MarkdownFile trusted={true} className="max-w-none">
+                {buffer.originalContent}
+              </MarkdownFile>
+            )}
           </div>
         )}
       </div>
@@ -501,9 +521,10 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
 }
 
 function Breadcrumbs({ filePath, projectPath }: { filePath: string; projectPath: string }) {
-  const relative = projectPath && filePath.startsWith(projectPath)
-    ? filePath.slice(projectPath.length + 1)
-    : filePath;
+  const relative =
+    projectPath && filePath.startsWith(projectPath)
+      ? filePath.slice(projectPath.length + 1)
+      : filePath;
   const segments = relative.split("/").filter(Boolean);
 
   return (
@@ -513,7 +534,9 @@ function Breadcrumbs({ filePath, projectPath }: { filePath: string; projectPath:
         return (
           <span key={i} className="flex items-center shrink-0">
             {i > 0 && <ChevronRight size={10} className="text-text-tertiary mx-0.5 shrink-0" />}
-            <span className={`text-[11px] font-mono ${isLast ? "text-text-primary" : "text-text-tertiary"}`}>
+            <span
+              className={`text-[11px] font-mono ${isLast ? "text-text-primary" : "text-text-tertiary"}`}
+            >
               {segment}
             </span>
           </span>

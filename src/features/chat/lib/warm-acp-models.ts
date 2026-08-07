@@ -30,9 +30,7 @@ import {
 const MODELS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function asAcpAgent(agentType: string): SwitchableAgent | null {
-  return (ACP_AGENTS as string[]).includes(agentType)
-    ? (agentType as SwitchableAgent)
-    : null;
+  return (ACP_AGENTS as string[]).includes(agentType) ? (agentType as SwitchableAgent) : null;
 }
 
 /** The ACP agents to prefetch when `agentType` is active: every other ACP
@@ -40,9 +38,7 @@ function asAcpAgent(agentType: string): SwitchableAgent | null {
  *  never-touched agents would spawn CLIs the user may not even have installed. */
 export function otherAcpAgents(agentType: string): SwitchableAgent[] {
   if (!asAcpAgent(agentType)) return [];
-  return ACP_AGENTS.filter(
-    (a) => a !== agentType && loadCachedAcpModels(a) !== null,
-  );
+  return ACP_AGENTS.filter((a) => a !== agentType && loadCachedAcpModels(a) !== null);
 }
 
 // Warm at most once per agent per app session (a model list is static per

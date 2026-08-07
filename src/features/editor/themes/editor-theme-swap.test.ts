@@ -78,7 +78,9 @@ describe("live theme swap", () => {
     const view = mountEditor("const a = 1;", "atlas");
 
     expect(() =>
-      view.dispatch({ effects: themeCompartment.reconfigure(editorThemeExtensions("deleted-theme")) })
+      view.dispatch({
+        effects: themeCompartment.reconfigure(editorThemeExtensions("deleted-theme")),
+      }),
     ).not.toThrow();
 
     expect(view.state.doc.toString()).toBe("const a = 1;");

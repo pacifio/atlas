@@ -18,8 +18,7 @@ export interface Policy {
 }
 
 export const memoryPolicy = {
-  list: (projectPath: string) =>
-    invoke<Policy[]>("memory_policies", { projectPath }),
+  list: (projectPath: string) => invoke<Policy[]>("memory_policies", { projectPath }),
   update: (filePath: string, oldText: string, newText: string) =>
     invoke<void>("memory_policy_update", { filePath, oldText, newText }),
 };

@@ -63,10 +63,7 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
           e.preventDefault();
           props.onClick();
         }}
-        className={cn(
-          "atlas-bubble-btn",
-          props.isActive && "is-active",
-        )}
+        className={cn("atlas-bubble-btn", props.isActive && "is-active")}
       >
         <Icon size={13} strokeWidth={1.7} />
       </button>
@@ -74,11 +71,7 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
   };
 
   return (
-    <BubbleMenu
-      editor={editor}
-      options={{ placement: "top" }}
-      className="atlas-bubble-wrap"
-    >
+    <BubbleMenu editor={editor} options={{ placement: "top" }} className="atlas-bubble-wrap">
       {linkOpen ? (
         <div className="atlas-bubble-link">
           <input

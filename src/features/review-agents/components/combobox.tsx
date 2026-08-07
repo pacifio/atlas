@@ -129,9 +129,7 @@ export function Combobox({
                 >
                   {o.icon}
                   <span className="flex-1 min-w-0">
-                    <span className="block truncate text-[11px] text-text-primary">
-                      {o.label}
-                    </span>
+                    <span className="block truncate text-[11px] text-text-primary">{o.label}</span>
                     {o.hint && (
                       <span className="block truncate text-[10px] text-text-tertiary">
                         {o.hint}

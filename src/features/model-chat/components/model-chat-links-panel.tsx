@@ -34,12 +34,8 @@ export function ModelChatLinksPanel({
         <div className="flex items-center justify-between px-3 h-[32px] border-b border-[var(--border-default)] shrink-0">
           <div className="flex items-center gap-1.5">
             <Link2 size={11} className="text-[var(--text-tertiary)]" />
-            <span className="text-[11px] font-medium text-[var(--text-secondary)]">
-              Links
-            </span>
-            <span className="text-[10px] text-[var(--text-tertiary)]">
-              · {links.length}
-            </span>
+            <span className="text-[11px] font-medium text-[var(--text-secondary)]">Links</span>
+            <span className="text-[10px] text-[var(--text-tertiary)]">· {links.length}</span>
           </div>
           <button
             onClick={onClose}

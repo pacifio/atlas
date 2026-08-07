@@ -39,7 +39,10 @@ function normalizeColor(value: string): string {
 
   const rgb = /^rgba?\(([^)]*)\)$/.exec(v);
   if (rgb) {
-    const parts = rgb[1].split(/[,/\s]+/).filter(Boolean).map(Number);
+    const parts = rgb[1]
+      .split(/[,/\s]+/)
+      .filter(Boolean)
+      .map(Number);
     const [r, g, b, a = 1] = parts;
     return `${r},${g},${b},${a.toFixed(2)}`;
   }
@@ -79,7 +82,8 @@ describe("stylesheet fallbacks track the default editor theme", () => {
           const want = expected[name];
           // `--cm-bg`/`--cm-gutter-bg` resolve to `var(--bg-base)`, which a
           // fallback cannot restate; they hard-code the AMOLED base instead.
-          if (want?.startsWith("var(")) return normalizeColor(fallback) !== normalizeColor("#000000");
+          if (want?.startsWith("var("))
+            return normalizeColor(fallback) !== normalizeColor("#000000");
           return normalizeColor(fallback) !== normalizeColor(want ?? "");
         })
         .map(([name, fallback]) => `${name}: ${fallback} (theme has ${expected[name]})`);

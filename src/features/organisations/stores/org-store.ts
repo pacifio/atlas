@@ -18,11 +18,7 @@ const uuid = (): string =>
 
 /** Whether `name` (case-insensitive, trimmed) is already used by an org other
  *  than `exceptId`. Enforces GitHub-style globally-unique org names. */
-function nameTaken(
-  name: string,
-  orgs: Organisation[],
-  exceptId?: string,
-): boolean {
+function nameTaken(name: string, orgs: Organisation[], exceptId?: string): boolean {
   const norm = name.trim().toLowerCase();
   return orgs.some((o) => o.id !== exceptId && o.name.trim().toLowerCase() === norm);
 }
@@ -127,11 +123,7 @@ interface OrgState {
      * Rejects with the user-facing string from Rust on server failure — the
      * caller toasts it. Resolves to the new LOCAL org id.
      */
-    createOrgSynced: (
-      name: string,
-      slug: string,
-      cloud: boolean,
-    ) => Promise<string>;
+    createOrgSynced: (name: string, slug: string, cloud: boolean) => Promise<string>;
     /** Rename an org. Returns `false` (no-op) if the name is blank or already
      *  taken by ANOTHER org (case-insensitive), so no two orgs collide. */
     rename: (id: string, name: string) => boolean;
@@ -241,9 +233,7 @@ export const useOrgStore = createSelectors(
         if (raced) {
           set((s) => ({
             organisations: s.organisations.map((o) =>
-              o.id === raced.id
-                ? { ...o, name: trimmed, slug: handle, syncEnabled: true }
-                : o,
+              o.id === raced.id ? { ...o, name: trimmed, slug: handle, syncEnabled: true } : o,
             ),
           }));
           scheduleAppStateSave();
@@ -275,9 +265,7 @@ export const useOrgStore = createSelectors(
         // Reject if ANOTHER org already has this name (case-insensitive).
         if (nameTaken(trimmed, get().organisations, id)) return false;
         set((s) => ({
-          organisations: s.organisations.map((o) =>
-            o.id === id ? { ...o, name: trimmed } : o,
-          ),
+          organisations: s.organisations.map((o) => (o.id === id ? { ...o, name: trimmed } : o)),
         }));
         scheduleAppStateSave();
         return true;
@@ -301,9 +289,7 @@ export const useOrgStore = createSelectors(
         // Atlas's org-scoped tracking is removed.) The caller (deleteOrgAndData)
         // must have already switched away if this is the active org.
         const ws = useWorkspaceStore.getState();
-        const orgPaths = new Set(
-          ws.workspaces.filter((w) => w.orgId === id).map((w) => w.path),
-        );
+        const orgPaths = new Set(ws.workspaces.filter((w) => w.orgId === id).map((w) => w.path));
         ws.actions.removeWorkspacesForOrg(id);
         const rc = useRecentChatsStore.getState();
         for (const c of rc.items) {
@@ -319,9 +305,7 @@ export const useOrgStore = createSelectors(
       setActiveWorkspaceForOrg: (orgId, workspaceId) => {
         set((s) => ({
           organisations: s.organisations.map((o) =>
-            o.id === orgId
-              ? { ...o, activeWorkspaceId: workspaceId ?? undefined }
-              : o,
+            o.id === orgId ? { ...o, activeWorkspaceId: workspaceId ?? undefined } : o,
           ),
         }));
         // Persisted via the switch's flushAppStateSave / scheduleAppStateSave.
@@ -359,9 +343,7 @@ export const useOrgStore = createSelectors(
           // Adopt a same-named, still-local org rather than duplicating it —
           // covers an org created offline that later arrives from the server.
           const adoptIdx = next.findIndex(
-            (o) =>
-              !o.remoteId &&
-              o.name.trim().toLowerCase() === s.name.trim().toLowerCase(),
+            (o) => !o.remoteId && o.name.trim().toLowerCase() === s.name.trim().toLowerCase(),
           );
           if (adoptIdx !== -1) {
             next = next.map((o, i) =>
@@ -441,4 +423,3 @@ export const useOrgStore = createSelectors(
     },
   })),
 );
-

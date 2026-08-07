@@ -79,4 +79,3 @@ export function StatusDot({
     </span>
   );
 }
-

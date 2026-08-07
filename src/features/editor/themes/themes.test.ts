@@ -99,12 +99,13 @@ describe("editor themes", () => {
       expect(getEditorTheme(DEFAULT_EDITOR_THEME_ID).id).toBe(DEFAULT_EDITOR_THEME_ID);
     });
 
-    it.each([["unknown id", "no-such-theme"], ["undefined", undefined], ["null", null]])(
-      "falls back to the default for %s",
-      (_label, id) => {
-        expect(getEditorTheme(id).id).toBe(DEFAULT_EDITOR_THEME_ID);
-      }
-    );
+    it.each([
+      ["unknown id", "no-such-theme"],
+      ["undefined", undefined],
+      ["null", null],
+    ])("falls back to the default for %s", (_label, id) => {
+      expect(getEditorTheme(id).id).toBe(DEFAULT_EDITOR_THEME_ID);
+    });
 
     it("keeps every theme on the interface background, not its own", () => {
       // The behaviour the contrast assertions below depend on.
@@ -119,13 +120,13 @@ describe("editor themes", () => {
 
   describe("syntax contrast", () => {
     const cases = EDITOR_THEMES.flatMap((theme) =>
-      INTERFACE_BASES.map((surface) => ({ theme, surface }))
+      INTERFACE_BASES.map((surface) => ({ theme, surface })),
     );
 
     it.each(cases)("$theme.id is readable on the $surface.id background", ({ theme, surface }) => {
       const min = ATLAS_AUTHORED.includes(theme.id) ? AA_TEXT : FLOOR;
       const failures = SYNTAX_TOKENS.filter(
-        (token) => contrast(theme.colors[token], surface.base) < min
+        (token) => contrast(theme.colors[token], surface.base) < min,
       ).map((token) => `${token} ${theme.colors[token]}`);
       expect(failures).toEqual([]);
     });

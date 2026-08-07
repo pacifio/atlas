@@ -40,8 +40,7 @@ export function CodeEditorThemeThumbnail({ theme }: { theme: EditorColorTheme })
         <div style={{ paddingLeft: "10px" }}>
           <span style={{ color: c.keyword, fontStyle: "italic" }}>const</span>{" "}
           <span style={{ color: c.definition }}>count</span>{" "}
-          <span style={{ color: c.operator }}>=</span>{" "}
-          <span style={{ color: c.number }}>42</span>
+          <span style={{ color: c.operator }}>=</span> <span style={{ color: c.number }}>42</span>
           <span style={{ color: c.operator }}>;</span>
         </div>
         <div style={{ paddingLeft: "10px" }}>

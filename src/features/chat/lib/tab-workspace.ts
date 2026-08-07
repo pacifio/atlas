@@ -26,10 +26,7 @@ export function workspaceIdForTab(tabId: string): string | null {
 export function workspacePathForTab(tabId: string): string | null {
   const id = workspaceIdForTab(tabId);
   if (!id) return null;
-  return (
-    useWorkspaceStore.getState().workspaces.find((w) => w.id === id)?.path ??
-    null
-  );
+  return useWorkspaceStore.getState().workspaces.find((w) => w.id === id)?.path ?? null;
 }
 
 /**
@@ -44,7 +41,5 @@ export async function jumpToSession(tabId: string): Promise<void> {
     await ws.actions.switchTo(ownerId);
   }
   useLayoutStore.getState().actions.setActiveTab(tabId);
-  window.dispatchEvent(
-    new CustomEvent("atlas:chat-focus", { detail: { tabId } }),
-  );
+  window.dispatchEvent(new CustomEvent("atlas:chat-focus", { detail: { tabId } }));
 }

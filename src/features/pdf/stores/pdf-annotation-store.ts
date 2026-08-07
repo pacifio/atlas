@@ -34,10 +34,7 @@ export interface NoteAnnotation extends Base {
   y: number;
   text: string;
 }
-export type PdfAnnotation =
-  | HighlightAnnotation
-  | PencilAnnotation
-  | NoteAnnotation;
+export type PdfAnnotation = HighlightAnnotation | PencilAnnotation | NoteAnnotation;
 
 /** Default swatch — colors that read on white pages. */
 export const PDF_COLORS = [
@@ -164,8 +161,8 @@ export const usePdfAnnotationStore = createSelectors(
           }
         },
       },
-    }))
-  )
+    })),
+  ),
 );
 
 export function newAnnotationId(): string {

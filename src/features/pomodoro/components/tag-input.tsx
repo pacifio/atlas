@@ -47,13 +47,9 @@ export function TagInput({ value, onChange, known, placeholder = "tag name" }: P
   };
 
   const suggestions = known.filter(
-    (t) =>
-      !value.includes(t) &&
-      (!adding || t.toLowerCase().includes(draft.trim().toLowerCase())),
+    (t) => !value.includes(t) && (!adding || t.toLowerCase().includes(draft.trim().toLowerCase())),
   );
-  const draftMatchesKnown = known.some(
-    (t) => t.toLowerCase() === draft.trim().toLowerCase(),
-  );
+  const draftMatchesKnown = known.some((t) => t.toLowerCase() === draft.trim().toLowerCase());
 
   return (
     <div className="flex flex-col gap-2">

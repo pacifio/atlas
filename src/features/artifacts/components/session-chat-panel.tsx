@@ -529,11 +529,7 @@ function Composer({
       {/* Tucked header stating what the NEXT question will read. It sits
           BEHIND the box below (`z-0` vs `z-10`) with only its curved top
           showing — the same construction as Memory ▸ Chat's codebase strip. */}
-      <CheckpointScopePicker
-        entries={entries}
-        scope={thread.checkpointScope}
-        onChange={onScope}
-      />
+      <CheckpointScopePicker entries={entries} scope={thread.checkpointScope} onChange={onScope} />
       {/* `relative z-10` is load-bearing: the strip above is positioned, and
           positioned elements paint over non-positioned siblings regardless of
           DOM order — without this the strip would cover the composer. */}

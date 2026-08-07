@@ -262,9 +262,7 @@ export function ApprovalCard({
                 custom: e.target.value,
               })
             }
-            placeholder={
-              q.options.length > 0 ? "Answer in your own words…" : "Type your answer…"
-            }
+            placeholder={q.options.length > 0 ? "Answer in your own words…" : "Type your answer…"}
             className={cn(
               "h-10 w-full rounded-lg border-0 bg-[var(--bg-base)]/70 px-3 text-[13px] text-[var(--text-primary)] outline-none transition-colors placeholder:text-[var(--text-tertiary)] focus:bg-[var(--bg-base)]",
               q.options.length > 0 && "mt-1.5",
@@ -292,7 +290,10 @@ export function ApprovalCard({
             <ArrowLeft size={15} />
           </button>
 
-          <span className="flex items-center gap-1.5" aria-label={`Question ${step + 1} of ${questions.length}`}>
+          <span
+            className="flex items-center gap-1.5"
+            aria-label={`Question ${step + 1} of ${questions.length}`}
+          >
             {questions.map((_, i) => (
               <span
                 key={i}

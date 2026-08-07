@@ -1,13 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import {
-  RefreshCw,
-  ArrowDown,
-  ArrowUp,
-  UploadCloud,
-  Loader2,
-  GitMerge,
-} from "lucide-react";
+import { RefreshCw, ArrowDown, ArrowUp, UploadCloud, Loader2, GitMerge } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGitStore } from "../../stores/git-store";
 import { BranchSwitcher } from "./branch-switcher";

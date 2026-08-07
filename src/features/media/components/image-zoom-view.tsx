@@ -48,24 +48,21 @@ export function ImageZoomView({ src, alt, fill, checkerboard }: ImageZoomViewPro
     reset();
   }, [src, reset]);
 
-  const zoomAt = useCallback(
-    (factor: number, cx: number, cy: number) => {
-      setScale((prev) => {
-        const next = clamp(prev * factor, MIN_SCALE, MAX_SCALE);
-        const ratio = next / prev;
-        if (next === MIN_SCALE) {
-          setOffset({ x: 0, y: 0 });
-        } else {
-          setOffset((o) => ({
-            x: cx - ratio * (cx - o.x),
-            y: cy - ratio * (cy - o.y),
-          }));
-        }
-        return next;
-      });
-    },
-    []
-  );
+  const zoomAt = useCallback((factor: number, cx: number, cy: number) => {
+    setScale((prev) => {
+      const next = clamp(prev * factor, MIN_SCALE, MAX_SCALE);
+      const ratio = next / prev;
+      if (next === MIN_SCALE) {
+        setOffset({ x: 0, y: 0 });
+      } else {
+        setOffset((o) => ({
+          x: cx - ratio * (cx - o.x),
+          y: cy - ratio * (cy - o.y),
+        }));
+      }
+      return next;
+    });
+  }, []);
 
   // Non-passive wheel listener so we can preventDefault the page scroll.
   useEffect(() => {

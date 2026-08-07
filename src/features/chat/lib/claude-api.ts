@@ -109,10 +109,7 @@ export interface ClaudeSessionStats {
   total_cost_usd: number;
 }
 
-export function getClaudeSessionStats(
-  cwd: string,
-  sessionId: string
-): Promise<ClaudeSessionStats> {
+export function getClaudeSessionStats(cwd: string, sessionId: string): Promise<ClaudeSessionStats> {
   return invoke<ClaudeSessionStats>("claude_session_stats", { cwd, sessionId });
 }
 

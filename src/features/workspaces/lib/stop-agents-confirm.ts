@@ -31,37 +31,32 @@ interface StopAgentsConfirmState {
   };
 }
 
-const useStopAgentsConfirmStoreBase = create<StopAgentsConfirmState>(
-  (set, get) => ({
-    pending: null,
-    actions: {
-      ask: (prompt) =>
-        new Promise<boolean>((resolve) => {
-          // A newer ask supersedes an unanswered one — decline the old caller
-          // so its promise never dangles.
-          get().pending?.resolve(false);
-          set({ pending: { ...prompt, resolve } });
-        }),
-      settle: (ok) => {
-        const p = get().pending;
-        if (!p) return;
-        set({ pending: null });
-        p.resolve(ok);
-      },
+const useStopAgentsConfirmStoreBase = create<StopAgentsConfirmState>((set, get) => ({
+  pending: null,
+  actions: {
+    ask: (prompt) =>
+      new Promise<boolean>((resolve) => {
+        // A newer ask supersedes an unanswered one — decline the old caller
+        // so its promise never dangles.
+        get().pending?.resolve(false);
+        set({ pending: { ...prompt, resolve } });
+      }),
+    settle: (ok) => {
+      const p = get().pending;
+      if (!p) return;
+      set({ pending: null });
+      p.resolve(ok);
     },
-  }),
-);
+  },
+}));
 
-export const useStopAgentsConfirmStore = createSelectors(
-  useStopAgentsConfirmStoreBase,
-);
+export const useStopAgentsConfirmStore = createSelectors(useStopAgentsConfirmStoreBase);
 
 /** Busy (running or permission-waiting) sessions, optionally scoped to one
  *  workspace path. */
 export function busySessions(path?: string): ChatSession[] {
   return Object.values(useChatStore.getState().sessions).filter(
-    (s) =>
-      isBusyAgentStatus(s.status) && (!path || s.workingDirectory === path),
+    (s) => isBusyAgentStatus(s.status) && (!path || s.workingDirectory === path),
   );
 }
 
@@ -71,9 +66,7 @@ export function busySessions(path?: string): ChatSession[] {
 export async function cancelBusySessions(path?: string): Promise<void> {
   const cancels = busySessions(path)
     .filter((s) => s.acpAgentId && s.acpSessionId)
-    .map((s) =>
-      agents.cancel({ agent_id: s.acpAgentId!, session_id: s.acpSessionId! }),
-    );
+    .map((s) => agents.cancel({ agent_id: s.acpAgentId!, session_id: s.acpSessionId! }));
   if (!cancels.length) return;
   await Promise.allSettled(cancels);
   await new Promise((r) => setTimeout(r, 250));

@@ -103,8 +103,7 @@ export const usePomodoroStore = createSelectors(
         tick: () =>
           set((s) => {
             if (!s.isRunning || s.phase === "idle") return;
-            const phaseTotalSec =
-              (s.phase === "focus" ? s.focusMin : s.breakMin) * 60;
+            const phaseTotalSec = (s.phase === "focus" ? s.focusMin : s.breakMin) * 60;
             s.secElapsed += 1;
 
             // Update current block's elapsedMin live so the Gantt fill grows.
@@ -153,10 +152,7 @@ export const usePomodoroStore = createSelectors(
                     current: true,
                     elapsedMin: 0,
                   });
-                  fireNotification(
-                    "Focus complete",
-                    `Time for a ${s.breakMin}-min break.`,
-                  );
+                  fireNotification("Focus complete", `Time for a ${s.breakMin}-min break.`);
                 }
               } else {
                 // rest → next focus
@@ -302,9 +298,7 @@ export const usePomodoroStore = createSelectors(
                 ...d,
                 today: d.date === today,
               }));
-              s.days = hasToday
-                ? normalized
-                : [{ ...emptyToday(), today: true }, ...normalized];
+              s.days = hasToday ? normalized : [{ ...emptyToday(), today: true }, ...normalized];
               s.activeDayIdx = 0;
               s.blocks = (file?.blocks ?? []).map((b) => ({ ...b, current: false }));
               s.knownTags = file?.knownTags ?? [];

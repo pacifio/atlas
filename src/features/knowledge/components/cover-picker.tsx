@@ -16,12 +16,36 @@ interface CoverPickerProps {
 /** Synthetic prefixes the renderer detects to paint a gradient instead
  *  of loading an image off disk. */
 const GRADIENTS: Array<{ id: string; css: string; label: string }> = [
-  { id: "gradient:slate-1", label: "Slate fade", css: "linear-gradient(135deg, #1f1f1f, #2a2a2a 60%, #161616)" },
-  { id: "gradient:warm-1", label: "Warm ember", css: "linear-gradient(135deg, #2a1d18, #382318 60%, #1d1411)" },
-  { id: "gradient:moss-1", label: "Moss",        css: "linear-gradient(135deg, #1a2422, #1f2e2a 60%, #131c1a)" },
-  { id: "gradient:dusk-1", label: "Dusk",        css: "linear-gradient(135deg, #1d1d2a, #232336 60%, #14141d)" },
-  { id: "gradient:rose-1", label: "Rose",        css: "linear-gradient(135deg, #271922, #36202d 60%, #1a1218)" },
-  { id: "gradient:gold-1", label: "Honey",       css: "linear-gradient(135deg, #2a2317, #36301a 60%, #1a1610)" },
+  {
+    id: "gradient:slate-1",
+    label: "Slate fade",
+    css: "linear-gradient(135deg, #1f1f1f, #2a2a2a 60%, #161616)",
+  },
+  {
+    id: "gradient:warm-1",
+    label: "Warm ember",
+    css: "linear-gradient(135deg, #2a1d18, #382318 60%, #1d1411)",
+  },
+  {
+    id: "gradient:moss-1",
+    label: "Moss",
+    css: "linear-gradient(135deg, #1a2422, #1f2e2a 60%, #131c1a)",
+  },
+  {
+    id: "gradient:dusk-1",
+    label: "Dusk",
+    css: "linear-gradient(135deg, #1d1d2a, #232336 60%, #14141d)",
+  },
+  {
+    id: "gradient:rose-1",
+    label: "Rose",
+    css: "linear-gradient(135deg, #271922, #36202d 60%, #1a1218)",
+  },
+  {
+    id: "gradient:gold-1",
+    label: "Honey",
+    css: "linear-gradient(135deg, #2a2317, #36301a 60%, #1a1610)",
+  },
 ];
 
 export function gradientCss(id: string): string | null {
@@ -78,10 +102,7 @@ export function CoverPicker({
 
   if (!anchorRect) return null;
   const PICKER_W = 320;
-  const left = Math.min(
-    Math.max(8, anchorRect.left),
-    window.innerWidth - PICKER_W - 8,
-  );
+  const left = Math.min(Math.max(8, anchorRect.left), window.innerWidth - PICKER_W - 8);
   const top = Math.min(anchorRect.bottom + 6, window.innerHeight - 280);
 
   return createPortal(
@@ -127,9 +148,7 @@ export function CoverPicker({
               borderRadius: 6,
               background: g.css,
               border:
-                value === g.id
-                  ? "2px solid var(--text-primary)"
-                  : "1px solid var(--border-subtle)",
+                value === g.id ? "2px solid var(--text-primary)" : "1px solid var(--border-subtle)",
               cursor: "pointer",
             }}
           />

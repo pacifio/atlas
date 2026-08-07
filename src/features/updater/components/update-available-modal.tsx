@@ -63,11 +63,10 @@ export function UpdateAvailableModal() {
 
           <p className="mt-1 text-[12px] text-text-secondary leading-relaxed px-1">
             {isError ? (
-              error ?? "Something went wrong while installing the update."
+              (error ?? "Something went wrong while installing the update.")
             ) : (
               <>
-                Atlas{version ? ` ${version}` : ""} has been downloaded. Restart to
-                finish updating.
+                Atlas{version ? ` ${version}` : ""} has been downloaded. Restart to finish updating.
               </>
             )}
           </p>

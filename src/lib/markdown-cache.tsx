@@ -334,12 +334,7 @@ interface CachedMarkdownProps {
  * the first parse to a `requestIdleCallback` so initial mount paint
  * isn't blocked; subsequent remounts hit the cache and skip the deferral.
  */
-export function CachedMarkdown({
-  source,
-  className,
-  unstyled,
-  priority = 0,
-}: CachedMarkdownProps) {
+export function CachedMarkdown({ source, className, unstyled, priority = 0 }: CachedMarkdownProps) {
   const [html, setHtml] = useState<string | null>(() => {
     const hit = cacheGet(source);
     if (hit !== undefined) return hit;

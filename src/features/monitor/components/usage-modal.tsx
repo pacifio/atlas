@@ -62,7 +62,10 @@ export function UsageModal({
               </thead>
               <tbody>
                 {sessions.map((s) => (
-                  <tr key={s.session_id} className="border-b border-border-subtle hover:bg-bg-hover">
+                  <tr
+                    key={s.session_id}
+                    className="border-b border-border-subtle hover:bg-bg-hover"
+                  >
                     <Td className="text-left max-w-0">
                       <span className="block truncate text-text-secondary">
                         {s.preview || s.session_id.slice(0, 8)}
@@ -71,8 +74,12 @@ export function UsageModal({
                     <Td className="text-left text-text-tertiary truncate">
                       {(s.model ?? "—").replace(/^claude-/, "")}
                     </Td>
-                    <Td className="text-right font-mono tabular-nums">{fmtTokens(s.input_tokens)}</Td>
-                    <Td className="text-right font-mono tabular-nums">{fmtTokens(s.output_tokens)}</Td>
+                    <Td className="text-right font-mono tabular-nums">
+                      {fmtTokens(s.input_tokens)}
+                    </Td>
+                    <Td className="text-right font-mono tabular-nums">
+                      {fmtTokens(s.output_tokens)}
+                    </Td>
                     <Td className="text-right font-mono tabular-nums">
                       {fmtTokens(s.cache_creation_tokens + s.cache_read_tokens)}
                     </Td>

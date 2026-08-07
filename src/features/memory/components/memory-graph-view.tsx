@@ -38,15 +38,8 @@ export function MemoryGraphView() {
   const results = useMemoryGraphStore.use.results();
   const matchedIds = useMemoryGraphStore.use.matchedIds();
   const selectedId = useMemoryGraphStore.use.selectedId();
-  const {
-    init,
-    download,
-    buildIndex,
-    runQuery,
-    setQuery,
-    clearQuery,
-    select,
-  } = useMemoryGraphStore.use.actions();
+  const { init, download, buildIndex, runQuery, setQuery, clearQuery, select } =
+    useMemoryGraphStore.use.actions();
 
   useEffect(() => {
     if (projectPath) void init(projectPath);
@@ -76,9 +69,9 @@ export function MemoryGraphView() {
               Enable semantic memory
             </h3>
             <p className="text-[11px] leading-relaxed text-[var(--text-tertiary)]">
-              Download a small on-device embedding model to index your Claude &
-              Codex memory, map how it relates, and query it in natural language.
-              Runs entirely locally — nothing leaves your machine.
+              Download a small on-device embedding model to index your Claude & Codex memory, map
+              how it relates, and query it in natural language. Runs entirely locally — nothing
+              leaves your machine.
             </p>
           </div>
           <button
@@ -134,14 +127,10 @@ export function MemoryGraphView() {
             {phase === "download-failed" ? "Model download failed" : "Something went wrong"}
           </p>
           {error && (
-            <p className="text-[10px] text-[var(--text-tertiary)] font-mono break-words">
-              {error}
-            </p>
+            <p className="text-[10px] text-[var(--text-tertiary)] font-mono break-words">{error}</p>
           )}
           <button
-            onClick={() =>
-              phase === "download-failed" ? void download() : void init(projectPath)
-            }
+            onClick={() => (phase === "download-failed" ? void download() : void init(projectPath))}
             className="inline-flex items-center gap-1.5 h-7 px-3 rounded-md border border-[var(--border-default)] text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           >
             <RotateCw size={12} />
@@ -167,9 +156,7 @@ export function MemoryGraphView() {
   if (!graph || graph.nodes.length === 0) {
     return (
       <Centered>
-        <p className="text-[12px] text-[var(--text-tertiary)]">
-          No memory to graph yet.
-        </p>
+        <p className="text-[12px] text-[var(--text-tertiary)]">No memory to graph yet.</p>
       </Centered>
     );
   }
@@ -444,7 +431,8 @@ function GraphReady({
                 <span className="w-2 h-2 rounded-full" style={{ background: "#fafafa" }} /> impacted
               </span>
               <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full" style={{ background: "#6796e6" }} /> influenced by
+                <span className="w-2 h-2 rounded-full" style={{ background: "#6796e6" }} />{" "}
+                influenced by
               </span>
             </div>
           )}
@@ -535,12 +523,7 @@ function SourceDot({ source }: { source: string }) {
           : source === "kilo"
             ? "var(--agent-kilo-chip)"
             : "var(--accent-primary)";
-  return (
-    <span
-      className="w-1.5 h-1.5 rounded-full shrink-0"
-      style={{ background: color }}
-    />
-  );
+  return <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />;
 }
 
 function Centered({ children }: { children: React.ReactNode }) {

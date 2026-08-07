@@ -58,8 +58,7 @@ export const useDetailPanelStore = createSelectors(
     targets: {},
     width: DEFAULT_WIDTH,
     actions: {
-      open: (tabId, target) =>
-        set((s) => ({ targets: { ...s.targets, [tabId]: target } })),
+      open: (tabId, target) => set((s) => ({ targets: { ...s.targets, [tabId]: target } })),
       close: (tabId) =>
         set((s) => {
           if (!s.targets[tabId]) return s;

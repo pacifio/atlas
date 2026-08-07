@@ -111,13 +111,12 @@ export const useExplorerStore = createSelectors(
           });
           try {
             const entries = await invoke<FileEntry[]>("read_directory", { path });
-            const nodes: TreeNode[] = applyHiddenFilter(entries)
-              .map((e) => ({
-                entry: e,
-                children: e.is_dir ? null : [],
-                expanded: false,
-                depth: 0,
-              }));
+            const nodes: TreeNode[] = applyHiddenFilter(entries).map((e) => ({
+              entry: e,
+              children: e.is_dir ? null : [],
+              expanded: false,
+              depth: 0,
+            }));
             set((s) => {
               s.tree = nodes;
               s.loading = false;
@@ -147,13 +146,12 @@ export const useExplorerStore = createSelectors(
               set((s) => {
                 const n = findNode(s.tree, path);
                 if (n) {
-                  n.children = applyHiddenFilter(entries)
-                    .map((e) => ({
-                      entry: e,
-                      children: e.is_dir ? null : [],
-                      expanded: false,
-                      depth: n.depth + 1,
-                    }));
+                  n.children = applyHiddenFilter(entries).map((e) => ({
+                    entry: e,
+                    children: e.is_dir ? null : [],
+                    expanded: false,
+                    depth: n.depth + 1,
+                  }));
                   n.expanded = true;
                 }
               });
@@ -251,8 +249,7 @@ export const useExplorerStore = createSelectors(
           set((s) => {
             s.selectedPaths = paths;
             // Default the anchor to the last path when not given.
-            s.selectionAnchor =
-              anchor !== undefined ? anchor : (paths[paths.length - 1] ?? null);
+            s.selectionAnchor = anchor !== undefined ? anchor : (paths[paths.length - 1] ?? null);
           });
         },
         toggleSelection: (path) => {
@@ -294,8 +291,8 @@ export const useExplorerStore = createSelectors(
           });
         },
       },
-    }))
-  )
+    })),
+  ),
 );
 
 function collapseAllNodes(nodes: TreeNode[]): void {
@@ -338,11 +335,7 @@ function collectExpandedDirs(nodes: TreeNode[], out: string[]): void {
  *  children); deleted entries are dropped. Used by the watcher
  *  reconciler so opening / expanding / agent-side file writes don't
  *  collapse the user's view. */
-function reconcileChildren(
-  existing: TreeNode[],
-  fresh: FileEntry[],
-  depth: number,
-): TreeNode[] {
+function reconcileChildren(existing: TreeNode[], fresh: FileEntry[], depth: number): TreeNode[] {
   const filtered = applyHiddenFilter(fresh);
   const byPath = new Map<string, TreeNode>();
   for (const n of existing) byPath.set(n.entry.path, n);

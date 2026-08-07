@@ -20,8 +20,7 @@ import { useExplorerStore } from "@/features/explorer/stores/explorer-store";
 import { useWorkspaceStore } from "../stores/workspace-store";
 
 export function revalidateWorkspace(workspaceId: string, path: string): void {
-  const stillActive = () =>
-    useWorkspaceStore.getState().activeWorkspaceId === workspaceId;
+  const stillActive = () => useWorkspaceStore.getState().activeWorkspaceId === workspaceId;
 
   // Git status — quick; the resident watcher keeps it fresh thereafter.
   if (stillActive()) {

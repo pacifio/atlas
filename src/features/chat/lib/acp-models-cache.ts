@@ -49,10 +49,7 @@ export function isCachedAcpModelsFresh(agentType: string, ttlMs: number): boolea
 export function saveCachedAcpModels(agentType: string, models: CachedAcpModels): void {
   try {
     if (models.availableModels.length > 0) {
-      localStorage.setItem(
-        key(agentType),
-        JSON.stringify({ ...models, fetchedAt: Date.now() }),
-      );
+      localStorage.setItem(key(agentType), JSON.stringify({ ...models, fetchedAt: Date.now() }));
     }
   } catch {
     // storage full / unavailable — caching is best-effort

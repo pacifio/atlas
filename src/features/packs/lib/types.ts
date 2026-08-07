@@ -10,13 +10,7 @@ import type { Scope } from "../../skills/lib/types";
 export type { Scope };
 
 /** Component kinds a pack can ship (Rust `ComponentKind`, lowercase serde). */
-export type ComponentKind =
-  | "skill"
-  | "agent"
-  | "command"
-  | "hook"
-  | "rule"
-  | "script";
+export type ComponentKind = "skill" | "agent" | "command" | "hook" | "rule" | "script";
 
 /** One skills.sh search hit. `source` is a GitHub `owner/repo`. */
 export interface PackSearchHit {
@@ -54,11 +48,7 @@ export interface Pack {
 }
 
 /** Outcome of an install attempt against the existing store + lock. */
-export type PackInstallState =
-  | "fresh"
-  | "updated"
-  | "alreadyInstalled"
-  | "conflict";
+export type PackInstallState = "fresh" | "updated" | "alreadyInstalled" | "conflict";
 
 export interface PackInstallResult {
   state: PackInstallState;

@@ -61,10 +61,7 @@ function positionPopup(popup: Popup, rect: DOMRect | null) {
   popup.el.style.display = "block";
   const POPUP_W = 280;
   // Anchor 4px below caret, left-align with caret; clamp to viewport.
-  const left = Math.min(
-    Math.max(8, rect.left),
-    window.innerWidth - POPUP_W - 8,
-  );
+  const left = Math.min(Math.max(8, rect.left), window.innerWidth - POPUP_W - 8);
   const top = Math.min(rect.bottom + 4, window.innerHeight - 360);
   popup.el.style.left = `${left}px`;
   popup.el.style.top = `${top}px`;
@@ -78,9 +75,7 @@ function render(popup: Popup, items: SlashItem[], command: (it: SlashItem) => vo
     command: (it: SlashItem) => void;
     ref?: React.Ref<SlashMenuRef>;
   }>;
-  popup.root.render(
-    <Menu items={items} command={command} ref={popup.ref} />,
-  );
+  popup.root.render(<Menu items={items} command={command} ref={popup.ref} />);
 }
 
 export interface SlashExtensionOptions {

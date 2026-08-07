@@ -35,12 +35,12 @@ describe("language registry", () => {
       "maps .%s to a language that is either loadable or explicitly plaintext",
       (_ext, language) => {
         expect(language === PLAINTEXT || LANGUAGE_IDS.includes(language)).toBe(true);
-      }
+      },
     );
 
     it("has no entry whose language id lacks a loader", () => {
       const orphans = Object.entries(EXTENSION_LANGUAGE).filter(
-        ([, language]) => language !== PLAINTEXT && !LANGUAGE_IDS.includes(language)
+        ([, language]) => language !== PLAINTEXT && !LANGUAGE_IDS.includes(language),
       );
       expect(orphans).toEqual([]);
     });
@@ -117,7 +117,7 @@ describe("language registry", () => {
         // The distinction that matters: the extension is *listed* as plaintext,
         // so nobody later assumes it was simply forgotten.
         expect(EXTENSION_LANGUAGE[path.split(".").pop()!]).toBe(PLAINTEXT);
-      }
+      },
     );
 
     it("is case-insensitive — macOS paths arrive in whatever case the user typed", () => {

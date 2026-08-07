@@ -50,9 +50,7 @@ export function FeedbackPanel() {
 
   const user = snapshot.status === "signed-in" ? snapshot.user : null;
   const signedIn = !!user;
-  const displayName = user
-    ? user.name || user.email || "your Atlas account"
-    : null;
+  const displayName = user ? user.name || user.email || "your Atlas account" : null;
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const radioRef = useRef<HTMLDivElement>(null);
@@ -93,9 +91,7 @@ export function FeedbackPanel() {
         : (i - 1 + CATEGORIES.length) % CATEGORIES.length;
     a.setCategory(CATEGORIES[next].id);
     requestAnimationFrame(() => {
-      radioRef.current
-        ?.querySelectorAll<HTMLButtonElement>("[role=radio]")
-        [next]?.focus();
+      radioRef.current?.querySelectorAll<HTMLButtonElement>("[role=radio]")[next]?.focus();
     });
   };
 
@@ -125,17 +121,12 @@ export function FeedbackPanel() {
       style={{
         zIndex: "var(--z-max)" as unknown as number,
         bottom: barVisible ? BAR_OFFSET : EDGE_OFFSET,
-        boxShadow:
-          "inset 0 1px 0 rgba(255,255,255,0.08), 0 16px 48px rgba(0,0,0,0.95)",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 16px 48px rgba(0,0,0,0.95)",
         // No `will-change` — it would isolate the layer and kill the blur.
       }}
     >
       <div className="flex items-center gap-2 px-3.5 h-9 border-b border-white/5">
-        <MessageCircleQuestion
-          size={13}
-          strokeWidth={1.5}
-          className="text-text-secondary"
-        />
+        <MessageCircleQuestion size={13} strokeWidth={1.5} className="text-text-secondary" />
         <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
           Send feedback
         </span>
@@ -151,16 +142,9 @@ export function FeedbackPanel() {
       </div>
 
       {sent ? (
-        <div
-          role="status"
-          className="flex flex-col items-center gap-2 px-6 py-7"
-        >
+        <div role="status" className="flex flex-col items-center gap-2 px-6 py-7">
           <div className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/[0.04]">
-            <Check
-              size={16}
-              strokeWidth={1.75}
-              className="text-[var(--status-success)]"
-            />
+            <Check size={16} strokeWidth={1.75} className="text-[var(--status-success)]" />
           </div>
           <p className="text-[12px] text-text-primary">Thanks — we got it.</p>
           <button
@@ -242,10 +226,7 @@ export function FeedbackPanel() {
           </div>
 
           {error && (
-            <p
-              role="alert"
-              className="px-3.5 pb-2 text-[10px] text-[var(--status-error)]"
-            >
+            <p role="alert" className="px-3.5 pb-2 text-[10px] text-[var(--status-error)]">
               {error}
             </p>
           )}
@@ -255,8 +236,7 @@ export function FeedbackPanel() {
             // transmits with usage data switched off, and the user pressed a
             // button labelled "Send".
             <p className="px-3.5 pb-2 text-[10px] leading-snug text-text-ghost">
-              Usage data is off. This feedback is still sent, because you asked
-              for it to be.
+              Usage data is off. This feedback is still sent, because you asked for it to be.
             </p>
           )}
 
@@ -266,9 +246,7 @@ export function FeedbackPanel() {
                 type="button"
                 onClick={() => a.setAnonymous(!anonymous)}
                 title={
-                  anonymous
-                    ? "Send with your Atlas account instead"
-                    : "Send anonymously instead"
+                  anonymous ? "Send with your Atlas account instead" : "Send anonymously instead"
                 }
                 className="inline-flex min-w-0 items-center gap-1.5 text-[10px] text-text-tertiary hover:text-text-secondary transition-colors cursor-pointer"
               >
@@ -282,9 +260,7 @@ export function FeedbackPanel() {
                   <AccountAvatar user={user} size={13} />
                 )}
                 <span className="truncate">
-                  {anonymous
-                    ? "Sending anonymously"
-                    : `Sending as ${displayName}`}
+                  {anonymous ? "Sending anonymously" : `Sending as ${displayName}`}
                 </span>
               </button>
             ) : (

@@ -48,10 +48,7 @@ function quoteFontName(name: string): string {
 }
 
 function splitFontFamilyList(fontFamily: string): string[] {
-  return fontFamily
-    .split(",")
-    .map(stripWrappingQuotes)
-    .filter(Boolean);
+  return fontFamily.split(",").map(stripWrappingQuotes).filter(Boolean);
 }
 
 function uniqueFontFamilies(families: string[]): string[] {

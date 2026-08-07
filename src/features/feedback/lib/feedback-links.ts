@@ -31,10 +31,7 @@ const MAX_BODY = 4000;
  * template is specified — text has to target a field by its `id` instead
  * (here, `description`, which both bug_report.yml and feedback.yml declare).
  */
-export function issueUrl(
-  category: FeedbackCategory,
-  message: string,
-): string {
+export function issueUrl(category: FeedbackCategory, message: string): string {
   const text = message.trim();
   const first = text.split("\n")[0]?.slice(0, 90) || "Feedback";
   const title = `${PREFIX[category]} ${first}`;

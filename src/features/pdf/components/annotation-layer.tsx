@@ -95,7 +95,12 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
 
   const onPointerUp = () => {
     if (!draft) return;
-    if (draft.kind === "highlight" && draft.rect && draft.rect.w > MIN_HIGHLIGHT && draft.rect.h > MIN_HIGHLIGHT) {
+    if (
+      draft.kind === "highlight" &&
+      draft.rect &&
+      draft.rect.w > MIN_HIGHLIGHT &&
+      draft.rect.h > MIN_HIGHLIGHT
+    ) {
       add(pdfPath, {
         id: newAnnotationId(),
         kind: "highlight",
@@ -121,7 +126,9 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
     if (tool === "erase") remove(pdfPath, a.id);
   };
 
-  const notes = annotations.filter((a): a is Extract<PdfAnnotation, { kind: "note" }> => a.kind === "note");
+  const notes = annotations.filter(
+    (a): a is Extract<PdfAnnotation, { kind: "note" }> => a.kind === "note",
+  );
   const selectedNote = notes.find((n) => n.id === selectedId);
 
   return (

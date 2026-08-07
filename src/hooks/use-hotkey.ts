@@ -23,9 +23,7 @@ function matchKey(e: KeyboardEvent, key: string) {
   return false;
 }
 
-export function useHotkeys(
-  bindings: Array<{ combo: KeyCombo; action: () => void }>
-) {
+export function useHotkeys(bindings: Array<{ combo: KeyCombo; action: () => void }>) {
   const bindingsRef = useRef(bindings);
   bindingsRef.current = bindings;
 

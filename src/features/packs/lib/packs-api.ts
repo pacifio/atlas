@@ -27,8 +27,7 @@ export const packs = {
   search: (query: string) => invoke<PackSearchHit[]>("pack_search", { query }),
 
   /** Clone a source repo and parse it WITHOUT installing (install preview). */
-  remotePreview: (source: string) =>
-    invoke<Pack>("pack_remote_preview", { source }),
+  remotePreview: (source: string) => invoke<Pack>("pack_remote_preview", { source }),
 
   /** Inspect an already-on-disk pack directory. */
   inspect: (dir: string) => invoke<Pack>("pack_inspect", { dir }),
@@ -40,12 +39,7 @@ export const packs = {
    * repo, dedups against the lock, writes `skills-lock.json`. No projection
    * and no script execution. `force` overrides a non-managed-dir conflict.
    */
-  install: (
-    scope: Scope,
-    source: string,
-    force = false,
-    projectPath?: string | null,
-  ) =>
+  install: (scope: Scope, source: string, force = false, projectPath?: string | null) =>
     afterSkillMutation(
       invoke<PackInstallResult>("pack_install_remote", {
         scope,
@@ -61,12 +55,7 @@ export const packs = {
    * skills.sh registry lists individual skills, so a Discover "Install" adds just
    * that skill. Returns void to the caller (the marketplace refetches).
    */
-  installSkill: (
-    scope: Scope,
-    source: string,
-    skillId: string,
-    projectPath?: string | null,
-  ) =>
+  installSkill: (scope: Scope, source: string, skillId: string, projectPath?: string | null) =>
     afterSkillMutation(
       invoke<unknown>("pack_install_skill", {
         scope,
@@ -129,12 +118,7 @@ export const packs = {
     ),
 
   /** Undo every projection of a pack into a tool. */
-  unproject: (
-    scope: Scope,
-    pack: string,
-    tool: string,
-    projectPath?: string | null,
-  ) =>
+  unproject: (scope: Scope, pack: string, tool: string, projectPath?: string | null) =>
     afterSkillMutation(
       invoke<void>("pack_unproject", {
         scope,

@@ -18,8 +18,7 @@ export interface SummarizerPref {
 }
 
 export const memorySharing = {
-  getEnabled: (projectPath: string) =>
-    invoke<boolean>("memory_sharing_get", { projectPath }),
+  getEnabled: (projectPath: string) => invoke<boolean>("memory_sharing_get", { projectPath }),
   setEnabled: (projectPath: string, enabled: boolean) =>
     invoke<void>("memory_sharing_set", { projectPath, enabled }),
   getSummarizer: (projectPath: string) =>

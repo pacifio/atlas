@@ -48,11 +48,7 @@ export const Callout = Node.create({
   },
 
   renderHTML({ HTMLAttributes }) {
-    return [
-      "aside",
-      mergeAttributes(HTMLAttributes, { class: "atlas-callout" }),
-      0,
-    ];
+    return ["aside", mergeAttributes(HTMLAttributes, { class: "atlas-callout" }), 0];
   },
 
   addNodeView() {
@@ -78,7 +74,11 @@ export const Callout = Node.create({
     return {
       markdown: {
         serialize(
-          state: { write: (s: string) => void; renderContent: (n: unknown) => void; closeBlock: (n: unknown) => void },
+          state: {
+            write: (s: string) => void;
+            renderContent: (n: unknown) => void;
+            closeBlock: (n: unknown) => void;
+          },
           node: { attrs: { emoji?: string } },
         ) {
           const emoji = node.attrs.emoji ?? "💡";

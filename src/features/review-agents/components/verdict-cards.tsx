@@ -28,8 +28,7 @@ interface Props {
  *  per-file accordion. */
 export function ReportView({ report, onOpenIssue, projectPath, onShareFile }: Props) {
   const hasSecurity =
-    report.security_concerns &&
-    report.security_concerns.trim().toLowerCase() !== "no";
+    report.security_concerns && report.security_concerns.trim().toLowerCase() !== "no";
 
   return (
     <div className="flex flex-col gap-2.5 p-2.5 text-[11px] animate-fade-in">
@@ -192,9 +191,7 @@ export function FileCard({
                   </span>
                 )}
               </div>
-              <div className="mt-1 text-text-secondary leading-relaxed">
-                {issue.issue_content}
-              </div>
+              <div className="mt-1 text-text-secondary leading-relaxed">{issue.issue_content}</div>
             </button>
           ))}
           {file.key_issues.length === 0 && (
@@ -204,7 +201,11 @@ export function FileCard({
           {/* Per-file actions */}
           <div className="flex items-center gap-1 pt-1">
             {onShare && file.key_issues.length > 0 && (
-              <ActionBtn icon={<LinkIcon size={11} />} label="Share" onClick={() => onShare(file)} />
+              <ActionBtn
+                icon={<LinkIcon size={11} />}
+                label="Share"
+                onClick={() => onShare(file)}
+              />
             )}
             {projectPath && (
               <>
@@ -292,8 +293,10 @@ function Badge({
     <span
       className={cn(
         "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 border text-[10.5px]",
-        tone === "good" && "border-[var(--status-success)]/50 bg-[var(--bg-elevated)] text-text-secondary",
-        tone === "warn" && "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
+        tone === "good" &&
+          "border-[var(--status-success)]/50 bg-[var(--bg-elevated)] text-text-secondary",
+        tone === "warn" &&
+          "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
         tone === "neutral" && "border-border-default bg-[var(--bg-elevated)] text-text-secondary",
       )}
     >

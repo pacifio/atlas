@@ -77,9 +77,7 @@ let unlisten: UnlistenFn | null = null;
 // without this the cache stays stuck on filename-style ids. Lazy import
 // avoids a static cycle with chat/lib/mentions (which imports this store).
 function republishMentionCache() {
-  void import("@/features/chat/lib/mentions").then((m) =>
-    m.publishKnowledgeToMentionCache(),
-  );
+  void import("@/features/chat/lib/mentions").then((m) => m.publishKnowledgeToMentionCache());
 }
 
 const store = create<KnowledgeMetaState>()((set, get) => ({

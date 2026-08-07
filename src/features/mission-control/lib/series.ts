@@ -33,9 +33,7 @@ export function areaRows(
     }
     row[d.projectPath] = (Number(row[d.projectPath]) || 0) + bucketTokens(d);
   }
-  return [...byDate.values()].sort((a, b) =>
-    String(a.date).localeCompare(String(b.date)),
-  );
+  return [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
 /** Per-project consumption shares (for the pie), sorted desc, biggest first. */

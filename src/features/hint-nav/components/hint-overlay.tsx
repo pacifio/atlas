@@ -11,9 +11,7 @@ import { activate } from "../lib/activate-target";
  * Single constant so it's trivial to rebind if it ever clashes with the OS.
  */
 function isTrigger(e: KeyboardEvent): boolean {
-  return (
-    e.code === "Space" && e.metaKey && e.altKey && !e.shiftKey && !e.ctrlKey
-  );
+  return e.code === "Space" && e.metaKey && e.altKey && !e.shiftKey && !e.ctrlKey;
 }
 
 /** Robust single-char extraction that survives macOS Option-diacritics and
@@ -76,9 +74,7 @@ export function HintOverlay() {
 
   // Re-measure rects on scroll/resize (rAF-throttled) so badges track the UI.
   const remeasure = useCallback(() => {
-    setTargets((prev) =>
-      prev.map((t) => ({ el: t.el, rect: t.el.getBoundingClientRect() }))
-    );
+    setTargets((prev) => prev.map((t) => ({ el: t.el, rect: t.el.getBoundingClientRect() })));
   }, []);
   useEffect(() => {
     if (!open) return;
@@ -107,7 +103,8 @@ export function HintOverlay() {
     let node: HTMLElement | null = el as HTMLElement | null;
     while (node && node !== document.body) {
       const style = getComputedStyle(node);
-      const scrollable = /(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight;
+      const scrollable =
+        /(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight;
       if (scrollable) {
         node.scrollBy({ top: dy });
         return;
@@ -189,8 +186,7 @@ export function HintOverlay() {
               // highlight + bottom shade for the raised feel, and a soft drop
               // shadow lifting it off the page.
               color: "rgba(255,255,255,0.95)",
-              background:
-                "linear-gradient(180deg, rgba(18,18,21,0.86) 0%, rgba(8,8,10,0.9) 100%)",
+              background: "linear-gradient(180deg, rgba(18,18,21,0.86) 0%, rgba(8,8,10,0.9) 100%)",
               backdropFilter: "blur(14px) saturate(160%)",
               WebkitBackdropFilter: "blur(14px) saturate(160%)",
               border: "1px solid rgba(255,255,255,0.08)",
@@ -198,9 +194,7 @@ export function HintOverlay() {
                 "inset 0 1px 0 rgba(255,255,255,0.12), inset 0 -1px 0 rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.6)",
             }}
           >
-            {typed && (
-              <span style={{ opacity: 0.4 }}>{label.slice(0, typed.length)}</span>
-            )}
+            {typed && <span style={{ opacity: 0.4 }}>{label.slice(0, typed.length)}</span>}
             <span>{label.slice(typed.length)}</span>
           </span>
         );
@@ -214,13 +208,11 @@ export function HintOverlay() {
             // Matches the hint keycaps: dark translucent gradient over a heavy
             // backdrop blur, hairline border, faint top highlight + soft drop
             // shadow for the floating native-HUD feel.
-            background:
-              "linear-gradient(180deg, rgba(18,18,21,0.86) 0%, rgba(8,8,10,0.9) 100%)",
+            background: "linear-gradient(180deg, rgba(18,18,21,0.86) 0%, rgba(8,8,10,0.9) 100%)",
             backdropFilter: "blur(22px) saturate(170%)",
             WebkitBackdropFilter: "blur(22px) saturate(170%)",
             border: "1px solid rgba(255,255,255,0.08)",
-            boxShadow:
-              "inset 0 1px 0 rgba(255,255,255,0.1), 0 8px 28px rgba(0,0,0,0.55)",
+            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.1), 0 8px 28px rgba(0,0,0,0.55)",
           }}
         >
           <span className="font-mono text-[12px] text-[var(--text-primary)]">

@@ -20,13 +20,7 @@ import {
   ChevronRight,
   DownloadCloud,
 } from "lucide-react";
-import {
-  clampScale,
-  SCALE_STEP,
-  MIN_SCALE,
-  MAX_SCALE,
-  DEFAULT_SCALE,
-} from "../lib/ui-scale";
+import { clampScale, SCALE_STEP, MIN_SCALE, MAX_SCALE, DEFAULT_SCALE } from "../lib/ui-scale";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { ProvidersSettings } from "./providers-settings";
 import { LayoutsSettings } from "./layouts-settings";
@@ -42,10 +36,7 @@ import { setEnabled as setTelemetryEnabled } from "@/features/telemetry/posthog-
 import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
 import { updater } from "@/features/updater/lib/updater-api";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
-import {
-  useSettingsNav,
-  type SettingsSection,
-} from "../stores/settings-nav-store";
+import { useSettingsNav, type SettingsSection } from "../stores/settings-nav-store";
 import { isDev } from "@/lib/env";
 
 // Developer section is dev-build only — production users never see the
@@ -65,9 +56,7 @@ const SECTIONS: Array<{
   { id: "models", label: "Local Models", icon: Boxes },
   { id: "updates", label: "Updates", icon: DownloadCloud },
   { id: "keybindings", label: "Keybindings", icon: Keyboard },
-  ...(isDev
-    ? [{ id: "developer" as const, label: "Developer", icon: FlaskConical }]
-    : []),
+  ...(isDev ? [{ id: "developer" as const, label: "Developer", icon: FlaskConical }] : []),
   { id: "about", label: "About", icon: Info },
 ];
 
@@ -263,9 +252,7 @@ function GeneralSettings() {
       >
         <Toggle
           checked={settings.autoAddAtlasGitignore}
-          onChange={(next) =>
-            updateSettings({ autoAddAtlasGitignore: next })
-          }
+          onChange={(next) => updateSettings({ autoAddAtlasGitignore: next })}
         />
       </SettingRow>
       <SettingRow
@@ -304,9 +291,7 @@ function GeneralSettings() {
           onChange={(next) => {
             updateSettings({ shareTelemetry: next });
             setTelemetryEnabled(next);
-            void invoke("telemetry_set_enabled", { enabled: next }).catch(
-              () => {},
-            );
+            void invoke("telemetry_set_enabled", { enabled: next }).catch(() => {});
           }}
         />
       </SettingRow>
@@ -326,9 +311,7 @@ function GeneralSettings() {
       >
         <button
           type="button"
-          onClick={() =>
-            useFeedbackStore.getState().actions.openPanel("settings")
-          }
+          onClick={() => useFeedbackStore.getState().actions.openPanel("settings")}
           className={cn(
             "h-7 rounded-md px-2.5 text-[11px] font-medium border border-border-default bg-bg-elevated",
             "text-text-primary hover:bg-bg-hover transition-colors",
@@ -343,9 +326,7 @@ function GeneralSettings() {
       >
         <Toggle
           checked={settings.adaptiveSuggestions !== "off"}
-          onChange={(next) =>
-            updateSettings({ adaptiveSuggestions: next ? "agent" : "off" })
-          }
+          onChange={(next) => updateSettings({ adaptiveSuggestions: next ? "agent" : "off" })}
         />
       </SettingRow>
       <SettingRow
@@ -415,7 +396,10 @@ function AppearanceSettings() {
         ))}
 
         {/* Interface zoom — right-aligned control (like Skills' scope control). */}
-        <div className="ml-auto flex items-center gap-1 pr-0.5" title="Interface zoom (⌘+ / ⌘- / ⌘0)">
+        <div
+          className="ml-auto flex items-center gap-1 pr-0.5"
+          title="Interface zoom (⌘+ / ⌘- / ⌘0)"
+        >
           <button
             type="button"
             aria-label="Zoom out"
@@ -660,7 +644,7 @@ function KeybindingsSettings() {
                 key={b.action}
                 className={cn(
                   "flex items-center justify-between px-3 h-[32px]",
-                  i > 0 && "border-t border-border-subtle"
+                  i > 0 && "border-t border-border-subtle",
                 )}
               >
                 <span className="text-[11px] text-text-secondary">{b.action}</span>
@@ -724,7 +708,8 @@ function AboutSettings() {
           </div>
         </div>
         <p className="text-[11px] text-text-secondary leading-relaxed pt-2">
-          Built with Tauri, React, and Rust. An everything app for agentic development — from code analysis to task management, research, and AI orchestration.
+          Built with Tauri, React, and Rust. An everything app for agentic development — from code
+          analysis to task management, research, and AI orchestration.
         </p>
       </div>
     </div>
@@ -740,7 +725,15 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) 
   );
 }
 
-function SettingRow({ label, description, children }: { label: string; description: string; children: React.ReactNode }) {
+function SettingRow({
+  label,
+  description,
+  children,
+}: {
+  label: string;
+  description: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex items-start justify-between gap-4">
       <div>
@@ -793,21 +786,16 @@ function Toggle({
         "relative inline-flex h-5 w-9 shrink-0 items-center",
         "rounded-full border-2 border-transparent transition-colors",
         disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer",
-        value
-          ? "bg-[var(--accent-primary)]"
-          : "bg-[var(--bg-elevated)]"
+        value ? "bg-[var(--accent-primary)]" : "bg-[var(--bg-elevated)]",
       )}
     >
       <span
         className={cn(
           "pointer-events-none block h-4 w-4 rounded-full shadow-[0_1px_3px_rgba(0,0,0,0.45)]",
           "transition-transform duration-150",
-          value
-            ? "translate-x-4 bg-[var(--bg-base)]"
-            : "translate-x-0 bg-white"
+          value ? "translate-x-4 bg-[var(--bg-base)]" : "translate-x-0 bg-white",
         )}
       />
     </button>
   );
 }
-

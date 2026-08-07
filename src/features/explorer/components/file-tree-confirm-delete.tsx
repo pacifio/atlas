@@ -61,19 +61,20 @@ export function FileTreeConfirmDelete({
             {title ?? (multi ? `Delete ${count} items?` : `Delete ${isDir ? "folder" : "file"}?`)}
           </Dialog.Title>
           <p className="text-[12px] text-text-secondary leading-relaxed">
-            {body ?? (multi ? (
-              <>
-                <span className="font-mono text-text-primary">{name}</span> and{" "}
-                {count - 1} other {count - 1 === 1 ? "item" : "items"} will be
-                permanently deleted. This can't be undone.
-              </>
-            ) : (
-              <>
-                <span className="font-mono text-text-primary">{name}</span> will be
-                permanently {isDir ? "removed along with everything inside it" : "deleted"}.
-                This can't be undone.
-              </>
-            ))}
+            {body ??
+              (multi ? (
+                <>
+                  <span className="font-mono text-text-primary">{name}</span> and {count - 1} other{" "}
+                  {count - 1 === 1 ? "item" : "items"} will be permanently deleted. This can't be
+                  undone.
+                </>
+              ) : (
+                <>
+                  <span className="font-mono text-text-primary">{name}</span> will be permanently{" "}
+                  {isDir ? "removed along with everything inside it" : "deleted"}. This can't be
+                  undone.
+                </>
+              ))}
           </p>
           <div className="flex items-center justify-end gap-2 mt-1">
             <button

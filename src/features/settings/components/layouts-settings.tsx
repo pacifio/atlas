@@ -1,10 +1,7 @@
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
-import {
-  LAYOUT_TEMPLATES,
-  type LayoutTemplate,
-} from "@/features/layout/templates";
+import { LAYOUT_TEMPLATES, type LayoutTemplate } from "@/features/layout/templates";
 import { LayoutThumbnail } from "@/features/layout/components/layout-thumbnail";
 
 /** Settings → Layouts: the same predefined templates the ⌘⌥L switcher offers,
@@ -39,12 +36,8 @@ export function LayoutsSettings() {
             )}
           >
             <LayoutThumbnail template={t} />
-            <div className="mt-2 text-[12px] font-medium text-text-primary">
-              {t.name}
-            </div>
-            <div className="text-[10px] text-text-tertiary leading-snug">
-              {t.description}
-            </div>
+            <div className="mt-2 text-[12px] font-medium text-text-primary">{t.name}</div>
+            <div className="text-[10px] text-text-tertiary leading-snug">{t.description}</div>
           </button>
         ))}
       </div>

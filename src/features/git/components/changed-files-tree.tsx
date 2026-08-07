@@ -30,7 +30,7 @@ function CommitPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const selected = commit ? log.find((c) => c.hash === commit) ?? null : null;
+  const selected = commit ? (log.find((c) => c.hash === commit) ?? null) : null;
   const label = commit
     ? selected
       ? `${selected.short_hash} · ${selected.message}`
@@ -104,10 +104,14 @@ function CommitPicker({
                   onClick={() => pick(c.hash)}
                   className={cn(
                     "flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[10px] hover:bg-[var(--bg-hover)]",
-                    c.hash === commit ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]",
+                    c.hash === commit
+                      ? "text-[var(--text-primary)]"
+                      : "text-[var(--text-secondary)]",
                   )}
                 >
-                  <span className="shrink-0 font-mono text-[var(--text-tertiary)]">{c.short_hash}</span>
+                  <span className="shrink-0 font-mono text-[var(--text-tertiary)]">
+                    {c.short_hash}
+                  </span>
                   <span className="min-w-0 flex-1 truncate">{c.message}</span>
                 </button>
               ))}
@@ -202,9 +206,7 @@ function buildTree(files: { path: string; status: string }[]): DirNode {
       if (i === parts.length - 1) {
         dir.children.push({ name: part, path, isDir: false, status });
       } else {
-        let next = dir.children.find(
-          (c): c is DirNode => c.isDir && c.name === part,
-        );
+        let next = dir.children.find((c): c is DirNode => c.isDir && c.name === part);
         if (!next) {
           next = { name: part, path: acc, isDir: true, children: [] };
           dir.children.push(next);
@@ -225,11 +227,7 @@ function collapseChains(dir: DirNode) {
     if (child.isDir) collapseChains(child);
   }
   // Root keeps its (empty) name; only fold interior dirs.
-  if (
-    dir.name !== "" &&
-    dir.children.length === 1 &&
-    dir.children[0].isDir
-  ) {
+  if (dir.name !== "" && dir.children.length === 1 && dir.children[0].isDir) {
     const only = dir.children[0];
     dir.name = `${dir.name}/${only.name}`;
     dir.path = only.path;
@@ -295,16 +293,13 @@ export const ChangedFilesTree = memo(function ChangedFilesTree({
 
   // Switch the whole diff tab to a different commit (or the working tree) for
   // the currently-open file.
-  const onPickCommit = (sha: string) =>
-    openGitDiff(repoPath, currentFile, staged, sha || null);
+  const onPickCommit = (sha: string) => openGitDiff(repoPath, currentFile, staged, sha || null);
 
   const tree = useMemo(() => {
     const seen = new Set<string>();
     const source: { path: string; status: string }[] = commit
       ? (commitFilesQuery.data ?? []).map((f) => ({ path: f.path, status: f.status }))
-      : files
-          .filter((f) => f.staged === staged)
-          .map((f) => ({ path: f.path, status: f.status }));
+      : files.filter((f) => f.staged === staged).map((f) => ({ path: f.path, status: f.status }));
     const scoped = source
       // Turn scope, when the caller supplied one.
       .filter((f) => !onlySet || onlySet.has(f.path))
@@ -331,10 +326,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree({
     return buildTree(scoped);
   }, [files, staged, currentFile, commit, commitFilesQuery.data, onlySet]);
 
-  const rows = useMemo(
-    () => flatten(tree, collapsed, 0),
-    [tree, collapsed],
-  );
+  const rows = useMemo(() => flatten(tree, collapsed, 0), [tree, collapsed]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({

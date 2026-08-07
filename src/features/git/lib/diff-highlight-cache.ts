@@ -6,11 +6,7 @@
 // ping, 3s watchdog → main-thread fallback).
 
 import DiffHighlightWorker from "./diff-highlight.worker?worker";
-import {
-  hljsIdForLanguage,
-  tokenizeLine,
-  type DiffToken,
-} from "./diff-highlight-core";
+import { hljsIdForLanguage, tokenizeLine, type DiffToken } from "./diff-highlight-core";
 
 /** Resolved per-file result: unique line text → its tokens (`null` = plain). */
 export type LineTokens = Map<string, DiffToken[] | null>;
@@ -56,9 +52,7 @@ function ensureWorker(): Worker | null {
   if (worker || workerBroken) return worker;
   try {
     worker = new DiffHighlightWorker();
-    worker.onmessage = (
-      e: MessageEvent<{ id: number; tokens: (DiffToken[] | null)[] }>,
-    ) => {
+    worker.onmessage = (e: MessageEvent<{ id: number; tokens: (DiffToken[] | null)[] }>) => {
       const resolve = waiters.get(e.data.id);
       if (resolve) {
         waiters.delete(e.data.id);
@@ -92,12 +86,9 @@ export function warmDiffHighlightWorker(): void {
 
 /** Tokenize a set of unique lines on the main thread, chunked via
  *  `requestIdleCallback` so a broken-worker fallback doesn't freeze the frame. */
-function fallbackTokenize(
-  hljsId: string,
-  unique: string[],
-): Promise<(DiffToken[] | null)[]> {
+function fallbackTokenize(hljsId: string, unique: string[]): Promise<(DiffToken[] | null)[]> {
   return new Promise((resolve) => {
-    const out: (DiffToken[] | null)[] = new Array(unique.length);
+    const out: (DiffToken[] | null)[] = Array.from({ length: unique.length });
     let i = 0;
     const CHUNK = 200;
     const w2 = window as Window & {

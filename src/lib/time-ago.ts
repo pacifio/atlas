@@ -10,10 +10,7 @@ export interface TimeAgoOptions {
   noDateFallback?: boolean;
 }
 
-export function timeAgo(
-  iso: string | null | undefined,
-  opts: TimeAgoOptions = {},
-): string {
+export function timeAgo(iso: string | null | undefined, opts: TimeAgoOptions = {}): string {
   if (!iso) return "";
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return "";

@@ -41,7 +41,7 @@ export function UsageBar() {
         acpSessionId: sess.acpSessionId,
         status: sess.status,
       };
-    })
+    }),
   );
   const acpSessionId = chatSession?.acpSessionId ?? null;
   const isStreaming = chatSession?.status === "running";
@@ -70,13 +70,10 @@ export function UsageBar() {
   // Push refresh on file-watch + on turn-end status transitions.
   useEffect(() => {
     if (!acpSessionId) return;
-    const unlistenPromise = listen<{ cwd: string }>(
-      "atlas:sessions-changed",
-      (e) => {
-        if (e.payload.cwd !== cwd) return;
-        queryClient.invalidateQueries({ queryKey });
-      }
-    );
+    const unlistenPromise = listen<{ cwd: string }>("atlas:sessions-changed", (e) => {
+      if (e.payload.cwd !== cwd) return;
+      queryClient.invalidateQueries({ queryKey });
+    });
     return () => {
       unlistenPromise.then((u) => u());
     };
@@ -119,7 +116,8 @@ export function UsageBar() {
     requestCountFallback,
   ]);
 
-  const totalTokens = display.inputTokens + display.outputTokens + display.cacheCreation + display.cacheRead;
+  const totalTokens =
+    display.inputTokens + display.outputTokens + display.cacheCreation + display.cacheRead;
   const elapsed = Math.floor((Date.now() - sessionStart) / 60000);
 
   return (
@@ -137,7 +135,9 @@ export function UsageBar() {
         {display.model && (
           <>
             <span>·</span>
-            <span className="truncate max-w-[120px]" title={display.model}>{display.model}</span>
+            <span className="truncate max-w-[120px]" title={display.model}>
+              {display.model}
+            </span>
           </>
         )}
       </button>

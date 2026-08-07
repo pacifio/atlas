@@ -152,7 +152,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 80ms, border-color 80ms;
+  transition:
+    background 80ms,
+    border-color 80ms;
 }
 
 .atlas-tiptap .ProseMirror ul[data-type="taskList"] input[type="checkbox"]:checked {
@@ -281,7 +283,8 @@
 }
 
 .atlas-slash-iconwrap {
-  width: 26px; height: 26px;
+  width: 26px;
+  height: 26px;
   border-radius: 6px;
   background: var(--bg-elevated-2);
   border: 1px solid var(--border-subtle);
@@ -344,7 +347,9 @@
   background: transparent;
   border: 0;
   cursor: pointer;
-  transition: background-color 80ms, color 80ms;
+  transition:
+    background-color 80ms,
+    color 80ms;
 }
 
 .atlas-bubble-btn:hover {
@@ -523,7 +528,9 @@
   color: var(--text-tertiary);
   cursor: pointer;
   font-size: 11px;
-  transition: color 80ms, background-color 80ms;
+  transition:
+    color 80ms,
+    background-color 80ms;
 }
 
 .atlas-tiptap .atlas-code-copy:hover {
@@ -554,16 +561,31 @@
    AgentRL code block (atlas-knowledge.jsx:695–698). */
 .atlas-tiptap .hljs-keyword,
 .atlas-tiptap .hljs-built_in,
-.atlas-tiptap .hljs-tag .hljs-name { color: #c084fc; }
+.atlas-tiptap .hljs-tag .hljs-name {
+  color: #c084fc;
+}
 .atlas-tiptap .hljs-title,
-.atlas-tiptap .hljs-title.function_ { color: #7170ff; }
+.atlas-tiptap .hljs-title.function_ {
+  color: #7170ff;
+}
 .atlas-tiptap .hljs-string,
-.atlas-tiptap .hljs-attr { color: #5cc28a; }
-.atlas-tiptap .hljs-number { color: #f5b73c; }
-.atlas-tiptap .hljs-comment { color: var(--text-muted); font-style: italic; }
+.atlas-tiptap .hljs-attr {
+  color: #5cc28a;
+}
+.atlas-tiptap .hljs-number {
+  color: #f5b73c;
+}
+.atlas-tiptap .hljs-comment {
+  color: var(--text-muted);
+  font-style: italic;
+}
 .atlas-tiptap .hljs-type,
-.atlas-tiptap .hljs-class { color: #4c8df6; }
-.atlas-tiptap .hljs-meta { color: #d97757; }
+.atlas-tiptap .hljs-class {
+  color: #4c8df6;
+}
+.atlas-tiptap .hljs-meta {
+  color: #d97757;
+}
 
 /* ── Inline mention chip ──────────────────────────────────────── */
 
@@ -610,7 +632,9 @@
   background: transparent;
   border: 0;
   cursor: pointer;
-  transition: background-color 80ms, color 80ms;
+  transition:
+    background-color 80ms,
+    color 80ms;
 }
 
 .atlas-block-handle-btn:hover {

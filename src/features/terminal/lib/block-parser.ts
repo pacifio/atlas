@@ -66,16 +66,17 @@ const MAX_BLOCKS = 200;
 // Matches the tail of common password / passphrase prompts:
 //   "[sudo] password for user:"  "Password:"  "user@host's password:"
 //   "Enter passphrase for key …:"
-const PW_PROMPT_RE =
-  /(?:password(?: for [^:\n]*)?|passphrase[^:\n]*|'s password)\s*:[ \t]*$/i;
+const PW_PROMPT_RE = /(?:password(?: for [^:\n]*)?|passphrase[^:\n]*|'s password)\s*:[ \t]*$/i;
 
 /** Whether the output's last line looks like a password prompt. Strips OSC/CSI
  *  so a colour-styled prompt still matches. */
 function looksLikePasswordPrompt(output: string): boolean {
   const plain = output
     // OSC … BEL/ST
+    // oxlint-disable-next-line no-control-regex -- intentionally matching ANSI control bytes
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
     // CSI …
+    // oxlint-disable-next-line no-control-regex -- intentionally matching ANSI control bytes
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
   const trimmed = plain.replace(/[ \t\r]+$/, "");
   const lastLine = trimmed.slice(trimmed.lastIndexOf("\n") + 1);
@@ -270,12 +271,7 @@ export class BlockStreamParser {
     // field appears on "Password:" and disappears once other output follows.
     // Skip firehose blocks (a huge dump isn't a prompt) and scan only the tail
     // so the regex stays cheap even on a large block.
-    if (
-      this.current &&
-      this.current.running &&
-      this.mode === "output" &&
-      !this.current.firehose
-    ) {
+    if (this.current && this.current.running && this.mode === "output" && !this.current.firehose) {
       const out = this.current.output;
       const tail = out.length > 256 ? out.slice(-256) : out;
       const next = looksLikePasswordPrompt(tail);
@@ -293,6 +289,7 @@ export class BlockStreamParser {
   private handleOsc(body: string): boolean {
     // OSC 7 — working directory: "7;file://host/abs/path"
     if (body.startsWith("7;")) {
+      // oxlint-disable-next-line no-control-regex -- intentionally matching the OSC 7 terminator byte
       const m = body.match(/file:\/\/[^/]*(\/[^\x07]*)/);
       if (m) {
         const next = decodeURIComponent(m[1]);
@@ -357,8 +354,7 @@ export class BlockStreamParser {
           // mark itself is suppressed at the source via `unsetopt PROMPT_SP`).
           this.current.output = this.current.output.replace(/[\r\n]+$/, "");
           // The preamble block (no command) carries no meaningful exit code.
-          this.current.exitCode =
-            this.current.command === "" || Number.isNaN(code) ? null : code;
+          this.current.exitCode = this.current.command === "" || Number.isNaN(code) ? null : code;
           // Replace with a new object so React sees the change.
           this.blocks = this.blocks.map((b) =>
             b.id === this.current!.id ? { ...this.current! } : b,

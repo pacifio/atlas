@@ -46,21 +46,17 @@ export type ModelChatEvent =
   | { stream_id: string; kind: "error"; message: string };
 
 export const modelchat = {
-  models: (provider: string) =>
-    invoke<{ id: string }[]>("modelchat_models", { provider }),
+  models: (provider: string) => invoke<{ id: string }[]>("modelchat_models", { provider }),
   stream: (streamId: string, provider: string, model: string, messages: WireMsg[]) =>
     invoke<void>("modelchat_stream", { streamId, provider, model, messages }),
   cancel: (streamId: string) => invoke<void>("modelchat_cancel", { streamId }),
 
   sessionsList: () => invoke<SessionMeta[]>("modelchat_sessions_list"),
-  sessionGet: (id: string) =>
-    invoke<ModelChatSessionWire>("modelchat_session_get", { id }),
+  sessionGet: (id: string) => invoke<ModelChatSessionWire>("modelchat_session_get", { id }),
   sessionSave: (session: ModelChatSessionWire) =>
     invoke<void>("modelchat_session_save", { session }),
   sessionDelete: (id: string) => invoke<void>("modelchat_session_delete", { id }),
 };
 
-export const listenModelChat = (
-  handler: (e: ModelChatEvent) => void,
-): Promise<UnlistenFn> =>
+export const listenModelChat = (handler: (e: ModelChatEvent) => void): Promise<UnlistenFn> =>
   listen<ModelChatEvent>("atlas:modelchat", (e) => handler(e.payload));

@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useTerminalStore, collectPanes, type TreeNode, type PaneNode } from "../stores/terminal-store";
+import {
+  useTerminalStore,
+  collectPanes,
+  type TreeNode,
+  type PaneNode,
+} from "../stores/terminal-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { BlockTerminal } from "./block-terminal";
-import {
-  Plus,
-  Columns2,
-  Rows2,
-  X,
-  Terminal as TerminalIcon,
-  Loader2,
-} from "lucide-react";
+import { Plus, Columns2, Rows2, X, Terminal as TerminalIcon, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface TerminalPanelProps {
@@ -90,8 +88,7 @@ export function TerminalPanel({ tabId }: TerminalPanelProps) {
     // container from display:none to visible), capturing a stale top of 0 —
     // which makes the absolutely-positioned terminal overlay cover its own
     // 28px pane header and bleed up under the tab bar.
-    const onResize = () =>
-      requestAnimationFrame(() => requestAnimationFrame(measurePanes));
+    const onResize = () => requestAnimationFrame(() => requestAnimationFrame(measurePanes));
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [measurePanes]);
@@ -106,12 +103,10 @@ export function TerminalPanel({ tabId }: TerminalPanelProps) {
     const root = rootRef.current;
     if (!root) return;
     const ro = new ResizeObserver(() =>
-      requestAnimationFrame(() => requestAnimationFrame(measurePanes))
+      requestAnimationFrame(() => requestAnimationFrame(measurePanes)),
     );
     ro.observe(root);
-    root
-      .querySelectorAll<HTMLElement>("[data-pane-container]")
-      .forEach((el) => ro.observe(el));
+    root.querySelectorAll<HTMLElement>("[data-pane-container]").forEach((el) => ro.observe(el));
     return () => ro.disconnect();
   }, [measurePanes, tab?.root]);
 
@@ -228,17 +223,28 @@ export function TerminalPanel({ tabId }: TerminalPanelProps) {
               <BlockTerminal
                 isActive={isActiveInPane && isPaneActive}
                 terminalKey={ptyId}
-                onFocus={() => { setActiveTerminalInPane(tabId, pane.id, ptyId); setActivePane(tabId, pane.id); }}
+                onFocus={() => {
+                  setActiveTerminalInPane(tabId, pane.id, ptyId);
+                  setActivePane(tabId, pane.id);
+                }}
               />
             </div>
           );
-        })
+        }),
       )}
     </div>
   );
 }
 
-function LayoutRenderer({ node, tabId, activePaneId }: { node: TreeNode; tabId: string; activePaneId: string | null }) {
+function LayoutRenderer({
+  node,
+  tabId,
+  activePaneId,
+}: {
+  node: TreeNode;
+  tabId: string;
+  activePaneId: string | null;
+}) {
   if (node.type === "pane") {
     return <PaneChrome pane={node} tabId={tabId} isActivePane={node.id === activePaneId} />;
   }
@@ -248,7 +254,13 @@ function LayoutRenderer({ node, tabId, activePaneId }: { node: TreeNode; tabId: 
       {node.children.map((child, i) => (
         <div
           key={child.id}
-          className={cn("min-w-0 min-h-0", i > 0 && (node.direction === "horizontal" ? "border-l border-border-default" : "border-t border-border-default"))}
+          className={cn(
+            "min-w-0 min-h-0",
+            i > 0 &&
+              (node.direction === "horizontal"
+                ? "border-l border-border-default"
+                : "border-t border-border-default"),
+          )}
           style={{ flex: 1 }}
         >
           <LayoutRenderer node={child} tabId={tabId} activePaneId={activePaneId} />
@@ -258,31 +270,62 @@ function LayoutRenderer({ node, tabId, activePaneId }: { node: TreeNode; tabId: 
   );
 }
 
-function PaneChrome({ pane, tabId, isActivePane }: { pane: PaneNode; tabId: string; isActivePane: boolean }) {
-  const { addTerminalToPane, splitPane, closeTerminalInPane, closePane, setActiveTerminalInPane, setActivePane } =
-    useTerminalStore.use.actions();
+function PaneChrome({
+  pane,
+  tabId,
+  isActivePane,
+}: {
+  pane: PaneNode;
+  tabId: string;
+  isActivePane: boolean;
+}) {
+  const {
+    addTerminalToPane,
+    splitPane,
+    closeTerminalInPane,
+    closePane,
+    setActiveTerminalInPane,
+    setActivePane,
+  } = useTerminalStore.use.actions();
   const tab = useTerminalStore((s) => s.tabs[tabId]);
   const busy = useTerminalStore((s) => s.busy);
   const hasSplits = tab?.root.type === "split";
   const activePty = pane.activeTerminalId;
 
   return (
-    <div className={cn("h-full flex flex-col", isActivePane && "ring-1 ring-[#ffffff08] ring-inset")}>
+    <div
+      className={cn("h-full flex flex-col", isActivePane && "ring-1 ring-[#ffffff08] ring-inset")}
+    >
       <div className="flex items-center h-[32px] shrink-0 border-b border-border-default bg-bg-primary px-1 gap-0.5">
         <div className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto hide-scrollbar">
           {pane.terminals.map((ptyId) => (
             <div
               key={ptyId}
-              onClick={() => { setActiveTerminalInPane(tabId, pane.id, ptyId); setActivePane(tabId, pane.id); }}
+              onClick={() => {
+                setActiveTerminalInPane(tabId, pane.id, ptyId);
+                setActivePane(tabId, pane.id);
+              }}
               className={cn(
                 "group flex items-center gap-1 px-1.5 h-5 rounded text-[10px] font-mono cursor-pointer shrink-0",
-                ptyId === activePty ? "text-text-primary bg-bg-selected" : "text-text-tertiary hover:text-text-secondary hover:bg-bg-hover"
+                ptyId === activePty
+                  ? "text-text-primary bg-bg-selected"
+                  : "text-text-tertiary hover:text-text-secondary hover:bg-bg-hover",
               )}
             >
-              {busy[ptyId] ? <Loader2 size={9} className="animate-spin text-[var(--accent-primary)]" /> : <TerminalIcon size={9} />}
+              {busy[ptyId] ? (
+                <Loader2 size={9} className="animate-spin text-[var(--accent-primary)]" />
+              ) : (
+                <TerminalIcon size={9} />
+              )}
               <span>~</span>
               {pane.terminals.length > 1 && (
-                <button onClick={(e) => { e.stopPropagation(); closeTerminalInPane(tabId, pane.id, ptyId); }} className="opacity-0 group-hover:opacity-100 hover:text-text-primary">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTerminalInPane(tabId, pane.id, ptyId);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 hover:text-text-primary"
+                >
                   <X size={8} />
                 </button>
               )}
@@ -290,11 +333,38 @@ function PaneChrome({ pane, tabId, isActivePane }: { pane: PaneNode; tabId: stri
           ))}
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
-          <button onClick={() => { addTerminalToPane(tabId, pane.id); setActivePane(tabId, pane.id); }} className="flex items-center justify-center w-5 h-5 rounded text-text-tertiary hover:text-text-secondary hover:bg-bg-hover transition-colors cursor-pointer" title="New tab"><Plus size={11} /></button>
-          <button onClick={() => splitPane(tabId, pane.id, "horizontal")} className="flex items-center justify-center w-5 h-5 rounded text-text-tertiary hover:text-text-secondary hover:bg-bg-hover transition-colors cursor-pointer" title="Split right"><Columns2 size={11} /></button>
-          <button onClick={() => splitPane(tabId, pane.id, "vertical")} className="flex items-center justify-center w-5 h-5 rounded text-text-tertiary hover:text-text-secondary hover:bg-bg-hover transition-colors cursor-pointer" title="Split down"><Rows2 size={11} /></button>
+          <button
+            onClick={() => {
+              addTerminalToPane(tabId, pane.id);
+              setActivePane(tabId, pane.id);
+            }}
+            className="flex items-center justify-center w-5 h-5 rounded text-text-tertiary hover:text-text-secondary hover:bg-bg-hover transition-colors cursor-pointer"
+            title="New tab"
+          >
+            <Plus size={11} />
+          </button>
+          <button
+            onClick={() => splitPane(tabId, pane.id, "horizontal")}
+            className="flex items-center justify-center w-5 h-5 rounded text-text-tertiary hover:text-text-secondary hover:bg-bg-hover transition-colors cursor-pointer"
+            title="Split right"
+          >
+            <Columns2 size={11} />
+          </button>
+          <button
+            onClick={() => splitPane(tabId, pane.id, "vertical")}
+            className="flex items-center justify-center w-5 h-5 rounded text-text-tertiary hover:text-text-secondary hover:bg-bg-hover transition-colors cursor-pointer"
+            title="Split down"
+          >
+            <Rows2 size={11} />
+          </button>
           {hasSplits && (
-            <button onClick={() => closePane(tabId, pane.id)} className="flex items-center justify-center w-5 h-5 rounded text-text-tertiary hover:text-white hover:bg-bg-hover transition-colors cursor-pointer" title="Close pane"><X size={11} /></button>
+            <button
+              onClick={() => closePane(tabId, pane.id)}
+              className="flex items-center justify-center w-5 h-5 rounded text-text-tertiary hover:text-white hover:bg-bg-hover transition-colors cursor-pointer"
+              title="Close pane"
+            >
+              <X size={11} />
+            </button>
           )}
         </div>
       </div>

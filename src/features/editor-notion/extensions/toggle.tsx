@@ -32,8 +32,7 @@ export const Toggle = Node.create({
     return {
       title: {
         default: "Untitled",
-        parseHTML: (el) =>
-          el.querySelector("summary")?.textContent?.trim() ?? "Untitled",
+        parseHTML: (el) => el.querySelector("summary")?.textContent?.trim() ?? "Untitled",
       },
       open: {
         default: true,
@@ -160,10 +159,7 @@ function ToggleView({ node, updateAttributes }: NodeViewProps) {
       ) : (
         // Keep ProseMirror happy by mounting a hidden NodeViewContent so
         // the children stay in the doc; visibility is just CSS-toggled.
-        <NodeViewContent
-          className="atlas-toggle-body"
-          style={{ display: "none" }}
-        />
+        <NodeViewContent className="atlas-toggle-body" style={{ display: "none" }} />
       )}
     </NodeViewWrapper>
   );

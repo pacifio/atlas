@@ -15,8 +15,7 @@ export function LoadingOrganisationOverlay() {
 
   if (!orgSwitching) return null;
 
-  const name =
-    organisations.find((o) => o.id === activeOrganisationId)?.name ?? "";
+  const name = organisations.find((o) => o.id === activeOrganisationId)?.name ?? "";
 
   return (
     <div

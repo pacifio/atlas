@@ -92,7 +92,7 @@ export function buildEditorChromeTheme(theme: EditorColorTheme): Extension {
         padding: "0 4px",
       },
     },
-    { dark: theme.dark }
+    { dark: theme.dark },
   );
 }
 
@@ -125,7 +125,10 @@ export function buildHighlightStyle(theme: EditorColorTheme): HighlightStyle {
     { tag: tags.punctuation, color: c.operator },
     { tag: tags.tagName, color: c.tagName },
     { tag: tags.attributeName, color: c.attributeName },
-    { tag: [tags.constant(tags.variableName), tags.standard(tags.variableName)], color: c.constant },
+    {
+      tag: [tags.constant(tags.variableName), tags.standard(tags.variableName)],
+      color: c.constant,
+    },
     { tag: tags.regexp, color: c.regexp },
     { tag: tags.escape, color: c.escape },
     { tag: [tags.definition(tags.variableName), tags.labelName], color: c.definition },

@@ -186,10 +186,7 @@ function ContextMenuSeparator({
   );
 }
 
-function ContextMenuShortcut({
-  className,
-  ...props
-}: React.ComponentProps<"span">) {
+function ContextMenuShortcut({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
       className={cn(

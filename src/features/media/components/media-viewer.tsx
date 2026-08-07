@@ -53,9 +53,7 @@ export function MediaViewer({ filePath }: MediaViewerProps) {
         </div>
       ) : (
         <div className="flex-1 min-h-0 flex items-center justify-center p-4 overflow-auto">
-          {kind === "video" && (
-            <video src={src} controls className="max-w-full max-h-full" />
-          )}
+          {kind === "video" && <video src={src} controls className="max-w-full max-h-full" />}
           {kind === "audio" && (
             <div className="flex flex-col items-center gap-3 text-[var(--text-secondary)]">
               <span className="text-[12px] font-mono">{name}</span>

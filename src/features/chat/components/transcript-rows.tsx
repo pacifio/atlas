@@ -45,16 +45,8 @@ import type {
 import { M } from "../lib/row-metrics";
 
 /** Shared by every row: the centred content column. */
-function Column({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <div className={cn("mx-auto w-full max-w-[760px] px-6", className)}>{children}</div>
-  );
+function Column({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <div className={cn("mx-auto w-full max-w-[760px] px-6", className)}>{children}</div>;
 }
 
 // ── User ───────────────────────────────────────────────────────────────────
@@ -197,12 +189,7 @@ export const ProseRowView = memo(function ProseRowView({
           className="atlas-prose"
         />
       ) : (
-        <CachedMarkdown
-          source={row.text}
-          unstyled
-          priority={priority}
-          className="atlas-prose"
-        />
+        <CachedMarkdown source={row.text} unstyled priority={priority} className="atlas-prose" />
       )}
     </Column>
   );
@@ -246,8 +233,7 @@ export const ThinkingRowView = memo(function ThinkingRowView({
 
 function StateGlyph({ state }: { state: MarkerState }) {
   if (state === "failed") return <X size={11} className="text-[var(--status-error)]" />;
-  if (state === "done")
-    return <Check size={11} className="text-[var(--text-tertiary)]" />;
+  if (state === "done") return <Check size={11} className="text-[var(--text-tertiary)]" />;
   if (state === "running")
     return (
       <Circle
@@ -307,9 +293,7 @@ export const MarkerRowView = memo(function MarkerRowView({
         )}
         {(row.added > 0 || row.removed > 0) && (
           <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
-            {row.added > 0 && (
-              <span className="text-[var(--diff-added-text)]">+{row.added}</span>
-            )}
+            {row.added > 0 && <span className="text-[var(--diff-added-text)]">+{row.added}</span>}
             {row.removed > 0 && (
               <span className="ml-1 text-[var(--status-error)]">−{row.removed}</span>
             )}
@@ -342,9 +326,7 @@ export const MarkerGroupRowView = memo(function MarkerGroupRowView({
       <div className="flex items-baseline gap-2 text-[11px]">
         <span className="font-medium text-[var(--text-secondary)]">Tool calls</span>
         {row.duration && (
-          <span className="font-mono text-[10px] text-[var(--text-tertiary)]">
-            {row.duration}
-          </span>
+          <span className="font-mono text-[10px] text-[var(--text-tertiary)]">{row.duration}</span>
         )}
         <span className="font-mono text-[10px] text-[var(--text-tertiary)]">
           {row.count} {row.count === 1 ? "call" : "calls"}
@@ -355,9 +337,7 @@ export const MarkerGroupRowView = memo(function MarkerGroupRowView({
           </span>
         )}
         {row.added > 0 && (
-          <span className="font-mono text-[10px] text-[var(--diff-added-text)]">
-            +{row.added}
-          </span>
+          <span className="font-mono text-[10px] text-[var(--diff-added-text)]">+{row.added}</span>
         )}
       </div>
       {/* While the turn runs the markers below are live progress, so there is
@@ -369,10 +349,7 @@ export const MarkerGroupRowView = memo(function MarkerGroupRowView({
           className="mt-0.5 flex cursor-pointer items-center gap-1 text-[11px] text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-secondary)]"
         >
           {row.open ? "Hide tool calls" : "Show tool calls"}
-          <ChevronRight
-            size={11}
-            className={cn("transition-transform", row.open && "rotate-90")}
-          />
+          <ChevronRight size={11} className={cn("transition-transform", row.open && "rotate-90")} />
         </button>
       )}
     </Column>
@@ -381,11 +358,7 @@ export const MarkerGroupRowView = memo(function MarkerGroupRowView({
 
 // ── Separator ──────────────────────────────────────────────────────────────
 
-export const SeparatorRowView = memo(function SeparatorRowView({
-  row,
-}: {
-  row: SeparatorRow;
-}) {
+export const SeparatorRowView = memo(function SeparatorRowView({ row }: { row: SeparatorRow }) {
   return (
     <Column className="flex h-[34px] items-center">
       <div className="flex w-full select-none items-center gap-2">
@@ -465,7 +438,11 @@ export const TurnFooterRowView = memo(function TurnFooterRowView({
         </div>
         <div className="border-t border-white/[0.06] px-3.5 py-2">
           {files.map((f) => (
-            <div key={f.path} className="flex h-[24px] items-center gap-2 text-[11px]" title={f.path}>
+            <div
+              key={f.path}
+              className="flex h-[24px] items-center gap-2 text-[11px]"
+              title={f.path}
+            >
               <span
                 className={cn(
                   "w-3 shrink-0 text-center font-mono text-[10px] font-semibold",
@@ -547,4 +524,3 @@ function FooterPill({
     </button>
   );
 }
-
