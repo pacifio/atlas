@@ -11,19 +11,13 @@
     "dev:app": "node scripts/with-posthog-env.mjs tauri dev",
     "build:app": "node scripts/with-posthog-env.mjs tauri build --bundles app",
     "build:app:dmg": "node scripts/with-posthog-env.mjs tauri build --bundles app,dmg",
-    "lint": "eslint src/",
-    "format": "prettier --write src/",
+    "lint": "oxlint src/",
+    "format": "oxfmt --write src/",
+    "format:check": "oxfmt --check src/",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json"
-  },
-  "overrides": {
-    "@codemirror/view": "^6.43.0",
-    "@codemirror/state": "^6.6.0"
-  },
-  "resolutions": {
-    "@codemirror/view": "^6.43.0",
-    "@codemirror/state": "^6.6.0"
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "prepare": "husky"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
@@ -123,12 +117,22 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4",
-    "eslint": "^9",
     "happy-dom": "^20.11.1",
-    "prettier": "^3",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.3.0",
+    "oxfmt": "^0.62.0",
+    "oxlint": "^1.77.0",
     "tailwindcss": "^4",
     "typescript": "^5.7",
     "vite": "^6",
     "vitest": "^4.1.10"
+  },
+  "resolutions": {
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.43.0"
+  },
+  "overrides": {
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.43.0"
   }
 }
