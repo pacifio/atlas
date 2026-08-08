@@ -108,6 +108,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4",
     "@tauri-apps/cli": "^2.11.2",
+    "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -134,5 +135,6 @@
   "overrides": {
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.43.0"
-  }
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }
