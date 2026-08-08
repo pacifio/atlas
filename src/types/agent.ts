@@ -10,13 +10,7 @@ export type AgentType =
   | "custom";
 
 /** Switchable (Atlas-shipped) agents — excludes the catch-all "custom". */
-export type SwitchableAgent =
-  | "claude-code"
-  | "codex"
-  | "opencode"
-  | "cursor"
-  | "kilo"
-  | "cersei";
+export type SwitchableAgent = "claude-code" | "codex" | "opencode" | "cursor" | "kilo" | "cersei";
 
 /** The coding agents Atlas ships, in switch order (for option+/). */
 export const SWITCHABLE_AGENTS: SwitchableAgent[] = [
@@ -57,13 +51,7 @@ export function pluginIdForAgent(agentType: AgentType | undefined): string {
 /** ACP-transport agents (out-of-process adapters) — the ones with modes/models
  *  advertised over ACP and warmable caches. Excludes the native in-process
  *  agent. */
-export const ACP_AGENTS: SwitchableAgent[] = [
-  "claude-code",
-  "codex",
-  "opencode",
-  "cursor",
-  "kilo",
-];
+export const ACP_AGENTS: SwitchableAgent[] = ["claude-code", "codex", "opencode", "cursor", "kilo"];
 
 /** Derive the display agent type from a spawnable plugin id. */
 export function agentTypeFromPluginId(pluginId: string): AgentType {
@@ -89,20 +77,14 @@ export function isBusyAgentStatus(status: string | undefined): boolean {
  *  (racily) flipped to idle, so it never re-enables ahead of a still-spinning
  *  tool card. Rust is authoritative — it defers turn-end until tool calls
  *  quiesce — this is the thin view-side guard against any residual race. */
-export function hasInFlightToolCalls(
-  session: { messages: ChatMessage[] } | undefined,
-): boolean {
+export function hasInFlightToolCalls(session: { messages: ChatMessage[] } | undefined): boolean {
   if (!session) return false;
   return session.messages.some((m) =>
     m.toolCalls.some((tc) => tc.status === "pending" || tc.status === "running"),
   );
 }
 export type MessageRole = "user" | "assistant" | "system" | "tool";
-export type ClaudePermissionMode =
-  | "default"
-  | "acceptEdits"
-  | "plan"
-  | "bypassPermissions";
+export type ClaudePermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
 
 export const CLAUDE_PERMISSION_MODES: ClaudePermissionMode[] = [
   "default",

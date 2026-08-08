@@ -44,9 +44,7 @@ export function StatusBarTimer() {
         <span
           className={cn(
             "w-1.5 h-1.5 rounded-full",
-            phase === "focus"
-              ? "bg-[var(--status-success)]"
-              : "border border-text-tertiary",
+            phase === "focus" ? "bg-[var(--status-success)]" : "border border-text-tertiary",
           )}
         />
       ) : (

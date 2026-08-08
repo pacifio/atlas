@@ -32,12 +32,8 @@ export const ReadmeView = memo(function ReadmeView({ source }: Props) {
               {p.children}
             </h2>
           ),
-          h3: (p) => (
-            <h3 className="text-[16px] font-semibold mt-6 mb-2">{p.children}</h3>
-          ),
-          h4: (p) => (
-            <h4 className="text-[14px] font-semibold mt-4 mb-1.5">{p.children}</h4>
-          ),
+          h3: (p) => <h3 className="text-[16px] font-semibold mt-6 mb-2">{p.children}</h3>,
+          h4: (p) => <h4 className="text-[14px] font-semibold mt-4 mb-1.5">{p.children}</h4>,
           p: (p) => <p className="my-3">{p.children}</p>,
           a: (p) => (
             <a
@@ -52,10 +48,7 @@ export const ReadmeView = memo(function ReadmeView({ source }: Props) {
           li: (p) => <li className="leading-relaxed">{p.children}</li>,
           img: (p) => (
             // eslint-disable-next-line jsx-a11y/alt-text
-            <img
-              {...p}
-              className="inline-block max-w-full h-auto rounded my-1 align-middle"
-            />
+            <img {...p} className="inline-block max-w-full h-auto rounded my-1 align-middle" />
           ),
           code(props) {
             const { className, children, ...rest } = props as {
@@ -98,18 +91,14 @@ export const ReadmeView = memo(function ReadmeView({ source }: Props) {
               <table className="w-full text-[13px] border-collapse">{p.children}</table>
             </div>
           ),
-          thead: (p) => (
-            <thead className="bg-[var(--bg-elevated)]">{p.children}</thead>
-          ),
+          thead: (p) => <thead className="bg-[var(--bg-elevated)]">{p.children}</thead>,
           th: (p) => (
             <th className="px-3 py-2 text-left text-[12px] font-semibold text-[var(--text-secondary)] border-b border-[var(--border-default)] border-r last:border-r-0">
               {p.children}
             </th>
           ),
           tr: (p) => (
-            <tr className="border-b border-[var(--border-subtle)] last:border-b-0">
-              {p.children}
-            </tr>
+            <tr className="border-b border-[var(--border-subtle)] last:border-b-0">{p.children}</tr>
           ),
           td: (p) => (
             <td className="px-3 py-2 align-top text-[13px] text-[var(--text-primary)] border-r border-[var(--border-subtle)] last:border-r-0 break-words">

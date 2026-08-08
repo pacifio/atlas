@@ -1437,7 +1437,10 @@ const CallRow = memo(function CallRow({
         </span>
         <ChevronRight
           size={12}
-          className={cn("text-[var(--border-strong)] transition-transform", expanded && "rotate-90")}
+          className={cn(
+            "text-[var(--border-strong)] transition-transform",
+            expanded && "rotate-90",
+          )}
         />
       </button>
 
@@ -1832,10 +1835,7 @@ function CheckpointJump({
   /** Position in the FULL list — `#3` must mean the third Checkpoint of the
    *  Session even when the search has narrowed what's shown. (Also drops the
    *  `indexOf` inside the render map, which was quadratic.) */
-  const ordinal = useMemo(
-    () => new Map(checkpoints.map((c, i) => [c.id, i + 1])),
-    [checkpoints],
-  );
+  const ordinal = useMemo(() => new Map(checkpoints.map((c, i) => [c.id, i + 1])), [checkpoints]);
 
   return (
     <Popover.Root

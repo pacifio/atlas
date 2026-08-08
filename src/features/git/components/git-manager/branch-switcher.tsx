@@ -29,7 +29,17 @@ export function BranchSwitcher() {
   };
 
   return (
-    <Popover.Root open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setQuery(""); setCreating(false); setNewName(""); } }}>
+    <Popover.Root
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) {
+          setQuery("");
+          setCreating(false);
+          setNewName("");
+        }
+      }}
+    >
       <Popover.Trigger asChild>
         <button
           className="flex items-center gap-1.5 h-6 px-2 rounded text-[11px] font-medium text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer min-w-0"
@@ -78,7 +88,10 @@ export function BranchSwitcher() {
                   setOpen(false);
                 }}
               >
-                <Check size={12} className={cn("shrink-0", b.isCurrent ? "text-accent" : "opacity-0")} />
+                <Check
+                  size={12}
+                  className={cn("shrink-0", b.isCurrent ? "text-accent" : "opacity-0")}
+                />
                 <span className="truncate flex-1 font-mono">{b.name}</span>
                 {b.isRemote && (
                   <span className="shrink-0 text-[8px] font-mono uppercase tracking-wide text-text-tertiary border border-border-default rounded px-1">
@@ -117,7 +130,9 @@ export function BranchSwitcher() {
               </div>
             ))}
             {filtered.length === 0 && (
-              <div className="px-3 py-2 text-[10px] text-text-tertiary text-center">No branches</div>
+              <div className="px-3 py-2 text-[10px] text-text-tertiary text-center">
+                No branches
+              </div>
             )}
           </div>
 

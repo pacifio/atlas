@@ -18,9 +18,7 @@ export interface CachedContextUsage {
 const key = (acpSessionId: string) => `atlas:context-usage:${acpSessionId}`;
 
 /** Last-seen context gauge for a session, or null if never seen. */
-export function loadCachedContextUsage(
-  acpSessionId: string,
-): CachedContextUsage | null {
+export function loadCachedContextUsage(acpSessionId: string): CachedContextUsage | null {
   try {
     const raw = localStorage.getItem(key(acpSessionId));
     if (!raw) return null;
@@ -33,10 +31,7 @@ export function loadCachedContextUsage(
 }
 
 /** Persist the latest gauge for a session (best-effort; skips empty gauges). */
-export function saveCachedContextUsage(
-  acpSessionId: string,
-  usage: CachedContextUsage,
-): void {
+export function saveCachedContextUsage(acpSessionId: string, usage: CachedContextUsage): void {
   try {
     if (usage.used > 0 || usage.size > 0) {
       localStorage.setItem(key(acpSessionId), JSON.stringify(usage));

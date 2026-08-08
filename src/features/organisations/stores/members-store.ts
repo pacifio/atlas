@@ -1,12 +1,7 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 import { createSelectors } from "@/lib/create-selectors";
-import {
-  auth,
-  type OrgInvitation,
-  type OrgMember,
-  type Role,
-} from "@/features/auth/lib/auth-api";
+import { auth, type OrgInvitation, type OrgMember, type Role } from "@/features/auth/lib/auth-api";
 
 /** One org's cached roster. Keyed by the SERVER org id (`remoteId`). */
 interface OrgRoster {
@@ -47,11 +42,7 @@ interface MembersState {
     /** Optimistic removal; reverts + toasts if the server refuses. */
     remove: (orgId: string, member: OrgMember) => Promise<void>;
     /** Invite, then fold the returned invitation (with its `acceptUrl`) in. */
-    invite: (
-      orgId: string,
-      email: string,
-      role: Role,
-    ) => Promise<OrgInvitation | null>;
+    invite: (orgId: string, email: string, role: Role) => Promise<OrgInvitation | null>;
     /** Optimistic invite cancellation. */
     cancelInvite: (orgId: string, invitationId: string) => Promise<void>;
   };
@@ -80,8 +71,7 @@ export const useMembersStore = createSelectors(
         load: async (orgId, opts) => {
           if (!orgId) return;
           const current = roster(orgId);
-          const fresh =
-            current.loadedAt !== null && Date.now() - current.loadedAt < FRESH_MS;
+          const fresh = current.loadedAt !== null && Date.now() - current.loadedAt < FRESH_MS;
           if (!opts?.force && (fresh || inFlight.has(orgId))) return;
           if (inFlight.has(orgId)) return;
 
@@ -106,8 +96,7 @@ export const useMembersStore = createSelectors(
             }
             patch(orgId, {
               members: membersRes.value,
-              invitations:
-                invitesRes.status === "fulfilled" ? invitesRes.value : [],
+              invitations: invitesRes.status === "fulfilled" ? invitesRes.value : [],
               loadedAt: Date.now(),
               loading: false,
               error: null,
@@ -126,9 +115,7 @@ export const useMembersStore = createSelectors(
             await auth.updateMemberRole(orgId, memberId, role);
           } catch (e) {
             patch(orgId, { members: before }); // put it back exactly as it was
-            toast.error(
-              typeof e === "string" ? e : "Couldn't change that role.",
-            );
+            toast.error(typeof e === "string" ? e : "Couldn't change that role.");
           }
         },
 
@@ -141,9 +128,7 @@ export const useMembersStore = createSelectors(
             await auth.removeMember(orgId, member.id);
           } catch (e) {
             patch(orgId, { members: before });
-            toast.error(
-              typeof e === "string" ? e : "Couldn't remove that member.",
-            );
+            toast.error(typeof e === "string" ? e : "Couldn't remove that member.");
           }
         },
 
@@ -169,13 +154,10 @@ export const useMembersStore = createSelectors(
             await auth.cancelInvitation(invitationId);
           } catch (e) {
             patch(orgId, { invitations: before });
-            toast.error(
-              typeof e === "string" ? e : "Couldn't cancel that invite.",
-            );
+            toast.error(typeof e === "string" ? e : "Couldn't cancel that invite.");
           }
         },
       },
     };
   }),
 );
-

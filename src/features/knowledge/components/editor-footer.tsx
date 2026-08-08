@@ -1,14 +1,7 @@
 import { useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  ChevronDown,
-  Download,
-  FileText,
-  Globe,
-  Loader2,
-  Server,
-} from "lucide-react";
+import { ChevronDown, Download, FileText, Globe, Loader2, Server } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface EditorFooterProps {
@@ -20,19 +13,9 @@ interface EditorFooterProps {
 
 const READ_WPM = 240;
 
-type ExportKey =
-  | "note-md"
-  | "note-html"
-  | "workspace-md"
-  | "workspace-html"
-  | "server";
+type ExportKey = "note-md" | "note-html" | "workspace-md" | "workspace-html" | "server";
 
-export function EditorFooter({
-  wordCount,
-  charCount,
-  projectPath,
-  entryId,
-}: EditorFooterProps) {
+export function EditorFooter({ wordCount, charCount, projectPath, entryId }: EditorFooterProps) {
   const readMinutes = Math.max(1, Math.round(wordCount / READ_WPM));
   // Which export is in-flight, if any. The pill renders a spinner +
   // disables the trigger while an export runs; the dropdown itself is
@@ -52,10 +35,7 @@ export function EditorFooter({
     }
   };
 
-  const pickSavePath = async (
-    defaultName: string,
-    ext: string,
-  ): Promise<string | null> => {
+  const pickSavePath = async (defaultName: string, ext: string): Promise<string | null> => {
     const { save } = await import("@tauri-apps/plugin-dialog");
     const chosen = await save({
       defaultPath: defaultName,
@@ -238,11 +218,7 @@ export function EditorFooter({
               onSelect={handleExportWorkspaceHtml}
             />
             <DropdownMenu.Separator className="h-px bg-border-default my-0.5" />
-            <ExportMenuItem
-              icon={Server}
-              label="Export server"
-              onSelect={handleExportServer}
-            />
+            <ExportMenuItem icon={Server} label="Export server" onSelect={handleExportServer} />
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>

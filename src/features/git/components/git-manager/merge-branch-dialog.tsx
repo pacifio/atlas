@@ -1,14 +1,7 @@
 import { useMemo, useState, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { toast } from "sonner";
-import {
-  Check,
-  Search,
-  Loader2,
-  GitMerge,
-  AlertTriangle,
-  Ban,
-} from "lucide-react";
+import { Check, Search, Loader2, GitMerge, AlertTriangle, Ban } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGitStore, type MergePreview } from "../../stores/git-store";
 
@@ -38,9 +31,7 @@ export function MergeBranchDialog({
   // Everything except the branch we're merging *into*.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return branchesFull.filter(
-      (b) => !b.isCurrent && (!q || b.name.toLowerCase().includes(q)),
-    );
+    return branchesFull.filter((b) => !b.isCurrent && (!q || b.name.toLowerCase().includes(q)));
   }, [branchesFull, query]);
 
   // Reset all transient state whenever the dialog closes.
@@ -128,14 +119,12 @@ export function MergeBranchDialog({
             <Dialog.Title className="text-[13px] font-semibold text-text-primary flex items-center gap-1.5">
               <GitMerge size={13} className="text-text-secondary shrink-0" />
               <span>
-                Merge into{" "}
-                <span className="font-mono text-accent">{branch || "—"}</span>
+                Merge into <span className="font-mono text-accent">{branch || "—"}</span>
               </span>
             </Dialog.Title>
             <Dialog.Description className="text-[11px] text-text-tertiary mt-1">
               Choose a branch to merge into{" "}
-              <span className="font-mono">{branch || "the current branch"}</span>
-              .
+              <span className="font-mono">{branch || "the current branch"}</span>.
             </Dialog.Description>
           </div>
 
@@ -213,11 +202,7 @@ export function MergeBranchDialog({
                     : "text-text-tertiary bg-bg-hover cursor-not-allowed",
                 )}
               >
-                {merging ? (
-                  <Loader2 size={11} className="animate-spin" />
-                ) : (
-                  <GitMerge size={11} />
-                )}
+                {merging ? <Loader2 size={11} className="animate-spin" /> : <GitMerge size={11} />}
                 {selected ? `Merge ${selected}` : "Merge"}
               </button>
             </div>
@@ -258,8 +243,7 @@ function MergePreviewLine({
   const src = <span className="font-mono">{selected}</span>;
   const dst = <span className="font-mono">{current}</span>;
   const n = preview.commitCount;
-  const plural = (count: number, word: string) =>
-    `${count} ${word}${count === 1 ? "" : "s"}`;
+  const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
   switch (preview.kind) {
     case "uptodate":
@@ -280,8 +264,8 @@ function MergePreviewLine({
         <p className="text-[11px] text-[var(--status-warning)] flex items-center gap-1.5">
           <AlertTriangle size={11} className="shrink-0" />
           <span>
-            {plural(preview.conflictedFiles, "file")} will conflict when merging{" "}
-            {src} into {dst}. You can still merge and resolve them.
+            {plural(preview.conflictedFiles, "file")} will conflict when merging {src} into {dst}.
+            You can still merge and resolve them.
           </span>
         </p>
       );

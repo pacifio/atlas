@@ -56,19 +56,19 @@ export const useKnowledgeStore = createSelectors(
           const current = get();
 
           // Skip update if entries haven't changed (prevent unnecessary re-renders)
-          const unchanged = current.entries.length === newEntries.length &&
-            current.entries.every((e, i) => e.id === newEntries[i]?.id && e.updated_at === newEntries[i]?.updated_at);
+          const unchanged =
+            current.entries.length === newEntries.length &&
+            current.entries.every(
+              (e, i) => e.id === newEntries[i]?.id && e.updated_at === newEntries[i]?.updated_at,
+            );
           if (unchanged && !current.loading) return;
 
           const activeStillExists = newEntries.find((e) => e.id === current.activeEntryId);
           set({
             entries: newEntries,
             loading: false,
-            activeEntryId: activeStillExists
-              ? current.activeEntryId
-              : newEntries[0]?.id ?? null,
-            editContent: activeStillExists?.content
-              ?? newEntries[0]?.content ?? "",
+            activeEntryId: activeStillExists ? current.activeEntryId : (newEntries[0]?.id ?? null),
+            editContent: activeStillExists?.content ?? newEntries[0]?.content ?? "",
           });
           // Mirror the new entry set into the Rust mention cache so
           // the @-picker doesn't have to ship the full knowledge
@@ -103,10 +103,14 @@ export const useKnowledgeStore = createSelectors(
           // the saved `id` only — if the store has since been swapped to another
           // workspace (different `entries`), this is a harmless no-op rather
           // than a cross-workspace mutation.
-          const title = content.split("\n")[0]?.replace(/^#+\s*/, "").slice(0, 60) || "note";
+          const title =
+            content
+              .split("\n")[0]
+              ?.replace(/^#+\s*/, "")
+              .slice(0, 60) || "note";
           set({
             entries: get().entries.map((e) =>
-              e.id === id ? { ...e, content, title, updated_at: new Date().toISOString() } : e
+              e.id === id ? { ...e, content, title, updated_at: new Date().toISOString() } : e,
             ),
           });
           invoke("log_interaction", {
@@ -178,5 +182,5 @@ export const useKnowledgeStore = createSelectors(
         }
       },
     },
-  }))
+  })),
 );

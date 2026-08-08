@@ -70,17 +70,11 @@ export function ActiveTimer() {
           </div>
         ) : (
           <>
-            <div className="text-[14px] text-text-tertiary italic mt-1">
-              No session running
-            </div>
+            <div className="text-[14px] text-text-tertiary italic mt-1">No session running</div>
             <div className="inline-flex items-stretch rounded-md overflow-hidden bg-bg-elevated border border-border-default text-text-primary mt-3 divide-x divide-border-default shadow-[0_2px_8px_rgba(0,0,0,0.35)]">
               <GroupedActionBtn icon={Zap} label="Quick start" onClick={quickStart} />
               <GroupedActionBtn icon={Download} label="Export" onClick={handleExport} />
-              <GroupedActionBtn
-                icon={Trash2}
-                label="Clear all"
-                onClick={handleClearAll}
-              />
+              <GroupedActionBtn icon={Trash2} label="Clear all" onClick={handleClearAll} />
             </div>
           </>
         )}
@@ -135,7 +129,9 @@ export function ActiveTimer() {
       </div>
 
       <div className="px-5 pb-4">
-        <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">Cycles</div>
+        <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+          Cycles
+        </div>
         <div className="flex gap-1.5">
           {Array.from({ length: cyclesPlanned }, (_, i) => {
             const done = i < cycleIdx;
@@ -145,11 +141,7 @@ export function ActiveTimer() {
                 key={i}
                 className={cn(
                   "flex-1 h-2 rounded-full",
-                  done
-                    ? "bg-text-primary"
-                    : current
-                      ? "bg-text-primary/40"
-                      : "bg-border-default",
+                  done ? "bg-text-primary" : current ? "bg-text-primary/40" : "bg-border-default",
                 )}
               />
             );
@@ -158,7 +150,9 @@ export function ActiveTimer() {
       </div>
 
       <div className="px-5 pb-4">
-        <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">Preset</div>
+        <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+          Preset
+        </div>
         <div className="flex flex-wrap gap-1.5">
           {PRESETS.filter((p) => p.id !== "custom").map((p) => {
             const active = p.id === presetId;
@@ -184,7 +178,9 @@ export function ActiveTimer() {
 
       {today && (
         <div className="px-5 pb-5 mt-auto">
-          <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">Today</div>
+          <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+            Today
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <Stat label="Focus" value={fmtDur(today.focusMin)} />
             <Stat label="Sessions" value={String(today.sessions)} />
@@ -221,9 +217,7 @@ function GroupedActionBtn({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-border-subtle bg-bg-elevated px-2.5 py-2">
-      <div className="text-[15px] font-semibold text-text-primary tabular-nums">
-        {value}
-      </div>
+      <div className="text-[15px] font-semibold text-text-primary tabular-nums">{value}</div>
       <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mt-0.5">
         {label}
       </div>

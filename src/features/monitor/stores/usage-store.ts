@@ -16,7 +16,12 @@ interface UsageState {
     timestamp: number;
   }>;
   actions: {
-    trackUsage: (provider: string, model: string, inputTokens: number, outputTokens: number) => void;
+    trackUsage: (
+      provider: string,
+      model: string,
+      inputTokens: number,
+      outputTokens: number,
+    ) => void;
     reset: () => void;
   };
 }
@@ -28,7 +33,7 @@ const COST_TABLE: Record<string, [number, number]> = {
   "claude-haiku-4-5-20251001": [0.8, 4],
   "gpt-4o": [2.5, 10],
   "gpt-4o-mini": [0.15, 0.6],
-  "o3": [10, 40],
+  o3: [10, 40],
   "gemini-2.5-pro-preview-06-05": [1.25, 10],
   "gemini-2.5-flash-preview-05-20": [0.15, 0.6],
   // BYOK model-chat — common direct-API models.
@@ -42,7 +47,7 @@ const COST_TABLE: Record<string, [number, number]> = {
   "deepseek-reasoner": [0.55, 2.19],
   "grok-4": [3, 15],
   "llama-3.3-70b-versatile": [0.59, 0.79],
-  "sonar": [1, 1],
+  sonar: [1, 1],
   "sonar-pro": [3, 15],
 };
 
@@ -83,5 +88,5 @@ export const useUsageStore = createSelectors(
           history: [],
         }),
     },
-  }))
+  })),
 );

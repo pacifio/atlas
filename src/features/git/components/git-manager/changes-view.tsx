@@ -33,8 +33,7 @@ function statusBadge(status: string): { letter: string; cls: string } {
   if (s.includes("add") || s.includes("new") || s.includes("untrack"))
     return { letter: "A", cls: "text-success" };
   if (s.includes("renam")) return { letter: "R", cls: "text-[var(--status-info)]" };
-  if (s.includes("conflict") || s.includes("unmerg"))
-    return { letter: "!", cls: "text-error" };
+  if (s.includes("conflict") || s.includes("unmerg")) return { letter: "!", cls: "text-error" };
   return { letter: "M", cls: "text-[var(--status-warning)]" };
 }
 
@@ -68,7 +67,9 @@ function FileRow({
         selected ? "bg-bg-selected" : "hover:bg-bg-hover",
       )}
     >
-      <span className={cn("shrink-0 w-3 text-center font-mono text-[10px] font-semibold", badge.cls)}>
+      <span
+        className={cn("shrink-0 w-3 text-center font-mono text-[10px] font-semibold", badge.cls)}
+      >
         {badge.letter}
       </span>
       <span className="truncate flex-1 min-w-0 font-mono">
@@ -210,7 +211,14 @@ export function ChangesView() {
   const openFile = (p: string) => {
     if (!currentProject) return;
     const full = `${currentProject.path}/${p}`;
-    addTab({ id: `editor-${full}`, type: "editor", title: p.split("/").pop() ?? p, closable: true, dirty: false, data: { filePath: full } });
+    addTab({
+      id: `editor-${full}`,
+      type: "editor",
+      title: p.split("/").pop() ?? p,
+      closable: true,
+      dirty: false,
+      data: { filePath: full },
+    });
   };
 
   const inProgressLabel = inProgress
@@ -222,14 +230,13 @@ export function ChangesView() {
           ? "cherry-pick"
           : "revert"
     : null;
-  const opKind: "merge" | "rebase" | "cherry-pick" | "revert" =
-    inProgress?.merge
-      ? "merge"
-      : inProgress?.rebase
-        ? "rebase"
-        : inProgress?.cherryPick
-          ? "cherry-pick"
-          : "revert";
+  const opKind: "merge" | "rebase" | "cherry-pick" | "revert" = inProgress?.merge
+    ? "merge"
+    : inProgress?.rebase
+      ? "rebase"
+      : inProgress?.cherryPick
+        ? "cherry-pick"
+        : "revert";
 
   const canCommit = (staged.length > 0 || amend) && summary.trim().length > 0;
 
@@ -338,9 +345,7 @@ export function ChangesView() {
       <DiffView
         diff={fileDiff ?? diff}
         onOpenFile={openFile}
-        onOpenDiff={
-          repoPath ? (p) => openGitDiff(repoPath, p, false) : undefined
-        }
+        onOpenDiff={repoPath ? (p) => openGitDiff(repoPath, p, false) : undefined}
         onRefresh={() => run(() => actions.loadDiff())}
         filters={!selected}
         emptyLabel={selected ? "No diff for this file" : "No changes"}

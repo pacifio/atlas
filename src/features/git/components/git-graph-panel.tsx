@@ -1,31 +1,16 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import * as Dialog from "@radix-ui/react-dialog";
-import {
-  RefreshCw,
-  GitBranch,
-  Maximize2,
-  Minimize2,
-} from "lucide-react";
+import { RefreshCw, GitBranch, Maximize2, Minimize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useGitStore } from "@/features/git/stores/git-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { CommitRowView } from "./commit-node";
-import {
-  ROW_HEIGHT,
-  type BuiltGraph,
-} from "../lib/git-graph";
+import { ROW_HEIGHT, type BuiltGraph } from "../lib/git-graph";
 
 const DEFAULT_LIMIT = 1000;
 
@@ -62,8 +47,7 @@ export function GitGraphPanel() {
   // that used to live in `lib/git-graph.ts::buildGraph` is gone.
   const graphQuery = useQuery<BuiltGraph>({
     queryKey: ["git-graph", path, signature, limit],
-    queryFn: () =>
-      invoke<BuiltGraph>("git_graph_build", { path, limit, all: true }),
+    queryFn: () => invoke<BuiltGraph>("git_graph_build", { path, limit, all: true }),
     enabled: !!path && isRepo && !!signature,
     staleTime: Infinity,
     placeholderData: (prev) => prev,
@@ -237,7 +221,7 @@ function GraphView({
             onClick={onRefresh}
             className={cn(
               "p-1 rounded hover:bg-bg-hover text-text-tertiary hover:text-text-primary transition-colors cursor-pointer",
-              refreshing && "animate-spin"
+              refreshing && "animate-spin",
             )}
             title="Refresh"
           >
@@ -248,13 +232,8 @@ function GraphView({
 
       {/* Virtualized commit list */}
       <div className="flex-1 min-h-0 relative">
-        <div
-          ref={parentRef}
-          className="absolute inset-0 overflow-auto hide-scrollbar"
-        >
-          {isLoading && (
-            <div className="px-3 py-3 text-[11px] text-text-tertiary">Loading…</div>
-          )}
+        <div ref={parentRef} className="absolute inset-0 overflow-auto hide-scrollbar">
+          {isLoading && <div className="px-3 py-3 text-[11px] text-text-tertiary">Loading…</div>}
           {rows.length === 0 && !isLoading && (
             <div className="px-3 py-3 text-[11px] text-text-tertiary">No commits.</div>
           )}
@@ -293,8 +272,7 @@ function GraphView({
               aria-hidden
               className="pointer-events-none absolute left-0 right-0 bottom-0 h-16 z-[1]"
               style={{
-                background:
-                  "linear-gradient(to bottom, transparent, var(--bg-sidebar))",
+                background: "linear-gradient(to bottom, transparent, var(--bg-sidebar))",
               }}
             />
             <button

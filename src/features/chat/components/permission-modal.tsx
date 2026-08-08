@@ -252,12 +252,9 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
         <div className="flex items-start gap-2 px-3 pt-3">
           <div className="flex-1 min-w-0">
             <div className="text-[13px] font-medium leading-snug text-text-primary">
-              The agent wants to run{" "}
-              <span className="font-mono text-text-primary">{title}</span>?
+              The agent wants to run <span className="font-mono text-text-primary">{title}</span>?
             </div>
-            {queueNote && (
-              <div className="mt-0.5 text-[11px] text-text-secondary">{queueNote}</div>
-            )}
+            {queueNote && <div className="mt-0.5 text-[11px] text-text-secondary">{queueNote}</div>}
           </div>
         </div>
 
@@ -323,7 +320,9 @@ function PermissionOption({
         <span
           className={cn(
             "flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold",
-            isPrimary ? "bg-[var(--bg-base)]/15 text-[var(--bg-base)]" : "bg-bg-elevated text-text-secondary",
+            isPrimary
+              ? "bg-[var(--bg-base)]/15 text-[var(--bg-base)]"
+              : "bg-bg-elevated text-text-secondary",
           )}
         >
           {index}
@@ -332,7 +331,9 @@ function PermissionOption({
       <Icon className="size-3.5 shrink-0" />
       <span className="min-w-0 flex-1 font-medium break-words">{label}</span>
       {isPrimary && (
-        <Kbd className="border-[var(--bg-base)]/20 bg-[var(--bg-base)]/10 text-[var(--bg-base)]">↵</Kbd>
+        <Kbd className="border-[var(--bg-base)]/20 bg-[var(--bg-base)]/10 text-[var(--bg-base)]">
+          ↵
+        </Kbd>
       )}
     </button>
   );

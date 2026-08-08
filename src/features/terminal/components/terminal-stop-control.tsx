@@ -29,10 +29,7 @@ export function TerminalStopControl({
       return;
     }
     if (phase !== "waiting") return;
-    const timer = window.setTimeout(
-      () => setPhase("force"),
-      FORCE_STOP_DELAY_MS,
-    );
+    const timer = window.setTimeout(() => setPhase("force"), FORCE_STOP_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [active, phase]);
 

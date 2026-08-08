@@ -92,7 +92,9 @@ export function FileTree() {
   const tabs = useLayoutStore.use.tabs();
   const { closeTab } = useLayoutStore.use.actions();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [deleteTargets, setDeleteTargets] = useState<{ path: string; name: string; isDir: boolean }[] | null>(null);
+  const [deleteTargets, setDeleteTargets] = useState<
+    { path: string; name: string; isDir: boolean }[] | null
+  >(null);
 
   // Active editor tab's file path — used to highlight the matching
   // row in the tree (pill style like the screenshot).
@@ -124,15 +126,17 @@ export function FileTree() {
         ...base,
       ];
     }
-    const idx = base.findIndex(
-      (r) => r.node?.entry.path === pendingNewEntry.parentDir,
-    );
+    const idx = base.findIndex((r) => r.node?.entry.path === pendingNewEntry.parentDir);
     if (idx === -1) return base;
     const parentDepth = base[idx].node?.depth ?? 0;
     const next: FlatRow[] = [...base];
     next.splice(idx + 1, 0, {
       node: null,
-      ghost: { parentDir: pendingNewEntry.parentDir, isDir: pendingNewEntry.isDir, depth: parentDepth + 1 },
+      ghost: {
+        parentDir: pendingNewEntry.parentDir,
+        isDir: pendingNewEntry.isDir,
+        depth: parentDepth + 1,
+      },
     });
     return next;
   }, [tree, pendingNewEntry, rootPath]);
@@ -279,15 +283,17 @@ export function FileTree() {
       await reconcileDirectory(dirOfPath(oldPath));
       // Re-point recent-files entries so the mention picker shows the new name
       // (the file-index search already self-updates via the fs watcher).
-      void invoke("recent_files_rename", { oldPath, newPath, workspaceId: activeWorkspaceId() }).catch(() => {});
+      void invoke("recent_files_rename", {
+        oldPath,
+        newPath,
+        workspaceId: activeWorkspaceId(),
+      }).catch(() => {});
       // If the renamed file is open in ANY file-backed viewer (editor, media,
       // svg, pdf, unsupported), swap those tabs to the new path — otherwise the
       // viewer keeps loading the old (now-missing) path and 404s. Re-opening
       // also re-classifies, so a changed extension routes to the right viewer.
       const stale = tabs.filter(
-        (t) =>
-          FILE_TAB_TYPES.has(t.type) &&
-          (t.data as { filePath?: string }).filePath === oldPath,
+        (t) => FILE_TAB_TYPES.has(t.type) && (t.data as { filePath?: string }).filePath === oldPath,
       );
       if (stale.length) {
         for (const t of stale) closeTab(t.id);
@@ -308,8 +314,7 @@ export function FileTree() {
         // Close any open file-backed tab pointing at this file.
         for (const t of tabs.filter(
           (t) =>
-            FILE_TAB_TYPES.has(t.type) &&
-            (t.data as { filePath?: string }).filePath === entry.path,
+            FILE_TAB_TYPES.has(t.type) && (t.data as { filePath?: string }).filePath === entry.path,
         )) {
           closeTab(t.id);
         }
@@ -333,7 +338,11 @@ export function FileTree() {
         if (clipboard.isCut) {
           await invoke("fs_rename", { from: src, to: destPath });
           await reconcileDirectory(dirOfPath(src));
-          void invoke("recent_files_rename", { oldPath: src, newPath: destPath, workspaceId: activeWorkspaceId() }).catch(() => {});
+          void invoke("recent_files_rename", {
+            oldPath: src,
+            newPath: destPath,
+            workspaceId: activeWorkspaceId(),
+          }).catch(() => {});
         } else {
           await invoke("fs_copy", { from: src, to: destPath });
         }
@@ -387,10 +396,7 @@ export function FileTree() {
         // Refresh both ends — the source's old parent loses the entry
         // and the destination gains it. The fs-watcher would catch
         // both eventually but the user expects an immediate update.
-        await Promise.all([
-          reconcileDirectory(parent),
-          reconcileDirectory(destDir),
-        ]);
+        await Promise.all([reconcileDirectory(parent), reconcileDirectory(destDir)]);
       } catch (e) {
         toast.error(String(e));
       }
@@ -475,18 +481,14 @@ export function FileTree() {
   };
   const handleCopyRelativePath = (paths: string[]) => {
     const rels = paths.map((path) =>
-      projectPath && path.startsWith(projectPath)
-        ? path.slice(projectPath.length + 1)
-        : path,
+      projectPath && path.startsWith(projectPath) ? path.slice(projectPath.length + 1) : path,
     );
     void navigator.clipboard.writeText(rels.join("\n")).catch(() => {});
   };
 
   const handleAddToGitignore = async (path: string) => {
     if (!projectPath) return;
-    const rel = path.startsWith(projectPath)
-      ? path.slice(projectPath.length + 1)
-      : path;
+    const rel = path.startsWith(projectPath) ? path.slice(projectPath.length + 1) : path;
     try {
       await invoke("fs_add_to_gitignore", { projectPath, pattern: rel });
       toast.success(`Added to .gitignore: ${rel}`);
@@ -533,11 +535,15 @@ export function FileTree() {
           <>
             <ContextMenuItem onSelect={() => beginNewEntry(entry.path, false)}>
               New File
-              <ContextMenuShortcut><KbdCombo combo="⌘N" /></ContextMenuShortcut>
+              <ContextMenuShortcut>
+                <KbdCombo combo="⌘N" />
+              </ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onSelect={() => beginNewEntry(entry.path, true)}>
               New Folder
-              <ContextMenuShortcut><KbdCombo combo="⌥⌘N" /></ContextMenuShortcut>
+              <ContextMenuShortcut>
+                <KbdCombo combo="⌥⌘N" />
+              </ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuSeparator />
           </>
@@ -551,7 +557,9 @@ export function FileTree() {
         )}
         <ContextMenuItem onSelect={() => handleRevealInFinder(entry.path)}>
           Reveal in Finder
-          <ContextMenuShortcut><KbdCombo combo="⌥⌘R" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⌥⌘R" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         {!isDir && (
           <ContextMenuItem onSelect={() => handleOpenInDefaultApp(entry.path)}>
@@ -566,30 +574,42 @@ export function FileTree() {
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => setClipboard(targetPaths, true)}>
           Cut{countSuffix}
-          <ContextMenuShortcut><KbdCombo combo="⌘X" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⌘X" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem onSelect={() => setClipboard(targetPaths, false)}>
           Copy{countSuffix}
-          <ContextMenuShortcut><KbdCombo combo="⌘C" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⌘C" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem onSelect={() => void handleDuplicate(entry.path)}>
           Duplicate
-          <ContextMenuShortcut><KbdCombo combo="⌘D" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⌘D" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         {isDir && clipboard && (
           <ContextMenuItem onSelect={() => void handlePaste(entry.path)}>
             Paste
-            <ContextMenuShortcut><KbdCombo combo="⌘V" /></ContextMenuShortcut>
+            <ContextMenuShortcut>
+              <KbdCombo combo="⌘V" />
+            </ContextMenuShortcut>
           </ContextMenuItem>
         )}
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => handleCopyPath(targetPaths)}>
           Copy Path{countSuffix}
-          <ContextMenuShortcut><KbdCombo combo="⌥⌘C" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⌥⌘C" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem onSelect={() => handleCopyRelativePath(targetPaths)}>
           Copy Relative Path{countSuffix}
-          <ContextMenuShortcut><KbdCombo combo="⇧⌥⌘C" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⇧⌥⌘C" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => void handleAddToGitignore(entry.path)}>
@@ -597,13 +617,13 @@ export function FileTree() {
         </ContextMenuItem>
         <ContextMenuItem onSelect={() => beginRename(entry.path)}>
           Rename
-          <ContextMenuShortcut><KbdCombo combo="↵" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="↵" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem
           onSelect={() =>
-            setDeleteTargets(
-              targets.map((t) => ({ path: t.path, name: t.name, isDir: t.is_dir })),
-            )
+            setDeleteTargets(targets.map((t) => ({ path: t.path, name: t.name, isDir: t.is_dir })))
           }
         >
           Delete{countSuffix}
@@ -630,7 +650,9 @@ export function FileTree() {
       {rootPath && clipboard && (
         <ContextMenuItem onSelect={() => void handlePaste(rootPath)}>
           Paste
-          <ContextMenuShortcut><KbdCombo combo="⌘V" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <KbdCombo combo="⌘V" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
       )}
       <ContextMenuSeparator />
@@ -660,11 +682,7 @@ export function FileTree() {
           {rootPath ? rootPath.split("/").pop() : "Files"}
         </span>
         <div className="flex items-center gap-0.5">
-          <FoldExpandButton
-            tree={tree}
-            onCollapseAll={collapseAll}
-            onExpandAll={expandAllLoaded}
-          />
+          <FoldExpandButton tree={tree} onCollapseAll={collapseAll} onExpandAll={expandAllLoaded} />
           <button
             onClick={handlePickFolder}
             className="p-1 rounded hover:bg-bg-hover text-text-tertiary hover:text-text-secondary transition-colors"
@@ -819,7 +837,9 @@ export function FileTree() {
               })),
             );
           }}
-          onOpenChange={(open) => { if (!open) setDeleteTargets(null); }}
+          onOpenChange={(open) => {
+            if (!open) setDeleteTargets(null);
+          }}
         />
       )}
     </div>

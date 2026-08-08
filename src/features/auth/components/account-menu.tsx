@@ -1,24 +1,12 @@
 import type { ReactNode } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import {
-  Keyboard,
-  LayoutTemplate,
-  LogIn,
-  LogOut,
-  Palette,
-  Settings,
-  Zap,
-} from "lucide-react";
+import { Keyboard, LayoutTemplate, LogIn, LogOut, Palette, Settings, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 import { KbdCombo } from "@/ui/kbd";
 import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import type { SettingsSection } from "@/features/settings/stores/settings-nav-store";
-import {
-  type AccountUser,
-  type SignedIn,
-  type SignedOut,
-} from "../lib/auth-api";
+import { type AccountUser, type SignedIn, type SignedOut } from "../lib/auth-api";
 import { useAuthStore } from "../stores/auth-store";
 import { AccountAvatar } from "./account-avatar";
 
@@ -121,11 +109,7 @@ export function AccountMenu({
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>{children}</DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          align="end"
-          sideOffset={6}
-          className={CONTENT_CLASS}
-        >
+        <DropdownMenu.Content align="end" sideOffset={6} className={CONTENT_CLASS}>
           {/* The account zone is always first, whichever state we are in: the
               identity when there is one, the way to get one when there is not.
               Keeping it in the same place means the destinations below never
@@ -133,10 +117,7 @@ export function AccountMenu({
           {user && <Header user={user} />}
           {!signedIn && (
             <>
-              <DropdownMenu.Item
-                onSelect={() => void beginSignIn()}
-                className={ITEM_CLASS}
-              >
+              <DropdownMenu.Item onSelect={() => void beginSignIn()} className={ITEM_CLASS}>
                 <LogIn size={13} className="shrink-0 text-[var(--text-tertiary)]" />
                 <span className="flex-1 text-left">Sign In</span>
               </DropdownMenu.Item>
@@ -149,10 +130,7 @@ export function AccountMenu({
               onSelect={() => openSettingsSection(item.section)}
               className={ITEM_CLASS}
             >
-              <item.icon
-                size={13}
-                className="shrink-0 text-[var(--text-tertiary)]"
-              />
+              <item.icon size={13} className="shrink-0 text-[var(--text-tertiary)]" />
               <span className="flex-1 text-left">{item.label}</span>
               {item.shortcut && <KbdCombo combo={item.shortcut} />}
             </DropdownMenu.Item>
@@ -164,10 +142,7 @@ export function AccountMenu({
           {signedIn && (
             <>
               <DropdownMenu.Separator className={SEPARATOR_CLASS} />
-              <DropdownMenu.Item
-                onSelect={() => void onSignOut()}
-                className={ITEM_CLASS}
-              >
+              <DropdownMenu.Item onSelect={() => void onSignOut()} className={ITEM_CLASS}>
                 <LogOut size={13} className="shrink-0 text-[var(--text-tertiary)]" />
                 <span className="flex-1 text-left">Sign Out</span>
               </DropdownMenu.Item>
@@ -202,9 +177,7 @@ function Header({ user }: { user: AccountUser }) {
             {primary}
           </div>
           {email && email !== primary && (
-            <div className="truncate text-[10.5px] text-[var(--text-tertiary)]">
-              {email}
-            </div>
+            <div className="truncate text-[10.5px] text-[var(--text-tertiary)]">{email}</div>
           )}
         </div>
       </DropdownMenu.Label>

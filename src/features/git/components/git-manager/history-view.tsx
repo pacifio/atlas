@@ -185,7 +185,10 @@ function ResetMenu({ onReset }: { onReset: (mode: "soft" | "mixed" | "hard") => 
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
         <button
-          className={cn("p-1 rounded hover:bg-bg-hover", open ? "text-text-primary" : "text-text-tertiary hover:text-text-primary")}
+          className={cn(
+            "p-1 rounded hover:bg-bg-hover",
+            open ? "text-text-primary" : "text-text-tertiary hover:text-text-primary",
+          )}
           title="Reset current branch to this commit"
         >
           <RotateCcw size={12} />
@@ -257,8 +260,17 @@ function CommitSessions({ sha }: { sha: string }) {
     // The sha travels with the request so the Session lands on this commit's
     // Checkpoint rather than at the top of a conversation that may have
     // produced several.
-    useArtifactsStore.getState().actions.openSession({ sessionId, projectPath: repoPath, commitSha: sha });
-    addTab({ id: "artifacts", type: "artifacts", title: "Timeline", closable: true, dirty: false, data: {} });
+    useArtifactsStore
+      .getState()
+      .actions.openSession({ sessionId, projectPath: repoPath, commitSha: sha });
+    addTab({
+      id: "artifacts",
+      type: "artifacts",
+      title: "Timeline",
+      closable: true,
+      dirty: false,
+      data: {},
+    });
   };
 
   return (

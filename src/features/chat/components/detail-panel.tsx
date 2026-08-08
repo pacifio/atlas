@@ -39,13 +39,7 @@ function useToolCalls(messages: ChatMessage[]) {
   }, [messages]);
 }
 
-export function DetailPanel({
-  tabId,
-  messages,
-}: {
-  tabId: string;
-  messages: ChatMessage[];
-}) {
+export function DetailPanel({ tabId, messages }: { tabId: string; messages: ChatMessage[] }) {
   const target = useDetailPanelStore((s) => s.targets[tabId] ?? null);
   const width = useDetailPanelStore((s) => s.width);
   const { close, setWidth } = useDetailPanelStore.use.actions();
@@ -153,9 +147,7 @@ function PanelBody({
           </pre>
         ) : (
           <Empty>
-            {tc?.status === "running" || tc?.status === "pending"
-              ? "Still running…"
-              : "No output."}
+            {tc?.status === "running" || tc?.status === "pending" ? "Still running…" : "No output."}
           </Empty>
         )}
       </div>

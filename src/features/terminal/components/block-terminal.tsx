@@ -20,10 +20,7 @@ import { cn } from "@/lib/utils";
 import { openFileOrReveal } from "@/lib/open-file";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { resolveTerminalFont } from "../utils/resolve-font";
-import {
-  resolveTerminalOutput,
-  type AnsiSegment,
-} from "../lib/ansi-to-segments";
+import { resolveTerminalOutput, type AnsiSegment } from "../lib/ansi-to-segments";
 import { linkifySegments, normalizeUrl } from "../lib/linkify-paths";
 import { createTerminalKeymap } from "../lib/terminal-keymap";
 import { createPathLinkProvider } from "../lib/path-link-provider";
@@ -135,11 +132,7 @@ const XTERM_THEME = {
  * The React command input sends lines to the shell; when an alt-screen app is
  * running, keystrokes go to xterm instead.
  */
-export function BlockTerminal({
-  isActive,
-  onFocus,
-  terminalKey,
-}: BlockTerminalProps) {
+export function BlockTerminal({ isActive, onFocus, terminalKey }: BlockTerminalProps) {
   const [blocks, setBlocks] = useState<TerminalBlock[]>([]);
   const [altScreen, setAltScreen] = useState(false);
   const [cwd, setCwd] = useState<string>("");
@@ -246,9 +239,7 @@ export function BlockTerminal({
       let earlyChunks: (ArrayBuffer | number[])[] = [];
       const handleChunk = (payload: ArrayBuffer | number[]) => {
         const bytes =
-          payload instanceof ArrayBuffer
-            ? new Uint8Array(payload)
-            : new Uint8Array(payload);
+          payload instanceof ArrayBuffer ? new Uint8Array(payload) : new Uint8Array(payload);
         term.write(bytes); // interactive surface
         parser.push(decoderRef.current.decode(bytes, { stream: true })); // blocks
       };
@@ -301,9 +292,7 @@ export function BlockTerminal({
         if (mod && key === "c") {
           if (term.hasSelection()) {
             e.preventDefault();
-            void navigator.clipboard
-              .writeText(term.getSelection())
-              .catch(() => {});
+            void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
           }
           return false;
         }
@@ -339,8 +328,7 @@ export function BlockTerminal({
     return () => {
       disposed = true;
       xtermRef.current?.dispose();
-      if (ptyRef.current)
-        void invoke("terminal_close", { id: ptyRef.current }).catch(() => {});
+      if (ptyRef.current) void invoke("terminal_close", { id: ptyRef.current }).catch(() => {});
     };
   }, []);
 
@@ -548,8 +536,7 @@ export function BlockTerminal({
   }, [search.query, blocks]);
 
   const navMatch = useCallback((dir: 1 | -1) => {
-    const els =
-      scrollRef.current?.querySelectorAll<HTMLElement>("[data-term-match]");
+    const els = scrollRef.current?.querySelectorAll<HTMLElement>("[data-term-match]");
     if (!els || !els.length) return;
     matchIdxRef.current = (matchIdxRef.current + dir + els.length) % els.length;
     els.forEach((el) => el.classList.remove("term-match-active"));
@@ -590,9 +577,7 @@ export function BlockTerminal({
           <input
             ref={searchInputRef}
             value={search.query}
-            onChange={(e) =>
-              setSearch((s) => ({ ...s, query: e.target.value }))
-            }
+            onChange={(e) => setSearch((s) => ({ ...s, query: e.target.value }))}
             onKeyDown={(e) => {
               if (e.key === "Escape") closeSearch();
               else if (e.key === "Enter") navMatch(e.shiftKey ? -1 : 1);
@@ -651,15 +636,9 @@ export function BlockTerminal({
           from obscuring application content. */}
       <div className="relative z-20 flex min-h-[29px] items-center gap-2 border-t border-[var(--border-default)] bg-[var(--bg-base)] px-3 py-[5px]">
         {busy || altScreen ? (
-          <Loader2
-            size={13}
-            className="shrink-0 animate-spin text-[var(--accent-primary)]"
-          />
+          <Loader2 size={13} className="shrink-0 animate-spin text-[var(--accent-primary)]" />
         ) : (
-          <ChevronRight
-            size={13}
-            className="shrink-0 text-[var(--accent-primary)]"
-          />
+          <ChevronRight size={13} className="shrink-0 text-[var(--accent-primary)]" />
         )}
         {altScreen ? (
           <span className="min-w-0 flex-1 truncate text-[11px] text-[var(--text-tertiary)]">
@@ -749,16 +728,11 @@ function StatusBadge({ cwd, git }: { cwd: string; git: TermGit | null }) {
             title={`On branch ${git.branch}`}
           >
             <GitBranch size={9} className="shrink-0" />
-            <span className="max-w-[140px] truncate">
-              {git.branch || "(detached)"}
-            </span>
+            <span className="max-w-[140px] truncate">{git.branch || "(detached)"}</span>
             {git.ahead > 0 && <span>↑{git.ahead}</span>}
             {git.behind > 0 && <span>↓{git.behind}</span>}
             {git.dirty && (
-              <span
-                className="text-[var(--status-warning)]"
-                title="Uncommitted changes"
-              >
+              <span className="text-[var(--status-warning)]" title="Uncommitted changes">
                 ●
               </span>
             )}
@@ -806,19 +780,14 @@ const BlockCard = memo(function BlockCard({
   // spinner or progress bar that redraws the same line (`\r…`) collapses to one
   // updating line instead of concatenating every frame.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const segments = useMemo(
-    () => resolveTerminalOutput(display),
-    [display, rev],
-  );
+  const segments = useMemo(() => resolveTerminalOutput(display), [display, rev]);
   const cwdName = block.cwd ? block.cwd.split("/").filter(Boolean).pop() : "";
   const [collapsed, setCollapsed] = useState(false);
   const [copied, setCopied] = useState(false);
   const hasHeader = block.command !== "";
 
   const duration =
-    !block.running && block.endedAt
-      ? formatDuration(block.endedAt - block.startedAt)
-      : null;
+    !block.running && block.endedAt ? formatDuration(block.endedAt - block.startedAt) : null;
 
   const copyOutput = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -833,20 +802,11 @@ const BlockCard = memo(function BlockCard({
       {hasHeader && (
         <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-2.5 h-[28px] text-[12px]">
           {block.running ? (
-            <Loader2
-              size={12}
-              className="shrink-0 animate-spin text-[var(--accent-primary)]"
-            />
+            <Loader2 size={12} className="shrink-0 animate-spin text-[var(--accent-primary)]" />
           ) : block.exitCode && block.exitCode !== 0 ? (
-            <XCircle
-              size={12}
-              className="shrink-0 text-[var(--status-error)]"
-            />
+            <XCircle size={12} className="shrink-0 text-[var(--status-error)]" />
           ) : (
-            <CheckCircle2
-              size={12}
-              className="shrink-0 text-[var(--status-success)]"
-            />
+            <CheckCircle2 size={12} className="shrink-0 text-[var(--status-success)]" />
           )}
           <button
             type="button"
@@ -899,28 +859,21 @@ const BlockCard = memo(function BlockCard({
               </span>
             )}
             {duration && <span>{duration}</span>}
-            {!block.running &&
-              block.exitCode != null &&
-              block.exitCode !== 0 && (
-                <span className="text-[var(--status-error)]">
-                  exit {block.exitCode}
-                </span>
-              )}
+            {!block.running && block.exitCode != null && block.exitCode !== 0 && (
+              <span className="text-[var(--status-error)]">exit {block.exitCode}</span>
+            )}
           </div>
         </div>
       )}
       {!collapsed && (clipped || block.truncated) && (
         <div className="px-3 pt-2 text-[10px] italic text-[var(--text-tertiary)]">
-          earlier output hidden — showing the latest {Math.round(cap / 1024)} KB
-          (Copy gets more)
+          earlier output hidden — showing the latest {Math.round(cap / 1024)} KB (Copy gets more)
         </div>
       )}
       {!collapsed && segments.length > 0 && (
         <BlockOutput segments={segments} cwd={block.cwd} query={query} />
       )}
-      {block.awaitingPassword && block.running && (
-        <BlockPasswordInput onSubmit={onPassword} />
-      )}
+      {block.awaitingPassword && block.running && <BlockPasswordInput onSubmit={onPassword} />}
     </div>
   );
 });
@@ -943,10 +896,7 @@ function BlockAction({
       title={title}
       className="flex h-5 w-5 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
     >
-      <Icon
-        size={11}
-        className={cn("transition-transform", rotated && "-rotate-90")}
-      />
+      <Icon size={11} className={cn("transition-transform", rotated && "-rotate-90")} />
     </button>
   );
 }

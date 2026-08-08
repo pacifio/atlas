@@ -111,10 +111,7 @@ export const useReviewStore = createSelectors(
               case "file_done":
                 set((s) => ({
                   pendingFiles: s.pendingFiles.filter((p) => p !== e.verdict.path),
-                  liveFiles: [
-                    ...s.liveFiles.filter((f) => f.path !== e.verdict.path),
-                    e.verdict,
-                  ],
+                  liveFiles: [...s.liveFiles.filter((f) => f.path !== e.verdict.path), e.verdict],
                 }));
                 break;
               case "file_error":
@@ -147,7 +144,7 @@ export const useReviewStore = createSelectors(
         set({ providers, providersLoaded: true });
 
         const saved = localStorage.getItem(LS_PROVIDER);
-        const provider = saved && providers.includes(saved) ? saved : providers[0] ?? null;
+        const provider = saved && providers.includes(saved) ? saved : (providers[0] ?? null);
         if (provider) {
           await get().actions.setProvider(provider);
         }

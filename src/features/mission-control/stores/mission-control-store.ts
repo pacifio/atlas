@@ -32,9 +32,7 @@ export const useMissionControlStore = createSelectors(
       refresh: async () => {
         set({ loading: true, error: null });
         try {
-          const projectPaths = useWorkspaceStore
-            .getState()
-            .workspaces.map((w) => w.path);
+          const projectPaths = useWorkspaceStore.getState().workspaces.map((w) => w.path);
           const data = await invoke<MissionControlUsage>("mission_control_usage", {
             projectPaths,
           });

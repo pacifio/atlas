@@ -25,9 +25,7 @@ export const NoteNode = memo(function NoteNode({ data, selected }: NodeProps) {
         "min-w-[260px] max-w-[360px]",
         "bg-[var(--bg-secondary)]/70 backdrop-blur-3xl backdrop-saturate-150",
         "border shadow-2xl transition-colors",
-        selected
-          ? "border-[var(--accent-primary)]/60"
-          : "border-white/10 hover:border-white/20"
+        selected ? "border-[var(--accent-primary)]/60" : "border-white/10 hover:border-white/20",
       )}
     >
       {/* Inner glow */}

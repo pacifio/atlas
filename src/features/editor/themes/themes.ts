@@ -322,7 +322,14 @@ const vesper: EditorColorTheme = {
   },
 };
 
-export const EDITOR_THEMES: EditorColorTheme[] = [atlas, atlasMono, dracula, oneDark, monokai, vesper];
+export const EDITOR_THEMES: EditorColorTheme[] = [
+  atlas,
+  atlasMono,
+  dracula,
+  oneDark,
+  monokai,
+  vesper,
+];
 
 export const DEFAULT_EDITOR_THEME_ID = "atlas";
 

@@ -84,17 +84,10 @@ export function ProviderLogo({
   const box = size + 6;
   return (
     <span
-      className={cn(
-        "grid place-items-center shrink-0 text-text-secondary",
-        className,
-      )}
+      className={cn("grid place-items-center shrink-0 text-text-secondary", className)}
       style={{ width: box, height: box }}
     >
-      {Icon ? (
-        <Icon size={size} />
-      ) : (
-        <Boxes size={Math.round(size * 0.8)} aria-hidden />
-      )}
+      {Icon ? <Icon size={size} /> : <Boxes size={Math.round(size * 0.8)} aria-hidden />}
     </span>
   );
 }

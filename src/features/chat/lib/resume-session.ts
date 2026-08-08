@@ -144,10 +144,7 @@ export async function resumeSessionFast(opts: {
 
   // Only repaint when the snapshot actually says something different. On a clean
   // resume it doesn't, and skipping saves a full virtualizer re-measure.
-  if (
-    !cb.isStale() &&
-    (!fastPainted || !sameThread(fastMessages, snapshot.messages))
-  ) {
+  if (!cb.isStale() && (!fastPainted || !sameThread(fastMessages, snapshot.messages))) {
     cb.paint(snapshot.messages.map(snapshotMessageToWire));
     cb.onPainted();
   }

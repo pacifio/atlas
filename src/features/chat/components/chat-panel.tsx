@@ -16,11 +16,7 @@ import {
   AGENT_LABEL,
   type SwitchableAgent,
 } from "@/types/agent";
-import {
-  composePrompt,
-  type MentionData,
-  type MentionSkill,
-} from "../lib/mentions";
+import { composePrompt, type MentionData, type MentionSkill } from "../lib/mentions";
 import { sharedMemory } from "@/features/memory/lib/shared-memory-api";
 import { usePaneFind } from "../lib/use-pane-find";
 import { MessageInput } from "./message-input";
@@ -31,11 +27,7 @@ import { workspacePathForTab } from "../lib/tab-workspace";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchTextDiff } from "@/features/git/lib/git-diff-api";
 import { getEditParts, getFilePathFromInput } from "../lib/tool-files";
-import {
-  OPEN_TURN_DIFF_EVENT,
-  toRepoRelative,
-  type TurnDiffRequest,
-} from "../lib/open-turn-diff";
+import { OPEN_TURN_DIFF_EVENT, toRepoRelative, type TurnDiffRequest } from "../lib/open-turn-diff";
 
 /** Height the floating header occupies — the transcript pads its content by
  *  this much so the first row clears the bar. Must match `ChatHeader`'s bar. */
@@ -52,9 +44,7 @@ import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup
 const BashHistoryPanel = lazy(() =>
   import("./bash-history-panel").then((m) => ({ default: m.BashHistoryPanel })),
 );
-const PlansPanel = lazy(() =>
-  import("./plans-panel").then((m) => ({ default: m.PlansPanel })),
-);
+const PlansPanel = lazy(() => import("./plans-panel").then((m) => ({ default: m.PlansPanel })));
 const ChatSearchPalette = lazy(() =>
   import("./chat-search-palette").then((m) => ({
     default: m.ChatSearchPalette,
@@ -65,15 +55,11 @@ const ChatSearchPalette = lazy(() =>
 // (`remark-gfm` + `rehype-highlight`, ~330 KB raw / 101 KB gzip). Lazy so an
 // empty-chat first paint doesn't preload it; loads the first time this tab has
 // messages.
-const Transcript = lazy(() =>
-  import("./transcript").then((m) => ({ default: m.Transcript })),
-);
+const Transcript = lazy(() => import("./transcript").then((m) => ({ default: m.Transcript })));
 import type { TranscriptHandle } from "./transcript";
 // Diffs + tool output live here rather than inline in the thread — see the
 // module header for why that's a perf decision as much as a UX one.
-const DetailPanel = lazy(() =>
-  import("./detail-panel").then((m) => ({ default: m.DetailPanel })),
-);
+const DetailPanel = lazy(() => import("./detail-panel").then((m) => ({ default: m.DetailPanel })));
 // Full-screen side-by-side diff for a turn's changes. Lazy: it pulls the
 // virtualizer + the diff-highlight worker, and most sessions never open it.
 const GitDiffModal = lazy(() =>
@@ -119,10 +105,7 @@ async function rebindDisconnectedSession(tabId: string): Promise<boolean> {
   const pluginId = pluginIdForAgent(sess.agentType);
   try {
     const agent = await ensureAgent(pluginId);
-    const cwd =
-      sess.workingDirectory ||
-      useProjectStore.getState().currentProject?.path ||
-      "/";
+    const cwd = sess.workingDirectory || useProjectStore.getState().currentProject?.path || "/";
     let key: SessionKey;
     if (sess.acpSessionId) {
       try {
@@ -212,9 +195,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   const session = useChatStore((s) => s.sessions[tabId]);
   const { createSession, addMessage, updateSessionStatus, setSessionTitle } =
     useChatStore.use.actions();
-  const [roleFilter, setRoleFilter] = useState<"all" | "user" | "assistant">(
-    "all",
-  );
+  const [roleFilter, setRoleFilter] = useState<"all" | "user" | "assistant">("all");
   const [bashPanelOpen, setBashPanelOpen] = useState(false);
   const [plansPanelOpen, setPlansPanelOpen] = useState(false);
   // Narrow boolean — changes only when the detail panel opens or closes.
@@ -308,7 +289,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   const filteredMessages = useMemo(
     () =>
       roleFilter === "all"
-        ? session?.messages ?? []
+        ? (session?.messages ?? [])
         : (session?.messages ?? []).filter((m) => m.role === roleFilter),
     [session?.messages, roleFilter],
   );
@@ -349,9 +330,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // would otherwise create the session against the WRONG repo — and a
         // "/" fallback would dodge the running-workspace eviction guard.
         const cwd =
-          workspacePathForTab(tabId) ??
-          useProjectStore.getState().currentProject?.path ??
-          "/";
+          workspacePathForTab(tabId) ?? useProjectStore.getState().currentProject?.path ?? "/";
         const key = await agents.newSession(agent.agent_id, cwd);
         if (cancelled) return;
         // Guard against an agent switch that landed mid-bind: if the tab's
@@ -366,9 +345,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // mode after it the first turn can race ahead of (e.g.)
         // bypassPermissions and still trigger a stray prompt on turn one.
         // Awaiting here guarantees the agent is in the right mode first.
-        const mode =
-          useChatStore.getState().sessions[tabId]?.claudePermissionMode ??
-          "default";
+        const mode = useChatStore.getState().sessions[tabId]?.claudePermissionMode ?? "default";
         if (mode !== "default") {
           try {
             await agents.setMode(key, mode);
@@ -377,9 +354,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           }
           if (cancelled) return;
         }
-        useChatStore
-          .getState()
-          .actions.setAcpBinding(tabId, agent.agent_id, key.session_id, cwd);
+        useChatStore.getState().actions.setAcpBinding(tabId, agent.agent_id, key.session_id, cwd);
         // Seed the composer mode picker from the freshly-created session's
         // advertised modes (Codex: read-only / auto / full-access). The modes
         // are seeded into the Rust SessionState by `new_session`, so the
@@ -407,15 +382,13 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
                   tabId,
                   snap.current_mode,
                   modes,
-                  agentTypeFromPluginId(snap.plugin_id)
+                  agentTypeFromPluginId(snap.plugin_id),
                 );
             }
             // Seed the ACP model picker (Claude Code / Codex) from the snapshot's
             // advertised models. Empty when the agent exposes no model selection.
             if (models.length > 0) {
-              useChatStore
-                .getState()
-                .actions.setAcpModels(tabId, snap.current_model, models);
+              useChatStore.getState().actions.setAcpModels(tabId, snap.current_model, models);
             }
             // Boot finished (with or without modes) — drop the loading state.
             useChatStore.getState().actions.setAcpModesPending(tabId, false);
@@ -495,8 +468,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           // model stamp/badge again in resumed sessions.
           // Re-read the agent type from the store — the closed-over `session`
           // is the render-time value and can be stale after the await.
-          const at =
-            useChatStore.getState().sessions[tabId]?.agentType ?? "claude-code";
+          const at = useChatStore.getState().sessions[tabId]?.agentType ?? "claude-code";
           const cached = loadCachedAcpModels(at);
           if (cached && cached.availableModels.length > 0) {
             useChatStore
@@ -535,8 +507,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   // capture phase so the browser's default focus traversal never steals it.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key !== "Tab" || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey)
-        return;
+      if (e.key !== "Tab" || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
       const root = rootRef.current;
       const active = document.activeElement as HTMLElement | null;
       // Only intercept when focus is somewhere inside this chat panel.
@@ -603,9 +574,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   const prevStatusRef = useRef<string | null>(null);
   const prevAcpRef = useRef<string | undefined>(undefined);
   const prevResumingRef = useRef(false);
-  const handleSendRef = useRef<
-    ((content: string, mentions: MentionData[]) => void) | null
-  >(null);
+  const handleSendRef = useRef<((content: string, mentions: MentionData[]) => void) | null>(null);
   const handleStopRef = useRef<(() => void) | null>(null);
   // STABLE wrappers passed to the memoized <ChatComposer> so it doesn't
   // re-render on every ChatPanel render (i.e. every streaming chunk). The real
@@ -617,10 +586,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     [],
   );
   const onStopStable = useCallback(() => handleStopRef.current?.(), []);
-  const onScrollToBottomStable = useCallback(
-    () => messagesListRef.current?.scrollToBottom(),
-    [],
-  );
+  const onScrollToBottomStable = useCallback(() => messagesListRef.current?.scrollToBottom(), []);
   useEffect(() => {
     const cur = session?.status ?? "idle";
     const prev = prevStatusRef.current;
@@ -745,10 +711,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     });
 
     if (session.messages.length === 0) {
-      setSessionTitle(
-        tabId,
-        actualContent.slice(0, 40) + (actualContent.length > 40 ? "..." : ""),
-      );
+      setSessionTitle(tabId, actualContent.slice(0, 40) + (actualContent.length > 40 ? "..." : ""));
     }
 
     updateSessionStatus(tabId, "running");
@@ -775,21 +738,13 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     // Best-effort, invisible: record that this turn applied one or more skills
     // so cross-agent shared memory reflects it (no view projection — see
     // EventKind::SkillUsed). Fire-and-forget; must never block or break send.
-    const usedSkills = mentions.filter(
-      (m): m is MentionSkill => m.kind === "skill",
-    );
-    const memoryProject =
-      useProjectStore.getState().currentProject?.path ?? null;
+    const usedSkills = mentions.filter((m): m is MentionSkill => m.kind === "skill");
+    const memoryProject = useProjectStore.getState().currentProject?.path ?? null;
     if (usedSkills.length > 0 && memoryProject) {
       void sharedMemory
-        .appendEvent(
-          memoryProject,
-          bound.acpAgentId,
-          bound.acpSessionId,
-          "skill_used",
-          null,
-          { skills: usedSkills.map((m) => m.skillName) },
-        )
+        .appendEvent(memoryProject, bound.acpAgentId, bound.acpSessionId, "skill_used", null, {
+          skills: usedSkills.map((m) => m.skillName),
+        })
         .catch(() => {});
     }
 
@@ -814,9 +769,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      useChatStore
-        .getState()
-        .actions.addMessage(tabId, "assistant", `agent send error: ${msg}`);
+      useChatStore.getState().actions.addMessage(tabId, "assistant", `agent send error: ${msg}`);
       useChatStore.getState().actions.updateSessionStatus(tabId, "error");
       logEvent({
         source: "agent",
@@ -849,11 +802,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             padding so the first row still starts below the bar. */}
         {session.messages.length === 0 ? (
           <div className="flex-1 overflow-y-auto">
-            {session.transcriptLoading ? (
-              <LoadingTranscriptState />
-            ) : (
-              <WelcomeState />
-            )}
+            {session.transcriptLoading ? <LoadingTranscriptState /> : <WelcomeState />}
           </div>
         ) : (
           <div className="relative flex-1 min-h-0 flex flex-col">
@@ -895,10 +844,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         <div className="relative">
           {/* Permission / question prompt — an inline card pinned above the
               composer (plan reviews still render as a centered modal). */}
-          <PermissionModal
-            tabId={tabId}
-            onSendMessage={(t) => handleSend(t, [])}
-          />
+          <PermissionModal tabId={tabId} onSendMessage={(t) => handleSend(t, [])} />
           {/* Bottom fade lives in the transcript; the centered floating
               row (setup pill + scroll-to-bottom) lives inside
               ChatComposer below. */}
@@ -921,9 +867,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             messages={session.messages}
             onJump={(idx) => {
               if (roleFilter !== "all") setRoleFilter("all");
-              window.dispatchEvent(
-                new CustomEvent("atlas:chat-jump", { detail: { index: idx } }),
-              );
+              window.dispatchEvent(new CustomEvent("atlas:chat-jump", { detail: { index: idx } }));
             }}
             onClose={() => setBashPanelOpen(false)}
           />
@@ -972,9 +916,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             onOpenChange={setSearchPaletteOpen}
             messages={session.messages}
             onJump={(idx) =>
-              window.dispatchEvent(
-                new CustomEvent("atlas:chat-jump", { detail: { index: idx } }),
-              )
+              window.dispatchEvent(new CustomEvent("atlas:chat-jump", { detail: { index: idx } }))
             }
           />
         </Suspense>
@@ -992,8 +934,8 @@ function DisconnectedBanner({ tabId }: { tabId: string }) {
   return (
     <div className="max-w-[720px] mx-auto mb-2 flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[12px]">
       <span className="text-[var(--text-secondary)]">
-        The agent process exited. Your conversation is safe — restart to
-        continue where you left off.
+        The agent process exited. Your conversation is safe — restart to continue where you left
+        off.
       </span>
       <button
         disabled={restarting}
@@ -1045,11 +987,7 @@ const ChatComposer = memo(function ChatComposer({
   onScrollToBottom,
 }: {
   tabId: string;
-  onSend: (
-    message: string,
-    mentions: MentionData[],
-    attachments?: ImageAttachment[],
-  ) => void;
+  onSend: (message: string, mentions: MentionData[], attachments?: ImageAttachment[]) => void;
   onStop: () => void;
   running: boolean;
   stopping: boolean;
@@ -1060,9 +998,7 @@ const ChatComposer = memo(function ChatComposer({
   // The Claude install/auth gating only applies to Claude sessions. A Codex
   // chat must not be blocked by Claude's status (Codex inherits its own
   // ~/.codex / OPENAI auth); it surfaces its own errors from the spawn path.
-  const agentType = useChatStore(
-    (s) => s.sessions[tabId]?.agentType ?? "claude-code",
-  );
+  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
   const isClaude = agentType === "claude-code";
   const isCodex = agentType === "codex";
   const phase = useClaudeSetupStore.use.phase();
@@ -1149,15 +1085,12 @@ const ChatComposer = memo(function ChatComposer({
 
   const disabled = (isClaude && phase !== "ready") || codexNeedsAuth;
 
-  const setupVisible =
-    (isClaude && phase !== "ready") || codexNeedsAuth || terminalAuthHint;
+  const setupVisible = (isClaude && phase !== "ready") || codexNeedsAuth || terminalAuthHint;
   // Node install pill (bundled-nvm). Non-blocking — informs only, doesn't
   // disable the composer. Shown for both agents since `npx` powers both.
   const nodePhase = useNodeSetupStore.use.phase();
   const nodeBusy =
-    nodePhase === "installing" ||
-    nodePhase === "installed" ||
-    nodePhase === "failed";
+    nodePhase === "installing" || nodePhase === "installed" || nodePhase === "failed";
   const showRow = setupVisible || nodeBusy || showJumpToBottom;
 
   return (
@@ -1192,9 +1125,7 @@ const ChatComposer = memo(function ChatComposer({
                   ) : (
                     <LogIn size={11} />
                   )}
-                  {codexSigningIn
-                    ? "Opening OpenAI sign-in…"
-                    : "Sign in to Codex with ChatGPT"}
+                  {codexSigningIn ? "Opening OpenAI sign-in…" : "Sign in to Codex with ChatGPT"}
                 </button>
               )}
               {terminalAuthHint && terminalLoginCommand && (
@@ -1208,8 +1139,8 @@ const ChatComposer = memo(function ChatComposer({
                   className="atlas-pill-in inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[11px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
                 >
                   <LogIn size={11} />
-                  {AGENT_LABEL[agentType as SwitchableAgent] ?? "Agent"} needs auth —
-                  copy `{terminalLoginCommand}`
+                  {AGENT_LABEL[agentType as SwitchableAgent] ?? "Agent"} needs auth — copy `
+                  {terminalLoginCommand}`
                 </button>
               )}
               {showJumpToBottom && (
@@ -1271,8 +1202,7 @@ function WelcomeState() {
             aria-hidden
             className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-[260px] w-[260px] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-[0.16]"
             style={{
-              background:
-                "radial-gradient(circle, var(--accent-primary) 0%, transparent 68%)",
+              background: "radial-gradient(circle, var(--accent-primary) 0%, transparent 68%)",
             }}
           />
           <AtlasIcon
@@ -1299,9 +1229,7 @@ function WelcomeState() {
             <button
               key={text}
               onClick={() =>
-                window.dispatchEvent(
-                  new CustomEvent("atlas:chat-prefill", { detail: { text } }),
-                )
+                window.dispatchEvent(new CustomEvent("atlas:chat-prefill", { detail: { text } }))
               }
               style={{ animationDelay: `${120 + i * 50}ms` }}
               className="group atlas-fade-in relative flex flex-col gap-2.5 rounded-xl border border-[var(--border-default)] bg-[var(--bg-secondary)] p-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:bg-[var(--bg-elevated)] hover:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.7)] cursor-pointer"

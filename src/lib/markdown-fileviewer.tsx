@@ -20,25 +20,19 @@ function handleWheel(e: React.WheelEvent<HTMLElement>) {
 
 interface Props {
   children: string;
-   /**
+  /**
    * Enables rendering of raw HTML (e.g. <details>, <img align>, etc.).
    * Should only be enabled for trusted/local Markdown documents.
    */
   trusted?: boolean;
   className?: string;
 }
-export const MarkdownFile = memo(function MarkdownFile({
-  children,  
-  trusted = false,
-}: Props) {
+export const MarkdownFile = memo(function MarkdownFile({ children, trusted = false }: Props) {
   return (
     <div className="atlas-markdown text-[14px] leading-relaxed text-[var(--text-primary)] break-words select-text">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[
-          ...(trusted ? [rehypeRaw] : []),
-          rehypeHighlight,
-        ]}
+        rehypePlugins={[...(trusted ? [rehypeRaw] : []), rehypeHighlight]}
         components={{
           h1: (p) => (
             <h1 className="mt-8 mb-3 border-b border-[var(--border-default)] pb-2 text-[26px] font-bold tracking-tight">
@@ -52,17 +46,9 @@ export const MarkdownFile = memo(function MarkdownFile({
             </h2>
           ),
 
-          h3: (p) => (
-            <h3 className="mt-6 mb-2 text-[16px] font-semibold">
-              {p.children}
-            </h3>
-          ),
+          h3: (p) => <h3 className="mt-6 mb-2 text-[16px] font-semibold">{p.children}</h3>,
 
-          h4: (p) => (
-            <h4 className="mt-4 mb-1.5 text-[14px] font-semibold">
-              {p.children}
-            </h4>
-          ),
+          h4: (p) => <h4 className="mt-4 mb-1.5 text-[14px] font-semibold">{p.children}</h4>,
 
           p: (p) => <p className="my-3">{p.children}</p>,
 
@@ -75,28 +61,15 @@ export const MarkdownFile = memo(function MarkdownFile({
             />
           ),
 
-          ul: (p) => (
-            <ul className="my-3 list-disc space-y-1 pl-6">
-              {p.children}
-            </ul>
-          ),
+          ul: (p) => <ul className="my-3 list-disc space-y-1 pl-6">{p.children}</ul>,
 
-          ol: (p) => (
-            <ol className="my-3 list-decimal space-y-1 pl-6">
-              {p.children}
-            </ol>
-          ),
+          ol: (p) => <ol className="my-3 list-decimal space-y-1 pl-6">{p.children}</ol>,
 
-          li: (p) => (
-            <li className="leading-relaxed">{p.children}</li>
-          ),
+          li: (p) => <li className="leading-relaxed">{p.children}</li>,
 
           img: (p) => (
             // eslint-disable-next-line jsx-a11y/alt-text
-            <img
-              {...p}
-              className="my-1 inline-block h-auto max-w-full rounded align-middle"
-            />
+            <img {...p} className="my-1 inline-block h-auto max-w-full rounded align-middle" />
           ),
 
           code(props) {
@@ -144,31 +117,21 @@ export const MarkdownFile = memo(function MarkdownFile({
             </blockquote>
           ),
 
-          hr: () => (
-            <hr className="my-6 border-[var(--border-subtle)]" />
-          ),
+          hr: () => <hr className="my-6 border-[var(--border-subtle)]" />,
 
           table: (p) => (
             <div
-                className="my-4 overflow-x-auto rounded-md border border-[var(--border-default)]"
-                onWheel={handleWheel}
+              className="my-4 overflow-x-auto rounded-md border border-[var(--border-default)]"
+              onWheel={handleWheel}
             >
-                <table className="min-w-max text-[13px] ">
-                {p.children}
-                </table>
+              <table className="min-w-max text-[13px] ">{p.children}</table>
             </div>
-            ),
-
-          thead: (p) => (
-            <thead className="bg-[var(--bg-elevated)]">
-              {p.children}
-            </thead>
           ),
 
+          thead: (p) => <thead className="bg-[var(--bg-elevated)]">{p.children}</thead>,
+
           tr: (p) => (
-            <tr className="border-b border-[var(--border-subtle)] last:border-b-0">
-              {p.children}
-            </tr>
+            <tr className="border-b border-[var(--border-subtle)] last:border-b-0">{p.children}</tr>
           ),
 
           th: (p) => (

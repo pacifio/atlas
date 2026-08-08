@@ -1,8 +1,4 @@
-import {
-  DEFAULT_ATLAS_THEME_ID,
-  buildThemeVars,
-  getAtlasTheme,
-} from "./themes";
+import { DEFAULT_ATLAS_THEME_ID, buildThemeVars, getAtlasTheme } from "./themes";
 
 // The full set of CSS custom properties a theme may override. Used to clear a
 // prior theme's inline overrides before applying the next (and to reset to the

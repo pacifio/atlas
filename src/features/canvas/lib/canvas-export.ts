@@ -5,11 +5,7 @@
 
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  getNodesBounds,
-  getViewportForBounds,
-  type ReactFlowInstance,
-} from "@xyflow/react";
+import { getNodesBounds, getViewportForBounds, type ReactFlowInstance } from "@xyflow/react";
 
 export type ExportFormat = "png" | "jpeg" | "svg" | "pdf";
 export type ExportResult = "ok" | "empty" | "cancelled";
@@ -36,7 +32,10 @@ function filterChrome(el: HTMLElement): boolean {
   return !cl.contains("react-flow__handle") && !cl.contains("react-flow__resize-control");
 }
 
-export async function exportCanvas(format: ExportFormat, rf: ReactFlowInstance): Promise<ExportResult> {
+export async function exportCanvas(
+  format: ExportFormat,
+  rf: ReactFlowInstance,
+): Promise<ExportResult> {
   const nodes = rf.getNodes();
   if (nodes.length === 0) return "empty";
   // Load the heavy export libs (jspdf ~390KB + html-to-image) ONLY when an
@@ -79,9 +78,7 @@ export async function exportCanvas(format: ExportFormat, rf: ReactFlowInstance):
     // toSvg returns `data:image/svg+xml;charset=utf-8,<uri-encoded>`.
     const comma = dataUrl.indexOf(",");
     const payload = dataUrl.slice(comma + 1);
-    const svg = dataUrl.includes(";base64,")
-      ? atob(payload)
-      : decodeURIComponent(payload);
+    const svg = dataUrl.includes(";base64,") ? atob(payload) : decodeURIComponent(payload);
     await invoke("write_file_content", { path, content: svg });
     return "ok";
   }

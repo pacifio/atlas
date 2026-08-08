@@ -38,9 +38,7 @@ export function requestCloseTab(tabId: string): void {
       });
       if (!ok) return;
       if (s.acpAgentId && s.acpSessionId) {
-        await agents
-          .cancel({ agent_id: s.acpAgentId, session_id: s.acpSessionId })
-          .catch(() => {});
+        await agents.cancel({ agent_id: s.acpAgentId, session_id: s.acpSessionId }).catch(() => {});
       }
       finishClose(tabId);
     })();

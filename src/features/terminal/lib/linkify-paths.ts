@@ -62,8 +62,7 @@ export function splitLinks(text: string): PathRun[] {
     const start = p.index;
     const end = p.index + raw.length;
     // Drop paths that fall inside an already-matched URL.
-    if (matches.some((m) => m.kind === "url" && start < m.end && end > m.start))
-      continue;
+    if (matches.some((m) => m.kind === "url" && start < m.end && end > m.start)) continue;
     matches.push({ start, end, kind: "path" });
   }
 
@@ -74,8 +73,7 @@ export function splitLinks(text: string): PathRun[] {
   let last = 0;
   for (const m of matches) {
     if (m.start < last) continue; // overlap guard (URLs win, added first)
-    if (m.start > last)
-      out.push({ text: text.slice(last, m.start), kind: "text" });
+    if (m.start > last) out.push({ text: text.slice(last, m.start), kind: "text" });
     out.push({
       text: text.slice(m.start, m.end),
       kind: m.kind,
@@ -136,10 +134,7 @@ export function linkifySegments(segments: AnsiSegment[]): LinkedRun[] {
       let consumed = 0;
       while (consumed < r.text.length && segIdx < line.length) {
         const seg = line[segIdx];
-        const take = Math.min(
-          r.text.length - consumed,
-          seg.text.length - segOff,
-        );
+        const take = Math.min(r.text.length - consumed, seg.text.length - segOff);
         out.push({
           text: r.text.slice(consumed, consumed + take),
           kind: r.kind,

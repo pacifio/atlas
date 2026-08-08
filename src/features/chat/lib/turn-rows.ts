@@ -479,9 +479,7 @@ export function projectRows(
     const span = endTs - startTs;
 
     if (markers.length > 0) {
-      const modified = new Set(
-        markers.filter((m) => m.opens === "diff").map((m) => m.detail),
-      ).size;
+      const modified = new Set(markers.filter((m) => m.opens === "diff").map((m) => m.detail)).size;
       const addedTotal = markers.reduce((n, m) => n + m.added, 0);
       const group: MarkerGroupRow = {
         kind: RowKind.MarkerGroup,
@@ -589,16 +587,10 @@ function sameShallow(a: object, b: object): boolean {
 }
 
 /** Faint "N ago" divider marking a real pause between turns. */
-function maybeGapSeparator(
-  rows: Row[],
-  messages: ChatMessage[],
-  i: number,
-  turnId: string,
-): void {
+function maybeGapSeparator(rows: Row[], messages: ChatMessage[], i: number, turnId: string): void {
   if (i === 0) return;
   const gap =
-    new Date(messages[i].timestamp).getTime() -
-    new Date(messages[i - 1].timestamp).getTime();
+    new Date(messages[i].timestamp).getTime() - new Date(messages[i - 1].timestamp).getTime();
   if (gap <= TURN_GAP_MS) return;
   rows.push({
     kind: RowKind.Separator,

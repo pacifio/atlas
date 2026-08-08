@@ -33,9 +33,10 @@ Only the things CI can't check for you:
 - [ ] New behaviour has a test; a bug fix has a test that fails without it
 - [ ] You've run the app and used the change in a window
 
-CI now runs, on every PR: `bun run typecheck`, `bun run test`, `bun run build`,
-`cargo test` for all 14 crates, and `cargo test` for `src-tauri`. So there are
-no boxes for those — if it compiles and passes locally, CI is checking it too.
+CI now runs, on every PR: `bun run lint`, `bun run format:check`, `bun run
+typecheck`, `bun run test`, `bun run build`, `cargo test` for all 14 crates,
+and `cargo test` for `src-tauri`. So there are no boxes for those — if it
+compiles and passes locally, CI is checking it too.
 What CI still can't judge is whether the change actually works in a window, and
 whether the behaviour you added is covered by a test.
 

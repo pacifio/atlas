@@ -32,13 +32,9 @@ export const claudeSetup = {
 export const listenClaudeInstallProgress = (
   handler: (p: ClaudeInstallProgress) => void,
 ): Promise<UnlistenFn> =>
-  listen<ClaudeInstallProgress>("atlas:claude-install:progress", (e) =>
-    handler(e.payload),
-  );
+  listen<ClaudeInstallProgress>("atlas:claude-install:progress", (e) => handler(e.payload));
 
 export const listenClaudeInstallDone = (
   handler: (p: ClaudeInstallDone) => void,
 ): Promise<UnlistenFn> =>
-  listen<ClaudeInstallDone>("atlas:claude-install:done", (e) =>
-    handler(e.payload),
-  );
+  listen<ClaudeInstallDone>("atlas:claude-install:done", (e) => handler(e.payload));

@@ -15,8 +15,8 @@ void initTelemetry();
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000,    // 5 min before refetch
-      gcTime: 30 * 60 * 1000,       // 30 min cache lifetime
+      staleTime: 5 * 60 * 1000, // 5 min before refetch
+      gcTime: 30 * 60 * 1000, // 30 min cache lifetime
       retry: 1,
       refetchOnWindowFocus: false,
     },
@@ -30,5 +30,5 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <App />
       </QueryClientProvider>
     </TelemetryErrorBoundary>
-  </React.StrictMode>
+  </React.StrictMode>,
 );

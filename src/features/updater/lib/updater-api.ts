@@ -54,27 +54,17 @@ export const updater = {
   ignore: (version: string) => invoke<void>("update_ignore", { version }),
 };
 
-export const listenUpdateProgress = (
-  handler: (e: UpdateProgress) => void,
-): Promise<UnlistenFn> =>
+export const listenUpdateProgress = (handler: (e: UpdateProgress) => void): Promise<UnlistenFn> =>
   listen<UpdateProgress>("atlas:update-progress", (e) => handler(e.payload));
 
-export const listenUpdateReady = (
-  handler: (e: UpdateReady) => void,
-): Promise<UnlistenFn> =>
+export const listenUpdateReady = (handler: (e: UpdateReady) => void): Promise<UnlistenFn> =>
   listen<UpdateReady>("atlas:update-ready", (e) => handler(e.payload));
 
-export const listenUpdateApplied = (
-  handler: (e: UpdateApplied) => void,
-): Promise<UnlistenFn> =>
+export const listenUpdateApplied = (handler: (e: UpdateApplied) => void): Promise<UnlistenFn> =>
   listen<UpdateApplied>("atlas:update-applied", (e) => handler(e.payload));
 
-export const listenUpdateError = (
-  handler: (e: UpdateError) => void,
-): Promise<UnlistenFn> =>
+export const listenUpdateError = (handler: (e: UpdateError) => void): Promise<UnlistenFn> =>
   listen<UpdateError>("atlas:update-error", (e) => handler(e.payload));
 
-export const listenUpdateChecking = (
-  handler: (e: UpdateChecking) => void,
-): Promise<UnlistenFn> =>
+export const listenUpdateChecking = (handler: (e: UpdateChecking) => void): Promise<UnlistenFn> =>
   listen<UpdateChecking>("atlas:update-checking", (e) => handler(e.payload));

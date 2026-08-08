@@ -1,9 +1,5 @@
 import { useChatStore } from "@/features/chat/stores/chat-store";
-import {
-  SWITCHABLE_AGENTS,
-  isBusyAgentStatus,
-  type SwitchableAgent,
-} from "@/types/agent";
+import { SWITCHABLE_AGENTS, isBusyAgentStatus, type SwitchableAgent } from "@/types/agent";
 import { openNewAgentChat } from "./open-agent-session";
 
 /**
@@ -34,17 +30,13 @@ export function switchAgentForTab(tabId: string, next: SwitchableAgent): void {
     chat.actions.clearSession(tabId);
   }
   chat.actions.switchChatAgent(tabId, next);
-  window.dispatchEvent(
-    new CustomEvent("atlas:chat-focus", { detail: { tabId } }),
-  );
+  window.dispatchEvent(new CustomEvent("atlas:chat-focus", { detail: { tabId } }));
 }
 
 /** The next agent in the ⌥/ rotation for a tab. */
 export function nextAgentForTab(tabId: string): SwitchableAgent {
   const cur = useChatStore.getState().sessions[tabId]?.agentType;
-  const idx = SWITCHABLE_AGENTS.indexOf(
-    (cur ?? "claude-code") as SwitchableAgent,
-  );
+  const idx = SWITCHABLE_AGENTS.indexOf((cur ?? "claude-code") as SwitchableAgent);
   return SWITCHABLE_AGENTS[(Math.max(idx, 0) + 1) % SWITCHABLE_AGENTS.length];
 }
 

@@ -65,10 +65,7 @@ export function EditorTopbar({
             <ChevronRight size={10} className="text-text-muted shrink-0" />
           </span>
         ))}
-        <span
-          className="flex items-center text-text-primary truncate"
-          style={{ gap: 5 }}
-        >
+        <span className="flex items-center text-text-primary truncate" style={{ gap: 5 }}>
           <span className="leading-none">{icon ?? "📄"}</span>
           <span className="truncate">{title}</span>
         </span>

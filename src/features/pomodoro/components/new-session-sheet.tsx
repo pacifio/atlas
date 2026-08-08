@@ -315,10 +315,7 @@ function Stepper({ step }: { step: number }) {
               {n}
             </div>
             <span
-              className={cn(
-                "text-[12px]",
-                active ? "text-text-primary" : "text-text-tertiary",
-              )}
+              className={cn("text-[12px]", active ? "text-text-primary" : "text-text-tertiary")}
             >
               {l}
             </span>
@@ -352,13 +349,7 @@ function Field({
   );
 }
 
-function StepperBtn({
-  onClick,
-  children,
-}: {
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+function StepperBtn({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
   return (
     <button
       onClick={onClick}

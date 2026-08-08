@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Application,
   Container,
@@ -109,9 +103,15 @@ export function KnowledgeGraph() {
     void invoke<GraphLayout>("knowledge_graph_layout_load", {
       projectPath: currentProject.path,
     })
-      .then((l) => { if (!cancelled) setLayout(l ?? { positions: {} }); })
-      .catch(() => { if (!cancelled) setLayout({ positions: {} }); });
-    return () => { cancelled = true; };
+      .then((l) => {
+        if (!cancelled) setLayout(l ?? { positions: {} });
+      })
+      .catch(() => {
+        if (!cancelled) setLayout({ positions: {} });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [currentProject?.path]);
 
   // Override node titles with `meta.title` when set — the wire-side
@@ -286,7 +286,11 @@ function GraphCanvas({
       })
       .then(() => {
         if (disposed) {
-          try { app.destroy(true, { children: true }); } catch { /* ignore */ }
+          try {
+            app.destroy(true, { children: true });
+          } catch {
+            /* ignore */
+          }
           return;
         }
         const pushViewport = (v: Viewport) => {
@@ -319,12 +323,24 @@ function GraphCanvas({
     return () => {
       disposed = true;
       if (teardown) {
-        try { teardown(); } catch { /* ignore */ }
+        try {
+          teardown();
+        } catch {
+          /* ignore */
+        }
       }
       if (createdApp) {
-        try { createdApp.destroy(true, { children: true }); } catch { /* ignore */ }
+        try {
+          createdApp.destroy(true, { children: true });
+        } catch {
+          /* ignore */
+        }
       }
-      try { host.removeChild(canvas); } catch { /* ignore */ }
+      try {
+        host.removeChild(canvas);
+      } catch {
+        /* ignore */
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, width, height]);
@@ -578,7 +594,11 @@ function buildScene(
   const onPointerUp = (e: PointerEvent) => {
     if (!panStart) return;
     panStart = null;
-    try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    try {
+      canvas.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
     setCursor();
   };
 
@@ -656,7 +676,10 @@ function buildScene(
   // ── Sleep/wake ────────────────────────────────────────────────
   let awake = true;
   let sleepFrames = 0;
-  const wake = () => { awake = true; sleepFrames = 0; };
+  const wake = () => {
+    awake = true;
+    sleepFrames = 0;
+  };
   window.addEventListener("pointerdown", wake);
   window.addEventListener("pointermove", wake);
   window.addEventListener("wheel", wake, { passive: true });
@@ -758,8 +781,7 @@ function buildScene(
       const b = nodesById.get(edge.to);
       edge.graphics.clear();
       if (!a || !b) continue;
-      const touchesFocus =
-        hasFocus && (focusId === edge.from || focusId === edge.to);
+      const touchesFocus = hasFocus && (focusId === edge.from || focusId === edge.to);
       let color = COLOR_EDGE_DEFAULT;
       let alpha = 0.3;
       if (hasFocus) {

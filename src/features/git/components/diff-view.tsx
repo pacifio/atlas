@@ -64,9 +64,7 @@ export function DiffView({
     if (q) result = result.filter((f) => f.path.toLowerCase().includes(q));
     if (langFilter) result = result.filter((f) => f.language === langFilter);
     if (sortMode === "most-changes") {
-      result = [...result].sort(
-        (a, b) => b.additions + b.deletions - (a.additions + a.deletions),
-      );
+      result = [...result].sort((a, b) => b.additions + b.deletions - (a.additions + a.deletions));
     }
     return result;
   }, [allFiles, filters, query, langFilter, sortMode]);
@@ -140,7 +138,9 @@ export function DiffView({
           onClick={() => setSortMode(sortMode === "most-changes" ? "default" : "most-changes")}
           className={cn(
             "p-1 rounded transition-colors cursor-pointer",
-            sortMode === "most-changes" ? "text-accent bg-bg-selected" : "text-text-tertiary hover:bg-bg-hover",
+            sortMode === "most-changes"
+              ? "text-accent bg-bg-selected"
+              : "text-text-tertiary hover:bg-bg-hover",
           )}
           title="Sort by most changes"
         >
@@ -161,7 +161,10 @@ export function DiffView({
       {files.length === 0 ? (
         <div className="px-3 py-8 text-center text-[11px] text-text-tertiary">{emptyLabel}</div>
       ) : (
-        <div ref={scrollRef} className="flex-1 min-h-0 min-w-0 overflow-auto hide-scrollbar px-3 py-2">
+        <div
+          ref={scrollRef}
+          className="flex-1 min-h-0 min-w-0 overflow-auto hide-scrollbar px-3 py-2"
+        >
           <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
             {virtualizer.getVirtualItems().map((vr) => {
               const row = rows[vr.index];
@@ -237,7 +240,11 @@ export function DiffView({
                     data-index={vr.index}
                     ref={virtualizer.measureElement}
                     // Empty spacer — keep an explicit height so it measures 8px.
-                    style={{ ...base, height: 8, backgroundColor: "var(--diff-context-bg, #0a0a0a)" }}
+                    style={{
+                      ...base,
+                      height: 8,
+                      backgroundColor: "var(--diff-context-bg, #0a0a0a)",
+                    }}
                     className="border-x border-b border-border-default rounded-b-md"
                   />
                 );
@@ -425,7 +432,9 @@ function FileListPopover({
               </button>
             ))}
             {filtered.length === 0 && (
-              <div className="px-3 py-2 text-[10px] text-text-tertiary text-center">No files found</div>
+              <div className="px-3 py-2 text-[10px] text-text-tertiary text-center">
+                No files found
+              </div>
             )}
           </div>
         </Popover.Content>

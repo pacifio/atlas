@@ -27,8 +27,8 @@
      subtle ladder between rail (#0a) / canvas (#0a) / panel (#0f)
      that the design relies on. */
   --bg-canvas: #0a0a0a;
-  --bg-rail:   #0a0a0a;
-  --bg-elevated-2: #161616;  /* card/elevated above --bg-raised */
+  --bg-rail: #0a0a0a;
+  --bg-elevated-2: #161616; /* card/elevated above --bg-raised */
 
   /* Compat aliases */
   --bg-primary: var(--bg-surface);
@@ -41,9 +41,9 @@
      their historical near-black hexes) so the Atlas interface-theme picker can
      recolor them per theme. `applyAtlasTheme` overrides these at runtime; the
      Atlas Black theme clears the overrides so these defaults apply verbatim. */
-  --panel-rail-bg: #0f0f0f;  /* workspace sidebar (<aside>, rendered at /80) */
-  --panel-bg:      #060706;  /* left panel — file tree / explorer */
-  --panel-bg-2:    #0d0e0d;  /* right panel — source control */
+  --panel-rail-bg: #0f0f0f; /* workspace sidebar (<aside>, rendered at /80) */
+  --panel-bg: #060706; /* left panel — file tree / explorer */
+  --panel-bg-2: #0d0e0d; /* right panel — source control */
 
   /* === Text — monochromatic grays === */
   --text-primary: #ffffff;
@@ -72,36 +72,36 @@
      chip square gets a faint per-agent tint. Surface via .agent-*
      utility classes below (so `<span class="agent-claude">` exposes
      --agent, --agent-bg, --agent-chip locally). */
-  --agent-claude-chip:    #c98263;
-  --agent-claude-chip-bg: rgba(201, 130, 99, 0.10);
-  --agent-gpt-chip:       #5fb39a;
-  --agent-gpt-chip-bg:    rgba(95, 179, 154, 0.10);
-  --agent-gemini-chip:    #7aa7e8;
-  --agent-gemini-chip-bg: rgba(122, 167, 232, 0.10);
-  --agent-local-chip:     #b8a3df;
-  --agent-local-chip-bg:  rgba(184, 163, 223, 0.10);
-  --agent-cursor-chip:    #d9b56e;
-  --agent-cursor-chip-bg: rgba(217, 181, 110, 0.10);
-  --agent-amp-chip:       #d68aae;
-  --agent-amp-chip-bg:    rgba(214, 138, 174, 0.10);
-  --agent-codex-chip:     #10a37f;
-  --agent-codex-chip-bg:  rgba(16, 163, 127, 0.10);
-  --agent-opencode-chip:    #9ca3af;
-  --agent-opencode-chip-bg: rgba(156, 163, 175, 0.10);
-  --agent-kilo-chip:        #f0c53d;
-  --agent-kilo-chip-bg:     rgba(240, 197, 61, 0.10);
+  --agent-claude-chip: #c98263;
+  --agent-claude-chip-bg: rgba(201, 130, 99, 0.1);
+  --agent-gpt-chip: #5fb39a;
+  --agent-gpt-chip-bg: rgba(95, 179, 154, 0.1);
+  --agent-gemini-chip: #7aa7e8;
+  --agent-gemini-chip-bg: rgba(122, 167, 232, 0.1);
+  --agent-local-chip: #b8a3df;
+  --agent-local-chip-bg: rgba(184, 163, 223, 0.1);
+  --agent-cursor-chip: #d9b56e;
+  --agent-cursor-chip-bg: rgba(217, 181, 110, 0.1);
+  --agent-amp-chip: #d68aae;
+  --agent-amp-chip-bg: rgba(214, 138, 174, 0.1);
+  --agent-codex-chip: #10a37f;
+  --agent-codex-chip-bg: rgba(16, 163, 127, 0.1);
+  --agent-opencode-chip: #9ca3af;
+  --agent-opencode-chip-bg: rgba(156, 163, 175, 0.1);
+  --agent-kilo-chip: #f0c53d;
+  --agent-kilo-chip-bg: rgba(240, 197, 61, 0.1);
 
   /* === Semantic status === */
   --status-success: #4d4d4d;
   --status-success-muted: rgba(77, 77, 77, 0.12);
-  --status-warning: #CD9731;
+  --status-warning: #cd9731;
   --status-warning-muted: rgba(205, 151, 49, 0.12);
-  --status-error: #F44747;
+  --status-error: #f44747;
   --status-error-muted: rgba(244, 71, 71, 0.12);
-  --status-info: #6796E6;
+  --status-info: #6796e6;
   --status-info-muted: rgba(103, 150, 230, 0.12);
   --status-purple: #999999;
-  --status-orange: #CD9731;
+  --status-orange: #cd9731;
 
   /* Session line counts — the one deliberately chromatic pair in the
      Artifacts surface. The app's diff views stay monochrome; a session's
@@ -214,13 +214,24 @@
   font-weight: 600;
 }
 
-.mono   { font-family: var(--font-mono); font-feature-settings: "zero", "ss02"; }
-.tnum   { font-variant-numeric: tabular-nums; }
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "zero", "ss02";
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
 
 .kbd {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 18px; height: 18px; padding: 0 5px;
-  font-family: var(--font-mono); font-size: 10px; font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
   color: var(--text-tertiary);
   background: var(--bg-raised);
   border: 1px solid var(--border-default);
@@ -229,8 +240,11 @@
 }
 
 .pill {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 22px; padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
   border-radius: 9999px;
   font-size: 11px;
   color: var(--text-secondary);
@@ -238,34 +252,96 @@
   border: 1px solid var(--border-default);
   white-space: nowrap;
 }
-.pill-bare { background: transparent; }
+.pill-bare {
+  background: transparent;
+}
 
-.dot       { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; display: inline-block; }
-.dot-lg    { width: 8px; height: 8px; }
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+  display: inline-block;
+}
+.dot-lg {
+  width: 8px;
+  height: 8px;
+}
 
 /* Per-agent color helpers — surface --agent / --agent-bg / --agent-chip
    so children read them off CSS custom properties. */
-.agent-claude { --agent: var(--text-primary); --agent-bg: rgba(255, 255, 255, 0.06); --agent-chip: var(--text-primary); }
-.agent-gpt    { --agent: var(--text-primary); --agent-bg: var(--agent-gpt-chip-bg);    --agent-chip: var(--agent-gpt-chip); }
-.agent-gemini { --agent: var(--text-primary); --agent-bg: var(--agent-gemini-chip-bg); --agent-chip: var(--agent-gemini-chip); }
-.agent-local  { --agent: var(--text-primary); --agent-bg: var(--agent-local-chip-bg);  --agent-chip: var(--agent-local-chip); }
-.agent-cursor { --agent: var(--text-primary); --agent-bg: var(--agent-cursor-chip-bg); --agent-chip: var(--agent-cursor-chip); }
-.agent-amp    { --agent: var(--text-primary); --agent-bg: var(--agent-amp-chip-bg);    --agent-chip: var(--agent-amp-chip); }
-.agent-codex  { --agent: var(--text-primary); --agent-bg: rgba(255, 255, 255, 0.06); --agent-chip: var(--text-primary); }
-.agent-opencode { --agent: var(--text-primary); --agent-bg: rgba(255, 255, 255, 0.06); --agent-chip: var(--text-primary); }
-.agent-kilo   { --agent: var(--text-primary); --agent-bg: var(--agent-kilo-chip-bg); --agent-chip: var(--agent-kilo-chip); }
+.agent-claude {
+  --agent: var(--text-primary);
+  --agent-bg: rgba(255, 255, 255, 0.06);
+  --agent-chip: var(--text-primary);
+}
+.agent-gpt {
+  --agent: var(--text-primary);
+  --agent-bg: var(--agent-gpt-chip-bg);
+  --agent-chip: var(--agent-gpt-chip);
+}
+.agent-gemini {
+  --agent: var(--text-primary);
+  --agent-bg: var(--agent-gemini-chip-bg);
+  --agent-chip: var(--agent-gemini-chip);
+}
+.agent-local {
+  --agent: var(--text-primary);
+  --agent-bg: var(--agent-local-chip-bg);
+  --agent-chip: var(--agent-local-chip);
+}
+.agent-cursor {
+  --agent: var(--text-primary);
+  --agent-bg: var(--agent-cursor-chip-bg);
+  --agent-chip: var(--agent-cursor-chip);
+}
+.agent-amp {
+  --agent: var(--text-primary);
+  --agent-bg: var(--agent-amp-chip-bg);
+  --agent-chip: var(--agent-amp-chip);
+}
+.agent-codex {
+  --agent: var(--text-primary);
+  --agent-bg: rgba(255, 255, 255, 0.06);
+  --agent-chip: var(--text-primary);
+}
+.agent-opencode {
+  --agent: var(--text-primary);
+  --agent-bg: rgba(255, 255, 255, 0.06);
+  --agent-chip: var(--text-primary);
+}
+.agent-kilo {
+  --agent: var(--text-primary);
+  --agent-bg: var(--agent-kilo-chip-bg);
+  --agent-chip: var(--agent-kilo-chip);
+}
 /* The native agent's mark (AtlasIcon) carries its own brand colors; the chip
    square stays neutral like claude/codex. */
-.agent-cersei { --agent: var(--text-primary); --agent-bg: rgba(255, 255, 255, 0.06); --agent-chip: var(--text-primary); }
+.agent-cersei {
+  --agent: var(--text-primary);
+  --agent-bg: rgba(255, 255, 255, 0.06);
+  --agent-chip: var(--text-primary);
+}
 
 .amark {
-  width: 22px; height: 22px;
+  width: 22px;
+  height: 22px;
   border-radius: 6px;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
   color: var(--agent-chip, var(--text-primary));
   background: var(--agent-bg, var(--bg-raised));
   border: 1px solid var(--border-default);
   flex: none;
 }
-.amark-lg { width: 32px; height: 32px; font-size: 12px; border-radius: 8px; }
+.amark-lg {
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+  border-radius: 8px;
+}

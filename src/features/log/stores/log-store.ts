@@ -51,7 +51,7 @@ interface LogActions {
     append: (
       entry: Omit<LogEntry, "id" | "timestamp" | "pinned" | "projectName"> & {
         projectName?: string;
-      }
+      },
     ) => void;
     pin: (id: string) => Promise<void>;
     unpin: (id: string) => Promise<void>;
@@ -91,8 +91,7 @@ export const useLogStore = createSelectors(
       actions: {
         append: (entry) => {
           const project = useProjectStore.getState().currentProject;
-          const orgId =
-            useOrgStore.getState().activeOrganisationId ?? undefined;
+          const orgId = useOrgStore.getState().activeOrganisationId ?? undefined;
           const projectPath = entry.projectPath ?? project?.path ?? undefined;
           const projectName =
             entry.projectName ??
@@ -154,7 +153,8 @@ export const useLogStore = createSelectors(
           try {
             const org = activeOrg();
             const remaining = get().pinned;
-            const body = remaining.map((e) => JSON.stringify(e)).join("\n") + (remaining.length ? "\n" : "");
+            const body =
+              remaining.map((e) => JSON.stringify(e)).join("\n") + (remaining.length ? "\n" : "");
             if (org) await invoke("rewrite_pinned_log", { org, entriesJson: body });
           } catch (err) {
             // eslint-disable-next-line no-console
@@ -272,6 +272,6 @@ export const useLogStore = createSelectors(
           await get().actions.loadPinned();
         },
       },
-    }))
-  )
+    })),
+  ),
 );

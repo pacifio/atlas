@@ -76,12 +76,24 @@ interface SessionChatState {
     init: () => Promise<void>;
     /** Load this Session's thread list, opening the newest or a fresh one. */
     /** `defaultScope` seeds a thread this call has to create — see `create`. */
-    open: (agentSessionId: string, projectPath: string, defaultScope?: string[] | null) => Promise<void>;
+    open: (
+      agentSessionId: string,
+      projectPath: string,
+      defaultScope?: string[] | null,
+    ) => Promise<void>;
     select: (agentSessionId: string, threadId: string) => Promise<void>;
     /** `checkpointScope` seeds the thread's grounding — see the field's doc. */
-    create: (agentSessionId: string, projectPath: string, checkpointScope?: string[] | null) => string;
+    create: (
+      agentSessionId: string,
+      projectPath: string,
+      checkpointScope?: string[] | null,
+    ) => string;
     setCheckpointScope: (threadId: string, scope: string[] | null) => void;
-    remove: (agentSessionId: string, threadId: string, defaultScope?: string[] | null) => Promise<void>;
+    remove: (
+      agentSessionId: string,
+      threadId: string,
+      defaultScope?: string[] | null,
+    ) => Promise<void>;
     setProvider: (threadId: string, provider: string) => void;
     setModel: (threadId: string, model: string) => void;
     send: (threadId: string, text: string) => Promise<void>;

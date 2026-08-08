@@ -197,7 +197,10 @@ export function ComposerAddMenu({
                 className={cn(CONTENT_CLASS, "min-w-[190px]")}
                 style={{ zIndex: 9999 }}
               >
-                <DropdownMenu.Item className={ITEM_CLASS} onSelect={() => onTakeScreenshot("region")}>
+                <DropdownMenu.Item
+                  className={ITEM_CLASS}
+                  onSelect={() => onTakeScreenshot("region")}
+                >
                   <Crop size={11} />
                   <span>Selected region</span>
                 </DropdownMenu.Item>
@@ -222,7 +225,10 @@ export function ComposerAddMenu({
             <DropdownMenu.Portal>
               <DropdownMenu.SubContent
                 sideOffset={6}
-                className={cn(CONTENT_CLASS, "min-w-[220px] max-w-[280px] max-h-[320px] overflow-y-auto")}
+                className={cn(
+                  CONTENT_CLASS,
+                  "min-w-[220px] max-w-[280px] max-h-[320px] overflow-y-auto",
+                )}
                 style={{ zIndex: 9999 }}
               >
                 {skills === null ? (
@@ -265,7 +271,11 @@ export function ComposerAddMenu({
             </DropdownMenu.Portal>
           </DropdownMenu.Sub>
 
-          <SessionsSubmenu projectPath={projectPath} agentId={agentId} onPickSession={onPickSession} />
+          <SessionsSubmenu
+            projectPath={projectPath}
+            agentId={agentId}
+            onPickSession={onPickSession}
+          />
 
           <WorkspaceSubmenu
             projectPath={projectPath}
@@ -315,7 +325,10 @@ export function ComposerAddMenu({
                 );
               })}
             </div>
-            <span className="flex items-center gap-1 text-[10px] text-[var(--text-tertiary)]" title="Cycle coding agent">
+            <span
+              className="flex items-center gap-1 text-[10px] text-[var(--text-tertiary)]"
+              title="Cycle coding agent"
+            >
               <kbd className="rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] px-1 leading-[15px] font-sans">
                 ⌥
               </kbd>
@@ -414,7 +427,10 @@ function GithubSubmenu({
                       >
                         <FolderGit2 size={11} className="shrink-0 text-[var(--text-tertiary)]" />
                         <span className="truncate">{c.display_name}</span>
-                        <Check size={11} className="ml-auto shrink-0 text-[var(--status-success)]" />
+                        <Check
+                          size={11}
+                          className="ml-auto shrink-0 text-[var(--status-success)]"
+                        />
                       </DropdownMenu.Item>
                     ))}
                     <DropdownMenu.Separator className="my-1 h-px bg-[var(--border-default)]" />
@@ -451,13 +467,21 @@ function GithubSubmenu({
                         title={repo.description || repo.full_name}
                       >
                         {already ? (
-                          <Check size={11} className="mt-0.5 shrink-0 text-[var(--status-success)]" />
+                          <Check
+                            size={11}
+                            className="mt-0.5 shrink-0 text-[var(--status-success)]"
+                          />
                         ) : (
-                          <Download size={11} className="mt-0.5 shrink-0 text-[var(--text-tertiary)]" />
+                          <Download
+                            size={11}
+                            className="mt-0.5 shrink-0 text-[var(--text-tertiary)]"
+                          />
                         )}
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
-                            <span className="truncate text-[var(--text-primary)]">{repo.full_name}</span>
+                            <span className="truncate text-[var(--text-primary)]">
+                              {repo.full_name}
+                            </span>
                             {already ? (
                               <span className="ml-auto shrink-0 text-[9px] text-[var(--text-tertiary)]">
                                 downloaded
@@ -551,7 +575,10 @@ function SessionsSubmenu({
                       onSelect={() => onPickSession(s)}
                       title={s.title}
                     >
-                      <MessageSquareText size={11} className="mt-0.5 shrink-0 text-[var(--text-tertiary)]" />
+                      <MessageSquareText
+                        size={11}
+                        className="mt-0.5 shrink-0 text-[var(--text-tertiary)]"
+                      />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-[var(--text-primary)]">{s.title}</div>
                         <div className="text-[10px] text-[var(--text-tertiary)]">

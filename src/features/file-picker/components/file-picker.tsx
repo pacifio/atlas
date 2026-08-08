@@ -179,7 +179,7 @@ export function FilePicker({ open, onOpenChange }: FilePickerProps) {
           className={cn(
             "fixed left-1/2 top-[18%] z-50 -translate-x-1/2",
             "w-[640px] max-w-[92vw] rounded-md border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-2xl",
-            "flex flex-col overflow-hidden"
+            "flex flex-col overflow-hidden",
           )}
         >
           <Dialog.Title className="sr-only">Open file</Dialog.Title>
@@ -187,9 +187,7 @@ export function FilePicker({ open, onOpenChange }: FilePickerProps) {
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={
-              project ? "Search files by name or path…" : "Open a project first"
-            }
+            placeholder={project ? "Search files by name or path…" : "Open a project first"}
             disabled={!project}
             className="px-4 h-11 bg-transparent border-b border-[var(--border-default)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none"
           />
@@ -234,7 +232,7 @@ export function FilePicker({ open, onOpenChange }: FilePickerProps) {
                         "flex items-center gap-2 px-3 text-left cursor-pointer transition-colors",
                         active
                           ? "bg-[var(--bg-selected)] text-[var(--text-primary)]"
-                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
                       )}
                     >
                       <KindIcon kind={classifyFile(m.path)} />
@@ -253,13 +251,15 @@ export function FilePicker({ open, onOpenChange }: FilePickerProps) {
                 title="Rebuild the file index"
                 className={cn(
                   "flex items-center gap-1 rounded px-1 -ml-1 transition-colors",
-                  "hover:text-[var(--text-secondary)] disabled:opacity-40 disabled:cursor-default cursor-pointer outline-none"
+                  "hover:text-[var(--text-secondary)] disabled:opacity-40 disabled:cursor-default cursor-pointer outline-none",
                 )}
               >
                 <RotateCw size={10} className={cn(reindexing && "animate-spin")} />
                 Reindex
               </button>
-              <span>{results.length} match{results.length === 1 ? "" : "es"}</span>
+              <span>
+                {results.length} match{results.length === 1 ? "" : "es"}
+              </span>
             </div>
             <span>↑↓ navigate · ↵ open · esc close</span>
           </div>

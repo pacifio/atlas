@@ -7,12 +7,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import type {
-  AgentId,
-  AgentInfo,
-  AcpSessionId,
-  PermissionDecision,
-} from "@/types/acp";
+import type { AgentId, AgentInfo, AcpSessionId, PermissionDecision } from "@/types/acp";
 import type {
   AgentDelta,
   ImageAttachment,
@@ -43,8 +38,7 @@ export interface AuthRunDone {
 export const agents = {
   listPlugins: () => invoke<PluginSpec[]>("agents_list_plugins"),
   listRunning: () => invoke<AgentInfo[]>("agents_list_running"),
-  spawn: (pluginId: string) =>
-    invoke<AgentInfo>("agents_spawn", { pluginId }),
+  spawn: (pluginId: string) => invoke<AgentInfo>("agents_spawn", { pluginId }),
   kill: (agentId: AgentId) => invoke<void>("agents_kill", { agentId }),
 
   newSession: (agentId: AgentId, cwd: string) =>
@@ -63,8 +57,7 @@ export const agents = {
       cwd,
     }),
 
-  snapshot: (key: SessionKey) =>
-    invoke<SessionSnapshot>("agents_snapshot", { key }),
+  snapshot: (key: SessionKey) => invoke<SessionSnapshot>("agents_snapshot", { key }),
 
   send: (key: SessionKey, text: string, attachments?: ImageAttachment[]) =>
     invoke<void>("agents_send", {
@@ -78,20 +71,18 @@ export const agents = {
   dropSession: (agentId: AgentId, sessionId: AcpSessionId) =>
     invoke<void>("agents_drop_session", { agentId, sessionId }),
 
-  setMode: (key: SessionKey, modeId: string) =>
-    invoke<void>("agents_set_mode", { key, modeId }),
+  setMode: (key: SessionKey, modeId: string) => invoke<void>("agents_set_mode", { key, modeId }),
   setModel: (key: SessionKey, modelId: string) =>
     invoke<void>("agents_set_model", { key, modelId }),
   setEffort: (key: SessionKey, effort: string) =>
     invoke<void>("agents_set_effort", { key, effort }),
-  setCompress: (key: SessionKey, on: boolean) =>
-    invoke<void>("agents_set_compress", { key, on }),
+  setCompress: (key: SessionKey, on: boolean) => invoke<void>("agents_set_compress", { key, on }),
 
   respondPermission: (
     agentId: AgentId,
     sessionId: AcpSessionId,
     requestId: string,
-    decision: PermissionDecision
+    decision: PermissionDecision,
   ) =>
     invoke<void>("agents_respond_permission", {
       agentId,
@@ -113,18 +104,14 @@ export const agents = {
 /** Whether Codex has stored credentials (`~/.codex/auth.json`). */
 export const codexStatus = (): Promise<boolean> => invoke<boolean>("codex_status");
 
-export const listenAuthRunDone = (
-  handler: (p: AuthRunDone) => void,
-): Promise<UnlistenFn> =>
+export const listenAuthRunDone = (handler: (p: AuthRunDone) => void): Promise<UnlistenFn> =>
   listen<AuthRunDone>("atlas:auth-run:done", (e) => handler(e.payload));
 
 /**
  * Subscribe to the single multiplexed delta stream. Every delta carries
  * `agent_id` + `session_id` so the consumer can route to the right tab.
  */
-export const listenAgents = (
-  handler: (env: AgentDelta) => void
-): Promise<UnlistenFn> =>
+export const listenAgents = (handler: (env: AgentDelta) => void): Promise<UnlistenFn> =>
   listen<AgentDelta>("atlas:agents", (e) => handler(e.payload));
 
 // ── Lazy per-agent registry ─────────────────────────────────────────────────

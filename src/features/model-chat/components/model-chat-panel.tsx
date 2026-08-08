@@ -19,10 +19,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import {
-  modelSupportsVision,
-  imageMimeFromPath,
-} from "../lib/model-capabilities";
+import { modelSupportsVision, imageMimeFromPath } from "../lib/model-capabilities";
 import type { ComposerAttachment } from "../stores/model-chat-store";
 import { Kbd, KbdGroup } from "@/ui/kbd";
 import { MessageItem } from "@/features/chat/components/message-item";
@@ -111,10 +108,7 @@ export function ModelChatPanel({ tabId }: { tabId?: string } = {}) {
     void init();
   }, [init]);
 
-  const configured = useMemo(
-    () => CHAT_PROVIDERS.filter((p) => !!keys[p.id]),
-    [keys],
-  );
+  const configured = useMemo(() => CHAT_PROVIDERS.filter((p) => !!keys[p.id]), [keys]);
 
   if (loaded && configured.length === 0) {
     return <EmptyState hasOtherKeys={Object.keys(keys).length > 0} />;
@@ -123,18 +117,10 @@ export function ModelChatPanel({ tabId }: { tabId?: string } = {}) {
   return <ChatSurface tabId={tabId} configuredIds={configured.map((p) => p.id)} />;
 }
 
-function ChatSurface({
-  tabId,
-  configuredIds,
-}: {
-  tabId?: string;
-  configuredIds: string[];
-}) {
+function ChatSurface({ tabId, configuredIds }: { tabId?: string; configuredIds: string[] }) {
   const activeId = useModelChatStore.use.activeId();
   const streaming = useModelChatStore.use.streaming();
-  const hasSession = useModelChatStore((s) =>
-    activeId ? !!s.sessions[activeId] : false,
-  );
+  const hasSession = useModelChatStore((s) => (activeId ? !!s.sessions[activeId] : false));
   const { newSession } = useModelChatStore.use.actions();
 
   useEffect(() => {
@@ -300,8 +286,7 @@ function Conversation({
                 {providerById(session.provider)?.name ?? "Chat"}
               </p>
               <p className="mt-1 text-[12px] text-text-tertiary">
-                Ask anything. Responses stream directly from the model using your
-                stored key.
+                Ask anything. Responses stream directly from the model using your stored key.
               </p>
             </div>
           </div>
@@ -336,9 +321,7 @@ function Conversation({
                       message={m}
                       model={m.role === "assistant" ? session.model : null}
                       streaming={
-                        isStreaming &&
-                        vItem.index === messages.length - 1 &&
-                        m.role === "assistant"
+                        isStreaming && vItem.index === messages.length - 1 && m.role === "assistant"
                       }
                       isLastInGroup
                     />
@@ -477,31 +460,28 @@ function Composer({
     inputRef.current?.insertMention(mention, t.from, t.to);
   }, []);
 
-  const keyInterceptor = useCallback(
-    (key: "Up" | "Down" | "Enter" | "Escape" | "Backspace") => {
-      const p = pickerRef.current;
-      const t = triggerRef.current;
-      if (!t || !p) return false;
-      switch (key) {
-        case "Up":
-          p.moveUp();
-          return true;
-        case "Down":
-          p.moveDown();
-          return true;
-        case "Enter":
-          return p.commit();
-        case "Escape":
-          if (p.goBack()) return true;
-          setTrigger(null);
-          return true;
-        case "Backspace":
-          if (t.query === "" && p.goBack()) return true;
-          return false;
-      }
-    },
-    [],
-  );
+  const keyInterceptor = useCallback((key: "Up" | "Down" | "Enter" | "Escape" | "Backspace") => {
+    const p = pickerRef.current;
+    const t = triggerRef.current;
+    if (!t || !p) return false;
+    switch (key) {
+      case "Up":
+        p.moveUp();
+        return true;
+      case "Down":
+        p.moveDown();
+        return true;
+      case "Enter":
+        return p.commit();
+      case "Escape":
+        if (p.goBack()) return true;
+        setTrigger(null);
+        return true;
+      case "Backspace":
+        if (t.query === "" && p.goBack()) return true;
+        return false;
+    }
+  }, []);
 
   const submit = () => {
     if (running) {
@@ -617,9 +597,7 @@ function Composer({
           <button
             type="button"
             onClick={submit}
-            disabled={
-              !running && ((!hasText && attachments.length === 0) || !model)
-            }
+            disabled={!running && ((!hasText && attachments.length === 0) || !model)}
             className={cn(
               "flex items-center justify-center w-7 h-7 shrink-0 rounded-full transition-colors",
               running

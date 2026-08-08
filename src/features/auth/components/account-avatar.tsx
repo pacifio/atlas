@@ -15,13 +15,7 @@ import type { AccountUser } from "../lib/auth-api";
  * account-menu header (28px) stay the same component: the initial's colour is
  * identity, and two implementations of it would eventually disagree.
  */
-export function AccountAvatar({
-  user,
-  size,
-}: {
-  user: AccountUser;
-  size: number;
-}) {
+export function AccountAvatar({ user, size }: { user: AccountUser; size: number }) {
   // Keyed by path rather than a bare boolean, so a photo that changes gets a
   // fresh attempt instead of inheriting the previous one's failure.
   const [failedPath, setFailedPath] = useState<string | null>(null);

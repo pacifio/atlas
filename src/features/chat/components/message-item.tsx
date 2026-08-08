@@ -34,15 +34,9 @@ import { StreamingMarkdown } from "./streaming-markdown";
  *  only the fallback for surfaces with no agent identity (memory chat, BYOK
  *  model chat), which is also what they rendered before the agent-icon work. */
 const USER_AVATAR = <User size={14} className="text-[var(--accent-primary)]" />;
-const GENERIC_AGENT_AVATAR = (
-  <Sparkles size={14} className="text-[var(--text-secondary)]" />
-);
+const GENERIC_AGENT_AVATAR = <Sparkles size={14} className="text-[var(--text-secondary)]" />;
 
-import {
-  getFilePathFromInput,
-  getEditParts,
-  type EditPart,
-} from "../lib/tool-files";
+import { getFilePathFromInput, getEditParts, type EditPart } from "../lib/tool-files";
 import { TurnSummaryCard } from "./turn-summary-card";
 import { stripNextSteps } from "../lib/next-steps";
 
@@ -69,7 +63,6 @@ function getAtlasSplit(message: ChatMessage): SplitContext {
   // or it's a legacy message we never split. Compute lazily.
   return splitAtlasContext(message.content);
 }
-
 
 function openFileInEditor(filePath: string) {
   useLayoutStore.getState().actions.addTab({
@@ -140,9 +133,7 @@ export const MessageItem = memo(function MessageItem({
     prose: rawProse,
     context,
     blockCount: contextBlockCount,
-  } = isUser
-    ? getAtlasSplit(message)
-    : { prose: message.content, context: null, blockCount: 0 };
+  } = isUser ? getAtlasSplit(message) : { prose: message.content, context: null, blockCount: 0 };
   // Hide the agent's `<next_steps>` block (rendered as chips) and, on resume,
   // our injected directive — from what the user reads.
   const prose = stripNextSteps(rawProse);
@@ -202,9 +193,7 @@ export const MessageItem = memo(function MessageItem({
               available on every settled message rather than only the
               last of a group. Floats at the top-right of the content
               column so it never reflows the text. */}
-          {!streaming && message.content && (
-            <MessageActions message={message} />
-          )}
+          {!streaming && message.content && <MessageActions message={message} />}
           <div className="space-y-3">
             {!compact && (
               <div className="flex items-center gap-2">
@@ -235,10 +224,7 @@ export const MessageItem = memo(function MessageItem({
               message.toolCalls.length === 0 &&
               !message.thinking && (
                 <div className="flex items-center gap-2 text-[12px] font-medium text-[var(--text-secondary)]">
-                  <Loader2
-                    size={13}
-                    className="animate-spin text-[var(--accent-primary)]"
-                  />
+                  <Loader2 size={13} className="animate-spin text-[var(--accent-primary)]" />
                   <span>Working…</span>
                 </div>
               )}
@@ -247,10 +233,7 @@ export const MessageItem = memo(function MessageItem({
               settles; auto-open while actively streaming so the user sees
               progress. */}
             {message.mode === "thinking" && message.thinking && (
-              <ThinkingAccordion
-                thinking={message.thinking}
-                streaming={streaming}
-              />
+              <ThinkingAccordion thinking={message.thinking} streaming={streaming} />
             )}
 
             {/* Images the user attached to this message (optimistic echo —
@@ -273,21 +256,12 @@ export const MessageItem = memo(function MessageItem({
                 source-keyed cache hits. Same renderer streaming + settled, so
                 there's no plain-text→markdown "pop" or reflow at turn end. */}
             {prose && (
-              <StreamingMarkdown
-                source={prose}
-                streaming={streaming}
-                className="text-sm"
-              />
+              <StreamingMarkdown source={prose} streaming={streaming} className="text-sm" />
             )}
 
             {/* Heavy @-mention bodies (files / folders / repo READMEs / notes /
               papers) collapsed by default so the thread stays scannable. */}
-            {context && (
-              <AtlasContextAccordion
-                context={context}
-                blockCount={contextBlockCount}
-              />
-            )}
+            {context && <AtlasContextAccordion context={context} blockCount={contextBlockCount} />}
 
             {/* Tool calls */}
             {message.toolCalls.length > 0 && (
@@ -312,9 +286,7 @@ export const MessageItem = memo(function MessageItem({
             )}
 
             {/* Plan */}
-            {message.plan && message.plan.length > 0 && (
-              <PlanCard steps={message.plan} />
-            )}
+            {message.plan && message.plan.length > 0 && <PlanCard steps={message.plan} />}
 
             {/* Per-turn usage footer (native agent) — token count + cost at the
                 end of the turn, since with the in-process agent we know the
@@ -328,9 +300,7 @@ export const MessageItem = memo(function MessageItem({
               !streaming &&
               message.role === "assistant" &&
               tabId &&
-              (message.turnSummary ||
-                message.suggestions ||
-                message.contextUsage) && (
+              (message.turnSummary || message.suggestions || message.contextUsage) && (
                 <TurnSummaryCard message={message} tabId={tabId} />
               )}
           </div>
@@ -386,9 +356,7 @@ function MessageActions({ message }: { message: ChatMessage }) {
       toast.success("Saved to knowledge base");
       setTimeout(() => setSaved(false), 1500);
     } catch (err) {
-      toast.error(
-        `Save failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      toast.error(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -405,10 +373,7 @@ function MessageActions({ message }: { message: ChatMessage }) {
     >
       <ActionButton onClick={handleCopy} title="Copy markdown">
         {copied ? (
-          <Check
-            size={12}
-            className="text-[var(--text-primary)] animate-scale-in"
-          />
+          <Check size={12} className="text-[var(--text-primary)] animate-scale-in" />
         ) : (
           <Copy size={12} />
         )}
@@ -418,10 +383,7 @@ function MessageActions({ message }: { message: ChatMessage }) {
       </ActionButton>
       <ActionButton onClick={handleSave} title="Save to knowledge base">
         {saved ? (
-          <Check
-            size={12}
-            className="text-[var(--text-primary)] animate-scale-in"
-          />
+          <Check size={12} className="text-[var(--text-primary)] animate-scale-in" />
         ) : (
           <Bookmark size={12} />
         )}
@@ -468,24 +430,16 @@ const AtlasContextAccordion = memo(function AtlasContextAccordion({
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] [&::-webkit-details-marker]:hidden">
         <ChevronRight
           size={12}
-          className={cn(
-            "transition-transform text-[var(--text-tertiary)]",
-            open && "rotate-90",
-          )}
+          className={cn("transition-transform text-[var(--text-tertiary)]", open && "rotate-90")}
         />
         <Paperclip size={12} className="text-[var(--text-tertiary)]" />
         <span className="font-mono">
           Atlas context
-          {blockCount > 0 && (
-            <span className="text-[var(--text-tertiary)]"> · {blockCount}</span>
-          )}
+          {blockCount > 0 && <span className="text-[var(--text-tertiary)]"> · {blockCount}</span>}
         </span>
       </summary>
       <div className="border-t border-[var(--border-default)] px-3 py-2">
-        <CachedMarkdown
-          source={context}
-          className="text-[12px] text-[var(--text-tertiary)]"
-        />
+        <CachedMarkdown source={context} className="text-[12px] text-[var(--text-tertiary)]" />
       </div>
     </details>
   );
@@ -512,22 +466,14 @@ const ThinkingAccordion = memo(function ThinkingAccordion({
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] [&::-webkit-details-marker]:hidden">
         <ChevronRight
           size={12}
-          className={cn(
-            "transition-transform text-[var(--text-tertiary)]",
-            open && "rotate-90",
-          )}
+          className={cn("transition-transform text-[var(--text-tertiary)]", open && "rotate-90")}
         />
         {streaming ? (
-          <Loader2
-            size={12}
-            className="animate-spin text-[var(--accent-primary)]"
-          />
+          <Loader2 size={12} className="animate-spin text-[var(--accent-primary)]" />
         ) : (
           <Brain size={12} className="text-[var(--text-tertiary)]" />
         )}
-        <span className="font-mono">
-          {streaming ? "Thinking…" : "Thought process"}
-        </span>
+        <span className="font-mono">{streaming ? "Thinking…" : "Thought process"}</span>
       </summary>
       <div className="border-t border-[var(--border-default)] px-3 py-2">
         <pre className="whitespace-pre-wrap break-words font-sans text-[12px] leading-relaxed text-[var(--text-tertiary)] select-text">
@@ -672,18 +618,13 @@ const ToolCallCard = memo(function ToolCallCard({
   const hasOutput = !!toolCall.result && toolCall.result.trim().length > 0;
 
   // Status icon — check for success, cross for failure, spinner while running.
-  const isRunning =
-    toolCall.status === "running" || toolCall.status === "pending";
-  const statusLabel =
-    toolCall.status === "failed" ? "Failed" : isRunning ? "Running" : "Done";
+  const isRunning = toolCall.status === "running" || toolCall.status === "pending";
+  const statusLabel = toolCall.status === "failed" ? "Failed" : isRunning ? "Running" : "Done";
   const statusIcon =
     toolCall.status === "failed" ? (
       <XCircle size={12} className="text-[var(--status-error)]" />
     ) : isRunning ? (
-      <Loader2
-        size={12}
-        className="animate-spin text-[var(--accent-primary)]"
-      />
+      <Loader2 size={12} className="animate-spin text-[var(--accent-primary)]" />
     ) : (
       <CheckCircle2 size={12} className="text-[var(--status-success)]" />
     );
@@ -691,8 +632,7 @@ const ToolCallCard = memo(function ToolCallCard({
   // Title text — for Bash, show the command directly; for other tools, show "<Tool> <path|pattern|args>".
   let title: string;
   if (isBash) {
-    title =
-      (args.command as string) ?? (args.cmd as string) ?? toolCall.toolName;
+    title = (args.command as string) ?? (args.cmd as string) ?? toolCall.toolName;
   } else if (filePath) {
     title = `${toolCall.toolName} ${filePath}`;
   } else if (typeof args.pattern === "string") {
@@ -739,8 +679,7 @@ const ToolCallCard = memo(function ToolCallCard({
         onClick={handleRowClick}
         className={cn(
           "flex items-center gap-2 px-3 py-1.5",
-          filePath &&
-            "cursor-pointer hover:bg-[var(--bg-hover)] transition-colors",
+          filePath && "cursor-pointer hover:bg-[var(--bg-hover)] transition-colors",
         )}
       >
         <span className="shrink-0" title={statusLabel} aria-label={statusLabel}>
@@ -782,10 +721,7 @@ const ToolCallCard = memo(function ToolCallCard({
           title="Copy Command + Output"
         >
           {copied ? (
-            <Check
-              size={11}
-              className="text-[var(--text-primary)] animate-scale-in"
-            />
+            <Check size={11} className="text-[var(--text-primary)] animate-scale-in" />
           ) : (
             <Copy size={11} />
           )}
@@ -824,8 +760,7 @@ function UsageFooter({
   model: string | null;
 }) {
   const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
-  const cost =
-    usage.cost > 0 ? ` · $${usage.cost.toFixed(usage.cost < 1 ? 4 : 2)}` : "";
+  const cost = usage.cost > 0 ? ` · $${usage.cost.toFixed(usage.cost < 1 ? 4 : 2)}` : "";
   const saved = usage.saved ?? 0;
   return (
     <div className="flex items-center gap-2 pt-1 text-[10px] text-[var(--text-tertiary)] tabular-nums select-none">
@@ -920,7 +855,10 @@ const MemoryRecallCard = memo(function MemoryRecallCard({
         {docs.length > 0 && (
           <ChevronRight
             size={13}
-            className={cn("shrink-0 text-[var(--text-tertiary)] transition-transform", open && "rotate-90")}
+            className={cn(
+              "shrink-0 text-[var(--text-tertiary)] transition-transform",
+              open && "rotate-90",
+            )}
           />
         )}
       </button>
@@ -942,7 +880,7 @@ const MemoryRecallCard = memo(function MemoryRecallCard({
                 <span
                   className={cn(
                     "shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide",
-                    MEMORY_SOURCE_STYLE[d.source] ?? MEMORY_SOURCE_STYLE.shared
+                    MEMORY_SOURCE_STYLE[d.source] ?? MEMORY_SOURCE_STYLE.shared,
                   )}
                 >
                   {d.source}
@@ -997,11 +935,7 @@ const FileChangeCard = memo(function FileChangeCard({
   );
 });
 
-const PlanCard = memo(function PlanCard({
-  steps,
-}: {
-  steps: ChatMessage["plan"];
-}) {
+const PlanCard = memo(function PlanCard({ steps }: { steps: ChatMessage["plan"] }) {
   if (!steps) return null;
   const completed = steps.filter((s) => s.status === "completed").length;
 
@@ -1014,15 +948,9 @@ const PlanCard = memo(function PlanCard({
         <div key={step.id} className="flex items-start gap-2">
           <span className="mt-0.5">
             {step.status === "completed" ? (
-              <CheckCircle2
-                size={12}
-                className="text-[var(--status-success)]"
-              />
+              <CheckCircle2 size={12} className="text-[var(--status-success)]" />
             ) : step.status === "in_progress" ? (
-              <Loader2
-                size={12}
-                className="animate-spin text-[var(--accent-primary)]"
-              />
+              <Loader2 size={12} className="animate-spin text-[var(--accent-primary)]" />
             ) : (
               <div className="w-3 h-3 rounded-full border border-[var(--border-strong)]" />
             )}

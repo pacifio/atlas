@@ -78,9 +78,7 @@ export function ModelChatSidebar({ onNew }: { onNew: () => void }) {
                       <MessageSquare size={11} className="text-text-tertiary" />
                     )}
                   </span>
-                  <span className="text-[11px] leading-snug line-clamp-2 flex-1">
-                    {m.title}
-                  </span>
+                  <span className="text-[11px] leading-snug line-clamp-2 flex-1">{m.title}</span>
                   <button
                     type="button"
                     onClick={(e) => {

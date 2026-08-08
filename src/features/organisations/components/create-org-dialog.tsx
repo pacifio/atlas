@@ -200,9 +200,7 @@ export function CreateOrgDialog({
             <div className="mt-3.5 space-y-3">
               {/* Display name — anything the user wants. */}
               <label className="block">
-                <span className="text-[11px] font-medium text-[var(--text-secondary)]">
-                  Name
-                </span>
+                <span className="text-[11px] font-medium text-[var(--text-secondary)]">Name</span>
                 <input
                   autoFocus
                   value={name}
@@ -214,9 +212,7 @@ export function CreateOrgDialog({
 
               {/* Handle — prefix + input, with live availability. */}
               <div>
-                <span className="text-[11px] font-medium text-[var(--text-secondary)]">
-                  Handle
-                </span>
+                <span className="text-[11px] font-medium text-[var(--text-secondary)]">Handle</span>
                 <div
                   className={cn(
                     "mt-1 flex h-8 items-center overflow-hidden rounded-lg border bg-[#0C0C0C] transition-colors focus-within:border-[#4a4a4a]",
@@ -236,12 +232,8 @@ export function CreateOrgDialog({
                     className="h-full min-w-0 flex-1 bg-transparent px-2.5 text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none"
                   />
                   <span className="flex w-7 shrink-0 items-center justify-center text-[var(--text-tertiary)]">
-                    {slug.kind === "checking" && (
-                      <Loader2 size={11} className="animate-spin" />
-                    )}
-                    {slug.kind === "available" && (
-                      <Check size={11} className="text-success" />
-                    )}
+                    {slug.kind === "checking" && <Loader2 size={11} className="animate-spin" />}
+                    {slug.kind === "available" && <Check size={11} className="text-success" />}
                   </span>
                 </div>
                 {/* Fixed-height hint row so the modal never jumps as you type. */}
@@ -264,9 +256,7 @@ export function CreateOrgDialog({
               {/* Cloud vs local. Signed out there is nothing to sync to, so
                   cloud is unavailable rather than merely unselected. */}
               <div>
-                <span className="text-[11px] font-medium text-[var(--text-secondary)]">
-                  Type
-                </span>
+                <span className="text-[11px] font-medium text-[var(--text-secondary)]">Type</span>
                 <div className="mt-1 flex gap-1.5">
                   {(
                     [
@@ -279,11 +269,7 @@ export function CreateOrgDialog({
                       <button
                         key={id}
                         disabled={isDisabled}
-                        title={
-                          isDisabled
-                            ? "Sign in to create a cloud organisation"
-                            : undefined
-                        }
+                        title={isDisabled ? "Sign in to create a cloud organisation" : undefined}
                         onClick={() => setMode(id)}
                         className={cn(
                           "rounded-full border px-2.5 py-1 text-[11px] transition-colors",
@@ -309,9 +295,7 @@ export function CreateOrgDialog({
               {/* Region — pill selector. Meaningless for a local org, which
                   never leaves this machine. */}
               <div className={cn(!cloud && "opacity-40")}>
-                <span className="text-[11px] font-medium text-[var(--text-secondary)]">
-                  Region
-                </span>
+                <span className="text-[11px] font-medium text-[var(--text-secondary)]">Region</span>
                 <div className="mt-1 flex gap-1.5">
                   {REGIONS.map((r) => {
                     const on = region === r.id;

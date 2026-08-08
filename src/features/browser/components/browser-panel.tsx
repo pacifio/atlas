@@ -63,8 +63,7 @@ function toNavUrl(input: string): string {
   if (!t) return "";
   if (/^https?:\/\//i.test(t)) return t;
   // A bare host (has a dot, no spaces) or localhost → treat as a URL.
-  const looksLikeUrl =
-    /^localhost(:\d+)?(\/.*)?$/i.test(t) || /^[^\s]+\.[^\s]{2,}(\/.*)?$/.test(t);
+  const looksLikeUrl = /^localhost(:\d+)?(\/.*)?$/i.test(t) || /^[^\s]+\.[^\s]{2,}(\/.*)?$/.test(t);
   if (looksLikeUrl) return `https://${t}`;
   return `https://www.google.com/search?q=${encodeURIComponent(t)}`;
 }
@@ -116,7 +115,12 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
 
   // ── Live: geometry + lifecycle ──────────────────────────────────────────
 
-  const currentRect = useCallback((): { x: number; y: number; width: number; height: number } | null => {
+  const currentRect = useCallback((): {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null => {
     const el = placeholderRef.current;
     if (!el) return null;
     const r = el.getBoundingClientRect();
@@ -234,23 +238,26 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
   }, [embedId, unregisterEmbed]);
 
   // ── Reader: sanitized fetch ─────────────────────────────────────────────
-  const fetchPage = useCallback(async (url: string) => {
-    url = normalizeUrl(url);
-    setInputUrl(url);
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await invoke<ReadableContent>("fetch_readable", { url });
-      setPage(result);
-      setInputUrl(result.url);
-      setHistory((h) => [...h.slice(0, historyIndex + 1), result]);
-      setHistoryIndex((i) => i + 1);
-    } catch (e) {
-      setError(String(e));
-      setPage(null);
-    }
-    setLoading(false);
-  }, [historyIndex]);
+  const fetchPage = useCallback(
+    async (url: string) => {
+      url = normalizeUrl(url);
+      setInputUrl(url);
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await invoke<ReadableContent>("fetch_readable", { url });
+        setPage(result);
+        setInputUrl(result.url);
+        setHistory((h) => [...h.slice(0, historyIndex + 1), result]);
+        setHistoryIndex((i) => i + 1);
+      } catch (e) {
+        setError(String(e));
+        setPage(null);
+      }
+      setLoading(false);
+    },
+    [historyIndex],
+  );
 
   // ── Unified navigation (dispatches by mode) ─────────────────────────────
   const navigate = useCallback(
@@ -290,15 +297,18 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
     else if (page) fetchPage(page.url);
   };
 
-  const handleContentClick = useCallback((e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    const anchor = target.closest("a");
-    if (!anchor) return;
-    e.preventDefault();
-    const href = anchor.getAttribute("href");
-    if (!href || href.startsWith("#") || href.startsWith("javascript:")) return;
-    fetchPage(href);
-  }, [fetchPage]);
+  const handleContentClick = useCallback(
+    (e: React.MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const anchor = target.closest("a");
+      if (!anchor) return;
+      e.preventDefault();
+      const href = anchor.getAttribute("href");
+      if (!href || href.startsWith("#") || href.startsWith("javascript:")) return;
+      fetchPage(href);
+    },
+    [fetchPage],
+  );
 
   const currentUrl = () => (mode === "live" ? liveNav?.url || inputUrl : page?.url || inputUrl);
 
@@ -307,9 +317,21 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
     const url = currentUrl();
     try {
       await invoke("browser_open_window", { url });
-      logEvent({ source: "atlas", kind: "browser-open-window", summary: `Opened ${url} in a browser window`, status: "success", payload: { url } });
+      logEvent({
+        source: "atlas",
+        kind: "browser-open-window",
+        summary: `Opened ${url} in a browser window`,
+        status: "success",
+        payload: { url },
+      });
     } catch (e) {
-      logEvent({ source: "atlas", kind: "browser-open-window", summary: `Failed to open browser window: ${url}`, status: "failure", payload: { url, error: String(e) } });
+      logEvent({
+        source: "atlas",
+        kind: "browser-open-window",
+        summary: `Failed to open browser window: ${url}`,
+        status: "failure",
+        payload: { url, error: String(e) },
+      });
     }
   };
 
@@ -318,10 +340,22 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
     try {
       const { openUrl } = await import("@tauri-apps/plugin-opener");
       await openUrl(url);
-      logEvent({ source: "atlas", kind: "browser-open-external", summary: `Opened ${url} in system browser`, status: "success", payload: { url } });
+      logEvent({
+        source: "atlas",
+        kind: "browser-open-external",
+        summary: `Opened ${url} in system browser`,
+        status: "success",
+        payload: { url },
+      });
     } catch (e) {
       window.open(url, "_blank");
-      logEvent({ source: "atlas", kind: "browser-open-external-fallback", summary: `Tauri opener failed; fell back to window.open: ${url}`, status: "failure", payload: { url, error: String(e) } });
+      logEvent({
+        source: "atlas",
+        kind: "browser-open-external-fallback",
+        summary: `Tauri opener failed; fell back to window.open: ${url}`,
+        status: "failure",
+        payload: { url, error: String(e) },
+      });
     }
   };
 
@@ -365,7 +399,10 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
         range.setStart(node, idx);
         range.setEnd(node, idx + searchQuery.length);
         sel.addRange(range);
-        (node as HTMLElement).parentElement?.scrollIntoView({ behavior: "smooth", block: "center" });
+        (node as HTMLElement).parentElement?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
         return;
       }
     }
@@ -394,13 +431,25 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
     <div className="h-full flex flex-col bg-bg-base" onMouseDownCapture={focusThisGroup}>
       {/* Address bar */}
       <div className="flex items-center gap-1.5 px-2 h-[36px] shrink-0 border-b border-border-default bg-bg-primary">
-        <button onClick={goBack} disabled={!canBack} className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer disabled:opacity-30">
+        <button
+          onClick={goBack}
+          disabled={!canBack}
+          className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer disabled:opacity-30"
+        >
           <ArrowLeft size={12} />
         </button>
-        <button onClick={goForward} disabled={!canFwd} className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer disabled:opacity-30">
+        <button
+          onClick={goForward}
+          disabled={!canFwd}
+          className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer disabled:opacity-30"
+        >
           <ArrowRight size={12} />
         </button>
-        <button onClick={reload} className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer" title="Reload">
+        <button
+          onClick={reload}
+          className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer"
+          title="Reload"
+        >
           {isLoading ? <Loader2 size={12} className="animate-spin" /> : <RotateCw size={12} />}
         </button>
 
@@ -409,7 +458,9 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
           <input
             value={inputUrl}
             onChange={(e) => setInputUrl(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") navigate(inputUrl); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") navigate(inputUrl);
+            }}
             className="flex-1 bg-transparent outline-none text-[11px] text-text-primary font-mono placeholder:text-text-tertiary"
             placeholder="Search or enter URL"
           />
@@ -432,19 +483,35 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
         </button>
 
         {!isLive && page && currentProject && (
-          <button onClick={saveToKnowledge} className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer" title="Save to knowledge base">
+          <button
+            onClick={saveToKnowledge}
+            className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer"
+            title="Save to knowledge base"
+          >
             <Save size={12} />
           </button>
         )}
         {!isLive && (
-          <button onClick={() => setSearchOpen(!searchOpen)} className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer" title="Find in page">
+          <button
+            onClick={() => setSearchOpen(!searchOpen)}
+            className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer"
+            title="Find in page"
+          >
             <Search size={12} />
           </button>
         )}
-        <button onClick={openBrowserWindow} className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer" title="Open in browser window">
+        <button
+          onClick={openBrowserWindow}
+          className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer"
+          title="Open in browser window"
+        >
           <AppWindow size={12} />
         </button>
-        <button onClick={openExternal} className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer" title="Open in system browser">
+        <button
+          onClick={openExternal}
+          className="p-1 rounded hover:bg-bg-hover text-text-tertiary transition-colors cursor-pointer"
+          title="Open in system browser"
+        >
           <ExternalLink size={12} />
         </button>
       </div>
@@ -456,7 +523,10 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); if (e.key === "Escape") setSearchOpen(false); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSearch();
+              if (e.key === "Escape") setSearchOpen(false);
+            }}
             className="flex-1 bg-transparent outline-none text-[11px] text-text-primary placeholder:text-text-tertiary"
             placeholder="Find in page..."
             autoFocus
@@ -511,15 +581,20 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
                 <Globe size={32} className="text-text-tertiary mx-auto" />
                 <p className="text-sm text-text-secondary">Enter a URL to browse</p>
                 <div className="flex flex-wrap gap-2 justify-center max-w-[320px] pt-2">
-                  {["google.com", "youtube.com", "github.com", "news.ycombinator.com"].map((site) => (
-                    <button
-                      key={site}
-                      onClick={() => { setInputUrl(`https://${site}`); navigate(site); }}
-                      className="px-2.5 py-1 rounded border border-border-default bg-bg-secondary text-[10px] text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors font-mono cursor-pointer"
-                    >
-                      {site}
-                    </button>
-                  ))}
+                  {["google.com", "youtube.com", "github.com", "news.ycombinator.com"].map(
+                    (site) => (
+                      <button
+                        key={site}
+                        onClick={() => {
+                          setInputUrl(`https://${site}`);
+                          navigate(site);
+                        }}
+                        className="px-2.5 py-1 rounded border border-border-default bg-bg-secondary text-[10px] text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors font-mono cursor-pointer"
+                      >
+                        {site}
+                      </button>
+                    ),
+                  )}
                 </div>
               </div>
             </div>
@@ -531,7 +606,10 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
       {!isLive && (
         <ContextMenu.Root>
           <ContextMenu.Trigger asChild>
-            <div className="flex-1 overflow-auto hide-scrollbar" onContextMenu={(e) => e.stopPropagation()}>
+            <div
+              className="flex-1 overflow-auto hide-scrollbar"
+              onContextMenu={(e) => e.stopPropagation()}
+            >
               {loading && (
                 <div className="flex items-center justify-center py-16">
                   <Loader2 size={20} className="animate-spin text-accent" />
@@ -541,14 +619,21 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
               {error && (
                 <div className="px-6 py-8 text-center">
                   <p className="text-[12px] text-error">{error}</p>
-                  <button onClick={() => fetchPage(inputUrl)} className="mt-2 text-[11px] text-accent underline cursor-pointer">Retry</button>
+                  <button
+                    onClick={() => fetchPage(inputUrl)}
+                    className="mt-2 text-[11px] text-accent underline cursor-pointer"
+                  >
+                    Retry
+                  </button>
                 </div>
               )}
 
               {!loading && !error && page && (
                 <div className="select-text">
                   <div className="px-4 py-3 border-b border-border-default">
-                    <h1 className="text-[15px] font-semibold text-text-primary leading-snug">{page.title}</h1>
+                    <h1 className="text-[15px] font-semibold text-text-primary leading-snug">
+                      {page.title}
+                    </h1>
                     <span className="text-[10px] text-text-tertiary font-mono">{page.url}</span>
                   </div>
                   <div
@@ -564,9 +649,16 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
                 <div className="h-full flex items-center justify-center py-16">
                   <div className="text-center space-y-3">
                     <BookText size={32} className="text-text-tertiary mx-auto" />
-                    <p className="text-sm text-text-secondary">Reader mode — enter a URL for a clean, JS-free view</p>
+                    <p className="text-sm text-text-secondary">
+                      Reader mode — enter a URL for a clean, JS-free view
+                    </p>
                     <div className="flex flex-wrap gap-2 justify-center max-w-[300px] pt-2">
-                      {["arxiv.org", "github.com", "news.ycombinator.com", "developer.mozilla.org"].map((site) => (
+                      {[
+                        "arxiv.org",
+                        "github.com",
+                        "news.ycombinator.com",
+                        "developer.mozilla.org",
+                      ].map((site) => (
                         <button
                           key={site}
                           onClick={() => fetchPage(`https://${site}`)}
@@ -582,27 +674,48 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
             </div>
           </ContextMenu.Trigger>
           <ContextMenu.Portal>
-            <ContextMenu.Content className="w-[180px] rounded-lg border border-[#1a1a1a] bg-[#0f0f0f] shadow-xl py-1" style={{ zIndex: 99999 }}>
-              <ContextMenu.Item onClick={copySelection} className="flex items-center gap-2 px-3 h-[28px] text-[11px] text-[#aaa] hover:bg-[#1a1a1a] hover:text-[#fff] cursor-default outline-none">
+            <ContextMenu.Content
+              className="w-[180px] rounded-lg border border-[#1a1a1a] bg-[#0f0f0f] shadow-xl py-1"
+              style={{ zIndex: 99999 }}
+            >
+              <ContextMenu.Item
+                onClick={copySelection}
+                className="flex items-center gap-2 px-3 h-[28px] text-[11px] text-[#aaa] hover:bg-[#1a1a1a] hover:text-[#fff] cursor-default outline-none"
+              >
                 <Copy size={11} className="text-[#555]" /> Copy Selection
               </ContextMenu.Item>
-              <ContextMenu.Item onClick={copyLink} className="flex items-center gap-2 px-3 h-[28px] text-[11px] text-[#aaa] hover:bg-[#1a1a1a] hover:text-[#fff] cursor-default outline-none">
+              <ContextMenu.Item
+                onClick={copyLink}
+                className="flex items-center gap-2 px-3 h-[28px] text-[11px] text-[#aaa] hover:bg-[#1a1a1a] hover:text-[#fff] cursor-default outline-none"
+              >
                 <Globe size={11} className="text-[#555]" /> Copy Link
               </ContextMenu.Item>
               <ContextMenu.Separator className="h-px bg-[#1a1a1a] my-1" />
-              <ContextMenu.Item onClick={() => setSearchOpen(true)} className="flex items-center gap-2 px-3 h-[28px] text-[11px] text-[#aaa] hover:bg-[#1a1a1a] hover:text-[#fff] cursor-default outline-none">
+              <ContextMenu.Item
+                onClick={() => setSearchOpen(true)}
+                className="flex items-center gap-2 px-3 h-[28px] text-[11px] text-[#aaa] hover:bg-[#1a1a1a] hover:text-[#fff] cursor-default outline-none"
+              >
                 <Search size={11} className="text-[#555]" /> Find in Page
               </ContextMenu.Item>
-              <ContextMenu.Item onClick={openBrowserWindow} className="flex items-center gap-2 px-3 h-[28px] text-[11px] text-[#aaa] hover:bg-[#1a1a1a] hover:text-[#fff] cursor-default outline-none">
+              <ContextMenu.Item
+                onClick={openBrowserWindow}
+                className="flex items-center gap-2 px-3 h-[28px] text-[11px] text-[#aaa] hover:bg-[#1a1a1a] hover:text-[#fff] cursor-default outline-none"
+              >
                 <AppWindow size={11} className="text-[#555]" /> Open in Browser Window
               </ContextMenu.Item>
-              <ContextMenu.Item onClick={openExternal} className="flex items-center gap-2 px-3 h-[28px] text-[11px] text-[#aaa] hover:bg-[#1a1a1a] hover:text-[#fff] cursor-default outline-none">
+              <ContextMenu.Item
+                onClick={openExternal}
+                className="flex items-center gap-2 px-3 h-[28px] text-[11px] text-[#aaa] hover:bg-[#1a1a1a] hover:text-[#fff] cursor-default outline-none"
+              >
                 <ExternalLink size={11} className="text-[#555]" /> Open in System Browser
               </ContextMenu.Item>
               {page && currentProject && (
                 <>
                   <ContextMenu.Separator className="h-px bg-[#1a1a1a] my-1" />
-                  <ContextMenu.Item onClick={saveToKnowledge} className="flex items-center gap-2 px-3 h-[28px] text-[11px] text-[#aaa] hover:bg-[#1a1a1a] hover:text-[#fff] cursor-default outline-none">
+                  <ContextMenu.Item
+                    onClick={saveToKnowledge}
+                    className="flex items-center gap-2 px-3 h-[28px] text-[11px] text-[#aaa] hover:bg-[#1a1a1a] hover:text-[#fff] cursor-default outline-none"
+                  >
                     <BookOpen size={11} className="text-[#555]" /> Save to Knowledge
                   </ContextMenu.Item>
                 </>

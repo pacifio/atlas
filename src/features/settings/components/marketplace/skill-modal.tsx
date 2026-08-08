@@ -45,9 +45,7 @@ export function SkillModalShell({
         >
           <div className="flex items-start gap-3 border-b border-border-default px-4 py-3">
             <div className="min-w-0 flex-1">
-              <Dialog.Title className="truncate text-sm font-semibold">
-                {title}
-              </Dialog.Title>
+              <Dialog.Title className="truncate text-sm font-semibold">{title}</Dialog.Title>
               {subtitle && (
                 <div className="mt-0.5 truncate font-mono text-[11px] text-text-tertiary">
                   {subtitle}
@@ -92,9 +90,7 @@ export function SkillDescriptions({
   if (skills.length === 1) {
     const s = skills[0];
     return s.description ? (
-      <p className="text-[13px] leading-relaxed text-text-secondary">
-        {s.description}
-      </p>
+      <p className="text-[13px] leading-relaxed text-text-secondary">{s.description}</p>
     ) : (
       <div className="text-[12px] text-text-tertiary">
         {fallback ?? "No description published."}

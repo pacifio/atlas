@@ -100,9 +100,7 @@ export const useMemoryGraphStore = createSelectors(
       download: async () => {
         clearListeners();
         set({ phase: "downloading", progress: null, error: null });
-        unlistens.push(
-          await listenMemoryEmbedProgress((p) => set({ progress: p })),
-        );
+        unlistens.push(await listenMemoryEmbedProgress((p) => set({ progress: p })));
         unlistens.push(
           await listenMemoryEmbedDone((d) => {
             clearListeners();
@@ -166,8 +164,7 @@ export const useMemoryGraphStore = createSelectors(
       },
 
       setQuery: (q) => set({ query: q }),
-      clearQuery: () =>
-        set({ query: "", results: [], matchedIds: new Set(), selectedId: null }),
+      clearQuery: () => set({ query: "", results: [], matchedIds: new Set(), selectedId: null }),
       select: (id) => set({ selectedId: id }),
     },
   })),

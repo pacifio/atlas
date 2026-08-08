@@ -105,8 +105,7 @@ export async function initTelemetry(): Promise<void> {
     setEnabled(cfg.enabled);
     // Whichever arrived first wins: an identity pushed by the auth store while
     // we were still initialising, or the account Rust already knew about.
-    const boot =
-      pendingIdentity ?? (cfg.accountId ? { distinctId: cfg.accountId } : null);
+    const boot = pendingIdentity ?? (cfg.accountId ? { distinctId: cfg.accountId } : null);
     if (boot) identify(boot);
   } catch {
     /* posthog init failure must never break app boot */
@@ -201,10 +200,7 @@ export function setEnabled(on: boolean): void {
  * Report a client-side failure. No-op unless posthog is started and the user
  * has opted in. Swallows all errors so telemetry can never crash the app.
  */
-export function captureClientError(
-  error: unknown,
-  context: Record<string, unknown> = {},
-): void {
+export function captureClientError(error: unknown, context: Record<string, unknown> = {}): void {
   if (!started || !enabled) return;
   // Drop known-benign, non-actionable noise before it hits PostHog quota.
   if (isIgnoredError(error)) return;

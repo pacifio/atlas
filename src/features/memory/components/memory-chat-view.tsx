@@ -71,7 +71,7 @@ export function MemoryChatView() {
   const makeNew = () =>
     newSession({
       mode: localReady ? "local" : "provider",
-      provider: localReady ? "" : configured[0]?.id ?? "",
+      provider: localReady ? "" : (configured[0]?.id ?? ""),
     });
 
   if (!showChat) {
@@ -147,7 +147,10 @@ function Sidebar({ onNew }: { onNew: () => void }) {
               >
                 <span className="shrink-0 inline-flex h-[15px] items-center">
                   {streaming[m.id] ? (
-                    <Loader2 size={10} className="animate-spin text-[var(--accent-primary,#60a5fa)]" />
+                    <Loader2
+                      size={10}
+                      className="animate-spin text-[var(--accent-primary,#60a5fa)]"
+                    />
                   ) : (
                     <MessageSquare size={11} className="text-[var(--text-tertiary)]" />
                   )}
@@ -299,7 +302,9 @@ function CodebaseIndexBanner({
   const lead = status?.indexed ? `Codebase: ${status.fileCount} files` : "Codebase not indexed";
   const rest = status?.indexed
     ? (status.summaryCount ? ` · ${status.summaryCount} summarized` : "") +
-      (status.builtAtMs ? ` · updated ${timeAgo(new Date(status.builtAtMs).toISOString(), { suffix: true })}` : "")
+      (status.builtAtMs
+        ? ` · updated ${timeAgo(new Date(status.builtAtMs).toISOString(), { suffix: true })}`
+        : "")
     : " — answers may be outdated";
 
   return (
@@ -358,7 +363,10 @@ function Sources({ sources }: { sources: SourceRef[] }) {
             type="button"
             title={tip}
             onClick={() => openFile(s.filePath as string)}
-            className={cn(base, "hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer")}
+            className={cn(
+              base,
+              "hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer",
+            )}
           >
             <FileText size={9} />
             <span className="max-w-[160px] truncate">{s.title}</span>
@@ -420,7 +428,14 @@ function ArcProgress({ pct, size = 13 }: { pct: number; size?: number }) {
   const off = c * (1 - clamped / 100);
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90 shrink-0">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth="2" stroke="var(--border-default)" />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="none"
+        strokeWidth="2"
+        stroke="var(--border-default)"
+      />
       <circle
         cx={size / 2}
         cy={size / 2}
@@ -469,8 +484,15 @@ function InstallButton() {
     <button
       type="button"
       onClick={() => void downloadModel()}
-      title={phase === "download-failed" ? error ?? "Download failed — retry" : "Download the local model"}
-      className={cn(pill, "shadow-[0_2px_8px_rgba(0,0,0,0.35)] hover:bg-bg-hover hover:text-text-primary transition-colors cursor-pointer")}
+      title={
+        phase === "download-failed"
+          ? (error ?? "Download failed — retry")
+          : "Download the local model"
+      }
+      className={cn(
+        pill,
+        "shadow-[0_2px_8px_rgba(0,0,0,0.35)] hover:bg-bg-hover hover:text-text-primary transition-colors cursor-pointer",
+      )}
     >
       <Download size={12} /> Install model
     </button>
@@ -557,54 +579,67 @@ function Composer({
       <div className="mx-auto w-full max-w-[760px]">
         {/* Tip peeks above the rounded input and tucks behind it (separate
             rounded-top surface, contrasting shade, no border). */}
-        <CodebaseIndexBanner mode={mode} provider={provider} model={model} localReady={localReady} />
-        <div className="relative z-10 overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--bg-secondary)] shadow-[0_8px_24px_rgba(0,0,0,0.35)] focus-within:border-[var(--border-focus)]">
-        <ChatInput
-          ref={inputRef}
-          placeholder={disabled ? "Open a project to chat with its memory…" : "Ask about features, policies, changes…"}
-          onChange={(v) => setHasText(v.trim().length > 0)}
-          onSubmit={submit}
+        <CodebaseIndexBanner
+          mode={mode}
+          provider={provider}
+          model={model}
+          localReady={localReady}
         />
-        <div className="flex items-center justify-between gap-2 px-2 pb-2 pt-1">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <ModeToggle
-              mode={mode}
-              localReady={localReady}
-              providerReady={providerReady}
-              onMode={(m) => setMode(sessionId, m)}
-            />
-            {mode === "provider" && (
-              <ProviderModelSelector
-                configured={configured}
-                provider={provider}
-                model={model}
-                onProvider={(p) => setProvider(sessionId, p)}
-                onModel={(m) => setModel(sessionId, m)}
+        <div className="relative z-10 overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--bg-secondary)] shadow-[0_8px_24px_rgba(0,0,0,0.35)] focus-within:border-[var(--border-focus)]">
+          <ChatInput
+            ref={inputRef}
+            placeholder={
+              disabled
+                ? "Open a project to chat with its memory…"
+                : "Ask about features, policies, changes…"
+            }
+            onChange={(v) => setHasText(v.trim().length > 0)}
+            onSubmit={submit}
+          />
+          <div className="flex items-center justify-between gap-2 px-2 pb-2 pt-1">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <ModeToggle
+                mode={mode}
+                localReady={localReady}
+                providerReady={providerReady}
+                onMode={(m) => setMode(sessionId, m)}
               />
-            )}
-            {mode === "local" && localReady && <BackendPill />}
-          </div>
-          {needsInstall ? (
-            <InstallButton />
-          ) : (
-            <button
-              type="button"
-              onClick={submit}
-              disabled={!running && (!hasText || disabled || !canSend)}
-              className={cn(
-                "flex items-center justify-center w-7 h-7 shrink-0 rounded-full transition-colors",
-                running
-                  ? "bg-[var(--bg-elevated,var(--bg-tertiary))] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                  : !hasText || disabled || !canSend
-                    ? "bg-[var(--bg-elevated,var(--bg-tertiary))] text-[var(--text-tertiary)] cursor-not-allowed"
-                    : "bg-[var(--text-primary)] text-[var(--bg-base)] hover:opacity-90",
+              {mode === "provider" && (
+                <ProviderModelSelector
+                  configured={configured}
+                  provider={provider}
+                  model={model}
+                  onProvider={(p) => setProvider(sessionId, p)}
+                  onModel={(m) => setModel(sessionId, m)}
+                />
               )}
-              aria-label={running ? "Stop" : "Send"}
-            >
-              {running ? <Square size={11} strokeWidth={3} fill="currentColor" /> : <ArrowUp size={14} strokeWidth={2.5} />}
-            </button>
-          )}
-        </div>
+              {mode === "local" && localReady && <BackendPill />}
+            </div>
+            {needsInstall ? (
+              <InstallButton />
+            ) : (
+              <button
+                type="button"
+                onClick={submit}
+                disabled={!running && (!hasText || disabled || !canSend)}
+                className={cn(
+                  "flex items-center justify-center w-7 h-7 shrink-0 rounded-full transition-colors",
+                  running
+                    ? "bg-[var(--bg-elevated,var(--bg-tertiary))] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                    : !hasText || disabled || !canSend
+                      ? "bg-[var(--bg-elevated,var(--bg-tertiary))] text-[var(--text-tertiary)] cursor-not-allowed"
+                      : "bg-[var(--text-primary)] text-[var(--bg-base)] hover:opacity-90",
+                )}
+                aria-label={running ? "Stop" : "Send"}
+              >
+                {running ? (
+                  <Square size={11} strokeWidth={3} fill="currentColor" />
+                ) : (
+                  <ArrowUp size={14} strokeWidth={2.5} />
+                )}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -652,7 +687,9 @@ function SetupGate({ byokLoaded }: { byokLoaded: boolean }) {
           <Sparkles size={22} className="text-[var(--text-tertiary)]" />
         </div>
         <div>
-          <p className="text-sm font-medium text-[var(--text-primary)]">Chat with your codebase memory</p>
+          <p className="text-sm font-medium text-[var(--text-primary)]">
+            Chat with your codebase memory
+          </p>
           <p className="text-xs text-[var(--text-tertiary)] mt-1.5 leading-relaxed">
             Ask about this project’s features, policies and changes. Run it on-device with a small
             local model (~470&nbsp;MB), or use one of your configured providers.

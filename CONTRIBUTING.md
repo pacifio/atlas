@@ -75,10 +75,11 @@ Other commands you'll use:
 
 ```bash
 bun run dev             # Vite only, no Tauri shell — fast for pure UI work, but invoke() calls fail
-bun run format          # Prettier on src/
+bun run format          # oxfmt --write on src/
+bun run lint            # oxlint on src/
 ```
 
-`bun run lint` fails on a clean checkout — there's no ESLint 9 flat config in the repo yet. Use `bunx tsc --noEmit` as the frontend gate (see Verification below).
+A husky pre-commit hook runs `lint-staged` (oxfmt + oxlint on staged files) plus `bun run typecheck`, so most formatting/lint issues are caught before they ever reach CI (see Verification below).
 
 If you're working on the **Claude Code** agent specifically, you also need the `claude` CLI on your `PATH`. The native Atlas agent needs nothing extra.
 
@@ -156,6 +157,8 @@ Run `bump.sh` once per release, on the version branch, before opening the PR int
 ## Verification
 
 ```bash
+bun run lint                       # oxlint on src/
+bun run format:check               # oxfmt --check on src/
 bun run typecheck                  # frontend typecheck (app + test code)
 bun run test                       # frontend and cross-cutting tests
 cd src-tauri && cargo check        # Rust typecheck, including every crates/* dependency

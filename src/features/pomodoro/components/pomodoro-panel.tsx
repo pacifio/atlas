@@ -13,8 +13,7 @@ export function PomodoroPanel() {
   const activeDayIdx = usePomodoroStore.use.activeDayIdx();
   const blocks = usePomodoroStore.use.blocks();
   const isRunning = usePomodoroStore.use.isRunning();
-  const { tick, hydrate, openSheet, rolloverDay } =
-    usePomodoroStore.use.actions();
+  const { tick, hydrate, openSheet, rolloverDay } = usePomodoroStore.use.actions();
 
   useEffect(() => {
     if (!currentProject?.path) return;

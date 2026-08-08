@@ -19,13 +19,7 @@ type Phase = "idle" | "generating" | "confirm" | "committing" | "done";
  * commits. After committing it renders the last-10-commits graph inline for
  * immersion. Never commits without the confirm step.
  */
-export function CommitFlow({
-  editedPaths,
-  turnText,
-}: {
-  editedPaths: string[];
-  turnText: string;
-}) {
+export function CommitFlow({ editedPaths, turnText }: { editedPaths: string[]; turnText: string }) {
   const isRepo = useGitStore.use.isRepo();
   const changedFiles = useGitStore.use.files();
   const [phase, setPhase] = useState<Phase>("idle");
@@ -113,10 +107,7 @@ export function CommitFlow({
           <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-[var(--text-tertiary)]">
             Recent commits
           </div>
-          <div
-            className="relative"
-            style={{ height: graph.rows.length * ROW_HEIGHT }}
-          >
+          <div className="relative" style={{ height: graph.rows.length * ROW_HEIGHT }}>
             {graph.rows.map((row, i) => (
               <div
                 key={row.sha}
@@ -156,10 +147,7 @@ export function CommitFlow({
 
             <div className="mt-2 max-h-[120px] overflow-auto rounded-lg border border-[var(--border-default)] bg-[var(--bg-secondary)] px-3 py-1.5">
               {editedPaths.map((p) => (
-                <div
-                  key={p}
-                  className="truncate py-0.5 text-[11px] text-[var(--text-secondary)]"
-                >
+                <div key={p} className="truncate py-0.5 text-[11px] text-[var(--text-secondary)]">
                   {p}
                 </div>
               ))}
@@ -180,9 +168,7 @@ export function CommitFlow({
                 disabled={phase === "committing" || !message.trim()}
                 className="flex items-center gap-1.5 rounded-md bg-[var(--accent-primary)] px-3 py-1.5 text-[11px] font-medium text-[var(--bg-base)] transition-opacity hover:opacity-90 disabled:opacity-50"
               >
-                {phase === "committing" && (
-                  <Loader2 size={12} className="animate-spin" />
-                )}
+                {phase === "committing" && <Loader2 size={12} className="animate-spin" />}
                 Commit
               </button>
             </div>

@@ -51,13 +51,11 @@ export const useRecentChatsStore = createSelectors(
               const rest = s.items.filter((c) => c.tabId !== chat.tabId);
               return { items: [chat, ...rest].slice(0, CAP) };
             }),
-          remove: (tabId) =>
-            set((s) => ({ items: s.items.filter((c) => c.tabId !== tabId) })),
+          remove: (tabId) => set((s) => ({ items: s.items.filter((c) => c.tabId !== tabId) })),
           removeBySession: (acpSessionId) =>
             set((s) => ({
               items: s.items.filter(
-                (c) =>
-                  c.acpSessionId !== acpSessionId && c.tabId !== acpSessionId,
+                (c) => c.acpSessionId !== acpSessionId && c.tabId !== acpSessionId,
               ),
             })),
           clear: () => set({ items: [] }),

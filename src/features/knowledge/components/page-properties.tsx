@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { Flame, User, Tag, Calendar, Clock, Link as LinkIcon, X, Plus, ChevronRight } from "lucide-react";
-import { cn } from "@/lib/utils";
 import {
-  usePageMeta,
-  useKnowledgeMetaStore,
-} from "../stores/knowledge-meta-store";
+  Flame,
+  User,
+  Tag,
+  Calendar,
+  Clock,
+  Link as LinkIcon,
+  X,
+  Plus,
+  ChevronRight,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { usePageMeta, useKnowledgeMetaStore } from "../stores/knowledge-meta-store";
 
 interface PagePropertiesProps {
   entryId: string;
@@ -38,7 +45,8 @@ export function PageProperties({
   const summaryParts: string[] = [];
   if (meta.status) summaryParts.push(meta.status);
   if (meta.owner) summaryParts.push(`@${meta.owner}`);
-  if (meta.tags && meta.tags.length > 0) summaryParts.push(`#${meta.tags[0]}${meta.tags.length > 1 ? ` +${meta.tags.length - 1}` : ""}`);
+  if (meta.tags && meta.tags.length > 0)
+    summaryParts.push(`#${meta.tags[0]}${meta.tags.length > 1 ? ` +${meta.tags.length - 1}` : ""}`);
   const summary = summaryParts.length > 0 ? summaryParts.join(" · ") : "Add status, owner, tags…";
 
   return (
@@ -116,10 +124,7 @@ export function PageProperties({
             />
           </Row>
           <Row icon={Tag} label="Tags">
-            <TagsEditor
-              tags={meta.tags ?? []}
-              onChange={(tags) => patch(entryId, { tags })}
-            />
+            <TagsEditor tags={meta.tags ?? []} onChange={(tags) => patch(entryId, { tags })} />
           </Row>
           <Row icon={Calendar} label="Created">
             <span style={{ color: "var(--text-secondary)" }}>
@@ -353,9 +358,7 @@ function TextEditor({
     <button
       type="button"
       onClick={() => setEditing(true)}
-      className={cn(
-        value ? "text-text-secondary" : "text-text-tertiary italic",
-      )}
+      className={cn(value ? "text-text-secondary" : "text-text-tertiary italic")}
       style={{
         background: "transparent",
         border: 0,
@@ -370,13 +373,7 @@ function TextEditor({
   );
 }
 
-function TagsEditor({
-  tags,
-  onChange,
-}: {
-  tags: string[];
-  onChange: (tags: string[]) => void;
-}) {
+function TagsEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);

@@ -61,7 +61,7 @@ export const useRecentFilesStore = createSelectors(
       },
       hydrate: (items) => set({ items }),
     },
-  }))
+  })),
 );
 
 // Singleton event listener — installed lazily on first store read so
@@ -80,6 +80,6 @@ export function ensureRecentFilesListener(): void {
         return;
       }
       useRecentFilesStore.setState({ items: e.payload.items });
-    }
+    },
   );
 }

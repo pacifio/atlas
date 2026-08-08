@@ -32,7 +32,8 @@ export function SearchOverlay({
   const rootPath = useExplorerStore.use.rootPath();
   const { addTab } = useLayoutStore.use.actions();
   const session = useSessionStore.use.session();
-  const { addSearchHistory, removeSearchHistory, clearSearchHistory, saveSession } = useSessionStore.use.actions();
+  const { addSearchHistory, removeSearchHistory, clearSearchHistory, saveSession } =
+    useSessionStore.use.actions();
   const currentProject = useProjectStore.use.currentProject();
 
   useEffect(() => {
@@ -104,7 +105,7 @@ export function SearchOverlay({
             "w-[600px] max-h-[500px] rounded-xl overflow-hidden",
             "bg-[var(--bg-secondary)] border border-[var(--border-default)]",
             "shadow-[var(--shadow-overlay)]",
-            "flex flex-col"
+            "flex flex-col",
           )}
           style={{ zIndex: 99999 }}
           onOpenAutoFocus={(e) => {
@@ -136,9 +137,14 @@ export function SearchOverlay({
             {!query.trim() && !hasSearched && session.searchHistory.length > 0 && (
               <div className="py-1">
                 <div className="flex items-center justify-between px-4 py-1">
-                  <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wide font-semibold">Recent searches</span>
+                  <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wide font-semibold">
+                    Recent searches
+                  </span>
                   <button
-                    onClick={() => { clearSearchHistory(); if (currentProject) saveSession(currentProject.path); }}
+                    onClick={() => {
+                      clearSearchHistory();
+                      if (currentProject) saveSession(currentProject.path);
+                    }}
                     className="text-[9px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] cursor-pointer"
                   >
                     Clear all
@@ -150,14 +156,22 @@ export function SearchOverlay({
                     className="flex items-center px-4 py-1.5 hover:bg-[var(--bg-hover)] group"
                   >
                     <button
-                      onClick={() => { setQuery(q); performSearch(q); }}
+                      onClick={() => {
+                        setQuery(q);
+                        performSearch(q);
+                      }}
                       className="flex items-center gap-2 flex-1 min-w-0 text-left"
                     >
                       <Clock size={11} className="text-[var(--text-tertiary)] shrink-0" />
-                      <span className="text-[11px] text-[var(--text-secondary)] font-mono truncate">{q}</span>
+                      <span className="text-[11px] text-[var(--text-secondary)] font-mono truncate">
+                        {q}
+                      </span>
                     </button>
                     <button
-                      onClick={() => { removeSearchHistory(q); if (currentProject) saveSession(currentProject.path); }}
+                      onClick={() => {
+                        removeSearchHistory(q);
+                        if (currentProject) saveSession(currentProject.path);
+                      }}
                       className="opacity-0 group-hover:opacity-100 p-0.5 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] shrink-0"
                     >
                       <X size={9} />
@@ -178,7 +192,7 @@ export function SearchOverlay({
                 onMouseEnter={() => setSelectedIndex(i)}
                 className={cn(
                   "w-full text-left px-4 py-1.5 transition-colors",
-                  i === selectedIndex ? "bg-[var(--bg-hover)]" : ""
+                  i === selectedIndex ? "bg-[var(--bg-hover)]" : "",
                 )}
               >
                 <div className="flex items-center gap-2">

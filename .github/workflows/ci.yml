@@ -40,6 +40,10 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Install
         run: bun install --frozen-lockfile
+      - name: Lint
+        run: bun run lint
+      - name: Check formatting
+        run: bun run format:check
       # Two configs: app code (`src/`, no Node globals) and test code
       # (Node globals allowed). See the comments in tsconfig.json.
       - name: Typecheck

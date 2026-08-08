@@ -1,13 +1,5 @@
 import { useMemo } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { fmtTokens } from "@/features/monitor/lib/usage-format";
 import { AGENT_COLOR, CHART } from "../../lib/chart-theme";
 import type { MissionControlUsage } from "../../types";
@@ -58,9 +50,20 @@ export function UsageBarChart({ data }: { data: MissionControlUsage }) {
                 tickFormatter={(v: number) => fmtTokens(v)}
               />
               <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
-              <Bar dataKey="Claude" stackId="a" fill={AGENT_COLOR.claude} isAnimationActive={false} />
+              <Bar
+                dataKey="Claude"
+                stackId="a"
+                fill={AGENT_COLOR.claude}
+                isAnimationActive={false}
+              />
               <Bar dataKey="Codex" stackId="a" fill={AGENT_COLOR.codex} isAnimationActive={false} />
-              <Bar dataKey="Review" stackId="a" fill={AGENT_COLOR.review} radius={[2, 2, 0, 0]} isAnimationActive={false} />
+              <Bar
+                dataKey="Review"
+                stackId="a"
+                fill={AGENT_COLOR.review}
+                radius={[2, 2, 0, 0]}
+                isAnimationActive={false}
+              />
             </BarChart>
           </ResponsiveContainer>
         )}

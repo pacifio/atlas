@@ -114,17 +114,53 @@ export interface SessionSnapshot {
  * `kind` discriminates; `agent_id` + `session_id` route to the right tab.
  */
 export type AgentDelta =
-  | { kind: "status"; agent_id: AgentId; session_id: AcpSessionId; status: SessionStatus; turn_seq?: number }
-  | { kind: "message_appended"; agent_id: AgentId; session_id: AcpSessionId; message: SessionMessage }
-  | { kind: "text_chunk"; agent_id: AgentId; session_id: AcpSessionId; message_id: string; delta: string }
-  | { kind: "thinking_chunk"; agent_id: AgentId; session_id: AcpSessionId; message_id: string; delta: string }
-  | { kind: "tool_call_upserted"; agent_id: AgentId; session_id: AcpSessionId; message_id: string; tool_call: ToolCall }
+  | {
+      kind: "status";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      status: SessionStatus;
+      turn_seq?: number;
+    }
+  | {
+      kind: "message_appended";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      message: SessionMessage;
+    }
+  | {
+      kind: "text_chunk";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      message_id: string;
+      delta: string;
+    }
+  | {
+      kind: "thinking_chunk";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      message_id: string;
+      delta: string;
+    }
+  | {
+      kind: "tool_call_upserted";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      message_id: string;
+      tool_call: ToolCall;
+    }
   | { kind: "plan_updated"; agent_id: AgentId; session_id: AcpSessionId; plan: PlanEntry[] }
   | { kind: "mode_changed"; agent_id: AgentId; session_id: AcpSessionId; mode_id: string }
   | { kind: "model_changed"; agent_id: AgentId; session_id: AcpSessionId; model_id: string }
   | { kind: "available_commands"; agent_id: AgentId; session_id: AcpSessionId; commands: unknown[] }
   | { kind: "usage_updated"; agent_id: AgentId; session_id: AcpSessionId; usage: Usage }
-  | { kind: "context_usage"; agent_id: AgentId; session_id: AcpSessionId; used: number; size: number; cost: number }
+  | {
+      kind: "context_usage";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      used: number;
+      size: number;
+      cost: number;
+    }
   | { kind: "compaction"; agent_id: AgentId; session_id: AcpSessionId; active: boolean }
   | { kind: "compression_saved"; agent_id: AgentId; session_id: AcpSessionId; saved_tokens: number }
   | {
@@ -136,7 +172,28 @@ export type AgentDelta =
       options: unknown;
     }
   | { kind: "permission_resolved"; agent_id: AgentId; session_id: AcpSessionId; request_id: string }
-  | { kind: "turn_finished"; agent_id: AgentId; session_id: AcpSessionId; stop_reason: string; turn_seq?: number }
-  | { kind: "turn_failed"; agent_id: AgentId; session_id: AcpSessionId; error: string; turn_seq?: number; error_kind?: "auth" | "transient" | "fatal" | "process_dead" | "unknown" }
-  | { kind: "retry_status"; agent_id: AgentId; session_id: AcpSessionId; attempt: number; max_attempts: number; delay_ms: number; last_error: string }
+  | {
+      kind: "turn_finished";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      stop_reason: string;
+      turn_seq?: number;
+    }
+  | {
+      kind: "turn_failed";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      error: string;
+      turn_seq?: number;
+      error_kind?: "auth" | "transient" | "fatal" | "process_dead" | "unknown";
+    }
+  | {
+      kind: "retry_status";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      attempt: number;
+      max_attempts: number;
+      delay_ms: number;
+      last_error: string;
+    }
   | { kind: "agent_disconnected"; agent_id: AgentId; session_id: AcpSessionId; reason: string };

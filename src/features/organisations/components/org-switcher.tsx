@@ -89,9 +89,7 @@ export function OrgSwitcher() {
    *    negative, and locking someone out of their own org on an offline launch
    *    is worse than the rare stale case.
    */
-  const orgAccess = (
-    org: Organisation,
-  ): { ok: true } | { ok: false; reason: string } => {
+  const orgAccess = (org: Organisation): { ok: true } | { ok: false; reason: string } => {
     if (!(org.syncEnabled && org.remoteId)) return { ok: true };
     if (!signedIn) return { ok: false, reason: "Sign in to open this synced organisation" };
     if (myOrgIds && !myOrgIds.has(org.remoteId)) {
@@ -123,8 +121,7 @@ export function OrgSwitcher() {
   // Members manager (server-backed, so synced orgs only).
   const [membersOpen, setMembersOpen] = useState(false);
 
-  const active =
-    organisations.find((o) => o.id === activeOrganisationId) ?? organisations[0];
+  const active = organisations.find((o) => o.id === activeOrganisationId) ?? organisations[0];
   /** Members are a SERVER surface, so this needs both halves: an org that
    *  actually exists server-side, AND a live credential to talk to it with.
    *  Signing out does not un-sync an org — you stay in it, and every member
@@ -364,11 +361,7 @@ export function OrgSwitcher() {
               </DropdownMenu.Item>
             ) : (
               <div
-                title={
-                  isSyncedOrg
-                    ? "Sign in to manage members"
-                    : "Turn on sync to manage members"
-                }
+                title={isSyncedOrg ? "Sign in to manage members" : "Turn on sync to manage members"}
                 className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] text-[var(--text-secondary)] opacity-40 cursor-not-allowed select-none shrink-0"
               >
                 <Users size={13} className="shrink-0" />
@@ -387,9 +380,7 @@ export function OrgSwitcher() {
                 className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] text-[var(--text-secondary)] select-none"
               >
                 <Loader2 size={13} className="shrink-0 animate-spin text-[var(--text-tertiary)]" />
-                <span className="flex-1 text-left truncate">
-                  Syncing {active.name}…
-                </span>
+                <span className="flex-1 text-left truncate">Syncing {active.name}…</span>
               </div>
             ) : active.syncEnabled && active.remoteId ? (
               <div
@@ -397,9 +388,7 @@ export function OrgSwitcher() {
                 className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] text-[var(--text-secondary)] select-none"
               >
                 <Cloud size={13} className="shrink-0 text-[var(--text-tertiary)]" />
-                <span className="flex-1 text-left truncate">
-                  {active.name} is synced
-                </span>
+                <span className="flex-1 text-left truncate">{active.name} is synced</span>
                 <Check size={12} className="shrink-0 text-[var(--text-secondary)]" />
               </div>
             ) : (
@@ -424,9 +413,7 @@ export function OrgSwitcher() {
                 className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] outline-none text-[var(--text-secondary)] hover:bg-[var(--bg-active)] hover:text-[var(--text-primary)] cursor-pointer"
               >
                 <Cloud size={13} className="shrink-0" />
-                <span className="flex-1 text-left truncate">
-                  Turn on sync for {active.name}…
-                </span>
+                <span className="flex-1 text-left truncate">Turn on sync for {active.name}…</span>
               </DropdownMenu.Item>
             )}
           </DropdownMenu.Content>
@@ -435,18 +422,12 @@ export function OrgSwitcher() {
 
       <CreateOrgDialog open={createOpen} onOpenChange={setCreateOpen} />
 
-      <MembersModal
-        org={active}
-        open={membersOpen}
-        onOpenChange={setMembersOpen}
-      />
+      <MembersModal org={active} open={membersOpen} onOpenChange={setMembersOpen} />
 
       <DeleteOrgDialog
         org={confirmDelete}
         projectCount={
-          confirmDelete
-            ? workspaces.filter((w) => w.orgId === confirmDelete.id).length
-            : 0
+          confirmDelete ? workspaces.filter((w) => w.orgId === confirmDelete.id).length : 0
         }
         onClose={() => setConfirmDelete(null)}
       />
@@ -491,11 +472,15 @@ function DeleteOrgDialog({
             This permanently removes the organisation
             {projectCount > 0 && (
               <>
-                {" "}and its <span className="text-[var(--text-primary)]">{projectCount} project{projectCount === 1 ? "" : "s"}</span> (plus their chats)
+                {" "}
+                and its{" "}
+                <span className="text-[var(--text-primary)]">
+                  {projectCount} project{projectCount === 1 ? "" : "s"}
+                </span>{" "}
+                (plus their chats)
               </>
             )}{" "}
-            from Atlas. Your actual project files on disk are not touched. This
-            can’t be undone.
+            from Atlas. Your actual project files on disk are not touched. This can’t be undone.
           </p>
           <div className="mt-5 flex justify-end gap-2">
             <button

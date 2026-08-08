@@ -17,7 +17,12 @@ import type { MarkdownProps } from "./markdown-props";
  */
 export default function MarkdownImpl({ children, className }: MarkdownProps) {
   return (
-    <div className={cn("prose-chat text-[var(--text-primary)] leading-relaxed break-words select-text", className)}>
+    <div
+      className={cn(
+        "prose-chat text-[var(--text-primary)] leading-relaxed break-words select-text",
+        className,
+      )}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
@@ -112,7 +117,9 @@ export default function MarkdownImpl({ children, className }: MarkdownProps) {
           },
           tr(props) {
             return (
-              <tr className="border-b border-[var(--border-subtle)] last:border-b-0">{props.children}</tr>
+              <tr className="border-b border-[var(--border-subtle)] last:border-b-0">
+                {props.children}
+              </tr>
             );
           },
           td(props) {

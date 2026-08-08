@@ -135,10 +135,7 @@ const cacheKey = (p: string) => `atlas:fileindex-cache:${p}`;
 
 export function cacheFileList(projectPath: string, files: FileMatch[]): void {
   try {
-    localStorage.setItem(
-      cacheKey(projectPath),
-      JSON.stringify(files.slice(0, CACHE_CAP)),
-    );
+    localStorage.setItem(cacheKey(projectPath), JSON.stringify(files.slice(0, CACHE_CAP)));
   } catch {
     /* quota / serialization — cache is best-effort */
   }

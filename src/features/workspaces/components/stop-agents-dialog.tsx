@@ -37,10 +37,10 @@ export function StopAgentsDialog() {
               {pending.count} running {pending.count === 1 ? "agent" : "agents"}
             </Dialog.Title>
             <p className="mt-2 text-[12px] leading-relaxed text-[var(--text-secondary)]">
-              {pending.count} {plural} still working. {pending.actionLabel} will
-              stop {pending.count === 1 ? "it" : "them"} — the conversation
-              {pending.count === 1 ? " stays" : "s stay"} in history, but the
-              in-flight work is cancelled.
+              {pending.count} {plural} still working. {pending.actionLabel} will stop{" "}
+              {pending.count === 1 ? "it" : "them"} — the conversation
+              {pending.count === 1 ? " stays" : "s stay"} in history, but the in-flight work is
+              cancelled.
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button

@@ -81,13 +81,10 @@ export function CaptureSessionsView({
       <div className="h-full flex items-center justify-center">
         <div className="text-center space-y-1.5 max-w-[320px] px-4">
           <Icon className="size-6 mx-auto opacity-40" />
-          <p className="text-[12px] text-[var(--text-secondary)]">
-            No {label} sessions yet
-          </p>
+          <p className="text-[12px] text-[var(--text-secondary)]">No {label} sessions yet</p>
           <p className="text-[11px] text-[var(--text-tertiary)] leading-relaxed">
-            {label} sessions are recorded by Atlas&apos;s session capture as you
-            work. Run {label} in this project (with capture enabled) to
-            populate this view and the memory graph.
+            {label} sessions are recorded by Atlas&apos;s session capture as you work. Run {label}{" "}
+            in this project (with capture enabled) to populate this view and the memory graph.
           </p>
         </div>
       </div>
