@@ -43,6 +43,30 @@ interface BrowserNav {
 
 type BrowserMode = "live" | "reader";
 
+/** Window-relative rect the native child webview is positioned to. */
+interface EmbedRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Sub-pixel geometry churn isn't worth a native reposition. */
+const RECT_EPSILON = 0.5;
+
+function rectsMatch(a: EmbedRect, b: EmbedRect): boolean {
+  return (
+    Math.abs(a.x - b.x) < RECT_EPSILON &&
+    Math.abs(a.y - b.y) < RECT_EPSILON &&
+    Math.abs(a.width - b.width) < RECT_EPSILON &&
+    Math.abs(a.height - b.height) < RECT_EPSILON
+  );
+}
+
+/** Frames of stillness before the settle loop parks itself. ~200ms at 60Hz —
+ *  long enough to ride out a CSS transition's easing tail. */
+const SETTLE_FRAMES = 12;
+
 interface BrowserPanelProps {
   tabId?: string;
   initialUrl?: string;
@@ -114,11 +138,21 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
   const contentRef = useRef<HTMLDivElement>(null);
   const currentProject = useProjectStore.use.currentProject();
 
-  const lastRectRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  /** Previous frame's rect — drives the "geometry has settled" counter only. */
+  const prevRectRef = useRef<EmbedRect | null>(null);
   const stableCountRef = useRef(0);
-  /** Last visibility we actually sent to Rust, so the per-frame sync can skip
-   *  the IPC when nothing changed. `null` = nothing sent yet. */
+  /** Last rect we told Rust about. Deliberately SEPARATE from `prevRectRef`:
+   *  bounds are diffed against what the native webview is actually parked at,
+   *  never against the previous frame. A transition moving <0.5px/frame reads
+   *  as "unchanged" every single frame, so a previous-frame diff would let the
+   *  placeholder drift arbitrarily far while the webview never moves.
+   *  `null` = nothing sent yet, or the last send failed — either way, re-send. */
+  const sentRectRef = useRef<EmbedRect | null>(null);
+  /** Last visibility we told Rust about; `null` = unknown, so re-send. */
   const lastVisibleRef = useRef<boolean | null>(null);
+  /** Handle for the settle loop (see `pump`), or null when parked. */
+  const rafRef = useRef<number | null>(null);
+  const idleFramesRef = useRef(0);
 
   // ── Live: geometry + lifecycle ──────────────────────────────────────────
 
@@ -147,48 +181,78 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
   }, []);
 
   // Single source of truth for the native webview's visibility & bounds.
-  const syncVisibility = useCallback(() => {
-    if (modeRef.current !== "live" || !createdRef.current) return;
+  // Returns true while geometry is still moving, so the settle loop knows it
+  // can't park yet.
+  const syncVisibility = useCallback((): boolean => {
+    if (modeRef.current !== "live" || !createdRef.current) return false;
     const rect = currentRect();
-    const lastRect = lastRectRef.current;
+    const prevRect = prevRectRef.current;
+    const isStable = !!rect && !!prevRect && rectsMatch(rect, prevRect);
 
-    const isStable =
-      rect &&
-      lastRect &&
-      Math.abs(rect.x - lastRect.x) < 0.5 &&
-      Math.abs(rect.y - lastRect.y) < 0.5 &&
-      Math.abs(rect.width - lastRect.width) < 0.5 &&
-      Math.abs(rect.height - lastRect.height) < 0.5;
+    // Drives the settle loop. Starts as "did it move since last frame", but a
+    // reposition also counts: a drift slower than the epsilon reads as stable
+    // every frame, and without this the loop would park mid-transition and
+    // stop tracking a still-moving element.
+    let changed = !isStable;
 
     if (rect) {
-      if (isStable) {
-        stableCountRef.current += 1;
-      } else {
-        stableCountRef.current = 1;
-      }
-      lastRectRef.current = rect;
-      // Only cross the IPC boundary when the geometry actually moved. This
-      // runs from a per-frame rAF loop, and `browser_embed_set_bounds` does a
-      // native `webview.set_bounds` on the Rust side — issuing it every frame
-      // burns ~60 native repositions/sec per live embed forever, since the
-      // browser is a persistent module that stays mounted across tab switches.
-      if (!isStable) {
-        invoke("browser_embed_set_bounds", { id: embedId, rect }).catch(() => {});
+      stableCountRef.current = isStable ? stableCountRef.current + 1 : 1;
+      prevRectRef.current = rect;
+
+      // Diffed against the last SENT rect, not the previous frame — see
+      // `sentRectRef`. Cached optimistically and invalidated on failure so a
+      // rejected call retries on the next sync instead of stranding the
+      // webview at stale bounds forever.
+      const sent = sentRectRef.current;
+      if (!sent || !rectsMatch(rect, sent)) {
+        changed = true;
+        sentRectRef.current = rect;
+        invoke("browser_embed_set_bounds", { id: embedId, rect }).catch(() => {
+          sentRectRef.current = null;
+        });
       }
     } else {
       stableCountRef.current = 0;
-      lastRectRef.current = null;
+      prevRectRef.current = null;
     }
 
     // Require stable geometry (at least 2 consecutive checks) before showing native webview
     const isGeometryStable = rect && stableCountRef.current >= 2;
     const visible = !!isGeometryStable && !overlayOpenRef.current;
-    // Same rationale: only tell Rust when the desired visibility flips.
     if (lastVisibleRef.current !== visible) {
       lastVisibleRef.current = visible;
-      invoke("browser_embed_set_visible", { id: embedId, visible }).catch(() => {});
+      invoke("browser_embed_set_visible", { id: embedId, visible }).catch(() => {
+        // Same self-healing rationale as bounds: without this, one swallowed
+        // rejection leaves the pane natively hidden while the cache claims
+        // it's visible, and nothing ever retries.
+        lastVisibleRef.current = null;
+      });
     }
+
+    return changed;
   }, [embedId, currentRect]);
+
+  /**
+   * Kick a short rAF burst so a CSS transition (splitter drag, panel collapse)
+   * is tracked frame-by-frame, then park once the rect holds still for
+   * `SETTLE_FRAMES`. The previous shape ran rAF unconditionally for the life of
+   * the window — and since the browser is a persistent module that survives tab
+   * switches, that was a forced layout read every frame forever, per embed.
+   */
+  const pump = useCallback(() => {
+    idleFramesRef.current = 0;
+    if (rafRef.current !== null) return; // already running; the reset above extends it
+    const step = () => {
+      const moving = syncVisibility();
+      idleFramesRef.current = moving ? 0 : idleFramesRef.current + 1;
+      if (idleFramesRef.current >= SETTLE_FRAMES) {
+        rafRef.current = null;
+        return;
+      }
+      rafRef.current = requestAnimationFrame(step);
+    };
+    rafRef.current = requestAnimationFrame(step);
+  }, [syncVisibility]);
 
   const ensureLive = useCallback(
     async (url: string) => {
@@ -209,7 +273,7 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
           setEmbedError(null);
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
-              syncVisibility();
+              pump();
             });
           });
         } else {
@@ -231,7 +295,7 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
         });
       }
     },
-    [embedId, currentRect, registerEmbed, syncVisibility],
+    [embedId, currentRect, registerEmbed, pump],
   );
 
   // Listen for Rust-owned navigation deltas for this embed.
@@ -252,36 +316,37 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
     };
   }, [embedId, groupId, tabId, focusThisGroup]);
 
-  // Track geometry + visibility continuously during layout changes & transitions.
+  // Track geometry + visibility across layout changes & transitions.
+  // `mode` is a dependency because the placeholder div only exists in Live
+  // mode — a Live→Reader→Live round-trip mounts a NEW node, and without the
+  // re-run the observer would stay attached to the detached one and silently
+  // stop reporting.
   useEffect(() => {
+    if (mode !== "live") return;
     const el = placeholderRef.current;
     if (!el) return;
 
-    let animFrame: number | null = null;
-    const loop = () => {
-      syncVisibility();
-      animFrame = requestAnimationFrame(loop);
-    };
-
-    const ro = new ResizeObserver(syncVisibility);
+    const ro = new ResizeObserver(pump);
     ro.observe(el);
-    window.addEventListener("resize", syncVisibility);
-    window.addEventListener("fullscreenchange", syncVisibility);
-
-    animFrame = requestAnimationFrame(loop);
+    window.addEventListener("resize", pump);
+    window.addEventListener("fullscreenchange", pump);
+    pump();
 
     return () => {
-      if (animFrame !== null) cancelAnimationFrame(animFrame);
       ro.disconnect();
-      window.removeEventListener("resize", syncVisibility);
-      window.removeEventListener("fullscreenchange", syncVisibility);
+      window.removeEventListener("resize", pump);
+      window.removeEventListener("fullscreenchange", pump);
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
     };
-  }, [syncVisibility]);
+  }, [mode, pump]);
 
   // Hide/restore the moment a DOM overlay opens or closes.
   useEffect(() => {
-    syncVisibility();
-  }, [overlayOpen, syncVisibility]);
+    pump();
+  }, [overlayOpen, pump]);
 
   // Create the embed once we have an initial URL and the placeholder is laid out.
   useEffect(() => {
@@ -297,15 +362,20 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
   useEffect(() => {
     if (!createdRef.current) return;
     if (mode === "live") {
-      syncVisibility();
+      pump();
     } else {
-      // Keep the cache in step with what Rust was actually told, otherwise the
-      // per-frame sync would think `false` was already sent and skip the
-      // re-show when the user switches back to Live.
+      // Reader mode tears the placeholder out of the tree, so the next Live
+      // pass starts from scratch: drop both caches or the re-show is skipped
+      // as "already sent" and the webview never comes back.
       lastVisibleRef.current = false;
-      invoke("browser_embed_set_visible", { id: embedId, visible: false }).catch(() => {});
+      sentRectRef.current = null;
+      prevRectRef.current = null;
+      stableCountRef.current = 0;
+      invoke("browser_embed_set_visible", { id: embedId, visible: false }).catch(() => {
+        lastVisibleRef.current = null;
+      });
     }
-  }, [mode, embedId, syncVisibility]);
+  }, [mode, embedId, pump]);
 
   // Destroy the native webview when the tab closes (panel unmounts).
   useEffect(() => {
@@ -630,11 +700,9 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
                     The embedded live browser could not be native-contained in this panel area. You
                     can view in Reader mode or open in a separate window:
                   </p>
-                  {embedError && (
-                    <p className="truncate pt-1 font-mono text-[10px] text-text-tertiary">
-                      {embedError}
-                    </p>
-                  )}
+                  <p className="truncate pt-1 font-mono text-[10px] text-text-tertiary">
+                    {embedError}
+                  </p>
                 </div>
                 <div className="flex flex-col gap-2 pt-1 w-full max-w-[280px]">
                   <button
