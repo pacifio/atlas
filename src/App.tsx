@@ -541,7 +541,7 @@ export function App() {
         }
         if (permissionState !== "granted") return;
         sendNotification({
-          title: `Atlas — ${sessionProjectName(acpSessionId)}`,
+          title: `Atlas: ${sessionProjectName(acpSessionId)}`,
           body: "Agent task finished.",
         });
       } catch (e) {
@@ -564,7 +564,7 @@ export function App() {
         }
         if (permissionState !== "granted") return;
         sendNotification({
-          title: `Atlas — ${sessionProjectName(acpSessionId)} needs permission`,
+          title: `Atlas: ${sessionProjectName(acpSessionId)} needs permission`,
           body: `Approve "${toolTitle}" to continue.`,
         });
       } catch (e) {
