@@ -10,6 +10,7 @@
 pub mod driver;
 pub mod error;
 pub mod events;
+pub mod model_sniff;
 pub mod registry;
 pub mod schema;
 pub mod spawn;

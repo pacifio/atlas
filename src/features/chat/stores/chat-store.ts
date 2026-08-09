@@ -23,6 +23,7 @@ import { splitAtlasContext } from "../lib/atlas-context";
 import { loadCachedAcpModes, saveCachedAcpModes } from "../lib/acp-modes-cache";
 import { loadCachedAcpModels, saveCachedAcpModels } from "../lib/acp-models-cache";
 import { resolveModelLabel } from "../lib/model-label";
+import { defaultAgentForNewSession } from "../lib/default-agent";
 import { loadCachedContextUsage, saveCachedContextUsage } from "../lib/context-usage-cache";
 import {
   saveCerseiModelPref,
@@ -565,7 +566,11 @@ export const useChatStore = createSelectors(
       drafts: {},
       activeSessionId: null,
       actions: {
-        createSession: (tabId, agentType = "claude-code") =>
+        // No explicit agent → resolve the priority default (Claude Code when
+        // it's installed + authed, otherwise the native Atlas agent). Never
+        // hard-code "claude-code" here: on a fresh install that produces a
+        // permanently disabled composer with no way to reach another agent.
+        createSession: (tabId, agentType = defaultAgentForNewSession()) =>
           set((s) => {
             if (s.sessions[tabId]) return;
             s.sessions[tabId] = {

@@ -19,6 +19,7 @@ import {
 import { composePrompt, type MentionData, type MentionSkill } from "../lib/mentions";
 import { sharedMemory } from "@/features/memory/lib/shared-memory-api";
 import { usePaneFind } from "../lib/use-pane-find";
+import { useDefaultAgentType } from "../hooks/use-default-agent";
 import { MessageInput } from "./message-input";
 import { SessionSidebar } from "./session-sidebar";
 import { ChatHeader } from "./chat-header";
@@ -296,11 +297,19 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
 
   const acpSessionId = session?.acpSessionId ?? "";
 
+  // Which agent a fresh chat starts on — Claude Code when it's installed +
+  // authed, otherwise the native Atlas agent. `null` while the Claude probe is
+  // still deciding on a first-ever launch: creating the session then would pin
+  // it to the wrong agent (and, for Claude, to a disabled composer), so we wait
+  // the few hundred ms it takes. The transcript already renders its skeleton
+  // for a session-less tab.
+  const defaultAgentType = useDefaultAgentType();
+
   useEffect(() => {
-    if (!session) {
-      createSession(tabId);
+    if (!session && defaultAgentType) {
+      createSession(tabId, defaultAgentType);
     }
-  }, [tabId, session, createSession]);
+  }, [tabId, session, createSession, defaultAgentType]);
 
   // Bind an ACP agent + session to this tab as soon as the panel mounts.
   // The agent spawn takes 1–3 s warm and up to 30 s on a cold `npx` cache,
@@ -633,7 +642,19 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     return () => window.removeEventListener("atlas:chat-send", handler);
   }, [tabId]);
 
-  if (!session) return null;
+  // No session yet. Normally a single frame (the effect above creates it on
+  // mount); on a first-ever launch it also covers the brief wait for the Claude
+  // Code probe that decides which agent this chat starts on. Show the transcript
+  // skeleton rather than a blank pane so that wait doesn't read as a broken tab.
+  if (!session) {
+    return (
+      <div ref={rootRef} className="h-full overflow-hidden">
+        <div className="mx-auto w-full max-w-[760px] pt-[46px]">
+          <PanelSkeleton rows={6} />
+        </div>
+      </div>
+    );
+  }
 
   const handleStop = () => {
     const cs = useChatStore.getState();

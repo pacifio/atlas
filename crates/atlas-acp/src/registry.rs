@@ -298,7 +298,15 @@ impl AgentRegistry {
         })
         .await?;
         self.register_session(agent_id, resp.session_id.clone())?;
-        let info: NewSessionInfo = resp.into();
+        let session_id = resp.session_id.clone();
+        let mut info: NewSessionInfo = resp.into();
+        // Agents still on the pre-config-options dialect (OpenCode, Cursor)
+        // answer with a top-level `models` blob that the typed
+        // `NewSessionResponse` drops on the floor — without this their model
+        // picker never renders. Recover it from the raw wire.
+        if info.models.is_none() {
+            info.models = self.take_sniffed_models(agent_id, session_id.0.as_ref());
+        }
         // Diagnostic: surface what the agent advertised for model selection, so a
         // missing model picker can be diagnosed (agent didn't send `models` vs.
         // a parse gap). Logs once per new session.
@@ -371,6 +379,18 @@ impl AgentRegistry {
 
     /// Install a lifecycle guard for a session. Idempotent — if a
     /// guard for this session already exists, the call is a no-op.
+    /// Collect the legacy `models` blob the driver's wire tap captured for this
+    /// session, if the agent sent one. `None` for agents on the config-options
+    /// dialect (whose models come through the typed response) and for agents
+    /// with no model selection at all.
+    fn take_sniffed_models(&self, agent_id: AgentId, session_id: &str) -> Option<serde_json::Value> {
+        self.inner
+            .get(&agent_id)?
+            .runtime
+            .model_sniffer
+            .take(session_id)
+    }
+
     /// Called from `new_session` / `load_session`.
     pub fn register_session(&self, agent_id: AgentId, session_id: SessionId) -> Result<()> {
         let entry = self

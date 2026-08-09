@@ -786,10 +786,15 @@ export function MessageInput({
     focusedOnceRef.current = false;
   }, [tabId]);
   const handleFocusCapture = useCallback(() => {
+    // The toolbar (agent / model pickers) stays interactive while the composer
+    // is disabled, so focus can now reach this handler from a control rather
+    // than the text area. Don't kick off an agent bind against a CLI that
+    // isn't ready — the user is most likely on their way to switching agents.
+    if (disabled) return;
     if (focusedOnceRef.current) return;
     focusedOnceRef.current = true;
     window.dispatchEvent(new CustomEvent("atlas:chat-input-focused", { detail: { tabId } }));
-  }, [tabId]);
+  }, [tabId, disabled]);
 
   // ── Mention picker orchestration ──────────────────────────────────────
   const projectPath = useProjectStore((s) => s.currentProject?.path ?? null);
@@ -1423,13 +1428,14 @@ export function MessageInput({
             "focus-within:ring-1 focus-within:ring-[var(--accent-primary)]/20",
             // Drag-over highlight: a clear accent ring while OS files hover.
             isDropTarget && "border-[var(--accent-primary)] ring-2 ring-[var(--accent-primary)]/40",
-            // Hard-disable when Claude Code isn't ready. `pointer-events-none`
-            // disables the textarea (no click-to-focus/type) and also blocks
-            // the focus event so we never trigger the agent-bind listener
-            // (which would try to spawn a session against a CLI that isn't
-            // ready). Just dim it — no red tint — since the send button is
-            // already disabled and submit()/Cmd+Enter are gated on `disabled`.
-            disabled && "opacity-60 pointer-events-none",
+            // Hard-disable when the bound agent isn't ready. Dim only — the
+            // pointer block lives on the INPUT wrapper below, never on the
+            // whole composer: the agent switcher sits in this toolbar, and
+            // blocking it meant a user without Claude Code could never reach
+            // another agent (the composer was a dead end on a fresh install).
+            // No red tint — the send button is already disabled and
+            // submit()/Cmd+Enter are gated on `disabled`.
+            disabled && "opacity-60",
             // Lock the composer while a GitHub repo syncs into `.atlas/repos`.
             githubSyncing !== null && "opacity-60 pointer-events-none",
           )}
@@ -1483,32 +1489,39 @@ export function MessageInput({
               })}
             </div>
           )}
-          {LazyChatInput ? (
-            <LazyChatInput
-              ref={inputRef}
-              initialValue={value}
-              placeholder={effectivePlaceholder}
-              onChange={setValue}
-              onSubmit={submit}
-              onMentionTrigger={setTrigger}
-              // The native agent has no slash commands — suppressing the
-              // trigger here (rather than showing an empty picker) keeps "/"
-              // as plain text for cersei.
-              onSlashTrigger={agentType === "cersei" ? undefined : setSlashTrigger}
-              onPasteImages={handlePasteImages}
-              keyInterceptor={keyInterceptor}
-              // All agents (incl. the native Atlas/cersei agent) support skills
-              // now — the `#` rail inlines a skill body via compose_prompt, and the
-              // native agent additionally loads Atlas-enabled skills via its Skill
-              // tool. (`agentType` retained for other per-agent gating above.)
-              allowSkillMention={true}
-            />
-          ) : (
-            // Same-height empty slot so the panel layout doesn't reflow when
-            // CodeMirror lands. Non-interactive — by the time the user can
-            // visually find this region the chunk has typically resolved.
-            <div aria-hidden="true" style={{ minHeight: 44 }} className="px-4 pt-3 pb-1" />
-          )}
+          {/* Only the text area is pointer-blocked while `disabled`:
+              `pointer-events-none` stops click-to-focus/typing AND the focus
+              event, so we never trigger the agent-bind listener against a CLI
+              that isn't ready. The toolbar below stays live so the agent /
+              model pickers remain reachable. */}
+          <div className={cn(disabled && "pointer-events-none")}>
+            {LazyChatInput ? (
+              <LazyChatInput
+                ref={inputRef}
+                initialValue={value}
+                placeholder={effectivePlaceholder}
+                onChange={setValue}
+                onSubmit={submit}
+                onMentionTrigger={setTrigger}
+                // The native agent has no slash commands — suppressing the
+                // trigger here (rather than showing an empty picker) keeps "/"
+                // as plain text for cersei.
+                onSlashTrigger={agentType === "cersei" ? undefined : setSlashTrigger}
+                onPasteImages={handlePasteImages}
+                keyInterceptor={keyInterceptor}
+                // All agents (incl. the native Atlas/cersei agent) support skills
+                // now — the `#` rail inlines a skill body via compose_prompt, and the
+                // native agent additionally loads Atlas-enabled skills via its Skill
+                // tool. (`agentType` retained for other per-agent gating above.)
+                allowSkillMention={true}
+              />
+            ) : (
+              // Same-height empty slot so the panel layout doesn't reflow when
+              // CodeMirror lands. Non-interactive — by the time the user can
+              // visually find this region the chunk has typically resolved.
+              <div aria-hidden="true" style={{ minHeight: 44 }} className="px-4 pt-3 pb-1" />
+            )}
+          </div>
           <div className="flex items-center justify-between px-2 pb-2 pt-1">
             <div className="flex items-center gap-1">
               <ComposerAddMenu
