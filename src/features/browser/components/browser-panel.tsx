@@ -110,8 +110,12 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [embedError, setEmbedError] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const currentProject = useProjectStore.use.currentProject();
+
+  const lastRectRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const stableCountRef = useRef(0);
 
   // ── Live: geometry + lifecycle ──────────────────────────────────────────
 
@@ -124,10 +128,53 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
     const el = placeholderRef.current;
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    // display:none (inactive tab) collapses to 0 — treat as "hidden".
     if (r.width <= 0 || r.height <= 0) return null;
-    return { x: r.left, y: r.top, width: r.width, height: r.height };
+
+    const winW = window.innerWidth;
+    const winH = window.innerHeight;
+    const x1 = Math.max(0, Math.min(winW, r.left));
+    const y1 = Math.max(0, Math.min(winH, r.top));
+    const x2 = Math.max(0, Math.min(winW, r.right));
+    const y2 = Math.max(0, Math.min(winH, r.bottom));
+    const width = x2 - x1;
+    const height = y2 - y1;
+
+    if (width <= 0 || height <= 0 || !Number.isFinite(x1) || !Number.isFinite(y1)) return null;
+    return { x: x1, y: y1, width, height };
   }, []);
+
+  // Single source of truth for the native webview's visibility & bounds.
+  const syncVisibility = useCallback(() => {
+    if (modeRef.current !== "live" || !createdRef.current) return;
+    const rect = currentRect();
+    const lastRect = lastRectRef.current;
+
+    const isStable =
+      rect &&
+      lastRect &&
+      Math.abs(rect.x - lastRect.x) < 0.5 &&
+      Math.abs(rect.y - lastRect.y) < 0.5 &&
+      Math.abs(rect.width - lastRect.width) < 0.5 &&
+      Math.abs(rect.height - lastRect.height) < 0.5;
+
+    if (rect) {
+      if (isStable) {
+        stableCountRef.current += 1;
+      } else {
+        stableCountRef.current = 1;
+      }
+      lastRectRef.current = rect;
+      invoke("browser_embed_set_bounds", { id: embedId, rect }).catch(() => {});
+    } else {
+      stableCountRef.current = 0;
+      lastRectRef.current = null;
+    }
+
+    // Require stable geometry (at least 2 consecutive checks) before showing native webview
+    const isGeometryStable = rect && stableCountRef.current >= 2;
+    const visible = !!isGeometryStable && !overlayOpenRef.current;
+    invoke("browser_embed_set_visible", { id: embedId, visible }).catch(() => {});
+  }, [embedId, currentRect]);
 
   const ensureLive = useCallback(
     async (url: string) => {
@@ -135,23 +182,38 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
       if (!rect) return;
       try {
         if (!createdRef.current) {
+          logEvent({
+            source: "atlas",
+            kind: "browser-embed",
+            summary: `Creating embedded browser child webview ${embedId} for ${url}`,
+            status: "success",
+            payload: { id: embedId, url, rect },
+          });
           await invoke("browser_embed_create", { id: embedId, url, rect });
           createdRef.current = true;
           registerEmbed();
+          setEmbedError(null);
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              syncVisibility();
+            });
+          });
         } else {
           await invoke("browser_embed_navigate", { id: embedId, url });
         }
       } catch (e) {
+        const errorMsg = String(e);
+        setEmbedError(errorMsg);
         logEvent({
           source: "atlas",
           kind: "browser-embed",
-          summary: `Failed to load ${url} in embedded browser`,
+          summary: `Failed to load ${url} in embedded browser; activating fallback`,
           status: "failure",
-          payload: { url, error: String(e) },
+          payload: { url, error: errorMsg },
         });
       }
     },
-    [embedId, currentRect, registerEmbed],
+    [embedId, currentRect, registerEmbed, syncVisibility],
   );
 
   // Listen for Rust-owned navigation deltas for this embed.
@@ -172,32 +234,29 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
     };
   }, [embedId, groupId, tabId, focusThisGroup]);
 
-  // Single source of truth for the native webview's visibility. The webview is
-  // shown only when it's Live, created, has a non-zero rect (visible tab), AND
-  // no DOM overlay is open on top of it. `set_bounds` keeps it positioned for
-  // the restore even while hidden.
-  const syncVisibility = useCallback(() => {
-    if (modeRef.current !== "live" || !createdRef.current) return;
-    const rect = currentRect();
-    if (rect) {
-      invoke("browser_embed_set_bounds", { id: embedId, rect }).catch(() => {});
-    }
-    const visible = !!rect && !overlayOpenRef.current;
-    invoke("browser_embed_set_visible", { id: embedId, visible }).catch(() => {});
-  }, [embedId, currentRect]);
-
-  // Track geometry + visibility. ResizeObserver fires both when the panel
-  // resizes AND when the tab is hidden (display:none → size 0), so it doubles
-  // as the show/hide trigger for the native overlay.
+  // Track geometry + visibility continuously during layout changes & transitions.
   useEffect(() => {
     const el = placeholderRef.current;
     if (!el) return;
+
+    let animFrame: number | null = null;
+    const loop = () => {
+      syncVisibility();
+      animFrame = requestAnimationFrame(loop);
+    };
+
     const ro = new ResizeObserver(syncVisibility);
     ro.observe(el);
     window.addEventListener("resize", syncVisibility);
+    window.addEventListener("fullscreenchange", syncVisibility);
+
+    animFrame = requestAnimationFrame(loop);
+
     return () => {
+      if (animFrame !== null) cancelAnimationFrame(animFrame);
       ro.disconnect();
       window.removeEventListener("resize", syncVisibility);
+      window.removeEventListener("fullscreenchange", syncVisibility);
     };
   }, [syncVisibility]);
 
@@ -216,8 +275,7 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
   }, [mode, initialUrl]);
 
   // Toggle the native overlay's visibility when switching Live⇄Reader, and
-  // (re)show + reposition when returning to Live. Routed through syncVisibility
-  // so it respects overlay suppression (can't re-show while a popup is open).
+  // (re)show + reposition when returning to Live.
   useEffect(() => {
     if (!createdRef.current) return;
     if (mode === "live") {
@@ -537,6 +595,51 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
       {/* ── Live mode: placeholder the native webview is positioned over ── */}
       {isLive && (
         <div ref={placeholderRef} className="flex-1 relative bg-bg-base">
+          {/* Safe fallback UI when native webview containment or creation fails */}
+          {embedError && (
+            <div className="absolute inset-0 flex items-center justify-center p-6 pointer-events-auto bg-bg-base z-10">
+              <div className="flex max-w-[380px] flex-col items-center gap-4 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border-default bg-bg-secondary">
+                  <Globe size={22} className="text-text-tertiary" />
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-sm font-medium text-text-primary">Native Embed Fallback</p>
+                  <p className="text-xs leading-relaxed text-text-tertiary">
+                    The embedded live browser could not be native-contained in this panel area. You
+                    can view in Reader mode or open in a separate window:
+                  </p>
+                  {embedError && (
+                    <p className="truncate pt-1 font-mono text-[10px] text-text-tertiary">
+                      {embedError}
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-col gap-2 pt-1 w-full max-w-[280px]">
+                  <button
+                    onClick={toggleReader}
+                    className="flex items-center justify-center gap-2 rounded-md bg-text-primary px-3 py-2 text-xs font-medium text-bg-base transition-opacity hover:opacity-90 cursor-pointer"
+                  >
+                    <BookOpen size={14} />
+                    Switch to Reader mode
+                  </button>
+                  <button
+                    onClick={openBrowserWindow}
+                    className="flex items-center justify-center gap-2 rounded-md border border-border-default bg-bg-secondary px-3 py-2 text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary cursor-pointer"
+                  >
+                    <AppWindow size={14} />
+                    Open in a new window
+                  </button>
+                  <button
+                    onClick={openExternal}
+                    className="flex items-center justify-center gap-2 rounded-md border border-border-default bg-bg-secondary px-3 py-2 text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary cursor-pointer"
+                  >
+                    <ExternalLink size={14} />
+                    Open in default browser
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           {/* Shown when an overlay forces the native webview to hide — it sits
               UNDER the webview, so it's only visible while the webview is gone. */}
           {createdRef.current && overlayOpen && (

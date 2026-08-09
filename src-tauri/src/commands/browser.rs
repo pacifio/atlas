@@ -49,6 +49,15 @@ pub struct BrowserRect {
 }
 
 impl BrowserRect {
+    pub fn is_valid(&self) -> bool {
+        self.width.is_finite()
+            && self.height.is_finite()
+            && self.x.is_finite()
+            && self.y.is_finite()
+            && self.width > 0.0
+            && self.height > 0.0
+    }
+
     fn to_tauri(self) -> Rect {
         Rect {
             position: Position::Logical(LogicalPosition::new(self.x, self.y)),
@@ -207,18 +216,23 @@ pub fn browser_embed_create(
     url: String,
     rect: BrowserRect,
 ) -> Result<(), String> {
+    if !rect.is_valid() {
+        return Err(format!("invalid embed bounds: {rect:?}"));
+    }
     let url = normalize_url(&url);
     let parsed: url::Url = url.parse().map_err(|e| format!("invalid URL {url:?}: {e}"))?;
     let label = embed_label(&id);
 
     // Already exists → just reposition, show, and navigate.
     if let Some(webview) = app.get_webview(&label) {
+        tracing::debug!(id = %id, rect = ?rect, "repositioning existing embed webview");
         let _ = webview.set_bounds(rect.to_tauri());
         let _ = webview.show();
         let _ = webview.navigate(parsed);
         return Ok(());
     }
 
+    tracing::info!(id = %id, url = %url, rect = ?rect, "creating new embedded child webview (initially hidden)");
     let profile = browser_profile_dir(&app)?;
     state
         .nav
@@ -258,13 +272,14 @@ pub fn browser_embed_create(
             }
         });
 
-    window
+    let webview = window
         .add_child(
             builder,
             Position::Logical(LogicalPosition::new(rect.x, rect.y)),
             Size::Logical(LogicalSize::new(rect.width.max(1.0), rect.height.max(1.0))),
         )
         .map_err(|e| format!("failed to embed browser webview: {e}"))?;
+    let _ = webview.hide();
 
     Ok(())
 }
@@ -311,9 +326,13 @@ pub fn browser_embed_set_bounds(
     id: String,
     rect: BrowserRect,
 ) -> Result<(), String> {
+    if !rect.is_valid() {
+        return Err(format!("invalid embed bounds: {rect:?}"));
+    }
     let webview = app
         .get_webview(&embed_label(&id))
         .ok_or_else(|| "embed not found".to_string())?;
+    tracing::trace!(id = %id, rect = ?rect, "browser_embed_set_bounds");
     webview.set_bounds(rect.to_tauri()).map_err(|e| e.to_string())
 }
 
@@ -329,6 +348,7 @@ pub fn browser_embed_set_visible(
     let webview = app
         .get_webview(&embed_label(&id))
         .ok_or_else(|| "embed not found".to_string())?;
+    tracing::debug!(id = %id, visible = visible, "browser_embed_set_visible");
     if visible {
         webview.show().map_err(|e| e.to_string())
     } else {
@@ -343,6 +363,7 @@ pub fn browser_embed_destroy(
     state: tauri::State<'_, BrowserState>,
     id: String,
 ) -> Result<(), String> {
+    tracing::info!(id = %id, "destroying embedded browser webview");
     state.nav.lock().remove(&id);
     if let Some(webview) = app.get_webview(&embed_label(&id)) {
         webview.close().map_err(|e| e.to_string())?;
