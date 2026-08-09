@@ -25,11 +25,17 @@ export interface TerminalTabState {
   activePaneId: string | null;
 }
 
+interface PendingTerminalFocus {
+  tabId: string;
+  requestId: number;
+}
+
 interface TerminalState {
   tabs: Record<string, TerminalTabState>;
   /** Per-terminal "a command is running" flag, keyed by the layout terminal id.
    *  Surfaced as a spinner on the tab strip; the BlockTerminal reports it. */
   busy: Record<string, boolean>;
+  pendingFocus: PendingTerminalFocus | null;
 }
 
 interface TerminalActions {
@@ -42,6 +48,8 @@ interface TerminalActions {
     setActiveTerminalInPane: (tabId: string, paneId: string, ptyId: string) => void;
     setActivePane: (tabId: string, paneId: string) => void;
     setTerminalBusy: (ptyId: string, busy: boolean) => void;
+    requestTerminalFocus: (tabId: string) => void;
+    clearPendingTerminalFocus: () => void;
     /** Drop several terminal tabs (used when a workspace is DISCARDED). PTYs
      *  are already closed by the BlockTerminal unmount; this frees the trees. */
     removeTabs: (tabIds: string[]) => void;
@@ -108,6 +116,7 @@ export const useTerminalStore = createSelectors(
     immer((set, get) => ({
       tabs: {},
       busy: {},
+      pendingFocus: null,
       actions: {
         initTab: (tabId) => {
           if (get().tabs[tabId]) return;
@@ -225,6 +234,17 @@ export const useTerminalStore = createSelectors(
           });
         },
 
+        requestTerminalFocus: (tabId) => {
+          set((s) => {
+            s.pendingFocus = { tabId, requestId: (s.pendingFocus?.requestId ?? 0) + 1 };
+          });
+        },
+
+        clearPendingTerminalFocus: () => {
+          set((s) => {
+            s.pendingFocus = null;
+          });
+        },
         removeTabs: (tabIds) =>
           set((s) => {
             for (const id of tabIds) delete s.tabs[id];
