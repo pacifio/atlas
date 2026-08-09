@@ -116,6 +116,9 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
 
   const lastRectRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
   const stableCountRef = useRef(0);
+  /** Last visibility we actually sent to Rust, so the per-frame sync can skip
+   *  the IPC when nothing changed. `null` = nothing sent yet. */
+  const lastVisibleRef = useRef<boolean | null>(null);
 
   // ── Live: geometry + lifecycle ──────────────────────────────────────────
 
@@ -164,7 +167,14 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
         stableCountRef.current = 1;
       }
       lastRectRef.current = rect;
-      invoke("browser_embed_set_bounds", { id: embedId, rect }).catch(() => {});
+      // Only cross the IPC boundary when the geometry actually moved. This
+      // runs from a per-frame rAF loop, and `browser_embed_set_bounds` does a
+      // native `webview.set_bounds` on the Rust side — issuing it every frame
+      // burns ~60 native repositions/sec per live embed forever, since the
+      // browser is a persistent module that stays mounted across tab switches.
+      if (!isStable) {
+        invoke("browser_embed_set_bounds", { id: embedId, rect }).catch(() => {});
+      }
     } else {
       stableCountRef.current = 0;
       lastRectRef.current = null;
@@ -173,7 +183,11 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
     // Require stable geometry (at least 2 consecutive checks) before showing native webview
     const isGeometryStable = rect && stableCountRef.current >= 2;
     const visible = !!isGeometryStable && !overlayOpenRef.current;
-    invoke("browser_embed_set_visible", { id: embedId, visible }).catch(() => {});
+    // Same rationale: only tell Rust when the desired visibility flips.
+    if (lastVisibleRef.current !== visible) {
+      lastVisibleRef.current = visible;
+      invoke("browser_embed_set_visible", { id: embedId, visible }).catch(() => {});
+    }
   }, [embedId, currentRect]);
 
   const ensureLive = useCallback(
@@ -200,6 +214,10 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
           });
         } else {
           await invoke("browser_embed_navigate", { id: embedId, url });
+          // A later successful navigation has to retire the fallback, or one
+          // transient failure pins the panel to the error UI for the rest of
+          // the tab's life even though the embed is working again.
+          setEmbedError(null);
         }
       } catch (e) {
         const errorMsg = String(e);
@@ -281,6 +299,10 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
     if (mode === "live") {
       syncVisibility();
     } else {
+      // Keep the cache in step with what Rust was actually told, otherwise the
+      // per-frame sync would think `false` was already sent and skip the
+      // re-show when the user switches back to Live.
+      lastVisibleRef.current = false;
       invoke("browser_embed_set_visible", { id: embedId, visible: false }).catch(() => {});
     }
   }, [mode, embedId, syncVisibility]);

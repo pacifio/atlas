@@ -34,6 +34,7 @@ import { AtlasIcon } from "@/components/atlas-icon";
 
 import { ChatInput, type ChatInputHandle } from "@/features/chat/components/chat-input";
 import { ProviderModelPills } from "@/features/chat/components/provider-model-pills";
+import { useProjectStore } from "@/features/project/stores/project-store";
 import { CHAT_PROVIDERS } from "@/features/settings/lib/providers";
 import { useByokStore } from "@/features/settings/stores/byok-store";
 import { cn } from "@/lib/utils";
@@ -510,6 +511,7 @@ function Composer({
 }) {
   const inputRef = useRef<ChatInputHandle>(null);
   const [hasText, setHasText] = useState(false);
+  const enterToSend = useProjectStore((s) => s.settings.enterToSend);
   const ready = !!thread.provider && !!thread.model;
 
   const submit = () => {
@@ -543,6 +545,7 @@ function Composer({
           placeholder="Ask about this session…"
           onChange={(v) => setHasText(v.trim().length > 0)}
           onSubmit={submit}
+          enterToSend={enterToSend}
         />
         <div className="flex items-center justify-between gap-2 px-2 pb-2 pt-1">
           {/* The agent composer's combo, not the Memory-Chat pair. It collapses
