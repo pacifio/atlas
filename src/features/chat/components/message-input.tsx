@@ -604,6 +604,9 @@ export function MessageInput({
   // sits inside the active chat panel.
   const permissionMode = useChatStore((s) => s.sessions[tabId]?.claudePermissionMode ?? "default");
   const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
+  // Settings → General → "Enter to send". Narrow selector so a toggle flip
+  // only re-renders composers, not the whole settings surface.
+  const enterToSend = useProjectStore((s) => s.settings.enterToSend);
   // `agentType` widened to a SwitchableAgent (drops "custom") for the composer
   // sub-components (skill/session scope, agent switcher) + the label lookup.
   const switchableAgent: SwitchableAgent =
@@ -1502,6 +1505,7 @@ export function MessageInput({
                 placeholder={effectivePlaceholder}
                 onChange={setValue}
                 onSubmit={submit}
+                enterToSend={enterToSend}
                 onMentionTrigger={setTrigger}
                 // The native agent has no slash commands — suppressing the
                 // trigger here (rather than showing an empty picker) keeps "/"
@@ -1606,7 +1610,7 @@ export function MessageInput({
                       : "Stop generation"
                     : mode === "queue"
                       ? "Queue message (sends after current finishes)"
-                      : "Send to agent (⌘↵)"
+                      : `Send to agent (${enterToSend ? "↵" : "⌘↵"})`
                 }
               >
                 {mode === "stop" ? (
