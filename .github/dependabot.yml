@@ -1,39 +1,42 @@
 version: 2
 updates:
+  # Version updates are OFF for this ecosystem. `open-pull-requests-limit: 0`
+  # is the documented way to disable them for a single package manager;
+  # security update PRs are exempt from the limit and still arrive, which is
+  # the only part we actually need to be automatic.
+  #
+  # This is a workaround for a real defect, not a statement that JS deps do not
+  # matter. The wildcard `version-update:semver-major` ignore below does not
+  # hold for the bun ecosystem. On 2026-08-10 it let through vite 6 -> 8,
+  # typescript 5 -> 7, @vitejs/plugin-react 4 -> 6, immer 10 -> 11 and
+  # lucide-react 0.468 -> 1.30; after those five were closed and the ignore was
+  # made explicit per package, the very next run opened react-resizable-panels
+  # 2 -> 4 (#146). Six majors through this entry against zero through 38 Cargo
+  # PRs on the same config. Naming packages individually cannot work, because
+  # the next major is always a package nobody has listed yet.
+  #
+  # It matters more here than it would elsewhere because JS breakage in this
+  # repo is invisible to CI. Per the `dedupe` note in vite.config.ts, a
+  # duplicated @codemirror/* or pdfjs-dist in the production bundle silently
+  # breaks editor theming and PDF rendering while lint, typecheck, `bun run
+  # build` and `bun run dev` all stay green. An unattended bot PR cannot attest
+  # to the one thing that would catch it: `bun run build:app` and a real
+  # window. Frontend deps therefore move deliberately, in their own PRs.
+  #
+  # Revisit if Dependabot's bun support starts honouring ignore.update-types —
+  # at that point restore the limit and the group below and delete this note.
   - package-ecosystem: "bun"
     directory: "/"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 0
     groups:
-      # One PR for the whole JS dependency set rather than one per package.
-      # The frontend is only meaningfully verifiable as a whole anyway — a
-      # bundler or plugin bump is judged by whether the packaged app still
-      # renders, not by whether one package resolved.
       javascript:
         patterns: ["*"]
         update-types: ["minor", "patch"]
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-      # Belt and braces. The wildcard semver-major ignore above did not hold
-      # for this ecosystem on the 2026-08-10 run — it opened vite 6 -> 8,
-      # typescript 5 -> 7, @vitejs/plugin-react 4 -> 6, immer 10 -> 11 and
-      # lucide-react 0.468 -> 1.30. The four below are named explicitly so that
-      # a repeat is impossible regardless of why the wildcard was skipped.
-      #
-      # lucide-react is deliberately not pinned here: an icon rename fails as a
-      # red typecheck, so CI catches it and the update is worth taking. The
-      # four below are the ones whose breakage is invisible to CI. Per the
-      # `dedupe` note in vite.config.ts, a duplicated @codemirror/* or
-      # pdfjs-dist in the production bundle silently breaks editor theming and
-      # PDF rendering while lint, typecheck, `bun run build` and `bun run dev`
-      # all stay green. A major on any of these needs `bun run build:app` and a
-      # real window, so it should never arrive as an unattended bot PR.
-      - dependency-name: "vite"
-      - dependency-name: "@vitejs/plugin-react"
-      - dependency-name: "typescript"
-      - dependency-name: "immer"
 
   # Every crates/* crate is a standalone package with its own Cargo.lock, not a
   # workspace member. Dependabot sees 16 unrelated projects that happen to share
