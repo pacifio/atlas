@@ -90,7 +90,7 @@
     "react-dom": "^19",
     "react-markdown": "^10.1.0",
     "react-pdf": "^10.4.1",
-    "react-resizable-panels": "^2",
+    "react-resizable-panels": "^4",
     "recharts": "^3.8.1",
     "rehype-highlight": "^7.0.2",
     "rehype-raw": "^7.0.0",
