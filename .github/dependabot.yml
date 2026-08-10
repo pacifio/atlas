@@ -3,148 +3,61 @@ updates:
   - package-ecosystem: "bun"
     directory: "/"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      # One PR for the whole JS dependency set rather than one per package.
+      # The frontend is only meaningfully verifiable as a whole anyway — a
+      # bundler or plugin bump is judged by whether the packaged app still
+      # renders, not by whether one package resolved.
+      javascript:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # Belt and braces. The wildcard semver-major ignore above did not hold
+      # for this ecosystem on the 2026-08-10 run — it opened vite 6 -> 8,
+      # typescript 5 -> 7, @vitejs/plugin-react 4 -> 6, immer 10 -> 11 and
+      # lucide-react 0.468 -> 1.30. The four below are named explicitly so that
+      # a repeat is impossible regardless of why the wildcard was skipped.
+      #
+      # lucide-react is deliberately not pinned here: an icon rename fails as a
+      # red typecheck, so CI catches it and the update is worth taking. The
+      # four below are the ones whose breakage is invisible to CI. Per the
+      # `dedupe` note in vite.config.ts, a duplicated @codemirror/* or
+      # pdfjs-dist in the production bundle silently breaks editor theming and
+      # PDF rendering while lint, typecheck, `bun run build` and `bun run dev`
+      # all stay green. A major on any of these needs `bun run build:app` and a
+      # real window, so it should never arrive as an unattended bot PR.
+      - dependency-name: "vite"
+      - dependency-name: "@vitejs/plugin-react"
+      - dependency-name: "typescript"
+      - dependency-name: "immer"
 
   # Every crates/* crate is a standalone package with its own Cargo.lock, not a
-  # workspace member — Dependabot doesn't discover them recursively from
-  # src-tauri, so each one needs its own entry. Limit kept low per-directory
-  # since a shared dep bump (e.g. a cersei-* pin) can fire across several of
-  # these at once.
+  # workspace member. Dependabot sees 16 unrelated projects that happen to share
+  # dependencies, so before grouping, one tokio release meant six near-identical
+  # PRs — the 2026-08-10 run opened 36 Cargo PRs covering 13 distinct crates.
+  #
+  # `directories` (plural) takes a glob where `directory` does not, so the whole
+  # tree is one entry instead of sixteen, and new crates are picked up without a
+  # config edit. atlas-git had already been missed by the old per-crate list.
+  #
+  # `group-by: dependency-name` is what collapses the fan-out: one PR per
+  # dependency spanning every crate that uses it, which also keeps shared pins
+  # in lockstep instead of letting crates drift apart between merges.
   - package-ecosystem: "cargo"
-    directory: "/src-tauri"
+    directories:
+      - "/src-tauri"
+      - "/crates/*"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     open-pull-requests-limit: 5
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-acp"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-agentkit"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-agents"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-bus"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-cersei"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-checkpoint"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-codeindex"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-embed"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-gitdiff"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-kb-server"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-memory"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-redact"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-review"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "cargo"
-    directory: "/crates/atlas-terminal"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
+    groups:
+      rust:
+        group-by: dependency-name
+        update-types: ["minor", "patch"]
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
@@ -152,7 +65,12 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
