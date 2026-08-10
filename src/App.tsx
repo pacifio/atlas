@@ -9,22 +9,20 @@ import { SearchOverlay } from "@/components/search-overlay";
 import { useHotkeys } from "@/hooks/use-hotkey";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useTerminalStore } from "@/features/terminal/stores/terminal-store";
-import {
-  useProjectStore,
-  type AppStateWire,
-} from "@/features/project/stores/project-store";
+import { useProjectStore, type AppStateWire } from "@/features/project/stores/project-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
-import {
-  listenAgents,
-  resetAgentByAgentId,
-} from "@/features/chat/lib/agents-api";
+import { listenAgents, resetAgentByAgentId } from "@/features/chat/lib/agents-api";
 import type { PendingPermission } from "@/types/acp";
 import type { AgentDelta } from "@/types/agents";
-import { SWITCHABLE_AGENTS } from "@/types/agent";
+import { cycleChatAgent } from "@/features/chat/lib/switch-agent";
 import { FilePicker } from "@/features/file-picker/components/file-picker";
 import { HintOverlay } from "@/features/hint-nav/components/hint-overlay";
 import { BrowserOverlayWatcher } from "@/features/browser/components/browser-overlay-watcher";
-import { fileIndex, openFileIndex, markFileIndexClosed } from "@/features/file-picker/lib/file-picker-api";
+import {
+  fileIndex,
+  openFileIndex,
+  markFileIndexClosed,
+} from "@/features/file-picker/lib/file-picker-api";
 import { activeWorkspaceId } from "@/features/workspaces/lib/active-workspace";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { pickAndAddWorkspace } from "@/features/workspaces/lib/pick-workspace";
@@ -41,6 +39,8 @@ import {
 import { useRecentChatsStore } from "@/features/workspaces/stores/recent-chats-store";
 import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
+import { requestCloseTab } from "@/features/chat/lib/close-tab";
+import { jumpToSession } from "@/features/chat/lib/tab-workspace";
 import { refreshCachedAcpModels } from "@/features/chat/lib/warm-acp-models";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
@@ -50,12 +50,14 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import { logEvent } from "@/features/log/lib/log";
-import { warmMarkdownWorker } from "@/lib/markdown-cache";
+import { warmMarkdownWorker, primeMarkdownRenderer } from "@/lib/markdown-cache";
+import { primeMarkdown } from "@/lib/markdown";
 import { useNotificationsStore } from "@/features/notifications/stores/notifications-store";
 import { NotificationPanel } from "@/features/notifications/components/notification-panel";
 import { FeedbackPanel } from "@/features/feedback/components/feedback-panel";
 import { UpdateAvailableModal } from "@/features/updater/components/update-available-modal";
 import { LoadingOrganisationOverlay } from "@/features/organisations/components/loading-organisation-overlay";
+import { StopAgentsDialog } from "@/features/workspaces/components/stop-agents-dialog";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
 import {
@@ -141,7 +143,7 @@ export function App() {
   useEffect(() => {
     const unlisten = listen("atlas:close-active-tab", () => {
       const current = useLayoutStore.getState().activeTabId;
-      if (current) useLayoutStore.getState().actions.closeTab(current);
+      if (current) requestCloseTab(current);
     });
     return () => {
       void unlisten.then((off) => off());
@@ -249,9 +251,7 @@ export function App() {
         const payload = await invoke<AppStateWire>("bootstrap_app_state");
         if (cancelled) return;
         startTransition(() => {
-          useProjectStore
-            .getState()
-            .actions.hydrate(payload, { skipActiveSwitch: !!cliPath });
+          useProjectStore.getState().actions.hydrate(payload, { skipActiveSwitch: !!cliPath });
           // Hydration replaces the org list wholesale, so re-apply any server
           // orgs from a snapshot that may have already arrived — otherwise a
           // sign-in that landed before this bootstrap would be overwritten.
@@ -298,6 +298,12 @@ export function App() {
               });
           }
           signalReady();
+          // First paint is done — pull in the main-thread markdown renderer
+          // now so the first small chat block still parses synchronously. It
+          // is deliberately NOT a static import (it would land in the eager
+          // entry chunk); see `primeMarkdownRenderer`.
+          primeMarkdownRenderer();
+          primeMarkdown();
         }
       }
     })();
@@ -320,7 +326,6 @@ export function App() {
     toggleTabBar,
     addTab,
     setActiveTab,
-    closeTab,
     activateTabByIndex,
     cycleTab,
     addGroup,
@@ -424,6 +429,8 @@ export function App() {
     const pendingDeltas: AgentDelta[] = [];
     const toolDeltaPos = new Map<string, number>(); // dedup key → index in pendingDeltas
     let rafId: number | null = null;
+    /** Timer drain that survives RAF being paused — see `schedule` below. */
+    let backstopId: ReturnType<typeof setTimeout> | null = null;
 
     // "Is Atlas actually in front of the user?" — tracked via the NATIVE window
     // focus, NOT web focus/blur. The web events keep reporting "focused" when
@@ -511,7 +518,18 @@ export function App() {
         /* permission unavailable — notifications silently no-op */
       }
     })();
-    const notifyAgentDone = async () => {
+    // Name the SESSION's workspace, not the active project — a finish in
+    // workspace B while A is focused used to read "Atlas — A".
+    const sessionProjectName = (acpSessionId: string): string => {
+      const sess = Object.values(useChatStore.getState().sessions).find(
+        (s) => s.acpSessionId === acpSessionId,
+      );
+      const byPath = useWorkspaceStore
+        .getState()
+        .workspaces.find((w) => w.path === sess?.workingDirectory)?.name;
+      return byPath ?? useProjectStore.getState().currentProject?.name ?? "Atlas";
+    };
+    const notifyAgentDone = async (acpSessionId: string) => {
       if (windowFocused) return;
       try {
         if (permissionState === "unknown") {
@@ -521,10 +539,8 @@ export function App() {
           permissionState = granted ? "granted" : "denied";
         }
         if (permissionState !== "granted") return;
-        const proj = useProjectStore.getState().currentProject;
-        const projectName = proj?.name ?? "Atlas";
         sendNotification({
-          title: `Atlas: ${projectName}`,
+          title: `Atlas: ${sessionProjectName(acpSessionId)}`,
           body: "Agent task finished.",
         });
       } catch (e) {
@@ -536,7 +552,7 @@ export function App() {
     // permission_request and the window isn't focused. Shares the
     // permission state machine and focus tracker above so we never
     // double-prompt for OS notification access.
-    const notifyPermissionRequested = async (toolTitle: string) => {
+    const notifyPermissionRequested = async (toolTitle: string, acpSessionId: string) => {
       if (windowFocused) return;
       try {
         if (permissionState === "unknown") {
@@ -546,10 +562,8 @@ export function App() {
           permissionState = granted ? "granted" : "denied";
         }
         if (permissionState !== "granted") return;
-        const proj = useProjectStore.getState().currentProject;
-        const projectName = proj?.name ?? "Atlas";
         sendNotification({
-          title: `Atlas: ${projectName} needs permission`,
+          title: `Atlas: ${sessionProjectName(acpSessionId)} needs permission`,
           body: `Approve "${toolTitle}" to continue.`,
         });
       } catch (e) {
@@ -558,12 +572,29 @@ export function App() {
     };
 
     const flush = () => {
-      rafId = null;
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      if (backstopId !== null) {
+        clearTimeout(backstopId);
+        backstopId = null;
+      }
       if (pendingDeltas.length === 0) return;
       const deltas = pendingDeltas.slice();
       pendingDeltas.length = 0;
       toolDeltaPos.clear();
-      useChatStore.getState().actions.applyAgentBatch({ texts: [], thoughts: [], deltas });
+      try {
+        useChatStore.getState().actions.applyAgentBatch({ texts: [], thoughts: [], deltas });
+      } catch (e) {
+        // The batch is already out of the buffer, so it is lost either way —
+        // re-queueing a batch that throws would just loop on it forever. What
+        // must NOT happen is the exception escaping into the RAF/timer callback
+        // and taking the scheduler down with it: every later delta would then
+        // buffer against a drain that never runs again, which presents as the
+        // thread freezing mid-turn.
+        console.error("applyAgentBatch failed; dropped", deltas.length, "deltas:", e);
+      }
     };
     // Coalesce a streaming text/thinking chunk into the trailing pendingDeltas
     // entry when it's the same kind + session; otherwise append in order. Keeps
@@ -584,9 +615,26 @@ export function App() {
         pendingDeltas.push(env);
       }
     };
+    // Two independent drains, because RAF alone is not a guarantee that the
+    // buffer is ever emptied.
+    //
+    // WebKit pauses `requestAnimationFrame` whenever the WKWebView isn't
+    // frontmost — not just when it's hidden. A user who leaves Atlas on screen
+    // while working in another app is watching a window whose RAF queue is
+    // stopped: deltas keep arriving over IPC and keep buffering, and NOTHING
+    // renders. The whole turn then lands in one batch the instant something
+    // wakes the webview, which reads as "it was stuck, then it caught up".
+    // `atlas:window-active` covered part of this, but only on a focus/visibility
+    // edge — it can't help a reader watching an unfocused window.
+    //
+    // `setTimeout` is throttled in that state (to roughly a second) but never
+    // paused, so it is the drain that always eventually fires. When RAF is
+    // healthy it wins every race and clears the backstop, so this costs one
+    // cancelled timer per frame and changes nothing about normal streaming.
+    const BACKSTOP_MS = 250;
     const schedule = () => {
-      if (rafId !== null) return;
-      rafId = requestAnimationFrame(flush);
+      if (rafId === null) rafId = requestAnimationFrame(flush);
+      if (backstopId === null) backstopId = setTimeout(flush, BACKSTOP_MS);
     };
 
     // When the webview is hidden/throttled, requestAnimationFrame is paused, so
@@ -603,8 +651,7 @@ export function App() {
     const isStaleAgentTurn = (sessionId: string, turnSeq?: number): boolean => {
       if (!turnSeq) return false;
       for (const sess of Object.values(useChatStore.getState().sessions)) {
-        if (sess.acpSessionId === sessionId)
-          return turnSeq < (sess.currentTurnSeq ?? 0);
+        if (sess.acpSessionId === sessionId) return turnSeq < (sess.currentTurnSeq ?? 0);
       }
       return false;
     };
@@ -634,6 +681,39 @@ export function App() {
       return { tabId: undefined as string | undefined, title: undefined as string | undefined };
     };
     const notify = () => useNotificationsStore.getState().actions;
+
+    // In-app toast for events from a session the user ISN'T looking at (another
+    // tab or another workspace) — the OS notification only fires when the whole
+    // window is unfocused, so without this a background workspace's permission
+    // prompt was invisible until the user happened to switch. Click jumps to
+    // the owning workspace + tab.
+    const toastBackgroundSession = (
+      tabId: string | undefined,
+      acpSessionId: string,
+      title: string,
+      body: string,
+      kind: "attention" | "done" | "failed",
+    ) => {
+      if (!tabId) return;
+      if (useLayoutStore.getState().activeTabId === tabId) return;
+      const wsName = (() => {
+        const path = useChatStore.getState().sessions[tabId]?.workingDirectory;
+        if (!path) return null;
+        const ws = useWorkspaceStore.getState();
+        const w = ws.workspaces.find((x) => x.path === path);
+        return w && w.id !== ws.activeWorkspaceId ? w.name : null;
+      })();
+      const fn = kind === "failed" ? toast.error : kind === "done" ? toast.success : toast;
+      fn(wsName ? `${title} — ${wsName}` : title, {
+        id: `bg-session-${kind}-${acpSessionId}`,
+        description: body,
+        duration: kind === "attention" ? 15000 : 5000,
+        action: {
+          label: "Open",
+          onClick: () => void jumpToSession(tabId),
+        },
+      });
+    };
 
     // After a native-agent turn that may have changed files, refresh the
     // project's codebase index (incremental + structural — cheap, no LLM) so
@@ -733,7 +813,7 @@ export function App() {
             (typeof tc?.title === "string" && tc.title) ||
             (typeof tc?.kind === "string" && tc.kind) ||
             "tool call";
-          void notifyPermissionRequested(toolTitle);
+          void notifyPermissionRequested(toolTitle, env.session_id);
           {
             const info = agentSessionInfo(env.session_id);
             notify().add({
@@ -744,6 +824,13 @@ export function App() {
               sessionId: env.session_id,
               tabId: info.tabId,
             });
+            toastBackgroundSession(
+              info.tabId,
+              env.session_id,
+              info.title || "Agent needs permission",
+              `Approve "${toolTitle}" to continue.`,
+              "attention",
+            );
           }
           return;
         }
@@ -753,11 +840,7 @@ export function App() {
         case "agent_disconnected":
           // Flush whatever's buffered before tearing the agent down
           // so we don't lose a final chunk to the post-disconnect
-          // discard.
-          if (rafId !== null) {
-            cancelAnimationFrame(rafId);
-            rafId = null;
-          }
+          // discard. `flush` cancels both pending drains itself.
           flush();
           actions.clearPermissionsForAgent(env.agent_id);
           // Reset the spawn cache for the plugin that actually died — the old
@@ -801,7 +884,7 @@ export function App() {
           // user-cancelled turns — that's a click the user just made,
           // they don't need to be told about it.
           if (env.stop_reason !== "cancelled") {
-            void notifyAgentDone();
+            void notifyAgentDone(env.session_id);
             const info = agentSessionInfo(env.session_id);
             notify().add({
               kind: "agent-done",
@@ -811,6 +894,13 @@ export function App() {
               sessionId: env.session_id,
               tabId: info.tabId,
             });
+            toastBackgroundSession(
+              info.tabId,
+              env.session_id,
+              info.title || "Agent",
+              "Task finished.",
+              "done",
+            );
           }
           return;
         case "turn_failed": {
@@ -826,6 +916,13 @@ export function App() {
             sessionId: env.session_id,
             tabId: info.tabId,
           });
+          toastBackgroundSession(
+            info.tabId,
+            env.session_id,
+            info.title || "Agent failed",
+            (env as { error?: string }).error || "The agent run failed.",
+            "failed",
+          );
           return;
         }
         default:
@@ -849,6 +946,7 @@ export function App() {
     return () => {
       cancelled = true;
       if (rafId !== null) cancelAnimationFrame(rafId);
+      if (backstopId !== null) clearTimeout(backstopId);
       window.removeEventListener("atlas:window-active", flushOnWake);
       unlistenFocus?.();
       document.removeEventListener("visibilitychange", onVisible);
@@ -917,8 +1015,7 @@ export function App() {
   useEffect(() => {
     const projectPath = currentProject?.path ?? "";
     for (const t of tabs) {
-      if (t.type !== "editor" && t.type !== "media" && t.type !== "unsupported")
-        continue;
+      if (t.type !== "editor" && t.type !== "media" && t.type !== "unsupported") continue;
       const absPath = (t.data as Record<string, unknown> | undefined)?.filePath as
         | string
         | undefined;
@@ -928,7 +1025,7 @@ export function App() {
       const rel =
         projectPath && absPath.startsWith(projectPath + "/")
           ? absPath.slice(projectPath.length + 1)
-          : absPath.split("/").pop() ?? absPath;
+          : (absPath.split("/").pop() ?? absPath);
       useRecentFilesStore.getState().actions.push({ absPath, rel });
     }
   }, [tabs, currentProject?.path]);
@@ -952,7 +1049,12 @@ export function App() {
       void invoke("mention_cache_clear").catch(() => {});
       return;
     }
-    markFileIndexClosed();
+    // Deliberately NOT `markFileIndexClosed()` here: switching projects keeps
+    // every hot workspace's Rust index resident (`fileindex_open_project` is
+    // idempotent for a live one), so previously-confirmed roots stay valid —
+    // clearing them made the first Cmd+P/@ after every switch pay a status
+    // round-trip. Roots are forgotten where indexes actually die: project
+    // close (above) and workspace teardown (`markFileIndexClosedFor`).
     const workspaceId = activeWorkspaceId();
     void openFileIndex(currentProject.path);
     // Git watcher: emits `atlas:git-changed` on commit / checkout /
@@ -1080,9 +1182,7 @@ export function App() {
         // Open/focus Knowledge WITHIN the focused split column.
         const st = useLayoutStore.getState();
         const g = st.focusedGroupId;
-        const existing = st.tabs.find(
-          (t) => (t.groupId ?? "main") === g && t.type === "knowledge",
-        );
+        const existing = st.tabs.find((t) => (t.groupId ?? "main") === g && t.type === "knowledge");
         if (existing) {
           setActiveTab(existing.id);
           return;
@@ -1112,7 +1212,7 @@ export function App() {
       combo: { key: "w", meta: true },
       action: () => {
         const current = useLayoutStore.getState().activeTabId;
-        if (current) closeTab(current);
+        if (current) requestCloseTab(current);
       },
     },
     {
@@ -1160,25 +1260,7 @@ export function App() {
         const layout = useLayoutStore.getState();
         const tab = layout.tabs.find((t) => t.id === layout.activeTabId);
         if (!tab || tab.type !== "chat") return;
-        const chat = useChatStore.getState();
-        const sess = chat.sessions[tab.id];
-        const curIdx = SWITCHABLE_AGENTS.indexOf(
-          (sess?.agentType ?? "claude-code") as (typeof SWITCHABLE_AGENTS)[number]
-        );
-        const next = SWITCHABLE_AGENTS[(Math.max(curIdx, 0) + 1) % SWITCHABLE_AGENTS.length];
-        // Empty chat flips agent in place. A started chat always starts a fresh
-        // session in the SAME tab bound to the next agent (singleton model —
-        // never a new tab, even mid-stream; the abandoned turn persists to the
-        // history sidebar).
-        if ((sess?.messages.length ?? 0) === 0) {
-          chat.actions.switchChatAgent(tab.id, next);
-        } else {
-          chat.actions.clearSession(tab.id);
-          chat.actions.switchChatAgent(tab.id, next);
-          window.dispatchEvent(
-            new CustomEvent("atlas:chat-focus", { detail: { tabId: tab.id } }),
-          );
-        }
+        cycleChatAgent(tab.id);
       },
     },
     {
@@ -1257,18 +1339,9 @@ export function App() {
           <AppLayout />
         </div>
       </AppContextMenu>
-      <CommandPalette
-        open={commandPaletteOpen}
-        onOpenChange={setCommandPaletteOpen}
-      />
-      <NewTabPalette
-        open={newTabPaletteOpen}
-        onOpenChange={setNewTabPaletteOpen}
-      />
-      <LayoutSwitcher
-        open={layoutSwitcherOpen}
-        onOpenChange={setLayoutSwitcherOpen}
-      />
+      <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
+      <NewTabPalette open={newTabPaletteOpen} onOpenChange={setNewTabPaletteOpen} />
+      <LayoutSwitcher open={layoutSwitcherOpen} onOpenChange={setLayoutSwitcherOpen} />
       <SearchOverlay open={searchOpen} onOpenChange={setSearchOpen} />
       <FilePicker open={filePickerOpen} onOpenChange={setFilePickerOpen} />
       <HintOverlay />
@@ -1277,6 +1350,7 @@ export function App() {
       <UpdateAvailableModal />
       <ConnectDialog />
       <LoadingOrganisationOverlay />
+      <StopAgentsDialog />
       <BrowserOverlayWatcher />
       <Toaster
         position="bottom-right"

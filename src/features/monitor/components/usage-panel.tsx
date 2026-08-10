@@ -69,7 +69,10 @@ export function UsagePanel() {
   if (restMetric > 0) segments.push({ label: "others", value: restMetric, color: OTHERS_COLOR });
 
   const totalTokens =
-    totals.input_tokens + totals.output_tokens + totals.cache_creation_tokens + totals.cache_read_tokens;
+    totals.input_tokens +
+    totals.output_tokens +
+    totals.cache_creation_tokens +
+    totals.cache_read_tokens;
 
   return (
     <div className="h-full overflow-y-auto hide-scrollbar px-3 py-3 space-y-4">
@@ -106,7 +109,9 @@ export function UsagePanel() {
           {TOKEN_TYPES.map((t) => (
             <div key={t.key} className="flex items-center gap-1.5 min-w-0">
               <span className="w-2 h-2 rounded-full shrink-0" style={{ background: t.color }} />
-              <span className="text-[10px] text-text-tertiary truncate flex-1 min-w-0">{t.label}</span>
+              <span className="text-[10px] text-text-tertiary truncate flex-1 min-w-0">
+                {t.label}
+              </span>
               <span className="text-[10px] font-mono tabular-nums text-text-secondary shrink-0">
                 {fmtTokens(totals[t.key])}
               </span>
@@ -163,7 +168,9 @@ export function UsagePanel() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-border-default bg-bg-secondary px-2 py-1.5 flex flex-col gap-0.5 min-w-0">
-      <span className="text-[9px] text-text-tertiary uppercase tracking-wider truncate">{label}</span>
+      <span className="text-[9px] text-text-tertiary uppercase tracking-wider truncate">
+        {label}
+      </span>
       <span className="text-[12px] font-mono tabular-nums text-text-primary truncate">{value}</span>
     </div>
   );

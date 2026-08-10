@@ -109,7 +109,14 @@ export type AiOp =
       height?: number;
       icon?: string;
     }
-  | { op: "update_node"; id: string; text?: string; title?: string; body?: string; shapeType?: ShapeType }
+  | {
+      op: "update_node";
+      id: string;
+      text?: string;
+      title?: string;
+      body?: string;
+      shapeType?: ShapeType;
+    }
   | { op: "delete_node"; id: string }
   | { op: "connect"; from: string; to: string }
   | { op: "delete_edge"; id: string };
@@ -406,581 +413,586 @@ export const useCanvasStore = createSelectors(
         });
       };
       return {
-      projectPath: null,
-      loaded: false,
-      nodes: [],
-      edges: [],
-      aiGroups: {},
-      viewport: emptyViewport,
-      pages: {},
-      tree: [],
-      activePageId: null,
-      selectedIds: [],
-      pendingAiThreadGroupId: null,
-      fullscreen: false,
-      activeTool: "select",
-      canUndo: false,
-      canRedo: false,
-      actions: {
-        loadProject: async (path) => {
-          if (saveTimer) {
-            clearTimeout(saveTimer);
-            saveTimer = null;
-          }
-          set((s) => {
-            s.projectPath = path;
-            s.loaded = false;
-            s.nodes = [];
-            s.edges = [];
-            s.aiGroups = {};
-            s.pages = {};
-            s.tree = [];
-            s.activePageId = null;
-            s.selectedIds = [];
-            s.viewport = emptyViewport;
-          });
-          try {
-            const raw = await loadCanvas(path);
-            const parsed = parseFile(raw);
-            resetHistory();
-            set((s) => {
-              if (s.projectPath !== path) return; // user switched projects mid-load
-              const pagesMap: Record<string, CanvasPage> = {};
-              for (const p of parsed.pages) pagesMap[p.id] = p;
-              s.pages = pagesMap;
-              s.tree = parsed.tree;
-              s.activePageId = parsed.activePageId;
-              // Mirror the active page into the working fields.
-              const active = pagesMap[parsed.activePageId];
-              s.nodes = active?.nodes ?? [];
-              s.edges = active?.edges ?? [];
-              s.aiGroups = active?.aiGroups ?? {};
-              s.viewport = active?.viewport ?? { ...emptyViewport };
-              s.loaded = true;
-              s.canUndo = false;
-              s.canRedo = false;
-            });
-          } catch {
-            set((s) => {
-              if (s.projectPath !== path) return;
-              s.loaded = true;
-            });
-          }
-        },
-        addNote: (at) => {
-          takeSnapshot();
-          const id = genId("n");
-          const stamp = nowIso();
-          const x = at?.x ?? 0;
-          const y = at?.y ?? 0;
-          set((s) => {
-            s.nodes.push({
-              id,
-              kind: "note",
-              x,
-              y,
-              width: 320,
-              title: "Untitled",
-              body: "",
-              createdAt: stamp,
-              updatedAt: stamp,
-            });
-            s.selectedIds = [id];
-          });
-          scheduleSave();
-          logEvent({ source: "canvas", kind: "note-add", summary: "New note", payload: { id } });
-          return id;
-        },
-        addText: (at) => {
-          takeSnapshot();
-          const id = genId("n");
-          const stamp = nowIso();
-          set((s) => {
-            s.nodes.push({
-              id,
-              kind: "text",
-              x: at?.x ?? 0,
-              y: at?.y ?? 0,
-              width: 200,
-              title: "",
-              body: "",
-              text: "Text",
-              createdAt: stamp,
-              updatedAt: stamp,
-            });
-            s.selectedIds = [id];
-          });
-          scheduleSave();
-          logEvent({ source: "canvas", kind: "text-add", summary: "New text", payload: { id } });
-          return id;
-        },
-        addShape: (shapeType, at, size) => {
-          takeSnapshot();
-          const id = genId("n");
-          const stamp = nowIso();
-          // Default sizes when placed with a click; drag-to-create passes `size`.
-          const [defW, defH] =
-            shapeType === "ellipse" || shapeType === "diamond" ? [130, 130] : [160, 90];
-          const w = size ? Math.max(20, Math.round(size.width)) : defW;
-          const h = size ? Math.max(20, Math.round(size.height)) : defH;
-          set((s) => {
-            s.nodes.push({
-              id,
-              kind: "shape",
-              shapeType,
-              x: at?.x ?? 0,
-              y: at?.y ?? 0,
-              width: w,
-              height: h,
-              title: "",
-              body: "",
-              text: "",
-              createdAt: stamp,
-              updatedAt: stamp,
-            });
-            s.selectedIds = [id];
-          });
-          scheduleSave();
-          logEvent({ source: "canvas", kind: "shape-add", summary: shapeType, payload: { id } });
-          return id;
-        },
-        addMedia: ({ src, mediaKind, width, height }, at) => {
-          takeSnapshot();
-          const id = genId("n");
-          const stamp = nowIso();
-          set((s) => {
-            s.nodes.push({
-              id,
-              kind: "media",
-              x: at?.x ?? 0,
-              y: at?.y ?? 0,
-              width: width ?? 320,
-              height,
-              title: "",
-              body: "",
-              src,
-              mediaKind,
-              createdAt: stamp,
-              updatedAt: stamp,
-            });
-            s.selectedIds = [id];
-          });
-          scheduleSave();
-          logEvent({ source: "canvas", kind: "media-add", summary: mediaKind, payload: { id } });
-          return id;
-        },
-        updateNote: (id, patch) =>
-          set((s) => {
-            const n = s.nodes.find((n) => n.id === id);
-            if (!n) return;
-            if (patch.title !== undefined) n.title = patch.title;
-            if (patch.body !== undefined) n.body = patch.body;
-            if (patch.width !== undefined) n.width = patch.width;
-            if (patch.height !== undefined) n.height = patch.height;
-            if (patch.icon !== undefined) n.icon = patch.icon;
-            if (patch.text !== undefined) n.text = patch.text;
-            if (patch.src !== undefined) n.src = patch.src;
-            if (patch.mediaKind !== undefined) n.mediaKind = patch.mediaKind;
-            n.updatedAt = nowIso();
-            scheduleSave();
-          }),
-        deleteNote: (id) => {
-          takeSnapshot();
-          const removed = get().nodes.find((n) => n.id === id);
-          set((s) => {
-            s.nodes = s.nodes.filter((n) => n.id !== id);
-            s.edges = s.edges.filter((e) => e.source !== id && e.target !== id);
-            s.selectedIds = s.selectedIds.filter((x) => x !== id);
-            scheduleSave();
-          });
-          if (removed) {
-            logEvent({
-              source: "canvas",
-              kind: "note-delete",
-              summary: removed.title || "Untitled",
-              payload: { id },
-            });
-          }
-        },
-        moveNote: (id, x, y) =>
-          set((s) => {
-            const n = s.nodes.find((n) => n.id === id);
-            if (!n) return;
-            n.x = x;
-            n.y = y;
-            scheduleSave();
-          }),
-        addEdge: (source, target, sourceHandle, targetHandle) => {
-          if (source === target) return;
-          const exists = get().edges.some(
-            (e) =>
-              (e.source === source && e.target === target) ||
-              (e.source === target && e.target === source)
-          );
-          if (exists) return;
-          takeSnapshot();
-          set((s) => {
-            s.edges.push({ id: genId("e"), source, target, sourceHandle, targetHandle });
-            scheduleSave();
-          });
-          logEvent({
-            source: "canvas",
-            kind: "edge-add",
-            summary: "Connection added",
-            payload: { source, target },
-          });
-        },
-        deleteEdge: (id) => {
-          takeSnapshot();
-          set((s) => {
-            s.edges = s.edges.filter((e) => e.id !== id);
-            scheduleSave();
-          });
-          logEvent({ source: "canvas", kind: "edge-delete", summary: "Connection removed", payload: { id } });
-        },
-        setSelected: (id) =>
-          set((s) => {
-            s.selectedIds = id ? [id] : [];
-          }),
-        setSelectedIds: (ids) =>
-          set((s) => {
-            s.selectedIds = ids;
-          }),
-        setViewport: (vp) =>
-          set((s) => {
-            s.viewport = vp;
-            scheduleSave();
-          }),
-        setFullscreen: (open) =>
-          set((s) => {
-            s.fullscreen = open;
-          }),
-        toggleFullscreen: () =>
-          set((s) => {
-            s.fullscreen = !s.fullscreen;
-          }),
-        setTool: (tool) =>
-          set((s) => {
-            s.activeTool = tool;
-          }),
-        beginInteraction: () => takeSnapshot(),
-        undo: () => {
-          if (past.length === 0) return;
-          future.push({ nodes: get().nodes, edges: get().edges });
-          const prev = past.pop()!;
-          set((s) => {
-            s.nodes = prev.nodes;
-            s.edges = prev.edges;
-            s.canUndo = past.length > 0;
-            s.canRedo = true;
-          });
-          scheduleSave();
-        },
-        redo: () => {
-          if (future.length === 0) return;
-          past.push({ nodes: get().nodes, edges: get().edges });
-          const next = future.pop()!;
-          set((s) => {
-            s.nodes = next.nodes;
-            s.edges = next.edges;
-            s.canUndo = true;
-            s.canRedo = future.length > 0;
-          });
-          scheduleSave();
-        },
-
-        // ── Pages ──────────────────────────────────────────────────────────
-        createPage: (parentId = null) => {
-          const id = genId("p");
-          set((s) => {
-            s.pages[id] = emptyPage(id);
-            const order = s.tree.filter((e) => e.parentId === parentId).length;
-            s.tree.push({ id, kind: "page", parentId, name: "Untitled", order });
-            // Fold the outgoing page back, then switch to the new (empty) page.
-            const active = activePageSnapshot(s);
-            if (active) s.pages[active.id] = active;
-            s.activePageId = id;
-            s.nodes = [];
-            s.edges = [];
-            s.aiGroups = {};
-            s.viewport = { ...emptyViewport };
-            s.selectedIds = [];
-          });
-          resetHistory();
-          set((s) => {
-            s.canUndo = false;
-            s.canRedo = false;
-          });
-          scheduleSave();
-          logEvent({ source: "canvas", kind: "page-add", summary: "New page", payload: { id } });
-          return id;
-        },
-
-        createPageFolder: (parentId = null) => {
-          const id = genId("f");
-          set((s) => {
-            const order = s.tree.filter((e) => e.parentId === parentId).length;
-            s.tree.push({ id, kind: "folder", parentId, name: "New folder", order });
-          });
-          scheduleSave();
-          return id;
-        },
-
-        setActivePage: (id) => {
-          if (get().activePageId === id) return;
-          set((s) => {
-            const target = s.pages[id];
-            if (!target) return;
-            // Fold the current working copy back into pages, then load the target.
-            const active = activePageSnapshot(s);
-            if (active) s.pages[active.id] = active;
-            s.activePageId = id;
-            s.nodes = target.nodes;
-            s.edges = target.edges;
-            s.aiGroups = target.aiGroups;
-            s.viewport = target.viewport;
-            s.selectedIds = [];
-          });
-          resetHistory();
-          set((s) => {
-            s.canUndo = false;
-            s.canRedo = false;
-          });
-          scheduleSave();
-        },
-
-        renameTreeEntry: (id, name) =>
-          set((s) => {
-            const e = s.tree.find((t) => t.id === id);
-            if (!e) return;
-            e.name = name;
-            scheduleSave();
-          }),
-
-        setTreeEntryIcon: (id, icon) =>
-          set((s) => {
-            const e = s.tree.find((t) => t.id === id);
-            if (!e) return;
-            e.icon = icon ?? undefined;
-            scheduleSave();
-          }),
-
-        deleteTreeEntry: (id) => {
-          set((s) => {
-            // Collect the entry + all descendants (folders cascade).
-            const toRemove = new Set<string>([id]);
-            let grew = true;
-            while (grew) {
-              grew = false;
-              for (const e of s.tree) {
-                if (e.parentId && toRemove.has(e.parentId) && !toRemove.has(e.id)) {
-                  toRemove.add(e.id);
-                  grew = true;
-                }
-              }
+        projectPath: null,
+        loaded: false,
+        nodes: [],
+        edges: [],
+        aiGroups: {},
+        viewport: emptyViewport,
+        pages: {},
+        tree: [],
+        activePageId: null,
+        selectedIds: [],
+        pendingAiThreadGroupId: null,
+        fullscreen: false,
+        activeTool: "select",
+        canUndo: false,
+        canRedo: false,
+        actions: {
+          loadProject: async (path) => {
+            if (saveTimer) {
+              clearTimeout(saveTimer);
+              saveTimer = null;
             }
-            const removedPageIds = s.tree
-              .filter((e) => toRemove.has(e.id) && e.kind === "page")
-              .map((e) => e.id);
-            const remainingPages = s.tree.filter(
-              (e) => e.kind === "page" && !toRemove.has(e.id),
-            );
-            // Never delete the last page.
-            if (remainingPages.length === 0) return;
-
-            s.tree = s.tree.filter((e) => !toRemove.has(e.id));
-            for (const pid of removedPageIds) delete s.pages[pid];
-
-            // If the active page was removed, switch to another page.
-            if (s.activePageId && removedPageIds.includes(s.activePageId)) {
-              const next = remainingPages[0];
-              const target = s.pages[next.id];
-              s.activePageId = next.id;
-              s.nodes = target?.nodes ?? [];
-              s.edges = target?.edges ?? [];
-              s.aiGroups = target?.aiGroups ?? {};
-              s.viewport = target?.viewport ?? { ...emptyViewport };
+            set((s) => {
+              s.projectPath = path;
+              s.loaded = false;
+              s.nodes = [];
+              s.edges = [];
+              s.aiGroups = {};
+              s.pages = {};
+              s.tree = [];
+              s.activePageId = null;
               s.selectedIds = [];
+              s.viewport = emptyViewport;
+            });
+            try {
+              const raw = await loadCanvas(path);
+              const parsed = parseFile(raw);
+              resetHistory();
+              set((s) => {
+                if (s.projectPath !== path) return; // user switched projects mid-load
+                const pagesMap: Record<string, CanvasPage> = {};
+                for (const p of parsed.pages) pagesMap[p.id] = p;
+                s.pages = pagesMap;
+                s.tree = parsed.tree;
+                s.activePageId = parsed.activePageId;
+                // Mirror the active page into the working fields.
+                const active = pagesMap[parsed.activePageId];
+                s.nodes = active?.nodes ?? [];
+                s.edges = active?.edges ?? [];
+                s.aiGroups = active?.aiGroups ?? {};
+                s.viewport = active?.viewport ?? { ...emptyViewport };
+                s.loaded = true;
+                s.canUndo = false;
+                s.canRedo = false;
+              });
+            } catch {
+              set((s) => {
+                if (s.projectPath !== path) return;
+                s.loaded = true;
+              });
             }
-            scheduleSave();
-          });
-        },
-
-        // ── AI groups ──────────────────────────────────────────────────────
-        createAiGroup: (at, provider, model) => {
-          const id = genId("g");
-          const stamp = nowIso();
-          set((s) => {
-            s.aiGroups[id] = {
-              id,
-              anchor: { x: at.x, y: at.y },
-              title: "AI diagram",
-              messages: [],
-              provider,
-              model,
-              createdAt: stamp,
-              updatedAt: stamp,
-            };
-          });
-          scheduleSave();
-          return id;
-        },
-
-        appendGroupMessage: (groupId, msg) =>
-          set((s) => {
-            const g = s.aiGroups[groupId];
-            if (!g) return;
-            g.messages.push(msg);
-            g.updatedAt = nowIso();
-            scheduleSave();
-          }),
-
-        applyAiOps: (groupId, ops, anchor) => {
-          takeSnapshot(); // whole batch = one undo step
-          const stamp = nowIso();
-          set((s) => {
-            const temp = new Map<string, string>(); // tempId → real node id
-            const addedIds: string[] = [];
-            let allHaveCoords = true;
-
-            for (const op of ops) {
-              if (op.op !== "add_node") continue;
-              const id = genId("n");
-              temp.set(op.tempId, id);
-              addedIds.push(id);
-              if (op.x === undefined || op.y === undefined) allHaveCoords = false;
-              const [dw, dh] =
-                op.kind === "shape" && (op.shapeType === "ellipse" || op.shapeType === "diamond")
-                  ? [130, 130]
-                  : op.kind === "shape"
-                    ? [160, 90]
-                    : op.kind === "note"
-                      ? [320, undefined as number | undefined]
-                      : [200, undefined as number | undefined];
+          },
+          addNote: (at) => {
+            takeSnapshot();
+            const id = genId("n");
+            const stamp = nowIso();
+            const x = at?.x ?? 0;
+            const y = at?.y ?? 0;
+            set((s) => {
               s.nodes.push({
                 id,
-                kind: op.kind,
-                groupId,
-                x: anchor.x + (op.x ?? 0),
-                y: anchor.y + (op.y ?? 0),
-                width: op.width ?? dw,
-                height: op.height ?? dh,
-                title: op.title ?? (op.kind === "note" ? "Untitled" : ""),
-                body: op.body ?? "",
-                text: op.text ?? (op.kind === "text" ? "Text" : op.kind === "shape" ? op.title ?? "" : ""),
-                shapeType: op.kind === "shape" ? op.shapeType ?? "rectangle" : undefined,
-                icon: op.icon,
+                kind: "note",
+                x,
+                y,
+                width: 320,
+                title: "Untitled",
+                body: "",
                 createdAt: stamp,
                 updatedAt: stamp,
               });
+              s.selectedIds = [id];
+            });
+            scheduleSave();
+            logEvent({ source: "canvas", kind: "note-add", summary: "New note", payload: { id } });
+            return id;
+          },
+          addText: (at) => {
+            takeSnapshot();
+            const id = genId("n");
+            const stamp = nowIso();
+            set((s) => {
+              s.nodes.push({
+                id,
+                kind: "text",
+                x: at?.x ?? 0,
+                y: at?.y ?? 0,
+                width: 200,
+                title: "",
+                body: "",
+                text: "Text",
+                createdAt: stamp,
+                updatedAt: stamp,
+              });
+              s.selectedIds = [id];
+            });
+            scheduleSave();
+            logEvent({ source: "canvas", kind: "text-add", summary: "New text", payload: { id } });
+            return id;
+          },
+          addShape: (shapeType, at, size) => {
+            takeSnapshot();
+            const id = genId("n");
+            const stamp = nowIso();
+            // Default sizes when placed with a click; drag-to-create passes `size`.
+            const [defW, defH] =
+              shapeType === "ellipse" || shapeType === "diamond" ? [130, 130] : [160, 90];
+            const w = size ? Math.max(20, Math.round(size.width)) : defW;
+            const h = size ? Math.max(20, Math.round(size.height)) : defH;
+            set((s) => {
+              s.nodes.push({
+                id,
+                kind: "shape",
+                shapeType,
+                x: at?.x ?? 0,
+                y: at?.y ?? 0,
+                width: w,
+                height: h,
+                title: "",
+                body: "",
+                text: "",
+                createdAt: stamp,
+                updatedAt: stamp,
+              });
+              s.selectedIds = [id];
+            });
+            scheduleSave();
+            logEvent({ source: "canvas", kind: "shape-add", summary: shapeType, payload: { id } });
+            return id;
+          },
+          addMedia: ({ src, mediaKind, width, height }, at) => {
+            takeSnapshot();
+            const id = genId("n");
+            const stamp = nowIso();
+            set((s) => {
+              s.nodes.push({
+                id,
+                kind: "media",
+                x: at?.x ?? 0,
+                y: at?.y ?? 0,
+                width: width ?? 320,
+                height,
+                title: "",
+                body: "",
+                src,
+                mediaKind,
+                createdAt: stamp,
+                updatedAt: stamp,
+              });
+              s.selectedIds = [id];
+            });
+            scheduleSave();
+            logEvent({ source: "canvas", kind: "media-add", summary: mediaKind, payload: { id } });
+            return id;
+          },
+          updateNote: (id, patch) =>
+            set((s) => {
+              const n = s.nodes.find((n) => n.id === id);
+              if (!n) return;
+              if (patch.title !== undefined) n.title = patch.title;
+              if (patch.body !== undefined) n.body = patch.body;
+              if (patch.width !== undefined) n.width = patch.width;
+              if (patch.height !== undefined) n.height = patch.height;
+              if (patch.icon !== undefined) n.icon = patch.icon;
+              if (patch.text !== undefined) n.text = patch.text;
+              if (patch.src !== undefined) n.src = patch.src;
+              if (patch.mediaKind !== undefined) n.mediaKind = patch.mediaKind;
+              n.updatedAt = nowIso();
+              scheduleSave();
+            }),
+          deleteNote: (id) => {
+            takeSnapshot();
+            const removed = get().nodes.find((n) => n.id === id);
+            set((s) => {
+              s.nodes = s.nodes.filter((n) => n.id !== id);
+              s.edges = s.edges.filter((e) => e.source !== id && e.target !== id);
+              s.selectedIds = s.selectedIds.filter((x) => x !== id);
+              scheduleSave();
+            });
+            if (removed) {
+              logEvent({
+                source: "canvas",
+                kind: "note-delete",
+                summary: removed.title || "Untitled",
+                payload: { id },
+              });
             }
+          },
+          moveNote: (id, x, y) =>
+            set((s) => {
+              const n = s.nodes.find((n) => n.id === id);
+              if (!n) return;
+              n.x = x;
+              n.y = y;
+              scheduleSave();
+            }),
+          addEdge: (source, target, sourceHandle, targetHandle) => {
+            if (source === target) return;
+            const exists = get().edges.some(
+              (e) =>
+                (e.source === source && e.target === target) ||
+                (e.source === target && e.target === source),
+            );
+            if (exists) return;
+            takeSnapshot();
+            set((s) => {
+              s.edges.push({ id: genId("e"), source, target, sourceHandle, targetHandle });
+              scheduleSave();
+            });
+            logEvent({
+              source: "canvas",
+              kind: "edge-add",
+              summary: "Connection added",
+              payload: { source, target },
+            });
+          },
+          deleteEdge: (id) => {
+            takeSnapshot();
+            set((s) => {
+              s.edges = s.edges.filter((e) => e.id !== id);
+              scheduleSave();
+            });
+            logEvent({
+              source: "canvas",
+              kind: "edge-delete",
+              summary: "Connection removed",
+              payload: { id },
+            });
+          },
+          setSelected: (id) =>
+            set((s) => {
+              s.selectedIds = id ? [id] : [];
+            }),
+          setSelectedIds: (ids) =>
+            set((s) => {
+              s.selectedIds = ids;
+            }),
+          setViewport: (vp) =>
+            set((s) => {
+              s.viewport = vp;
+              scheduleSave();
+            }),
+          setFullscreen: (open) =>
+            set((s) => {
+              s.fullscreen = open;
+            }),
+          toggleFullscreen: () =>
+            set((s) => {
+              s.fullscreen = !s.fullscreen;
+            }),
+          setTool: (tool) =>
+            set((s) => {
+              s.activeTool = tool;
+            }),
+          beginInteraction: () => takeSnapshot(),
+          undo: () => {
+            if (past.length === 0) return;
+            future.push({ nodes: get().nodes, edges: get().edges });
+            const prev = past.pop()!;
+            set((s) => {
+              s.nodes = prev.nodes;
+              s.edges = prev.edges;
+              s.canUndo = past.length > 0;
+              s.canRedo = true;
+            });
+            scheduleSave();
+          },
+          redo: () => {
+            if (future.length === 0) return;
+            past.push({ nodes: get().nodes, edges: get().edges });
+            const next = future.pop()!;
+            set((s) => {
+              s.nodes = next.nodes;
+              s.edges = next.edges;
+              s.canUndo = true;
+              s.canRedo = future.length > 0;
+            });
+            scheduleSave();
+          },
 
-            const resolve = (ref: string) => temp.get(ref) ?? ref;
-            const nodeExists = (nid: string) => s.nodes.some((n) => n.id === nid);
+          // ── Pages ──────────────────────────────────────────────────────────
+          createPage: (parentId = null) => {
+            const id = genId("p");
+            set((s) => {
+              s.pages[id] = emptyPage(id);
+              const order = s.tree.filter((e) => e.parentId === parentId).length;
+              s.tree.push({ id, kind: "page", parentId, name: "Untitled", order });
+              // Fold the outgoing page back, then switch to the new (empty) page.
+              const active = activePageSnapshot(s);
+              if (active) s.pages[active.id] = active;
+              s.activePageId = id;
+              s.nodes = [];
+              s.edges = [];
+              s.aiGroups = {};
+              s.viewport = { ...emptyViewport };
+              s.selectedIds = [];
+            });
+            resetHistory();
+            set((s) => {
+              s.canUndo = false;
+              s.canRedo = false;
+            });
+            scheduleSave();
+            logEvent({ source: "canvas", kind: "page-add", summary: "New page", payload: { id } });
+            return id;
+          },
 
-            for (const op of ops) {
-              if (op.op === "connect") {
-                const from = resolve(op.from);
-                const to = resolve(op.to);
-                if (from === to || !nodeExists(from) || !nodeExists(to)) continue;
-                const dup = s.edges.some(
-                  (e) =>
-                    (e.source === from && e.target === to) ||
-                    (e.source === to && e.target === from),
-                );
-                if (dup) continue;
-                s.edges.push({ id: genId("e"), source: from, target: to, groupId });
-              } else if (op.op === "update_node") {
-                const n = s.nodes.find((x) => x.id === op.id);
-                if (!n) continue;
-                if (op.text !== undefined) n.text = op.text;
-                if (op.title !== undefined) n.title = op.title;
-                if (op.body !== undefined) n.body = op.body;
-                if (op.shapeType !== undefined) n.shapeType = op.shapeType;
-                n.updatedAt = stamp;
-              } else if (op.op === "delete_node") {
-                s.nodes = s.nodes.filter((n) => n.id !== op.id);
-                s.edges = s.edges.filter((e) => e.source !== op.id && e.target !== op.id);
-              } else if (op.op === "delete_edge") {
-                s.edges = s.edges.filter((e) => e.id !== op.id);
-              }
-            }
+          createPageFolder: (parentId = null) => {
+            const id = genId("f");
+            set((s) => {
+              const order = s.tree.filter((e) => e.parentId === parentId).length;
+              s.tree.push({ id, kind: "folder", parentId, name: "New folder", order });
+            });
+            scheduleSave();
+            return id;
+          },
 
-            // If the model didn't give coordinates for every new node, force-lay
-            // them out (over the group's own edges) in a box seeded at the anchor.
-            if (addedIds.length > 1 && !allHaveCoords) {
-              const deg = new Map<string, number>();
-              for (const e of s.edges) {
-                if (e.groupId !== groupId) continue;
-                deg.set(e.source, (deg.get(e.source) ?? 0) + 1);
-                deg.set(e.target, (deg.get(e.target) ?? 0) + 1);
-              }
-              const layoutNodes = addedIds.map((nid) => ({ id: nid, degree: deg.get(nid) ?? 0 }));
-              const layoutEdges = s.edges
-                .filter((e) => e.groupId === groupId)
-                .map((e) => ({ from: e.source, to: e.target }));
-              const pos = forceLayout(layoutNodes, layoutEdges, 720, 480, { spacing: 1.1 });
-              for (const nid of addedIds) {
-                const p = pos[nid];
-                const n = s.nodes.find((x) => x.id === nid);
-                if (p && n) {
-                  n.x = anchor.x + p.x;
-                  n.y = anchor.y + p.y;
+          setActivePage: (id) => {
+            if (get().activePageId === id) return;
+            set((s) => {
+              const target = s.pages[id];
+              if (!target) return;
+              // Fold the current working copy back into pages, then load the target.
+              const active = activePageSnapshot(s);
+              if (active) s.pages[active.id] = active;
+              s.activePageId = id;
+              s.nodes = target.nodes;
+              s.edges = target.edges;
+              s.aiGroups = target.aiGroups;
+              s.viewport = target.viewport;
+              s.selectedIds = [];
+            });
+            resetHistory();
+            set((s) => {
+              s.canUndo = false;
+              s.canRedo = false;
+            });
+            scheduleSave();
+          },
+
+          renameTreeEntry: (id, name) =>
+            set((s) => {
+              const e = s.tree.find((t) => t.id === id);
+              if (!e) return;
+              e.name = name;
+              scheduleSave();
+            }),
+
+          setTreeEntryIcon: (id, icon) =>
+            set((s) => {
+              const e = s.tree.find((t) => t.id === id);
+              if (!e) return;
+              e.icon = icon ?? undefined;
+              scheduleSave();
+            }),
+
+          deleteTreeEntry: (id) => {
+            set((s) => {
+              // Collect the entry + all descendants (folders cascade).
+              const toRemove = new Set<string>([id]);
+              let grew = true;
+              while (grew) {
+                grew = false;
+                for (const e of s.tree) {
+                  if (e.parentId && toRemove.has(e.parentId) && !toRemove.has(e.id)) {
+                    toRemove.add(e.id);
+                    grew = true;
+                  }
                 }
               }
-            }
+              const removedPageIds = s.tree
+                .filter((e) => toRemove.has(e.id) && e.kind === "page")
+                .map((e) => e.id);
+              const remainingPages = s.tree.filter((e) => e.kind === "page" && !toRemove.has(e.id));
+              // Never delete the last page.
+              if (remainingPages.length === 0) return;
 
-            const g = s.aiGroups[groupId];
-            if (g) g.updatedAt = stamp;
-            scheduleSave();
-          });
-        },
+              s.tree = s.tree.filter((e) => !toRemove.has(e.id));
+              for (const pid of removedPageIds) delete s.pages[pid];
 
-        deleteGroup: (groupId) => {
-          takeSnapshot();
-          set((s) => {
-            s.nodes = s.nodes.filter((n) => n.groupId !== groupId);
-            s.edges = s.edges.filter((e) => e.groupId !== groupId);
-            delete s.aiGroups[groupId];
-            s.selectedIds = [];
-            scheduleSave();
-          });
-        },
-
-        moveGroup: (groupId, dx, dy) =>
-          set((s) => {
-            for (const n of s.nodes) {
-              if (n.groupId === groupId) {
-                n.x += dx;
-                n.y += dy;
+              // If the active page was removed, switch to another page.
+              if (s.activePageId && removedPageIds.includes(s.activePageId)) {
+                const next = remainingPages[0];
+                const target = s.pages[next.id];
+                s.activePageId = next.id;
+                s.nodes = target?.nodes ?? [];
+                s.edges = target?.edges ?? [];
+                s.aiGroups = target?.aiGroups ?? {};
+                s.viewport = target?.viewport ?? { ...emptyViewport };
+                s.selectedIds = [];
               }
-            }
-            const g = s.aiGroups[groupId];
-            if (g) {
-              g.anchor.x += dx;
-              g.anchor.y += dy;
-            }
+              scheduleSave();
+            });
+          },
+
+          // ── AI groups ──────────────────────────────────────────────────────
+          createAiGroup: (at, provider, model) => {
+            const id = genId("g");
+            const stamp = nowIso();
+            set((s) => {
+              s.aiGroups[id] = {
+                id,
+                anchor: { x: at.x, y: at.y },
+                title: "AI diagram",
+                messages: [],
+                provider,
+                model,
+                createdAt: stamp,
+                updatedAt: stamp,
+              };
+            });
             scheduleSave();
-          }),
+            return id;
+          },
 
-        selectGroup: (groupId) =>
-          set((s) => {
-            s.selectedIds = s.nodes.filter((n) => n.groupId === groupId).map((n) => n.id);
-          }),
+          appendGroupMessage: (groupId, msg) =>
+            set((s) => {
+              const g = s.aiGroups[groupId];
+              if (!g) return;
+              g.messages.push(msg);
+              g.updatedAt = nowIso();
+              scheduleSave();
+            }),
 
-        requestOpenAiThread: (groupId) =>
-          set((s) => {
-            s.pendingAiThreadGroupId = groupId;
-          }),
+          applyAiOps: (groupId, ops, anchor) => {
+            takeSnapshot(); // whole batch = one undo step
+            const stamp = nowIso();
+            set((s) => {
+              const temp = new Map<string, string>(); // tempId → real node id
+              const addedIds: string[] = [];
+              let allHaveCoords = true;
 
-        consumePendingAiThread: () =>
-          set((s) => {
-            s.pendingAiThreadGroupId = null;
-          }),
-      },
+              for (const op of ops) {
+                if (op.op !== "add_node") continue;
+                const id = genId("n");
+                temp.set(op.tempId, id);
+                addedIds.push(id);
+                if (op.x === undefined || op.y === undefined) allHaveCoords = false;
+                const [dw, dh] =
+                  op.kind === "shape" && (op.shapeType === "ellipse" || op.shapeType === "diamond")
+                    ? [130, 130]
+                    : op.kind === "shape"
+                      ? [160, 90]
+                      : op.kind === "note"
+                        ? [320, undefined as number | undefined]
+                        : [200, undefined as number | undefined];
+                s.nodes.push({
+                  id,
+                  kind: op.kind,
+                  groupId,
+                  x: anchor.x + (op.x ?? 0),
+                  y: anchor.y + (op.y ?? 0),
+                  width: op.width ?? dw,
+                  height: op.height ?? dh,
+                  title: op.title ?? (op.kind === "note" ? "Untitled" : ""),
+                  body: op.body ?? "",
+                  text:
+                    op.text ??
+                    (op.kind === "text" ? "Text" : op.kind === "shape" ? (op.title ?? "") : ""),
+                  shapeType: op.kind === "shape" ? (op.shapeType ?? "rectangle") : undefined,
+                  icon: op.icon,
+                  createdAt: stamp,
+                  updatedAt: stamp,
+                });
+              }
+
+              const resolve = (ref: string) => temp.get(ref) ?? ref;
+              const nodeExists = (nid: string) => s.nodes.some((n) => n.id === nid);
+
+              for (const op of ops) {
+                if (op.op === "connect") {
+                  const from = resolve(op.from);
+                  const to = resolve(op.to);
+                  if (from === to || !nodeExists(from) || !nodeExists(to)) continue;
+                  const dup = s.edges.some(
+                    (e) =>
+                      (e.source === from && e.target === to) ||
+                      (e.source === to && e.target === from),
+                  );
+                  if (dup) continue;
+                  s.edges.push({ id: genId("e"), source: from, target: to, groupId });
+                } else if (op.op === "update_node") {
+                  const n = s.nodes.find((x) => x.id === op.id);
+                  if (!n) continue;
+                  if (op.text !== undefined) n.text = op.text;
+                  if (op.title !== undefined) n.title = op.title;
+                  if (op.body !== undefined) n.body = op.body;
+                  if (op.shapeType !== undefined) n.shapeType = op.shapeType;
+                  n.updatedAt = stamp;
+                } else if (op.op === "delete_node") {
+                  s.nodes = s.nodes.filter((n) => n.id !== op.id);
+                  s.edges = s.edges.filter((e) => e.source !== op.id && e.target !== op.id);
+                } else if (op.op === "delete_edge") {
+                  s.edges = s.edges.filter((e) => e.id !== op.id);
+                }
+              }
+
+              // If the model didn't give coordinates for every new node, force-lay
+              // them out (over the group's own edges) in a box seeded at the anchor.
+              if (addedIds.length > 1 && !allHaveCoords) {
+                const deg = new Map<string, number>();
+                for (const e of s.edges) {
+                  if (e.groupId !== groupId) continue;
+                  deg.set(e.source, (deg.get(e.source) ?? 0) + 1);
+                  deg.set(e.target, (deg.get(e.target) ?? 0) + 1);
+                }
+                const layoutNodes = addedIds.map((nid) => ({ id: nid, degree: deg.get(nid) ?? 0 }));
+                const layoutEdges = s.edges
+                  .filter((e) => e.groupId === groupId)
+                  .map((e) => ({ from: e.source, to: e.target }));
+                const pos = forceLayout(layoutNodes, layoutEdges, 720, 480, { spacing: 1.1 });
+                for (const nid of addedIds) {
+                  const p = pos[nid];
+                  const n = s.nodes.find((x) => x.id === nid);
+                  if (p && n) {
+                    n.x = anchor.x + p.x;
+                    n.y = anchor.y + p.y;
+                  }
+                }
+              }
+
+              const g = s.aiGroups[groupId];
+              if (g) g.updatedAt = stamp;
+              scheduleSave();
+            });
+          },
+
+          deleteGroup: (groupId) => {
+            takeSnapshot();
+            set((s) => {
+              s.nodes = s.nodes.filter((n) => n.groupId !== groupId);
+              s.edges = s.edges.filter((e) => e.groupId !== groupId);
+              delete s.aiGroups[groupId];
+              s.selectedIds = [];
+              scheduleSave();
+            });
+          },
+
+          moveGroup: (groupId, dx, dy) =>
+            set((s) => {
+              for (const n of s.nodes) {
+                if (n.groupId === groupId) {
+                  n.x += dx;
+                  n.y += dy;
+                }
+              }
+              const g = s.aiGroups[groupId];
+              if (g) {
+                g.anchor.x += dx;
+                g.anchor.y += dy;
+              }
+              scheduleSave();
+            }),
+
+          selectGroup: (groupId) =>
+            set((s) => {
+              s.selectedIds = s.nodes.filter((n) => n.groupId === groupId).map((n) => n.id);
+            }),
+
+          requestOpenAiThread: (groupId) =>
+            set((s) => {
+              s.pendingAiThreadGroupId = groupId;
+            }),
+
+          consumePendingAiThread: () =>
+            set((s) => {
+              s.pendingAiThreadGroupId = null;
+            }),
+        },
       };
-    })
-  )
+    }),
+  ),
 );
 
 /** Bounding box (flow space) of a group's member nodes, or null if none. Used to

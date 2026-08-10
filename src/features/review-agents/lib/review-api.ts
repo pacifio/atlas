@@ -73,27 +73,17 @@ export const review = {
   /** BYOK providers that have a key AND the reviewer can drive. */
   providers: () => invoke<string[]>("review_providers"),
   /** Candidate base branches + detected default for Branch mode. */
-  baseBranches: (project: string) =>
-    invoke<BaseBranches>("review_base_branches", { project }),
-  start: (
-    id: string,
-    project: string,
-    provider: string,
-    model: string,
-    source: ReviewSource,
-  ) => invoke<void>("review_start", { id, project, provider, model, source }),
+  baseBranches: (project: string) => invoke<BaseBranches>("review_base_branches", { project }),
+  start: (id: string, project: string, provider: string, model: string, source: ReviewSource) =>
+    invoke<void>("review_start", { id, project, provider, model, source }),
   cancel: (id: string) => invoke<void>("review_cancel", { id }),
   list: (project: string) => invoke<ReviewRecord[]>("review_list", { project }),
-  get: (project: string, id: string) =>
-    invoke<ReviewRecord | null>("review_get", { project, id }),
+  get: (project: string, id: string) => invoke<ReviewRecord | null>("review_get", { project, id }),
   /** Model ids for a provider — reuses the Model-Chat listing command. */
-  models: (provider: string) =>
-    invoke<{ id: string }[]>("modelchat_models", { provider }),
+  models: (provider: string) => invoke<{ id: string }[]>("modelchat_models", { provider }),
 };
 
-export const listenReview = (
-  handler: (e: ReviewEvent) => void,
-): Promise<UnlistenFn> =>
+export const listenReview = (handler: (e: ReviewEvent) => void): Promise<UnlistenFn> =>
   listen<ReviewEvent>("atlas:review", (e) => handler(e.payload));
 
 /** Serialize a single file's verdict to markdown for sharing with the agent. */
@@ -141,7 +131,9 @@ export function reportToMarkdown(record: ReviewRecord): string {
     }
   }
   if (r.not_reviewed.length) {
-    lines.push(`_Not individually reviewed (${r.not_reviewed.length}): ${r.not_reviewed.join(", ")}_`);
+    lines.push(
+      `_Not individually reviewed (${r.not_reviewed.length}): ${r.not_reviewed.join(", ")}_`,
+    );
   }
   return lines.join("\n");
 }

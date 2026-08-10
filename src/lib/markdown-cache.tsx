@@ -13,15 +13,23 @@
 
 import { useEffect, useRef, useState } from "react";
 import { isTypingHot } from "./input-activity";
-import { parseMarkdown } from "./markdown-render";
 import MarkdownWorker from "./markdown.worker?worker";
 import "highlight.js/styles/github-dark.css";
 import { cn } from "./utils";
 
-const CACHE_MAX = 250;
 // Insertion-ordered Map → simple LRU via delete+set on hit. Bounded so a
 // thread of thousands of unique strings can't grow this unbounded.
+//
+// Sized in CHARACTERS, not entries. The old 250-entry bound predates block
+// splitting: one message used to be one entry, then became N blocks, and a
+// code-heavy thread blew through 250 entries while barely using any memory —
+// evicting exactly the settled blocks the cache exists to protect, so
+// scroll-back re-parsed everything. ~4 MB of source keys is a few thousand
+// typical blocks; the HTML roughly doubles that, still trivial for a desktop
+// webview.
+const CACHE_MAX_CHARS = 4_000_000;
 const cache = new Map<string, string>();
+let cacheChars = 0;
 
 // Blocks at or below this length parse synchronously on the main thread:
 // they're sub-millisecond and going async would flash empty content. Larger
@@ -38,19 +46,72 @@ function cacheGet(src: string): string | undefined {
 }
 
 function cacheSet(src: string, html: string): void {
+  const prev = cache.get(src);
+  if (prev !== undefined) cacheChars -= src.length + prev.length;
   cache.set(src, html);
-  if (cache.size > CACHE_MAX) {
+  cacheChars += src.length + html.length;
+  while (cacheChars > CACHE_MAX_CHARS && cache.size > 1) {
     const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
+    if (oldest === undefined) break;
+    cacheChars -= oldest.length + (cache.get(oldest)?.length ?? 0);
+    cache.delete(oldest);
   }
 }
 
-/** Synchronous parse on the main thread, with caching. Used for small blocks,
- *  cache misses already in hand, and the worker-unavailable fallback. */
-function renderToHtmlSync(src: string): string {
+// ── Main-thread renderer (lazily loaded) ───────────────────────────────────
+//
+// `markdown-render.ts` pulls the whole unified/remark/rehype/highlight.js
+// pipeline — ~554 KB. `App.tsx` imports `warmMarkdownWorker` from this module
+// on the boot path, so a STATIC import here put that entire stack in the eager
+// entry chunk, parsed before React's first paint, as a second copy of what
+// `markdown.worker.ts` already carries. Loading it through `import()` keeps it
+// out of the entry's static graph (Vite only preloads that graph) while
+// `primeMarkdownRenderer()` still gets it resident well before the first chat
+// block renders, so the synchronous small-block path below behaves as before.
+
+type RenderModule = typeof import("./markdown-render");
+
+let renderMod: RenderModule | null = null;
+let renderModPromise: Promise<RenderModule> | null = null;
+
+function ensureRenderer(): Promise<RenderModule> {
+  if (!renderModPromise) {
+    renderModPromise = import("./markdown-render").then((m) => {
+      renderMod = m;
+      return m;
+    });
+  }
+  return renderModPromise;
+}
+
+/** Start loading the main-thread renderer chunk. Safe to call repeatedly. */
+export function primeMarkdownRenderer(): void {
+  void ensureRenderer();
+}
+
+/** Synchronous parse on the main thread, with caching — but only if the
+ *  renderer chunk is already resident. Returns `null` when it isn't, so the
+ *  caller can route the block through the worker instead of blocking on a
+ *  module load. */
+function renderToHtmlSyncIfReady(src: string): string | null {
   const cached = cacheGet(src);
   if (cached !== undefined) return cached;
-  const html = parseMarkdown(src);
+  if (!renderMod) {
+    void ensureRenderer();
+    return null;
+  }
+  const html = renderMod.parseMarkdown(src);
+  cacheSet(src, html);
+  return html;
+}
+
+/** Main-thread parse, loading the renderer chunk first if needed. The
+ *  worker-unavailable fallback path — correctness over latency. */
+async function renderToHtmlAsync(src: string): Promise<string> {
+  const cached = cacheGet(src);
+  if (cached !== undefined) return cached;
+  const m = await ensureRenderer();
+  const html = m.parseMarkdown(src);
   cacheSet(src, html);
   return html;
 }
@@ -60,25 +121,36 @@ function renderToHtmlSync(src: string): string {
 let worker: Worker | null = null;
 let workerBroken = false;
 let seq = 0;
-const waiters = new Map<number, (html: string) => void>();
+// Waiters keep their SOURCE so a worker failure can settle them synchronously —
+// without it each in-flight block sat blank until its own 3s watchdog fired.
+const waiters = new Map<number, { source: string; finish: (html: string) => void }>();
 // Dedupe concurrent requests for the same source so two visible copies of an
 // identical message don't parse twice.
 const pending = new Map<string, Promise<string>>();
 
 function ensureWorker(): Worker | null {
-  if (worker || workerBroken) return worker;
+  // Order matters: once the watchdog (or onerror) marks the worker broken, hand
+  // back null even though `worker` is still non-null. Returning the dead worker
+  // here kept every later large block on the worker branch, where each one
+  // waited out the full 3s watchdog before falling back to a sync parse.
+  if (workerBroken) return null;
+  if (worker) return worker;
   try {
     worker = new MarkdownWorker();
     worker.onmessage = (e: MessageEvent<{ id: number; html: string }>) => {
-      const resolve = waiters.get(e.data.id);
-      if (resolve) {
+      const waiter = waiters.get(e.data.id);
+      if (waiter) {
         waiters.delete(e.data.id);
-        resolve(e.data.html);
+        waiter.finish(e.data.html);
       }
     };
     worker.onerror = () => {
-      // Reject in-flight waiters back to the sync path and stop using the worker.
+      // Stop using the worker AND settle everything in flight via the sync
+      // path right now, instead of letting each waiter eat its own watchdog.
       workerBroken = true;
+      const stranded = Array.from(waiters.values());
+      waiters.clear();
+      for (const w of stranded) void renderToHtmlAsync(w.source).then(w.finish);
     };
   } catch {
     workerBroken = true;
@@ -93,6 +165,9 @@ function ensureWorker(): Worker | null {
  *  (or hit the 3s watchdog → main-thread sync fallback). The echoed reply
  *  carries an id no waiter is registered for, so it's harmlessly ignored. */
 export function warmMarkdownWorker(): void {
+  // Same idea for the main-thread renderer: get its chunk resident before the
+  // first small block wants a synchronous parse.
+  void ensureRenderer();
   const w = ensureWorker();
   if (w) {
     try {
@@ -103,13 +178,64 @@ export function warmMarkdownWorker(): void {
   }
 }
 
+// ── Priority queue ─────────────────────────────────────────────────────────
+//
+// Blocks used to be posted to the worker the moment they mounted. The worker
+// drains FIFO, and rows mount top-to-bottom, so the queue was strictly
+// OLDEST-FIRST — the exact reverse of what the reader needs. Loading a session
+// lands the viewport at the newest turns, and those were last in line behind
+// every historical message, each one popping from placeholder to formatted as it
+// arrived and reflowing everything below it. That is the "content pushing"
+// during history load.
+//
+// So the queue is ours, not the worker's: hold the work here, keep only a couple
+// of parses in flight, and always dispatch the highest priority next. Callers
+// pass the row's position, so the newest visible message is parsed first and the
+// reader's viewport settles before anything off-screen is touched.
+
+interface QueueItem {
+  source: string;
+  priority: number;
+  dispatch: () => void;
+}
+
+const queue: QueueItem[] = [];
+let inFlight = 0;
+/** Small, not 1: one keeps the worker idle for a round-trip between items, and
+ *  much more would let a burst of low-priority work overtake a late arrival. */
+const MAX_IN_FLIGHT = 2;
+
+function pump(): void {
+  while (inFlight < MAX_IN_FLIGHT && queue.length > 0) {
+    let best = 0;
+    for (let i = 1; i < queue.length; i++) {
+      if (queue[i].priority > queue[best].priority) best = i;
+    }
+    const item = queue.splice(best, 1)[0];
+    inFlight += 1;
+    item.dispatch();
+  }
+}
+
+/** Raise a queued item's priority — the same source can be requested again by a
+ *  row that matters more (e.g. it scrolled into view). */
+function bumpPriority(source: string, priority: number): void {
+  for (const item of queue) {
+    if (item.source === source && priority > item.priority) item.priority = priority;
+  }
+}
+
 /** Parse a large block off the main thread. Falls back to a gated-idle main-
- *  thread parse (the pre-worker behavior) if the worker is unavailable. */
-function parseLarge(source: string): Promise<string> {
+ *  thread parse (the pre-worker behavior) if the worker is unavailable.
+ *  `priority` orders the queue — higher goes first. */
+function parseLarge(source: string, priority: number): Promise<string> {
   const hit = cacheGet(source);
   if (hit !== undefined) return Promise.resolve(hit);
   const existing = pending.get(source);
-  if (existing) return existing;
+  if (existing) {
+    bumpPriority(source, priority);
+    return existing;
+  }
 
   const w = ensureWorker();
   let p: Promise<string>;
@@ -122,19 +248,29 @@ function parseLarge(source: string): Promise<string> {
         settled = true;
         waiters.delete(id);
         cacheSet(source, html);
+        inFlight = Math.max(0, inFlight - 1);
         resolve(html);
+        // Free slot — start the next-highest-priority block.
+        pump();
       };
-      waiters.set(id, finish);
-      // Watchdog: if the worker never answers (e.g. its script failed to load
-      // asynchronously), fall back to a main-thread parse so the message still
-      // renders instead of hanging blank.
-      window.setTimeout(() => {
-        if (!settled) {
-          workerBroken = true;
-          finish(renderToHtmlSync(source));
-        }
-      }, 3000);
-      w.postMessage({ id, source });
+      queue.push({
+        source,
+        priority,
+        dispatch: () => {
+          waiters.set(id, { source, finish });
+          // Watchdog: if the worker never answers (e.g. its script failed to
+          // load asynchronously), fall back to a main-thread parse so the
+          // message still renders instead of hanging blank.
+          window.setTimeout(() => {
+            if (!settled) {
+              workerBroken = true;
+              void renderToHtmlAsync(source).then(finish);
+            }
+          }, 3000);
+          w.postMessage({ id, source });
+        },
+      });
+      pump();
     });
   } else {
     // Fallback: parse on the main thread but keep it out of typing bursts.
@@ -152,7 +288,7 @@ function parseLarge(source: string): Promise<string> {
           schedule();
           return;
         }
-        resolve(renderToHtmlSync(source));
+        void renderToHtmlAsync(source).then(resolve);
       }
       schedule();
     });
@@ -170,6 +306,25 @@ function parseLarge(source: string): Promise<string> {
 interface CachedMarkdownProps {
   source: string;
   className?: string;
+  /**
+   * Drop the default `prose-chat` typography classes and style the output
+   * purely from `className`.
+   *
+   * The new transcript needs this: its heights are PREDICTED from the metrics
+   * pinned in `.atlas-prose`, and `prose-chat`'s element rules (`.prose-chat p`,
+   * specificity 0,1,1) would win over `.atlas-prose > *` (0,1,0) and silently
+   * change the real margins out from under the prediction. Opting out is
+   * cleaner than escalating specificity in a fight the two stylesheets would
+   * keep having.
+   */
+  unstyled?: boolean;
+  /**
+   * Parse-queue priority — higher parses sooner. Callers pass the row's position
+   * in the thread, so the newest messages (the ones on screen after a history
+   * load) format first and the viewport stops reflowing before off-screen work
+   * begins. Only affects blocks large enough to go to the worker.
+   */
+  priority?: number;
 }
 
 /**
@@ -179,13 +334,15 @@ interface CachedMarkdownProps {
  * the first parse to a `requestIdleCallback` so initial mount paint
  * isn't blocked; subsequent remounts hit the cache and skip the deferral.
  */
-export function CachedMarkdown({ source, className }: CachedMarkdownProps) {
+export function CachedMarkdown({ source, className, unstyled, priority = 0 }: CachedMarkdownProps) {
   const [html, setHtml] = useState<string | null>(() => {
     const hit = cacheGet(source);
     if (hit !== undefined) return hit;
     // Small blocks parse synchronously (cheap, no flash); large blocks defer
-    // to the worker via the effect below.
-    if (source.length <= SYNC_LIMIT) return renderToHtmlSync(source);
+    // to the worker via the effect below. A small block ALSO defers when the
+    // renderer chunk hasn't loaded yet — the effect routes it to the worker,
+    // which carries its own copy of the pipeline and needs nothing from here.
+    if (source.length <= SYNC_LIMIT) return renderToHtmlSyncIfReady(source);
     return null;
   });
   const ref = useRef<HTMLDivElement>(null);
@@ -197,13 +354,17 @@ export function CachedMarkdown({ source, className }: CachedMarkdownProps) {
       return;
     }
     if (source.length <= SYNC_LIMIT) {
-      const fresh = renderToHtmlSync(source);
-      if (fresh !== html) setHtml(fresh);
-      return;
+      const fresh = renderToHtmlSyncIfReady(source);
+      if (fresh !== null) {
+        if (fresh !== html) setHtml(fresh);
+        return;
+      }
+      // Renderer chunk still loading — fall through to the worker path.
     }
-    // Large block → parse off the main thread, then swap in the HTML.
+    // Large block (or a small one before the renderer lands) → parse off the
+    // main thread, then swap in the HTML.
     let cancelled = false;
-    void parseLarge(source).then((result) => {
+    void parseLarge(source, priority).then((result) => {
       if (!cancelled) setHtml(result);
     });
     return () => {
@@ -211,7 +372,7 @@ export function CachedMarkdown({ source, className }: CachedMarkdownProps) {
     };
     // `html` intentionally omitted: re-running on our own setHtml would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source]);
+  }, [source, priority]);
 
   // One delegated click handler: copy-code buttons + safe external links.
   useEffect(() => {
@@ -238,9 +399,7 @@ export function CachedMarkdown({ source, className }: CachedMarkdownProps) {
       if (anchor instanceof HTMLAnchorElement && anchor.href && /^https?:/i.test(anchor.href)) {
         e.preventDefault();
         const href = anchor.href;
-        void import("@tauri-apps/plugin-opener")
-          .then((m) => m.openUrl(href))
-          .catch(() => {});
+        void import("@tauri-apps/plugin-opener").then((m) => m.openUrl(href)).catch(() => {});
       }
     };
     node.addEventListener("click", onClick);
@@ -277,15 +436,39 @@ export function CachedMarkdown({ source, className }: CachedMarkdownProps) {
     });
   }, [html]);
 
+  const cls = cn(
+    unstyled
+      ? "select-text"
+      : "prose-chat text-[var(--text-primary)] leading-relaxed break-words select-text",
+    className,
+  );
+
+  // Not yet parsed (a large block waiting on the worker) — render the RAW
+  // SOURCE rather than nothing.
+  //
+  // This matters far more than it looks. Rendering `__html: ""` gives an empty
+  // element of ZERO height, so a screen's worth of unparsed messages collapses
+  // the document to nothing; in the windowed transcript that showed up as the
+  // whole viewport going blank at the moment the window grew, and it persisted
+  // until the worker replied — up to the 3s watchdog if the worker was cold.
+  //
+  // The placeholder is the same text at the same size, so the height is about
+  // right and the reader can read it immediately; it swaps to formatted HTML
+  // when the parse lands. Unformatted beats absent, exactly as with rows.
+  if (html === null) {
+    return (
+      <div ref={ref} className={cls}>
+        <pre className="atlas-md-pending">{source}</pre>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={ref}
-      className={cn(
-        "prose-chat text-[var(--text-primary)] leading-relaxed break-words select-text",
-        className,
-      )}
+      className={cls}
       // eslint-disable-next-line react/no-danger
-      dangerouslySetInnerHTML={{ __html: html ?? "" }}
+      dangerouslySetInnerHTML={{ __html: html }}
     />
   );
 }

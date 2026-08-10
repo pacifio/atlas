@@ -20,7 +20,9 @@ Areas where help goes furthest right now:
 
 Check [open and closed issues](https://github.com/pacifio/atlas/issues?q=is%3Aissue) first. If one already covers it, a 👍 reaction is more useful than a duplicate.
 
-For a new report, include your Atlas version (Settings → About), your macOS version, and which agent was selected.
+The fastest way to report one is the **feedback button** in the app (status bar, or Settings) — its "Open a GitHub issue" link pre-fills the Bug Report form from whatever you typed. Filing directly on GitHub works the same way.
+
+The form only requires one field: a freeform description. Write as much or as little as you have — a one-line note is a fine issue, and so is a long writeup with source references. If you have them, your Atlas version (Settings → About), your OS and version, which agent was selected, and how to trigger it all help, but none of them block you from filing.
 
 ## Security issues
 
@@ -46,32 +48,42 @@ Share the proposal in the issue before implementing anything that changes UI or 
 
 Atlas has a lot of surfaces — a change that looks right in one panel often reads wrong across the other twelve. A design pass up front is faster than a rewrite after review.
 
-## Requirements
+## Quickstart
 
-**macOS is the supported platform.** Linux and Windows build from the same Tauri codebase but are untested, so expect to be the first person to hit whatever breaks. Reports from either are genuinely welcome.
+**macOS is the only currently-supported platform.** Linux and Windows build from the same Tauri codebase but are untested — a Windows build is planned, and reports from either OS are genuinely welcome in the meantime.
+
+You need:
 
 - [Bun](https://bun.sh/)
 - [Rust](https://rustup.rs/), stable
 - Xcode Command Line Tools
-- The `claude` CLI on your `PATH`, only if you're working on the Claude Code agent. The native agent needs nothing extra.
 
-## Local setup
+**No API keys, no `.env` file, no account.** Atlas builds and runs from a clean clone:
 
 ```bash
+git clone git@github.com:pacifio/atlas.git
+cd atlas
 bun install
 bun run dev:app
 ```
 
-The first Rust compile takes a few minutes. After that it's seconds.
+The first Rust compile takes a few minutes; after that, seconds. `bun run dev:app` hot-reloads the frontend on save — Rust changes need a restart.
 
-**No API keys are needed to build or run Atlas.** `.env` is optional — copy `.env.example` only if you want to point telemetry at your own PostHog project. Left blank, telemetry is permanently inert.
+That's enough to build and run Atlas. If you're planning to submit a change, clone your **fork** instead of `pacifio/atlas` directly — see "Fork, branch, PR" below.
+
+Other commands you'll use:
 
 ```bash
-bun run dev             # Vite only, no Tauri shell. Fast for pure UI work, but invoke() calls fail
-bun run format          # Prettier on src/
+bun run dev             # Vite only, no Tauri shell — fast for pure UI work, but invoke() calls fail
+bun run format          # oxfmt --write on src/
+bun run lint            # oxlint on src/
 ```
 
-`bun run lint` fails on a clean checkout — there's no ESLint 9 flat config in the repo yet. Use `bunx tsc --noEmit` as the frontend gate.
+A husky pre-commit hook runs `lint-staged` (oxfmt + oxlint on staged files) plus `bun run typecheck`, so most formatting/lint issues are caught before they ever reach CI (see Verification below).
+
+If you're working on the **Claude Code** agent specifically, you also need the `claude` CLI on your `PATH`. The native Atlas agent needs nothing extra.
+
+`.env` is optional — copy `.env.example` only if you want to point telemetry at your own PostHog project. Left blank, telemetry is permanently inert.
 
 ## Fork, branch, PR
 
@@ -85,40 +97,48 @@ cd atlas
 # 2. Point `upstream` at the canonical repo
 git remote add upstream git@github.com:pacifio/atlas.git
 git fetch upstream
-
-# 3. Find the current version branch — the highest-numbered one
-git ls-remote --heads upstream \
-  | sed 's|.*refs/heads/||' \
-  | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
-
-# 4. Branch from it, not from main
-git checkout -b <you>/atl-123-short-slug upstream/0.2.4
-
-# 5. Push to your fork, then open the PR against that same version branch
-git push -u origin <you>/atl-123-short-slug
 ```
 
-Linear generates branch names in the form `<you>/atl-<id>-<slug>`. Use them as given.
+Next, find the current version branch — check the [branch list on GitHub](https://github.com/pacifio/atlas/branches) and look for the highest-numbered one (e.g. `0.2.5`). Ask in `#dev` on Discord if it's not obvious.
+
+```bash
+# 3. Branch from it, not from main
+git checkout -b <you>/short-slug upstream/0.2.5
+
+# 4. Push to your fork, then open the PR against that same version branch
+git push -u origin <you>/short-slug
+```
+
+Name your branch `<you>/<short-slug>` — a few words describing the change, e.g. `alex/fix-sidebar-collapse`. If there's a GitHub issue for it, lead with the number: `alex/42-fix-sidebar-collapse`.
 
 To pick up changes made while you were working:
 
 ```bash
 git fetch upstream
-git rebase upstream/0.2.4
+git rebase upstream/0.2.5
 ```
 
 Leave **Allow edits from maintainers** checked when you open the PR. It lets small fixes land without another round trip.
 
 ## Branching model
 
-Atlas uses version branches, not trunk-based development.
+Most open-source projects merge every PR straight into `main`, because `main` is deployed continuously — there's no fixed "next release," just a constantly moving target. Atlas doesn't work that way: it ships as a numbered, installable build with an auto-updater, so `main` has to always equal exactly what's been released, nothing ahead of it. That means work needs somewhere to collect *before* it becomes a release, instead of landing on `main` directly.
+
+That somewhere is a version branch — one per upcoming release (`0.2.5`, `0.2.6`, …). PRs target the version branch, not `main`. Once the version branch is ready to ship, it gets merged into `main` in a single PR, and that merge *is* the release.
+
+```
+you/fix-sidebar-collapse ──┐
+you/add-vim-keybindings ───┼──►  0.2.5  ──►  main     (this merge = the 0.2.5 release)
+someone/fix-x ──────────────┘
+```
 
 | Branch | Purpose | Merges into |
 |---|---|---|
-| `main` | Release branch | — |
-| `0.2.4`, `0.2.5`, … | Integration branch for an upcoming release | `main`, and that merge is the release |
-| `<you>/atl-<id>-<slug>` | One issue's worth of work | The current version branch |
-| `feature-*`, `fix/*`, `mvc`, `ui` | Work spanning version cycles | `main` or the active version branch, depending on timing |
+| `main` | Always equals the latest release, nothing more | — |
+| `0.2.4`, `0.2.5`, … | Collects everything going into the next release | `main`, and that merge is the release |
+| `<you>/<short-slug>` | One issue's worth of work | The current version branch |
+
+PR straight into `main` only when the change has no version-branch dependency and doesn't need to wait for the next release — a doc fix or a one-line hotfix, say. When in doubt, target the version branch.
 
 Releases are tagged `alpha-X.Y.Z`, with occasional `exp-X.Y.Z-X.Y.Z` snapshots.
 
@@ -137,32 +157,52 @@ Run `bump.sh` once per release, on the version branch, before opening the PR int
 ## Verification
 
 ```bash
-bunx tsc --noEmit                  # frontend typecheck
+bun run lint                       # oxlint on src/
+bun run format:check               # oxfmt --check on src/
+bun run typecheck                  # frontend typecheck (app + test code)
+bun run test                       # frontend and cross-cutting tests
 cd src-tauri && cargo check        # Rust typecheck, including every crates/* dependency
 ```
 
-Rust tests run offline and need no API keys:
+Rust tests run offline and need no API keys. Each crate under `crates/` is its own standalone package (its own `Cargo.lock`, not a workspace member of `src-tauri`), so tests run from inside the crate's own directory — not with `-p <crate>` from `src-tauri`:
 
 ```bash
-cd src-tauri && cargo test -p atlas-cersei                      # the native agent
-cd src-tauri && cargo test -p atlas-cersei --test tools_eval    # a single file
-cd src-tauri && cargo run -p atlas-acp --example smoke          # ACP transport smoke test
+cd crates/atlas-cersei && cargo test                      # the native agent
+cd crates/atlas-cersei && cargo test --test tools_eval    # a single file
+cd crates/atlas-acp && cargo run --example smoke          # ACP transport smoke test
 ```
 
-Run `cargo test -p <crate>` for any workspace crate you touched.
+Run `cargo test` from inside the directory of any crate you touched.
 
-There's no frontend test runner. UI work is verified by running the app and using the feature in a window.
+Frontend tests run under Vitest:
+
+```bash
+bun run test                            # everything
+bun run test src/lib/time-ago.test.ts   # one file
+bun run test:watch                      # re-run on save
+```
+
+Tests live next to the code they cover (`src/lib/time-ago.test.ts`), except for
+ones that check the repo as a whole, which live in `tests/`. Two of those run on
+every PR and are worth knowing about:
+
+- `tests/ipc-contract.test.ts` — every `invoke("name")` in the frontend resolves
+  to a registered `#[tauri::command]`, and every command is wired into
+  `generate_handler!`. Rename a command without updating its callers and this is
+  what tells you, instead of a dead button at runtime.
+- `tests/ci-coverage.test.ts` — every crate in `crates/` is in the CI matrix, so
+  a new crate can't merge with its tests unrun.
+
+For a new IPC module, copy the pattern in
+`src/features/settings/lib/byok-api.test.ts`: mock `invoke` and assert the
+command name and payload. Whether the command *exists* is already covered.
+
+Rendering and interaction still need a real window — Vitest covers logic and the
+IPC seam, not the UI itself.
 
 ## Pull request checklist
 
-- [ ] PR targets the current version branch, unless it's a small standalone fix
-- [ ] `bunx tsc --noEmit` passes
-- [ ] `cd src-tauri && cargo check` passes
-- [ ] `cargo test -p <crate>` passes for every crate you touched
-- [ ] You have run the app and used the feature in a window
-- [ ] No commented-out code, no leftover `console.log`
-- [ ] No new top-level dependencies unless discussed in the issue
-- [ ] `TELEMETRY.md` updated, if you touched the telemetry pipeline
+Opening a PR pre-fills the checklist from the [PR template](.github/PULL_REQUEST_TEMPLATE.md) — work through it before asking for review.
 
 ## Telemetry
 

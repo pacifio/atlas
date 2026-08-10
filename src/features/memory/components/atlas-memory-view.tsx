@@ -91,7 +91,9 @@ export function AtlasMemoryView({ projectPath }: { projectPath: string | null })
   if (!projectPath) {
     return (
       <div className="h-full flex items-center justify-center">
-        <p className="text-[12px] text-[var(--text-tertiary)]">Open a project to view Atlas agent memory.</p>
+        <p className="text-[12px] text-[var(--text-tertiary)]">
+          Open a project to view Atlas agent memory.
+        </p>
       </div>
     );
   }
@@ -101,7 +103,8 @@ export function AtlasMemoryView({ projectPath }: { projectPath: string | null })
       <div className="h-full flex flex-col items-center justify-center gap-2 text-center px-6">
         <AtlasIcon size={20} />
         <p className="text-[12px] text-[var(--text-tertiary)]">
-          No Atlas agent sessions yet. Chat with the Atlas agent and its sessions + plans appear here.
+          No Atlas agent sessions yet. Chat with the Atlas agent and its sessions + plans appear
+          here.
         </p>
       </div>
     );
@@ -117,10 +120,14 @@ export function AtlasMemoryView({ projectPath }: { projectPath: string | null })
             onClick={() => setSelected(s.id)}
             className={cn(
               "flex w-full flex-col gap-0.5 border-b border-[var(--border-subtle)] px-3 py-2 text-left transition-colors",
-              s.id === selected ? "bg-[var(--bg-selected,var(--bg-hover))]" : "hover:bg-[var(--bg-hover)]",
+              s.id === selected
+                ? "bg-[var(--bg-selected,var(--bg-hover))]"
+                : "hover:bg-[var(--bg-hover)]",
             )}
           >
-            <span className="truncate text-[12px] text-[var(--text-primary)]">{s.preview || "Session"}</span>
+            <span className="truncate text-[12px] text-[var(--text-primary)]">
+              {s.preview || "Session"}
+            </span>
             <span className="text-[10px] text-[var(--text-tertiary)] tabular-nums">
               {s.message_count} msg{s.message_count === 1 ? "" : "s"}
               {s.last_modified ? ` · ${timeAgo(s.last_modified)}` : ""}
@@ -145,9 +152,15 @@ export function AtlasMemoryView({ projectPath }: { projectPath: string | null })
                 {plan.map((t, i) => (
                   <div key={i} className="flex items-start gap-2 py-0.5">
                     {t.status === "completed" ? (
-                      <CheckCircle2 size={12} className="mt-0.5 shrink-0 text-[var(--status-success)]" />
+                      <CheckCircle2
+                        size={12}
+                        className="mt-0.5 shrink-0 text-[var(--status-success)]"
+                      />
                     ) : t.status === "in_progress" ? (
-                      <Loader2 size={12} className="mt-0.5 shrink-0 animate-spin text-[var(--accent-primary)]" />
+                      <Loader2
+                        size={12}
+                        className="mt-0.5 shrink-0 animate-spin text-[var(--accent-primary)]"
+                      />
                     ) : (
                       <Circle size={12} className="mt-0.5 shrink-0 text-[var(--text-tertiary)]" />
                     )}
@@ -201,7 +214,9 @@ function TranscriptItem({ item }: { item: ReplayItem }) {
       <div
         className={cn(
           "text-[12px] leading-relaxed",
-          item.kind === "thinking" ? "italic text-[var(--text-tertiary)]" : "text-[var(--text-secondary)]",
+          item.kind === "thinking"
+            ? "italic text-[var(--text-tertiary)]"
+            : "text-[var(--text-secondary)]",
         )}
       >
         <Markdown>{item.text}</Markdown>

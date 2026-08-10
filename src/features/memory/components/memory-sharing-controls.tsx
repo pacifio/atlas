@@ -15,11 +15,7 @@ import { CHAT_PROVIDERS } from "@/features/settings/lib/providers";
 import { useMemorySharingStore } from "../stores/memory-sharing-store";
 import type { SummarizerMode } from "../lib/memory-sharing-api";
 
-export function MemorySharingControls({
-  projectPath,
-}: {
-  projectPath: string | null;
-}) {
+export function MemorySharingControls({ projectPath }: { projectPath: string | null }) {
   const enabled = useMemorySharingStore.use.enabled();
   const pref = useMemorySharingStore.use.pref();
   const { load, setEnabled, setPref } = useMemorySharingStore.use.actions();
@@ -55,9 +51,7 @@ export function MemorySharingControls({
         type="button"
         onClick={() => void setEnabled(!enabled)}
         title={
-          enabled
-            ? "Shared memory ON — injected into agents on first send"
-            : "Shared memory OFF"
+          enabled ? "Shared memory ON — injected into agents on first send" : "Shared memory OFF"
         }
         className={cn(
           "flex items-center gap-1 h-6 px-2 rounded-full border text-[10px] font-medium transition-colors cursor-pointer outline-none",
@@ -90,8 +84,8 @@ export function MemorySharingControls({
           >
             <div className="eyebrow mb-2">Recent-session handoff</div>
             <p className="mb-2.5 text-[11px] leading-snug text-text-tertiary">
-              How the previous session's tail is summarized before it is injected
-              into the next agent.
+              How the previous session's tail is summarized before it is injected into the next
+              agent.
             </p>
 
             <div className="inline-flex items-center gap-0.5 rounded-full border border-border-default bg-bg-elevated p-0.5">
@@ -125,9 +119,7 @@ export function MemorySharingControls({
                     configured={configured}
                     provider={pref.provider}
                     model={pref.model}
-                    onProvider={(provider) =>
-                      void setPref({ ...pref, provider, model: "" })
-                    }
+                    onProvider={(provider) => void setPref({ ...pref, provider, model: "" })}
                     onModel={(model) => void setPref({ ...pref, model })}
                   />
                 ) : (

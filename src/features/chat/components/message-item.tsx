@@ -34,15 +34,9 @@ import { StreamingMarkdown } from "./streaming-markdown";
  *  only the fallback for surfaces with no agent identity (memory chat, BYOK
  *  model chat), which is also what they rendered before the agent-icon work. */
 const USER_AVATAR = <User size={14} className="text-[var(--accent-primary)]" />;
-const GENERIC_AGENT_AVATAR = (
-  <Sparkles size={14} className="text-[var(--text-secondary)]" />
-);
+const GENERIC_AGENT_AVATAR = <Sparkles size={14} className="text-[var(--text-secondary)]" />;
 
-import {
-  getFilePathFromInput,
-  getEditParts,
-  type EditPart,
-} from "../lib/tool-files";
+import { getFilePathFromInput, getEditParts, type EditPart } from "../lib/tool-files";
 import { TurnSummaryCard } from "./turn-summary-card";
 import { stripNextSteps } from "../lib/next-steps";
 
@@ -69,7 +63,6 @@ function getAtlasSplit(message: ChatMessage): SplitContext {
   // or it's a legacy message we never split. Compute lazily.
   return splitAtlasContext(message.content);
 }
-
 
 function openFileInEditor(filePath: string) {
   useLayoutStore.getState().actions.addTab({
@@ -140,9 +133,7 @@ export const MessageItem = memo(function MessageItem({
     prose: rawProse,
     context,
     blockCount: contextBlockCount,
-  } = isUser
-    ? getAtlasSplit(message)
-    : { prose: message.content, context: null, blockCount: 0 };
+  } = isUser ? getAtlasSplit(message) : { prose: message.content, context: null, blockCount: 0 };
   // Hide the agent's `<next_steps>` block (rendered as chips) and, on resume,
   // our injected directive — from what the user reads.
   const prose = stripNextSteps(rawProse);
@@ -158,6 +149,7 @@ export const MessageItem = memo(function MessageItem({
         // then we anchor with normal spacing so the next user turn
         // doesn't crowd the action row.
         isLastInGroup ? "pb-6" : "pb-1",
+        isUser && "bg-[var(--bg-primary)]",
         dividerAbove && "border-t border-dashed border-[var(--border-default)]",
       )}
     >
@@ -170,17 +162,7 @@ export const MessageItem = memo(function MessageItem({
           <span className="h-px flex-1 bg-[var(--border-subtle)]" />
         </div>
       )}
-      <div
-        className={cn(
-          "flex gap-4 max-w-[760px] mx-auto",
-          // User turns mirror the row: avatar gutter on the right, content
-          // hugging the right edge of the column. The agent side keeps its
-          // existing left-aligned presentation untouched. Only the main axis
-          // flips — every child below is the same element in both layouts,
-          // so selection, copy/reply/save and keyboard focus are unaffected.
-          isUser && "flex-row-reverse",
-        )}
-      >
+      <div className="flex gap-4 max-w-[760px] mx-auto">
         {/* Avatar gutter. For grouped (compact) sub-blocks we replace the
             avatar with a thin vertical rail centered in the same column,
             so a multi-block turn reads as one connected unit (Zed-style)
@@ -206,65 +188,19 @@ export const MessageItem = memo(function MessageItem({
             `space-y-3` stack (as a sibling of it) — otherwise it counts
             as the first space-y child and pushes a 12px top margin onto
             the real first block of every message. */}
-        <div
-          className={cn(
-            "relative min-w-0",
-            // Agent turns fill the column. User turns shrink to fit their
-            // content — capped at 85% of the column so a long prompt still
-            // leaves the asymmetry visible, and so the cap shrinks with the
-            // panel in narrow/split layouts instead of a fixed pixel width.
-            isUser ? "flex max-w-[85%] flex-col items-end" : "flex-1",
-          )}
-        >
+        <div className="relative flex-1 min-w-0">
           {/* Quick actions — revealed on row hover (Zed/Linear style),
               available on every settled message rather than only the
-              last of a group. Floats at the top outer corner of the
-              content column (mirrored for user turns) so it never
-              reflows the text or covers the role header. */}
-          {!streaming && message.content && (
-            <MessageActions message={message} mirrored={isUser} />
-          )}
-          <div
-            className={cn(
-              "space-y-3",
-              // The user turn is a bounded card rather than a full-bleed row:
-              // right alignment alone reads as ragged text, and the card edge
-              // is what keeps the distinction legible for tool cards, quoted
-              // replies and attachments. `--bg-elevated-2` sits one step above
-              // the `--bg-secondary` used by code blocks / the Atlas-context
-              // accordion, so nested blocks stay inset instead of blending.
-              //
-              // `min-w-[200px]` reserves room for the hover-action cluster
-              // pinned to the card's inner corner: without it a one-word
-              // prompt shrinks to a card narrower than the cluster (~82px)
-              // and the actions cover the "You · time" header.
-              isUser &&
-                "min-w-[200px] max-w-full rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated-2)] px-3.5 py-2.5",
-            )}
-          >
+              last of a group. Floats at the top-right of the content
+              column so it never reflows the text. */}
+          {!streaming && message.content && <MessageActions message={message} />}
+          <div className="space-y-3">
             {!compact && (
-              <div
-                className={cn(
-                  "flex items-center gap-2",
-                  // Header sits at the card's outer (right) corner so the
-                  // hover actions at the inner corner never cover it.
-                  isUser && "justify-end",
-                )}
-              >
+              <div className="flex items-center gap-2">
                 <span className="text-[11px] font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
                   {isUser ? "You" : isAssistant ? (agentLabel ?? "Assistant") : message.role}
                 </span>
-                <span
-                  className={cn(
-                    "text-[10px] font-mono",
-                    // Tertiary grey clears 4.5:1 against the page background
-                    // but not against the user card's raised surface, so the
-                    // timestamp steps up one tier inside the card.
-                    isUser
-                      ? "text-[var(--text-secondary)]"
-                      : "text-[var(--text-tertiary)]",
-                  )}
-                >
+                <span className="text-[10px] text-[var(--text-tertiary)] font-mono">
                   {new Date(message.timestamp).toLocaleTimeString([], {
                     hour: "2-digit",
                     minute: "2-digit",
@@ -288,10 +224,7 @@ export const MessageItem = memo(function MessageItem({
               message.toolCalls.length === 0 &&
               !message.thinking && (
                 <div className="flex items-center gap-2 text-[12px] font-medium text-[var(--text-secondary)]">
-                  <Loader2
-                    size={13}
-                    className="animate-spin text-[var(--accent-primary)]"
-                  />
+                  <Loader2 size={13} className="animate-spin text-[var(--accent-primary)]" />
                   <span>Working…</span>
                 </div>
               )}
@@ -300,21 +233,13 @@ export const MessageItem = memo(function MessageItem({
               settles; auto-open while actively streaming so the user sees
               progress. */}
             {message.mode === "thinking" && message.thinking && (
-              <ThinkingAccordion
-                thinking={message.thinking}
-                streaming={streaming}
-              />
+              <ThinkingAccordion thinking={message.thinking} streaming={streaming} />
             )}
 
             {/* Images the user attached to this message (optimistic echo —
                 not recovered on replay; see ChatMessage.attachments). */}
             {message.attachments && message.attachments.length > 0 && (
-              <div
-                className={cn(
-                  "flex flex-wrap gap-2",
-                  isUser && "justify-end",
-                )}
-              >
+              <div className="flex flex-wrap gap-2">
                 {message.attachments.map((img, i) => (
                   <img
                     key={i}
@@ -331,21 +256,12 @@ export const MessageItem = memo(function MessageItem({
                 source-keyed cache hits. Same renderer streaming + settled, so
                 there's no plain-text→markdown "pop" or reflow at turn end. */}
             {prose && (
-              <StreamingMarkdown
-                source={prose}
-                streaming={streaming}
-                className="text-sm"
-              />
+              <StreamingMarkdown source={prose} streaming={streaming} className="text-sm" />
             )}
 
             {/* Heavy @-mention bodies (files / folders / repo READMEs / notes /
               papers) collapsed by default so the thread stays scannable. */}
-            {context && (
-              <AtlasContextAccordion
-                context={context}
-                blockCount={contextBlockCount}
-              />
-            )}
+            {context && <AtlasContextAccordion context={context} blockCount={contextBlockCount} />}
 
             {/* Tool calls */}
             {message.toolCalls.length > 0 && (
@@ -370,9 +286,7 @@ export const MessageItem = memo(function MessageItem({
             )}
 
             {/* Plan */}
-            {message.plan && message.plan.length > 0 && (
-              <PlanCard steps={message.plan} />
-            )}
+            {message.plan && message.plan.length > 0 && <PlanCard steps={message.plan} />}
 
             {/* Per-turn usage footer (native agent) — token count + cost at the
                 end of the turn, since with the in-process agent we know the
@@ -386,9 +300,7 @@ export const MessageItem = memo(function MessageItem({
               !streaming &&
               message.role === "assistant" &&
               tabId &&
-              (message.turnSummary ||
-                message.suggestions ||
-                message.contextUsage) && (
+              (message.turnSummary || message.suggestions || message.contextUsage) && (
                 <TurnSummaryCard message={message} tabId={tabId} />
               )}
           </div>
@@ -398,15 +310,7 @@ export const MessageItem = memo(function MessageItem({
   );
 });
 
-function MessageActions({
-  message,
-  mirrored = false,
-}: {
-  message: ChatMessage;
-  /** Right-aligned (user) rows pin the cluster to the inner edge so it
-   *  mirrors the agent side and stays clear of the role header. */
-  mirrored?: boolean;
-}) {
+function MessageActions({ message }: { message: ChatMessage }) {
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -452,17 +356,14 @@ function MessageActions({
       toast.success("Saved to knowledge base");
       setTimeout(() => setSaved(false), 1500);
     } catch (err) {
-      toast.error(
-        `Save failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      toast.error(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
   return (
     <div
       className={cn(
-        "absolute -top-1 z-10 flex items-center gap-0.5 rounded-md",
-        mirrored ? "left-0" : "right-0",
+        "absolute right-0 -top-1 z-10 flex items-center gap-0.5 rounded-md",
         "border border-[var(--border-default)] bg-[var(--bg-elevated)] p-0.5",
         "shadow-[var(--shadow-sm)]",
         // Hidden until the message row is hovered (the `.group` wrapper
@@ -472,10 +373,7 @@ function MessageActions({
     >
       <ActionButton onClick={handleCopy} title="Copy markdown">
         {copied ? (
-          <Check
-            size={12}
-            className="text-[var(--text-primary)] animate-scale-in"
-          />
+          <Check size={12} className="text-[var(--text-primary)] animate-scale-in" />
         ) : (
           <Copy size={12} />
         )}
@@ -485,10 +383,7 @@ function MessageActions({
       </ActionButton>
       <ActionButton onClick={handleSave} title="Save to knowledge base">
         {saved ? (
-          <Check
-            size={12}
-            className="text-[var(--text-primary)] animate-scale-in"
-          />
+          <Check size={12} className="text-[var(--text-primary)] animate-scale-in" />
         ) : (
           <Bookmark size={12} />
         )}
@@ -535,24 +430,16 @@ const AtlasContextAccordion = memo(function AtlasContextAccordion({
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] [&::-webkit-details-marker]:hidden">
         <ChevronRight
           size={12}
-          className={cn(
-            "transition-transform text-[var(--text-tertiary)]",
-            open && "rotate-90",
-          )}
+          className={cn("transition-transform text-[var(--text-tertiary)]", open && "rotate-90")}
         />
         <Paperclip size={12} className="text-[var(--text-tertiary)]" />
         <span className="font-mono">
           Atlas context
-          {blockCount > 0 && (
-            <span className="text-[var(--text-tertiary)]"> · {blockCount}</span>
-          )}
+          {blockCount > 0 && <span className="text-[var(--text-tertiary)]"> · {blockCount}</span>}
         </span>
       </summary>
       <div className="border-t border-[var(--border-default)] px-3 py-2">
-        <CachedMarkdown
-          source={context}
-          className="text-[12px] text-[var(--text-tertiary)]"
-        />
+        <CachedMarkdown source={context} className="text-[12px] text-[var(--text-tertiary)]" />
       </div>
     </details>
   );
@@ -579,22 +466,14 @@ const ThinkingAccordion = memo(function ThinkingAccordion({
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] [&::-webkit-details-marker]:hidden">
         <ChevronRight
           size={12}
-          className={cn(
-            "transition-transform text-[var(--text-tertiary)]",
-            open && "rotate-90",
-          )}
+          className={cn("transition-transform text-[var(--text-tertiary)]", open && "rotate-90")}
         />
         {streaming ? (
-          <Loader2
-            size={12}
-            className="animate-spin text-[var(--accent-primary)]"
-          />
+          <Loader2 size={12} className="animate-spin text-[var(--accent-primary)]" />
         ) : (
           <Brain size={12} className="text-[var(--text-tertiary)]" />
         )}
-        <span className="font-mono">
-          {streaming ? "Thinking…" : "Thought process"}
-        </span>
+        <span className="font-mono">{streaming ? "Thinking…" : "Thought process"}</span>
       </summary>
       <div className="border-t border-[var(--border-default)] px-3 py-2">
         <pre className="whitespace-pre-wrap break-words font-sans text-[12px] leading-relaxed text-[var(--text-tertiary)] select-text">
@@ -739,18 +618,13 @@ const ToolCallCard = memo(function ToolCallCard({
   const hasOutput = !!toolCall.result && toolCall.result.trim().length > 0;
 
   // Status icon — check for success, cross for failure, spinner while running.
-  const isRunning =
-    toolCall.status === "running" || toolCall.status === "pending";
-  const statusLabel =
-    toolCall.status === "failed" ? "Failed" : isRunning ? "Running" : "Done";
+  const isRunning = toolCall.status === "running" || toolCall.status === "pending";
+  const statusLabel = toolCall.status === "failed" ? "Failed" : isRunning ? "Running" : "Done";
   const statusIcon =
     toolCall.status === "failed" ? (
       <XCircle size={12} className="text-[var(--status-error)]" />
     ) : isRunning ? (
-      <Loader2
-        size={12}
-        className="animate-spin text-[var(--accent-primary)]"
-      />
+      <Loader2 size={12} className="animate-spin text-[var(--accent-primary)]" />
     ) : (
       <CheckCircle2 size={12} className="text-[var(--status-success)]" />
     );
@@ -758,8 +632,7 @@ const ToolCallCard = memo(function ToolCallCard({
   // Title text — for Bash, show the command directly; for other tools, show "<Tool> <path|pattern|args>".
   let title: string;
   if (isBash) {
-    title =
-      (args.command as string) ?? (args.cmd as string) ?? toolCall.toolName;
+    title = (args.command as string) ?? (args.cmd as string) ?? toolCall.toolName;
   } else if (filePath) {
     title = `${toolCall.toolName} ${filePath}`;
   } else if (typeof args.pattern === "string") {
@@ -806,8 +679,7 @@ const ToolCallCard = memo(function ToolCallCard({
         onClick={handleRowClick}
         className={cn(
           "flex items-center gap-2 px-3 py-1.5",
-          filePath &&
-            "cursor-pointer hover:bg-[var(--bg-hover)] transition-colors",
+          filePath && "cursor-pointer hover:bg-[var(--bg-hover)] transition-colors",
         )}
       >
         <span className="shrink-0" title={statusLabel} aria-label={statusLabel}>
@@ -849,10 +721,7 @@ const ToolCallCard = memo(function ToolCallCard({
           title="Copy Command + Output"
         >
           {copied ? (
-            <Check
-              size={11}
-              className="text-[var(--text-primary)] animate-scale-in"
-            />
+            <Check size={11} className="text-[var(--text-primary)] animate-scale-in" />
           ) : (
             <Copy size={11} />
           )}
@@ -891,8 +760,7 @@ function UsageFooter({
   model: string | null;
 }) {
   const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
-  const cost =
-    usage.cost > 0 ? ` · $${usage.cost.toFixed(usage.cost < 1 ? 4 : 2)}` : "";
+  const cost = usage.cost > 0 ? ` · $${usage.cost.toFixed(usage.cost < 1 ? 4 : 2)}` : "";
   const saved = usage.saved ?? 0;
   return (
     <div className="flex items-center gap-2 pt-1 text-[10px] text-[var(--text-tertiary)] tabular-nums select-none">
@@ -987,7 +855,10 @@ const MemoryRecallCard = memo(function MemoryRecallCard({
         {docs.length > 0 && (
           <ChevronRight
             size={13}
-            className={cn("shrink-0 text-[var(--text-tertiary)] transition-transform", open && "rotate-90")}
+            className={cn(
+              "shrink-0 text-[var(--text-tertiary)] transition-transform",
+              open && "rotate-90",
+            )}
           />
         )}
       </button>
@@ -1009,7 +880,7 @@ const MemoryRecallCard = memo(function MemoryRecallCard({
                 <span
                   className={cn(
                     "shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide",
-                    MEMORY_SOURCE_STYLE[d.source] ?? MEMORY_SOURCE_STYLE.shared
+                    MEMORY_SOURCE_STYLE[d.source] ?? MEMORY_SOURCE_STYLE.shared,
                   )}
                 >
                   {d.source}
@@ -1064,11 +935,7 @@ const FileChangeCard = memo(function FileChangeCard({
   );
 });
 
-const PlanCard = memo(function PlanCard({
-  steps,
-}: {
-  steps: ChatMessage["plan"];
-}) {
+const PlanCard = memo(function PlanCard({ steps }: { steps: ChatMessage["plan"] }) {
   if (!steps) return null;
   const completed = steps.filter((s) => s.status === "completed").length;
 
@@ -1081,15 +948,9 @@ const PlanCard = memo(function PlanCard({
         <div key={step.id} className="flex items-start gap-2">
           <span className="mt-0.5">
             {step.status === "completed" ? (
-              <CheckCircle2
-                size={12}
-                className="text-[var(--status-success)]"
-              />
+              <CheckCircle2 size={12} className="text-[var(--status-success)]" />
             ) : step.status === "in_progress" ? (
-              <Loader2
-                size={12}
-                className="animate-spin text-[var(--accent-primary)]"
-              />
+              <Loader2 size={12} className="animate-spin text-[var(--accent-primary)]" />
             ) : (
               <div className="w-3 h-3 rounded-full border border-[var(--border-strong)]" />
             )}

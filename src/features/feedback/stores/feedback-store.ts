@@ -71,10 +71,7 @@ const useFeedbackStoreBase = create<FeedbackState>()((set, get) => ({
     openPanel: (source) => set({ open: true, source, error: null, sent: false }),
     // Draft survives on purpose — see the module note.
     closePanel: () => set({ open: false }),
-    toggle: (source) =>
-      get().open
-        ? get().actions.closePanel()
-        : get().actions.openPanel(source),
+    toggle: (source) => (get().open ? get().actions.closePanel() : get().actions.openPanel(source)),
 
     setCategory: (category) => set({ category }),
     setMessage: (message) => set({ message }),
@@ -89,9 +86,7 @@ const useFeedbackStoreBase = create<FeedbackState>()((set, get) => ({
         // and must not raise a toast.
         if (shot) set({ shot });
       } catch (e) {
-        toast.error(
-          `Screenshot failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        toast.error(`Screenshot failed: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
         set({ capturing: false });
       }
@@ -121,8 +116,7 @@ const useFeedbackStoreBase = create<FeedbackState>()((set, get) => ({
       // Read the active tab lazily and non-reactively: a *type* ("chat"), never
       // a title or a path.
       const layout = useLayoutStore.getState();
-      const activeTab =
-        layout.tabs.find((t) => t.id === layout.activeTabId)?.type ?? null;
+      const activeTab = layout.tabs.find((t) => t.id === layout.activeTabId)?.type ?? null;
 
       try {
         const receipt = await feedback.submit({

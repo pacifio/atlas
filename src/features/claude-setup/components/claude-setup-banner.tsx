@@ -14,8 +14,7 @@ import { useClaudeSetupStore } from "../stores/claude-setup-store";
 export function ClaudeSetupBanner() {
   const phase = useClaudeSetupStore.use.phase();
   const installError = useClaudeSetupStore.use.installError();
-  const { install, openLoginDialog, refreshStatus } =
-    useClaudeSetupStore.use.actions();
+  const { install, openLoginDialog, refreshStatus } = useClaudeSetupStore.use.actions();
 
   if (phase === "ready") return null;
 

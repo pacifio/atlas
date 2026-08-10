@@ -16,11 +16,22 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { useChatStore } from "../stores/chat-store";
 import { agents } from "../lib/agents-api";
-import { CLAUDE_PERMISSION_MODE_LABEL, AGENT_LABEL, agentTypeFromPluginId, type SwitchableAgent } from "@/types/agent";
+import {
+  CLAUDE_PERMISSION_MODE_LABEL,
+  AGENT_LABEL,
+  agentTypeFromPluginId,
+  type SwitchableAgent,
+} from "@/types/agent";
+import {
+  cycleChatAgent,
+  nextAgentForTab,
+  switchAgentForTab,
+} from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
 import { ProviderModelPills } from "./provider-model-pills";
 import { loadCerseiEffort, loadCerseiCompress } from "../lib/cersei-model-pref";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
+import { modelLabel } from "../lib/model-label";
 // `ChatInput` pulls in CodeMirror (~870 KB) via `cm-mention-extension`.
 // We import it dynamically so the chunk is not in the initial preload set.
 // The import is kicked off at module-evaluation time (below, outside the
@@ -64,15 +75,18 @@ import { useProjectStore } from "@/features/project/stores/project-store";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import type { MentionTrigger } from "../lib/cm-mention-extension";
 import type { SlashTrigger } from "../lib/cm-slash-extension";
-import { clearSlashRange } from "../lib/cm-slash-extension";
+// Value import — MUST come from the CodeMirror-free module, not from
+// `cm-slash-extension` (see `cm-clear-range.ts`), or the composer's dynamic
+// `import("./chat-input")` boundary below is defeated and the CodeMirror
+// vendor chunk lands in the eager boot graph.
+import { clearSlashRange } from "../lib/cm-clear-range";
 import type { MentionData } from "../lib/mentions";
 
 // Start the CodeMirror chunk download at module-evaluation time. Vite still
 // excludes it from `<link rel="modulepreload">` because the static analysis
 // only sees a dynamic `import()`. The promise is reused by every MessageInput
 // instance.
-const chatInputPromise: Promise<typeof import("./chat-input")> =
-  import("./chat-input");
+const chatInputPromise: Promise<typeof import("./chat-input")> = import("./chat-input");
 const mentionPickerPromise: Promise<
   typeof import("@/features/mentions/components/mention-picker")
 > = import("@/features/mentions/components/mention-picker");
@@ -110,11 +124,7 @@ interface MessageInputProps {
    * and any staged image attachments — the panel-level handler composes
    * the final wire prompt and stages the images.
    */
-  onSend: (
-    message: string,
-    mentions: MentionData[],
-    attachments?: ImageAttachment[],
-  ) => void;
+  onSend: (message: string, mentions: MentionData[], attachments?: ImageAttachment[]) => void;
   /** Stop the current generation. */
   onStop?: () => void;
   /** Stop was clicked; awaiting the cancelled turn's terminal delta. */
@@ -209,7 +219,12 @@ function CerseiMemoryPill() {
       {indexing ? (
         <Loader2 size={11} className="animate-spin text-[var(--accent-primary)]" />
       ) : (
-        <Database size={11} className={status?.indexed ? "text-[var(--accent-primary)]" : "text-[var(--text-tertiary)]"} />
+        <Database
+          size={11}
+          className={
+            status?.indexed ? "text-[var(--accent-primary)]" : "text-[var(--text-tertiary)]"
+          }
+        />
       )}
       {label}
     </button>
@@ -268,7 +283,8 @@ function CerseiUsagePill({ tabId }: { tabId: string }) {
   const total = (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
   if (total === 0) return null;
   const tokens = total >= 1000 ? `${(total / 1000).toFixed(1)}K` : `${total}`;
-  const cost = usage.cost && usage.cost > 0 ? ` · $${usage.cost.toFixed(usage.cost < 1 ? 3 : 2)}` : "";
+  const cost =
+    usage.cost && usage.cost > 0 ? ` · $${usage.cost.toFixed(usage.cost < 1 ? 3 : 2)}` : "";
   return (
     <span
       className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-tertiary)] select-none tabular-nums"
@@ -286,6 +302,13 @@ function CerseiUsagePill({ tabId }: { tabId: string }) {
  * Self-contained: own narrow store selectors + click-outside, so it doesn't
  * widen MessageInput's render surface.
  */
+/** Mode names arrive verbatim from the agent — OpenCode sends lowercase ids as
+ *  names ("build", "plan"). Title-case a single all-lowercase word for display;
+ *  multi-word or already-cased names (Claude's "Accept Edits") pass through. */
+function displayModeName(name: string): string {
+  return /^[a-z][a-z0-9-]*$/.test(name) ? name.charAt(0).toUpperCase() + name.slice(1) : name;
+}
+
 function AcpModePicker({ tabId }: { tabId: string }) {
   const currentMode = useChatStore((s) => s.sessions[tabId]?.acpCurrentMode);
   const availableModes = useChatStore((s) => s.sessions[tabId]?.acpAvailableModes);
@@ -336,7 +359,7 @@ function AcpModePicker({ tabId }: { tabId: string }) {
           className="w-1.5 h-1.5 rounded-full shrink-0"
           style={{ background: acpModeColor(currentMode) }}
         />
-        {current?.name ?? "Mode"}
+        {current ? displayModeName(current.name) : "Mode"}
       </button>
       {open && (
         <div className="absolute bottom-full left-0 mb-1.5 z-50 min-w-[200px] max-w-[280px] rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] p-1 shadow-lg">
@@ -351,9 +374,7 @@ function AcpModePicker({ tabId }: { tabId: string }) {
                 }}
                 className={cn(
                   "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors",
-                  active
-                    ? "bg-[var(--bg-selected)]"
-                    : "hover:bg-[var(--bg-hover)]"
+                  active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
                 )}
               >
                 <span
@@ -362,10 +383,8 @@ function AcpModePicker({ tabId }: { tabId: string }) {
                 />
                 <span className="flex-1 min-w-0">
                   <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
-                    {m.name}
-                    {active && (
-                      <Check size={11} className="text-[var(--accent-primary)]" />
-                    )}
+                    {displayModeName(m.name)}
+                    {active && <Check size={11} className="text-[var(--accent-primary)]" />}
                   </span>
                   {m.description && (
                     <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)]">
@@ -389,11 +408,6 @@ function AcpModePicker({ tabId }: { tabId: string }) {
  * dropup mirroring the mode picker. Hidden when the agent exposes no models or
  * for the native agent (which uses ProviderModelPills + its BYOK catalog).
  */
-/** Claude Code advertises its default model as "Recommended"; show "Default". */
-function modelLabel(m: { id: string; name: string }): string {
-  if (m.name.trim().toLowerCase() === "recommended" || m.id === "default") return "Default";
-  return m.name;
-}
 
 function AcpModelPicker({ tabId }: { tabId: string }) {
   const currentModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel);
@@ -448,7 +462,9 @@ function AcpModelPicker({ tabId }: { tabId: string }) {
         title="Model"
       >
         <Cpu size={11} className="shrink-0 text-[var(--text-tertiary)]" />
-        <span className="max-w-[120px] truncate">{current ? modelLabel(current) : (currentModel ?? "Model")}</span>
+        <span className="max-w-[120px] truncate">
+          {current ? modelLabel(current) : (currentModel ?? "Model")}
+        </span>
         <ChevronDown size={10} className="shrink-0 text-[var(--text-tertiary)]" />
       </button>
       {open && (
@@ -529,15 +545,11 @@ export function MessageInput({
   } = useChatStore.use.actions();
   // Codex/other ACP agents advertise their own permission modes; show the
   // picker only when this session actually has modes (Claude uses its own pill).
-  const hasAcpModes = useChatStore(
-    (s) => (s.sessions[tabId]?.acpAvailableModes?.length ?? 0) > 0
-  );
+  const hasAcpModes = useChatStore((s) => (s.sessions[tabId]?.acpAvailableModes?.length ?? 0) > 0);
   // Show the picker as soon as the agent is non-Claude — even before its modes
   // load — so the composer can render a loading pill instead of nothing during
   // the agent spawn + new_session boot.
-  const acpModesPending = useChatStore(
-    (s) => s.sessions[tabId]?.acpModesPending ?? false
-  );
+  const acpModesPending = useChatStore((s) => s.sessions[tabId]?.acpModesPending ?? false);
   // Self-heal the mode picker. chat-panel seeds the modes when a session is
   // first bound, but that path can be missed (resumed/restored sessions, an
   // effect that didn't re-run, etc.) — leaving a bound Codex session with the
@@ -565,7 +577,7 @@ export function MessageInput({
             tabId,
             snap.current_mode,
             snap.available_modes,
-            agentTypeFromPluginId(snap.plugin_id)
+            agentTypeFromPluginId(snap.plugin_id),
           );
         }
       } catch (err) {
@@ -590,29 +602,31 @@ export function MessageInput({
   // Narrow per-tab selectors — primitives only, no message-array refs. This
   // component otherwise would re-render on every streaming chunk because it
   // sits inside the active chat panel.
-  const permissionMode = useChatStore(
-    (s) => s.sessions[tabId]?.claudePermissionMode ?? "default"
-  );
-  const agentType = useChatStore(
-    (s) => s.sessions[tabId]?.agentType ?? "claude-code"
-  );
-  // Settings → General → "Enter to send" (#51). Narrow selector so a toggle
-  // flip only re-renders composers, not the whole settings surface.
+  const permissionMode = useChatStore((s) => s.sessions[tabId]?.claudePermissionMode ?? "default");
+  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
+  // Settings → General → "Enter to send". Narrow selector so a toggle flip
+  // only re-renders composers, not the whole settings surface.
   const enterToSend = useProjectStore((s) => s.settings.enterToSend);
   // `agentType` widened to a SwitchableAgent (drops "custom") for the composer
   // sub-components (skill/session scope, agent switcher) + the label lookup.
   const switchableAgent: SwitchableAgent =
-    agentType === "codex" ? "codex" : agentType === "cersei" ? "cersei" : "claude-code";
+    agentType === "codex" ||
+    agentType === "opencode" ||
+    agentType === "cursor" ||
+    agentType === "kilo" ||
+    agentType === "cersei"
+      ? agentType
+      : "claude-code";
   // Native Cersei agent only: BYOK provider + model selection for the composer.
   const cerseiProvider = useChatStore((s) => s.sessions[tabId]?.cerseiProvider ?? "");
   const cerseiModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel ?? "");
   const onCerseiProvider = useCallback(
     (id: string) => setCerseiProvider(tabId, id),
-    [tabId, setCerseiProvider]
+    [tabId, setCerseiProvider],
   );
   const onCerseiModel = useCallback(
     (id: string) => setCerseiModel(tabId, id),
-    [tabId, setCerseiModel]
+    [tabId, setCerseiModel],
   );
   // The composer may settle on a provider/model before the session is bound
   // (the `agents_set_model` push no-ops until then). Re-push once the binding
@@ -655,34 +669,63 @@ export function MessageInput({
     if (cerseiBound || cerseiCompress === undefined) setCerseiCompress(tabId, on);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, agentType, cerseiBound]);
-  // ACP-reported slash commands for this session (Codex). Claude keeps its
-  // curated catalogue (the picker's default).
+  // ACP-reported slash commands for this session. Both adapters advertise
+  // their real command list via `available_commands_update` — Codex's arrives
+  // with the binding, Claude's a few seconds after session/new (the SDK
+  // discovers skills/plugins/MCP prompts first), so Claude falls back to the
+  // curated catalogue until the live list lands. The native agent has no
+  // slash commands; its trigger is suppressed at the wiring site below.
   const availableCommands = useChatStore((s) => s.sessions[tabId]?.availableCommands);
   const agentSlashCommands = useMemo<SlashCommand[] | undefined>(() => {
-    if (agentType !== "codex") return undefined;
+    if (
+      agentType !== "codex" &&
+      agentType !== "claude-code" &&
+      agentType !== "opencode" &&
+      agentType !== "cursor" &&
+      agentType !== "kilo"
+    )
+      return undefined;
     const fromAgent: SlashCommand[] = (availableCommands ?? [])
       .map((c) => {
-        const o = (c ?? {}) as { name?: string; description?: string; input?: unknown };
+        const o = (c ?? {}) as {
+          name?: string;
+          description?: string;
+          input?: { hint?: string } | null;
+        };
         const name = (o.name ?? "").replace(/^\//, "");
+        const hint = typeof o.input?.hint === "string" ? o.input.hint : null;
         return {
           name,
-          signature: o.input != null ? `/${name} <args>` : `/${name}`,
+          signature: o.input != null ? `/${name} <${hint || "args"}>` : `/${name}`,
           description: o.description ?? "",
           handler: "passthrough" as const,
         };
       })
       .filter((c) => c.name && c.name !== "login");
-    // Custom Atlas-handled command (not advertised by codex-acp): opens the
-    // Codex sign-in modal — mirrors Claude's `/login`.
-    return [
-      {
-        name: "login",
-        signature: "/login",
-        description: "Sign in to Codex (ChatGPT or API key).",
-        handler: "codex-login" as const,
-      },
-      ...fromAgent,
-    ];
+    // Claude: until the ACP list arrives, `undefined` selects the picker's
+    // curated fallback (which carries its own `/login`).
+    if (agentType === "claude-code" && fromAgent.length === 0) return undefined;
+    // OpenCode / Cursor / Kilo auth is terminal-only — no host dialog, so no
+    // synthetic `/login`; the composer's auth pill covers them.
+    if (agentType === "opencode" || agentType === "cursor" || agentType === "kilo")
+      return fromAgent;
+    // `/login` is Atlas-handled, not advertised by either adapter: it opens
+    // the host sign-in dialog for the bound agent.
+    const login: SlashCommand =
+      agentType === "codex"
+        ? {
+            name: "login",
+            signature: "/login",
+            description: "Sign in to Codex (ChatGPT or API key).",
+            handler: "codex-login" as const,
+          }
+        : {
+            name: "login",
+            signature: "/login",
+            description: "Sign in to your Anthropic account.",
+            handler: "atlas-login" as const,
+          };
+    return [login, ...fromAgent];
   }, [agentType, availableCommands]);
   const queue = useChatStore((s) => s.queues[tabId] ?? EMPTY_QUEUE);
 
@@ -695,9 +738,7 @@ export function MessageInput({
   // (which unmounts this component) doesn't drop what the user was typing.
   // `useState`'s lazy initializer runs once per mount with the tabId that
   // was current at mount time — that's exactly what we want.
-  const [value, setValue] = useState(
-    () => useChatStore.getState().drafts[tabId] ?? "",
-  );
+  const [value, setValue] = useState(() => useChatStore.getState().drafts[tabId] ?? "");
   const inputRef = useRef<ChatInputHandle>(null);
 
   // Mirror every doc change into the per-tab draft slot. Using an
@@ -715,12 +756,13 @@ export function MessageInput({
   // fallback — instead the placeholder div below holds the layout slot at
   // the same height so the swap is invisible (no reflow, no mount/unmount
   // of an interactive element mid-typing).
-  const [LazyChatInput, setLazyChatInput] =
-    useState<typeof ChatInputComponent | null>(null);
-  const [LazyMentionPicker, setLazyMentionPicker] =
-    useState<typeof MentionPickerComponent | null>(null);
-  const [LazySlashPicker, setLazySlashPicker] =
-    useState<typeof SlashCommandPickerComponent | null>(null);
+  const [LazyChatInput, setLazyChatInput] = useState<typeof ChatInputComponent | null>(null);
+  const [LazyMentionPicker, setLazyMentionPicker] = useState<typeof MentionPickerComponent | null>(
+    null,
+  );
+  const [LazySlashPicker, setLazySlashPicker] = useState<typeof SlashCommandPickerComponent | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -747,12 +789,15 @@ export function MessageInput({
     focusedOnceRef.current = false;
   }, [tabId]);
   const handleFocusCapture = useCallback(() => {
+    // The toolbar (agent / model pickers) stays interactive while the composer
+    // is disabled, so focus can now reach this handler from a control rather
+    // than the text area. Don't kick off an agent bind against a CLI that
+    // isn't ready — the user is most likely on their way to switching agents.
+    if (disabled) return;
     if (focusedOnceRef.current) return;
     focusedOnceRef.current = true;
-    window.dispatchEvent(
-      new CustomEvent("atlas:chat-input-focused", { detail: { tabId } })
-    );
-  }, [tabId]);
+    window.dispatchEvent(new CustomEvent("atlas:chat-input-focused", { detail: { tabId } }));
+  }, [tabId, disabled]);
 
   // ── Mention picker orchestration ──────────────────────────────────────
   const projectPath = useProjectStore((s) => s.currentProject?.path ?? null);
@@ -764,6 +809,11 @@ export function MessageInput({
   // ── Slash-command picker orchestration ────────────────────────────────
   const [slashTrigger, setSlashTrigger] = useState<SlashTrigger | null>(null);
   const [codexLoginOpen, setCodexLoginOpen] = useState(false);
+  // Close a picker left open across an agent switch — the new agent's
+  // catalogue (or lack of one, for cersei) must not inherit the open state.
+  useEffect(() => {
+    if (agentType === "cersei") setSlashTrigger(null);
+  }, [agentType]);
   const slashPickerRef = useRef<SlashCommandPickerHandle>(null);
   const slashTriggerRef = useRef<SlashTrigger | null>(null);
   slashTriggerRef.current = slashTrigger;
@@ -784,30 +834,24 @@ export function MessageInput({
     return () => window.removeEventListener("atlas:auth-required", handler);
   }, [tabId, openLoginDialog]);
 
-  const handleMentionSelect = useCallback(
-    (mention: MentionData) => {
-      const t = triggerRef.current;
-      if (!t) return;
-      inputRef.current?.insertMention(mention, t.from, t.to);
-      // Trigger naturally closes when the doc no longer has an `@…` before
-      // the caret; the plugin will fire the null transition for us.
-    },
-    []
-  );
+  const handleMentionSelect = useCallback((mention: MentionData) => {
+    const t = triggerRef.current;
+    if (!t) return;
+    inputRef.current?.insertMention(mention, t.from, t.to);
+    // Trigger naturally closes when the doc no longer has an `@…` before
+    // the caret; the plugin will fire the null transition for us.
+  }, []);
 
   // ── Drag-and-drop OS files onto the composer → attach as mention chips ──
   const composerRef = useRef<HTMLDivElement>(null);
   const handleDropFiles = useCallback(
     (paths: string[]) => {
-      const root =
-        projectPath && !projectPath.endsWith("/") ? `${projectPath}/` : projectPath;
+      const root = projectPath && !projectPath.endsWith("/") ? `${projectPath}/` : projectPath;
       for (const abs of paths) {
         // Relative-to-project display name when the file lives inside the
         // project; otherwise just the basename (dropped files can be anywhere).
         const displayName =
-          root && abs.startsWith(root)
-            ? abs.slice(root.length)
-            : abs.split("/").pop() || abs;
+          root && abs.startsWith(root) ? abs.slice(root.length) : abs.split("/").pop() || abs;
         const mention: MentionFile = {
           kind: "file",
           id: abs,
@@ -818,7 +862,7 @@ export function MessageInput({
       }
       requestAnimationFrame(() => inputRef.current?.focus());
     },
-    [projectPath]
+    [projectPath],
   );
   const { isDropTarget } = useComposerFileDrop({
     targetRef: composerRef,
@@ -926,8 +970,20 @@ export function MessageInput({
           {
             name: "Media",
             extensions: [
-              "png", "jpg", "jpeg", "gif", "webp", "heic", "bmp", "svg",
-              "mp4", "mov", "webm", "m4v", "avi", "mkv",
+              "png",
+              "jpg",
+              "jpeg",
+              "gif",
+              "webp",
+              "heic",
+              "bmp",
+              "svg",
+              "mp4",
+              "mov",
+              "webm",
+              "m4v",
+              "avi",
+              "mkv",
             ],
           },
         ],
@@ -961,29 +1017,33 @@ export function MessageInput({
   // `screencapture` CLI (region selection or whole desktop), then attaches the
   // PNG — inline (multimodal) when the agent supports images, else as an @file
   // chip pointing at the saved `.atlas/screenshots/…` path.
-  const handleTakeScreenshot = useCallback(async (mode: "region" | "full") => {
-    try {
-      // Let the "+" menu fully close first so it (and any dropdown) isn't caught
-      // in a whole-desktop capture.
-      await new Promise((r) => setTimeout(r, 250));
-      const proj = useProjectStore.getState().currentProject?.path ?? null;
-      const res = await invoke<{ path: string; mimeType: string; dataBase64: string } | null>(
-        "capture_screenshot",
-        { mode, projectPath: proj },
-      );
-      if (!res) return; // cancelled (Esc during region select)
-      if (imageSupported) {
-        setStagedImages((prev) => [...prev, { mimeType: res.mimeType, dataBase64: res.dataBase64 }]);
-      } else {
-        handleDropFiles([res.path]);
+  const handleTakeScreenshot = useCallback(
+    async (mode: "region" | "full") => {
+      try {
+        // Let the "+" menu fully close first so it (and any dropdown) isn't caught
+        // in a whole-desktop capture.
+        await new Promise((r) => setTimeout(r, 250));
+        const proj = useProjectStore.getState().currentProject?.path ?? null;
+        const res = await invoke<{ path: string; mimeType: string; dataBase64: string } | null>(
+          "capture_screenshot",
+          { mode, projectPath: proj },
+        );
+        if (!res) return; // cancelled (Esc during region select)
+        if (imageSupported) {
+          setStagedImages((prev) => [
+            ...prev,
+            { mimeType: res.mimeType, dataBase64: res.dataBase64 },
+          ]);
+        } else {
+          handleDropFiles([res.path]);
+        }
+        requestAnimationFrame(() => inputRef.current?.focus());
+      } catch (err) {
+        toast.error(`Screenshot failed: ${err instanceof Error ? err.message : String(err)}`);
       }
-      requestAnimationFrame(() => inputRef.current?.focus());
-    } catch (err) {
-      toast.error(
-        `Screenshot failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }, [imageSupported, handleDropFiles]);
+    },
+    [imageSupported, handleDropFiles],
+  );
 
   // "+" menu → "Add from GitHub". Shorthand for the GitHub panel's search+clone:
   // download the repo into `<project>/.atlas/repos`, lock the composer while it
@@ -1040,22 +1100,12 @@ export function MessageInput({
     requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
 
-  // "+" menu footer → agent switcher. Mirrors the ⌥/ cycle (App.tsx) but jumps
-  // straight to the picked agent: an empty chat flips in place; a started chat
-  // clears + rebinds in the SAME tab (singleton model — the abandoned turn
-  // persists to the history sidebar).
-  const handleSwitchAgent = useCallback((next: SwitchableAgent) => {
-    const chat = useChatStore.getState();
-    const sess = chat.sessions[tabId];
-    if ((sess?.agentType ?? "claude-code") === next) return;
-    if ((sess?.messages.length ?? 0) === 0) {
-      chat.actions.switchChatAgent(tabId, next);
-    } else {
-      chat.actions.clearSession(tabId);
-      chat.actions.switchChatAgent(tabId, next);
-    }
-    window.dispatchEvent(new CustomEvent("atlas:chat-focus", { detail: { tabId } }));
-  }, [tabId]);
+  // "+" menu footer → agent switcher. Same helper as ⌥/ and the agent pill,
+  // but jumps straight to the picked agent instead of cycling.
+  const handleSwitchAgent = useCallback(
+    (next: SwitchableAgent) => switchAgentForTab(tabId, next),
+    [tabId],
+  );
 
   // Clipboard images (screenshots) → staged attachments. Returning false
   // lets chat-input's default file-paste (native pasteboard → quoted paths)
@@ -1127,66 +1177,63 @@ export function MessageInput({
       setSlashTrigger(null);
       onSend(`/${cmd.name}`, []);
     },
-    [openLoginDialog, onSend, disabled]
+    [openLoginDialog, onSend, disabled],
   );
 
   // Forward Up/Down/Enter/Esc/Backspace from CodeMirror to whichever
   // picker is open. Slash and mention pickers are mutually exclusive in
   // practice (slash only fires at line start of an otherwise-empty
   // composer), but we still route deterministically.
-  const keyInterceptor = useCallback(
-    (key: "Up" | "Down" | "Enter" | "Escape" | "Backspace") => {
-      // Slash takes precedence when both happen to be open.
-      const sp = slashPickerRef.current;
-      const st = slashTriggerRef.current;
-      if (st && sp) {
-        switch (key) {
-          case "Up":
-            sp.moveUp();
-            return true;
-          case "Down":
-            sp.moveDown();
-            return true;
-          case "Enter":
-            return sp.commit();
-          case "Escape":
-            setSlashTrigger(null);
-            return true;
-          case "Backspace":
-            // Let CM delete a query char or the `/` itself (which closes
-            // the picker via the trigger detector).
-            return false;
-        }
-      }
-
-      const p = pickerRef.current;
-      const t = triggerRef.current;
-      if (!t || !p) return false;
+  const keyInterceptor = useCallback((key: "Up" | "Down" | "Enter" | "Escape" | "Backspace") => {
+    // Slash takes precedence when both happen to be open.
+    const sp = slashPickerRef.current;
+    const st = slashTriggerRef.current;
+    if (st && sp) {
       switch (key) {
         case "Up":
-          p.moveUp();
+          sp.moveUp();
           return true;
         case "Down":
-          p.moveDown();
+          sp.moveDown();
           return true;
         case "Enter":
-          return p.commit();
+          return sp.commit();
         case "Escape":
-          // At a sublevel, Esc pops back. At the top level, it closes.
-          if (p.goBack()) return true;
-          setTrigger(null);
+          setSlashTrigger(null);
           return true;
         case "Backspace":
-          // Only consume Backspace when at a sublevel AND the query is
-          // empty — otherwise let CM delete a character in the query (or
-          // the `@` itself, which closes the picker via the trigger
-          // detector).
-          if (t.query === "" && p.goBack()) return true;
+          // Let CM delete a query char or the `/` itself (which closes
+          // the picker via the trigger detector).
           return false;
       }
-    },
-    []
-  );
+    }
+
+    const p = pickerRef.current;
+    const t = triggerRef.current;
+    if (!t || !p) return false;
+    switch (key) {
+      case "Up":
+        p.moveUp();
+        return true;
+      case "Down":
+        p.moveDown();
+        return true;
+      case "Enter":
+        return p.commit();
+      case "Escape":
+        // At a sublevel, Esc pops back. At the top level, it closes.
+        if (p.goBack()) return true;
+        setTrigger(null);
+        return true;
+      case "Backspace":
+        // Only consume Backspace when at a sublevel AND the query is
+        // empty — otherwise let CM delete a character in the query (or
+        // the `@` itself, which closes the picker via the trigger
+        // detector).
+        if (t.query === "" && p.goBack()) return true;
+        return false;
+    }
+  }, []);
 
   // Auto-focus the composer whenever this panel mounts (tab switch back into
   // chat). If the CodeMirror chunk hasn't resolved yet, the next re-render
@@ -1306,7 +1353,17 @@ export function MessageInput({
     // The value→draft sync effect will collapse the empty value into a
     // `delete s.drafts[tabId]` on the next commit, so no explicit
     // clearDraft call is needed.
-  }, [value, running, onSend, onStop, enqueueMessage, tabId, disabled, stagedImages, githubSyncing]);
+  }, [
+    value,
+    running,
+    onSend,
+    onStop,
+    enqueueMessage,
+    tabId,
+    disabled,
+    stagedImages,
+    githubSyncing,
+  ]);
 
   const trimmed = value.trim();
   // Tri-state button:
@@ -1315,11 +1372,7 @@ export function MessageInput({
   //   not running + any → SEND
   type Mode = "send" | "queue" | "stop";
   const mode: Mode = running ? (trimmed ? "queue" : "stop") : "send";
-  const buttonEnabled = disabled
-    ? false
-    : mode === "stop"
-      ? true
-      : trimmed.length > 0;
+  const buttonEnabled = disabled ? false : mode === "stop" ? true : trimmed.length > 0;
 
   // A fixed, generic placeholder ("Ask Claude Code / Codex what to do…") — the
   // composer no longer mirrors the setup phase here (the setup pill above the
@@ -1377,15 +1430,15 @@ export function MessageInput({
             "focus-within:border-[var(--border-focus)]",
             "focus-within:ring-1 focus-within:ring-[var(--accent-primary)]/20",
             // Drag-over highlight: a clear accent ring while OS files hover.
-            isDropTarget &&
-              "border-[var(--accent-primary)] ring-2 ring-[var(--accent-primary)]/40",
-            // Hard-disable when Claude Code isn't ready. `pointer-events-none`
-            // disables the textarea (no click-to-focus/type) and also blocks
-            // the focus event so we never trigger the agent-bind listener
-            // (which would try to spawn a session against a CLI that isn't
-            // ready). Just dim it — no red tint — since the send button is
-            // already disabled and submit()/Cmd+Enter are gated on `disabled`.
-            disabled && "opacity-60 pointer-events-none",
+            isDropTarget && "border-[var(--accent-primary)] ring-2 ring-[var(--accent-primary)]/40",
+            // Hard-disable when the bound agent isn't ready. Dim only — the
+            // pointer block lives on the INPUT wrapper below, never on the
+            // whole composer: the agent switcher sits in this toolbar, and
+            // blocking it meant a user without Claude Code could never reach
+            // another agent (the composer was a dead end on a fresh install).
+            // No red tint — the send button is already disabled and
+            // submit()/Cmd+Enter are gated on `disabled`.
+            disabled && "opacity-60",
             // Lock the composer while a GitHub repo syncs into `.atlas/repos`.
             githubSyncing !== null && "opacity-60 pointer-events-none",
           )}
@@ -1418,9 +1471,7 @@ export function MessageInput({
                       className="h-14 w-14 object-cover rounded-lg border border-[var(--border-default)]"
                     />
                     <button
-                      onClick={() =>
-                        setStagedImages((prev) => prev.filter((_, j) => j !== i))
-                      }
+                      onClick={() => setStagedImages((prev) => prev.filter((_, j) => j !== i))}
                       className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-4 h-4 rounded-full bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                       title="Remove image"
                     >
@@ -1441,34 +1492,40 @@ export function MessageInput({
               })}
             </div>
           )}
-          {LazyChatInput ? (
-            <LazyChatInput
-              ref={inputRef}
-              initialValue={value}
-              placeholder={effectivePlaceholder}
-              onChange={setValue}
-              onSubmit={submit}
-              enterToSend={enterToSend}
-              onMentionTrigger={setTrigger}
-              onSlashTrigger={setSlashTrigger}
-              onPasteImages={handlePasteImages}
-              keyInterceptor={keyInterceptor}
-              // All agents (incl. the native Atlas/cersei agent) support skills
-              // now — the `#` rail inlines a skill body via compose_prompt, and the
-              // native agent additionally loads Atlas-enabled skills via its Skill
-              // tool. (`agentType` retained for other per-agent gating above.)
-              allowSkillMention={true}
-            />
-          ) : (
-            // Same-height empty slot so the panel layout doesn't reflow when
-            // CodeMirror lands. Non-interactive — by the time the user can
-            // visually find this region the chunk has typically resolved.
-            <div
-              aria-hidden="true"
-              style={{ minHeight: 44 }}
-              className="px-4 pt-3 pb-1"
-            />
-          )}
+          {/* Only the text area is pointer-blocked while `disabled`:
+              `pointer-events-none` stops click-to-focus/typing AND the focus
+              event, so we never trigger the agent-bind listener against a CLI
+              that isn't ready. The toolbar below stays live so the agent /
+              model pickers remain reachable. */}
+          <div className={cn(disabled && "pointer-events-none")}>
+            {LazyChatInput ? (
+              <LazyChatInput
+                ref={inputRef}
+                initialValue={value}
+                placeholder={effectivePlaceholder}
+                onChange={setValue}
+                onSubmit={submit}
+                enterToSend={enterToSend}
+                onMentionTrigger={setTrigger}
+                // The native agent has no slash commands — suppressing the
+                // trigger here (rather than showing an empty picker) keeps "/"
+                // as plain text for cersei.
+                onSlashTrigger={agentType === "cersei" ? undefined : setSlashTrigger}
+                onPasteImages={handlePasteImages}
+                keyInterceptor={keyInterceptor}
+                // All agents (incl. the native Atlas/cersei agent) support skills
+                // now — the `#` rail inlines a skill body via compose_prompt, and the
+                // native agent additionally loads Atlas-enabled skills via its Skill
+                // tool. (`agentType` retained for other per-agent gating above.)
+                allowSkillMention={true}
+              />
+            ) : (
+              // Same-height empty slot so the panel layout doesn't reflow when
+              // CodeMirror lands. Non-interactive — by the time the user can
+              // visually find this region the chunk has typically resolved.
+              <div aria-hidden="true" style={{ minHeight: 44 }} className="px-4 pt-3 pb-1" />
+            )}
+          </div>
           <div className="flex items-center justify-between px-2 pb-2 pt-1">
             <div className="flex items-center gap-1">
               <ComposerAddMenu
@@ -1486,32 +1543,33 @@ export function MessageInput({
                 currentAgent={switchableAgent}
                 onSwitchAgent={handleSwitchAgent}
               />
-              {/* Which coding agent this chat is bound to (Claude / Codex).
-                  Switch with ⌥/ (only on a fresh chat). */}
-              <span
-                className="flex items-center gap-1.5 px-1.5 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] select-none"
-                title="Coding agent (switch with ⌥/ on a new chat)"
+              {/* Which coding agent this chat is bound to. Click cycles to the
+                  next agent, exactly like ⌥/ (same helper). */}
+              <button
+                onClick={() => cycleChatAgent(tabId)}
+                className="flex items-center gap-1.5 px-1.5 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                title={`Coding agent — click to switch to ${AGENT_LABEL[nextAgentForTab(tabId)]} (⌥/)`}
               >
                 <AgentMark agentType={agentType} className="!h-4 !w-4 !text-[9px] !rounded" />
                 {AGENT_LABEL[switchableAgent]}
-              </span>
-              {agentType === "claude-code" && (
-              <button
-                onClick={() => cycleClaudePermissionMode(tabId)}
-                className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                title="Cycle permission mode (⇧⇥)"
-              >
-                <span
-                  className={cn(
-                    "w-1.5 h-1.5 rounded-full shrink-0",
-                    permissionMode === "default" && "bg-[var(--text-tertiary)]",
-                    permissionMode === "acceptEdits" && "bg-[var(--status-success)]",
-                    permissionMode === "plan" && "bg-[var(--accent-primary)]",
-                    permissionMode === "bypassPermissions" && "bg-[var(--status-error)]"
-                  )}
-                />
-                {CLAUDE_PERMISSION_MODE_LABEL[permissionMode]}
               </button>
+              {agentType === "claude-code" && (
+                <button
+                  onClick={() => cycleClaudePermissionMode(tabId)}
+                  className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                  title="Cycle permission mode (⇧⇥)"
+                >
+                  <span
+                    className={cn(
+                      "w-1.5 h-1.5 rounded-full shrink-0",
+                      permissionMode === "default" && "bg-[var(--text-tertiary)]",
+                      permissionMode === "acceptEdits" && "bg-[var(--status-success)]",
+                      permissionMode === "plan" && "bg-[var(--accent-primary)]",
+                      permissionMode === "bypassPermissions" && "bg-[var(--status-error)]",
+                    )}
+                  />
+                  {CLAUDE_PERMISSION_MODE_LABEL[permissionMode]}
+                </button>
               )}
               {agentType !== "claude-code" && (hasAcpModes || acpModesPending) && (
                 <AcpModePicker tabId={tabId} />
@@ -1543,7 +1601,7 @@ export function MessageInput({
                   "flex items-center justify-center w-7 h-7 rounded-full transition-colors",
                   buttonEnabled
                     ? "bg-[var(--text-primary)] text-[var(--bg-primary)] hover:bg-[var(--text-secondary)] cursor-pointer"
-                    : "bg-[var(--bg-elevated)] text-[var(--text-tertiary)] cursor-not-allowed"
+                    : "bg-[var(--bg-elevated)] text-[var(--text-tertiary)] cursor-not-allowed",
                 )}
                 title={
                   mode === "stop"
@@ -1551,8 +1609,8 @@ export function MessageInput({
                       ? "Stopping… (waiting for the agent to wind down)"
                       : "Stop generation"
                     : mode === "queue"
-                    ? "Queue message (sends after current finishes)"
-                    : `Send to agent (${enterToSend ? "↵" : "⌘↵"})`
+                      ? "Queue message (sends after current finishes)"
+                      : `Send to agent (${enterToSend ? "↵" : "⌘↵"})`
                 }
               >
                 {mode === "stop" ? (
@@ -1594,7 +1652,17 @@ export function MessageInput({
           onSelect={handleSlashSelect}
           onClose={() => setSlashTrigger(null)}
           commands={agentSlashCommands}
-          footerLabel={agentType === "codex" ? "Codex commands" : undefined}
+          footerLabel={
+            agentType === "codex"
+              ? "Codex commands"
+              : agentType === "opencode"
+                ? "OpenCode commands"
+                : agentType === "cursor"
+                  ? "Cursor commands"
+                  : agentType === "claude-code" && agentSlashCommands
+                    ? "Claude Code commands"
+                    : undefined
+          }
         />
       )}
       <CodexLoginDialog open={codexLoginOpen} onOpenChange={setCodexLoginOpen} />

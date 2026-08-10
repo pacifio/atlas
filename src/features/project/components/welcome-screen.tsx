@@ -1,10 +1,5 @@
 import { useProjectStore } from "../stores/project-store";
-import {
-  FolderOpen,
-  Clock,
-  X,
-  Folder,
-} from "lucide-react";
+import { FolderOpen, Clock, X, Folder } from "lucide-react";
 import { AtlasIcon } from "@/components/atlas-icon";
 
 export function WelcomeScreen() {
@@ -29,12 +24,8 @@ export function WelcomeScreen() {
         {/* Branding */}
         <div className="text-center space-y-2">
           <AtlasIcon size={64} className="mx-auto mb-4 rounded-2xl" />
-          <h1 className="text-xl font-semibold text-[var(--text-primary)]">
-            Atlas
-          </h1>
-          <p className="text-sm text-[var(--text-secondary)]">
-            The second brain IDE
-          </p>
+          <h1 className="text-xl font-semibold text-[var(--text-primary)]">Atlas</h1>
+          <p className="text-sm text-[var(--text-secondary)]">The second brain IDE</p>
         </div>
 
         {/* Primary action */}
@@ -63,10 +54,7 @@ export function WelcomeScreen() {
                   className="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                   onClick={() => openProject(project.path)}
                 >
-                  <Folder
-                    size={14}
-                    className="text-[var(--accent-primary)] shrink-0"
-                  />
+                  <Folder size={14} className="text-[var(--accent-primary)] shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="text-[12px] font-medium text-[var(--text-primary)] truncate">
                       {project.name}
@@ -93,11 +81,14 @@ export function WelcomeScreen() {
         {/* Hint */}
         <div className="text-center">
           <span className="text-[10px] text-[var(--text-tertiary)]">
-            Press <kbd className="px-1 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[9px] font-mono">⌘K</kbd> for command palette
+            Press{" "}
+            <kbd className="px-1 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[9px] font-mono">
+              ⌘K
+            </kbd>{" "}
+            for command palette
           </span>
         </div>
       </div>
     </div>
   );
 }
-

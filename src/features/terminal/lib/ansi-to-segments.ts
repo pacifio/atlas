@@ -18,8 +18,22 @@ export interface AnsiSegment {
 
 // Standard 16-color palette (xterm-ish, tuned to read on the black terminal bg).
 const PALETTE_16 = [
-  "#1a1a1a", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#cccccc",
-  "#5c6370", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
+  "#1a1a1a",
+  "#e06c75",
+  "#98c379",
+  "#e5c07b",
+  "#61afef",
+  "#c678dd",
+  "#56b6c2",
+  "#cccccc",
+  "#5c6370",
+  "#e06c75",
+  "#98c379",
+  "#e5c07b",
+  "#61afef",
+  "#c678dd",
+  "#56b6c2",
+  "#ffffff",
 ];
 
 function color256(n: number): string {
@@ -231,63 +245,4 @@ export function resolveTerminalOutput(input: string): AnsiSegment[] {
     if (r < lines.length - 1) out.push({ text: "\n" });
   }
   return out;
-}
-
-/** Convert a string containing ANSI/SGR escapes into styled text runs. */
-export function ansiToSegments(input: string): AnsiSegment[] {
-  const segments: AnsiSegment[] = [];
-  const state: SgrState = {};
-  let buf = "";
-
-  const flush = () => {
-    if (buf) {
-      segments.push({ text: buf, style: styleOf(state) });
-      buf = "";
-    }
-  };
-
-  let i = 0;
-  const n = input.length;
-  while (i < n) {
-    const ch = input.charCodeAt(i);
-    if (ch === ESC && input[i + 1] === "[") {
-      // CSI — read params up to the final byte.
-      let j = i + 2;
-      while (j < n && !/[@-~]/.test(input[j])) j++;
-      const final = input[j];
-      const body = input.slice(i + 2, j);
-      if (final === "m") {
-        flush();
-        const params = body.split(";").map((x) => (x === "" ? 0 : parseInt(x, 10)));
-        applySgr(state, params.length ? params : [0]);
-      }
-      // Any other CSI (cursor/erase) is dropped — static output only.
-      i = j + 1;
-      continue;
-    }
-    if (ch === ESC && (input[i + 1] === "]" || input[i + 1] === ")" || input[i + 1] === "(")) {
-      // OSC or charset designation — skip to terminator (BEL or ST).
-      let j = i + 2;
-      while (j < n && input.charCodeAt(j) !== 0x07 && !(input.charCodeAt(j) === ESC && input[j + 1] === "\\")) j++;
-      i = input.charCodeAt(j) === ESC ? j + 2 : j + 1;
-      continue;
-    }
-    if (ch === ESC) {
-      i += 2; // unknown 2-byte escape
-      continue;
-    }
-    if (ch === 0x0d) {
-      // CR — drop (we keep \n only; CRLF → LF).
-      i++;
-      continue;
-    }
-    if (ch === 0x07 || ch === 0x08) {
-      i++; // bell / backspace — ignore in static output
-      continue;
-    }
-    buf += input[i];
-    i++;
-  }
-  flush();
-  return segments;
 }

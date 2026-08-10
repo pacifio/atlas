@@ -3,7 +3,7 @@
 // (computing once on message insert) and the MessageItem renderer (as
 // a fallback for legacy messages) can use the same split logic.
 
-export const ATLAS_CONTEXT_MARKER = "\n\n---\n# Atlas context\n\n";
+const ATLAS_CONTEXT_MARKER = "\n\n---\n# Atlas context\n\n";
 
 export interface SplitContext {
   prose: string;
@@ -23,28 +23,60 @@ const INJECTED_CORES = [
   "RECENT SESSION",
 ];
 
-/** Strip Atlas-injected `--- LABEL ---` … `--- END LABEL ---` context blocks.
- *  Line-based and position-agnostic; mirrors the Rust `strip_injected_context`. */
-export function stripInjectedContext(text: string): string {
-  if (!text.includes("--- ")) return text; // fast path: no markers
+/** One Atlas-injected context block, recovered rather than discarded. */
+export interface InjectedBlock {
+  /** The marker's label — `SHARED MEMORY`, `RELEVANT PROJECT MEMORY`, … */
+  label: string;
+  body: string;
+}
+
+/** Split Atlas-injected `--- LABEL ---` … `--- END LABEL ---` blocks out of a
+ *  prompt, returning both halves. Line-based and position-agnostic; mirrors the
+ *  Rust `strip_injected_context`.
+ *
+ *  The blocks are *kept* here because two callers want opposite things from the
+ *  same parse: the chat renderer drops them (they are scaffolding the agent
+ *  echoed back), while the Timeline's session detail renders them as their own
+ *  cards — what Atlas contributed to a turn is a fact about the turn, and
+ *  hiding it made every prompt look unassisted. One parser, so the two can
+ *  never disagree about where a block ends. */
+export function extractInjectedContext(text: string): {
+  prose: string;
+  blocks: InjectedBlock[];
+} {
+  if (!text.includes("--- ")) return { prose: text, blocks: [] }; // fast path
   const out: string[] = [];
-  let skipUntil: string | null = null;
+  const blocks: InjectedBlock[] = [];
+  let open: { label: string; end: string; lines: string[] } | null = null;
   for (const line of text.split("\n")) {
     const l = line.trim();
-    if (skipUntil !== null) {
-      if (l === skipUntil) skipUntil = null;
+    if (open !== null) {
+      if (l === open.end) {
+        blocks.push({ label: open.label, body: open.lines.join("\n").trim() });
+        open = null;
+      } else {
+        open.lines.push(line);
+      }
       continue;
     }
     if (l.startsWith("--- ") && l.endsWith("---") && !l.startsWith("--- END")) {
       const core = INJECTED_CORES.find((c) => l.slice(4).startsWith(c));
       if (core) {
-        skipUntil = `--- END ${core} ---`;
+        open = { label: core, end: `--- END ${core} ---`, lines: [] };
         continue;
       }
     }
     out.push(line);
   }
-  return out.join("\n").trim();
+  // An unterminated block is still a block — a truncated prompt preview cuts the
+  // closing marker off long before it runs out of body.
+  if (open) blocks.push({ label: open.label, body: open.lines.join("\n").trim() });
+  return { prose: out.join("\n").trim(), blocks };
+}
+
+/** Strip Atlas-injected context blocks, keeping only the prose. */
+export function stripInjectedContext(text: string): string {
+  return extractInjectedContext(text).prose;
 }
 
 /** Split a user message into (prose, contextBody, contextBlockCount).

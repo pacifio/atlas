@@ -112,13 +112,7 @@ export const skills = {
    * Project a canonical skill into one tool at a scope (symlink/copy + ledger).
    * `force` overrides the non-destructive guard (drifted/external) — default false.
    */
-  project: (
-    scope: Scope,
-    name: string,
-    tool: string,
-    force = false,
-    projectPath?: string | null,
-  ) =>
+  project: (scope: Scope, name: string, tool: string, force = false, projectPath?: string | null) =>
     afterSkillMutation(
       invoke<void>("skills_project", {
         scope,
@@ -130,12 +124,7 @@ export const skills = {
     ),
 
   /** Remove a projection (symlink/copy) of a skill from one tool. */
-  unproject: (
-    scope: Scope,
-    name: string,
-    tool: string,
-    projectPath?: string | null,
-  ) =>
+  unproject: (scope: Scope, name: string, tool: string, projectPath?: string | null) =>
     afterSkillMutation(
       invoke<void>("skills_unproject", {
         scope,

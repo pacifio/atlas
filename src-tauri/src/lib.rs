@@ -195,11 +195,35 @@ pub fn run() {
                 app.manage(commands::auth::AuthState::new(config_dir));
                 commands::auth::restore_on_launch(&app.handle());
 
+                // Seed the Organisation every event is attributed to, from the
+                // state we just loaded. The app has an active org from its first
+                // frame; waiting for the renderer to announce it would leave
+                // every launch-time event ungrouped, which is exactly the
+                // window where launch/update/crash events land. Runs after
+                // `AuthState` is managed because a synced org's role is read
+                // from the auth snapshot.
+                {
+                    let handle = app.handle();
+                    let active = handle
+                        .state::<AppStateHandle>()
+                        .lock()
+                        .active_organisation_id
+                        .clone();
+                    handle
+                        .state::<Arc<telemetry::TelemetryClient>>()
+                        .set_active_org(commands::telemetry::resolve_org(handle, active.as_deref()));
+                }
+
                 // Session capture's drain needs a credential, and the auth core
                 // only exists from here on. Installed rather than passed in at
                 // construction because `CaptureState` is registered earlier in
                 // the builder chain; until this runs the drain simply parks,
                 // which is exactly Local-mode behaviour.
+                // The worker announces its writes through this handle — without
+                // it the Timeline board only ever sees them on its 15 s poll.
+                app.state::<commands::capture::CaptureState>()
+                    .install_notifier(app.handle().clone());
+
                 let core = app.state::<commands::auth::AuthState>().core();
                 app.state::<commands::capture::CaptureState>()
                     .install_token_provider(Box::new(move || {
@@ -283,6 +307,7 @@ pub fn run() {
             commands::auth::auth_delete_org,
             commands::window::window_zoom,
             commands::clipboard::clipboard_file_paths,
+            commands::clipboard::clipboard_write_text,
             commands::window::set_window_title,
             commands::browser::browser_open_window,
             commands::browser::browser_embed_create,
@@ -297,7 +322,9 @@ pub fn run() {
             commands::terminal::terminal_zsh_dir,
             commands::terminal::terminal_write,
             commands::terminal::terminal_resize,
+            commands::terminal::terminal_kill_foreground,
             commands::terminal::terminal_close,
+            commands::terminal::terminal_ack,
             commands::terminal::terminal_resolve_path,
             commands::terminal::resolve_path,
             commands::terminal::terminal_path_complete,
@@ -373,6 +400,17 @@ pub fn run() {
             commands::git_ops::git_show,
             commands::git_ops::git_inprogress,
             commands::git_ops::git_op_control,
+            commands::git_ops::git_commit_v2,
+            commands::git_snapshot::git_snapshot,
+            commands::git_stage_ops::git_stage_hunk,
+            commands::git_stage_ops::git_unstage_hunk,
+            commands::git_stage_ops::git_discard_hunk,
+            commands::git_conflicts::git_conflict_state,
+            commands::git_conflicts::git_resolve_file,
+            commands::git_ops::git_clone,
+            commands::git_ops::git_rebase,
+            commands::git_ops::git_undo_commit,
+            commands::git_ops::git_squash_last,
             commands::git_watcher::git_watch_start,
             commands::git_watcher::git_watch_stop,
             commands::git_watcher::git_watch_stop_all,
@@ -393,11 +431,14 @@ pub fn run() {
             commands::capture::capture_connect,
             commands::capture::capture_activate,
             commands::capture::capture_retry_failed,
+            commands::capture::capture_retry_watcher,
             commands::capture::artifacts_sessions,
+            commands::capture::capture_agent_session_counts,
             commands::capture::artifacts_session,
             commands::capture::artifacts_payload,
             commands::capture::capture_commit_sessions,
             commands::capture::artifacts_board,
+            commands::capture::artifacts_checkpoints,
             commands::git_watcher::git_watch_status,
             commands::mention_search::mention_search,
             commands::mention_search::mention_cache_set_knowledge,
@@ -417,6 +458,7 @@ pub fn run() {
             // were replaced by ACP. Session-history readers below are still in use.
             commands::claude::list_claude_sessions,
             commands::gitdiff::git_diff_structured,
+            commands::gitdiff::diff_structured_text,
             commands::gitdiff::git_commit_changed_files,
             commands::gitdiff::git_diff_line_status,
             commands::claude::delete_claude_session,
@@ -478,6 +520,7 @@ pub fn run() {
             commands::telemetry::telemetry_config,
             commands::telemetry::telemetry_set_enabled,
             commands::telemetry::telemetry_capture,
+            commands::telemetry::telemetry_set_org,
             commands::feedback::feedback_submit,
             commands::updater::update_check_now,
             commands::updater::update_apply,
@@ -551,6 +594,8 @@ pub fn run() {
             commands::agent_memory::agent_memory_read,
             commands::agent_memory::list_codex_sessions,
             commands::agent_memory::codex_delete_session,
+            commands::kilo::list_kilo_sessions,
+            commands::kilo::kilo_delete_session,
             commands::memory_graph::memory_embed_status,
             commands::memory_graph::memory_embed_download,
             commands::memory_graph::memory_index_build,
@@ -588,6 +633,11 @@ pub fn run() {
             commands::memory_chat_sessions::memory_chat_session_get,
             commands::memory_chat_sessions::memory_chat_session_save,
             commands::memory_chat_sessions::memory_chat_session_delete,
+            commands::session_chat::session_chat_retrieve,
+            commands::session_chat_sessions::session_chat_threads_list,
+            commands::session_chat_sessions::session_chat_thread_get,
+            commands::session_chat_sessions::session_chat_thread_save,
+            commands::session_chat_sessions::session_chat_thread_delete,
             commands::pdf_annotations::pdf_annotations_load,
             commands::pdf_annotations::pdf_annotations_save,
             commands::skills::skills_list,

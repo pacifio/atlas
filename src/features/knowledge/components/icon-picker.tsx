@@ -14,19 +14,90 @@ interface IconPickerProps {
 const GROUPS: Array<{ label: string; emojis: string[] }> = [
   {
     label: "Documents",
-    emojis: ["📄", "📝", "📖", "📕", "📗", "📘", "📙", "📚", "📓", "📔", "📋", "📑", "📰", "🗒️", "🗂️", "🗃️", "🗄️"],
+    emojis: [
+      "📄",
+      "📝",
+      "📖",
+      "📕",
+      "📗",
+      "📘",
+      "📙",
+      "📚",
+      "📓",
+      "📔",
+      "📋",
+      "📑",
+      "📰",
+      "🗒️",
+      "🗂️",
+      "🗃️",
+      "🗄️",
+    ],
   },
   {
     label: "Symbols",
-    emojis: ["✦", "✧", "✩", "✪", "✫", "★", "☆", "❖", "◆", "◇", "●", "○", "▲", "△", "■", "□", "▪", "▫"],
+    emojis: [
+      "✦",
+      "✧",
+      "✩",
+      "✪",
+      "✫",
+      "★",
+      "☆",
+      "❖",
+      "◆",
+      "◇",
+      "●",
+      "○",
+      "▲",
+      "△",
+      "■",
+      "□",
+      "▪",
+      "▫",
+    ],
   },
   {
     label: "Tech",
-    emojis: ["💻", "🖥️", "⌨️", "🖱️", "💾", "💿", "🧠", "⚙️", "🔧", "🛠️", "🔩", "🧪", "🧬", "🧮", "📡", "🛰️"],
+    emojis: [
+      "💻",
+      "🖥️",
+      "⌨️",
+      "🖱️",
+      "💾",
+      "💿",
+      "🧠",
+      "⚙️",
+      "🔧",
+      "🛠️",
+      "🔩",
+      "🧪",
+      "🧬",
+      "🧮",
+      "📡",
+      "🛰️",
+    ],
   },
   {
     label: "Concepts",
-    emojis: ["💡", "🔥", "⚡", "✨", "🌟", "🎯", "🚀", "🛸", "🌐", "🧭", "🗺️", "📌", "📍", "🎨", "🏗️", "🧱"],
+    emojis: [
+      "💡",
+      "🔥",
+      "⚡",
+      "✨",
+      "🌟",
+      "🎯",
+      "🚀",
+      "🛸",
+      "🌐",
+      "🧭",
+      "🗺️",
+      "📌",
+      "📍",
+      "🎨",
+      "🏗️",
+      "🧱",
+    ],
   },
   {
     label: "People",
@@ -67,10 +138,7 @@ export function IconPicker({ value, anchorRect, onPick, onClose }: IconPickerPro
   const PICKER_W = 320;
   // Anchor immediately under the icon tile. Clamp to viewport so the
   // popup doesn't leak off-screen when the tile sits near the edge.
-  const left = Math.min(
-    Math.max(8, anchorRect.left),
-    window.innerWidth - PICKER_W - 8,
-  );
+  const left = Math.min(Math.max(8, anchorRect.left), window.innerWidth - PICKER_W - 8);
   const top = Math.min(anchorRect.bottom + 6, window.innerHeight - 320);
 
   // Portal into document.body so an ancestor with `transform` /
@@ -96,10 +164,7 @@ export function IconPicker({ value, anchorRect, onPick, onClose }: IconPickerPro
     >
       {GROUPS.map((g) => (
         <div key={g.label} style={{ marginBottom: 6 }}>
-          <div
-            className="eyebrow"
-            style={{ fontSize: 9.5, padding: "4px 4px 2px" }}
-          >
+          <div className="eyebrow" style={{ fontSize: 9.5, padding: "4px 4px 2px" }}>
             {g.label}
           </div>
           <div
@@ -122,8 +187,7 @@ export function IconPicker({ value, anchorRect, onPick, onClose }: IconPickerPro
                   width: 30,
                   height: 30,
                   borderRadius: 5,
-                  background:
-                    value === e ? "var(--bg-active)" : "transparent",
+                  background: value === e ? "var(--bg-active)" : "transparent",
                   border: 0,
                   fontSize: 18,
                   lineHeight: 1,

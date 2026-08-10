@@ -1,12 +1,13 @@
-// Background model-list warming for the ACP agents (Claude Code / Codex).
+// Background model-list warming for the ACP agents (Claude Code / Codex /
+// OpenCode).
 //
 // Models are advertised in a `session/new` response, so the only way to learn
 // them is to open a session. To make the model picker instant — and to let the
-// user switch to the *other* agent with its models already populated — we warm
+// user switch to another agent with its models already populated — we warm
 // each agent's model list in the background and persist it (acp-models-cache):
 //
-//   • When a chat is active on agent A, warm the OTHER ACP agent (so a switch is
-//     instant the first time too).
+//   • When a chat is active on agent A, warm the other ACP agents the user has
+//     touched before (so a switch is instant the first time too).
 //   • On Atlas startup, silently refresh the agents we've cached before
 //     (optimistic UI: the cache drives the picker, this just keeps it fresh).
 //
@@ -14,7 +15,8 @@
 // it), so it's invisible to the UI and never persisted (no turn runs). Agents are
 // pooled per plugin, so this is one cheap extra ACP session per agent per launch.
 
-import { agents, ensureAgent, CODEX_PLUGIN_ID, DEFAULT_PLUGIN_ID } from "./agents-api";
+import { agents, ensureAgent } from "./agents-api";
+import { ACP_AGENTS, pluginIdForAgent, type SwitchableAgent } from "@/types/agent";
 import {
   loadCachedAcpModels,
   saveCachedAcpModels,
@@ -27,18 +29,16 @@ import {
  *  waste. A week keeps it fresh enough while eliminating the per-launch spawns. */
 const MODELS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** ACP agent types that expose a model list (the native "cersei" agent uses its
- *  own BYOK catalog, not ACP models). */
-type AcpAgentType = "claude-code" | "codex";
+function asAcpAgent(agentType: string): SwitchableAgent | null {
+  return (ACP_AGENTS as string[]).includes(agentType) ? (agentType as SwitchableAgent) : null;
+}
 
-const pluginFor = (agentType: AcpAgentType) =>
-  agentType === "codex" ? CODEX_PLUGIN_ID : DEFAULT_PLUGIN_ID;
-
-/** The other ACP agent — used to prefetch what the user is likely to switch to. */
-export function otherAcpAgent(agentType: string): AcpAgentType | null {
-  if (agentType === "claude-code") return "codex";
-  if (agentType === "codex") return "claude-code";
-  return null;
+/** The ACP agents to prefetch when `agentType` is active: every other ACP
+ *  agent the user has used before (has a persisted model cache). Warming
+ *  never-touched agents would spawn CLIs the user may not even have installed. */
+export function otherAcpAgents(agentType: string): SwitchableAgent[] {
+  if (!asAcpAgent(agentType)) return [];
+  return ACP_AGENTS.filter((a) => a !== agentType && loadCachedAcpModels(a) !== null);
 }
 
 // Warm at most once per agent per app session (a model list is static per
@@ -51,7 +51,7 @@ const warmed = new Set<string>();
  * session. Best-effort + silent — never throws into the caller.
  */
 export async function warmAcpModels(agentType: string, cwd: string): Promise<void> {
-  const at = agentType === "claude-code" || agentType === "codex" ? (agentType as AcpAgentType) : null;
+  const at = asAcpAgent(agentType);
   if (!at) return;
   if (warmed.has(at)) return;
   // TTL gate: if we already have a fresh cached list, DON'T spawn a throwaway
@@ -61,7 +61,7 @@ export async function warmAcpModels(agentType: string, cwd: string): Promise<voi
   if (isCachedAcpModelsFresh(at, MODELS_TTL_MS)) return;
   warmed.add(at);
   try {
-    const agent = await ensureAgent(pluginFor(at));
+    const agent = await ensureAgent(pluginIdForAgent(at));
     const key = await agents.newSession(agent.agent_id, cwd);
     const snap = await agents.snapshot(key);
     const models = snap.available_models ?? [];
@@ -82,7 +82,7 @@ export async function warmAcpModels(agentType: string, cwd: string): Promise<voi
  * user never touches. Deferred so it never blocks launch.
  */
 export function refreshCachedAcpModels(cwd: string): void {
-  for (const agentType of ["claude-code", "codex"] as const) {
+  for (const agentType of ACP_AGENTS) {
     if (loadCachedAcpModels(agentType)) {
       void warmAcpModels(agentType, cwd);
     }

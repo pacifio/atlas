@@ -5,11 +5,7 @@ import { cn } from "@/lib/utils";
 import { Markdown } from "@/lib/markdown";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
-import {
-  type PlanRecord,
-  formatPlanTimestamp,
-  planTimeAgo,
-} from "../lib/plans";
+import { type PlanRecord, formatPlanTimestamp, planTimeAgo } from "../lib/plans";
 
 interface PlansPanelProps {
   onClose: () => void;
@@ -86,7 +82,7 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
-    [plansPanel.width, setPlansPanelWidth]
+    [plansPanel.width, setPlansPanelWidth],
   );
 
   return (
@@ -112,12 +108,8 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
         <div className="flex items-center justify-between px-3 h-[32px] border-b border-[var(--border-default)] shrink-0">
           <div className="flex items-center gap-1.5">
             <ClipboardList size={11} className="text-[var(--text-tertiary)]" />
-            <span className="text-[11px] font-medium text-[var(--text-secondary)]">
-              Plans
-            </span>
-            <span className="text-[10px] text-[var(--text-tertiary)]">
-              · {plans.length}
-            </span>
+            <span className="text-[11px] font-medium text-[var(--text-secondary)]">Plans</span>
+            <span className="text-[10px] text-[var(--text-tertiary)]">· {plans.length}</span>
           </div>
           <button
             onClick={onClose}
@@ -132,8 +124,8 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
         <div className="flex-1 overflow-y-auto hide-scrollbar">
           {plans.length === 0 ? (
             <div className="px-3 py-3 text-[11px] text-[var(--text-tertiary)] leading-relaxed">
-              No plans yet. When Claude Code proposes a plan, it’s saved here
-              with the message that triggered it.
+              No plans yet. When Claude Code proposes a plan, it’s saved here with the message that
+              triggered it.
             </div>
           ) : (
             plans.map((p, idx) => {
@@ -142,10 +134,7 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
               return (
                 <div
                   key={p.id}
-                  className={cn(
-                    "px-3 py-2.5",
-                    !isLast && "border-b border-[var(--border-subtle)]"
-                  )}
+                  className={cn("px-3 py-2.5", !isLast && "border-b border-[var(--border-subtle)]")}
                 >
                   {/* Header row: user message + expand toggle */}
                   <button
@@ -167,7 +156,7 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
                     <span
                       className={cn(
                         "text-[12px] leading-snug text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors",
-                        !isOpen && "line-clamp-2"
+                        !isOpen && "line-clamp-2",
                       )}
                     >
                       {p.userMessage || "(no message)"}

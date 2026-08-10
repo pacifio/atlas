@@ -16,7 +16,12 @@ import "@xyflow/react/dist/style.css";
 import * as Dialog from "@radix-ui/react-dialog";
 import { StickyNote } from "lucide-react";
 import { useProjectStore } from "@/features/project/stores/project-store";
-import { useCanvasStore, groupBounds, type CanvasNode, type ShapeType } from "../stores/canvas-store";
+import {
+  useCanvasStore,
+  groupBounds,
+  type CanvasNode,
+  type ShapeType,
+} from "../stores/canvas-store";
 import { canvasMediaUpload } from "../lib/canvas-api";
 import { NoteNode } from "./note-node";
 import { TextNode } from "./text-node";
@@ -49,7 +54,10 @@ export function CanvasPanel() {
   // never have two ReactFlow instances competing for state at once.
   const surface = (
     <ReactFlowProvider>
-      <CanvasSurface fullscreen={fullscreen} onToggleFullscreen={() => setFullscreen(!fullscreen)} />
+      <CanvasSurface
+        fullscreen={fullscreen}
+        onToggleFullscreen={() => setFullscreen(!fullscreen)}
+      />
     </ReactFlowProvider>
   );
 
@@ -128,8 +136,14 @@ function CanvasSurface({
   // double-click; text edits inline; media has no editor.
   const [editingId, setEditingId] = useState<string | null>(null);
   // AI: floating composer position (after an "Ask AI" click) + open thread.
-  const [aiInput, setAiInput] = useState<{ screen: { x: number; y: number }; flow: { x: number; y: number } } | null>(null);
-  const [threadFor, setThreadFor] = useState<{ groupId: string; at: { x: number; y: number } } | null>(null);
+  const [aiInput, setAiInput] = useState<{
+    screen: { x: number; y: number };
+    flow: { x: number; y: number };
+  } | null>(null);
+  const [threadFor, setThreadFor] = useState<{
+    groupId: string;
+    at: { x: number; y: number };
+  } | null>(null);
   const [pagesOpen, setPagesOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem("atlas:canvas:pagesOpen") === "1";
@@ -209,7 +223,7 @@ function CanvasSurface({
                   },
         draggable: true,
       })),
-    [nodes, selectedSet, projectPath]
+    [nodes, selectedSet, projectPath],
   );
   const rfEdges = useMemo<Edge[]>(
     () =>
@@ -222,7 +236,7 @@ function CanvasSurface({
         type: "smoothstep",
         style: { stroke: "rgba(255,255,255,0.25)", strokeWidth: 1.5 },
       })),
-    [edges]
+    [edges],
   );
 
   // Subtle dashed frame per AI group, as a NON-interactive background node placed
@@ -250,7 +264,7 @@ function CanvasSurface({
           },
         ];
       }),
-    [aiGroups, nodes]
+    [aiGroups, nodes],
   );
   const allNodes = useMemo(() => [...frameNodes, ...rfNodes], [frameNodes, rfNodes]);
 
@@ -273,7 +287,7 @@ function CanvasSurface({
       }
       if (selChanged) setSelectedIds([...sel]);
     },
-    [moveNote, deleteNote, setSelectedIds]
+    [moveNote, deleteNote, setSelectedIds],
   );
 
   const onEdgesChange = useCallback(
@@ -282,14 +296,14 @@ function CanvasSurface({
         if (c.type === "remove") deleteEdge(c.id);
       }
     },
-    [deleteEdge]
+    [deleteEdge],
   );
 
   const onConnect = useCallback(
     (c: Connection) => {
       if (c.source && c.target) addEdge(c.source, c.target, c.sourceHandle, c.targetHandle);
     },
-    [addEdge]
+    [addEdge],
   );
 
   const viewportCenter = useCallback(
@@ -303,7 +317,7 @@ function CanvasSurface({
       });
       return { x: c.x + dx, y: c.y + dy };
     },
-    [rf]
+    [rf],
   );
 
   // Empty-canvas click just clears selection. Create-tools are handled by the
@@ -313,9 +327,12 @@ function CanvasSurface({
   // ── Drag-to-create (Excalidraw-style) ──────────────────────────────────────
   // While a create-tool is armed, an overlay captures pointer drags: press+drag
   // sizes the shape (Shift = 1:1 square), a plain click drops a default size.
-  const [preview, setPreview] = useState<{ left: number; top: number; w: number; h: number } | null>(
-    null
-  );
+  const [preview, setPreview] = useState<{
+    left: number;
+    top: number;
+    w: number;
+    h: number;
+  } | null>(null);
   const dragStart = useRef<{ sx: number; sy: number; fx: number; fy: number } | null>(null);
 
   const overlayDown = useCallback(
@@ -328,7 +345,7 @@ function CanvasSurface({
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       setPreview(null);
     },
-    [rf]
+    [rf],
   );
 
   const overlayMove = useCallback((e: React.PointerEvent) => {
@@ -388,7 +405,7 @@ function CanvasSurface({
       }
       setTool("select");
     },
-    [rf, addShape, addNote, addText, setTool]
+    [rf, addShape, addNote, addText, setTool],
   );
 
   // Escape disarms a create-tool (back to the default pointer/pan mode).
@@ -409,7 +426,8 @@ function CanvasSurface({
       const w = wrapperRef.current;
       if (!w || w.offsetParent === null) return;
       const ae = document.activeElement as HTMLElement | null;
-      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
+      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable))
+        return;
       const key = e.key.toLowerCase();
       if (key === "z" && !e.shiftKey) {
         e.preventDefault();
@@ -451,7 +469,7 @@ function CanvasSurface({
     (_: unknown, vp: { x: number; y: number; zoom: number }) => {
       setViewport(vp);
     },
-    [setViewport]
+    [setViewport],
   );
 
   const jumpToNode = useCallback(
@@ -460,7 +478,7 @@ function CanvasSurface({
       if (!n) return;
       rf.setCenter(n.x + 160, n.y + 60, { duration: 350, zoom: rf.getZoom() });
     },
-    [rf]
+    [rf],
   );
 
   // Open the slide-in editor on a note double-click (text/media aren't notes).
@@ -483,113 +501,118 @@ function CanvasSurface({
     <div className="flex h-full min-h-0">
       {pagesOpen && <PagesPanel />}
       <div ref={wrapperRef} className="relative min-h-0 min-w-0 flex-1 bg-bg-base overflow-hidden">
-      {!loaded && (
-        <div className="absolute inset-0 flex items-center justify-center text-[11px] text-text-tertiary z-30">
-          Loading…
-        </div>
-      )}
+        {!loaded && (
+          <div className="absolute inset-0 flex items-center justify-center text-[11px] text-text-tertiary z-30">
+            Loading…
+          </div>
+        )}
 
-      <ReactFlow
-        nodes={allNodes}
-        edges={rfEdges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onNodeDragStart={() => beginInteraction()}
-        onNodeDoubleClick={onNodeDoubleClick}
-        onPaneClick={onPaneClick}
-        onMoveEnd={onMoveEnd}
-        nodeTypes={nodeTypes}
-        connectionMode={ConnectionMode.Loose}
-        connectionRadius={40}
-        minZoom={0.2}
-        maxZoom={2}
-        fitView={false}
-        defaultViewport={useCanvasStore.getState().viewport}
-        deleteKeyCode={["Backspace", "Delete"]}
-        proOptions={{ hideAttribution: true }}
-        // Drag empty canvas to pan (hold Space also pans); click selects a node;
-        // Shift-click multi-selects. No marquee tool (it fought Space-to-pan).
-        panOnScroll
-      >
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={20}
-          size={1.2}
-          color="rgba(255,255,255,0.18)"
-        />
-      </ReactFlow>
-
-      {/* Drag-to-create overlay — only mounted while a create-tool is armed. */}
-      {armed && (
-        <div
-          className="absolute inset-0 z-10 cursor-crosshair"
-          onPointerDown={overlayDown}
-          onPointerMove={overlayMove}
-          onPointerUp={overlayUp}
+        <ReactFlow
+          nodes={allNodes}
+          edges={rfEdges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onNodeDragStart={() => beginInteraction()}
+          onNodeDoubleClick={onNodeDoubleClick}
+          onPaneClick={onPaneClick}
+          onMoveEnd={onMoveEnd}
+          nodeTypes={nodeTypes}
+          connectionMode={ConnectionMode.Loose}
+          connectionRadius={40}
+          minZoom={0.2}
+          maxZoom={2}
+          fitView={false}
+          defaultViewport={useCanvasStore.getState().viewport}
+          deleteKeyCode={["Backspace", "Delete"]}
+          proOptions={{ hideAttribution: true }}
+          // Drag empty canvas to pan (hold Space also pans); click selects a node;
+          // Shift-click multi-selects. No marquee tool (it fought Space-to-pan).
+          panOnScroll
         >
-          {preview && (
-            <div
-              className="absolute rounded border border-[var(--accent-primary)] bg-[var(--accent-primary)]/10 pointer-events-none"
-              style={{ left: preview.left, top: preview.top, width: preview.w, height: preview.h }}
-            />
-          )}
-        </div>
-      )}
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={20}
+            size={1.2}
+            color="rgba(255,255,255,0.18)"
+          />
+        </ReactFlow>
 
-      {/* Floating overlays (Miro-style) */}
-      <CanvasHeader
-        pageName={pageName}
-        pageIcon={pageIcon}
-        pagesOpen={pagesOpen}
-        onTogglePages={togglePages}
-        fullscreen={fullscreen}
-        onFit={handleFit}
-        onToggleFullscreen={onToggleFullscreen}
-      />
-      <CanvasExportToolbar />
-      <CanvasToolbar
-        activeTool={activeTool}
-        onTool={setTool}
-        onInsertMedia={handleInsertMedia}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        onUndo={undo}
-        onRedo={redo}
-      />
+        {/* Drag-to-create overlay — only mounted while a create-tool is armed. */}
+        {armed && (
+          <div
+            className="absolute inset-0 z-10 cursor-crosshair"
+            onPointerDown={overlayDown}
+            onPointerMove={overlayMove}
+            onPointerUp={overlayUp}
+          >
+            {preview && (
+              <div
+                className="absolute rounded border border-[var(--accent-primary)] bg-[var(--accent-primary)]/10 pointer-events-none"
+                style={{
+                  left: preview.left,
+                  top: preview.top,
+                  width: preview.w,
+                  height: preview.h,
+                }}
+              />
+            )}
+          </div>
+        )}
 
-      {editingId && (
-        <NoteEditorPanel
-          key={editingId}
-          noteId={editingId}
-          projectPath={projectPath}
-          onClose={() => setEditingId(null)}
-          onJumpToNode={(id) => {
-            setEditingId(id);
-            jumpToNode(id);
-          }}
+        {/* Floating overlays (Miro-style) */}
+        <CanvasHeader
+          pageName={pageName}
+          pageIcon={pageIcon}
+          pagesOpen={pagesOpen}
+          onTogglePages={togglePages}
+          fullscreen={fullscreen}
+          onFit={handleFit}
+          onToggleFullscreen={onToggleFullscreen}
         />
-      )}
+        <CanvasExportToolbar />
+        <CanvasToolbar
+          activeTool={activeTool}
+          onTool={setTool}
+          onInsertMedia={handleInsertMedia}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={undo}
+          onRedo={redo}
+        />
 
-      {/* AI copilot: ✨ group pins, floating composer, and thread popover. */}
-      <AiGroupMarkers onOpenThread={(groupId, at) => setThreadFor({ groupId, at })} />
-      {aiInput && (
-        <AiInputFloat
-          screen={aiInput.screen}
-          flow={aiInput.flow}
-          projectPath={projectPath}
-          onClose={() => setAiInput(null)}
-        />
-      )}
-      {threadFor && (
-        <AiThreadPanel
-          key={threadFor.groupId}
-          groupId={threadFor.groupId}
-          at={threadFor.at}
-          projectPath={projectPath}
-          onClose={() => setThreadFor(null)}
-        />
-      )}
+        {editingId && (
+          <NoteEditorPanel
+            key={editingId}
+            noteId={editingId}
+            projectPath={projectPath}
+            onClose={() => setEditingId(null)}
+            onJumpToNode={(id) => {
+              setEditingId(id);
+              jumpToNode(id);
+            }}
+          />
+        )}
+
+        {/* AI copilot: ✨ group pins, floating composer, and thread popover. */}
+        <AiGroupMarkers onOpenThread={(groupId, at) => setThreadFor({ groupId, at })} />
+        {aiInput && (
+          <AiInputFloat
+            screen={aiInput.screen}
+            flow={aiInput.flow}
+            projectPath={projectPath}
+            onClose={() => setAiInput(null)}
+          />
+        )}
+        {threadFor && (
+          <AiThreadPanel
+            key={threadFor.groupId}
+            groupId={threadFor.groupId}
+            at={threadFor.at}
+            projectPath={projectPath}
+            onClose={() => setThreadFor(null)}
+          />
+        )}
       </div>
     </div>
   );

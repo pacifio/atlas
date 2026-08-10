@@ -2,6 +2,9 @@
  *  URLs (open in the default browser) and file paths (open in Atlas / reveal in
  *  Finder) as clickable spans. Mirrors the xterm link provider's detection. */
 
+import type { CSSProperties } from "react";
+import type { AnsiSegment } from "./ansi-to-segments";
+
 // File path: a run with at least one `/`, made of safe path chars, with an
 // optional `:line[:col]` suffix. Colons are excluded from the body so URLs
 // don't match as paths (guarded again by the `:` look-behind at use site).
@@ -44,7 +47,11 @@ export function splitLinks(text: string): PathRun[] {
   while ((u = URL_RE.exec(text)) !== null) {
     const trimmed = u[0].replace(TRAILING_PUNCT, "");
     if (trimmed.length < 2) continue;
-    matches.push({ start: u.index, end: u.index + trimmed.length, kind: "url" });
+    matches.push({
+      start: u.index,
+      end: u.index + trimmed.length,
+      kind: "url",
+    });
   }
 
   PATH_RE.lastIndex = 0;
@@ -74,5 +81,85 @@ export function splitLinks(text: string): PathRun[] {
     last = m.end;
   }
   if (last < text.length) out.push({ text: text.slice(last), kind: "text" });
+  return out;
+}
+
+// ── Line-level linkification over styled segments ───────────────────────────
+
+export interface LinkedRun {
+  text: string;
+  kind: LinkKind;
+  /** The FULL matched link text (may span several styled segments) — this is
+   *  what a click should open, not this run's possibly-partial `text`. */
+  target?: string;
+  style?: CSSProperties;
+}
+
+/** Linkify styled segments LINE by LINE, then split each detected link back
+ *  across the styled segments it covers (styling preserved per run, but every
+ *  run of a link carries the whole match as `target`).
+ *
+ *  Detection MUST see whole lines: tools style parts of a URL differently —
+ *  Vite prints `http://localhost:` and `8080/` in different SGR runs — so
+ *  per-segment detection matched only `http://localhost:`, the trailing-punct
+ *  trim ate the `:`, and clicks opened `http://localhost` without the port. */
+export function linkifySegments(segments: AnsiSegment[]): LinkedRun[] {
+  const out: LinkedRun[] = [];
+  let line: AnsiSegment[] = [];
+
+  const flushLine = () => {
+    if (line.length === 0) return;
+    if (line.length === 1) {
+      // Single-style line — no offset mapping needed.
+      const s = line[0];
+      for (const r of splitLinks(s.text)) {
+        out.push({
+          text: r.text,
+          kind: r.kind,
+          target: r.kind === "text" ? undefined : r.text,
+          style: s.style,
+        });
+      }
+      line = [];
+      return;
+    }
+    let lineText = "";
+    for (const s of line) lineText += s.text;
+    const runs = splitLinks(lineText);
+    // Runs and segments cover the same text in order — walk them in lockstep,
+    // splitting runs at segment borders so each piece keeps its own style.
+    let segIdx = 0;
+    let segOff = 0;
+    for (const r of runs) {
+      let consumed = 0;
+      while (consumed < r.text.length && segIdx < line.length) {
+        const seg = line[segIdx];
+        const take = Math.min(r.text.length - consumed, seg.text.length - segOff);
+        out.push({
+          text: r.text.slice(consumed, consumed + take),
+          kind: r.kind,
+          target: r.kind === "text" ? undefined : r.text,
+          style: seg.style,
+        });
+        consumed += take;
+        segOff += take;
+        if (segOff >= seg.text.length) {
+          segIdx++;
+          segOff = 0;
+        }
+      }
+    }
+    line = [];
+  };
+
+  for (const seg of segments) {
+    if (seg.text === "\n") {
+      flushLine();
+      out.push({ text: "\n", kind: "text" });
+    } else {
+      line.push(seg);
+    }
+  }
+  flushLine();
   return out;
 }

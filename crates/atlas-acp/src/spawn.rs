@@ -80,7 +80,10 @@ fn resolve_program_abs(program: &str) -> Option<String> {
         if !out.status.success() {
             return None;
         }
-        let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        // Interactive rc files can echo noise before the real answer — take
+        // the LAST non-empty line (see `probe_shell` on why `-i` matters).
+        let raw = String::from_utf8_lossy(&out.stdout);
+        let p = raw.lines().rev().find(|l| !l.trim().is_empty())?.trim().to_string();
         // Accept only a real absolute path (not a shell function/alias name).
         (p.starts_with('/') && std::path::Path::new(&p).exists()).then_some(p)
     });
@@ -94,6 +97,16 @@ fn resolve_program_abs(program: &str) -> Option<String> {
 /// is killed (so its reader thread exits promptly) instead of being abandoned
 /// to run forever — the old `recv_timeout`-only pattern leaked one thread AND
 /// one login shell per timed-out probe.
+///
+/// `-i` (interactive) is NOT optional: zsh only reads `~/.zshrc` in
+/// interactive shells, and that's where most CLI installers put their PATH
+/// export (OpenCode writes `export PATH=~/.opencode/bin:$PATH` there). A
+/// login-only `-lc` probe reads `.zprofile`/`.zlogin` but skips `.zshrc`, so
+/// the bundled app couldn't find `opencode` even though the terminal (and
+/// `tauri dev`) could — agent worked in dev, ENOENT in production. Mirrors
+/// `claude_setup::resolve_cli`, which already probes with `-lic` for the same
+/// reason. Interactive rcs can print noise; callers must parse defensively
+/// (last line / filtered entries).
 fn probe_shell(
     shell: &str,
     script: &str,
@@ -215,6 +228,16 @@ pub(crate) fn explain_spawn_failure(spec: &AgentSpec, err: AcpError) -> AcpError
         "Node.js (which provides `npx`) was not found. Install Node.js \
          (https://nodejs.org) and relaunch Atlas. If it is installed, make sure \
          it is on your login shell's PATH."
+    } else if program == "opencode" {
+        "the OpenCode CLI was not found. Install it from https://opencode.ai \
+         (then optionally run `opencode auth login`) and relaunch Atlas."
+    } else if program == "cursor-agent" {
+        "the Cursor CLI was not found. Install it from https://cursor.com/cli \
+         and run `cursor-agent login`, then relaunch Atlas."
+    } else if program == "kilo" {
+        "the Kilo Code CLI was not found. Install it with \
+         `npm install -g @kilocode/cli` (or `brew install Kilo-Org/tap/kilo`) \
+         and run `kilo auth login`, then relaunch Atlas."
     } else {
         "the agent's runtime executable was not found on PATH"
     };
@@ -259,8 +282,8 @@ fn enrich_path() {
     //    happen synchronously so the very first `acp_spawn_agent` call can
     //    already resolve `npx`/`node` from a Homebrew install.
     //
-    // 2. The user's REAL interactive-shell PATH, queried synchronously via
-    //    `$SHELL -lic 'echo $PATH'` (bounded by a short timeout). This is the
+    // 2. The user's REAL shell PATH, queried synchronously via
+    //    `$SHELL -lc 'echo $PATH'` (bounded by a short timeout). This is the
     //    authoritative fix: macOS GUI apps launched from Finder/the Dock only
     //    inherit `/usr/bin:/bin:/usr/sbin:/sbin`, so `npx`/`node` installed via
     //    nvm/fnm/volta/asdf or a custom npm prefix are invisible — the hardcoded
@@ -285,8 +308,9 @@ fn enrich_path() {
 fn merge_login_shell_path() {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
-    // `-lic` loads the user's full login + interactive config (where
-    // nvm/fnm/etc. mutate PATH). Owned timeout: the probe child is killed on
+    // `probe_shell` runs `-lic` — login AND interactive, so both
+    // `.zprofile` (nvm/fnm) and `.zshrc` (opencode, most curl-installers)
+    // PATH exports are seen. Owned timeout: the probe child is killed on
     // expiry instead of leaking (see `probe_shell`).
     let Some(out) = probe_shell(
         &shell,
@@ -299,8 +323,13 @@ fn merge_login_shell_path() {
         return;
     }
 
+    // Interactive rc files can print noise lines before the real answer —
+    // `printf` emits no trailing newline, so the PATH is the LAST line.
     let raw = String::from_utf8_lossy(&out.stdout);
-    let entries: Vec<String> = raw
+    let Some(path_line) = raw.lines().rev().find(|l| !l.trim().is_empty()) else {
+        return;
+    };
+    let entries: Vec<String> = path_line
         .trim()
         .split(':')
         .filter(|s| !s.is_empty() && s.starts_with('/'))
@@ -320,6 +349,9 @@ fn apply_cheap_path_extras() {
         extras.push(format!("{home}/.local/bin"));
         extras.push(format!("{home}/.bun/bin"));
         extras.push(format!("{home}/.cargo/bin"));
+        // Agent-CLI install dirs whose PATH export lives only in ~/.zshrc
+        // (interactive-only) — deterministic backstop for the shell probe.
+        extras.push(format!("{home}/.opencode/bin"));
     }
     extras.push("/opt/homebrew/bin".into());
     extras.push("/opt/homebrew/sbin".into());

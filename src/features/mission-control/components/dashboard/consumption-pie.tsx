@@ -54,7 +54,9 @@ export function ConsumptionPie({ data }: { data: MissionControlUsage }) {
                     className="h-1.5 w-1.5 rounded-full shrink-0"
                     style={{ backgroundColor: projectColor(i) }}
                   />
-                  <span className="flex-1 min-w-0 truncate text-[var(--text-secondary)]">{s.name}</span>
+                  <span className="flex-1 min-w-0 truncate text-[var(--text-secondary)]">
+                    {s.name}
+                  </span>
                   <span className="font-mono tabular-nums text-[var(--text-tertiary)]">
                     {total > 0 ? Math.round((s.value / total) * 100) : 0}%
                   </span>

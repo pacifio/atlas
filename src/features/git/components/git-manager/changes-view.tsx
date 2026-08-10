@@ -1,23 +1,58 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { toast } from "sonner";
 import {
   Plus,
   Minus,
   Undo2,
   AlertTriangle,
   ChevronDown,
+  ChevronUp,
   GitCompare,
   FileCode2,
+  GitCommitHorizontal,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGitStore, type GitFileStatus } from "../../stores/git-store";
+import { handleGitError } from "../../lib/git-errors";
 import { openGitDiff } from "../../lib/git-diff-api";
+import { hunkWireLines, type DiffHunk } from "../../lib/diff";
+import { GitOpOutput } from "./git-op-output";
+import { ConflictsView } from "./conflicts-view";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { DiffView } from "../diff-view";
 import { classifyFile } from "@/lib/file-types";
 import { FileTreeConfirmDelete } from "@/features/explorer/components/file-tree-confirm-delete";
+
+/** Expand/collapse toggle for an optional commit-form field. The chevron
+ *  flips with state; a collapsed field that still holds text shows a dot so
+ *  its content can't be committed invisibly by surprise. */
+function FieldToggle({
+  open,
+  hasContent,
+  label,
+  onToggle,
+}: {
+  open: boolean;
+  hasContent: boolean;
+  label: string;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      className="flex items-center gap-1 text-[10px] text-text-tertiary hover:text-text-secondary"
+      title={open ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+    >
+      {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+      {label}
+      {!open && hasContent && (
+        <span className="inline-block w-1 h-1 rounded-full bg-[var(--accent-primary)]" />
+      )}
+    </button>
+  );
+}
 
 /** An added/untracked file has no HEAD version, so "revert" = delete it (a plain
  *  `git restore` errors). Mirrors the loose detection in `statusBadge`. */
@@ -32,8 +67,7 @@ function statusBadge(status: string): { letter: string; cls: string } {
   if (s.includes("add") || s.includes("new") || s.includes("untrack"))
     return { letter: "A", cls: "text-success" };
   if (s.includes("renam")) return { letter: "R", cls: "text-[var(--status-info)]" };
-  if (s.includes("conflict") || s.includes("unmerg"))
-    return { letter: "!", cls: "text-error" };
+  if (s.includes("conflict") || s.includes("unmerg")) return { letter: "!", cls: "text-error" };
   return { letter: "M", cls: "text-[var(--status-warning)]" };
 }
 
@@ -67,7 +101,9 @@ function FileRow({
         selected ? "bg-bg-selected" : "hover:bg-bg-hover",
       )}
     >
-      <span className={cn("shrink-0 w-3 text-center font-mono text-[10px] font-semibold", badge.cls)}>
+      <span
+        className={cn("shrink-0 w-3 text-center font-mono text-[10px] font-semibold", badge.cls)}
+      >
         {badge.letter}
       </span>
       <span className="truncate flex-1 min-w-0 font-mono">
@@ -141,6 +177,8 @@ export function ChangesView() {
   const [description, setDescription] = useState("");
   const [amend, setAmend] = useState(false);
   const [showDesc, setShowDesc] = useState(false);
+  const [showCoAuthors, setShowCoAuthors] = useState(false);
+  const [coAuthors, setCoAuthors] = useState("");
 
   const staged = useMemo(() => files.filter((f) => f.staged), [files]);
   const unstaged = useMemo(() => files.filter((f) => !f.staged), [files]);
@@ -166,7 +204,7 @@ export function ChangesView() {
     try {
       await fn();
     } catch (e) {
-      toast.error(String(e));
+      handleGitError(e);
     }
   };
 
@@ -196,20 +234,86 @@ export function ChangesView() {
     else setConfirmDelete(f);
   };
 
+  // Hunk / line-level staging: send the hunk exactly as displayed; Rust
+  // re-diffs fresh, matches it by content, synthesizes the patch and runs
+  // `git apply`. Discards confirm first (destructive).
+  const [confirmHunkDiscard, setConfirmHunkDiscard] = useState<{
+    file: string;
+    hunk: DiffHunk;
+    selected?: number[];
+  } | null>(null);
+
+  const runHunkOp = (cmd: string, file: string, hunk: DiffHunk, selected?: number[]) =>
+    run(async () => {
+      if (!repoPath) return;
+      await invoke(cmd, {
+        path: repoPath,
+        file,
+        lines: hunkWireLines(hunk),
+        selected: selected ?? null,
+      });
+      await actions.refresh(repoPath);
+      void actions.loadDiff();
+    });
+
+  const onHunkAction = (
+    action: "stage" | "unstage" | "discard",
+    file: string,
+    hunk: DiffHunk,
+    selected?: number[],
+  ) => {
+    if (action === "discard") {
+      setConfirmHunkDiscard({ file, hunk, selected });
+      return;
+    }
+    void runHunkOp(
+      action === "stage" ? "git_stage_hunk" : "git_unstage_hunk",
+      file,
+      hunk,
+      selected,
+    );
+  };
+
+  // Busy while OUR streaming commit runs — a slow pre-commit hook
+  // (lint-staged & co.) used to look like a hung app because the button
+  // gave no feedback. The live output strip below the form shows what the
+  // hook is doing meanwhile.
+  const activeOp = useGitStore.use.activeOp();
+  const committing = activeOp?.kind === "commit" && activeOp.running;
+
   const doCommit = () =>
     run(async () => {
-      if (!summary.trim()) return;
-      await actions.commit(summary.trim(), description.trim() || undefined, amend);
+      // Amend with an empty summary keeps the original message.
+      if ((!summary.trim() && !amend) || committing) return;
+      const authors = coAuthors
+        .split(",")
+        .map((a) => a.trim())
+        .filter(Boolean);
+      await actions.commit(
+        summary.trim(),
+        description.trim() || undefined,
+        amend,
+        authors.length > 0 ? authors : undefined,
+      );
       setSummary("");
       setDescription("");
       setAmend(false);
       setShowDesc(false);
+      setCoAuthors("");
+      setShowCoAuthors(false);
     });
 
   const openFile = (p: string) => {
     if (!currentProject) return;
     const full = `${currentProject.path}/${p}`;
-    addTab({ id: `editor-${full}`, type: "editor", title: p.split("/").pop() ?? p, closable: true, dirty: false, data: { filePath: full } });
+    addTab({
+      id: `editor-${full}`,
+      type: "editor",
+      title: p.split("/").pop() ?? p,
+      closable: true,
+      dirty: false,
+      data: { filePath: full },
+    });
   };
 
   const inProgressLabel = inProgress
@@ -221,16 +325,20 @@ export function ChangesView() {
           ? "cherry-pick"
           : "revert"
     : null;
-  const opKind: "merge" | "rebase" | "cherry-pick" | "revert" =
-    inProgress?.merge
-      ? "merge"
-      : inProgress?.rebase
-        ? "rebase"
-        : inProgress?.cherryPick
-          ? "cherry-pick"
-          : "revert";
+  const opKind: "merge" | "rebase" | "cherry-pick" | "revert" = inProgress?.merge
+    ? "merge"
+    : inProgress?.rebase
+      ? "rebase"
+      : inProgress?.cherryPick
+        ? "cherry-pick"
+        : "revert";
 
-  const canCommit = (staged.length > 0 || amend) && summary.trim().length > 0;
+  const hasConflicts = useMemo(() => files.some((f) => f.status === "conflicted"), [files]);
+
+  // Amending never requires a new summary (empty = keep the original
+  // message, like `git commit --amend --no-edit`).
+  const canCommit =
+    (staged.length > 0 || amend) && (summary.trim().length > 0 || amend) && !committing;
 
   return (
     <div className="h-full flex flex-col min-w-0">
@@ -242,7 +350,9 @@ export function ChangesView() {
           </span>
           <button
             onClick={() => run(() => actions.opControl(opKind, "continue"))}
-            className="px-2 h-6 rounded text-[10px] font-medium bg-[var(--accent-primary)] text-[var(--bg-base)] hover:bg-[var(--accent-primary-hover)]"
+            disabled={hasConflicts}
+            title={hasConflicts ? "Resolve all conflicts first" : undefined}
+            className="px-2 h-6 rounded text-[10px] font-medium bg-[var(--accent-primary)] text-[var(--bg-base)] hover:bg-[var(--accent-primary-hover)] disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Continue
           </button>
@@ -254,6 +364,9 @@ export function ChangesView() {
           </button>
         </div>
       )}
+
+      {/* Conflicted files (in-progress merge/rebase/cherry-pick only). */}
+      {inProgressLabel && <ConflictsView onOpenFile={openFile} />}
 
       {/* File lists — bounded so the diff region below gets room. */}
       <div className="shrink-0 max-h-[45%] overflow-y-auto hide-scrollbar border-b border-border-default">
@@ -337,27 +450,47 @@ export function ChangesView() {
       <DiffView
         diff={fileDiff ?? diff}
         onOpenFile={openFile}
-        onOpenDiff={
-          repoPath ? (p) => openGitDiff(repoPath, p, false) : undefined
-        }
+        onOpenDiff={repoPath ? (p) => openGitDiff(repoPath, p, false) : undefined}
         onRefresh={() => run(() => actions.loadDiff())}
         filters={!selected}
         emptyLabel={selected ? "No diff for this file" : "No changes"}
         className="flex-1"
+        hunkActions={["stage", "discard"]}
+        onHunkAction={onHunkAction}
       />
+
+      {/* Live output from a streaming git op (hooks etc.) */}
+      <GitOpOutput />
 
       {/* Commit form */}
       <div className="shrink-0 border-t border-border-default p-2 space-y-1.5">
         <input
           value={summary}
           onChange={(e) => setSummary(e.target.value)}
-          placeholder={amend ? "Amend commit message" : "Summary (required)"}
+          placeholder={amend ? "Amend message (empty = keep original)" : "Summary (required)"}
           className="w-full h-7 rounded-md border border-border-default bg-bg-input px-2 text-[11px] text-text-primary outline-none focus:border-border-focus"
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) doCommit();
           }}
         />
-        {showDesc ? (
+        {/* Optional-field toggles — always visible, so an opened field can be
+            collapsed again. Hidden text is kept (and still committed); the dot
+            marks a collapsed field that has content. */}
+        <div className="flex items-center gap-2.5">
+          <FieldToggle
+            open={showDesc}
+            hasContent={description.trim().length > 0}
+            label="Description"
+            onToggle={() => setShowDesc((v) => !v)}
+          />
+          <FieldToggle
+            open={showCoAuthors}
+            hasContent={coAuthors.trim().length > 0}
+            label="Co-authors"
+            onToggle={() => setShowCoAuthors((v) => !v)}
+          />
+        </div>
+        {showDesc && (
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -365,13 +498,15 @@ export function ChangesView() {
             rows={3}
             className="w-full rounded-md border border-border-default bg-bg-input px-2 py-1.5 text-[11px] text-text-primary outline-none focus:border-border-focus resize-none"
           />
-        ) : (
-          <button
-            onClick={() => setShowDesc(true)}
-            className="flex items-center gap-1 text-[10px] text-text-tertiary hover:text-text-secondary"
-          >
-            <ChevronDown size={10} /> Add description
-          </button>
+        )}
+        {showCoAuthors && (
+          <input
+            value={coAuthors}
+            onChange={(e) => setCoAuthors(e.target.value)}
+            placeholder="Co-authors: Name <email>, Name <email>"
+            className="w-full h-7 rounded-md border border-border-default bg-bg-input px-2 text-[11px] font-mono text-text-primary outline-none focus:border-border-focus"
+            title="Added as Co-authored-by trailers"
+          />
         )}
         <div className="flex items-center gap-2">
           <label className="flex items-center gap-1.5 text-[10px] text-text-tertiary cursor-pointer select-none">
@@ -383,17 +518,24 @@ export function ChangesView() {
             />
             Amend last commit
           </label>
+          {/* The house pill, same as the session-capture footer's actions and
+              the create-organisation modal's. The old style was a filled white
+              rectangle when enabled and a flat grey slab when not — two shapes
+              for one button, neither of them the app's own language. The pill
+              keeps its outline in both states and dims rather than changing
+              colour, so the control stays the same object while it waits for a
+              summary. */}
           <button
             onClick={doCommit}
             disabled={!canCommit}
-            className={cn(
-              "ml-auto px-3 h-7 rounded-md text-[11px] font-medium transition-colors",
-              canCommit
-                ? "bg-[var(--accent-primary)] text-[var(--bg-base)] hover:bg-[var(--accent-primary-hover)]"
-                : "bg-bg-elevated text-text-tertiary cursor-not-allowed",
-            )}
+            className="ml-auto inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[11px] font-medium leading-none text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[var(--bg-elevated)]"
           >
-            {amend ? "Amend" : "Commit"}
+            {committing ? (
+              <Loader2 size={11} className="animate-spin" />
+            ) : (
+              <GitCommitHorizontal size={11} />
+            )}
+            {committing ? "Committing…" : amend ? "Amend" : "Commit"}
           </button>
         </div>
       </div>
@@ -408,6 +550,39 @@ export function ChangesView() {
         }}
         onOpenChange={(open) => {
           if (!open) setConfirmDelete(null);
+        }}
+      />
+
+      <FileTreeConfirmDelete
+        open={confirmHunkDiscard !== null}
+        name=""
+        isDir={false}
+        title="Discard these changes?"
+        confirmLabel="Discard"
+        body={
+          <>
+            {confirmHunkDiscard?.selected
+              ? `${confirmHunkDiscard.selected.length} selected line${
+                  confirmHunkDiscard.selected.length === 1 ? "" : "s"
+                }`
+              : "This hunk"}{" "}
+            in <span className="font-mono text-text-primary">{confirmHunkDiscard?.file}</span> will
+            be reverted in your working tree. This can't be undone.
+          </>
+        }
+        onConfirm={() => {
+          if (confirmHunkDiscard) {
+            void runHunkOp(
+              "git_discard_hunk",
+              confirmHunkDiscard.file,
+              confirmHunkDiscard.hunk,
+              confirmHunkDiscard.selected,
+            );
+          }
+          setConfirmHunkDiscard(null);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setConfirmHunkDiscard(null);
         }}
       />
 

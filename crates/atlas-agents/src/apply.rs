@@ -23,7 +23,7 @@ use crate::session::{
     MessageMode, MessageRole, PlanEntry, SessionState, SessionStatus, ToolCall, ToolCallStatus,
     extract_image_block, extract_text_block, format_tool_content, map_tool_status,
     new_assistant_text,
-    new_assistant_thinking, new_assistant_tool, normalise_tool_input,
+    new_assistant_thinking, new_assistant_tool, new_user_message, normalise_tool_input,
 };
 
 /// Apply one inbound [`AcpEvent`] to an already-resolved session. Handles every
@@ -170,6 +170,66 @@ fn apply_session_update(
                     format!("\n\n![image](data:{mime};base64,{data})\n\n"),
                 );
             }
+        }
+        "user_message_chunk" => {
+            // The user's side of a `session/load` replay (both adapters stream
+            // history back as user/agent chunk notifications). Dropping these —
+            // the old behavior — is why replay only worked for agents with an
+            // on-disk transcript to re-read: the Rust session state was missing
+            // every prompt, and Codex resume painted an empty thread.
+            //
+            // Consecutive chunks coalesce into the trailing user message (replay
+            // streams a message in pieces). Only the first chunk of a message
+            // emits `MessageAppended`; continuations mutate state silently and
+            // ride the post-load snapshot — there is no user-text streaming
+            // delta, and live turns never stream user text.
+            let Some(content) = v.get("content") else {
+                return;
+            };
+            let Ok(block) = serde_json::from_value::<acp_schema::ContentBlock>(content.clone())
+            else {
+                return;
+            };
+            let Some(text) = extract_text_block(&block) else {
+                return;
+            };
+            let mut st = state.lock();
+            match st.messages.last_mut() {
+                Some(last) if last.role == MessageRole::User && last.mode == MessageMode::Text => {
+                    last.content.push_str(&text);
+                    st.touch();
+                }
+                _ => {
+                    let msg = new_user_message(text);
+                    let cloned = msg.clone();
+                    st.messages.push(msg);
+                    let agent_id = st.agent_id;
+                    let sid = st.session_id.clone();
+                    st.touch();
+                    drop(st);
+                    emitter.emit(SessionDeltaEnvelope {
+                        agent_id,
+                        session_id: sid,
+                        delta: SessionDelta::MessageAppended { message: cloned },
+                    });
+                }
+            }
+        }
+        "config_option_update" => {
+            // Config-option state pushed by the agent (e.g. claude-agent-acp
+            // after `/model`, thinking toggles). Stored raw for the snapshot;
+            // ignoring it left the host permanently stale on anything the user
+            // changed inside the agent rather than through Atlas.
+            let Some(options) = v
+                .get("configOptions")
+                .and_then(|c| c.as_array().cloned())
+                .or_else(|| v.get("options").and_then(|c| c.as_array().cloned()))
+            else {
+                return;
+            };
+            let mut st = state.lock();
+            st.config_options = options;
+            st.touch();
         }
         "agent_thought_chunk" => {
             let Some(content) = v.get("content") else {
@@ -392,6 +452,18 @@ fn apply_tool_call(
     let status_raw = v.get("status").and_then(|s| s.as_str());
     let content_val = v.get("content").cloned();
     let formatted = content_val.as_ref().and_then(format_tool_content);
+    // Live command output — the `_meta.terminal_output` contract shared by
+    // claude-agent-acp and codex-acp, opted into at initialize (see the
+    // driver's client capabilities). Updates carrying it are pure streaming:
+    // append the chunk to the visible result as the command runs. The final
+    // tool_result still replaces the result wholesale, so the settled state is
+    // exactly what it was before this existed.
+    let live_output = v
+        .get("_meta")
+        .and_then(|m| m.get("terminal_output"))
+        .and_then(|t| t.get("data"))
+        .and_then(|d| d.as_str())
+        .map(|s| s.to_string());
 
     let mut st = state.lock();
 
@@ -423,6 +495,12 @@ fn apply_tool_call(
             if let Some(locations) = v.get("locations").and_then(|l| l.as_array()) {
                 if !locations.is_empty() {
                     tc.locations = locations.clone();
+                }
+            }
+            if let Some(chunk) = live_output.as_deref() {
+                match tc.result.as_mut() {
+                    Some(existing) => existing.push_str(chunk),
+                    None => tc.result = Some(chunk.to_string()),
                 }
             }
             if let Some(result) = formatted.clone() {

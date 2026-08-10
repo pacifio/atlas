@@ -380,10 +380,16 @@ fn import_file(
                         .as_ref()
                         .map(|t| (t.agent.as_deref(), t.model.as_deref()))
                         .unwrap_or((None, None));
+                    // No branch: an imported transcript is read long after the
+                    // fact, and today's HEAD says nothing about where the work
+                    // was done. Guessing it would be worse than leaving it
+                    // empty — the same reason imported Sessions get no
+                    // Checkpoints.
                     let id = capture.ensure_session(
                         &session_key,
                         agent.or(Some("claude-code")),
                         model,
+                        None,
                         None,
                     )?;
                     session_id = Some(id.clone());

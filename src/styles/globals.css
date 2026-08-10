@@ -73,25 +73,49 @@
   --animate-slide-in-right: slide-in-right 0.18s cubic-bezier(0.32, 0.72, 0, 1);
 
   @keyframes slide-in-right {
-    from { transform: translateX(100%); }
-    to { transform: translateX(0); }
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
   }
 
   @keyframes fade-in {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
   @keyframes fade-out {
-    from { opacity: 1; }
-    to { opacity: 0; }
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
   }
   @keyframes scale-in {
-    from { opacity: 0; transform: scale(0.95); }
-    to { opacity: 1; transform: scale(1); }
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
   }
   @keyframes scale-out {
-    from { opacity: 1; transform: scale(1); }
-    to { opacity: 0; transform: scale(0.95); }
+    from {
+      opacity: 1;
+      transform: scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: scale(0.95);
+    }
   }
 }
 
@@ -165,15 +189,33 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.atlas-mention-chip[data-mention-kind="file"]         { color: var(--accent-primary); }
-.atlas-mention-chip[data-mention-kind="folder"]       { color: var(--accent-primary); }
-.atlas-mention-chip[data-mention-kind="symbol"]       { color: var(--status-success); }
-.atlas-mention-chip[data-mention-kind="knowledge"]    { color: var(--accent-primary); }
-.atlas-mention-chip[data-mention-kind="repo"]         { color: var(--status-success); }
-.atlas-mention-chip[data-mention-kind="paper"]        { color: var(--status-warning); }
-.atlas-mention-chip[data-mention-kind="branch"]       { color: var(--text-secondary); }
-.atlas-mention-chip[data-mention-kind="past_message"] { color: var(--text-secondary); }
-.atlas-mention-chip[data-mention-kind="past_session"] { color: var(--text-secondary); }
+.atlas-mention-chip[data-mention-kind="file"] {
+  color: var(--accent-primary);
+}
+.atlas-mention-chip[data-mention-kind="folder"] {
+  color: var(--accent-primary);
+}
+.atlas-mention-chip[data-mention-kind="symbol"] {
+  color: var(--status-success);
+}
+.atlas-mention-chip[data-mention-kind="knowledge"] {
+  color: var(--accent-primary);
+}
+.atlas-mention-chip[data-mention-kind="repo"] {
+  color: var(--status-success);
+}
+.atlas-mention-chip[data-mention-kind="paper"] {
+  color: var(--status-warning);
+}
+.atlas-mention-chip[data-mention-kind="branch"] {
+  color: var(--text-secondary);
+}
+.atlas-mention-chip[data-mention-kind="past_message"] {
+  color: var(--text-secondary);
+}
+.atlas-mention-chip[data-mention-kind="past_session"] {
+  color: var(--text-secondary);
+}
 
 /* Hover preview card for media (`@file` image/video) mention chips. Appended to
    document.body by the CM ChipWidget; positioned inline via fixed coords. */
@@ -193,10 +235,18 @@
   object-fit: contain;
 }
 /* Invokable capabilities — distinguished by glyph/sigil, not color (white). */
-.atlas-mention-chip[data-mention-kind="skill"]        { color: var(--accent-primary); }
-.atlas-mention-chip[data-mention-kind="command"]      { color: var(--accent-primary); }
-.atlas-mention-chip[data-mention-kind="agent"]        { color: var(--accent-primary); }
-.atlas-mention-chip[data-mention-kind="rule"]         { color: var(--accent-primary); }
+.atlas-mention-chip[data-mention-kind="skill"] {
+  color: var(--accent-primary);
+}
+.atlas-mention-chip[data-mention-kind="command"] {
+  color: var(--accent-primary);
+}
+.atlas-mention-chip[data-mention-kind="agent"] {
+  color: var(--accent-primary);
+}
+.atlas-mention-chip[data-mention-kind="rule"] {
+  color: var(--accent-primary);
+}
 
 /* Inline variant for sent chat messages: flows in selectable prose, carries the
    same kind glyph the picker/composer use so a sent message matches what you
@@ -249,9 +299,13 @@
   }
 
   /* Re-enable text selection in content areas */
-  input, textarea, [contenteditable],
-  .cm-content, .select-text,
-  pre, code {
+  input,
+  textarea,
+  [contenteditable],
+  .cm-content,
+  .select-text,
+  pre,
+  code {
     user-select: text;
     -webkit-user-select: text;
   }
@@ -322,7 +376,8 @@
     color: var(--text-primary);
   }
 
-  img, a {
+  img,
+  a {
     -webkit-user-drag: none;
   }
 
@@ -352,7 +407,9 @@
   }
 
   /* Global transitions — only background-color to avoid icon jitter from color/opacity transitions */
-  button, a, select {
+  button,
+  a,
+  select {
     transition: background-color 120ms ease-out;
   }
 
@@ -374,31 +431,33 @@
 
      These rules sit at the same specificity as the runtime injection so they
      always win when the runtime fails, and harmlessly co-exist when it
-     succeeds. Match colors with `atlasTheme` in editor-panel.tsx. */
+     succeeds. Every fallback hex mirrors the `atlas` theme in
+     `features/editor/themes/themes.ts` — keep the two in step. */
   .cm-editor {
     background-color: var(--cm-bg, #000);
-    color: var(--cm-fg, #b3b3b3);
+    color: var(--cm-fg, #d4d4d4);
     /* `font-size` + `line-height` live on the editor so both .cm-content
        and .cm-gutters measure the SAME row height — CodeMirror reads the
        computed line-height off the content via ResizeObserver to position
        the gutter elements; forcing different metrics on `.cm-content`
        alone desyncs the gutter, leaving line numbers stranded at the top
-       while text sits further down. Keep them at the editor root. */
+       while text sits further down. Keep them at the editor root, and in
+       step with the metrics in `themes/build-cm-theme.ts`. */
     font-family: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
-    font-size: 14px;
-    line-height: 18px;
+    font-size: 13px;
+    line-height: 20px;
   }
   .cm-content {
-    color: var(--cm-fg, #b3b3b3);
-    caret-color: var(--cm-caret, #b3b3b3);
+    color: var(--cm-fg, #d4d4d4);
+    caret-color: var(--cm-caret, #d4d4d4);
   }
   .cm-gutters {
     background-color: var(--cm-gutter-bg, #000);
-    color: var(--cm-gutter-fg, #222);
+    color: var(--cm-gutter-fg, #666);
     border: none;
   }
   .cm-activeLineGutter {
-    color: var(--cm-active-gutter-fg, #777);
+    color: var(--cm-active-gutter-fg, #d4d4d4);
     background-color: transparent;
   }
   .cm-activeLine {
@@ -411,7 +470,7 @@
   }
   .cm-cursor,
   .cm-dropCursor {
-    border-left-color: var(--cm-caret, #b3b3b3);
+    border-left-color: var(--cm-caret, #d4d4d4);
     border-left-width: 2px;
   }
   .cm-matchingBracket {
@@ -421,9 +480,8 @@
   .cm-foldPlaceholder {
     background-color: var(--cm-fold-bg, #1a1a1a);
     border: 1px solid var(--cm-fold-border, #2a2a2a);
-    color: var(--cm-fold-fg, #555);
+    color: var(--cm-fold-fg, #8a8a8a);
   }
-
 
   /* xterm.js — force monospace font in production. The DOM renderer normally
      injects a <style> tag with our `fontFamily` option, but in the bundled
@@ -434,7 +492,9 @@
   .xterm-rows,
   .xterm .xterm-char-measure-element,
   .xterm-helper-textarea {
-    font-family: Menlo, Monaco, "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", "Courier New", monospace !important;
+    font-family:
+      Menlo, Monaco, "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", "Courier New",
+      monospace !important;
     font-variant-ligatures: none !important;
     letter-spacing: 0 !important;
   }
@@ -442,7 +502,9 @@
   /* Hidden scrollbars for panel content */
   .hide-scrollbar {
     scrollbar-width: none;
-    &::-webkit-scrollbar { display: none; }
+    &::-webkit-scrollbar {
+      display: none;
+    }
   }
 
   /* Prevent overscroll bounce between panels */
@@ -460,48 +522,71 @@
     word-break: break-word;
     overflow-wrap: break-word;
   }
-  .reader-content h1, .reader-content h2, .reader-content h3,
-  .reader-content h4, .reader-content h5, .reader-content h6 {
+  .reader-content h1,
+  .reader-content h2,
+  .reader-content h3,
+  .reader-content h4,
+  .reader-content h5,
+  .reader-content h6 {
     color: var(--text-primary);
     font-weight: 600;
     margin: 1.2em 0 0.4em;
     line-height: 1.3;
   }
-  .reader-content h1 { font-size: 1.4em; }
-  .reader-content h2 { font-size: 1.2em; }
-  .reader-content h3 { font-size: 1.05em; }
-  .reader-content p { margin: 0.6em 0; }
+  .reader-content h1 {
+    font-size: 1.4em;
+  }
+  .reader-content h2 {
+    font-size: 1.2em;
+  }
+  .reader-content h3 {
+    font-size: 1.05em;
+  }
+  .reader-content p {
+    margin: 0.6em 0;
+  }
   .reader-content a {
     color: var(--accent-primary);
     text-decoration: underline;
     text-underline-offset: 2px;
     cursor: pointer;
   }
-  .reader-content a:hover { color: var(--accent-primary-hover); }
+  .reader-content a:hover {
+    color: var(--accent-primary-hover);
+  }
   .reader-content img {
     max-width: 100%;
     height: auto;
     border-radius: 4px;
     margin: 0.5em 0;
   }
-  .reader-content ul, .reader-content ol {
+  .reader-content ul,
+  .reader-content ol {
     padding-left: 1.5em;
     margin: 0.5em 0;
   }
-  .reader-content li { margin: 0.2em 0; }
-  .reader-content pre, .reader-content code {
+  .reader-content li {
+    margin: 0.2em 0;
+  }
+  .reader-content pre,
+  .reader-content code {
     font-family: var(--font-mono);
     font-size: 0.9em;
     background: var(--bg-secondary);
     border-radius: 3px;
   }
-  .reader-content code { padding: 0.15em 0.3em; }
+  .reader-content code {
+    padding: 0.15em 0.3em;
+  }
   .reader-content pre {
     padding: 0.8em;
     overflow-x: auto;
     margin: 0.6em 0;
   }
-  .reader-content pre code { padding: 0; background: none; }
+  .reader-content pre code {
+    padding: 0;
+    background: none;
+  }
   .reader-content blockquote {
     border-left: 3px solid var(--border-default);
     padding-left: 1em;
@@ -514,24 +599,48 @@
     margin: 0.6em 0;
     font-size: 0.9em;
   }
-  .reader-content th, .reader-content td {
+  .reader-content th,
+  .reader-content td {
     border: 1px solid var(--border-default);
     padding: 0.4em 0.6em;
     text-align: left;
   }
-  .reader-content th { background: var(--bg-secondary); color: var(--text-primary); font-weight: 600; }
-  .reader-content hr { border: none; border-top: 1px solid var(--border-subtle); margin: 1em 0; }
-  .reader-content nav, .reader-content aside,
-  .reader-content img, .reader-content video, .reader-content audio,
-  .reader-content picture, .reader-content figure, .reader-content canvas,
-  .reader-content svg, .reader-content iframe, .reader-content object { display: none; }
+  .reader-content th {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+  .reader-content hr {
+    border: none;
+    border-top: 1px solid var(--border-subtle);
+    margin: 1em 0;
+  }
+  .reader-content nav,
+  .reader-content aside,
+  .reader-content img,
+  .reader-content video,
+  .reader-content audio,
+  .reader-content picture,
+  .reader-content figure,
+  .reader-content canvas,
+  .reader-content svg,
+  .reader-content iframe,
+  .reader-content object {
+    display: none;
+  }
 }
 
 /* Pill enter animation — used by the floating row above the chat composer
    (setup banner, scroll-to-bottom button). Slides up + fades in. */
 @keyframes atlas-pill-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .atlas-pill-in {
   animation: atlas-pill-in 200ms ease-out both;
@@ -553,18 +662,244 @@
    isolate its compositing layer and flatten the blur to plain transparency.
    See the note in app-layout.tsx. */
 @keyframes atlas-panel-in-br {
-  from { opacity: 0; transform: translate3d(6px, 10px, 0) scale(0.965); }
-  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translate3d(6px, 10px, 0) scale(0.965);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
 }
 .atlas-panel-in-br {
   transform-origin: 100% 100%;
   animation: atlas-panel-in-br 200ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+/* Same, mirrored: the capture popover grows out of the titlebar project pill
+   it hangs below. The no-fill-mode rule above applies here for the same
+   reason — this element carries `backdrop-filter`. */
+@keyframes atlas-panel-in-tl {
+  from {
+    opacity: 0;
+    transform: translate3d(-4px, -8px, 0) scale(0.965);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+.atlas-panel-in-tl {
+  transform-origin: 0 0;
+  animation: atlas-panel-in-tl 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Stats-rail collapse — the Timeline's summary opening and closing.
+
+   Two curves, on purpose. The wrapper's HEIGHT uses the house decelerating
+   curve, because a height that overshoots would open a gap under a fixed-height
+   panel and then close it. The CONTENT gets the overshoot instead: it settles
+   just past its resting place and eases back, which is what reads as spring
+   rather than as a drawer sliding. Separating them is the whole trick. */
+.atlas-rail {
+  transition: height 340ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* The Session detail's two-pane split (detail | grounded chat).
+ *
+ * Width rather than transform: the detail must actually give up the space, so
+ * its own layout reflows into what is left. Same easing as the stats rail, so
+ * the two panels in one tab open with one motion. */
+.atlas-split {
+  transition: width 340ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.atlas-rail-body {
+  transition:
+    transform 380ms cubic-bezier(0.22, 1.4, 0.36, 1),
+    opacity 200ms ease-out;
+}
+
+/* Breathing ring — the Timeline's live/attention markers and stat dots. A
+   box-shadow pulse rather than an opacity fade, so the dot itself stays at full
+   strength and only the halo moves. */
+@keyframes atlas-live-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--atlas-pulse-color, rgba(63, 185, 80, 0.5));
+  }
+  50% {
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+.atlas-live-pulse {
+  animation: atlas-live-pulse 2s ease-in-out infinite;
+}
+
+/* Marching-ants border — the capture-health banner when capture is stopped.
+
+   A CSS `border: dashed` cannot animate its dashes, so the four edges are drawn
+   as four background gradients and the whole set is scrolled. The four values in
+   the keyframe are one per edge, and their signs are what send each edge round
+   the box in the same direction rather than two of them running backwards.
+
+   `--atlas-ants-color` is set by the caller so the same rule serves any status
+   tone. */
+@keyframes atlas-ants {
+  to {
+    background-position:
+      8px 0,
+      -8px 100%,
+      0 -8px,
+      100% 8px;
+  }
+}
+.atlas-ants {
+  background-image:
+    repeating-linear-gradient(90deg, var(--atlas-ants-color) 0 4px, transparent 4px 8px),
+    repeating-linear-gradient(90deg, var(--atlas-ants-color) 0 4px, transparent 4px 8px),
+    repeating-linear-gradient(0deg, var(--atlas-ants-color) 0 4px, transparent 4px 8px),
+    repeating-linear-gradient(0deg, var(--atlas-ants-color) 0 4px, transparent 4px 8px);
+  background-size:
+    100% 1px,
+    100% 1px,
+    1px 100%,
+    1px 100%;
+  background-position:
+    0 0,
+    0 100%,
+    0 0,
+    100% 0;
+  background-repeat: no-repeat;
+  animation: atlas-ants 700ms linear infinite;
+}
+
+/* Capture popover — the Timeline teaser.
+
+   A pulse runs down the rail every few seconds so the mock reads as a live
+   recorder rather than a static illustration, and the rows arrive staggered
+   underneath it. Both are CSS rather than a motion library: this is the only
+   animated illustration in the app and it is not worth a dependency.
+   `--atlas-beam-travel` is set per-instance to the rail's height. */
+@keyframes atlas-timeline-beam {
+  0% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  12% {
+    opacity: 1;
+  }
+  82% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(var(--atlas-beam-travel, 48px));
+  }
+}
+.atlas-timeline-beam {
+  animation: atlas-timeline-beam 3.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Capture popover — the radar on a bound project.
+
+   The sweep *wobbles* between roughly -55° and -42° instead of rotating: a full
+   turn reads as a loading spinner, and this is a recorder that never finishes.
+   The ping restarts on every hop (React keys it on the blip index). */
+@keyframes atlas-radar-sweep {
+  0% {
+    transform: rotate(-55deg);
+    opacity: 0.75;
+  }
+  25% {
+    transform: rotate(-43deg);
+    opacity: 1;
+  }
+  50% {
+    transform: rotate(-50deg);
+    opacity: 0.85;
+  }
+  75% {
+    transform: rotate(-45deg);
+    opacity: 1;
+  }
+  100% {
+    transform: rotate(-55deg);
+    opacity: 0.75;
+  }
+}
+.atlas-radar-sweep {
+  animation: atlas-radar-sweep 16s ease-in-out infinite;
+}
+
+@keyframes atlas-radar-ping {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  70% {
+    opacity: 0.35;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+.atlas-radar-ping {
+  animation: atlas-radar-ping 1.4s ease-out 0.35s both;
+}
+
+@keyframes atlas-timeline-row {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+.atlas-timeline-row {
+  animation: atlas-timeline-row 320ms ease-out both;
+}
+
+/* One entry in a Session's timeline (the Artifacts detail).
+ *
+ * **`content-visibility: auto` was here and has been removed.** It was added on
+ * reasoning, not measurement, and measurement killed it: during a fast scroll it
+ * produced a *fully blank viewport*, because rows it had skipped could not be
+ * rendered fast enough to fill the screen at scroll speed. Skipping work for
+ * offscreen rows is worthless if the reader arrives before the work is done —
+ * a slow row beats an absent one.
+ *
+ * `contain-intrinsic-size: auto 96px` made it worse. Real rows run 150–600px,
+ * so every unrendered row under-reported its height by 2–6×; scrolling a given
+ * distance therefore crossed several times more rows than the engine had budget
+ * to render, and the scroll geometry moved under the reader as they corrected.
+ *
+ * What is left is the half that costs nothing and cannot blank: `layout` and
+ * `style` containment scope reflow and style recalc to the row. Deliberately
+ * NOT `paint` — the `Clamp` "Show more" pill is positioned to overhang the
+ * row's bottom edge by half its height, and paint containment would clip it.
+ *
+ * The real fix for offscreen cost is virtualization (Phase 4 of
+ * docs/timeline-scroll-perf-handoff.md), which unmounts those rows outright
+ * rather than asking the engine to render them at the last moment. */
+.atlas-entry {
+  contain: layout style;
+}
+
 /* Brief highlight when jumping to a message (Cmd+F / links panel). */
 @keyframes atlas-jump-flash-kf {
-  0%   { background-color: var(--accent-primary); opacity: 0.14; }
-  100% { background-color: transparent; opacity: 0; }
+  0% {
+    background-color: var(--accent-primary);
+    opacity: 0.14;
+  }
+  100% {
+    background-color: transparent;
+    opacity: 0;
+  }
 }
 .atlas-jump-flash {
   position: relative;
@@ -581,8 +916,14 @@
 /* Streaming caret — a thin blinking bar appended after the live
    assistant text so an in-progress turn reads like a terminal cursor. */
 @keyframes atlas-blink {
-  0%, 49%   { opacity: 1; }
-  50%, 100% { opacity: 0; }
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
 }
 .atlas-stream-caret {
   display: inline-block;
@@ -598,13 +939,48 @@
 /* Respect the OS "reduce motion" setting — hold the caret steady and
    neutralize our entrance/blink animations (keep their end state). */
 @media (prefers-reduced-motion: reduce) {
-  .atlas-stream-caret { animation: none; }
+  .atlas-stream-caret {
+    animation: none;
+  }
   .atlas-pill-in,
   .atlas-panel-in-br,
-  .atlas-fade-in { animation: none; }
+  .atlas-panel-in-tl,
+  .atlas-timeline-row,
+  .atlas-fade-in {
+    animation: none;
+  }
+  /* The two looping animations in the chrome: the capture dot's halo and the
+     Timeline teaser's rail pulse. Both are decorative. */
+  /* The dashes stay — only their travel stops. */
+  /* The rail snaps instead of springing. */
+  .atlas-rail,
+  .atlas-rail-body {
+    transition: none;
+  }
+  .atlas-live-pulse,
+  .atlas-ants,
+  .animate-ping,
+  .atlas-radar-sweep,
+  .atlas-radar-ping,
+  .atlas-timeline-beam {
+    animation: none;
+  }
+  .atlas-timeline-beam,
+  .atlas-radar-ping {
+    opacity: 0;
+  }
+  /* Hold the sweep at its resting angle rather than un-rotated. */
+  .atlas-radar-sweep {
+    transform: rotate(-50deg);
+  }
   .animate-scale-in,
   .animate-fade-in,
-  .animate-slide-in-right { animation: none !important; }
+  .animate-slide-in-right {
+    animation: none !important;
+  }
+  .atlas-split {
+    transition: none !important;
+  }
 }
 
 /* Active match in the terminal search (brighter than the other matches). */
@@ -658,7 +1034,9 @@
   outline: none !important;
   min-width: 200px !important;
   margin: 0 !important;
-  transition: border-color 120ms, background-color 120ms !important;
+  transition:
+    border-color 120ms,
+    background-color 120ms !important;
 }
 .cm-panel.cm-search input[type="text"]:hover {
   background-color: var(--bg-hover) !important;
@@ -688,7 +1066,9 @@
   font-family: inherit !important;
   font-weight: 500 !important;
   cursor: pointer !important;
-  transition: background-color 120ms, color 120ms !important;
+  transition:
+    background-color 120ms,
+    color 120ms !important;
   text-transform: none !important;
   margin: 0 !important;
   box-shadow: none !important;
@@ -751,7 +1131,9 @@
   position: relative !important;
   margin: 0 !important;
   padding: 0 !important;
-  transition: background-color 120ms, border-color 120ms !important;
+  transition:
+    background-color 120ms,
+    border-color 120ms !important;
   flex-shrink: 0 !important;
 }
 .cm-panel.cm-search label input[type="checkbox"]:checked {
@@ -806,13 +1188,37 @@
    utilities to each tag via react-markdown's `components` override; the
    cached pipeline emits bare HTML, so the same rules live as plain CSS
    here. Tokens match the values that were inline. */
-.prose-chat h1 { font-size: 1rem; font-weight: 600; margin: 0.75rem 0 0.25rem; }
-.prose-chat h2 { font-size: 0.875rem; font-weight: 600; margin: 0.75rem 0 0.25rem; }
-.prose-chat h3 { font-size: 0.875rem; font-weight: 600; margin: 0.5rem 0 0.25rem; }
-.prose-chat p { margin: 0.375rem 0; }
-.prose-chat ul { list-style-type: disc; padding-left: 1.25rem; margin: 0.5rem 0; }
-.prose-chat ol { list-style-type: decimal; padding-left: 1.25rem; margin: 0.5rem 0; }
-.prose-chat li + li { margin-top: 0.125rem; }
+.prose-chat h1 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.75rem 0 0.25rem;
+}
+.prose-chat h2 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0.75rem 0 0.25rem;
+}
+.prose-chat h3 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0.5rem 0 0.25rem;
+}
+.prose-chat p {
+  margin: 0.375rem 0;
+}
+.prose-chat ul {
+  list-style-type: disc;
+  padding-left: 1.25rem;
+  margin: 0.5rem 0;
+}
+.prose-chat ol {
+  list-style-type: decimal;
+  padding-left: 1.25rem;
+  margin: 0.5rem 0;
+}
+.prose-chat li + li {
+  margin-top: 0.125rem;
+}
 .prose-chat blockquote {
   border-left: 2px solid var(--border-default);
   padding-left: 0.75rem;
@@ -845,7 +1251,9 @@
   opacity: 0;
   transition: opacity 120ms ease-out;
 }
-.prose-chat pre:hover .atlas-code-bar { opacity: 1; }
+.prose-chat pre:hover .atlas-code-bar {
+  opacity: 1;
+}
 .atlas-code-lang {
   font-size: 9px;
   text-transform: uppercase;
@@ -862,9 +1270,14 @@
   background: var(--bg-elevated);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: color 120ms ease-out, background 120ms ease-out;
+  transition:
+    color 120ms ease-out,
+    background 120ms ease-out;
 }
-.atlas-code-copy:hover { color: var(--text-primary); background: var(--bg-hover); }
+.atlas-code-copy:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
 .prose-chat code {
   padding: 0.125rem 0.25rem;
   border-radius: 0.25rem;
@@ -884,9 +1297,15 @@
   color: var(--accent-primary);
   text-decoration: underline;
 }
-.prose-chat a:hover { opacity: 0.8; }
-.prose-chat strong { font-weight: 600; }
-.prose-chat em { font-style: italic; }
+.prose-chat a:hover {
+  opacity: 0.8;
+}
+.prose-chat strong {
+  font-weight: 600;
+}
+.prose-chat em {
+  font-style: italic;
+}
 .prose-chat hr {
   border: none;
   border-top: 1px solid var(--border-default);
@@ -901,7 +1320,9 @@
   border-radius: 0.375rem;
   overflow: hidden;
 }
-.prose-chat thead { background: var(--bg-elevated); }
+.prose-chat thead {
+  background: var(--bg-elevated);
+}
 .prose-chat th {
   padding: 0.5rem 0.75rem;
   text-align: left;
@@ -911,9 +1332,15 @@
   border-bottom: 1px solid var(--border-default);
   border-right: 1px solid var(--border-default);
 }
-.prose-chat th:last-child { border-right: none; }
-.prose-chat tr { border-bottom: 1px solid var(--border-subtle); }
-.prose-chat tbody tr:last-child { border-bottom: none; }
+.prose-chat th:last-child {
+  border-right: none;
+}
+.prose-chat tr {
+  border-bottom: 1px solid var(--border-subtle);
+}
+.prose-chat tbody tr:last-child {
+  border-bottom: none;
+}
 .prose-chat td {
   padding: 0.5rem 0.75rem;
   vertical-align: top;
@@ -922,7 +1349,9 @@
   border-right: 1px solid var(--border-subtle);
   word-break: break-word;
 }
-.prose-chat td:last-child { border-right: none; }
+.prose-chat td:last-child {
+  border-right: none;
+}
 /* Task list items (remark-gfm output) — drop the disc bullet so the
    checkbox stands alone. */
 .prose-chat li.task-list-item,
@@ -947,17 +1376,319 @@
   animation: atlas-l23 1s infinite;
 }
 @keyframes atlas-l23 {
-  0%, 10% {
-    background-position: 50% calc(0*100%/3), 50% calc(1*100%/3), 50% calc(2*100%/3), 50% calc(3*100%/3);
+  0%,
+  10% {
+    background-position:
+      50% calc(0*100%/3),
+      50% calc(1*100%/3),
+      50% calc(2*100%/3),
+      50% calc(3*100%/3);
   }
   33% {
-    background-position: 100% calc(0*100%/3), calc(100% - var(--g)) calc(1*100%/3), var(--g) calc(2*100%/3), 0 calc(3*100%/3);
+    background-position:
+      100% calc(0*100%/3),
+      calc(100% - var(--g)) calc(1*100%/3),
+      var(--g) calc(2*100%/3),
+      0 calc(3*100%/3);
   }
   66% {
-    background-position: 0 calc(0*100%/3), var(--g) calc(1*100%/3), calc(100% - var(--g)) calc(2*100%/3), 100% calc(3*100%/3);
+    background-position:
+      0 calc(0*100%/3),
+      var(--g) calc(1*100%/3),
+      calc(100% - var(--g)) calc(2*100%/3),
+      100% calc(3*100%/3);
   }
-  90%, 100% {
-    background-position: 50% calc(0*100%/3), 50% calc(1*100%/3), 50% calc(2*100%/3), 50% calc(3*100%/3);
+  90%,
+  100% {
+    background-position:
+      50% calc(0*100%/3),
+      50% calc(1*100%/3),
+      50% calc(2*100%/3),
+      50% calc(3*100%/3);
   }
 }
 
+/* ── New transcript (agent chat rework) ─────────────────────────────────────
+   EVERY value in this block is mirrored by a constant in
+   `src/features/chat/lib/row-height.ts`. They are a contract: row heights are
+   predicted from these numbers before layout, so the virtualizer never measures
+   and never corrects. Change one, change the other — in the same commit.
+   `assert-height.ts` warns in dev when they drift.
+
+   Two rules do the heavy lifting:
+     - every block element has an explicit `line-height` in px (never a unitless
+       `leading-*`, which resolves against font-size and rounds unpredictably);
+     - code blocks DO NOT WRAP. `white-space: pre` + horizontal scroll makes a
+       fenced block's height a function of its line count alone, independent of
+       the container width. Wrapping code is what made prose height
+       width-dependent and unpredictable.                                     */
+
+.atlas-prose {
+  /* 13px/21px, down from 14px/22px: at the reading measure this is the size the
+     eye settles at, and the extra leading buys back the density the smaller
+     glyphs would otherwise cost. */
+  font-size: 13px;
+  line-height: 21px;
+  color: var(--text-primary);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+/* Uniform inter-block gap via margin-top only — no bottom margins, so there is
+   no margin collapsing to reason about. 12px rather than 8px: paragraphs that
+   nearly touch read as one wall of text, and the whole point of the measure is
+   that it can be skimmed. */
+.atlas-prose > * {
+  margin: 12px 0 0;
+}
+.atlas-prose > :first-child {
+  margin-top: 0;
+}
+
+.atlas-prose p {
+  line-height: 21px;
+}
+.atlas-prose h1 {
+  font-size: 15px;
+  line-height: 23px;
+  font-weight: 600;
+  margin-top: 18px;
+}
+.atlas-prose h2,
+.atlas-prose h3,
+.atlas-prose h4,
+.atlas-prose h5,
+.atlas-prose h6 {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  margin-top: 18px;
+}
+
+.atlas-prose ul {
+  list-style-type: disc;
+  padding-left: 20px;
+}
+.atlas-prose ol {
+  list-style-type: decimal;
+  padding-left: 20px;
+}
+.atlas-prose li {
+  line-height: 21px;
+}
+.atlas-prose li + li {
+  margin-top: 4px;
+}
+
+.atlas-prose blockquote {
+  border-left: 2px solid var(--border-default);
+  padding: 4px 0 4px 12px;
+  color: var(--text-secondary);
+}
+
+.atlas-prose pre {
+  position: relative;
+  border: 1px solid var(--border-default);
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 18px;
+  /* Width-independent height — the whole point. */
+  white-space: pre;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.atlas-prose pre code {
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: inherit;
+}
+.atlas-prose code {
+  padding: 0.125rem 0.25rem;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.atlas-prose hr {
+  border: none;
+  border-top: 1px solid var(--border-default);
+  margin: 6px 0;
+}
+
+.atlas-prose a {
+  color: var(--accent-primary);
+  text-decoration: underline;
+}
+.atlas-prose a:hover {
+  opacity: 0.8;
+}
+.atlas-prose strong {
+  font-weight: 600;
+}
+.atlas-prose em {
+  font-style: italic;
+}
+
+/* `display: block` was here (to make the table scroll internally, back when row
+   heights had to be predicted). It also stops the element being a TABLE: block
+   boxes don't do table layout, so `width: 100%` no longer distributes across
+   columns, cells collapse to their content and the whole thing renders ragged
+   and clipped. Heights are measured now, not predicted, so the cap and the
+   scroller are both unnecessary — this is a plain table again.
+   Wide tables wrap inside cells (see `overflow-wrap` below) rather than
+   scrolling, which is the right trade in a 760px reading measure. */
+.atlas-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  font-size: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.atlas-prose th,
+.atlas-prose td {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+.atlas-prose thead {
+  background: var(--bg-elevated);
+}
+.atlas-prose th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-default);
+}
+.atlas-prose td {
+  padding: 7px 12px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border-subtle);
+}
+/* Markdown has no headerless table: `| | |` over a delimiter row is the only
+   way to write one, and it renders as a blank band above the first real row.
+   Collapse it when every cell is empty, so a two-column key/value table reads
+   as the list it is. */
+.atlas-prose thead:not(:has(th:not(:empty))) {
+  display: none;
+}
+
+/* User prompt bubbles run through the same prose renderer as the agent's
+   replies, one step up the type scale (they sit in a tinted bubble at a
+   narrower measure, where 13px reads small). The bubble owns the padding, so
+   the first and last blocks must not add their own. */
+.atlas-prose--user {
+  font-size: 14px;
+  line-height: 22px;
+}
+.atlas-prose--user > * {
+  margin-top: 10px;
+}
+.atlas-prose--user > :first-child {
+  margin-top: 0;
+}
+.atlas-prose--user p,
+.atlas-prose--user li {
+  line-height: 22px;
+}
+/* Fences inside a bubble sit on the bubble's own tint, not the thread's
+   surface, or they read as a hole punched through it. */
+.atlas-prose--user pre {
+  background: color-mix(in srgb, var(--bg-base) 55%, transparent);
+  border-color: color-mix(in srgb, var(--border-default) 60%, transparent);
+}
+
+/* Row containment scopes reflow + style recalc to the row.
+   `layout style` only — deliberately NOT `paint` (it would clip the hover
+   action bar that sits at a row's top edge), and deliberately NOT
+   `content-visibility: auto`: that blanks the viewport on fast scrolls, which
+   the timeline already learned the hard way (see the `.atlas-entry` note).
+   Also no `will-change`/`translateZ` — promoting hundreds of virtualized rows
+   to layers makes WKWebView worse, not better. */
+.atlas-row {
+  contain: layout style;
+}
+
+/* Marker rows: one line, muted, never wraps. */
+.atlas-marker {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* Running-state shimmer for in-flight markers. Opacity only — no transform, no
+   layout, so it cannot affect a predicted height. */
+@keyframes atlas-marker-shimmer {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.atlas-marker-running {
+  animation: atlas-marker-shimmer 1.4s ease-in-out infinite;
+}
+
+/* Live status label ("Thinking…"): a highlight that travels across the glyphs.
+   Clipped to the text, so it animates paint only — no transform, no layout, and
+   nothing for the transcript's scroll loop to re-measure. Deliberately not a
+   spinner: the marker rows below it already carry per-tool running glyphs, and a
+   second spinning thing next to them reads as two separate jobs. */
+@keyframes atlas-thinking-sweep {
+  0% {
+    background-position: 140% 0;
+  }
+  100% {
+    background-position: -40% 0;
+  }
+}
+.atlas-thinking-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0%,
+    var(--text-tertiary) 30%,
+    var(--text-primary) 50%,
+    var(--text-tertiary) 70%,
+    var(--text-tertiary) 100%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: atlas-thinking-sweep 2.2s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .atlas-thinking-shimmer {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: var(--text-secondary);
+  }
+}
+
+/* Markdown that has not finished parsing yet — see `CachedMarkdown`.
+   Rendered as the raw source at the same size as the formatted result, so an
+   unparsed block occupies roughly its final height instead of collapsing to
+   zero. A screen of zero-height blocks is what made the transcript flash blank
+   at the moment its window grew. */
+.atlas-md-pending {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  color: inherit;
+}

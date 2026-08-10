@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 use crate::error::{AcpError, Result};
 use crate::events::{AcpEvent, EventSink};
+use crate::model_sniff::ModelSniffer;
 use crate::registry::AgentId;
 
 /// Per-(agent, session) lifecycle guard the driver consults before
@@ -136,6 +137,9 @@ pub struct AgentRuntime {
     pub prompt_image_supported: bool,
     /// Images staged for each session's next prompt. See [`PendingAttachments`].
     pub pending_attachments: Arc<PendingAttachments>,
+    /// Legacy `models` blobs recovered off the raw wire for agents still on the
+    /// pre-config-options dialect (OpenCode, Cursor). See [`ModelSniffer`].
+    pub model_sniffer: Arc<ModelSniffer>,
 }
 
 /// JSON-friendly projection of `AuthMethod` for the wire. The ACP Rust
@@ -235,6 +239,8 @@ pub async fn spawn_agent(
     let guards_for_task = guards.clone();
     let sink_for_task = sink.clone();
     let command_for_task = command.clone();
+    let model_sniffer: Arc<ModelSniffer> = Arc::new(ModelSniffer::new());
+    let sniffer_for_task = model_sniffer.clone();
 
     // Trailing stderr from the agent process (ring buffer, newest last). When
     // the driver dies, the tail rides on the AgentDisconnected reason so the
@@ -252,6 +258,7 @@ pub async fn spawn_agent(
             pending_for_task,
             guards_for_task,
             stderr_for_task.clone(),
+            sniffer_for_task,
             ready_tx,
             shutdown_rx,
         )
@@ -306,6 +313,7 @@ pub async fn spawn_agent(
         auth_methods: initialized.auth_methods,
         prompt_image_supported: initialized.prompt_image_supported,
         pending_attachments: Arc::new(DashMap::new()),
+        model_sniffer,
     })
 }
 
@@ -316,6 +324,7 @@ async fn run_driver(
     pending: Arc<PendingPermissions>,
     guards: Arc<SessionGuards>,
     stderr_tail: Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
+    model_sniffer: Arc<ModelSniffer>,
     ready_tx: oneshot::Sender<Result<InitializedAgent>>,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<()> {
@@ -339,9 +348,11 @@ async fn run_driver(
             }
             LineDirection::Stdin => {
                 tracing::trace!(target: "atlas_acp::stdin", agent = ?agent_id, "{line}");
+                model_sniffer.observe_outgoing(&line);
             }
             LineDirection::Stdout => {
                 tracing::trace!(target: "atlas_acp::stdout", agent = ?agent_id, "{line}");
+                model_sniffer.observe_incoming(&line);
             }
         }
         let _ = &sink_dbg; // keep sink alive in this scope; reserved for future ring-buffer
@@ -396,7 +407,7 @@ async fn run_driver(
             agent_client_protocol::on_receive_notification!(),
         )
         .on_receive_request(
-            async move |request: RequestPermissionRequest, responder, _connection| {
+            async move |request: RequestPermissionRequest, responder, connection| {
                 // Auto-reject permission requests for cancelled
                 // sessions. The agent gets a clean `Cancelled`
                 // outcome (so its turn can wind down per ACP spec)
@@ -445,14 +456,24 @@ async fn run_driver(
                     turn,
                 );
 
-                let outcome = rx.await.unwrap_or_else(|_| {
-                    // Sender dropped (registry kill, app shutdown, cancel_turn) —
-                    // ACP spec: treat as Cancelled.
-                    RequestPermissionOutcome::Cancelled
-                });
-                pending_for_handler.remove(&request_id);
-
-                responder.respond(RequestPermissionResponse::new(outcome))
+                // Await the user's decision OUTSIDE the dispatch loop. `on_*`
+                // handlers block the loop until they return (see the crate's
+                // ordering docs) — awaiting a human here froze every OTHER
+                // session multiplexed on this driver (all projects using this
+                // plugin): their deltas, prompt results, and permission
+                // requests all sat unread until this modal was answered.
+                // Spawning frees the loop immediately; the responder is moved
+                // into the task and answers whenever the user clicks.
+                let pending = pending_for_handler.clone();
+                connection.spawn(async move {
+                    let outcome = rx.await.unwrap_or_else(|_| {
+                        // Sender dropped (registry kill, app shutdown,
+                        // cancel_turn) — ACP spec: treat as Cancelled.
+                        RequestPermissionOutcome::Cancelled
+                    });
+                    pending.remove(&request_id);
+                    responder.respond(RequestPermissionResponse::new(outcome))
+                })
             },
             agent_client_protocol::on_receive_request!(),
         )
@@ -462,9 +483,24 @@ async fn run_driver(
             // with structured subprocess specs we can actually run.
             // Without this flag the adapter returns an empty auth-methods
             // list and `/login` has no way to launch the OAuth flow.
+            //
+            // `_meta.terminal_output: true` opts into LIVE command output:
+            // claude-agent-acp and codex-acp share this meta contract — a
+            // Bash-shaped tool_call carries `terminal_info` and its updates
+            // stream `terminal_output` / `terminal_exit` in `_meta`, which
+            // the apply layer folds into the tool call's visible result as
+            // it runs. Without the flag both adapters only deliver output
+            // once the command has finished. (Underscore vs. dash matches
+            // each adapter's key exactly — Zed advertises both spellings.)
             let mut caps = ClientCapabilities::default();
             let mut meta = Map::new();
             meta.insert("terminal-auth".into(), Value::Bool(true));
+            meta.insert("terminal_output".into(), Value::Bool(true));
+            // Cursor-only capability (Zed sends it too): opts into
+            // parameterized model ids like `gpt-5.4[reasoning=medium]`.
+            // Unknown meta keys are ignored per the ACP spec, so sending it
+            // unconditionally beats plumbing a per-spec meta field.
+            meta.insert("parameterizedModelPicker".into(), Value::Bool(true));
             caps.meta = Some(meta);
 
             let init_result = connection

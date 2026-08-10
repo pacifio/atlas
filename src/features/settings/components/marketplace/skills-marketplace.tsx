@@ -9,14 +9,7 @@
 // default view is a cached "Popular" merge of a few seed queries, and detail is
 // fetched lazily on open.
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Boxes, Check, Copy, Download, Github, Loader2, Search, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
@@ -25,17 +18,8 @@ import { cn } from "@/lib/utils";
 import { packs as packsApi } from "@/features/packs/lib/packs-api";
 import { skills as skillsApi } from "@/features/skills/lib/skills-api";
 import { SKILLS_CHANGED_EVENT } from "@/features/skills/lib/skills-events";
-import {
-  SkillModalShell,
-  SkillDescriptions,
-  ModalAction,
-} from "./skill-modal";
-import type {
-  ComponentKind,
-  Pack,
-  PackSearchHit,
-  Scope,
-} from "@/features/packs/lib/types";
+import { SkillModalShell, SkillDescriptions, ModalAction } from "./skill-modal";
+import type { ComponentKind, Pack, PackSearchHit, Scope } from "@/features/packs/lib/types";
 
 const POPULAR_SEEDS = ["agent", "react", "design", "review", "database", "python"];
 const POPULAR_LS_KEY = "atlas:skills:popular:v1";
@@ -59,11 +43,7 @@ function notifyInstalling() {
   installVersion++;
   installSubs.forEach((f) => f());
 }
-async function runInstall(
-  hit: PackSearchHit,
-  scope: Scope,
-  projectPath: string | null,
-) {
+async function runInstall(hit: PackSearchHit, scope: Scope, projectPath: string | null) {
   if (installingIds.has(hit.id)) return;
   installingIds.add(hit.id);
   notifyInstalling();
@@ -181,9 +161,7 @@ export function SkillsMarketplace({
     if (loadPopularCache()) return; // already have it
     let cancelled = false;
     void (async () => {
-      const batches = await Promise.allSettled(
-        POPULAR_SEEDS.map((q) => packsApi.search(q)),
-      );
+      const batches = await Promise.allSettled(POPULAR_SEEDS.map((q) => packsApi.search(q)));
       if (cancelled) return;
       const byId = new Map<string, PackSearchHit>();
       for (const b of batches) {
@@ -310,10 +288,7 @@ export function SkillsMarketplace({
                     {hit.name}
                   </span>
                   <span
-                    className={cn(
-                      COL.source,
-                      "truncate font-mono text-[10px] text-text-tertiary",
-                    )}
+                    className={cn(COL.source, "truncate font-mono text-[10px] text-text-tertiary")}
                   >
                     {hit.source}
                   </span>
@@ -400,7 +375,7 @@ function SkillDetailModal({
 }) {
   // Seed synchronously from cache so a re-opened modal paints instantly.
   const [preview, setPreview] = useState<Pack | null>(
-    hit ? previewCache.get(hit.source) ?? null : null,
+    hit ? (previewCache.get(hit.source) ?? null) : null,
   );
   const [loading, setLoading] = useState(false);
 
@@ -520,9 +495,7 @@ function SkillDetailModal({
           {!preview.manifest?.description &&
             modalSkills.length === 0 &&
             otherCounts.length === 0 && (
-              <div className="text-[12px] text-text-tertiary">
-                No additional details published.
-              </div>
+              <div className="text-[12px] text-text-tertiary">No additional details published.</div>
             )}
         </>
       ) : (

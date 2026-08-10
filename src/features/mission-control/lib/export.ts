@@ -24,7 +24,7 @@ async function capture(node: HTMLElement, kind: "png" | "jpeg"): Promise<string>
 function dataUrlToBytes(dataUrl: string): number[] {
   const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
   const bin = atob(base64);
-  const out = new Array<number>(bin.length);
+  const out = Array.from<number>({ length: bin.length });
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
@@ -45,7 +45,10 @@ export async function exportJpeg(node: HTMLElement): Promise<void> {
   const dataUrl = await capture(node, "jpeg");
   const target = await pickSave(`atlas-console-${stamp()}.jpg`, "jpg");
   if (!target) return;
-  await invoke("mission_control_write_file", { targetPath: target, bytes: dataUrlToBytes(dataUrl) });
+  await invoke("mission_control_write_file", {
+    targetPath: target,
+    bytes: dataUrlToBytes(dataUrl),
+  });
 }
 
 /** Export the dashboard node as a multi-page PDF (image-per-page slices). */
@@ -100,19 +103,27 @@ function buildMarkdown(data: MissionControlUsage): string {
   const lines: string[] = [];
   lines.push(`# Atlas — Console Report`);
   lines.push("");
-  lines.push(`_Generated ${new Date(data.generatedAt).toLocaleString()} · ${data.projects.length} projects_`);
+  lines.push(
+    `_Generated ${new Date(data.generatedAt).toLocaleString()} · ${data.projects.length} projects_`,
+  );
   lines.push("");
   lines.push(`## Totals`);
   lines.push("");
   lines.push(`| Metric | Value |`);
   lines.push(`| --- | --- |`);
   lines.push(`| Total tokens | ${fmtTokens(t.totalTokens)} |`);
-  lines.push(`| Claude input / output | ${fmtTokens(t.claudeInput)} / ${fmtTokens(t.claudeOutput)} |`);
+  lines.push(
+    `| Claude input / output | ${fmtTokens(t.claudeInput)} / ${fmtTokens(t.claudeOutput)} |`,
+  );
   lines.push(`| Claude cache | ${fmtTokens(t.claudeCache)} |`);
   lines.push(`| Requests / sessions | ${fmtTokens(t.claudeRequests)} / ${t.claudeSessions} |`);
   lines.push(`| Codex tokens | ${fmtTokens(t.codexTokens)} (${t.codexSessions} threads) |`);
-  lines.push(`| Review tokens / runs | ${fmtTokens(t.reviewInput + t.reviewOutput)} / ${t.reviewRuns} |`);
-  lines.push(`| BYOK tokens / calls | ${fmtTokens(t.byokInput + t.byokOutput)} / ${t.byokRequests} |`);
+  lines.push(
+    `| Review tokens / runs | ${fmtTokens(t.reviewInput + t.reviewOutput)} / ${t.reviewRuns} |`,
+  );
+  lines.push(
+    `| BYOK tokens / calls | ${fmtTokens(t.byokInput + t.byokOutput)} / ${t.byokRequests} |`,
+  );
   lines.push(`| Total cost | ${fmtCost(t.totalCostUsd)} |`);
   lines.push("");
   lines.push(`## Per project`);

@@ -33,6 +33,10 @@ export interface TerminalBlock {
   /** This block emitted a high volume of output, so live rendering is throttled
    *  (the "large output" badge). */
   firehose?: boolean;
+  /** Bumped on every mutation of this block. Block objects are mutated in
+   *  place while running, so React memoization keys on `(block, rev)` — a
+   *  finished block's rev never changes and its card never re-renders. */
+  rev: number;
 }
 
 const ESC = 0x1b;
@@ -41,26 +45,38 @@ const ESC = 0x1b;
 // lines) can't grow the string to hundreds of MB — that alone froze the app
 // (O(n) string append per 16ms batch → O(n²), plus re-segmenting the whole
 // thing every frame). We keep the most recent `OUTPUT_STORE_CAP` bytes.
-const OUTPUT_STORE_CAP = 512 * 1024;
+// 2 MB (up from 512 KB — "long content gets cut off"): Copy and the render
+// tail both reach further back, and the trim is now amortized (see SLACK).
+const OUTPUT_STORE_CAP = 2 * 1024 * 1024;
+// Only trim once the string is this far past the cap. Trimming exactly at the
+// cap meant a full `slice` copy of the whole capped string on nearly every
+// 16 ms batch once a block crossed it — O(n²) over a long stream. With slack,
+// each trim pays one copy per SLACK bytes appended.
+const OUTPUT_TRIM_SLACK = 256 * 1024;
 // Once a block has emitted this much, treat it as a "firehose": stop rendering
 // every batch (throttle to FIREHOSE_FLUSH_MS) so the UI thread stays free.
 const FIREHOSE_BYTES = 256 * 1024;
 const FIREHOSE_FLUSH_MS = 1500;
 const NORMAL_FLUSH_MS = 16;
+// Keep at most this many blocks mounted. Every block stays in the DOM (the
+// list isn't virtualized), so an unbounded history grows node count — and
+// per-flush reconciliation work — forever in a long-lived session.
+const MAX_BLOCKS = 200;
 
 // Matches the tail of common password / passphrase prompts:
 //   "[sudo] password for user:"  "Password:"  "user@host's password:"
 //   "Enter passphrase for key …:"
-const PW_PROMPT_RE =
-  /(?:password(?: for [^:\n]*)?|passphrase[^:\n]*|'s password)\s*:[ \t]*$/i;
+const PW_PROMPT_RE = /(?:password(?: for [^:\n]*)?|passphrase[^:\n]*|'s password)\s*:[ \t]*$/i;
 
 /** Whether the output's last line looks like a password prompt. Strips OSC/CSI
  *  so a colour-styled prompt still matches. */
 function looksLikePasswordPrompt(output: string): boolean {
   const plain = output
     // OSC … BEL/ST
+    // oxlint-disable-next-line no-control-regex -- intentionally matching ANSI control bytes
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
     // CSI …
+    // oxlint-disable-next-line no-control-regex -- intentionally matching ANSI control bytes
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
   const trimmed = plain.replace(/[ \t\r]+$/, "");
   const lastLine = trimmed.slice(trimmed.lastIndexOf("\n") + 1);
@@ -131,7 +147,10 @@ export class BlockStreamParser {
     this.onChange();
   }
 
-  constructor(initialCwd: string, private onChange: () => void) {
+  constructor(
+    initialCwd: string,
+    private onChange: () => void,
+  ) {
     this.cwd = initialCwd;
     // Preamble block: the shell banner / output before the first prompt marker.
     // If shell integration ISN'T active (no OSC 133 ever), EVERYTHING stays
@@ -145,6 +164,7 @@ export class BlockStreamParser {
       running: true,
       startedAt: Date.now(),
       endedAt: null,
+      rev: 0,
     };
     this.blocks = [this.current];
     this.preambleId = this.current.id;
@@ -162,10 +182,11 @@ export class BlockStreamParser {
     const appendOut = (chunk: string) => {
       if (this.mode === "output" && this.current) {
         this.current.output += chunk;
+        this.current.rev++;
         this.bytesInBlock += chunk.length;
         // Bound stored output so a giant dump can't grow the string unbounded
         // (and re-segment quadratically). Trim from the front past the cap.
-        if (this.current.output.length > OUTPUT_STORE_CAP) {
+        if (this.current.output.length > OUTPUT_STORE_CAP + OUTPUT_TRIM_SLACK) {
           this.current.output = this.current.output.slice(-OUTPUT_STORE_CAP);
           this.current.truncated = true;
         }
@@ -198,8 +219,16 @@ export class BlockStreamParser {
         let term = -1;
         let termLen = 0;
         while (j < n) {
-          if (s.charCodeAt(j) === 0x07) { term = j; termLen = 1; break; }
-          if (s.charCodeAt(j) === ESC && s[j + 1] === "\\") { term = j; termLen = 2; break; }
+          if (s.charCodeAt(j) === 0x07) {
+            term = j;
+            termLen = 1;
+            break;
+          }
+          if (s.charCodeAt(j) === ESC && s[j + 1] === "\\") {
+            term = j;
+            termLen = 2;
+            break;
+          }
           j++;
         }
         if (term === -1) break; // incomplete OSC; wait
@@ -216,9 +245,13 @@ export class BlockStreamParser {
         if (j >= n) break; // incomplete CSI; wait
         const seq = s.slice(i, j + 1);
         const body = s.slice(i + 2, j);
-        if (body === "?1049" && s[j] === "h") { this.altScreen = true; changed = true; }
-        else if (body === "?1049" && s[j] === "l") { this.altScreen = false; changed = true; }
-        else appendOut(seq); // keep SGR / other CSI in the block output
+        if (body === "?1049" && s[j] === "h") {
+          this.altScreen = true;
+          changed = true;
+        } else if (body === "?1049" && s[j] === "l") {
+          this.altScreen = false;
+          changed = true;
+        } else appendOut(seq); // keep SGR / other CSI in the block output
         i = j + 1;
         continue;
       }
@@ -244,6 +277,7 @@ export class BlockStreamParser {
       const next = looksLikePasswordPrompt(tail);
       if (next !== !!this.current.awaitingPassword) {
         this.current.awaitingPassword = next;
+        this.current.rev++;
         changed = true;
       }
     }
@@ -255,6 +289,7 @@ export class BlockStreamParser {
   private handleOsc(body: string): boolean {
     // OSC 7 — working directory: "7;file://host/abs/path"
     if (body.startsWith("7;")) {
+      // oxlint-disable-next-line no-control-regex -- intentionally matching the OSC 7 terminator byte
       const m = body.match(/file:\/\/[^/]*(\/[^\x07]*)/);
       if (m) {
         const next = decodeURIComponent(m[1]);
@@ -297,11 +332,15 @@ export class BlockStreamParser {
           exitCode: null,
           running: true,
           startedAt: Date.now(),
-      endedAt: null,
+          endedAt: null,
+          rev: 0,
         };
         this.pendingCommand = "";
         this.bytesInBlock = 0;
         this.blocks = [...this.blocks, this.current];
+        if (this.blocks.length > MAX_BLOCKS) {
+          this.blocks = this.blocks.slice(-MAX_BLOCKS);
+        }
         this.mode = "output";
         return true;
       } else if (kind === "D") {
@@ -310,15 +349,15 @@ export class BlockStreamParser {
           this.current.running = false;
           this.current.awaitingPassword = false;
           this.current.endedAt = Date.now();
+          this.current.rev++;
           // Trim trailing blank lines for a compact block (the `%` partial-line
           // mark itself is suppressed at the source via `unsetopt PROMPT_SP`).
           this.current.output = this.current.output.replace(/[\r\n]+$/, "");
           // The preamble block (no command) carries no meaningful exit code.
-          this.current.exitCode =
-            this.current.command === "" || Number.isNaN(code) ? null : code;
+          this.current.exitCode = this.current.command === "" || Number.isNaN(code) ? null : code;
           // Replace with a new object so React sees the change.
           this.blocks = this.blocks.map((b) =>
-            b.id === this.current!.id ? { ...this.current! } : b
+            b.id === this.current!.id ? { ...this.current! } : b,
           );
         }
         this.current = null;

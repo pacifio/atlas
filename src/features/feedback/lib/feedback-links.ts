@@ -13,22 +13,38 @@ const PREFIX: Record<FeedbackCategory, string> = {
   other: "[Feedback]",
 };
 
+/** Which issue form each category opens. Both forms use a `description` field id. */
+const TEMPLATE: Record<FeedbackCategory, string> = {
+  issue: "bug_report.yml",
+  feature_request: "feedback.yml",
+  improvement: "feedback.yml",
+  other: "feedback.yml",
+};
+
 /** GitHub rejects very long URLs (~8k). Stay well inside it. */
 const MAX_BODY = 4000;
 
-/** A prefilled "new issue" URL carrying whatever the user has typed so far. */
-export function issueUrl(
-  category: FeedbackCategory,
-  message: string,
-): string {
+/**
+ * A prefilled "new issue" URL carrying whatever the user has typed so far.
+ *
+ * Issue forms don't have a single body box, so `body=` is ignored once a
+ * template is specified — text has to target a field by its `id` instead
+ * (here, `description`, which both bug_report.yml and feedback.yml declare).
+ */
+export function issueUrl(category: FeedbackCategory, message: string): string {
   const text = message.trim();
   const first = text.split("\n")[0]?.slice(0, 90) || "Feedback";
   const title = `${PREFIX[category]} ${first}`;
-  const body =
+  const description =
     `${text.slice(0, MAX_BODY)}\n\n---\n` +
     `_Filed from Atlas → Send feedback._\n` +
     `_Attached a screenshot? Drag it in here — a link can't carry it._`;
-  return `${ISSUE_BASE}?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+  const params = new URLSearchParams({
+    template: TEMPLATE[category],
+    title,
+    description,
+  });
+  return `${ISSUE_BASE}?${params.toString()}`;
 }
 
 /** Open in the system browser, with the repo's usual `window.open` fallback. */

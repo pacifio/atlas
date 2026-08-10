@@ -1,15 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import {
-  Search,
-  Download,
-  Check,
-  Trash2,
-  Loader2,
-  Cpu,
-  Boxes,
-  AlertTriangle,
-} from "lucide-react";
+import { Search, Download, Check, Trash2, Loader2, Cpu, Boxes, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useModelsStore } from "../stores/models-store";
@@ -106,12 +97,25 @@ export function ModelsManager() {
       {/* Toolbar */}
       <div className="shrink-0 border-b border-border-default px-4 py-2.5 flex items-center gap-2">
         <div className="flex items-center rounded-md border border-border-default overflow-hidden">
-          <KindTab active={kind === "embedding"} onClick={() => setKind("embedding")} icon={Boxes} label="Embedding" />
-          <KindTab active={kind === "llm"} onClick={() => setKind("llm")} icon={Cpu} label="Language" />
+          <KindTab
+            active={kind === "embedding"}
+            onClick={() => setKind("embedding")}
+            icon={Boxes}
+            label="Embedding"
+          />
+          <KindTab
+            active={kind === "llm"}
+            onClick={() => setKind("llm")}
+            icon={Cpu}
+            label="Language"
+          />
         </div>
 
         <div className="relative ml-auto w-[240px]">
-          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary" />
+          <Search
+            size={13}
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary"
+          />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -156,9 +160,13 @@ export function ModelsManager() {
                         </span>
                       )}
                     </div>
-                    <div className="text-[10px] text-text-tertiary mt-0.5 truncate">{m.description}</div>
+                    <div className="text-[10px] text-text-tertiary mt-0.5 truncate">
+                      {m.description}
+                    </div>
                   </div>
-                  <div className={cn(COL.size, "text-[11px] text-text-secondary")}>{fmtSize(m.sizeMb)}</div>
+                  <div className={cn(COL.size, "text-[11px] text-text-secondary")}>
+                    {fmtSize(m.sizeMb)}
+                  </div>
                   <div className={cn(COL.dim, "text-[11px] text-text-secondary")}>
                     {m.dim ?? "—"}
                   </div>
@@ -246,7 +254,11 @@ function KindTab({
   );
 }
 
-function ProgressBar({ dl }: { dl: { fileIndex: number; fileCount: number; received: number; total: number } }) {
+function ProgressBar({
+  dl,
+}: {
+  dl: { fileIndex: number; fileCount: number; received: number; total: number };
+}) {
   const pct = Math.min(
     100,
     Math.round(
@@ -276,7 +288,10 @@ function ConfirmReindex({
   onConfirm: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onCancel}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onClick={onCancel}
+    >
       <div
         className="w-[380px] rounded-lg border border-border-default bg-bg-primary p-4 shadow-xl"
         onClick={(e) => e.stopPropagation()}

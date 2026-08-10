@@ -21,9 +21,7 @@ export function modelSupportsVision(provider: string, model: string): boolean {
       return /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-4-vision|chatgpt-4o|o1|o3|o4/.test(m);
     default:
       // Open-weight + gateway providers: match common vision model markers.
-      return /vision|-vl\b|vl-|pixtral|llava|internvl|qwen2?-vl|llama-3\.2|maverick|scout/.test(
-        m,
-      );
+      return /vision|-vl\b|vl-|pixtral|llava|internvl|qwen2?-vl|llama-3\.2|maverick|scout/.test(m);
   }
 }
 

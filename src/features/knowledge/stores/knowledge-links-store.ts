@@ -41,13 +41,10 @@ const store = create<KnowledgeLinksState>()((set, get) => ({
       if (get().projectPath === projectPath && unlisten) return;
       get().actions.unbind();
       set({ projectPath, rev: 0 });
-      unlisten = await listen<{ projectPath: string }>(
-        "atlas:knowledge:links-changed",
-        (event) => {
-          if (!projectPath || event.payload?.projectPath !== projectPath) return;
-          set((s) => ({ rev: s.rev + 1 }));
-        },
-      );
+      unlisten = await listen<{ projectPath: string }>("atlas:knowledge:links-changed", (event) => {
+        if (!projectPath || event.payload?.projectPath !== projectPath) return;
+        set((s) => ({ rev: s.rev + 1 }));
+      });
     },
     unbind: () => {
       if (unlisten) {
@@ -98,7 +95,7 @@ export function useBacklinks(entryId: string | null): Backlink[] {
 
 /** Hook: live counts for the Properties strip's "References" row and
  *  any "N backlinks" badges. */
-export function useLinkCounts(entryId: string | null): LinkCounts {
+function useLinkCounts(entryId: string | null): LinkCounts {
   const projectPath = useKnowledgeLinksStore.use.projectPath();
   const rev = useKnowledgeLinksStore.use.rev();
   const [counts, setCounts] = useState<LinkCounts>({ backlinks: 0, forwardlinks: 0 });

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
-import { toast } from "sonner";
 import { Archive } from "lucide-react";
 import { useGitStore } from "../../stores/git-store";
+import { handleGitError } from "../../lib/git-errors";
 
 export function StashesView() {
   const repoPath = useGitStore.use.repoPath();
@@ -17,7 +17,7 @@ export function StashesView() {
     try {
       await fn();
     } catch (e) {
-      toast.error(String(e));
+      handleGitError(e);
     }
   };
 

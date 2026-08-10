@@ -6,9 +6,7 @@
 const FILE_PATH_KEYS = ["file_path", "path", "filename", "filePath"];
 
 /** First file-path-like string in a tool call's arguments, or null. */
-export function getFilePathFromInput(
-  input: Record<string, unknown>,
-): string | null {
+export function getFilePathFromInput(input: Record<string, unknown>): string | null {
   for (const k of FILE_PATH_KEYS) {
     const v = input[k];
     if (typeof v === "string" && v.length > 0) return v;
@@ -17,7 +15,7 @@ export function getFilePathFromInput(
 }
 
 /** Tools that mutate files (Claude Code, Codex, native). */
-export const EDIT_TOOLS = new Set([
+const EDIT_TOOLS = new Set([
   "edit",
   "write",
   "multiedit",
@@ -33,41 +31,30 @@ export interface EditPart {
   neu: string;
 }
 
-const asStr = (v: unknown): string | null =>
-  typeof v === "string" ? v : null;
+const asStr = (v: unknown): string | null => (typeof v === "string" ? v : null);
 
 /** Before/after text pairs for an edit tool call, straight from its args. */
-export function getEditParts(
-  toolName: string,
-  args: Record<string, unknown>,
-): EditPart[] {
+export function getEditParts(toolName: string, args: Record<string, unknown>): EditPart[] {
   const parts: EditPart[] = [];
   const edits = args.edits;
   if (Array.isArray(edits)) {
     for (const e of edits) {
       if (e && typeof e === "object") {
         const o = e as Record<string, unknown>;
-        const old =
-          asStr(o.old_string) ?? asStr(o.oldString) ?? asStr(o.old_str) ?? "";
-        const neu =
-          asStr(o.new_string) ?? asStr(o.newString) ?? asStr(o.new_str) ?? "";
+        const old = asStr(o.old_string) ?? asStr(o.oldString) ?? asStr(o.old_str) ?? "";
+        const neu = asStr(o.new_string) ?? asStr(o.newString) ?? asStr(o.new_str) ?? "";
         if (old || neu) parts.push({ old, neu });
       }
     }
     if (parts.length) return parts;
   }
-  const old =
-    asStr(args.old_string) ?? asStr(args.oldString) ?? asStr(args.old_str);
-  const neu =
-    asStr(args.new_string) ?? asStr(args.newString) ?? asStr(args.new_str);
+  const old = asStr(args.old_string) ?? asStr(args.oldString) ?? asStr(args.old_str);
+  const neu = asStr(args.new_string) ?? asStr(args.newString) ?? asStr(args.new_str);
   if (old != null || neu != null) return [{ old: old ?? "", neu: neu ?? "" }];
   // Whole-file write/create — only when the tool is actually an editor.
   if (EDIT_TOOLS.has(toolName.toLowerCase())) {
     const content =
-      asStr(args.content) ??
-      asStr(args.new_content) ??
-      asStr(args.text) ??
-      asStr(args.file_text);
+      asStr(args.content) ?? asStr(args.new_content) ?? asStr(args.text) ?? asStr(args.file_text);
     if (content != null) return [{ old: "", neu: content }];
   }
   return parts;
@@ -102,10 +89,7 @@ function countPart(oldStr: string, neu: string): { added: number; removed: numbe
 
 /** True when an edit tool call CREATED the file (every edit op had empty prior
  *  content) → git-status "A". A normal edit (non-empty `old`) is "M". */
-export function isFileCreated(
-  toolName: string,
-  args: Record<string, unknown>,
-): boolean {
+export function isFileCreated(toolName: string, args: Record<string, unknown>): boolean {
   const parts = getEditParts(toolName, args);
   return parts.length > 0 && parts.every((p) => p.old === "");
 }

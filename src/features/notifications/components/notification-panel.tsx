@@ -1,20 +1,12 @@
 import { useMemo } from "react";
-import {
-  Bell,
-  Shield,
-  AlertTriangle,
-  X,
-  Sparkles,
-} from "lucide-react";
+import { Bell, Shield, AlertTriangle, X, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { ProviderLogo } from "@/components/provider-logo";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
-import {
-  useNotificationsStore,
-  type AppNotification,
-} from "../stores/notifications-store";
+import { jumpToSession } from "@/features/chat/lib/tab-workspace";
+import { useNotificationsStore, type AppNotification } from "../stores/notifications-store";
 
 /** Bucket a timestamp into a relative-day group label. */
 function dayBucket(iso: string): string {
@@ -68,9 +60,7 @@ export function NotificationPanel() {
         {/* Header — matches the window titlebar height (30px). */}
         <div className="flex items-center gap-2 px-4 h-[30px] shrink-0 border-b border-[var(--border-default)]">
           <Bell size={13} className="text-text-secondary" strokeWidth={1.5} />
-          <span className="text-[12px] font-semibold text-text-primary">
-            Notifications
-          </span>
+          <span className="text-[12px] font-semibold text-text-primary">Notifications</span>
           <div className="flex-1" />
           {items.length > 0 && (
             <button
@@ -144,9 +134,7 @@ function NotificationCard({ n }: { n: AppNotification }) {
           {!n.read && (
             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent-primary)]" />
           )}
-          <span className="truncate text-[12px] font-medium text-text-primary">
-            {n.title}
-          </span>
+          <span className="truncate text-[12px] font-medium text-text-primary">{n.title}</span>
           <span className="ml-auto shrink-0 text-[9px] text-text-tertiary tabular-nums">
             {timeAgo(n.timestamp, { suffix: true })}
           </span>
@@ -178,10 +166,8 @@ function NotificationIcon({ n }: { n: AppNotification }) {
     return <Shield size={15} className="text-accent" strokeWidth={1.5} />;
   if (n.kind === "agent-failed" || n.kind === "chat-error")
     return <AlertTriangle size={15} className="text-[var(--status-error)]" strokeWidth={1.5} />;
-  if (n.kind === "chat-done" && n.provider)
-    return <ProviderLogo id={n.provider} size={16} />;
-  if (n.source === "agent")
-    return <AtlasIcon size={16} className="rounded-[5px]" />;
+  if (n.kind === "chat-done" && n.provider) return <ProviderLogo id={n.provider} size={16} />;
+  if (n.source === "agent") return <AtlasIcon size={16} className="rounded-[5px]" />;
   return <Sparkles size={15} className="text-text-secondary" strokeWidth={1.5} />;
 }
 
@@ -189,15 +175,16 @@ function NotificationIcon({ n }: { n: AppNotification }) {
 function focusNotification(n: AppNotification) {
   const layout = useLayoutStore.getState();
   if (n.source === "agent" && n.tabId) {
-    layout.actions.setActiveTab(n.tabId);
+    // Workspace-aware: a bare setActiveTab on a tab from ANOTHER workspace
+    // falls back to tabs[0] of the current one — jumpToSession switches to the
+    // owning workspace first.
+    void jumpToSession(n.tabId);
     return;
   }
   if (n.source === "chat" && n.sessionId) {
-    void import("@/features/model-chat/stores/model-chat-store").then(
-      ({ useModelChatStore }) => {
-        void useModelChatStore.getState().actions.selectSession(n.sessionId!);
-      },
-    );
+    void import("@/features/model-chat/stores/model-chat-store").then(({ useModelChatStore }) => {
+      void useModelChatStore.getState().actions.selectSession(n.sessionId!);
+    });
     // Focus an existing model-chat tab, else open one.
     const existing = layout.tabs.find((t) => t.type === "model-chat");
     if (existing) {

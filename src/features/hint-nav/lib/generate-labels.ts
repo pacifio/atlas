@@ -7,7 +7,7 @@
  */
 
 // Home-row + easy reaches first, so the most common targets get the easiest keys.
-export const HINT_ALPHABET = "fjdkslaghrueiwovncm";
+const HINT_ALPHABET = "fjdkslaghrueiwovncm";
 
 export function generateLabels(count: number, alphabet = HINT_ALPHABET): string[] {
   const chars = alphabet.split("");
@@ -26,7 +26,7 @@ export function generateLabels(count: number, alphabet = HINT_ALPHABET): string[
   // Generate `count` labels of fixed length L in odometer order. Fixed length
   // guarantees prefix-freeness (every label is the same length).
   const labels: string[] = [];
-  const idx = new Array(length).fill(0);
+  const idx: number[] = Array.from({ length }, () => 0);
   for (let k = 0; k < count; k++) {
     let label = "";
     for (let p = 0; p < length; p++) label += chars[idx[p]];

@@ -38,15 +38,8 @@ export function MemoryGraphView() {
   const results = useMemoryGraphStore.use.results();
   const matchedIds = useMemoryGraphStore.use.matchedIds();
   const selectedId = useMemoryGraphStore.use.selectedId();
-  const {
-    init,
-    download,
-    buildIndex,
-    runQuery,
-    setQuery,
-    clearQuery,
-    select,
-  } = useMemoryGraphStore.use.actions();
+  const { init, download, buildIndex, runQuery, setQuery, clearQuery, select } =
+    useMemoryGraphStore.use.actions();
 
   useEffect(() => {
     if (projectPath) void init(projectPath);
@@ -76,9 +69,9 @@ export function MemoryGraphView() {
               Enable semantic memory
             </h3>
             <p className="text-[11px] leading-relaxed text-[var(--text-tertiary)]">
-              Download a small on-device embedding model to index your Claude &
-              Codex memory, map how it relates, and query it in natural language.
-              Runs entirely locally — nothing leaves your machine.
+              Download a small on-device embedding model to index your Claude & Codex memory, map
+              how it relates, and query it in natural language. Runs entirely locally — nothing
+              leaves your machine.
             </p>
           </div>
           <button
@@ -134,14 +127,10 @@ export function MemoryGraphView() {
             {phase === "download-failed" ? "Model download failed" : "Something went wrong"}
           </p>
           {error && (
-            <p className="text-[10px] text-[var(--text-tertiary)] font-mono break-words">
-              {error}
-            </p>
+            <p className="text-[10px] text-[var(--text-tertiary)] font-mono break-words">{error}</p>
           )}
           <button
-            onClick={() =>
-              phase === "download-failed" ? void download() : void init(projectPath)
-            }
+            onClick={() => (phase === "download-failed" ? void download() : void init(projectPath))}
             className="inline-flex items-center gap-1.5 h-7 px-3 rounded-md border border-[var(--border-default)] text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           >
             <RotateCw size={12} />
@@ -167,9 +156,7 @@ export function MemoryGraphView() {
   if (!graph || graph.nodes.length === 0) {
     return (
       <Centered>
-        <p className="text-[12px] text-[var(--text-tertiary)]">
-          No memory to graph yet.
-        </p>
+        <p className="text-[12px] text-[var(--text-tertiary)]">No memory to graph yet.</p>
       </Centered>
     );
   }
@@ -278,15 +265,18 @@ function GraphReady({
   }, [selectedId, onSelect]);
 
   // Jump from the detail card to the source memory: Claude file, Codex thread,
-  // or native Atlas (cersei) session.
+  // native Atlas (cersei) session, or a capture-backed agent session view
+  // (opencode/cursor/kilo). Anything else (codebase/shared/note) → Claude tab.
   const openSource = () => {
     if (!selected) return;
     const sub =
-      selected.source === "codex"
-        ? "codex"
-        : selected.source === "cersei"
-          ? "cersei"
-          : "claude";
+      selected.source === "codex" ||
+      selected.source === "cersei" ||
+      selected.source === "opencode" ||
+      selected.source === "cursor" ||
+      selected.source === "kilo"
+        ? selected.source
+        : "claude";
     navigateToMemory(sub, selected.id);
   };
 
@@ -441,7 +431,8 @@ function GraphReady({
                 <span className="w-2 h-2 rounded-full" style={{ background: "#fafafa" }} /> impacted
               </span>
               <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full" style={{ background: "#6796e6" }} /> influenced by
+                <span className="w-2 h-2 rounded-full" style={{ background: "#6796e6" }} />{" "}
+                influenced by
               </span>
             </div>
           )}
@@ -450,8 +441,12 @@ function GraphReady({
             <button
               onClick={openSource}
               title={
-                selected.source === "codex"
-                  ? "Open this session in the Codex tab"
+                selected.source === "codex" ||
+                selected.source === "cersei" ||
+                selected.source === "opencode" ||
+                selected.source === "cursor" ||
+                selected.source === "kilo"
+                  ? "Open this session in its agent tab"
                   : "Open this file in the Claude Code tab"
               }
               className="group absolute left-[26px] bottom-3 max-w-[340px] text-left rounded-lg border border-[var(--border-default)] hover:border-[var(--border-strong)] bg-[var(--bg-elevated)]/90 backdrop-blur-sm shadow-[var(--shadow-overlay)] p-3 transition-colors cursor-pointer"
@@ -518,15 +513,17 @@ function GraphReady({
 }
 
 function SourceDot({ source }: { source: string }) {
-  return (
-    <span
-      className="w-1.5 h-1.5 rounded-full shrink-0"
-      style={{
-        background:
-          source === "codex" ? "var(--status-info)" : "var(--accent-primary)",
-      }}
-    />
-  );
+  const color =
+    source === "codex"
+      ? "var(--status-info)"
+      : source === "opencode"
+        ? "var(--agent-opencode-chip)"
+        : source === "cursor"
+          ? "var(--agent-cursor-chip)"
+          : source === "kilo"
+            ? "var(--agent-kilo-chip)"
+            : "var(--accent-primary)";
+  return <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />;
 }
 
 function Centered({ children }: { children: React.ReactNode }) {

@@ -52,7 +52,7 @@ export function hljsIdForLanguage(language: string): string | undefined {
 
 // Skip pathologically long lines (minified blobs, etc.) — not worth the
 // tokenize cost and they never read as code anyway.
-export const MAX_LEN = 2000;
+const MAX_LEN = 2000;
 
 // Built lazily on first tokenize so merely importing this module (e.g. for the
 // language map) doesn't register ~35 grammars. In the normal path this runs in

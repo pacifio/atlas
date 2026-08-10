@@ -19,7 +19,13 @@ export function loadCerseiModelPref(): CerseiModelPref | null {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     const v = JSON.parse(raw) as CerseiModelPref;
-    if (v && typeof v.provider === "string" && typeof v.model === "string" && v.provider && v.model) {
+    if (
+      v &&
+      typeof v.provider === "string" &&
+      typeof v.model === "string" &&
+      v.provider &&
+      v.model
+    ) {
       return v;
     }
   } catch {

@@ -21,9 +21,7 @@ export function DayCard({ day, active, onClick }: Props) {
       onClick={onClick}
       className={cn(
         "w-full flex items-stretch gap-3 px-4 py-3 text-left border-b border-border-subtle outline-none transition-colors cursor-pointer",
-        active
-          ? "bg-bg-elevated"
-          : "hover:bg-bg-hover",
+        active ? "bg-bg-elevated" : "hover:bg-bg-hover",
       )}
     >
       <div className="w-12 shrink-0 flex flex-col items-start justify-center leading-none">
@@ -31,16 +29,16 @@ export function DayCard({ day, active, onClick }: Props) {
         <span className="text-[22px] font-semibold text-text-primary mt-0.5 leading-none tabular-nums">
           {String(dayN).padStart(2, "0")}
         </span>
-        <span className="text-[11px] text-text-tertiary mt-1">
-          {day.today ? "Today" : weekday}
-        </span>
+        <span className="text-[11px] text-text-tertiary mt-1">{day.today ? "Today" : weekday}</span>
       </div>
       <div className="flex-1 min-w-0 flex flex-col gap-1.5">
         <HourHistogram hours={day.hours} active={active} />
         <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
           <span>{fmtDur(day.focusMin)}</span>
           <span className="text-text-tertiary/50">·</span>
-          <span>{day.sessions} session{day.sessions === 1 ? "" : "s"}</span>
+          <span>
+            {day.sessions} session{day.sessions === 1 ? "" : "s"}
+          </span>
         </div>
         {day.sessions === 0 && (
           <p className="text-[11px] text-text-secondary leading-snug line-clamp-2">
@@ -50,7 +48,10 @@ export function DayCard({ day, active, onClick }: Props) {
       </div>
       <ChevronRight
         size={12}
-        className={cn("self-center shrink-0", active ? "text-text-primary" : "text-text-tertiary/60")}
+        className={cn(
+          "self-center shrink-0",
+          active ? "text-text-primary" : "text-text-tertiary/60",
+        )}
       />
     </button>
   );

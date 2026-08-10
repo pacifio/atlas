@@ -2,15 +2,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { ScrollArea } from "@/ui/scroll-area";
-import {
-  Search,
-  Star,
-  GitFork,
-  ExternalLink,
-  Download,
-  Loader2,
-  Github,
-} from "lucide-react";
+import { Search, Star, GitFork, ExternalLink, Download, Loader2, Github } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { logEvent } from "@/features/log/lib/log";
 import type { GithubRepo } from "@/features/github/types";
@@ -68,21 +60,27 @@ export function GithubPanel() {
     } catch (e) {
       console.error("Clone failed:", e);
     }
-    setCloning((s) => { const n = new Set(s); n.delete(repo.full_name); return n; });
+    setCloning((s) => {
+      const n = new Set(s);
+      n.delete(repo.full_name);
+      return n;
+    });
   };
 
   return (
     <div className="h-full flex flex-col">
       {/* Search */}
       <div className="flex items-center gap-1.5 h-[32px] shrink-0 border-b border-border-default bg-bg-primary px-3">
-          <Search size={11} className="text-text-tertiary shrink-0" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
-            placeholder="Search GitHub repositories..."
-            className="flex-1 bg-transparent outline-none text-[11px] text-text-primary placeholder:text-text-tertiary"
-          />
+        <Search size={11} className="text-text-tertiary shrink-0" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSearch();
+          }}
+          placeholder="Search GitHub repositories..."
+          className="flex-1 bg-transparent outline-none text-[11px] text-text-primary placeholder:text-text-tertiary"
+        />
       </div>
 
       {/* Results */}
@@ -96,7 +94,12 @@ export function GithubPanel() {
         {error && (
           <div className="px-3 py-6 text-center">
             <p className="text-[11px] text-error">{error}</p>
-            <button onClick={handleSearch} className="mt-1 text-[10px] text-accent hover:underline cursor-pointer">Retry</button>
+            <button
+              onClick={handleSearch}
+              className="mt-1 text-[10px] text-accent hover:underline cursor-pointer"
+            >
+              Retry
+            </button>
           </div>
         )}
 
@@ -108,21 +111,30 @@ export function GithubPanel() {
         )}
 
         {!loading && !error && results.length === 0 && query.trim() && (
-          <div className="px-3 py-6 text-center text-[11px] text-text-tertiary">No repositories found</div>
+          <div className="px-3 py-6 text-center text-[11px] text-text-tertiary">
+            No repositories found
+          </div>
         )}
 
         {results.map((repo) => {
           const isCloning = cloning.has(repo.full_name);
           const isCloned = cloned.has(repo.full_name);
           return (
-            <div key={repo.full_name} className="px-3 py-2.5 border-b border-border-default hover:bg-bg-hover group">
+            <div
+              key={repo.full_name}
+              className="px-3 py-2.5 border-b border-border-default hover:bg-bg-hover group"
+            >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-medium text-accent truncate">{repo.full_name}</span>
+                    <span className="text-[11px] font-medium text-accent truncate">
+                      {repo.full_name}
+                    </span>
                   </div>
                   {repo.description && (
-                    <p className="text-[10px] text-text-tertiary mt-0.5 line-clamp-2">{repo.description}</p>
+                    <p className="text-[10px] text-text-tertiary mt-0.5 line-clamp-2">
+                      {repo.description}
+                    </p>
                   )}
                   <div className="flex items-center gap-3 mt-1">
                     {repo.language && (
@@ -151,11 +163,21 @@ export function GithubPanel() {
                       disabled={isCloning || isCloned}
                       className={cn(
                         "p-1 rounded cursor-pointer",
-                        isCloned ? "text-success" : isCloning ? "text-accent" : "text-text-tertiary hover:text-text-primary hover:bg-bg-active"
+                        isCloned
+                          ? "text-success"
+                          : isCloning
+                            ? "text-accent"
+                            : "text-text-tertiary hover:text-text-primary hover:bg-bg-active",
                       )}
-                      title={isCloned ? "Cloned" : isCloning ? "Cloning..." : "Clone to .atlas/repos/"}
+                      title={
+                        isCloned ? "Cloned" : isCloning ? "Cloning..." : "Clone to .atlas/repos/"
+                      }
                     >
-                      {isCloning ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+                      {isCloning ? (
+                        <Loader2 size={11} className="animate-spin" />
+                      ) : (
+                        <Download size={11} />
+                      )}
                     </button>
                   )}
                 </div>

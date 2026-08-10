@@ -8,10 +8,7 @@ const hashCache = new Map<string, string>();
 async function sha256(text: string): Promise<string> {
   const cached = hashCache.get(text);
   if (cached) return cached;
-  const buf = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(text)
-  );
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   const bytes = Array.from(new Uint8Array(buf));
   const hex = bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
   hashCache.set(text, hex);
@@ -60,10 +57,7 @@ export function CommitAvatar({ email, size = 16, className }: CommitAvatarProps)
       style={{ width: size, height: size }}
     >
       {showFallback ? (
-        <User
-          size={Math.max(8, Math.floor(size * 0.55))}
-          className="text-[var(--text-tertiary)]"
-        />
+        <User size={Math.max(8, Math.floor(size * 0.55))} className="text-[var(--text-tertiary)]" />
       ) : (
         <img
           src={`https://www.gravatar.com/avatar/${hash}?s=${size * 2}&d=404`}

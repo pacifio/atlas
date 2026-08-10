@@ -1,30 +1,64 @@
 import type { SessionModeInfo } from "./agents";
 
-export type AgentType = "claude-code" | "codex" | "cersei" | "custom";
+export type AgentType =
+  | "claude-code"
+  | "codex"
+  | "opencode"
+  | "cursor"
+  | "kilo"
+  | "cersei"
+  | "custom";
 
 /** Switchable (Atlas-shipped) agents — excludes the catch-all "custom". */
-export type SwitchableAgent = "claude-code" | "codex" | "cersei";
-
-/** Map a high-level agent type to the spawnable plugin id (registry.rs /
- *  atlas-cersei). "cersei" is Atlas's native in-process agent. */
-export const AGENT_PLUGIN_ID: Record<SwitchableAgent, string> = {
-  "claude-code": "claude-code-ts",
-  codex: "codex",
-  cersei: "cersei",
-};
+export type SwitchableAgent = "claude-code" | "codex" | "opencode" | "cursor" | "kilo" | "cersei";
 
 /** The coding agents Atlas ships, in switch order (for option+/). */
-export const SWITCHABLE_AGENTS: SwitchableAgent[] = ["claude-code", "codex", "cersei"];
+export const SWITCHABLE_AGENTS: SwitchableAgent[] = [
+  "claude-code",
+  "codex",
+  "opencode",
+  "cursor",
+  "kilo",
+  "cersei",
+];
 
 export const AGENT_LABEL: Record<SwitchableAgent, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
+  opencode: "OpenCode",
+  cursor: "Cursor",
+  kilo: "Kilo",
   cersei: "Atlas",
 };
+
+/** The Rust-side spawnable plugin id for each switchable agent (see
+ *  `AgentSpec::all_known()` in crates/atlas-acp). Single source of truth —
+ *  every agentType→pluginId decision goes through `pluginIdForAgent`. */
+export const PLUGIN_ID_BY_AGENT: Record<SwitchableAgent, string> = {
+  "claude-code": "claude-code-ts",
+  codex: "codex",
+  opencode: "opencode",
+  cursor: "cursor",
+  kilo: "kilo",
+  cersei: "cersei",
+};
+
+export function pluginIdForAgent(agentType: AgentType | undefined): string {
+  if (agentType && agentType !== "custom") return PLUGIN_ID_BY_AGENT[agentType];
+  return PLUGIN_ID_BY_AGENT["claude-code"];
+}
+
+/** ACP-transport agents (out-of-process adapters) — the ones with modes/models
+ *  advertised over ACP and warmable caches. Excludes the native in-process
+ *  agent. */
+export const ACP_AGENTS: SwitchableAgent[] = ["claude-code", "codex", "opencode", "cursor", "kilo"];
 
 /** Derive the display agent type from a spawnable plugin id. */
 export function agentTypeFromPluginId(pluginId: string): AgentType {
   if (pluginId === "codex") return "codex";
+  if (pluginId === "opencode") return "opencode";
+  if (pluginId === "cursor") return "cursor";
+  if (pluginId === "kilo") return "kilo";
   if (pluginId === "cersei") return "cersei";
   if (pluginId.startsWith("claude")) return "claude-code";
   return "custom";
@@ -43,20 +77,14 @@ export function isBusyAgentStatus(status: string | undefined): boolean {
  *  (racily) flipped to idle, so it never re-enables ahead of a still-spinning
  *  tool card. Rust is authoritative — it defers turn-end until tool calls
  *  quiesce — this is the thin view-side guard against any residual race. */
-export function hasInFlightToolCalls(
-  session: { messages: ChatMessage[] } | undefined,
-): boolean {
+export function hasInFlightToolCalls(session: { messages: ChatMessage[] } | undefined): boolean {
   if (!session) return false;
   return session.messages.some((m) =>
     m.toolCalls.some((tc) => tc.status === "pending" || tc.status === "running"),
   );
 }
 export type MessageRole = "user" | "assistant" | "system" | "tool";
-export type ClaudePermissionMode =
-  | "default"
-  | "acceptEdits"
-  | "plan"
-  | "bypassPermissions";
+export type ClaudePermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
 
 export const CLAUDE_PERMISSION_MODES: ClaudePermissionMode[] = [
   "default",

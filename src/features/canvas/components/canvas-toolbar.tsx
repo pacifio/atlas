@@ -66,13 +66,23 @@ export function CanvasToolbar({
       )}
     >
       {TOOLS.map((t) => (
-        <ToolButton key={t.tool} def={t} active={activeTool === t.tool} onClick={() => onTool(t.tool)} />
+        <ToolButton
+          key={t.tool}
+          def={t}
+          active={activeTool === t.tool}
+          onClick={() => onTool(t.tool)}
+        />
       ))}
 
       <div className="my-0.5 h-px w-5 bg-white/10" />
 
       {SHAPES.map((t) => (
-        <ToolButton key={t.tool} def={t} active={activeTool === t.tool} onClick={() => onTool(t.tool)} />
+        <ToolButton
+          key={t.tool}
+          def={t}
+          active={activeTool === t.tool}
+          onClick={() => onTool(t.tool)}
+        />
       ))}
 
       <div className="my-0.5 h-px w-5 bg-white/10" />

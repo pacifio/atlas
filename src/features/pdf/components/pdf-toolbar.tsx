@@ -1,10 +1,14 @@
-import { MousePointer2, Highlighter, Pencil, StickyNote, Eraser, ZoomIn, ZoomOut } from "lucide-react";
-import { cn } from "@/lib/utils";
 import {
-  usePdfAnnotationStore,
-  PDF_COLORS,
-  type PdfTool,
-} from "../stores/pdf-annotation-store";
+  MousePointer2,
+  Highlighter,
+  Pencil,
+  StickyNote,
+  Eraser,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { usePdfAnnotationStore, PDF_COLORS, type PdfTool } from "../stores/pdf-annotation-store";
 
 interface PdfToolbarProps {
   fileName: string;
@@ -41,7 +45,7 @@ export function PdfToolbar({ fileName, zoom, dirty, onZoomIn, onZoomOut }: PdfTo
               "flex h-6 w-6 items-center justify-center rounded transition-colors",
               tool === t
                 ? "bg-[var(--bg-selected)] text-[var(--text-primary)]"
-                : "text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                : "text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
             )}
           >
             <Icon size={13} />
@@ -61,14 +65,17 @@ export function PdfToolbar({ fileName, zoom, dirty, onZoomIn, onZoomOut }: PdfTo
             title={c}
             className={cn(
               "h-3.5 w-3.5 rounded-full border transition-transform",
-              color === c ? "border-[var(--text-primary)] scale-110" : "border-black/20"
+              color === c ? "border-[var(--text-primary)] scale-110" : "border-black/20",
             )}
             style={{ background: c }}
           />
         ))}
       </div>
 
-      <div className="mx-1 flex flex-1 items-center justify-center gap-1.5 truncate text-[11px] font-mono text-[var(--text-tertiary)]" title={fileName}>
+      <div
+        className="mx-1 flex flex-1 items-center justify-center gap-1.5 truncate text-[11px] font-mono text-[var(--text-tertiary)]"
+        title={fileName}
+      >
         {/* Unsaved-changes dot — Cmd+S bakes annotations into the PDF file. */}
         {dirty && (
           <span
@@ -81,13 +88,23 @@ export function PdfToolbar({ fileName, zoom, dirty, onZoomIn, onZoomOut }: PdfTo
 
       {/* Zoom */}
       <div className="flex items-center gap-0.5">
-        <button type="button" onClick={onZoomOut} title="Zoom out" className="flex h-6 w-6 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]">
+        <button
+          type="button"
+          onClick={onZoomOut}
+          title="Zoom out"
+          className="flex h-6 w-6 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+        >
           <ZoomOut size={13} />
         </button>
         <span className="w-9 text-center text-[10px] font-mono text-[var(--text-tertiary)]">
           {Math.round(zoom * 100)}%
         </span>
-        <button type="button" onClick={onZoomIn} title="Zoom in" className="flex h-6 w-6 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]">
+        <button
+          type="button"
+          onClick={onZoomIn}
+          title="Zoom in"
+          className="flex h-6 w-6 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+        >
           <ZoomIn size={13} />
         </button>
       </div>

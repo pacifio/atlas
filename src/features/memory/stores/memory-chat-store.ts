@@ -308,8 +308,7 @@ const useMemoryChatStoreBase = create<MemoryChatState>()((set, get) => ({
       const priorMessages = session.messages;
       const userMsg = makeMessage("user", trimmed);
       const assistantMsg = makeMessage("assistant", "");
-      const title =
-        session.title === "New Chat" ? trimmed.slice(0, 60) : session.title;
+      const title = session.title === "New Chat" ? trimmed.slice(0, 60) : session.title;
       const messages = [...priorMessages, userMsg, assistantMsg];
       const streamId = uid();
 

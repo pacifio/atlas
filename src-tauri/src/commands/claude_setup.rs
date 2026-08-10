@@ -26,26 +26,36 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as AsyncCommand;
 use tokio::time::timeout;
 
-/// Resolve a CLI's absolute path via the user's LOGIN+INTERACTIVE shell.
+/// Resolve a CLI's absolute path via the user's login shell.
 ///
 /// macOS GUI apps launched from Finder/the Dock inherit only a minimal PATH
 /// (`/usr/bin:/bin:/usr/sbin:/sbin`), so a bare `claude` spawn fails even when
 /// the user has it on their interactive-shell PATH (`~/.local/bin`, nvm, a
-/// custom npm prefix, Homebrew, etc.). Asking their own `$SHELL -lic` resolves
-/// the binary the same way their terminal would. Falls back to the bare name
-/// (relying on the process-wide PATH enrichment in `atlas_acp::sanitize_host_env`)
-/// if the shell probe fails or times out.
+/// custom npm prefix, Homebrew, etc.). Asking their own `$SHELL -lc` resolves
+/// the binary the same way their terminal would — login-shell PATH sourcing
+/// without interactive-shell job-control init, which self-stops via SIGTTOU
+/// when this process has a real controlling terminal attached (e.g. any
+/// dev-mode launch from a terminal, vs. a Finder/Dock-launched build).
+/// Falls back to the bare name (relying on the process-wide PATH enrichment
+/// in `atlas_acp::sanitize_host_env`) if the shell probe fails or times out.
 async fn resolve_cli(name: &str) -> String {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    // `-lic`, not `-lc`: zsh only reads ~/.zshrc in interactive shells, and
+    // that's where many installers put their PATH export — a login-only probe
+    // finds the CLI in dev (terminal-inherited PATH) but not in the bundled
+    // app. Interactive rcs can echo noise, so take the LAST non-empty line.
     let probe = AsyncCommand::new(&shell)
         .args(["-lic", &format!("command -v {name} 2>/dev/null")])
         .output();
     if let Ok(Ok(out)) = timeout(Duration::from_secs(5), probe).await {
         if out.status.success() {
-            let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            // Accept only a real absolute path (not a shell function/alias name).
-            if p.starts_with('/') && std::path::Path::new(&p).exists() {
-                return p;
+            let raw = String::from_utf8_lossy(&out.stdout);
+            if let Some(p) = raw.lines().rev().find(|l| !l.trim().is_empty()) {
+                let p = p.trim();
+                // Accept only a real absolute path (not a shell function/alias name).
+                if p.starts_with('/') && std::path::Path::new(p).exists() {
+                    return p.to_string();
+                }
             }
         }
     }

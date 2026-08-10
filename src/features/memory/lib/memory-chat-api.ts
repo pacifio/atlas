@@ -90,16 +90,13 @@ export const memoryChat = {
   cancel: (streamId: string) => invoke<void>("memory_chat_cancel", { streamId }),
 
   sessionsList: () => invoke<SessionMeta[]>("memory_chat_sessions_list"),
-  sessionGet: (id: string) =>
-    invoke<MemoryChatSessionWire>("memory_chat_session_get", { id }),
+  sessionGet: (id: string) => invoke<MemoryChatSessionWire>("memory_chat_session_get", { id }),
   sessionSave: (session: MemoryChatSessionWire) =>
     invoke<void>("memory_chat_session_save", { session }),
   sessionDelete: (id: string) => invoke<void>("memory_chat_session_delete", { id }),
 };
 
-export const listenMemoryChat = (
-  handler: (e: MemoryChatEvent) => void,
-): Promise<UnlistenFn> =>
+export const listenMemoryChat = (handler: (e: MemoryChatEvent) => void): Promise<UnlistenFn> =>
   listen<MemoryChatEvent>("atlas:memory-chat", (e) => handler(e.payload));
 
 export const listenChatModelProgress = (
@@ -107,7 +104,5 @@ export const listenChatModelProgress = (
 ): Promise<UnlistenFn> =>
   listen<DownloadProgress>("atlas:memory-chat-model:progress", (e) => handler(e.payload));
 
-export const listenChatModelDone = (
-  handler: (d: DownloadDone) => void,
-): Promise<UnlistenFn> =>
+export const listenChatModelDone = (handler: (d: DownloadDone) => void): Promise<UnlistenFn> =>
   listen<DownloadDone>("atlas:memory-chat-model:done", (e) => handler(e.payload));

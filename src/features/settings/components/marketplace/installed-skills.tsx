@@ -44,10 +44,7 @@ const TABLE_MIN_W = 200 + 180 + 150 + 28;
 
 /** Apply the per-tool optimistic overrides (toolId → on) on top of a projected
  *  set, so a pack toggle reflects instantly before the disk reconcile lands. */
-function mergeOptimistic(
-  base: Set<string>,
-  optimistic: Record<string, boolean>,
-): Set<string> {
+function mergeOptimistic(base: Set<string>, optimistic: Record<string, boolean>): Set<string> {
   const next = new Set(base);
   for (const [toolId, on] of Object.entries(optimistic)) {
     if (on) next.add(toolId);
@@ -85,8 +82,7 @@ interface InstalledSnapshot {
 // re-entering My Skills or flipping scope paints instantly, then revalidates
 // in the background. Mutations re-fetch and overwrite the entry.
 const installedCache = new Map<string, InstalledSnapshot>();
-const cacheKeyFor = (scope: Scope, project: string | null) =>
-  `${scope}:${project ?? ""}`;
+const cacheKeyFor = (scope: Scope, project: string | null) => `${scope}:${project ?? ""}`;
 
 export function InstalledSkills({
   scope,
@@ -166,19 +162,12 @@ export function InstalledSkills({
     [view],
   );
   const packsNoSkills = useMemo(
-    () =>
-      packList.filter(
-        (p) => !(view?.skills ?? []).some((s) => s.pack === p.pack.name),
-      ),
+    () => packList.filter((p) => !(view?.skills ?? []).some((s) => s.pack === p.pack.name)),
     [packList, view],
   );
-  const packByName = useMemo(
-    () => new Map(packList.map((p) => [p.pack.name, p])),
-    [packList],
-  );
+  const packByName = useMemo(() => new Map(packList.map((p) => [p.pack.name, p])), [packList]);
 
-  const detectedFor = (t: ToolInfo) =>
-    scope === "project" ? t.detectedProject : t.detectedGlobal;
+  const detectedFor = (t: ToolInfo) => (scope === "project" ? t.detectedProject : t.detectedGlobal);
 
   // ── Pack projection ──────────────────────────────────────────────────────
   const togglePackTool = useCallback(
@@ -187,8 +176,7 @@ export function InstalledSkills({
       setOptimistic((o) => ({ ...o, [toolId]: on }));
       setError(null);
       try {
-        if (on)
-          await packsApi.project(scope, packName, toolId, null, false, effectiveProject);
+        if (on) await packsApi.project(scope, packName, toolId, null, false, effectiveProject);
         else await packsApi.unproject(scope, packName, toolId, effectiveProject);
         await refresh();
       } catch (e) {
@@ -212,8 +200,7 @@ export function InstalledSkills({
       setOptimistic((o) => ({ ...o, [toolId]: status !== "synced" }));
       setError(null);
       try {
-        if (status === "synced")
-          await skillsApi.unproject(scope, name, toolId, effectiveProject);
+        if (status === "synced") await skillsApi.unproject(scope, name, toolId, effectiveProject);
         else await skillsApi.project(scope, name, toolId, status === "drifted", effectiveProject);
         await refresh();
       } catch (e) {
@@ -335,11 +322,14 @@ export function InstalledSkills({
                   >
                     <span className={cn(COL.name, "flex items-center gap-2 min-w-0")}>
                       <Package size={13} className="shrink-0 text-text-tertiary" />
-                      <span className="truncate text-[12px] text-text-primary">
-                        {p.pack.name}
-                      </span>
+                      <span className="truncate text-[12px] text-text-primary">{p.pack.name}</span>
                     </span>
-                    <span className={cn(COL.origin, "truncate font-mono text-[10px] text-text-tertiary")}>
+                    <span
+                      className={cn(
+                        COL.origin,
+                        "truncate font-mono text-[10px] text-text-tertiary",
+                      )}
+                    >
                       {p.source}
                     </span>
                     <span className={cn(COL.tools, "truncate text-[10px] text-text-tertiary")}>
@@ -359,11 +349,7 @@ export function InstalledSkills({
                 const onCount = s.cells.filter(
                   (c) => c.scope === scope && c.status === "synced",
                 ).length;
-                const origin = s.pack
-                  ? s.pack
-                  : s.managed
-                    ? "library"
-                    : "external";
+                const origin = s.pack ? s.pack : s.managed ? "library" : "external";
                 const onClick = () => {
                   // Pack-provided skill → manage its pack (the install unit).
                   const pack = s.pack ? packByName.get(s.pack) : undefined;
@@ -377,9 +363,7 @@ export function InstalledSkills({
                     className="flex w-full items-center min-h-[44px] py-2 border-b border-border-subtle px-3 text-left transition-colors hover:bg-bg-hover"
                   >
                     <span className={cn(COL.name, "min-w-0 pr-6")}>
-                      <span className="block truncate text-[12px] text-text-primary">
-                        {s.name}
-                      </span>
+                      <span className="block truncate text-[12px] text-text-primary">{s.name}</span>
                       {s.description && (
                         <span className="mt-0.5 text-[10px] leading-snug text-text-tertiary line-clamp-2">
                           {s.description}
@@ -430,10 +414,7 @@ export function InstalledSkills({
       )}
       {target?.kind === "skill" && (
         <SkillManageModal
-          skill={
-            (view?.skills ?? []).find((s) => s.name === target.skill.name) ??
-            target.skill
-          }
+          skill={(view?.skills ?? []).find((s) => s.name === target.skill.name) ?? target.skill}
           tools={tools}
           scope={scope}
           detectedFor={detectedFor}
@@ -502,9 +483,7 @@ function ToolToggles({
 }) {
   return (
     <div className="flex flex-col gap-2.5">
-      <div className="text-[10px] uppercase tracking-wider text-text-tertiary">
-        Deliver to
-      </div>
+      <div className="text-[10px] uppercase tracking-wider text-text-tertiary">Deliver to</div>
       {tools.map((t) => {
         const status = statusFor(t);
         const detected = detectedFor(t);
@@ -651,10 +630,7 @@ function SkillManageModal({
   const statusFor = (t: ToolInfo): ProjectionStatus => {
     const ov = optimistic[t.id];
     if (ov !== undefined) return ov ? "synced" : "absent";
-    return (
-      skill.cells.find((c) => c.tool === t.id && c.scope === scope)?.status ??
-      "absent"
-    );
+    return skill.cells.find((c) => c.tool === t.id && c.scope === scope)?.status ?? "absent";
   };
 
   return (
@@ -714,9 +690,9 @@ function PackUpdate({
   projectedTools: Set<string>;
   onDone: () => void;
 }) {
-  const [state, setState] = useState<
-    "idle" | "checking" | "available" | "uptodate" | "updating"
-  >("idle");
+  const [state, setState] = useState<"idle" | "checking" | "available" | "uptodate" | "updating">(
+    "idle",
+  );
 
   const check = async () => {
     setState("checking");
@@ -747,12 +723,27 @@ function PackUpdate({
   const base =
     "flex w-full items-center gap-2 rounded-md border border-border-default px-2.5 py-2 text-[12px] font-medium text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary";
   if (state === "checking")
-    return <span className={base}><Loader2 size={13} className="animate-spin" /> Checking…</span>;
+    return (
+      <span className={base}>
+        <Loader2 size={13} className="animate-spin" /> Checking…
+      </span>
+    );
   if (state === "updating")
-    return <span className={base}><Loader2 size={13} className="animate-spin" /> Updating…</span>;
-  if (state === "uptodate")
-    return <span className={base}>Up to date</span>;
+    return (
+      <span className={base}>
+        <Loader2 size={13} className="animate-spin" /> Updating…
+      </span>
+    );
+  if (state === "uptodate") return <span className={base}>Up to date</span>;
   if (state === "available")
-    return <button onClick={apply} className={base}><ArrowUpCircle size={13} /> Update available</button>;
-  return <button onClick={check} className={base}><RefreshCw size={13} /> Check for update</button>;
+    return (
+      <button onClick={apply} className={base}>
+        <ArrowUpCircle size={13} /> Update available
+      </button>
+    );
+  return (
+    <button onClick={check} className={base}>
+      <RefreshCw size={13} /> Check for update
+    </button>
+  );
 }

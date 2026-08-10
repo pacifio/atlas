@@ -68,7 +68,11 @@ function createPopup(initialScope: "knowledge" | null = null): PopupState {
 }
 
 function destroyPopup(popup: PopupState) {
-  try { popup.root.unmount(); } catch { /* ignore */ }
+  try {
+    popup.root.unmount();
+  } catch {
+    /* ignore */
+  }
   popup.el.remove();
 }
 
@@ -196,8 +200,7 @@ function buildSuggestion(
     command: ({ editor: ed, range, props }) => {
       const m = props as unknown as MentionData;
       const label = mentionLabel(m);
-      ed
-        .chain()
+      ed.chain()
         .focus()
         .insertContentAt(range, [
           {
@@ -222,7 +225,9 @@ function buildSuggestion(
               .focus()
               .deleteRange({ from: props.range.from, to: props.range.to })
               .run();
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         };
         renderPopup(popup);
       },

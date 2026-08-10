@@ -58,11 +58,14 @@ function wrapLabel(text: string, maxChars: number, maxLines = 2): string[] {
   }
   if (lines.length < maxLines && cur) lines.push(cur);
   // Hard-clamp each line; ellipsise the last if we dropped content.
-  const out = lines.slice(0, maxLines).map((l) => (l.length > maxChars ? l.slice(0, maxChars - 1) : l));
+  const out = lines
+    .slice(0, maxLines)
+    .map((l) => (l.length > maxChars ? l.slice(0, maxChars - 1) : l));
   const shown = out.join(" ");
   if (shown.length < clean.length && out.length) {
     const i = out.length - 1;
-    out[i] = (out[i].length > maxChars - 1 ? out[i].slice(0, maxChars - 1) : out[i]).trimEnd() + "…";
+    out[i] =
+      (out[i].length > maxChars - 1 ? out[i].slice(0, maxChars - 1) : out[i]).trimEnd() + "…";
   }
   return out;
 }
@@ -297,9 +300,7 @@ export function MemoryTreeView({
                   const textX = isRoot ? 10 : 20;
                   const maxChars = Math.floor((CARD_W - textX - 9) / (fontSize * 0.54));
                   const suffix =
-                    collapsed.has(t.id) && t.children.length > 0
-                      ? `  (${t.children.length})`
-                      : "";
+                    collapsed.has(t.id) && t.children.length > 0 ? `  (${t.children.length})` : "";
                   const lines = wrapLabel(t.label + suffix, maxChars, 3);
                   const lineH = fontSize + 2.5;
                   const top = CARD_H / 2 - ((lines.length - 1) * lineH) / 2;

@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
+import { createPortal } from "react-dom";
+import { Check, Copy, Download, Maximize2, Minus, Plus, X } from "lucide-react";
+
+import { copyText } from "@/lib/clipboard";
+import { cn } from "@/lib/utils";
 
 // Mermaid is heavy (~500KB) — load it on first diagram render only. The theme is
 // mapped to the *live* Atlas interface-theme tokens (read from CSS custom
@@ -59,7 +66,9 @@ async function getMermaid() {
 function sanitize(src: string): string {
   let s = src.trim();
   // Ensure a diagram header.
-  if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|mindmap|gantt)/.test(s)) {
+  if (
+    !/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|mindmap|gantt)/.test(s)
+  ) {
     s = `flowchart TD\n${s}`;
   }
   // `subgraph "Title"` → `subgraph s_n["Title"]` (a subgraph needs an id).
@@ -120,9 +129,26 @@ async function tryRender(
   }
 }
 
+/** Zoom bounds. Below 0.4 a diagram is unreadable; above 3 it is a texture. */
+const MIN_ZOOM = 0.4;
+const MAX_ZOOM = 3;
+const ZOOM_STEP = 0.25;
+
+/**
+ * Export scale. Mermaid emits vector SVG, so the only thing a PNG loses is
+ * resolution — rasterising at 2× keeps a diagram legible when it is pasted into
+ * a ticket and viewed at 100%.
+ */
+const EXPORT_SCALE = 2;
+
 /** Render a Mermaid diagram from raw source. Tries the source as-is, then a
- *  sanitized variant; only falls back to showing the source if both fail. */
-export function MermaidBlock({ code }: { code: string }) {
+ *  sanitized variant; only falls back to showing the source if both fail.
+ *
+ *  `controls` adds zoom, copy-source and export-as-PNG. Off by default: the
+ *  review panel renders diagrams inline at a fixed size, where a toolbar would
+ *  be chrome on something nobody manipulates. A diagram an agent just drew in a
+ *  chat is the opposite — it is the answer, and it gets read, kept and shared. */
+export function MermaidBlock({ code, controls = false }: { code: string; controls?: boolean }) {
   const [svg, setSvg] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const mountedRef = useRef(true);
@@ -171,10 +197,272 @@ export function MermaidBlock({ code }: { code: string }) {
   if (!svg) {
     return <div className="p-3 text-[11px] text-text-tertiary">Rendering diagram…</div>;
   }
+  if (!controls) {
+    return (
+      <div
+        className="overflow-auto rounded-md border border-border-default bg-[var(--bg-base)] p-2 [&_svg]:h-auto [&_svg]:max-w-full"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+    );
+  }
+  return <DiagramViewer svg={svg} code={code} />;
+}
+
+/**
+ * A rendered diagram you can actually work with.
+ *
+ * Zoom is a CSS transform on the SVG rather than a re-render: mermaid's output
+ * is vector, so scaling it stays sharp at any factor and costs nothing, where
+ * re-rendering at a new size would re-run layout on every click.
+ */
+function DiagramViewer({ svg, code }: { svg: string; code: string }) {
+  const [zoom, setZoom] = useState(1);
+  const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [full, setFull] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1400);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  useEffect(() => {
+    if (!full) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFull(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [full]);
+
+  const copy = useCallback(() => {
+    // The *source*, not the SVG: mermaid is what someone pastes back into a doc
+    // or another chat, and an SVG blob is not editable by hand.
+    void copyText(code).then((ok) => setCopied(ok));
+  }, [code]);
+
+  const exportPng = useCallback(async () => {
+    setSaving(true);
+    try {
+      const path = await save({
+        defaultPath: "diagram.png",
+        filters: [{ name: "PNG", extensions: ["png"] }],
+      });
+      if (!path) return;
+      const base64 = await svgToPngBase64(svg);
+      await invoke("write_file_base64", { path, contents: base64 });
+    } catch {
+      /* a cancelled dialog and a failed raster both leave the diagram intact */
+    } finally {
+      setSaving(false);
+    }
+  }, [svg]);
+
+  const step = (delta: number) =>
+    setZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round((z + delta) * 100) / 100)));
+
+  return (
+    <div className="group/diagram relative overflow-hidden rounded-md border border-border-default bg-[var(--bg-base)]">
+      <div className="hide-scrollbar max-h-[420px] overflow-auto p-2">
+        <div
+          // `top left` so zooming grows into the scrollable area rather than
+          // pushing the diagram off the left edge.
+          style={{ transform: `scale(${zoom})`, transformOrigin: "top left" }}
+          className="inline-block origin-top-left transition-transform duration-100 [&_svg]:h-auto [&_svg]:max-w-none"
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      </div>
+
+      {/* Revealed on hover: at rest the diagram is the content, not a widget. */}
+      <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)]/80 p-0.5 opacity-0 backdrop-blur-xl transition-opacity focus-within:opacity-100 group-hover/diagram:opacity-100">
+        <IconButton label="Zoom out" onClick={() => step(-ZOOM_STEP)} disabled={zoom <= MIN_ZOOM}>
+          <Minus size={12} />
+        </IconButton>
+        <button
+          type="button"
+          onClick={() => setZoom(1)}
+          title="Reset zoom"
+          className="cursor-pointer px-1 font-mono text-[10px] tabular-nums text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)]"
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <IconButton label="Zoom in" onClick={() => step(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM}>
+          <Plus size={12} />
+        </IconButton>
+        <span aria-hidden className="mx-0.5 h-3 w-px bg-[var(--border-default)]" />
+        <IconButton label="Open full screen" onClick={() => setFull(true)}>
+          <Maximize2 size={11} />
+        </IconButton>
+        <IconButton label="Copy diagram source" onClick={copy}>
+          {copied ? <Check size={11} className="text-[var(--capture-live)]" /> : <Copy size={11} />}
+        </IconButton>
+        <IconButton label="Export as PNG" onClick={() => void exportPng()} disabled={saving}>
+          <Download size={11} />
+        </IconButton>
+      </div>
+
+      {full &&
+        createPortal(
+          <Fullscreen
+            svg={svg}
+            copied={copied}
+            saving={saving}
+            onCopy={copy}
+            onExport={() => void exportPng()}
+            onClose={() => setFull(false)}
+          />,
+          document.body,
+        )}
+    </div>
+  );
+}
+
+/**
+ * The diagram at full size.
+ *
+ * Portalled to `document.body` rather than rendered in place: the chat panel is
+ * a 420px column inside a scroller with `overflow: hidden` on the way up, so an
+ * in-tree overlay would be clipped to the very column the reader is trying to
+ * escape.
+ *
+ * Its zoom is deliberately independent of the inline one — you open this to look
+ * closer, and inheriting a 40% inline zoom would defeat the point.
+ */
+function Fullscreen({
+  svg,
+  copied,
+  saving,
+  onCopy,
+  onExport,
+  onClose,
+}: {
+  svg: string;
+  copied: boolean;
+  saving: boolean;
+  onCopy: () => void;
+  onExport: () => void;
+  onClose: () => void;
+}) {
+  const [zoom, setZoom] = useState(1);
+  const step = (delta: number) =>
+    setZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round((z + delta) * 100) / 100)));
+
   return (
     <div
-      className="overflow-auto rounded-md border border-border-default bg-[var(--bg-base)] p-2 [&_svg]:max-w-full [&_svg]:h-auto"
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+      role="dialog"
+      aria-label="Diagram"
+      className="animate-fade-in fixed inset-0 z-[var(--z-max)] flex flex-col bg-[var(--bg-base)]/95 backdrop-blur-2xl"
+    >
+      <header className="flex h-10 shrink-0 items-center gap-1 border-b border-[var(--border-default)] px-3">
+        <span className="text-[12px] text-[var(--text-secondary)]">Diagram</span>
+        <div className="flex-1" />
+        <IconButton label="Zoom out" onClick={() => step(-ZOOM_STEP)} disabled={zoom <= MIN_ZOOM}>
+          <Minus size={13} />
+        </IconButton>
+        <button
+          type="button"
+          onClick={() => setZoom(1)}
+          title="Reset zoom"
+          className="cursor-pointer px-1.5 font-mono text-[11px] tabular-nums text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)]"
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <IconButton label="Zoom in" onClick={() => step(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM}>
+          <Plus size={13} />
+        </IconButton>
+        <span aria-hidden className="mx-1 h-3.5 w-px bg-[var(--border-default)]" />
+        <IconButton label="Copy diagram source" onClick={onCopy}>
+          {copied ? <Check size={12} className="text-[var(--capture-live)]" /> : <Copy size={12} />}
+        </IconButton>
+        <IconButton label="Export as PNG" onClick={onExport} disabled={saving}>
+          <Download size={12} />
+        </IconButton>
+        <span aria-hidden className="mx-1 h-3.5 w-px bg-[var(--border-default)]" />
+        <IconButton label="Close" onClick={onClose}>
+          <X size={13} />
+        </IconButton>
+      </header>
+
+      <div className="hide-scrollbar min-h-0 flex-1 overflow-auto p-6">
+        <div
+          style={{ transform: `scale(${zoom})`, transformOrigin: "top left" }}
+          className="inline-block transition-transform duration-100 [&_svg]:h-auto [&_svg]:max-w-none"
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      </div>
+    </div>
   );
+}
+
+function IconButton({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "flex size-5 items-center justify-center rounded-full transition-colors",
+        disabled
+          ? "cursor-default text-[var(--text-ghost)]"
+          : "cursor-pointer text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Rasterise an SVG string to base64 PNG.
+ *
+ * The size comes from the SVG's own `viewBox` rather than the rendered element:
+ * the element is under a zoom transform, and exporting whatever the reader
+ * happened to be zoomed to would make the file's resolution an accident.
+ *
+ * The image is loaded from a data URL rather than a blob URL because a
+ * `securityLevel: "strict"` mermaid SVG is self-contained — no external refs —
+ * so the canvas never becomes tainted and `toDataURL` stays legal.
+ */
+async function svgToPngBase64(svg: string): Promise<string> {
+  const viewBox = svg
+    .match(/viewBox="([\d.\-\s]+)"/)?.[1]
+    ?.trim()
+    .split(/\s+/);
+  const width = viewBox ? Number(viewBox[2]) : 1200;
+  const height = viewBox ? Number(viewBox[3]) : 800;
+
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("could not rasterise the diagram"));
+    img.src = url;
+  });
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width * EXPORT_SCALE));
+  canvas.height = Math.max(1, Math.round(height * EXPORT_SCALE));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("no 2d context");
+
+  // Mermaid draws no background of its own, so a PNG without this is a diagram
+  // on transparency — invisible in any light-background document.
+  ctx.fillStyle = cssVar("--bg-base", "#0a0a0a");
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+  return canvas.toDataURL("image/png").split(",")[1];
 }

@@ -11,11 +11,7 @@ import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import "../tiptap.css";
 import { cn } from "@/lib/utils";
 import { buildExtensions } from "../lib/extensions";
-import {
-  dropCachedDoc,
-  getCachedDoc,
-  setCachedDoc,
-} from "../lib/blocks-cache";
+import { dropCachedDoc, getCachedDoc, setCachedDoc } from "../lib/blocks-cache";
 import { AtlasBubbleMenu } from "./bubble-menu";
 
 export interface TiptapEditorHandle {
@@ -66,162 +62,154 @@ export interface TiptapEditorProps {
  *  - Parsed docs live in a module-level cache so revisiting a
  *    previously-loaded document is synchronous (JSON, not markdown).
  */
-export const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
-  function TiptapEditor(
-    { documentId, initialMarkdown, editable = true, onDirty, className, placeholder },
-    ref,
-  ) {
-    const extensions = useMemo(
-      () => buildExtensions({ placeholder }),
-      [placeholder],
-    );
-    const loadedIdRef = useRef<string | null>(null);
-    const dirtyRef = useRef(false);
-    // Seed `swapping` true: tiptap dispatches an initial transaction
-    // during the view-mount that fires onUpdate BEFORE onCreate runs,
-    // so a parent setState there would land mid-render. onCreate
-    // flips it false on the next microtask.
-    const swappingRef = useRef(true);
-    const onDirtyRef = useRef(onDirty);
-    onDirtyRef.current = onDirty;
-    // BubbleMenu reads `editor.view.dom` in a layout effect that runs
-    // before EditorContent's view-mount layout effect (React commits
-    // children bottom-up). Gate it until we know the view exists.
-    const [viewReady, setViewReady] = useState(false);
+export const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(function TiptapEditor(
+  { documentId, initialMarkdown, editable = true, onDirty, className, placeholder },
+  ref,
+) {
+  const extensions = useMemo(() => buildExtensions({ placeholder }), [placeholder]);
+  const loadedIdRef = useRef<string | null>(null);
+  const dirtyRef = useRef(false);
+  // Seed `swapping` true: tiptap dispatches an initial transaction
+  // during the view-mount that fires onUpdate BEFORE onCreate runs,
+  // so a parent setState there would land mid-render. onCreate
+  // flips it false on the next microtask.
+  const swappingRef = useRef(true);
+  const onDirtyRef = useRef(onDirty);
+  onDirtyRef.current = onDirty;
+  // BubbleMenu reads `editor.view.dom` in a layout effect that runs
+  // before EditorContent's view-mount layout effect (React commits
+  // children bottom-up). Gate it until we know the view exists.
+  const [viewReady, setViewReady] = useState(false);
 
-    const editor = useEditor({
-      extensions,
-      editable,
-      // Defer the first view render out of React's render pass. Otherwise
-      // tiptap mounts our ReactNodeViewRenderer nodes (code-block/toggle/
-      // callout) synchronously during render, and each one calls flushSync
-      // mid-commit → "flushSync was called from inside a lifecycle" warning
-      // storm + jank when a KB tab with those blocks is revealed on switch.
-      immediatelyRender: false,
-      // Open notes without focus so the suggestion plugin can't
-      // activate from a cursor that landed near an `@` chip. User has
-      // to click into the editor to focus + reposition the caret.
-      autofocus: false,
-      content: getInitialContent(documentId, initialMarkdown),
-      onCreate: ({ editor }) => {
-        // Stamp the id so onUpdate knows which entry to cache against.
-        loadedIdRef.current = documentId;
-        swappingRef.current = true;
-        // Defer to a microtask: onCreate runs inside tiptap's mount effect,
-        // so dispatching `rehydrateMentions`'s transaction here would mount
-        // Mention/NodeView nodes mid-commit → flushSync-in-render warning.
-        // The microtask runs before paint, so there's no visible flash of
-        // raw `@kind:id` text.
-        queueMicrotask(() => {
-          if (editor.isDestroyed) return;
-          // Re-wrap bare `@kind:id` text (tiptap-markdown parsed it as plain
-          // text) back into atomic Mention nodes so the suggestion plugin
-          // doesn't fire on them.
-          rehydrateMentions(editor);
-          cacheCurrentDoc(editor, documentId);
-          swappingRef.current = false;
-          setViewReady(true);
-        });
-      },
-      onUpdate: ({ editor }) => {
-        if (swappingRef.current) return;
-        if (loadedIdRef.current) {
-          cacheCurrentDoc(editor, loadedIdRef.current);
-        }
-        if (!dirtyRef.current) {
-          dirtyRef.current = true;
-          // Defer — onUpdate can fire synchronously during the parent's
-          // first commit, and a synchronous setState there violates
-          // React's render rules.
-          queueMicrotask(() => onDirtyRef.current?.());
-        }
-      },
-    });
-
-    // Keep `editable` in sync — useEditor only reads it on mount.
-    useEffect(() => {
-      editor?.setEditable(editable);
-    }, [editor, editable]);
-
-    // documentId change: swap in the new doc in place. We `flush()` the
-    // current doc first so unsaved edits get a chance to persist —
-    // knowledge-panel's `handleSelectEntry` also flushes, but doing it
-    // here too closes the race where the parent changes documentId
-    // without going through that callback.
-    useEffect(() => {
-      if (!editor) return;
-      if (loadedIdRef.current === documentId) return;
-      // Cache the outgoing doc one more time in case onUpdate hadn't
-      // fired since the last edit.
+  const editor = useEditor({
+    extensions,
+    editable,
+    // Defer the first view render out of React's render pass. Otherwise
+    // tiptap mounts our ReactNodeViewRenderer nodes (code-block/toggle/
+    // callout) synchronously during render, and each one calls flushSync
+    // mid-commit → "flushSync was called from inside a lifecycle" warning
+    // storm + jank when a KB tab with those blocks is revealed on switch.
+    immediatelyRender: false,
+    // Open notes without focus so the suggestion plugin can't
+    // activate from a cursor that landed near an `@` chip. User has
+    // to click into the editor to focus + reposition the caret.
+    autofocus: false,
+    content: getInitialContent(documentId, initialMarkdown),
+    onCreate: ({ editor }) => {
+      // Stamp the id so onUpdate knows which entry to cache against.
+      loadedIdRef.current = documentId;
+      swappingRef.current = true;
+      // Defer to a microtask: onCreate runs inside tiptap's mount effect,
+      // so dispatching `rehydrateMentions`'s transaction here would mount
+      // Mention/NodeView nodes mid-commit → flushSync-in-render warning.
+      // The microtask runs before paint, so there's no visible flash of
+      // raw `@kind:id` text.
+      queueMicrotask(() => {
+        if (editor.isDestroyed) return;
+        // Re-wrap bare `@kind:id` text (tiptap-markdown parsed it as plain
+        // text) back into atomic Mention nodes so the suggestion plugin
+        // doesn't fire on them.
+        rehydrateMentions(editor);
+        cacheCurrentDoc(editor, documentId);
+        swappingRef.current = false;
+        setViewReady(true);
+      });
+    },
+    onUpdate: ({ editor }) => {
+      if (swappingRef.current) return;
       if (loadedIdRef.current) {
         cacheCurrentDoc(editor, loadedIdRef.current);
       }
-      swappingRef.current = true;
-      const targetId = documentId;
-      // Defer the `setContent` transaction out of this effect's commit phase.
-      // setContent mounts ReactNodeViewRenderer nodes (code-block/toggle/
-      // callout), whose renderer calls flushSync — dispatching it directly in
-      // the effect warns "flushSync was called from inside a lifecycle". The
-      // microtask runs before paint, so the swap is still visually immediate.
-      queueMicrotask(() => {
-        if (editor.isDestroyed) return;
-        try {
-          const cached = getCachedDoc(targetId);
-          if (cached) {
-            editor.commands.setContent(cached, { emitUpdate: false });
-          } else if (initialMarkdown && initialMarkdown.trim().length > 0) {
-            editor.commands.setContent(initialMarkdown, { emitUpdate: false });
-            rehydrateMentions(editor);
-            cacheCurrentDoc(editor, targetId);
-          } else {
-            editor.commands.setContent("", { emitUpdate: false });
-          }
-          loadedIdRef.current = targetId;
-          dirtyRef.current = false;
-        } finally {
-          swappingRef.current = false;
-        }
-      });
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [documentId, editor]);
-
-    const flush = useCallback(async (): Promise<string | null> => {
-      if (!editor || !loadedIdRef.current) return null;
-      try {
-        // tiptap-markdown registers a `markdown` storage slot at
-        // runtime; @tiptap/core's Storage type doesn't know about it.
-        const storage = editor.storage as unknown as Record<
-          string,
-          { getMarkdown?: () => string }
-        >;
-        const md = storage.markdown?.getMarkdown?.();
-        cacheCurrentDoc(editor, loadedIdRef.current);
-        dirtyRef.current = false;
-        return typeof md === "string" ? md : null;
-      } catch {
-        return null;
+      if (!dirtyRef.current) {
+        dirtyRef.current = true;
+        // Defer — onUpdate can fire synchronously during the parent's
+        // first commit, and a synchronous setState there violates
+        // React's render rules.
+        queueMicrotask(() => onDirtyRef.current?.());
       }
-    }, [editor]);
+    },
+  });
 
-    useImperativeHandle(
-      ref,
-      () => ({
-        flush,
-        isDirty: () => dirtyRef.current,
-        evict: (id) => dropCachedDoc(id),
-        getEditor: () => editor,
-      }),
-      [editor, flush],
-    );
+  // Keep `editable` in sync — useEditor only reads it on mount.
+  useEffect(() => {
+    editor?.setEditable(editable);
+  }, [editor, editable]);
 
-    return (
-      <div className={cn("atlas-tiptap", className)} style={{ position: "relative" }}>
-        <EditorContent editor={editor} />
-        {editable && editor && viewReady && <AtlasBubbleMenu editor={editor} />}
-      </div>
-    );
-  },
-);
+  // documentId change: swap in the new doc in place. We `flush()` the
+  // current doc first so unsaved edits get a chance to persist —
+  // knowledge-panel's `handleSelectEntry` also flushes, but doing it
+  // here too closes the race where the parent changes documentId
+  // without going through that callback.
+  useEffect(() => {
+    if (!editor) return;
+    if (loadedIdRef.current === documentId) return;
+    // Cache the outgoing doc one more time in case onUpdate hadn't
+    // fired since the last edit.
+    if (loadedIdRef.current) {
+      cacheCurrentDoc(editor, loadedIdRef.current);
+    }
+    swappingRef.current = true;
+    const targetId = documentId;
+    // Defer the `setContent` transaction out of this effect's commit phase.
+    // setContent mounts ReactNodeViewRenderer nodes (code-block/toggle/
+    // callout), whose renderer calls flushSync — dispatching it directly in
+    // the effect warns "flushSync was called from inside a lifecycle". The
+    // microtask runs before paint, so the swap is still visually immediate.
+    queueMicrotask(() => {
+      if (editor.isDestroyed) return;
+      try {
+        const cached = getCachedDoc(targetId);
+        if (cached) {
+          editor.commands.setContent(cached, { emitUpdate: false });
+        } else if (initialMarkdown && initialMarkdown.trim().length > 0) {
+          editor.commands.setContent(initialMarkdown, { emitUpdate: false });
+          rehydrateMentions(editor);
+          cacheCurrentDoc(editor, targetId);
+        } else {
+          editor.commands.setContent("", { emitUpdate: false });
+        }
+        loadedIdRef.current = targetId;
+        dirtyRef.current = false;
+      } finally {
+        swappingRef.current = false;
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentId, editor]);
+
+  const flush = useCallback(async (): Promise<string | null> => {
+    if (!editor || !loadedIdRef.current) return null;
+    try {
+      // tiptap-markdown registers a `markdown` storage slot at
+      // runtime; @tiptap/core's Storage type doesn't know about it.
+      const storage = editor.storage as unknown as Record<string, { getMarkdown?: () => string }>;
+      const md = storage.markdown?.getMarkdown?.();
+      cacheCurrentDoc(editor, loadedIdRef.current);
+      dirtyRef.current = false;
+      return typeof md === "string" ? md : null;
+    } catch {
+      return null;
+    }
+  }, [editor]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      flush,
+      isDirty: () => dirtyRef.current,
+      evict: (id) => dropCachedDoc(id),
+      getEditor: () => editor,
+    }),
+    [editor, flush],
+  );
+
+  return (
+    <div className={cn("atlas-tiptap", className)} style={{ position: "relative" }}>
+      <EditorContent editor={editor} />
+      {editable && editor && viewReady && <AtlasBubbleMenu editor={editor} />}
+    </div>
+  );
+});
 
 /** Resolve the initial doc handed to `useEditor` on first mount. Tiptap
  *  parses markdown strings via tiptap-markdown automatically; if we
@@ -229,9 +217,7 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
 function getInitialContent(documentId: string, initialMarkdown: string) {
   const cached = getCachedDoc(documentId);
   if (cached) return cached;
-  return initialMarkdown && initialMarkdown.trim().length > 0
-    ? initialMarkdown
-    : "";
+  return initialMarkdown && initialMarkdown.trim().length > 0 ? initialMarkdown : "";
 }
 
 function cacheCurrentDoc(editor: Editor, id: string) {

@@ -10,7 +10,20 @@ const ROW_H = 30;
 const PAGE_SIZE = 100;
 /** Cap entries loaded into memory across all projects (most-recent-first). */
 const LOAD_CAP = 5000;
-const SOURCES = ["all", "atlas", "agent", "chat", "git", "knowledge", "github", "project", "system", "editor", "research", "canvas"] as const;
+const SOURCES = [
+  "all",
+  "atlas",
+  "agent",
+  "chat",
+  "git",
+  "knowledge",
+  "github",
+  "project",
+  "system",
+  "editor",
+  "research",
+  "canvas",
+] as const;
 
 function parseJsonl(raw: string): LogEntry[] {
   return raw
@@ -81,7 +94,10 @@ export function LogsTable({ projects }: { projects: ProjectMetrics[] }) {
     return all.filter((e) => {
       if (projectFilter !== "all" && e.projectPath !== projectFilter) return false;
       if (sourceFilter !== "all" && e.source !== sourceFilter) return false;
-      if (q && !(`${e.summary} ${e.kind} ${e.source} ${e.projectName ?? ""}`.toLowerCase().includes(q)))
+      if (
+        q &&
+        !`${e.summary} ${e.kind} ${e.source} ${e.projectName ?? ""}`.toLowerCase().includes(q)
+      )
         return false;
       return true;
     });
@@ -110,7 +126,9 @@ export function LogsTable({ projects }: { projects: ProjectMetrics[] }) {
     <div className="h-full flex flex-col rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] overflow-hidden">
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-2.5 h-[38px] shrink-0 border-b border-[var(--border-default)]">
-        <span className="text-[12px] font-medium text-[var(--text-primary)] mr-1">Activity log</span>
+        <span className="text-[12px] font-medium text-[var(--text-primary)] mr-1">
+          Activity log
+        </span>
         <span className="text-[10px] text-[var(--text-tertiary)]">{filtered.length}</span>
         <div className="flex-1" />
         <div className="flex items-center gap-1.5 h-[26px] rounded-md border border-[var(--border-default)] bg-[var(--bg-base)] px-2 w-[180px]">
@@ -122,12 +140,19 @@ export function LogsTable({ projects }: { projects: ProjectMetrics[] }) {
             className="flex-1 bg-transparent outline-none text-[11px] text-[var(--text-secondary)] placeholder:text-[var(--text-tertiary)]"
           />
         </div>
-        <Select value={sourceFilter} onChange={setSourceFilter} options={SOURCES as unknown as string[]} />
+        <Select
+          value={sourceFilter}
+          onChange={setSourceFilter}
+          options={SOURCES as unknown as string[]}
+        />
         <Select
           value={projectFilter}
           onChange={setProjectFilter}
           options={["all", ...projects.map((p) => p.projectPath)]}
-          labels={{ all: "All projects", ...Object.fromEntries(projects.map((p) => [p.projectPath, p.projectName])) }}
+          labels={{
+            all: "All projects",
+            ...Object.fromEntries(projects.map((p) => [p.projectPath, p.projectName])),
+          }}
         />
       </div>
 
@@ -152,7 +177,14 @@ export function LogsTable({ projects }: { projects: ProjectMetrics[] }) {
               return (
                 <div
                   key={e.id}
-                  style={{ position: "absolute", top: 0, left: 0, width: "100%", height: ROW_H, transform: `translateY(${v.start}px)` }}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: ROW_H,
+                    transform: `translateY(${v.start}px)`,
+                  }}
                   className="flex items-center px-3 text-[11px] border-b border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]"
                 >
                   <span className="w-[120px] shrink-0 font-mono text-[10px] text-[var(--text-tertiary)]">
@@ -170,7 +202,10 @@ export function LogsTable({ projects }: { projects: ProjectMetrics[] }) {
                   <span className="w-[140px] shrink-0 truncate font-mono text-[var(--text-tertiary)]">
                     {e.kind}
                   </span>
-                  <span className="flex-1 min-w-0 truncate text-[var(--text-secondary)]" title={e.summary}>
+                  <span
+                    className="flex-1 min-w-0 truncate text-[var(--text-secondary)]"
+                    title={e.summary}
+                  >
                     {e.summary}
                   </span>
                 </div>
@@ -184,8 +219,8 @@ export function LogsTable({ projects }: { projects: ProjectMetrics[] }) {
       {filtered.length > PAGE_SIZE && (
         <div className="flex items-center justify-between px-3 h-[30px] shrink-0 border-t border-[var(--border-default)] text-[10px] text-[var(--text-tertiary)]">
           <span className="font-mono tabular-nums">
-            {clampedPage * PAGE_SIZE + 1}–{Math.min(filtered.length, (clampedPage + 1) * PAGE_SIZE)} of{" "}
-            {filtered.length}
+            {clampedPage * PAGE_SIZE + 1}–{Math.min(filtered.length, (clampedPage + 1) * PAGE_SIZE)}{" "}
+            of {filtered.length}
           </span>
           <div className="flex items-center gap-1">
             <button

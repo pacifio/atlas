@@ -19,7 +19,13 @@ import {
   warmDiffHighlightWorker,
   type LineTokens,
 } from "../lib/diff-highlight-cache";
-import { gitDiffStructured, type DiffSide, type DiffRow } from "../lib/git-diff-api";
+import {
+  gitDiffStructured,
+  diffStructuredText,
+  diffQueryKey,
+  type DiffSide,
+  type DiffRow,
+} from "../lib/git-diff-api";
 import {
   Panel,
   PanelGroup,
@@ -77,6 +83,27 @@ interface GitDiffPanelProps {
   staged?: boolean;
   /** When set, the diff for this file at a specific commit (via `git show`). */
   commit?: string | null;
+  /** Hide the tree's commit/branch picker — see `ChangedFilesTree.hidePicker`. */
+  hidePicker?: boolean;
+  /** Restrict the tree to these repo-relative paths — see
+   *  `ChangedFilesTree.only`. */
+  only?: string[];
+  /**
+   * Before/after text per path, bypassing git entirely.
+   *
+   * The agent chat needs this. A turn's diff is not a question git can answer:
+   * the working tree holds the CURRENT state, while a file created in turn 1,
+   * edited in turn 2 and deleted in turn 3 has three different correct diffs and
+   * only the tool arguments know which. When a path appears here, its diff is
+   * computed from these strings instead of from the repository.
+   */
+  textSources?: Record<string, { old: string; new: string }>;
+  /** Handle tree clicks instead of opening the Git Diff module tab — see
+   *  `ChangedFilesTree.onSelect`. */
+  onSelectFile?: (path: string) => void;
+  /** Fired after "Open in editor" — a modal host closes itself here, or the
+   *  editor tab lands invisibly behind it. */
+  onOpenInEditor?: () => void;
 }
 
 function sideBg(side: DiffSide | null, isLeft: boolean): string | undefined {
@@ -283,6 +310,11 @@ export function GitDiffPanel({
   file = "",
   staged = false,
   commit = null,
+  hidePicker = false,
+  only,
+  textSources,
+  onSelectFile,
+  onOpenInEditor,
 }: GitDiffPanelProps) {
   const storeRepo = useGitStore.use.repoPath();
   const repoPath = repoPathProp || storeRepo || "";
@@ -298,11 +330,17 @@ export function GitDiffPanel({
   const toggleTree = () =>
     treeCollapsed ? treePanelRef.current?.expand() : treePanelRef.current?.collapse();
 
-  const queryKey = ["git-diff", repoPath, file, staged, commit] as const;
+  // A supplied text source wins over the repository — see `textSources`.
+  const textSource = textSources?.[file];
+  const queryKey = diffQueryKey(repoPath, file, staged, commit, textSource);
   const { data, isLoading, refetch } = useQuery({
     queryKey,
-    queryFn: () => gitDiffStructured(repoPath, file, staged, commit),
-    enabled: !!repoPath && !!file,
+    queryFn: () =>
+      textSource
+        ? diffStructuredText(textSource.old, textSource.new, file)
+        : gitDiffStructured(repoPath, file, staged, commit),
+    // Text-sourced diffs need no repo, so they must not be gated on one.
+    enabled: !!file && (!!textSource || !!repoPath),
     staleTime: 10_000,
   });
 
@@ -362,8 +400,7 @@ export function GitDiffPanel({
 
   const jump = (dir: 1 | -1) => {
     if (changeBlocks.length === 0) return;
-    const next =
-      (blockCursorRef.current + dir + changeBlocks.length) % changeBlocks.length;
+    const next = (blockCursorRef.current + dir + changeBlocks.length) % changeBlocks.length;
     blockCursorRef.current = next;
     virtualizer.scrollToIndex(changeBlocks[next], { align: "center" });
   };
@@ -434,114 +471,125 @@ export function GitDiffPanel({
         onCollapse={() => setTreeCollapsed(true)}
         onExpand={() => setTreeCollapsed(false)}
       >
-        <ChangedFilesTree repoPath={repoPath} staged={staged} currentFile={file} commit={commit} />
+        <ChangedFilesTree
+          repoPath={repoPath}
+          staged={staged}
+          currentFile={file}
+          commit={commit}
+          hidePicker={hidePicker}
+          only={only}
+          onSelect={onSelectFile}
+        />
       </Panel>
       <PanelResizeHandle className="w-px bg-border-default hover:bg-accent data-[resize-handle-active]:bg-accent transition-colors cursor-col-resize" />
 
       {/* Main column: toolbar + diff body */}
       <Panel className="min-w-0">
-      <div className="flex h-full min-w-0 flex-col">
-      {/* Toolbar */}
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-[var(--border-default)] px-3">
-        <button
-          onClick={toggleTree}
-          className="-ml-1 rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
-          title={treeCollapsed ? "Show changed files" : "Hide changed files"}
-        >
-          {treeCollapsed ? <PanelLeftOpen size={12} /> : <PanelLeftClose size={12} />}
-        </button>
-        <FileCode2 size={12} className="shrink-0 text-[var(--text-tertiary)]" />
-        <span className="truncate font-mono text-[11px] text-[var(--text-secondary)]">
-          {file || "Git Diff"}
-        </span>
-        {staged && (
-          <span className="shrink-0 rounded bg-[var(--bg-elevated)] px-1.5 py-px text-[9px] uppercase tracking-wide text-[var(--text-tertiary)]">
-            staged
-          </span>
-        )}
-        {stats && (
-          <span className="shrink-0 font-mono text-[10px]">
-            <span className="text-[var(--status-success)]">+{stats.additions}</span>{" "}
-            <span className="text-[var(--status-error)]">-{stats.deletions}</span>
-          </span>
-        )}
-        {!!file && (
-        <div className="ml-auto flex items-center gap-0.5">
-          <span className="mr-1 font-mono text-[10px] text-[var(--text-tertiary)] tabular-nums">
-            {diffCount} diff{diffCount !== 1 ? "s" : ""}
-          </span>
-          <button
-            onClick={() => jump(-1)}
-            disabled={diffCount === 0}
-            className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-30 cursor-pointer"
-            title="Previous change"
-          >
-            <ChevronUp size={12} />
-          </button>
-          <button
-            onClick={() => jump(1)}
-            disabled={diffCount === 0}
-            className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-30 cursor-pointer"
-            title="Next change"
-          >
-            <ChevronDown size={12} />
-          </button>
-          <button
-            onClick={() => void refetch()}
-            className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
-            title="Refresh"
-          >
-            <RefreshCw size={11} />
-          </button>
-          <button
-            onClick={() => void openFile(`${repoPath}/${file}`)}
-            className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
-            title="Open in editor"
-          >
-            <ExternalLink size={11} />
-          </button>
-        </div>
-        )}
-      </div>
-
-      {/* Body */}
-      {!file ? (
-        <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-[var(--text-tertiary)]">
-          Pick a file from the left to view its diff — or choose a commit to browse.
-        </div>
-      ) : isLoading ? (
-        <div className="px-3 py-8 text-center text-[11px] text-[var(--text-tertiary)]">
-          Loading diff…
-        </div>
-      ) : data?.isBinary ? (
-        <div className="px-3 py-8 text-center text-[11px] text-[var(--text-tertiary)]">
-          Binary file — no text diff to show.
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="px-3 py-8 text-center text-[11px] text-[var(--text-tertiary)]">
-          No changes.
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1">
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto hide-scrollbar">
-          <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-            {items.map((vr) => (
-              <DiffRow
-                key={vr.index}
-                row={rows[vr.index]}
-                prev={rows[vr.index - 1]}
-                next={rows[vr.index + 1]}
-                hlMap={hlMap}
-                top={vr.start}
-              />
-            ))}
+        <div className="flex h-full min-w-0 flex-col">
+          {/* Toolbar */}
+          <div className="flex h-8 shrink-0 items-center gap-2 border-b border-[var(--border-default)] px-3">
+            <button
+              onClick={toggleTree}
+              className="-ml-1 rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+              title={treeCollapsed ? "Show changed files" : "Hide changed files"}
+            >
+              {treeCollapsed ? <PanelLeftOpen size={12} /> : <PanelLeftClose size={12} />}
+            </button>
+            <FileCode2 size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+            <span className="truncate font-mono text-[11px] text-[var(--text-secondary)]">
+              {file || "Git Diff"}
+            </span>
+            {staged && (
+              <span className="shrink-0 rounded bg-[var(--bg-elevated)] px-1.5 py-px text-[9px] uppercase tracking-wide text-[var(--text-tertiary)]">
+                staged
+              </span>
+            )}
+            {stats && (
+              <span className="shrink-0 font-mono text-[10px]">
+                <span className="text-[var(--status-success)]">+{stats.additions}</span>{" "}
+                <span className="text-[var(--status-error)]">-{stats.deletions}</span>
+              </span>
+            )}
+            {!!file && (
+              <div className="ml-auto flex items-center gap-0.5">
+                <span className="mr-1 font-mono text-[10px] text-[var(--text-tertiary)] tabular-nums">
+                  {diffCount} diff{diffCount !== 1 ? "s" : ""}
+                </span>
+                <button
+                  onClick={() => jump(-1)}
+                  disabled={diffCount === 0}
+                  className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-30 cursor-pointer"
+                  title="Previous change"
+                >
+                  <ChevronUp size={12} />
+                </button>
+                <button
+                  onClick={() => jump(1)}
+                  disabled={diffCount === 0}
+                  className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-30 cursor-pointer"
+                  title="Next change"
+                >
+                  <ChevronDown size={12} />
+                </button>
+                <button
+                  onClick={() => void refetch()}
+                  className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+                  title="Refresh"
+                >
+                  <RefreshCw size={11} />
+                </button>
+                <button
+                  onClick={() => {
+                    void openFile(`${repoPath}/${file}`);
+                    onOpenInEditor?.();
+                  }}
+                  className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+                  title="Open in editor"
+                >
+                  <ExternalLink size={11} />
+                </button>
+              </div>
+            )}
           </div>
+
+          {/* Body */}
+          {!file ? (
+            <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-[var(--text-tertiary)]">
+              Pick a file from the left to view its diff — or choose a commit to browse.
+            </div>
+          ) : isLoading ? (
+            <div className="px-3 py-8 text-center text-[11px] text-[var(--text-tertiary)]">
+              Loading diff…
+            </div>
+          ) : data?.isBinary ? (
+            <div className="px-3 py-8 text-center text-[11px] text-[var(--text-tertiary)]">
+              Binary file — no text diff to show.
+            </div>
+          ) : rows.length === 0 ? (
+            <div className="px-3 py-8 text-center text-[11px] text-[var(--text-tertiary)]">
+              No changes.
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1">
+              <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto hide-scrollbar">
+                <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+                  {items.map((vr) => (
+                    <DiffRow
+                      key={vr.index}
+                      row={rows[vr.index]}
+                      prev={rows[vr.index - 1]}
+                      next={rows[vr.index + 1]}
+                      hlMap={hlMap}
+                      top={vr.start}
+                    />
+                  ))}
+                </div>
+              </div>
+              {/* Right: change minimap synced to the diff scroll position */}
+              <DiffMinimap rows={rows} scrollRef={scrollRef} />
+            </div>
+          )}
         </div>
-        {/* Right: change minimap synced to the diff scroll position */}
-        <DiffMinimap rows={rows} scrollRef={scrollRef} />
-        </div>
-      )}
-      </div>
       </Panel>
     </PanelGroup>
   );

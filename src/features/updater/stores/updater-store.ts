@@ -60,13 +60,15 @@ const useUpdaterStoreBase = create<UpdaterState>()((set) => ({
         // Background download must NOT steal focus — no modal here.
         modalOpen: false,
       }),
-    setReady: (version) => set({ phase: "ready", version, progress: null, error: null, modalOpen: true }),
+    setReady: (version) =>
+      set({ phase: "ready", version, progress: null, error: null, modalOpen: true }),
     setError: (message) => set({ phase: "error", error: message, modalOpen: true }),
     setChecking: (checking) => set({ checking }),
     beginApply: () => set({ phase: "applying" }),
     openModal: () => set({ modalOpen: true }),
     dismissModal: () => set({ modalOpen: false }),
-    reset: () => set({ phase: "idle", version: null, progress: null, error: null, modalOpen: false }),
+    reset: () =>
+      set({ phase: "idle", version: null, progress: null, error: null, modalOpen: false }),
   },
 }));
 

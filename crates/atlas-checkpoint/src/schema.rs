@@ -16,7 +16,7 @@ use rusqlite::Connection;
 use crate::error::{Error, Result};
 
 /// Bump when adding a migration, and add the matching arm in [`migrate`].
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     // Fast path, outside any transaction: the overwhelmingly common case is a
@@ -65,6 +65,11 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         if found < 6 {
             apply_v6_tolerant(conn)?;
         }
+        if found < 7 {
+            // Same tolerance as V6, for the same reason: pure ALTER TABLE, and
+            // a store that half-applied it must still be openable.
+            apply_tolerant(conn, V7)?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
     })();
@@ -90,7 +95,18 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 /// unavailable forever. Skipping exactly that error makes the migration
 /// idempotent for every tear shape while still surfacing anything real.
 fn apply_v6_tolerant(conn: &Connection) -> Result<()> {
-    for statement in V6.split(';') {
+    apply_tolerant(conn, V6)
+}
+
+/// Run an ALTER-TABLE-only migration statement by statement, skipping columns
+/// that a half-applied earlier run already added.
+///
+/// **The split is a naive `;`, so no comment in one of these migrations may
+/// contain a semicolon.** One in prose cuts the comment in half and feeds the
+/// remainder to SQLite as a statement, which fails the migration and leaves the
+/// store reporting itself unavailable — for every user, on the next launch.
+fn apply_tolerant(conn: &Connection, sql: &str) -> Result<()> {
+    for statement in sql.split(';') {
         let statement = statement.trim();
         if statement.is_empty() {
             continue;
@@ -104,6 +120,17 @@ fn apply_v6_tolerant(conn: &Connection) -> Result<()> {
     }
     Ok(())
 }
+
+const V7: &str = r#"
+-- The branch the repository was on when the Session started.
+--
+-- `SessionSummary.branches` was derived purely from a Session's Checkpoints, so
+-- a Session that produced no commit (most of them) had no branch at all, and
+-- the Timeline's branch filter could not see it. The branch is known at the
+-- moment the prompt is sent, so recording it there gives every Session one, and
+-- a Session that later lands commits on other branches shows the union.
+ALTER TABLE agent_session ADD COLUMN branch TEXT;
+"#;
 
 const V1: &str = r#"
 -- One row per Session. Named `agent_session`, never `session`: the server's

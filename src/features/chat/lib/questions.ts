@@ -46,8 +46,7 @@ export function extractQuestions(tc: ToolCallRef): QuestionSpec[] | null {
     const qo = q as Record<string, unknown>;
     const question = typeof qo.question === "string" ? qo.question : "";
     const header = typeof qo.header === "string" ? qo.header : undefined;
-    const multiSelect =
-      typeof qo.multiSelect === "boolean" ? qo.multiSelect : undefined;
+    const multiSelect = typeof qo.multiSelect === "boolean" ? qo.multiSelect : undefined;
 
     const options: QuestionOption[] = [];
     const optsRaw = Array.isArray(qo.options) ? qo.options : [];
@@ -63,8 +62,7 @@ export function extractQuestions(tc: ToolCallRef): QuestionSpec[] | null {
           (typeof oo.name === "string" && oo.name) ||
           "";
         if (!label) continue;
-        const description =
-          typeof oo.description === "string" ? oo.description : undefined;
+        const description = typeof oo.description === "string" ? oo.description : undefined;
         options.push({ label, description });
       }
     }

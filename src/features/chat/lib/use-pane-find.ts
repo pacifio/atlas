@@ -15,22 +15,13 @@ import { useLayoutStore } from "@/features/layout/stores/layout-store";
  * pane moves *pane* focus without moving DOM focus — so an activeElement check
  * lets the other pane keep the keyboard and both finders fire.
  */
-export function usePaneFind(
-  tabId: string | undefined,
-): [boolean, (open: boolean) => void] {
+export function usePaneFind(tabId: string | undefined): [boolean, (open: boolean) => void] {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     if (!tabId) return;
     const handler = (e: KeyboardEvent) => {
-      if (
-        !(
-          (e.metaKey || e.ctrlKey) &&
-          e.key.toLowerCase() === "f" &&
-          !e.shiftKey &&
-          !e.altKey
-        )
-      ) {
+      if (!((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f" && !e.shiftKey && !e.altKey)) {
         return;
       }
       if (useLayoutStore.getState().activeTabId !== tabId) return;

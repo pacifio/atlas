@@ -4,12 +4,13 @@ import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
+import { ensureAgent, getAgentSync } from "./agents-api";
 import {
-  agents,
-  ensureDefaultAgent,
-  getDefaultAgentSync,
-  DEFAULT_PLUGIN_ID,
-} from "./agents-api";
+  isBusyAgentStatus,
+  pluginIdForAgent,
+  type AgentType,
+  type SwitchableAgent,
+} from "@/types/agent";
 import { invalidateLoad } from "./load-tokens";
 import { resumeSessionFast } from "./resume-session";
 
@@ -18,11 +19,7 @@ import { resumeSessionFast } from "./resume-session";
 function activeCwd(): string {
   const project = useProjectStore.getState().currentProject;
   const ws = useWorkspaceStore.getState();
-  return (
-    project?.path ??
-    ws.workspaces.find((w) => w.id === ws.activeWorkspaceId)?.path ??
-    ""
-  );
+  return project?.path ?? ws.workspaces.find((w) => w.id === ws.activeWorkspaceId)?.path ?? "";
 }
 
 /** Nudge the history sidebar to refetch all three agent session lists. The
@@ -45,6 +42,10 @@ interface OpenOpts {
   title: string;
   /** Project root for `loadSession`. */
   cwd: string;
+  /** The agent that ran this session. Resuming through the wrong plugin makes
+   *  `loadSession` fail and silently fall back to a blank session — the same
+   *  bug the sidebar fixed. Defaults to Claude for legacy callers. */
+  agentType?: AgentType;
 }
 
 function freshTabId(): string {
@@ -58,7 +59,12 @@ function freshTabId(): string {
  * load flow (focus-if-open, reuse-idle-tab-else-new) so it can be invoked from
  * anywhere (e.g. the workspace switcher's Chats section).
  */
-export async function openAgentSession({ acpSessionId, title, cwd }: OpenOpts): Promise<void> {
+export async function openAgentSession({
+  acpSessionId,
+  title,
+  cwd,
+  agentType,
+}: OpenOpts): Promise<void> {
   const chat = useChatStore.getState();
   const layout = useLayoutStore.getState();
   const { addTab, setActiveTab } = layout.actions;
@@ -94,8 +100,7 @@ export async function openAgentSession({ acpSessionId, title, cwd }: OpenOpts): 
   const activeId = layout.activeTabId;
   const activeTab = activeId ? layout.tabs.find((t) => t.id === activeId) : undefined;
   const activeSession = activeId ? chat.sessions[activeId] : undefined;
-  const reuse =
-    activeTab?.type === "chat" && (!activeSession || activeSession.status === "idle");
+  const reuse = activeTab?.type === "chat" && (!activeSession || activeSession.status === "idle");
   const targetTabId = reuse && activeId ? activeId : freshTabId();
 
   if (targetTabId !== activeId) {
@@ -121,14 +126,19 @@ export async function openAgentSession({ acpSessionId, title, cwd }: OpenOpts): 
     reuse &&
     targetTabId === activeId &&
     !!activeSession &&
-    ((activeSession.userMessageCount ?? 0) > 0 ||
-      activeSession.messages.length > 0);
+    ((activeSession.userMessageCount ?? 0) > 0 || activeSession.messages.length > 0);
 
   // Optimistic bind + spinner, then hydrate from the (cached) Rust session.
   clearSession(targetTabId);
   if (abandoningCurrent) refreshSessionLists();
   setSessionTitle(targetTabId, title.slice(0, 40));
-  const cached = getDefaultAgentSync();
+  // Resume through the session's OWN agent — loading a Codex/OpenCode session
+  // through the Claude plugin fails and falls back to a blank chat.
+  const pluginId = pluginIdForAgent(agentType);
+  if (agentType && agentType !== "custom") {
+    useChatStore.getState().actions.setSessionAgentType(targetTabId, agentType);
+  }
+  const cached = getAgentSync(pluginId);
   if (cached) setAcpBinding(targetTabId, cached.agent_id, acpSessionId, cwd);
   // The binding above is optimistic — gate sends until the backend really has
   // the session (see `ChatSession.resumePending`).
@@ -138,10 +148,10 @@ export async function openAgentSession({ acpSessionId, title, cwd }: OpenOpts): 
     // Two-stage: paint from disk in ~50ms, bind the agent concurrently. See
     // `resumeSessionFast` for why the old single-await chain felt slow.
     const { agent, snapshot } = await resumeSessionFast({
-      pluginId: DEFAULT_PLUGIN_ID,
+      pluginId,
       sessionId: acpSessionId,
       cwd,
-      ensure: ensureDefaultAgent,
+      ensure: () => ensureAgent(pluginId),
       cb: {
         paint: (msgs) => replaceMessages(targetTabId, msgs),
         onPainted: () => setTranscriptLoading(targetTabId, false),
@@ -156,9 +166,7 @@ export async function openAgentSession({ acpSessionId, title, cwd }: OpenOpts): 
   } catch (err) {
     setTranscriptLoading(targetTabId, false);
     setResumePending(targetTabId, false);
-    toast.error(
-      `Couldn't open session: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    toast.error(`Couldn't open session: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -173,18 +181,21 @@ export async function openAgentSession({ acpSessionId, title, cwd }: OpenOpts): 
  * The fresh session is NOT added to history until the user actually submits
  * (the sidebar filters on `userMessageCount > 0`).
  *
- * New chat ALWAYS resets the current tab in place — even mid-stream — because
- * jumping to a new tab breaks the flow and scrambles the thread. Nothing is
- * lost: the Rust SessionWorker keeps running independently of this frontend
- * reset and persists the turn's transcript to disk, so the abandoned chat
- * reappears in the history sidebar. We DO cancel that in-flight turn first so a
- * chat the user walked away from doesn't keep burning tokens invisibly.
+ * If the current chat is BUSY (running, or waiting on a permission), it is left
+ * completely alone — Atlas's whole point is many agents working concurrently, so
+ * "new chat" must never stop or orphan a live turn. We open a fresh tab beside
+ * it instead (multiple chat tabs already coexist — `openAgentSession` spawns one
+ * whenever the active chat is running). Only an IDLE chat is reset in place.
+ *
+ * `agent` binds the fresh session to a specific agent — the busy branch of the
+ * ⌥/ cycle and the composer's agent switcher route here so switching agents
+ * mid-turn spawns a new chat instead of killing the live one.
  */
-export function openNewAgentChat(): void {
+export function openNewAgentChat(agent?: SwitchableAgent): void {
   const layout = useLayoutStore.getState();
   const chat = useChatStore.getState();
   const { addTab, setActiveTab } = layout.actions;
-  const { clearSession, createSession } = chat.actions;
+  const { clearSession, createSession, switchChatAgent } = chat.actions;
 
   const focus = (id: string) =>
     window.dispatchEvent(new CustomEvent("atlas:chat-focus", { detail: { tabId: id } }));
@@ -197,19 +208,14 @@ export function openNewAgentChat(): void {
     ? layout.tabs.find((t) => t.id === layout.activeTabId && t.type === "chat")
     : undefined;
   const existing = activeChatTab ?? layout.tabs.find((t) => t.type === "chat");
-  if (existing) {
+  if (existing && !isBusyAgentStatus(chat.sessions[existing.id]?.status)) {
     setActiveTab(existing.id);
-    const s = chat.sessions[existing.id];
-    // Stop an in-flight turn before resetting so it doesn't keep streaming into
-    // an orphaned (hidden) session. Its transcript still persists → history.
-    if (s?.status === "running" && s.acpAgentId && s.acpSessionId) {
-      agents.cancel({ agent_id: s.acpAgentId, session_id: s.acpSessionId }).catch(() => {});
-    }
     // Cancel any in-flight history load targeting this tab BEFORE clearing, so a
     // resolving `loadSession → replaceMessages` chain can't repaint the freshly
     // cleared blank session with the old transcript.
     invalidateLoad(existing.id);
     clearSession(existing.id);
+    if (agent) switchChatAgent(existing.id, agent);
     focus(existing.id);
     // The abandoned conversation persists to disk per-turn, but its live row was
     // the sidebar's only handle on it until a disk refetch. Re-list now so it
@@ -218,9 +224,11 @@ export function openNewAgentChat(): void {
     return;
   }
 
-  // No chat tab open yet → create the one and only one.
+  // No chat tab open, or the current chat is mid-turn → fresh tab.
   const id = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   addTab({ id, type: "chat", title: "Agents", closable: true, dirty: false, data: {} });
   createSession(id);
+  if (agent) switchChatAgent(id, agent);
   setActiveTab(id);
+  focus(id);
 }

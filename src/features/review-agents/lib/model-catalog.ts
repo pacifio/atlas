@@ -12,18 +12,9 @@
 
 /** Best-first preferred coding models per provider. Also the offline fallback. */
 const PREFERRED: Record<string, string[]> = {
-  anthropic: [
-    "claude-opus-4-8",
-    "claude-sonnet-4-6",
-    "claude-opus-4-1",
-    "claude-sonnet-4-5",
-  ],
+  anthropic: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-opus-4-1", "claude-sonnet-4-5"],
   openai: ["gpt-5.1", "gpt-5", "o4-mini", "gpt-4.1", "gpt-4o"],
-  google: [
-    "gemini-3.1-pro-preview",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-  ],
+  google: ["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash"],
   xai: ["grok-4", "grok-code-fast-1", "grok-3"],
   deepseek: ["deepseek-reasoner", "deepseek-chat"],
   mistral: ["mistral-large-latest", "codestral-latest"],
@@ -36,11 +27,7 @@ const PREFERRED: Record<string, string[]> = {
   fireworks: ["accounts/fireworks/models/qwen3-coder-480b-a35b-instruct"],
   deepinfra: ["Qwen/Qwen3-Coder-480B-A35B-Instruct", "deepseek-ai/DeepSeek-V3"],
   cerebras: ["qwen-3-coder-480b", "llama-3.3-70b"],
-  openrouter: [
-    "anthropic/claude-sonnet-4.6",
-    "google/gemini-3.1-pro",
-    "qwen/qwen3-coder",
-  ],
+  openrouter: ["anthropic/claude-sonnet-4.6", "google/gemini-3.1-pro", "qwen/qwen3-coder"],
   perplexity: ["sonar-reasoning-pro", "sonar-pro"],
   cohere: ["command-a-03-2025"],
 };
@@ -70,7 +57,7 @@ const NON_CODING = [
 ];
 
 /** Whether `id` looks like a usable text/coding model (vs an embedding/TTS/etc.). */
-export function isCodingModel(id: string): boolean {
+function isCodingModel(id: string): boolean {
   const lower = id.toLowerCase();
   return !NON_CODING.some((bad) => lower.includes(bad));
 }

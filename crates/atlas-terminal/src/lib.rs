@@ -40,7 +40,12 @@ impl TerminalManager {
         cols: u16,
         rows: u16,
         cwd: Option<&str>,
-        sender: mpsc::UnboundedSender<TerminalOutput>,
+        // BOUNDED. When the consumer falls behind, `blocking_send` parks this
+        // session's reader thread, the kernel tty queue fills, and the child's
+        // write() stalls — real flow control instead of unbounded buffering
+        // (the same backpressure shape Ghostty's fixed ring of read buffers
+        // produces). Nothing is ever dropped.
+        sender: mpsc::Sender<TerminalOutput>,
     ) -> anyhow::Result<String> {
         let pty_system = native_pty_system();
         let pair = pty_system.openpty(PtySize {
@@ -108,7 +113,7 @@ impl TerminalManager {
                             id: session_id.clone(),
                             data: buf[..n].to_vec(),
                         };
-                        if sender.send(output).is_err() {
+                        if sender.blocking_send(output).is_err() {
                             break;
                         }
                     }
@@ -159,6 +164,43 @@ impl TerminalManager {
         Ok(())
     }
 
+    /// Kill the PTY's foreground job without killing the login shell. Returns
+    /// false when the shell already owns the foreground (the job exited, or the
+    /// terminal is idle), which also makes a late force-stop click race-safe.
+    pub fn kill_foreground(&self, id: &str) -> anyhow::Result<bool> {
+        let session = self
+            .sessions
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("Terminal session not found: {}", id))?;
+
+        #[cfg(unix)]
+        {
+            let foreground = session
+                .master
+                .lock()
+                .map_err(|_| anyhow::anyhow!("terminal master mutex poisoned"))?
+                .process_group_leader();
+            let Some(pgid) = foreground_job_pgid(session.pid, foreground) else {
+                return Ok(false);
+            };
+            let result = unsafe { libc::kill(-pgid, libc::SIGKILL) };
+            if result == 0 {
+                return Ok(true);
+            }
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                return Ok(false);
+            }
+            return Err(error.into());
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = session;
+            anyhow::bail!("Force stopping foreground terminal jobs is unsupported on this platform")
+        }
+    }
+
     pub fn close(&mut self, id: &str) {
         self.sessions.remove(id);
     }
@@ -166,6 +208,25 @@ impl TerminalManager {
     /// PID of the session's login shell (for `cwd_of_pid`).
     pub fn pid(&self, id: &str) -> Option<u32> {
         self.sessions.get(id)?.pid
+    }
+}
+
+#[cfg(unix)]
+fn foreground_job_pgid(shell_pid: Option<u32>, foreground_pgid: Option<i32>) -> Option<i32> {
+    let pgid = foreground_pgid.filter(|pid| *pid > 0)?;
+    (shell_pid != Some(pgid as u32)).then_some(pgid)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::foreground_job_pgid;
+
+    #[test]
+    fn foreground_job_excludes_the_login_shell() {
+        assert_eq!(foreground_job_pgid(Some(42), Some(42)), None);
+        assert_eq!(foreground_job_pgid(Some(42), Some(84)), Some(84));
+        assert_eq!(foreground_job_pgid(Some(42), None), None);
+        assert_eq!(foreground_job_pgid(Some(42), Some(0)), None);
     }
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "atlas",
-  "version": "0.2.4",
+  "version": "0.2.6",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,16 +11,13 @@
     "dev:app": "node scripts/with-posthog-env.mjs tauri dev",
     "build:app": "node scripts/with-posthog-env.mjs tauri build --bundles app",
     "build:app:dmg": "node scripts/with-posthog-env.mjs tauri build --bundles app,dmg",
-    "lint": "eslint src/",
-    "format": "prettier --write src/"
-  },
-  "overrides": {
-    "@codemirror/view": "^6.43.0",
-    "@codemirror/state": "^6.6.0"
-  },
-  "resolutions": {
-    "@codemirror/view": "^6.43.0",
-    "@codemirror/state": "^6.6.0"
+    "lint": "oxlint src/",
+    "format": "oxfmt --write src/",
+    "format:check": "oxfmt --check src/",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "prepare": "husky"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
@@ -41,6 +38,7 @@
     "@codemirror/search": "^6.6.0",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.43.0",
+    "@lezer/highlight": "^1.2.3",
     "@lobehub/icons": "^5.10.0",
     "@radix-ui/react-context-menu": "^2",
     "@radix-ui/react-dialog": "^1",
@@ -48,12 +46,13 @@
     "@radix-ui/react-popover": "^1",
     "@tanstack/react-query": "^5.96.2",
     "@tanstack/react-table": "^8.21.3",
-    "@tanstack/react-virtual": "^3",
+    "@tanstack/react-virtual": "^3.14.9",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tiptap/core": "^3.23.6",
+    "@tiptap/extension-bold": "^3.23.6",
     "@tiptap/extension-code-block-lowlight": "^3.23.6",
     "@tiptap/extension-highlight": "^3.23.6",
     "@tiptap/extension-link": "^3.23.6",
@@ -86,35 +85,56 @@
     "mermaid": "^11.15.0",
     "pdfjs-dist": "^5.4.296",
     "pixi.js": "^8.18.1",
+    "posthog-js": "^1.396.3",
     "react": "^19",
     "react-dom": "^19",
     "react-markdown": "^10.1.0",
     "react-pdf": "^10.4.1",
     "react-resizable-panels": "^2",
-    "posthog-js": "^1.396.3",
     "recharts": "^3.8.1",
     "rehype-highlight": "^7.0.2",
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "rehype-stringify": "^10.0.1",
     "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
     "sonner": "^2",
     "tailwind-merge": "^3",
     "tiptap-markdown": "^0.9.0",
+    "unified": "^11.0.5",
     "zustand": "^5"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4",
     "@tauri-apps/cli": "^2.11.2",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/hast": "^3.0.4",
     "@types/matter-js": "^0.20.2",
+    "@types/node": "^26.1.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4",
-    "eslint": "^9",
-    "postcss": "^8",
-    "prettier": "^3",
+    "happy-dom": "^20.11.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.3.0",
+    "oxfmt": "^0.62.0",
+    "oxlint": "^1.77.0",
     "tailwindcss": "^4",
     "typescript": "^5.7",
-    "vite": "^6"
-  }
+    "vite": "^6",
+    "vitest": "^4.1.10"
+  },
+  "resolutions": {
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.43.0"
+  },
+  "overrides": {
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.43.0"
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }

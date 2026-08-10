@@ -112,7 +112,10 @@ export function PdfViewer({ filePath, tabId }: PdfViewerProps) {
         onZoomOut={() => setZoom((z) => Math.max(0.5, z - 0.2))}
       />
 
-      <div ref={scrollRef} className="flex flex-1 justify-center overflow-auto bg-[var(--bg-canvas)] p-8">
+      <div
+        ref={scrollRef}
+        className="flex flex-1 justify-center overflow-auto bg-[var(--bg-canvas)] p-8"
+      >
         {error ? (
           <div className="mt-20 text-[12px] text-[var(--status-error)]">{error}</div>
         ) : pdfFile ? (
@@ -121,7 +124,11 @@ export function PdfViewer({ filePath, tabId }: PdfViewerProps) {
             onLoadSuccess={(pdf) => setNumPages(pdf.numPages)}
             onLoadError={(e) => setError(e.message || "Failed to load PDF document.")}
             loading={<PdfSpinner label="Loading PDF" />}
-            error={<div className="mt-20 text-[12px] text-[var(--status-error)]">Failed to load PDF document.</div>}
+            error={
+              <div className="mt-20 text-[12px] text-[var(--status-error)]">
+                Failed to load PDF document.
+              </div>
+            }
             className="flex flex-col items-center gap-4"
           >
             {Array.from({ length: numPages }, (_, i) => (
@@ -138,7 +145,15 @@ export function PdfViewer({ filePath, tabId }: PdfViewerProps) {
 
 /** One rendered page + its annotation overlay. Measures its own rendered size
  *  so the overlay (normalized coords) maps to exact pixels. */
-function PdfPage({ pdfPath, pageNumber, width }: { pdfPath: string; pageNumber: number; width: number }) {
+function PdfPage({
+  pdfPath,
+  pageNumber,
+  width,
+}: {
+  pdfPath: string;
+  pageNumber: number;
+  width: number;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const { width: w, height: h } = useElementSize(ref);
   return (
@@ -149,12 +164,17 @@ function PdfPage({ pdfPath, pageNumber, width }: { pdfPath: string; pageNumber: 
         renderTextLayer
         renderAnnotationLayer
         loading={
-          <div className="flex items-center justify-center bg-white" style={{ width, height: width * 1.29 }}>
+          <div
+            className="flex items-center justify-center bg-white"
+            style={{ width, height: width * 1.29 }}
+          >
             <Loader2 size={16} className="animate-spin text-[var(--text-tertiary)]" />
           </div>
         }
       />
-      {w > 0 && h > 0 && <AnnotationLayer pdfPath={pdfPath} page={pageNumber} pageW={w} pageH={h} />}
+      {w > 0 && h > 0 && (
+        <AnnotationLayer pdfPath={pdfPath} page={pageNumber} pageW={w} pageH={h} />
+      )}
     </div>
   );
 }

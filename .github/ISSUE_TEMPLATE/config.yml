@@ -1,0 +1,13 @@
+# Kept enabled on purpose. Already-installed Atlas builds link to
+# /issues/new?title=…&body=… with no `template=` — disabling blank issues
+# redirects that to the template chooser and silently drops the prefilled
+# body, losing whatever the user typed in the feedback panel. It also gives
+# anything that fits neither form somewhere to go.
+blank_issues_enabled: true
+contact_links:
+  - name: Question about Atlas
+    url: https://discord.gg/GmnFggaPfP
+    about: Ask in #dev on Discord rather than opening an issue.
+  - name: Report a security vulnerability
+    url: https://github.com/pacifio/atlas/security/policy
+    about: Don't open a public issue for a vulnerability — see SECURITY.md for how to report it privately.

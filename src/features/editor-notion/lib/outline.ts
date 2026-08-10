@@ -27,7 +27,7 @@ function slugify(text: string): string {
 
 /** Walk the doc once and emit headings — used by both the hook and any
  *  imperative callers that just want a snapshot. */
-export function extractOutline(editor: Editor): OutlineHeading[] {
+function extractOutline(editor: Editor): OutlineHeading[] {
   const out: OutlineHeading[] = [];
   const slugCount = new Map<string, number>();
   editor.state.doc.descendants((node, pos) => {
@@ -73,10 +73,7 @@ export function useEditorOutline(editor: Editor | null): OutlineHeading[] {
 
 /** Returns the id of the heading whose top is closest to (but above) the
  *  scroll container's top. Recomputes on scroll + on outline changes. */
-export function useActiveHeading(
-  editor: Editor | null,
-  headings: OutlineHeading[],
-): string | null {
+export function useActiveHeading(editor: Editor | null, headings: OutlineHeading[]): string | null {
   const [activeId, setActiveId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -140,11 +137,13 @@ export function jumpToHeading(editor: Editor, pos: number): void {
   // Fallback: dispatch a scroll-into-view tr at the position.
   try {
     const { state } = view;
-    const tr = state.tr.setSelection(
-      // setTextSelection via tr.doc helper isn't on Transaction; let the
-      // chain command do it instead.
-      state.selection,
-    ).scrollIntoView();
+    const tr = state.tr
+      .setSelection(
+        // setTextSelection via tr.doc helper isn't on Transaction; let the
+        // chain command do it instead.
+        state.selection,
+      )
+      .scrollIntoView();
     void tr;
     editor.chain().focus().setTextSelection(pos).scrollIntoView().run();
   } catch {
@@ -157,10 +156,7 @@ function findScrollParent(el: HTMLElement | null): HTMLElement | null {
   while (cur) {
     const style = window.getComputedStyle(cur);
     const overflowY = style.overflowY;
-    if (
-      (overflowY === "auto" || overflowY === "scroll") &&
-      cur.scrollHeight > cur.clientHeight
-    ) {
+    if ((overflowY === "auto" || overflowY === "scroll") && cur.scrollHeight > cur.clientHeight) {
       return cur;
     }
     cur = cur.parentElement;

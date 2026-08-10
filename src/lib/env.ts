@@ -11,10 +11,3 @@
 // `.app`s.
 
 export const isDev: boolean = import.meta.env.DEV;
-
-/**
- * Vite's `MODE` is "development" / "production" by default but can be
- * overridden via `--mode <name>`. Useful when you want to branch on a
- * named environment (e.g. a staging build).
- */
-export const mode: string = import.meta.env.MODE;

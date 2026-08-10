@@ -194,12 +194,16 @@ pub fn evaluate(store: &Store, workspace_id: &str, host: HostSignals) -> Result<
     if host.expects_watcher && !host.watcher_attached {
         issues.push(HealthIssue {
             state: HealthState::Stopped,
-            reason: "The git watcher for this Workspace is not running, so commits are not being \
-                     linked to Sessions."
-                .into(),
-            next_step: "Reopen the Workspace to restart it. Commits made meanwhile are picked up \
-                        by the open-time walk."
-                .into(),
+            // Kept to one short sentence: the host renders each issue as a
+            // single truncating line, and this one has to survive a 352px
+            // popover intact.
+            reason: "Git watcher stopped — commits aren't being linked.".into(),
+            // No longer "reopen the Workspace": the host retries the watcher on
+            // every health poll and again when the banner is clicked, so by the
+            // time anyone reads this the easy fix has already been attempted.
+            // Commits made meanwhile are not lost — the open-time walk picks
+            // them up.
+            next_step: "Click to retry. Commits made meanwhile are still picked up.".into(),
         });
     }
 

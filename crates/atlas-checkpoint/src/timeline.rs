@@ -58,13 +58,26 @@ pub struct SessionSummary {
     pub message_count: i64,
     pub tool_call_count: i64,
     pub checkpoint_count: i64,
-    /// Branches the Session's Checkpoints landed on, deduplicated. Drives the
-    /// branch filter; empty for a Session with no linked commit yet.
+    /// Every branch this Session touched: the one it started on, plus every
+    /// branch its Checkpoints landed on, deduplicated. The first entry is the
+    /// starting branch when there is one, so a row can show a single branch
+    /// without picking arbitrarily.
     pub branches: Vec<String>,
     pub insertions: i64,
     pub deletions: i64,
     pub files_touched: i64,
+    /// Input + output. Zero for an agent that reports no split — see
+    /// `context_used`.
     pub total_tokens: i64,
+    /// Context-window occupancy, for agents that report only that.
+    ///
+    /// ACP agents (Claude Code, Codex) do not emit a usage split, so
+    /// `total_tokens` is 0 for them and this is the only figure there is. It is
+    /// kept separate rather than folded into the total because occupancy is not
+    /// consumption — a compaction drops it, and presenting it as tokens spent
+    /// would be a lie that gets worse the longer a Session runs.
+    pub context_used: Option<i64>,
+    pub context_size: Option<i64>,
     /// Something could not be recorded. The viewer surfaces this per row so a
     /// hole in the record is visible where the record is read.
     pub needs_attention: bool,
@@ -257,10 +270,18 @@ fn summarize(
     message_count: i64,
     tool_call_count: i64,
 ) -> SessionSummary {
-    let mut branches: Vec<String> =
-        checkpoints.iter().filter_map(|c| c.branch.clone()).collect();
-    branches.sort();
-    branches.dedup();
+    // Starting branch first, then the Checkpoint branches — so a row that shows
+    // one branch shows the one the work began on rather than whichever sorted
+    // first.
+    let mut branches: Vec<String> = session.branch.iter().cloned().collect();
+    let mut landed: Vec<String> = checkpoints.iter().filter_map(|c| c.branch.clone()).collect();
+    landed.sort();
+    landed.dedup();
+    for branch in landed {
+        if !branches.contains(&branch) {
+            branches.push(branch);
+        }
+    }
 
     // Distinct paths, not touch events: editing one file four times is one file.
     let mut files: Vec<&str> =
@@ -286,9 +307,64 @@ fn summarize(
         deletions: checkpoints.iter().map(|c| c.deletions).sum(),
         files_touched: files.len() as i64,
         total_tokens: (totals.input_tokens + totals.output_tokens) as i64,
+        context_used: totals.context_used.map(|n| n as i64),
+        context_size: totals.context_size.map(|n| n as i64),
         needs_attention: session.needs_attention,
         attention_reason: session.attention_reason.clone(),
     }
+}
+
+/// One Checkpoint, flat enough to list.
+///
+/// A deliberately smaller shape than [`TimelineEntry`]: this is a jump target,
+/// not a reading surface. It carries what identifies a commit (sha, subject,
+/// branch), what it cost (`insertions`/`deletions`/`files`) and enough to open
+/// the Session it belongs to — and nothing else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointRow {
+    pub session_id: String,
+    /// The Session's title, so a row says which work produced the commit.
+    pub session_title: Option<String>,
+    pub commit_sha: String,
+    /// Read from git at display time, like every other commit subject here —
+    /// `None` when the repository has moved or the commit is gone.
+    pub commit_subject: Option<String>,
+    pub branch: Option<String>,
+    pub link_state: LinkState,
+    pub insertions: i64,
+    pub deletions: i64,
+    pub files: usize,
+    pub at: String,
+}
+
+/// The newest Checkpoints across a Workspace, most recent first.
+///
+/// `subject_for` is a callback for the same reason it is on [`detail`]: the read
+/// model has to work for a Workspace whose repository has moved, where the rows
+/// still render without subjects.
+pub fn recent_checkpoints(
+    store: &Store,
+    workspace_id: &str,
+    limit: i64,
+    subject_for: impl Fn(&str) -> Option<String>,
+) -> Result<Vec<CheckpointRow>> {
+    Ok(store
+        .recent_checkpoints(workspace_id, limit)?
+        .into_iter()
+        .map(|(checkpoint, session_title)| CheckpointRow {
+            session_id: checkpoint.session_id,
+            session_title,
+            commit_subject: subject_for(&checkpoint.commit_sha),
+            commit_sha: checkpoint.commit_sha,
+            branch: checkpoint.branch,
+            link_state: checkpoint.link_state,
+            insertions: checkpoint.insertions,
+            deletions: checkpoint.deletions,
+            files: checkpoint.files_touched.len(),
+            at: checkpoint.created_at.to_rfc3339(),
+        })
+        .collect())
 }
 
 /// One Session as an ordered timeline.

@@ -54,7 +54,9 @@ export function DayTimeline({ day, blocks, nowMin, onNewSession }: Props) {
           <div className="flex items-center gap-2 text-[11px] text-text-tertiary whitespace-nowrap mt-2">
             <span>{fmtDur(day.focusMin)} focus</span>
             <span className="text-text-tertiary/50">·</span>
-            <span>{day.sessions} session{day.sessions === 1 ? "" : "s"}</span>
+            <span>
+              {day.sessions} session{day.sessions === 1 ? "" : "s"}
+            </span>
             {day.distractions > 0 && (
               <>
                 <span className="text-text-tertiary/50">·</span>
@@ -72,10 +74,7 @@ export function DayTimeline({ day, blocks, nowMin, onNewSession }: Props) {
         </button>
       </div>
 
-      <div
-        className="relative px-6 py-4"
-        style={{ minHeight: totalHeight + 32 }}
-      >
+      <div className="relative px-6 py-4" style={{ minHeight: totalHeight + 32 }}>
         <div className="relative" style={{ height: totalHeight, marginLeft: 56 }}>
           {hours.slice(0, -1).map((h, i) => (
             <div
@@ -106,9 +105,7 @@ export function DayTimeline({ day, blocks, nowMin, onNewSession }: Props) {
           {blocks.map((b) => {
             const top = minToY(b.startMin);
             const height = Math.max(28, minToY(b.endMin) - minToY(b.startMin));
-            return (
-              <TimelineBlock key={b.id} block={b} top={top} height={height} />
-            );
+            return <TimelineBlock key={b.id} block={b} top={top} height={height} />;
           })}
 
           {nowMin >= 0 && (
@@ -127,28 +124,16 @@ export function DayTimeline({ day, blocks, nowMin, onNewSession }: Props) {
   );
 }
 
-function TimelineBlock({
-  block,
-  top,
-  height,
-}: {
-  block: Block;
-  top: number;
-  height: number;
-}) {
+function TimelineBlock({ block, top, height }: { block: Block; top: number; height: number }) {
   const isFocus = block.type === "focus";
   const totalMin = Math.max(1, block.endMin - block.startMin);
-  const pct = block.elapsedMin
-    ? Math.min(100, (block.elapsedMin / totalMin) * 100)
-    : 0;
+  const pct = block.elapsedMin ? Math.min(100, (block.elapsedMin / totalMin) * 100) : 0;
 
   return (
     <div
       className={cn(
         "absolute left-2 right-2 rounded-md overflow-hidden border transition-shadow",
-        isFocus
-          ? "bg-bg-elevated border-border-default"
-          : "bg-bg-secondary border-border-subtle",
+        isFocus ? "bg-bg-elevated border-border-default" : "bg-bg-secondary border-border-subtle",
         block.current && "ring-1 ring-text-primary/40 shadow-lg",
       )}
       style={{ top, height }}

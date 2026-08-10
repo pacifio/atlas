@@ -34,7 +34,13 @@ function loadModelIds(provider: string): Promise<string[]> {
   return p;
 }
 
-function PickerDropdown({ trigger, children }: { trigger: React.ReactNode; children: React.ReactNode }) {
+function PickerDropdown({
+  trigger,
+  children,
+}: {
+  trigger: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
@@ -75,7 +81,13 @@ function ModelCombo({
   }, [models, q]);
 
   return (
-    <Popover.Root open={open} onOpenChange={(o) => { setOpen(o); if (!o) setQ(""); }}>
+    <Popover.Root
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) setQ("");
+      }}
+    >
       <Popover.Trigger asChild>
         <button className="flex min-w-0 items-center gap-1.5 h-[26px] rounded-full border border-border-default bg-bg-elevated px-2 text-[10px] font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors outline-none cursor-pointer">
           {loading && <Loader2 size={11} className="animate-spin text-text-tertiary" />}
@@ -112,7 +124,10 @@ function ModelCombo({
               filtered.map((id) => (
                 <button
                   key={id}
-                  onClick={() => { onSelect(id); setOpen(false); }}
+                  onClick={() => {
+                    onSelect(id);
+                    setOpen(false);
+                  }}
                   className="flex w-full items-center gap-2 px-2.5 h-[26px] text-left text-[11px] font-mono text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none"
                 >
                   <span className="flex-1 truncate">{id}</span>
@@ -177,7 +192,7 @@ export function ProviderModelSelector({
           <>
             {provider && <ProviderLogo id={provider} size={13} />}
             <span className="max-w-[100px] truncate">
-              {provider ? providerById(provider)?.name ?? provider : "Provider"}
+              {provider ? (providerById(provider)?.name ?? provider) : "Provider"}
             </span>
             <ChevronDown size={11} className="text-text-tertiary" />
           </>

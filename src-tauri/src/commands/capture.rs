@@ -53,7 +53,7 @@ use atlas_checkpoint::{
     Capture, FileWrite, Mode, Role, SessionKey, Source, Store, TokenTotals, ToolCallContent,
     ToolStatus, TurnContent, WorkspaceMode,
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// Lock a mutex, recovering from poisoning.
 ///
@@ -82,6 +82,10 @@ struct SessionBinding {
     native_session_id: String,
     agent: Option<String>,
     model: Option<String>,
+    /// Branch at the moment of the first prompt. Read once per Session — a
+    /// `git symbolic-ref` on every keystroke-triggered send would be a process
+    /// spawn on the send path for a value that does not change.
+    branch: Option<String>,
     cwd: String,
     /// The turn a message-appended delta belongs to. Message deltas carry no
     /// turn identity of their own, so the send path stamps it here. Seeded from
@@ -228,6 +232,10 @@ pub struct CaptureState {
     pending_turns: Mutex<HashMap<String, PendingTurn>>,
     /// How the drain gets an access token. Shared with the worker.
     token: TokenProvider,
+    /// How the worker tells the UI something was written. Late-bound like
+    /// `token`, for the same reason: the app handle does not exist yet when
+    /// this state is registered.
+    notify: Notifier,
     /// Every writing session store this process has open.
     stores: StoreRegistry,
     /// Set false when the worker thread dies (it should never — each job runs
@@ -240,6 +248,26 @@ pub struct CaptureState {
 /// A late-bound source of access tokens, shared between the command surface and
 /// the capture worker.
 type TokenProvider = Arc<Mutex<Option<Box<dyn Fn() -> Option<String> + Send>>>>;
+
+/// A late-bound window-event emitter, shared with the capture worker.
+type Notifier = Arc<Mutex<Option<AppHandle>>>;
+
+/// Emitted when the worker has written something a reader would want to see.
+///
+/// The Timeline board polls every 15 s as a fallback, which is fine for a
+/// background refresh and far too slow for the session you just started — it
+/// appears up to fifteen seconds after you sent the prompt. Capture writes move
+/// no git ref, so `atlas:git-changed` never fires for them and there was nothing
+/// else to listen to.
+const CAPTURE_CHANGED: &str = "atlas:capture-changed";
+
+/// Coalescing window for [`CAPTURE_CHANGED`].
+///
+/// One streaming turn produces dozens of jobs — every tool call, every finished
+/// message, every usage update. Emitting per job would have the board re-reading
+/// every project's store dozens of times a turn. Leading-edge plus trailing, so
+/// the first write of a burst shows immediately and the last one is not lost.
+const NOTIFY_DEBOUNCE: Duration = Duration::from_millis(250);
 
 /// Per-root drain backoff, owned by the worker.
 struct DrainBackoff {
@@ -287,6 +315,8 @@ impl CaptureState {
         // instead of failing it, and is exactly Local-mode behaviour.
         let token: TokenProvider = Arc::new(Mutex::new(None));
         let token_for_worker = token.clone();
+        let notify: Notifier = Arc::new(Mutex::new(None));
+        let notify_for_worker = notify.clone();
         let stores: StoreRegistry = Arc::new(Mutex::new(HashMap::new()));
         let stores_for_worker = stores.clone();
         let worker_alive = Arc::new(AtomicBool::new(true));
@@ -297,7 +327,9 @@ impl CaptureState {
         // milliseconds.
         std::thread::Builder::new()
             .name("atlas-capture".into())
-            .spawn(move || worker(rx, token_for_worker, stores_for_worker, alive_for_worker))
+            .spawn(move || {
+                worker(rx, token_for_worker, notify_for_worker, stores_for_worker, alive_for_worker)
+            })
             .expect("capture worker thread");
         Self {
             sessions: Mutex::new(HashMap::new()),
@@ -305,6 +337,7 @@ impl CaptureState {
             session_calls: Mutex::new(HashMap::new()),
             pending_turns: Mutex::new(HashMap::new()),
             token,
+            notify,
             stores,
             worker_alive,
             tx,
@@ -340,6 +373,15 @@ impl CaptureState {
     /// Called once from `setup`, after the auth core exists.
     pub fn install_token_provider(&self, provider: Box<dyn Fn() -> Option<String> + Send>) {
         *lock_ok(&self.token) = Some(provider);
+    }
+
+    /// Install the handle the worker emits [`CAPTURE_CHANGED`] through.
+    ///
+    /// Called once from `setup`. Until it is, the worker simply writes without
+    /// announcing, and the board's poll is the only refresh — which is the
+    /// behaviour that existed before this event.
+    pub fn install_notifier(&self, app: AppHandle) {
+        *lock_ok(&self.notify) = Some(app);
     }
 
     /// Record the user's prompt and bind the session, from the send path.
@@ -386,6 +428,9 @@ impl CaptureState {
                     native_session_id: session_id.to_string(),
                     agent: Some(plugin_id.to_string()),
                     model: model.map(str::to_string),
+                    // Resolved here, inside `or_insert_with`, so the `git` call
+                    // happens once per Session rather than on every send.
+                    branch: atlas_checkpoint::git::current_branch(Path::new(cwd)),
                     cwd: cwd.to_string(),
                     turn_seq: seed,
                 });
@@ -953,12 +998,23 @@ pub async fn capture_retry_failed(project_path: String, app: AppHandle) -> Resul
 /// inferred from "no events lately" — a quiet repository and a dead watcher are
 /// indistinguishable from the event stream, which is exactly how the clear-all
 /// bug stayed invisible.
+///
+/// **A missing watcher is healed here, not reported here.** An Organisation
+/// switch tears down every mounted Workspace and restarts the incoming one's
+/// watcher; if that restart loses a race, health had no way to do anything but
+/// tell the user to reopen the Workspace — advice for a problem one idempotent
+/// call fixes. So the poll attempts the restart itself and only reports what is
+/// still broken afterwards. `git_watch_start` is idempotent (it returns early
+/// when the same root is already watched), so the attempt is free on the
+/// overwhelmingly common healthy path.
 #[tauri::command]
 pub async fn capture_health(
     project_path: String,
     workspace_id: Option<String>,
     app: AppHandle,
 ) -> Result<atlas_checkpoint::CaptureHealth, String> {
+    heal_git_watcher(&app, &project_path, workspace_id.as_deref()).await;
+
     tauri::async_runtime::spawn_blocking(move || {
         let root = std::path::Path::new(&project_path);
         // A reader, so a status poll never waits behind an import — and
@@ -1022,6 +1078,62 @@ pub async fn capture_health(
     .map_err(|e| e.to_string())?
 }
 
+/// Restart this Workspace's git watcher if it should have one and does not.
+///
+/// Silent and best-effort: this is a repair attempt on a status poll, so a
+/// failure is not the poll's error to report — the health evaluation that runs
+/// straight afterwards reads the registry again and says so properly.
+///
+/// Not a repository, or already watched, and this is a no-op.
+async fn heal_git_watcher(app: &AppHandle, project_path: &str, workspace_id: Option<&str>) {
+    let root = std::path::Path::new(project_path);
+    if !atlas_checkpoint::git::is_repository(root) {
+        return;
+    }
+    {
+        let watchers = app.state::<super::git_watcher::GitWatcherState>();
+        let attached = workspace_id.is_some_and(|id| watchers.is_watching(id))
+            || watchers.is_watching_root(root);
+        if attached {
+            return;
+        }
+    }
+
+    // Straight through the command the frontend calls on Workspace open, so
+    // the repair path and the ordinary path cannot drift apart.
+    let state = app.state::<super::git_watcher::GitWatcherState>();
+    if let Err(e) = super::git_watcher::git_watch_start(
+        project_path.to_string(),
+        workspace_id.map(str::to_string),
+        app.clone(),
+        state,
+    )
+    .await
+    {
+        tracing::warn!(
+            target: "atlas::capture",
+            project = %project_path,
+            "git watcher self-heal failed: {e}"
+        );
+    }
+}
+
+/// Restart the git watcher for a Workspace and report the health that results.
+///
+/// The retry behind the health banner. Distinct from the silent heal on every
+/// poll because this one is a human pressing a button: it runs the same repair
+/// and then answers with the *new* state, so the banner either clears or says
+/// what is still wrong — rather than clearing optimistically and reappearing on
+/// the next poll.
+#[tauri::command]
+pub async fn capture_retry_watcher(
+    project_path: String,
+    workspace_id: Option<String>,
+    app: AppHandle,
+) -> Result<atlas_checkpoint::CaptureHealth, String> {
+    capture_health(project_path, workspace_id, app).await
+}
+
 fn off_health(summary: &str) -> atlas_checkpoint::CaptureHealth {
     atlas_checkpoint::CaptureHealth {
         state: atlas_checkpoint::HealthState::Off,
@@ -1050,6 +1162,32 @@ pub async fn artifacts_sessions(
         };
         let workspace_id = workspace_id.unwrap_or_else(|| project_path.clone());
         atlas_checkpoint::session_summaries(&store, &workspace_id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Per-agent session counts for this Workspace — one GROUP BY, no session
+/// bodies. Feeds the Memory panel's agent dropdown badges for the
+/// capture-backed agents (opencode/cursor/kilo) without loading full lists.
+#[tauri::command]
+pub async fn capture_agent_session_counts(
+    project_path: String,
+) -> Result<std::collections::HashMap<String, i64>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(store) = open_reader(&project_path)? else {
+            return Ok(std::collections::HashMap::new());
+        };
+        let mut counts = std::collections::HashMap::new();
+        for s in store
+            .sessions_for_workspace(&project_path)
+            .map_err(|e| e.to_string())?
+        {
+            if let Some(agent) = s.agent {
+                *counts.entry(agent).or_insert(0i64) += 1;
+            }
+        }
+        Ok(counts)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1157,6 +1295,90 @@ pub async fn artifacts_board(projects: Vec<String>) -> Result<Vec<BoardSession>,
         // happened to be read first".
         out.sort_by(|a, b| b.session.started_at.cmp(&a.session.started_at));
         out.truncate(limit);
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// One Checkpoint on the board, tagged with the project it came from.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardCheckpoint {
+    #[serde(flatten)]
+    pub checkpoint: atlas_checkpoint::CheckpointRow,
+    /// Each project has its own store, so a jump has to remember which one.
+    pub project_path: String,
+    pub project_name: String,
+}
+
+/// How many Checkpoints the recent-commits picker reads across all projects.
+///
+/// Smaller than [`BOARD_LIMIT`] on purpose: this is a "jump to something you
+/// remember doing" list, not a history. Anything older than the newest hundred
+/// is found by opening its Session, which is what the board is for.
+const CHECKPOINT_LIMIT: i64 = 100;
+
+/// The newest Checkpoints across every project, most recent first.
+///
+/// Subjects are resolved from git here for the same reason as
+/// [`artifacts_session`]: this layer knows the Workspace root, and git stays the
+/// single source of truth for a commit message. Unlike that command this asks
+/// git **once per project** with a batched log read rather than once per commit
+/// — a hundred Checkpoints would otherwise be a hundred process spawns to fill
+/// one dropdown.
+#[tauri::command]
+pub async fn artifacts_checkpoints(projects: Vec<String>) -> Result<Vec<BoardCheckpoint>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut out: Vec<BoardCheckpoint> = Vec::new();
+        for project_path in projects {
+            // One unreadable store must not blank the whole list.
+            let Ok(Some(store)) = open_reader(&project_path) else {
+                continue;
+            };
+            let root = Path::new(&project_path).to_path_buf();
+            let is_repo = atlas_checkpoint::git::is_repository(&root);
+
+            let Ok(rows) = atlas_checkpoint::recent_checkpoints(
+                &store,
+                &project_path,
+                CHECKPOINT_LIMIT,
+                |_| None,
+            ) else {
+                continue;
+            };
+
+            // Resolve subjects only for the shas this project actually returned.
+            let mut subjects: HashMap<String, String> = HashMap::new();
+            if is_repo {
+                for row in &rows {
+                    if subjects.contains_key(&row.commit_sha) {
+                        continue;
+                    }
+                    if let Ok(info) = atlas_checkpoint::git::commit_info(&root, &row.commit_sha) {
+                        subjects.insert(row.commit_sha.clone(), info.subject);
+                    }
+                }
+            }
+
+            let project_name = root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| project_path.clone());
+
+            out.extend(rows.into_iter().map(|mut row| {
+                row.commit_subject = subjects.get(&row.commit_sha).cloned();
+                BoardCheckpoint {
+                    checkpoint: row,
+                    project_path: project_path.clone(),
+                    project_name: project_name.clone(),
+                }
+            }));
+        }
+        // One ordering across every project, then cap — so the list means
+        // "newest" rather than "whichever project was read first".
+        out.sort_by(|a, b| b.checkpoint.at.cmp(&a.checkpoint.at));
+        out.truncate(CHECKPOINT_LIMIT as usize);
         Ok(out)
     })
     .await
@@ -1605,7 +1827,7 @@ fn sync_config<'a>(
 /// `None` rather than an empty store, because opening one would create it —
 /// and then merely looking at the Artifacts tab would plant an `.atlas/`
 /// directory in a Workspace nobody enabled.
-fn open_reader(project_path: &str) -> Result<Option<Store>, String> {
+pub(crate) fn open_reader(project_path: &str) -> Result<Option<Store>, String> {
     open_reader_raw(project_path).map_err(|e| e.to_string())
 }
 
@@ -1721,6 +1943,7 @@ fn open_in(stores: &StoreRegistry, root: &Path) -> Result<StoreHandle, String> {
 fn worker(
     rx: mpsc::Receiver<Job>,
     drain_token: TokenProvider,
+    notify: Notifier,
     stores: StoreRegistry,
     alive: Arc<AtomicBool>,
 ) {
@@ -1740,15 +1963,51 @@ fn worker(
     // the only place drains run.
     let backoff: BackoffMap = Arc::new(Mutex::new(HashMap::new()));
 
+    // Change notification, coalesced. `dirty` says a write landed that a reader
+    // would want; `last_emit` enforces the window. Starting `last_emit` a full
+    // window in the past makes the very first write emit immediately.
+    let mut dirty = false;
+    let mut last_emit = Instant::now() - NOTIFY_DEBOUNCE;
+    // The scan runs on its own clock now, because the receive timeout is short
+    // while there is a pending notification to flush.
+    let mut last_scan = Instant::now();
+
     loop {
+        // Short wait while a notification is pending, so the trailing edge of a
+        // burst is announced promptly rather than at the next scan.
+        let wait = if dirty { NOTIFY_DEBOUNCE } else { IMPORT_SCAN_INTERVAL };
         // A timeout rather than a blocking receive, so the ongoing transcript
         // scan reaches **every bound Workspace** — including backgrounded ones.
         // The existing sessions watcher is a global singleton pointed at the
         // active workspace, so inheriting it would miss exactly the terminal
         // Sessions this is meant to catch.
-        let job = match rx.recv_timeout(IMPORT_SCAN_INTERVAL) {
-            Ok(job) => job,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
+        let job = match rx.recv_timeout(wait) {
+            Ok(job) => Some(job),
+            Err(mpsc::RecvTimeoutError::Timeout) => None,
+            // The app is shutting down.
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        };
+
+        if let Some(job) = job {
+            // One panicking job must not kill the recorder for the rest of the
+            // process. The job is lost (and logged); the mutexes it may have
+            // poisoned are recovered by `lock_ok` everywhere.
+            //
+            // Every job except a drain changes something a reader can see —
+            // a drain only moves outbox state, which no view renders.
+            let visible = !matches!(job, Job::Drain { .. });
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                process_job(job, &mut session_ids, &drain_token, &stores, &backoff);
+            }));
+            if result.is_err() {
+                tracing::error!(target: "atlas::capture", "capture job panicked; job dropped");
+            }
+            dirty |= visible;
+        }
+
+        if last_scan.elapsed() >= IMPORT_SCAN_INTERVAL {
+            last_scan = Instant::now();
+            {
                 let open: Vec<(PathBuf, StoreHandle)> = lock_ok(&stores)
                     .iter()
                     .filter(|(_, handle)| handle.is_writer)
@@ -1774,20 +2033,17 @@ fn worker(
                         );
                     }
                 }
-                continue;
             }
-            // The app is shutting down.
-            Err(mpsc::RecvTimeoutError::Disconnected) => return,
-        };
+            // An import may have added Sessions, so the board wants to know.
+            dirty = true;
+        }
 
-        // One panicking job must not kill the recorder for the rest of the
-        // process. The job is lost (and logged); the mutexes it may have
-        // poisoned are recovered by `lock_ok` everywhere.
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            process_job(job, &mut session_ids, &drain_token, &stores, &backoff);
-        }));
-        if result.is_err() {
-            tracing::error!(target: "atlas::capture", "capture job panicked; job dropped");
+        if dirty && last_emit.elapsed() >= NOTIFY_DEBOUNCE {
+            dirty = false;
+            last_emit = Instant::now();
+            if let Some(app) = lock_ok(&notify).as_ref() {
+                let _ = app.emit(CAPTURE_CHANGED, ());
+            }
         }
     }
 }
@@ -1952,8 +2208,11 @@ fn process_job(
                 binding.model.as_deref(),
                 Some(&binding.cwd),
             )
-            .map(|id| {
+            .and_then(|id| {
+                // The branch is a separate call — see `Capture::note_branch`.
+                capture.note_branch(&id, binding.branch.as_deref())?;
                 session_ids.insert(binding.native_session_id.clone(), id);
+                Ok(())
             }),
         Job::Turn {
             native_message_id,

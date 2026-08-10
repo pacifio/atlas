@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -31,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
 import { useLogStore, type LogEntry, type LogSource } from "../stores/log-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
+import { useOrgStore } from "@/features/organisations/stores/org-store";
 
 const SOURCES: LogSource[] = [
   "atlas",
@@ -112,19 +107,22 @@ export function LogPanel() {
     useLogStore.use.actions();
 
   const currentProject = useProjectStore.use.currentProject();
+  const activeOrganisationId = useOrgStore.use.activeOrganisationId();
 
   const [search, setSearch] = useState("");
-  const [activeSources, setActiveSources] = useState<Set<LogSource>>(
-    () => new Set(SOURCES)
-  );
+  const [activeSources, setActiveSources] = useState<Set<LogSource>>(() => new Set(SOURCES));
   const [projectScope, setProjectScope] = useState<"all" | "current">("current");
   const [showPinnedOnly, setShowPinnedOnly] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // Keyed on the Organisation, not just on `ready`: the panel can mount before
+  // the org store has hydrated (pins then load as empty), and an org switch has
+  // to re-read. `loadPinned` no-ops when the loaded org already matches, so
+  // firing it on every org change is free.
   useEffect(() => {
-    if (!ready) loadPinned();
-  }, [ready, loadPinned]);
+    void loadPinned();
+  }, [activeOrganisationId, ready, loadPinned]);
 
   // Restore (and scope) the activity log for the current project from disk.
   useEffect(() => {
@@ -158,8 +156,7 @@ export function LogPanel() {
         if (e.projectPath !== currentProject.path) return false;
       }
       if (q) {
-        const hay =
-          (e.summary + " " + e.kind + " " + (e.projectName ?? "")).toLowerCase();
+        const hay = (e.summary + " " + e.kind + " " + (e.projectName ?? "")).toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -231,7 +228,7 @@ export function LogPanel() {
                 "inline-flex items-center px-1.5 h-[15px] rounded border text-[9px] font-mono leading-none",
                 c.text,
                 c.bg,
-                c.border
+                c.border,
               )}
             >
               {row.original.source}
@@ -287,7 +284,7 @@ export function LogPanel() {
                   "p-1 rounded hover:bg-[var(--bg-hover)] cursor-pointer transition-colors",
                   e.pinned
                     ? "text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)]"
-                    : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
+                    : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)]",
                 )}
                 title={e.pinned ? "Unpin" : "Pin (save)"}
               >
@@ -309,7 +306,7 @@ export function LogPanel() {
         size: 60,
       },
     ],
-    [expanded, copiedId, pin, unpin]
+    [expanded, copiedId, pin, unpin],
   );
 
   const table = useReactTable<LogEntry>({
@@ -359,7 +356,7 @@ export function LogPanel() {
             "flex items-center gap-1 px-2 h-6 rounded text-[10px] cursor-pointer outline-none transition-colors",
             showPinnedOnly
               ? "text-[var(--accent-primary)] bg-[var(--accent-primary-muted)]"
-              : "text-text-tertiary hover:text-text-primary hover:bg-bg-hover"
+              : "text-text-tertiary hover:text-text-primary hover:bg-bg-hover",
           )}
           title="Pinned only"
         >
@@ -391,11 +388,7 @@ export function LogPanel() {
         {table.getHeaderGroups().map((hg) => (
           <div key={hg.id} className="flex items-center w-full">
             {hg.headers.map((h) => (
-              <div
-                key={h.id}
-                style={cellStyle(h.column.id, h.getSize())}
-                className="truncate"
-              >
+              <div key={h.id} style={cellStyle(h.column.id, h.getSize())} className="truncate">
                 {h.isPlaceholder ? null : flexRender(h.column.columnDef.header, h.getContext())}
               </div>
             ))}
@@ -439,7 +432,7 @@ export function LogPanel() {
                     onClick={() => toggleExpanded(row.original.id)}
                     className={cn(
                       "flex items-center px-3 cursor-pointer border-b border-[var(--border-subtle)] hover:bg-bg-hover",
-                      isExpanded && "bg-[var(--bg-elevated)]/40"
+                      isExpanded && "bg-[var(--bg-elevated)]/40",
                     )}
                     style={{ height: 32 }}
                   >
@@ -521,7 +514,7 @@ function SourceFilter({
                     "w-3 h-3 rounded-sm border flex items-center justify-center",
                     checked
                       ? "bg-[var(--accent-primary)] border-[var(--accent-primary)]"
-                      : "border-[var(--border-default)]"
+                      : "border-[var(--border-default)]",
                   )}
                 >
                   {checked && <Check size={9} className="text-white" />}
@@ -577,7 +570,7 @@ function ProjectScopeFilter({
                 value === v
                   ? "text-[var(--text-primary)] bg-[var(--bg-selected)]"
                   : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
-                v === "current" && !hasProject && "opacity-50 cursor-not-allowed"
+                v === "current" && !hasProject && "opacity-50 cursor-not-allowed",
               )}
             >
               {label}

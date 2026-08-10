@@ -70,6 +70,17 @@ function dataSlice(state: unknown): Record<string, unknown> {
   return clone(data);
 }
 
+/** Strip `actions` and capture the rest BY REFERENCE — no clone. Only valid
+ *  for stores whose every update replaces state immutably (new arrays/objects
+ *  via `setState`), so a captured reference can never be mutated in place. */
+function refSlice(state: unknown): Record<string, unknown> {
+  const { actions: _actions, ...data } = state as {
+    actions?: unknown;
+    [k: string]: unknown;
+  };
+  return data;
+}
+
 /** Cheap, stable string hash (djb2). */
 function hashString(s: string): string {
   let h = 5381;
@@ -84,11 +95,23 @@ function hashString(s: string): string {
 export function captureSnapshot(workspaceId: string): void {
   const explorer = dataSlice(useExplorerStore.getState());
   const git = dataSlice(useGitStore.getState());
-  const knowledge = dataSlice(useKnowledgeStore.getState());
+  // Knowledge is captured BY REFERENCE, not cloned. Its store replaces state
+  // wholesale on every update (`entries: newEntries`, `entries.map(...)` — new
+  // arrays, new objects for changed entries; `editContent` is an immutable
+  // string), so the captured references can never be mutated out from under
+  // the snapshot. Cloning here put the ENTIRE vault — every note's content —
+  // back on the switch critical path that `loadProjectStores` deliberately
+  // moved it off of: on a large vault the deep clone was the dominant
+  // synchronous cost of switching away.
+  const knowledge = refSlice(useKnowledgeStore.getState());
   const knowledgeMeta = dataSlice(useKnowledgeMetaStore.getState());
 
   // Tabs/split layout drive the persisted editor-state, so dedup on the
-  // mirror's persisted fields only (NOT viewsByWs, which is the whole map).
+  // mirror's persisted fields only (NOT viewsByWs, which is the whole map) —
+  // and ONLY on those fields. Knowledge/meta used to be stringified into this
+  // hash too, which cost a second full pass over the vault per switch and made
+  // note edits force editor-state disk writes that had nothing to do with the
+  // editor state being written.
   const ls = useLayoutStore.getState();
   const layoutForHash = {
     tabs: ls.tabs.map((t) => ({ id: t.id, type: t.type, groupId: t.groupId, data: t.data })),
@@ -102,9 +125,7 @@ export function captureSnapshot(workspaceId: string): void {
     git,
     knowledge,
     knowledgeMeta,
-    persistHash: hashString(
-      JSON.stringify([layoutForHash, knowledge, knowledgeMeta]),
-    ),
+    persistHash: hashString(JSON.stringify(layoutForHash)),
     touchedAt: ++clock,
   };
 

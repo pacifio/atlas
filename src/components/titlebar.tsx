@@ -4,6 +4,7 @@ import { useProjectStore } from "@/features/project/stores/project-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { useNotificationsStore } from "@/features/notifications/stores/notifications-store";
+import { useChatStore } from "@/features/chat/stores/chat-store";
 import { PanelLeft, PanelRight, Bell, Layers, ArrowDownToLine, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
@@ -56,12 +57,9 @@ export function Titlebar() {
   // switch or rename re-labels immediately.
   const organisations = useOrgStore.use.organisations();
   const activeOrganisationId = useOrgStore.use.activeOrganisationId();
-  const orgName =
-    organisations.find((o) => o.id === activeOrganisationId)?.name ?? null;
+  const orgName = organisations.find((o) => o.id === activeOrganisationId)?.name ?? null;
   const displayName =
-    (currentProject
-      ? workspaces.find((w) => w.path === currentProject.path)?.name
-      : undefined) ??
+    (currentProject ? workspaces.find((w) => w.path === currentProject.path)?.name : undefined) ??
     currentProject?.name ??
     "Atlas";
   const { windowRef, isFullscreen } = useTauriWindow();
@@ -120,11 +118,7 @@ export function Titlebar() {
         <WorkspaceToggle />
         {currentProject && <LeftPanelToggle />}
         {/* `org / project` pill — click to copy the workspace path. */}
-        <ProjectLabel
-          name={displayName}
-          orgName={orgName}
-          path={currentProject?.path}
-        />
+        <ProjectLabel name={displayName} orgName={orgName} path={currentProject?.path} />
       </div>
 
       {/* The account button sits OUTSIDE the `currentProject` guard on purpose:
@@ -149,11 +143,13 @@ export function Titlebar() {
 }
 
 /**
- * The titlebar project label. Click copies the workspace's full path to the
- * clipboard; hovering shows a custom tooltip with that path, and on copy the
- * tooltip text animates over to a "Copied" confirmation before reverting.
- * It's a <button> (not a span) so the titlebar's drag/double-click-zoom
- * handlers skip it — see `isTitlebarSurface`.
+ * The titlebar project label — `org / project`, with the capture dot.
+ *
+ * Clicking it opens capture setup. It used to copy the workspace path and show
+ * a hover tooltip of that path; both are gone, because the click now opens a
+ * panel and a tooltip that fires every time you approach that panel is noise in
+ * front of it. It stays a <button> (not a span) so the titlebar's
+ * drag/double-click-zoom handlers skip it — see `isTitlebarSurface`.
  */
 function ProjectLabel({
   name,
@@ -164,7 +160,6 @@ function ProjectLabel({
   orgName?: string | null;
   path?: string;
 }) {
-  const [hovered, setHovered] = useState(false);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [binding, setBinding] = useState<Binding | null>(null);
   const [health, setHealth] = useState<CaptureHealth | null>(null);
@@ -189,14 +184,8 @@ function ProjectLabel({
 
   useEffect(() => readCapture(), [readCapture]);
 
-  const showTip = !!path && !captureOpen && hovered;
-
   return (
-    <div
-      className="relative min-w-0"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
+    <div className="relative min-w-0">
       {/* Pill: `org / project`. The org segment is de-emphasised so the project
           — the thing that changes most — still reads as the primary label.
 
@@ -206,7 +195,11 @@ function ProjectLabel({
       <Popover.Root open={captureOpen} onOpenChange={setCaptureOpen}>
         <Popover.Trigger asChild>
           <button
-            className="group flex h-[19px] max-w-[320px] min-w-0 cursor-pointer items-center gap-1 rounded-full border border-[#303030] bg-[#0C0C0C] px-2 text-[11px] font-medium transition-colors hover:bg-[#1f1f1f]"
+            // `leading-none` is what actually centres the capture dot: with the
+            // inherited line-height the label spans set a taller line box than
+            // the dot, and `items-center` centred the dot against *that* — which
+            // is why it sat visibly high.
+            className="group flex h-[19px] max-w-[320px] min-w-0 cursor-pointer items-center gap-1 rounded-full border border-[#303030] bg-[#0C0C0C] px-2 text-[11px] leading-none font-medium transition-colors hover:bg-[#1f1f1f]"
             title={health?.summary ?? "Session capture"}
           >
             {orgName && (
@@ -231,7 +224,12 @@ function ProjectLabel({
               side="bottom"
               align="start"
               sideOffset={6}
-              className="z-[var(--z-max)] origin-[var(--radix-popover-content-transform-origin)] data-[state=closed]:animate-scale-out data-[state=open]:animate-scale-in"
+              // Enter is animated by the panel itself (`atlas-panel-in-tl`), not
+              // here: this wrapper would hold a transform for the duration, and
+              // a transformed ancestor becomes the backdrop root — which
+              // flattens the panel's blur while it plays. Exit stays here
+              // because Radix needs the animation on the element it unmounts.
+              className="z-[var(--z-max)] origin-[var(--radix-popover-content-transform-origin)] data-[state=closed]:animate-scale-out"
             >
               <CapturePopover
                 projectPath={path}
@@ -243,18 +241,6 @@ function ProjectLabel({
           </Popover.Portal>
         )}
       </Popover.Root>
-      {showTip && (
-        <div className="pointer-events-none absolute left-1 top-full z-[var(--z-max)] mt-1.5 origin-top-left animate-scale-in">
-          {/* `w-max` sizes the box to the path's intrinsic width (capped by
-              max-w) — without it the absolutely-positioned box has no width to
-              resolve against and `break-all` collapses it to one char per line. */}
-          <div className="w-max max-w-[70vw] rounded-md border border-black/10 bg-white px-2 py-1 shadow-[var(--shadow-overlay)]">
-            <span className="block animate-fade-in whitespace-nowrap font-mono text-[10px] leading-snug text-black/80">
-              {path}
-            </span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -305,7 +291,15 @@ function ArcProgress({ value }: { value: number }) {
   const off = c * (1 - Math.max(0, Math.min(1, value)));
   return (
     <svg width={14} height={14} viewBox="0 0 16 16" className="-rotate-90">
-      <circle cx="8" cy="8" r={r} fill="none" stroke="currentColor" strokeOpacity={0.25} strokeWidth={2} />
+      <circle
+        cx="8"
+        cy="8"
+        r={r}
+        fill="none"
+        stroke="currentColor"
+        strokeOpacity={0.25}
+        strokeWidth={2}
+      />
       <circle
         cx="8"
         cy="8"
@@ -350,7 +344,9 @@ function UpdateButton() {
           toast.success(`You're on the latest version (${status.currentVersion}).`);
         }
       })
-      .catch((e) => toast.error(`Update check failed: ${e instanceof Error ? e.message : String(e)}`));
+      .catch((e) =>
+        toast.error(`Update check failed: ${e instanceof Error ? e.message : String(e)}`),
+      );
   };
 
   const title = checking
@@ -376,7 +372,11 @@ function UpdateButton() {
       {checking ? (
         <Loader2 size={14} className="animate-spin" />
       ) : downloading ? (
-        progress != null ? <ArcProgress value={progress} /> : <Loader2 size={14} className="animate-spin" />
+        progress != null ? (
+          <ArcProgress value={progress} />
+        ) : (
+          <Loader2 size={14} className="animate-spin" />
+        )
       ) : (
         <ArrowDownToLine size={14} />
       )}
@@ -396,9 +396,14 @@ function NotificationButton() {
   // would create a new reference every render and trigger an infinite loop.
   const hasUnread = useNotificationsStore((s) => s.items.some((i) => !i.read));
   const hasError = useNotificationsStore((s) =>
-    s.items.some(
-      (i) => !i.read && (i.kind === "agent-failed" || i.kind === "chat-error"),
-    ),
+    s.items.some((i) => !i.read && (i.kind === "agent-failed" || i.kind === "chat-error")),
+  );
+  // LIVE attention state: any session (any workspace) blocked on a permission
+  // decision. Derived from the chat store rather than unread flags so it shows
+  // even after the panel was opened, and clears itself the moment the prompt
+  // is answered.
+  const needsAttention = useChatStore((s) =>
+    Object.values(s.pendingPermissions).some((reqs) => reqs.length > 0),
   );
 
   return (
@@ -408,13 +413,18 @@ function NotificationButton() {
       title="Notifications"
     >
       <Bell size={14} />
-      {hasUnread && (
+      {(hasUnread || needsAttention) && (
         <span
           className={cn(
             "absolute -top-[1px] -right-[1px] w-[7px] h-[7px] rounded-full ring-1 ring-[var(--bg-base)] pointer-events-none",
-            hasError ? "bg-[var(--status-error)]" : "bg-white",
+            // Priority: error > needs-attention (green) > plain unread.
+            hasError
+              ? "bg-[var(--status-error)]"
+              : needsAttention
+                ? "bg-[var(--status-success)] animate-pulse"
+                : "bg-white",
           )}
-          aria-label="Unread notifications"
+          aria-label={needsAttention ? "An agent needs your attention" : "Unread notifications"}
         />
       )}
     </button>

@@ -94,28 +94,24 @@ export function ProvidersSettings() {
         const cb = keys[b.id] ? 0 : 1;
         if (ca !== cb) return ca - cb;
       } else if (sortKey === "category" && a.category !== b.category) {
-        return (
-          PROVIDER_CATEGORIES.indexOf(a.category) -
-          PROVIDER_CATEGORIES.indexOf(b.category)
-        );
+        return PROVIDER_CATEGORIES.indexOf(a.category) - PROVIDER_CATEGORIES.indexOf(b.category);
       }
       return a.name.localeCompare(b.name);
     });
     return list;
   }, [category, query, sortKey, configuredOnly, keys]);
 
-  const tabs: Array<{ id: ProviderCategory | "All"; label: string; count: number }> =
-    useMemo(
-      () => [
-        { id: "All", label: "All", count: PROVIDERS.length },
-        ...PROVIDER_CATEGORIES.map((c) => ({
-          id: c,
-          label: c,
-          count: PROVIDERS.filter((p) => p.category === c).length,
-        })),
-      ],
-      [],
-    );
+  const tabs: Array<{ id: ProviderCategory | "All"; label: string; count: number }> = useMemo(
+    () => [
+      { id: "All", label: "All", count: PROVIDERS.length },
+      ...PROVIDER_CATEGORIES.map((c) => ({
+        id: c,
+        label: c,
+        count: PROVIDERS.filter((p) => p.category === c).length,
+      })),
+    ],
+    [],
+  );
 
   return (
     <div className="h-full flex flex-col bg-bg-base">
@@ -133,9 +129,7 @@ export function ProvidersSettings() {
             )}
           >
             {t.label}
-            <span className="text-[9px] text-text-tertiary tabular-nums">
-              {t.count}
-            </span>
+            <span className="text-[9px] text-text-tertiary tabular-nums">{t.count}</span>
           </button>
         ))}
 
@@ -228,9 +222,7 @@ export function ProvidersSettings() {
                 provider={p}
                 meta={keys[p.id]}
                 expanded={expandedId === p.id}
-                onToggle={() =>
-                  setExpandedId((cur) => (cur === p.id ? null : p.id))
-                }
+                onToggle={() => setExpandedId((cur) => (cur === p.id ? null : p.id))}
               />
             ))
           )}
@@ -265,17 +257,10 @@ function ProviderTableRow({
         {/* Provider */}
         <span className={cn(COL.provider, "flex items-center gap-2 min-w-0")}>
           <ProviderLogo id={provider.id} size={18} />
-          <span className="truncate text-[12px] text-text-primary">
-            {provider.name}
-          </span>
+          <span className="truncate text-[12px] text-text-primary">{provider.name}</span>
         </span>
         {/* Env var */}
-        <span
-          className={cn(
-            COL.env,
-            "truncate font-mono text-[10px] text-text-tertiary",
-          )}
-        >
+        <span className={cn(COL.env, "truncate font-mono text-[10px] text-text-tertiary")}>
           {provider.env}
         </span>
         {/* Category */}
@@ -338,9 +323,7 @@ function ProviderEditor({
       setDraft("");
       toast.success(`${provider.name} key saved`);
     } catch (e) {
-      toast.error(
-        `Couldn't save key: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      toast.error(`Couldn't save key: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -349,9 +332,7 @@ function ProviderEditor({
       await remove(provider.id);
       toast.success(`${provider.name} key removed`);
     } catch (e) {
-      toast.error(
-        `Couldn't remove key: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      toast.error(`Couldn't remove key: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -408,13 +389,10 @@ function ProviderEditor({
                 Remove
               </button>
             )}
-            <span className="text-[10px] text-text-tertiary font-mono pl-1">
-              {provider.env}
-            </span>
+            <span className="text-[10px] text-text-tertiary font-mono pl-1">{provider.env}</span>
           </div>
         </div>
       </div>
     </div>
   );
 }
-

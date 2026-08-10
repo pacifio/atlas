@@ -126,6 +126,8 @@ pub struct SessionSnapshot {
     /// selection; drives the composer's model picker for Claude Code / Codex.
     pub available_models: Vec<SessionModeInfo>,
     pub available_commands: Vec<serde_json::Value>,
+    /// Raw `config_option_update` state (see `SessionState::config_options`).
+    pub config_options: Vec<serde_json::Value>,
     /// Whether the agent's transport supports image content blocks in
     /// prompts (`promptCapabilities.image`). Stamped by the manager from the
     /// live backend — `SessionState::snapshot()` leaves it false so session
@@ -151,6 +153,12 @@ pub struct SessionState {
     pub available_modes: Vec<SessionModeInfo>,
     pub available_models: Vec<SessionModeInfo>,
     pub available_commands: Vec<serde_json::Value>,
+    /// Config options the agent advertised / updated (`config_option_update`).
+    /// Raw wire JSON, replaced whole per update — the UI reads them from the
+    /// snapshot; nothing here interprets them. Ignoring this update kind meant
+    /// an in-agent change (e.g. `/model` flipping a config option) never
+    /// reached the host.
+    pub config_options: Vec<serde_json::Value>,
     pub plan: Vec<PlanEntry>,
     pub messages: Vec<Message>,
     pub usage: Usage,
@@ -178,6 +186,7 @@ impl SessionState {
             available_modes: Vec::new(),
             available_models: Vec::new(),
             available_commands: Vec::new(),
+            config_options: Vec::new(),
             plan: Vec::new(),
             messages: Vec::new(),
             usage: Usage::default(),
@@ -199,6 +208,7 @@ impl SessionState {
             available_modes: self.available_modes.clone(),
             available_models: self.available_models.clone(),
             available_commands: self.available_commands.clone(),
+            config_options: self.config_options.clone(),
             prompt_image_supported: false,
             plan: self.plan.clone(),
             messages: self.messages.clone(),

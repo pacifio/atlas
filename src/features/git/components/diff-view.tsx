@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import * as Popover from "@radix-ui/react-popover";
 import {
@@ -14,10 +14,12 @@ import {
   GitCompare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { parseDiff, buildRows, type DiffFile } from "../lib/diff";
+import { parseDiff, buildRows, type DiffFile, type DiffHunk } from "../lib/diff";
 import { highlightDiffLine } from "../lib/diff-highlight";
 
 type SortMode = "default" | "most-changes";
+
+export type HunkAction = "stage" | "unstage" | "discard";
 
 /**
  * Virtualized unified-diff renderer. Takes raw `git diff`/`git show` text and
@@ -35,6 +37,8 @@ export function DiffView({
   filters = false,
   emptyLabel = "No changes",
   className,
+  hunkActions,
+  onHunkAction,
 }: {
   diff: string;
   onOpenFile?: (path: string) => void;
@@ -44,12 +48,54 @@ export function DiffView({
   filters?: boolean;
   emptyLabel?: string;
   className?: string;
+  /** Which hunk-level buttons to show on hunk headers (none = read-only). */
+  hunkActions?: HunkAction[];
+  /** Invoked with the DISPLAYED hunk (+ selected line indices, if any). */
+  onHunkAction?: (action: HunkAction, file: string, hunk: DiffHunk, selected?: number[]) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("default");
   const [langFilter, setLangFilter] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Line selection for partial staging, keyed `${fileIndex}:${hunkIndex}`.
+  // Reset whenever the diff text changes — indices would no longer line up.
+  const [lineSel, setLineSel] = useState<Map<string, Set<number>>>(new Map());
+  const selectable = !!onHunkAction && (hunkActions?.length ?? 0) > 0;
+  useEffect(() => {
+    setLineSel(new Map());
+  }, [diff]);
+
+  const toggleLine = (fileIndex: number, hunkIndex: number, lineIndex: number) => {
+    setLineSel((prev) => {
+      const key = `${fileIndex}:${hunkIndex}`;
+      const next = new Map(prev);
+      const set = new Set(next.get(key) ?? []);
+      if (set.has(lineIndex)) set.delete(lineIndex);
+      else set.add(lineIndex);
+      if (set.size === 0) next.delete(key);
+      else next.set(key, set);
+      return next;
+    });
+  };
+
+  const fireHunkAction = (
+    action: HunkAction,
+    file: string,
+    hunk: DiffHunk,
+    fileIndex: number,
+    hunkIndex: number,
+  ) => {
+    const sel = lineSel.get(`${fileIndex}:${hunkIndex}`);
+    onHunkAction?.(
+      action,
+      file,
+      hunk,
+      sel && sel.size > 0 ? [...sel].sort((a, b) => a - b) : undefined,
+    );
+    setLineSel(new Map());
+  };
 
   const allFiles = useMemo(() => parseDiff(diff), [diff]);
 
@@ -64,9 +110,7 @@ export function DiffView({
     if (q) result = result.filter((f) => f.path.toLowerCase().includes(q));
     if (langFilter) result = result.filter((f) => f.language === langFilter);
     if (sortMode === "most-changes") {
-      result = [...result].sort(
-        (a, b) => b.additions + b.deletions - (a.additions + a.deletions),
-      );
+      result = [...result].sort((a, b) => b.additions + b.deletions - (a.additions + a.deletions));
     }
     return result;
   }, [allFiles, filters, query, langFilter, sortMode]);
@@ -83,6 +127,7 @@ export function DiffView({
       const k = rows[i].kind;
       if (k === "file-header") return 42;
       if (k === "file-footer") return 8;
+      if (k === "hunk-header") return 22;
       return 20;
     },
     overscan: 30,
@@ -140,7 +185,9 @@ export function DiffView({
           onClick={() => setSortMode(sortMode === "most-changes" ? "default" : "most-changes")}
           className={cn(
             "p-1 rounded transition-colors cursor-pointer",
-            sortMode === "most-changes" ? "text-accent bg-bg-selected" : "text-text-tertiary hover:bg-bg-hover",
+            sortMode === "most-changes"
+              ? "text-accent bg-bg-selected"
+              : "text-text-tertiary hover:bg-bg-hover",
           )}
           title="Sort by most changes"
         >
@@ -161,7 +208,10 @@ export function DiffView({
       {files.length === 0 ? (
         <div className="px-3 py-8 text-center text-[11px] text-text-tertiary">{emptyLabel}</div>
       ) : (
-        <div ref={scrollRef} className="flex-1 min-h-0 min-w-0 overflow-auto hide-scrollbar px-3 py-2">
+        <div
+          ref={scrollRef}
+          className="flex-1 min-h-0 min-w-0 overflow-auto hide-scrollbar px-3 py-2"
+        >
           <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
             {virtualizer.getVirtualItems().map((vr) => {
               const row = rows[vr.index];
@@ -230,6 +280,78 @@ export function DiffView({
                 );
               }
 
+              if (row.kind === "hunk-header") {
+                const sel = lineSel.get(`${row.fileIndex}:${row.hunkIndex}`);
+                const nSel = sel?.size ?? 0;
+                const label = (verb: string) =>
+                  nSel > 0 ? `${verb} ${nSel} line${nSel === 1 ? "" : "s"}` : `${verb} hunk`;
+                return (
+                  <div
+                    key={vr.index}
+                    data-index={vr.index}
+                    ref={virtualizer.measureElement}
+                    style={{ ...base, backgroundColor: "var(--diff-context-bg, #0a0a0a)" }}
+                    className="group/hunk flex items-center gap-2 px-2 h-[22px] border-x border-border-default text-[10px] font-mono text-text-tertiary"
+                  >
+                    <span className="truncate flex-1 text-[var(--status-info,#6ea8fe)]/70 select-text">
+                      {row.hunk.header}
+                    </span>
+                    {selectable && hunkActions && (
+                      <span className="flex items-center gap-1 opacity-0 group-hover/hunk:opacity-100 shrink-0">
+                        {hunkActions.includes("stage") && (
+                          <button
+                            onClick={() =>
+                              fireHunkAction(
+                                "stage",
+                                row.file.path,
+                                row.hunk,
+                                row.fileIndex,
+                                row.hunkIndex,
+                              )
+                            }
+                            className="px-1.5 h-[16px] rounded border border-border-default text-[9px] text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+                          >
+                            {label("Stage")}
+                          </button>
+                        )}
+                        {hunkActions.includes("unstage") && (
+                          <button
+                            onClick={() =>
+                              fireHunkAction(
+                                "unstage",
+                                row.file.path,
+                                row.hunk,
+                                row.fileIndex,
+                                row.hunkIndex,
+                              )
+                            }
+                            className="px-1.5 h-[16px] rounded border border-border-default text-[9px] text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+                          >
+                            {label("Unstage")}
+                          </button>
+                        )}
+                        {hunkActions.includes("discard") && (
+                          <button
+                            onClick={() =>
+                              fireHunkAction(
+                                "discard",
+                                row.file.path,
+                                row.hunk,
+                                row.fileIndex,
+                                row.hunkIndex,
+                              )
+                            }
+                            className="px-1.5 h-[16px] rounded border border-border-default text-[9px] text-text-secondary hover:text-[var(--status-error)] hover:bg-bg-hover"
+                          >
+                            {label("Discard")}
+                          </button>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                );
+              }
+
               if (row.kind === "file-footer") {
                 return (
                   <div
@@ -237,18 +359,32 @@ export function DiffView({
                     data-index={vr.index}
                     ref={virtualizer.measureElement}
                     // Empty spacer — keep an explicit height so it measures 8px.
-                    style={{ ...base, height: 8, backgroundColor: "var(--diff-context-bg, #0a0a0a)" }}
+                    style={{
+                      ...base,
+                      height: 8,
+                      backgroundColor: "var(--diff-context-bg, #0a0a0a)",
+                    }}
                     className="border-x border-b border-border-default rounded-b-md"
                   />
                 );
               }
 
               const line = row.line;
+              const isChange = line.type !== "context";
+              const isSelected =
+                isChange &&
+                (lineSel.get(`${row.fileIndex}:${row.hunkIndex}`)?.has(row.lineIndex) ?? false);
               return (
                 <div
                   key={vr.index}
                   data-index={vr.index}
                   ref={virtualizer.measureElement}
+                  onClick={
+                    selectable && isChange
+                      ? () => toggleLine(row.fileIndex, row.hunkIndex, row.lineIndex)
+                      : undefined
+                  }
+                  title={selectable && isChange ? "Click to select for partial staging" : undefined}
                   // Clip long lines to the viewport width (no horizontal scroll,
                   // no row overflow/overlap). Users open the full diff view to
                   // read a truncated line in its entirety.
@@ -256,6 +392,9 @@ export function DiffView({
                     ...base,
                     width: "100%",
                     overflow: "hidden",
+                    cursor: selectable && isChange ? "pointer" : undefined,
+                    outline: isSelected ? "1px solid var(--accent-primary)" : undefined,
+                    outlineOffset: isSelected ? -1 : undefined,
                     backgroundColor:
                       line.type === "add"
                         ? "var(--diff-add-line-bg, #0d2211)"
@@ -425,7 +564,9 @@ function FileListPopover({
               </button>
             ))}
             {filtered.length === 0 && (
-              <div className="px-3 py-2 text-[10px] text-text-tertiary text-center">No files found</div>
+              <div className="px-3 py-2 text-[10px] text-text-tertiary text-center">
+                No files found
+              </div>
             )}
           </div>
         </Popover.Content>

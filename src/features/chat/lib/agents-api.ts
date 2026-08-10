@@ -7,12 +7,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import type {
-  AgentId,
-  AgentInfo,
-  AcpSessionId,
-  PermissionDecision,
-} from "@/types/acp";
+import type { AgentId, AgentInfo, AcpSessionId, PermissionDecision } from "@/types/acp";
 import type {
   AgentDelta,
   ImageAttachment,
@@ -43,8 +38,7 @@ export interface AuthRunDone {
 export const agents = {
   listPlugins: () => invoke<PluginSpec[]>("agents_list_plugins"),
   listRunning: () => invoke<AgentInfo[]>("agents_list_running"),
-  spawn: (pluginId: string) =>
-    invoke<AgentInfo>("agents_spawn", { pluginId }),
+  spawn: (pluginId: string) => invoke<AgentInfo>("agents_spawn", { pluginId }),
   kill: (agentId: AgentId) => invoke<void>("agents_kill", { agentId }),
 
   newSession: (agentId: AgentId, cwd: string) =>
@@ -63,8 +57,7 @@ export const agents = {
       cwd,
     }),
 
-  snapshot: (key: SessionKey) =>
-    invoke<SessionSnapshot>("agents_snapshot", { key }),
+  snapshot: (key: SessionKey) => invoke<SessionSnapshot>("agents_snapshot", { key }),
 
   send: (key: SessionKey, text: string, attachments?: ImageAttachment[]) =>
     invoke<void>("agents_send", {
@@ -78,20 +71,18 @@ export const agents = {
   dropSession: (agentId: AgentId, sessionId: AcpSessionId) =>
     invoke<void>("agents_drop_session", { agentId, sessionId }),
 
-  setMode: (key: SessionKey, modeId: string) =>
-    invoke<void>("agents_set_mode", { key, modeId }),
+  setMode: (key: SessionKey, modeId: string) => invoke<void>("agents_set_mode", { key, modeId }),
   setModel: (key: SessionKey, modelId: string) =>
     invoke<void>("agents_set_model", { key, modelId }),
   setEffort: (key: SessionKey, effort: string) =>
     invoke<void>("agents_set_effort", { key, effort }),
-  setCompress: (key: SessionKey, on: boolean) =>
-    invoke<void>("agents_set_compress", { key, on }),
+  setCompress: (key: SessionKey, on: boolean) => invoke<void>("agents_set_compress", { key, on }),
 
   respondPermission: (
     agentId: AgentId,
     sessionId: AcpSessionId,
     requestId: string,
-    decision: PermissionDecision
+    decision: PermissionDecision,
   ) =>
     invoke<void>("agents_respond_permission", {
       agentId,
@@ -113,18 +104,14 @@ export const agents = {
 /** Whether Codex has stored credentials (`~/.codex/auth.json`). */
 export const codexStatus = (): Promise<boolean> => invoke<boolean>("codex_status");
 
-export const listenAuthRunDone = (
-  handler: (p: AuthRunDone) => void,
-): Promise<UnlistenFn> =>
+export const listenAuthRunDone = (handler: (p: AuthRunDone) => void): Promise<UnlistenFn> =>
   listen<AuthRunDone>("atlas:auth-run:done", (e) => handler(e.payload));
 
 /**
  * Subscribe to the single multiplexed delta stream. Every delta carries
  * `agent_id` + `session_id` so the consumer can route to the right tab.
  */
-export const listenAgents = (
-  handler: (env: AgentDelta) => void
-): Promise<UnlistenFn> =>
+export const listenAgents = (handler: (env: AgentDelta) => void): Promise<UnlistenFn> =>
   listen<AgentDelta>("atlas:agents", (e) => handler(e.payload));
 
 // ── Lazy per-agent registry ─────────────────────────────────────────────────
@@ -132,9 +119,13 @@ export const listenAgents = (
 // first prompt doesn't pay npx/node cold-start (10–30s); a chat bound to a
 // different agent (e.g. Codex) spawns that agent the first time it's used.
 
-/** The coding agents Atlas ships. claude is the default for new chats. */
+/** The coding agents Atlas ships. claude is the default for new chats.
+ *  Kept in sync with `PLUGIN_ID_BY_AGENT` in `src/types/agent.ts` — prefer
+ *  `pluginIdForAgent(agentType)` over these constants for routing. */
 export const DEFAULT_PLUGIN_ID = "claude-code-ts";
 export const CODEX_PLUGIN_ID = "codex";
+export const OPENCODE_PLUGIN_ID = "opencode";
+export const CURSOR_PLUGIN_ID = "cursor";
 /** Atlas's native in-process agent (atlas-cersei). */
 export const CERSEI_PLUGIN_ID = "cersei";
 
@@ -197,4 +188,3 @@ export function resetAgent(pluginId?: string): void {
 // Back-compat thin wrappers (default = Claude) for existing callers.
 export const ensureDefaultAgent = (): Promise<AgentInfo> => ensureAgent(DEFAULT_PLUGIN_ID);
 export const getDefaultAgentSync = (): AgentInfo | null => getAgentSync(DEFAULT_PLUGIN_ID);
-export const resetDefaultAgent = (): void => resetAgent(DEFAULT_PLUGIN_ID);

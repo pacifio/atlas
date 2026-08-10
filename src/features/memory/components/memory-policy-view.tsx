@@ -40,8 +40,12 @@ export function MemoryPolicyView() {
   const phase = useMemoryStore.use.policyPhase();
   const policies = useMemoryStore.use.policies() ?? [];
   const error = useMemoryStore.use.policyError();
-  const { ensureProject, loadPolicies: storeLoadPolicies, setPolicyPhase, updatePolicyValue } =
-    useMemoryStore.use.actions();
+  const {
+    ensureProject,
+    loadPolicies: storeLoadPolicies,
+    setPolicyPhase,
+    updatePolicyValue,
+  } = useMemoryStore.use.actions();
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
 
   // ── Filters ──────────────────────────────────────────────────────────────
@@ -135,8 +139,8 @@ export function MemoryPolicyView() {
             Enable preference learning
           </p>
           <p className="text-[11px] leading-relaxed text-[var(--text-tertiary)]">
-            Download the on-device embedding model to distill your saved
-            preferences into an editable policy table — no LLM, purely semantic.
+            Download the on-device embedding model to distill your saved preferences into an
+            editable policy table — no LLM, purely semantic.
           </p>
           <button
             onClick={() => void download()}
@@ -164,7 +168,10 @@ export function MemoryPolicyView() {
           <Loader2 size={20} className="animate-spin text-[var(--text-secondary)] mx-auto" />
           <p className="text-[12px] text-[var(--text-primary)]">Downloading model…</p>
           <div className="h-1.5 rounded-full bg-[var(--bg-elevated)] overflow-hidden">
-            <div className="h-full bg-[var(--accent-primary)] transition-[width] duration-200" style={{ width: `${pct}%` }} />
+            <div
+              className="h-full bg-[var(--accent-primary)] transition-[width] duration-200"
+              style={{ width: `${pct}%` }}
+            />
           </div>
           <p className="text-[10px] text-[var(--text-tertiary)] font-mono">{pct}%</p>
         </div>
@@ -178,7 +185,9 @@ export function MemoryPolicyView() {
         <div className="text-center max-w-[340px] px-6 space-y-3">
           <AlertTriangle size={20} className="text-[var(--status-error)] mx-auto" />
           <p className="text-[12px] text-[var(--text-secondary)]">Couldn't load policies</p>
-          {error && <p className="text-[10px] text-[var(--text-tertiary)] font-mono break-words">{error}</p>}
+          {error && (
+            <p className="text-[10px] text-[var(--text-tertiary)] font-mono break-words">{error}</p>
+          )}
           <button
             onClick={() => void init(projectPath)}
             className="inline-flex items-center gap-1.5 h-7 px-3 rounded-md border border-[var(--border-default)] text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
@@ -213,8 +222,8 @@ export function MemoryPolicyView() {
       {policies.length === 0 ? (
         <Centered>
           <p className="text-[12px] text-[var(--text-tertiary)] max-w-[300px] text-center px-4">
-            No preferences detected yet. As Claude Code & Codex record how you like
-            to work, they'll surface here.
+            No preferences detected yet. As Claude Code & Codex record how you like to work, they'll
+            surface here.
           </p>
         </Centered>
       ) : (
@@ -224,17 +233,35 @@ export function MemoryPolicyView() {
             <FilterGroup
               value={originF}
               onChange={setOriginF}
-              options={[["all", "All"], ["preference", "Preferences"], ["codebase", "Codebase"]] as const}
+              options={
+                [
+                  ["all", "All"],
+                  ["preference", "Preferences"],
+                  ["codebase", "Codebase"],
+                ] as const
+              }
             />
             <FilterGroup
               value={matchF}
               onChange={setMatchF}
-              options={[["all", "Any match"], ["semantic", "Semantic"], ["keyword", "Keyword"]] as const}
+              options={
+                [
+                  ["all", "Any match"],
+                  ["semantic", "Semantic"],
+                  ["keyword", "Keyword"],
+                ] as const
+              }
             />
             <FilterGroup
               value={strengthF}
               onChange={setStrengthF}
-              options={[["all", "Any"], ["soft", "Soft"], ["strong", "Strong"]] as const}
+              options={
+                [
+                  ["all", "Any"],
+                  ["soft", "Soft"],
+                  ["strong", "Strong"],
+                ] as const
+              }
             />
             <input
               value={query}
@@ -338,7 +365,11 @@ function PolicyRow({
                 ? "border-[var(--status-error)]/40 bg-[var(--status-error)]/10 text-[var(--status-error)]"
                 : "border-[var(--border-default)] bg-[var(--bg-elevated)] text-[var(--text-tertiary)]",
             )}
-            title={policy.category === "strong" ? "Strong rule — must follow" : "Soft preference — guidance"}
+            title={
+              policy.category === "strong"
+                ? "Strong rule — must follow"
+                : "Soft preference — guidance"
+            }
           >
             {policy.category}
           </span>
@@ -376,7 +407,9 @@ function PolicyRow({
         </span>
       </div>
 
-      <div className={cn(COL.score, "text-right tabular-nums text-[10px] text-[var(--text-tertiary)]")}>
+      <div
+        className={cn(COL.score, "text-right tabular-nums text-[10px] text-[var(--text-tertiary)]")}
+      >
         {Math.round(policy.score * 100)}%
       </div>
 

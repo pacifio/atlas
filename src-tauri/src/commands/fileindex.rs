@@ -16,7 +16,7 @@ use nucleo_matcher::Matcher;
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::collections::HashMap;
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 /// One indexed file. `path` is absolute; `rel` is relative to the project
 /// root so the UI can render `crates/foo/src/lib.rs` instead of the full
@@ -38,6 +38,13 @@ pub struct FileMatch {
 /// `_debouncer` handle; dropping `ProjectIndex` stops the watcher.
 struct ProjectIndex {
     root: PathBuf,
+    /// When the last full `walk_project` ran (initial build, watcher-forced
+    /// rewalk, or background refresh). Gates the stale-while-revalidate
+    /// rebuild in `fileindex_open_project` so rapid workspace toggles /
+    /// picker opens don't stack redundant walks.
+    last_walk: Arc<parking_lot::Mutex<std::time::Instant>>,
+    /// True while a background rebuild for this workspace is in flight.
+    refreshing: Arc<std::sync::atomic::AtomicBool>,
     files: Arc<RwLock<Vec<IndexedFile>>>,
     /// Derived unique-parent-directories list, cached. Lazily built
     /// on first folder query (or first `snapshot_folders` call) and
@@ -163,12 +170,111 @@ pub async fn fileindex_open_project(
         return Err(format!("not a directory: {path}"));
     }
 
-    // Idempotent: if this workspace already has a resident index (e.g. on a
-    // switch back), don't re-walk the tree or spawn a second watcher.
-    if let Some(existing) = state.per_window.read().get(&key) {
-        return Ok(existing.files.read().len());
+    // Resident index → return the current count instantly (workspace
+    // switches must stay cheap), but kick off a THROTTLED background
+    // rebuild: fresh walk AND fresh watch plan, swapped in atomically when
+    // done. The old unconditional early-return made every re-open a no-op,
+    // so a single missed watcher event (or a top-level directory created
+    // after the watch plan was made — those are never watched) meant the
+    // index was stale until the project was closed. Now Cmd+P "Reindex"
+    // and the picker's ensure path genuinely recover, stale-while-revalidate.
+    let resident = {
+        let guard = state.per_window.read();
+        guard.get(&key).map(|ex| {
+            let stale = ex.last_walk.lock().elapsed() >= REFRESH_MIN_INTERVAL;
+            // `swap` claims the refresh slot — only one rebuild in flight.
+            let claimed =
+                stale && !ex.refreshing.swap(true, std::sync::atomic::Ordering::SeqCst);
+            (ex.files.read().len(), claimed, ex.refreshing.clone())
+        })
+    };
+    if let Some((count, claimed, refreshing)) = resident {
+        if claimed {
+            let app_bg = app.clone();
+            let key_bg = key.clone();
+            let window_bg = window_label.clone();
+            let root_bg = root.clone();
+            tauri::async_runtime::spawn(async move {
+                match build_project_index(
+                    root_bg,
+                    app_bg.clone(),
+                    key_bg.clone(),
+                    window_bg.clone(),
+                )
+                .await
+                {
+                    Ok(index) => {
+                        let fresh_count = index.files.read().len();
+                        let st = app_bg.state::<FileIndexState>();
+                        // Swap in the fresh index (dropping the old watcher) —
+                        // but ONLY if the workspace still holds an index for
+                        // this same root. If it was closed (or repointed at a
+                        // different project) mid-rebuild, inserting would
+                        // resurrect a torn-down watcher.
+                        let swapped = {
+                            let mut guard = st.per_window.write();
+                            match guard.get(&key_bg) {
+                                Some(existing) if existing.root == index.root => {
+                                    guard.insert(key_bg.clone(), index);
+                                    true
+                                }
+                                _ => false,
+                            }
+                        };
+                        if swapped {
+                            let _ = app_bg.emit_to(
+                                window_bg.as_str(),
+                                "atlas:fileindex:updated",
+                                serde_json::json!({ "workspaceId": key_bg, "count": fresh_count }),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "atlas::fileindex",
+                            "background reindex failed: {e}"
+                        );
+                        // Release the slot so a later open can retry.
+                        refreshing.store(false, std::sync::atomic::Ordering::SeqCst);
+                    }
+                }
+            });
+        }
+        return Ok(count);
     }
 
+    let index = build_project_index(root, app.clone(), key.clone(), window_label.clone()).await?;
+    let count = index.files.read().len();
+    state.per_window.write().insert(key.clone(), index);
+
+    // Tell the window the index is now searchable. Mirrors the event the
+    // watcher fires on file-set changes — palette + mention picker both listen
+    // for it, so a re-query lands the user's first results the instant the walk
+    // finishes (no manual reopen needed). Tagged with the workspace id so the
+    // frontend ignores it unless it belongs to the active workspace.
+    let _ = app.emit_to(
+        window_label.as_str(),
+        "atlas:fileindex:updated",
+        serde_json::json!({ "workspaceId": key, "count": count }),
+    );
+
+    Ok(count)
+}
+
+/// Minimum age before a re-open triggers a background rebuild. Guards rapid
+/// workspace toggles and per-keystroke ensure calls from stacking walks.
+const REFRESH_MIN_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Build a complete `ProjectIndex` for `root`: full ignore-respecting walk,
+/// fresh watcher plan, debounced watcher wired to emit against
+/// (`key` = workspace id, `window_label` = emit target). Shared by the
+/// first open and the background refresh path.
+async fn build_project_index(
+    root: PathBuf,
+    app: AppHandle,
+    key: String,
+    window_label: String,
+) -> Result<ProjectIndex, String> {
     // Off the main thread: walk the tree AND build the watcher. Watcher
     // creation isn't free on macOS — FSEvents does an initial scan of the
     // path tree before returning a stream handle.
@@ -288,29 +394,14 @@ pub async fn fileindex_open_project(
     .await
     .map_err(|e| e.to_string())??;
 
-    let count = files.read().len();
-    state.per_window.write().insert(
-        key.clone(),
-        ProjectIndex {
-            root,
-            files,
-            folders,
-            _debouncer: debouncer,
-        },
-    );
-
-    // Tell the window the index is now searchable. Mirrors the event the
-    // watcher fires on file-set changes — palette + mention picker both listen
-    // for it, so a re-query lands the user's first results the instant the walk
-    // finishes (no manual reopen needed). Tagged with the workspace id so the
-    // frontend ignores it unless it belongs to the active workspace.
-    let _ = app.emit_to(
-        window_label.as_str(),
-        "atlas:fileindex:updated",
-        serde_json::json!({ "workspaceId": key, "count": count }),
-    );
-
-    Ok(count)
+    Ok(ProjectIndex {
+        root,
+        last_walk: Arc::new(parking_lot::Mutex::new(std::time::Instant::now())),
+        refreshing: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        files,
+        folders,
+        _debouncer: debouncer,
+    })
 }
 
 #[tauri::command]

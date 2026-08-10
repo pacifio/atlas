@@ -3,11 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { createSelectors } from "@/lib/create-selectors";
 import { logEvent } from "@/features/log/lib/log";
 import { flushAll } from "../lib/flush-registry";
-import {
-  captureSnapshot,
-  restoreSnapshot,
-  evictSnapshot,
-} from "../lib/workspace-snapshot";
+import { captureSnapshot, restoreSnapshot, evictSnapshot } from "../lib/workspace-snapshot";
 import { revalidateWorkspace } from "../lib/workspace-revalidate";
 import {
   useProjectStore,
@@ -19,6 +15,12 @@ import { useChatStore } from "@/features/chat/stores/chat-store";
 import { useTerminalStore } from "@/features/terminal/stores/terminal-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { isWorkspaceRunning } from "../lib/agent-activity";
+import {
+  busySessions,
+  cancelBusySessions,
+  useStopAgentsConfirmStore,
+} from "../lib/stop-agents-confirm";
+import { markFileIndexClosedFor } from "@/features/file-picker/lib/file-picker-api";
 
 /** The active org id, used to tag newly-created workspaces/groups so they
  *  belong to the org the user is currently in. Read lazily to avoid an
@@ -184,6 +186,13 @@ let pendingSwitchTarget: string | null = null;
  * caller manages those.
  */
 function teardownHot(id: string): void {
+  // For the ACTIVE workspace the layout mirror is the live tab set and
+  // `viewsByWs[id]` may be stale (it's only refreshed on switch-away) — commit
+  // first, or tabs opened since the last switch are missed and their chat
+  // sessions leak as headless backend actors.
+  if (id === useWorkspaceStore.getState().activeWorkspaceId) {
+    useLayoutStore.getState().actions.commitWorkspaceView(id);
+  }
   const view = useLayoutStore.getState().viewsByWs[id];
   const tabIds = view ? view.tabs.map((t) => t.id) : [];
   if (tabIds.length) {
@@ -192,6 +201,10 @@ function teardownHot(id: string): void {
   }
   evictSnapshot(id);
   useLayoutStore.getState().actions.removeWorkspaceView(id);
+  // The picker's no-IPC fast path must stop vouching for an index that is
+  // about to be torn down.
+  const path = useWorkspaceStore.getState().workspaces.find((w) => w.id === id)?.path;
+  if (path) markFileIndexClosedFor(path);
   void invoke("fileindex_close_project", { workspaceId: id }).catch(() => {});
   void invoke("git_watch_stop", { workspaceId: id }).catch(() => {});
   void invoke("recent_files_close_project", { workspaceId: id }).catch(() => {});
@@ -289,9 +302,7 @@ export const useWorkspaceStore = createSelectors(
 
       pin: (id: string) => {
         set((s) => ({
-          workspaces: s.workspaces.map((w) =>
-            w.id === id ? { ...w, pinned: true } : w,
-          ),
+          workspaces: s.workspaces.map((w) => (w.id === id ? { ...w, pinned: true } : w)),
         }));
         // Pinning warms the workspace so it's instant.
         get().actions.ensureMounted(id);
@@ -300,9 +311,7 @@ export const useWorkspaceStore = createSelectors(
 
       unpin: (id: string) => {
         set((s) => ({
-          workspaces: s.workspaces.map((w) =>
-            w.id === id ? { ...w, pinned: false } : w,
-          ),
+          workspaces: s.workspaces.map((w) => (w.id === id ? { ...w, pinned: false } : w)),
         }));
         scheduleAppStateSave();
       },
@@ -358,8 +367,7 @@ export const useWorkspaceStore = createSelectors(
           //    fire-and-forget. We do NOT reset chat/editor/terminal — they
           //    stay resident across switches so nothing remounts.
           const layout = useLayoutStore.getState().actions;
-          const outgoingPath =
-            useProjectStore.getState().currentProject?.path ?? null;
+          const outgoingPath = useProjectStore.getState().currentProject?.path ?? null;
           if (activeWorkspaceId) {
             layout.commitWorkspaceView(activeWorkspaceId);
             // Flush the OUTGOING workspace's pending writes (notably the KB
@@ -369,7 +377,11 @@ export const useWorkspaceStore = createSelectors(
             // The snapshot is then taken AFTER the flush so it reflects the
             // just-saved state. `flushAll` swallows per-store errors, so a bad
             // flush can't block the switch.
-            await flushAll({ workspaceId: activeWorkspaceId, path: outgoingPath });
+            await flushAll({
+              workspaceId: activeWorkspaceId,
+              path: outgoingPath,
+              reason: "switch",
+            });
             captureSnapshot(activeWorkspaceId);
           }
 
@@ -377,9 +389,7 @@ export const useWorkspaceStore = createSelectors(
           const nowIso = new Date().toISOString();
           set((s) => ({
             activeWorkspaceId: id,
-            workspaces: s.workspaces.map((w) =>
-              w.id === id ? { ...w, lastActiveAt: nowIso } : w,
-            ),
+            workspaces: s.workspaces.map((w) => (w.id === id ? { ...w, lastActiveAt: nowIso } : w)),
           }));
 
           // 3) Point the project store at the incoming workspace. This sets
@@ -443,6 +453,21 @@ export const useWorkspaceStore = createSelectors(
 
         const isActive = id === activeWorkspaceId;
         const closingPath = closing.path;
+
+        // Closing kills this workspace's running agents — confirm, then cancel
+        // their turns so the adapters actually stop (drop alone leaves them
+        // editing files headless).
+        const busy = busySessions(closingPath).length;
+        if (busy > 0) {
+          const ok = await useStopAgentsConfirmStore.getState().actions.ask({
+            count: busy,
+            actionLabel: "Closing this workspace",
+            confirmLabel: "Stop agents & close",
+          });
+          if (!ok) return;
+          await cancelBusySessions(closingPath);
+        }
+
         if (isActive) {
           // Active workspace: the layout mirror is its tabs, so flush is correct.
           await flushAll({ workspaceId: id, path: closingPath });
@@ -459,9 +484,8 @@ export const useWorkspaceStore = createSelectors(
 
         if (isActive) {
           // Switch to the most-recently-active remaining workspace, or clear.
-          const next = [...remaining].sort(
-            (a, b) =>
-              (b.lastActiveAt ?? "").localeCompare(a.lastActiveAt ?? ""),
+          const next = [...remaining].sort((a, b) =>
+            (b.lastActiveAt ?? "").localeCompare(a.lastActiveAt ?? ""),
           )[0];
           if (next) {
             set({ activeWorkspaceId: null });
@@ -486,9 +510,7 @@ export const useWorkspaceStore = createSelectors(
 
       removeWorkspacesForOrg: (orgId: string) => {
         const { workspaces, mountedWorkspaceIds } = get();
-        const removedIds = new Set(
-          workspaces.filter((w) => w.orgId === orgId).map((w) => w.id),
-        );
+        const removedIds = new Set(workspaces.filter((w) => w.orgId === orgId).map((w) => w.id));
         // Tear down any that are still mounted (defensive — a deleted org is
         // normally switched away from first, so its set is already cold).
         for (const id of mountedWorkspaceIds) {
@@ -497,9 +519,7 @@ export const useWorkspaceStore = createSelectors(
         set((s) => ({
           workspaces: s.workspaces.filter((w) => w.orgId !== orgId),
           groups: s.groups.filter((g) => g.orgId !== orgId),
-          mountedWorkspaceIds: s.mountedWorkspaceIds.filter(
-            (x) => !removedIds.has(x),
-          ),
+          mountedWorkspaceIds: s.mountedWorkspaceIds.filter((x) => !removedIds.has(x)),
         }));
       },
 
@@ -513,9 +533,7 @@ export const useWorkspaceStore = createSelectors(
       },
       rename: (id, name) => {
         set((s) => ({
-          workspaces: s.workspaces.map((w) =>
-            w.id === id ? { ...w, name } : w,
-          ),
+          workspaces: s.workspaces.map((w) => (w.id === id ? { ...w, name } : w)),
         }));
         scheduleAppStateSave();
       },
@@ -523,9 +541,7 @@ export const useWorkspaceStore = createSelectors(
       endRenameWorkspace: () => set({ editingWorkspaceId: null }),
       setGroup: (id, groupId) => {
         set((s) => ({
-          workspaces: s.workspaces.map((w) =>
-            w.id === id ? { ...w, groupId } : w,
-          ),
+          workspaces: s.workspaces.map((w) => (w.id === id ? { ...w, groupId } : w)),
         }));
         scheduleAppStateSave();
       },
@@ -567,9 +583,7 @@ export const useWorkspaceStore = createSelectors(
         set((s) => ({
           groups: s.groups.filter((g) => g.id !== id),
           // Ungroup any workspaces that belonged to it.
-          workspaces: s.workspaces.map((w) =>
-            w.groupId === id ? { ...w, groupId: null } : w,
-          ),
+          workspaces: s.workspaces.map((w) => (w.groupId === id ? { ...w, groupId: null } : w)),
         }));
         scheduleAppStateSave();
       },
@@ -592,7 +606,9 @@ export const useWorkspaceStore = createSelectors(
           const sidebarPinned = !s.sidebarPinned;
           try {
             localStorage.setItem(SIDEBAR_PINNED_KEY, sidebarPinned ? "1" : "0");
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
           // Pinning docks it into view immediately; unpinning leaves the
           // (now overlay) sidebar in whatever open state it was.
           return sidebarPinned ? { sidebarPinned, sidebarOpen: true } : { sidebarPinned };
@@ -600,7 +616,9 @@ export const useWorkspaceStore = createSelectors(
       setSidebarPinned: (pinned) => {
         try {
           localStorage.setItem(SIDEBAR_PINNED_KEY, pinned ? "1" : "0");
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
         set({ sidebarPinned: pinned });
       },
 

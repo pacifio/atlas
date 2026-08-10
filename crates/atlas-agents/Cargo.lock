@@ -210,7 +210,6 @@ dependencies = [
  "async-trait",
  "atlas-acp",
  "tokio",
- "tracing",
  "uuid",
 ]
 

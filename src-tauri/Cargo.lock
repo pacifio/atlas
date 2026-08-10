@@ -350,7 +350,7 @@ dependencies = [
 
 [[package]]
 name = "atlas"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "anyhow",
  "atlas-acp",
@@ -358,9 +358,9 @@ dependencies = [
  "atlas-checkpoint",
  "atlas-codeindex",
  "atlas-embed",
+ "atlas-git",
  "atlas-gitdiff",
  "atlas-memory",
- "atlas-redact",
  "atlas-review",
  "atlas-terminal",
  "base64 0.21.7",
@@ -421,7 +421,6 @@ dependencies = [
  "async-trait",
  "atlas-acp",
  "tokio",
- "tracing",
  "uuid",
 ]
 
@@ -519,6 +518,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-git"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde",
+]
+
+[[package]]
 name = "atlas-gitdiff"
 version = "0.1.0"
 dependencies = [
@@ -570,6 +577,7 @@ name = "atlas-terminal"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "portable-pty",
  "serde",
  "tokio",

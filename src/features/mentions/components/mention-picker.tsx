@@ -2,12 +2,14 @@
 // `@` in the CodeMirror composer), driven by an imperative keyboard API so
 // the editor never loses focus.
 //
-// Two views:
-//   • Empty query, no scope locked: "Recent files" (up to 5) → divider →
-//     category headers. Headers act as scope-locks.
-//   • Anything else: a single blended ranked list. Files dominate by
-//     weight, but category-aliased queries (e.g. `@note auth`) boost the
-//     matching kind so users can steer the result set.
+// Two views (Linear-style — search-first, no category step):
+//   • No scope locked: ONE blended search across every kind, rendered as
+//     per-kind sections (Files / Knowledge / Cloned Repos / …) in the order
+//     the ranked results surface them. Empty query shows a zero-query
+//     overview (recents + a slice of each kind) with a "Browse" category
+//     tail as an escape hatch for explicit scoping + past messages.
+//   • Scope locked (category pick, `~`, `#`, or an alias like `@note `):
+//     results from that kind only.
 //
 // Keyboard contract: the parent component forwards Up/Down/Enter/Esc via
 // the imperative handle so CM's focus stays put — the picker never has
@@ -15,6 +17,8 @@
 
 import {
   forwardRef,
+  memo,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -56,12 +60,10 @@ import {
   type PastSessionRef,
 } from "@/features/chat/lib/mentions";
 import { SKILLS_CHANGED_EVENT } from "@/features/skills/lib/skills-events";
-import {
-  useRecentFilesStore,
-  type RecentFile,
-} from "@/features/chat/stores/recent-files-store";
+import { useRecentFilesStore, type RecentFile } from "@/features/chat/stores/recent-files-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { ensureFileIndex } from "@/features/file-picker/lib/file-picker-api";
+import { activeWorkspaceId } from "@/features/workspaces/lib/active-workspace";
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -141,7 +143,7 @@ export const MentionPicker = forwardRef<MentionPickerHandle, MentionPickerProps>
       hostSelectors,
       initialScope,
     },
-    ref
+    ref,
   ) {
     const recentFiles = useRecentFilesStore.use.items();
     // Workspace mentions are scoped to the active org (see `searchWorkspaces`).
@@ -190,15 +192,6 @@ export const MentionPicker = forwardRef<MentionPickerHandle, MentionPickerProps>
       const controller = new AbortController();
       const ctx: MentionContext = { projectPath, agentId };
 
-      // Empty query + no scope renders "Recent files + Browse
-      // categories" — the picker ignores `results` entirely in that
-      // state. Short-circuit so we don't pay any IPC.
-      if (!query.trim() && !scope) {
-        setResults([]);
-        setPastSessions([]);
-        return () => controller.abort();
-      }
-
       // No debounce — the Rust side reads everything from cached
       // state now (file index, folder list, git refs, knowledge,
       // symbols are all in `MentionCacheState` / `FileIndexState`),
@@ -214,20 +207,16 @@ export const MentionPicker = forwardRef<MentionPickerHandle, MentionPickerProps>
         void listPastSessions(ctx).then((sessions) => {
           if (controller.signal.aborted) return;
           const q = query.trim().toLowerCase();
-          const filtered = q
-            ? sessions.filter((s) => s.title.toLowerCase().includes(q))
-            : sessions;
+          const filtered = q ? sessions.filter((s) => s.title.toLowerCase().includes(q)) : sessions;
           setPastSessions(filtered.slice(0, 30));
           setResults([]);
         });
       } else if (scope === "past_message" && pastSession) {
-        void listMessagesInPastSession(pastSession, query, controller.signal).then(
-          (msgs) => {
-            if (controller.signal.aborted) return;
-            setResults(applyExcludes(msgs));
-            setPastSessions([]);
-          }
-        );
+        void listMessagesInPastSession(pastSession, query, controller.signal).then((msgs) => {
+          if (controller.signal.aborted) return;
+          setResults(applyExcludes(msgs));
+          setPastSessions([]);
+        });
       } else {
         void searchMentions(query, scope, ctx).then((r) => {
           if (controller.signal.aborted) return;
@@ -237,7 +226,17 @@ export const MentionPicker = forwardRef<MentionPickerHandle, MentionPickerProps>
       }
 
       return () => controller.abort();
-    }, [open, query, scope, pastSession, projectPath, agentId, excludeIds, indexNonce, activeOrganisationId]);
+    }, [
+      open,
+      query,
+      scope,
+      pastSession,
+      projectPath,
+      agentId,
+      excludeIds,
+      indexNonce,
+      activeOrganisationId,
+    ]);
 
     // Reset the keyboard cursor to the top ONLY when the user changes what
     // they're looking at (query/scope/session) — NOT when results merely
@@ -278,8 +277,13 @@ export const MentionPicker = forwardRef<MentionPickerHandle, MentionPickerProps>
       if (!open) return;
       let cancelled = false;
       let unlisten: (() => void) | null = null;
-      void listen("atlas:fileindex:updated", () => {
+      void listen<{ workspaceId?: string }>("atlas:fileindex:updated", (ev) => {
         if (cancelled) return;
+        // The event carries the owning workspace — a background reindex for
+        // ANOTHER workspace must not clear this picker's loading hint or
+        // re-fire its search.
+        const ws = ev.payload?.workspaceId;
+        if (ws && ws !== activeWorkspaceId()) return;
         setIndexing(false);
         setIndexNonce((n) => n + 1);
       }).then((un) => {
@@ -371,40 +375,60 @@ export const MentionPicker = forwardRef<MentionPickerHandle, MentionPickerProps>
         }
         return out;
       }
-      if (!query.trim()) {
-        // The recents mirror is a single global store reflecting the ACTIVE
-        // workspace; right after a workspace switch there's an async window
-        // where it still holds the previous project's files. Filter to THIS
-        // picker's project so a recent from another project can never surface.
-        const recents = recentFiles
-          .filter(
-            (r) =>
-              !projectPath ||
-              r.absPath === projectPath ||
-              r.absPath.startsWith(projectPath + "/"),
-          )
-          .slice(0, RECENT_LIMIT);
-        if (recents.length > 0) {
-          out.push({ type: "header", label: "Recent files" });
-          for (const r of recents) {
-            out.push({
-              type: "mention",
-              mention: recentToMention(r),
-              recentLabel: dirOf(r.rel),
-            });
-          }
+      // Unscoped: ONE blended ranked list across every kind, rendered as
+      // per-kind sections. Section order = first appearance in the ranked
+      // results, so the best-scoring kind leads (Linear-style). Bucketing
+      // (rather than a header on every kind flip) keeps each kind together
+      // even when scores interleave.
+      const emptyQuery = !query.trim();
+      // The recents mirror is a single global store reflecting the ACTIVE
+      // workspace; right after a workspace switch there's an async window
+      // where it still holds the previous project's files. Filter to THIS
+      // picker's project so a recent from another project can never surface.
+      const recents = emptyQuery
+        ? recentFiles
+            .filter(
+              (r) =>
+                !projectPath ||
+                r.absPath === projectPath ||
+                r.absPath.startsWith(projectPath + "/"),
+            )
+            .slice(0, RECENT_LIMIT)
+        : [];
+      const recentIds = new Set(recents.map((r) => r.absPath));
+      if (recents.length > 0) {
+        out.push({ type: "header", label: "Recent files" });
+        for (const r of recents) {
+          out.push({
+            type: "mention",
+            mention: recentToMention(r),
+            recentLabel: dirOf(r.rel),
+          });
         }
+      }
+      const buckets = new Map<string, MentionData[]>();
+      for (const m of results) {
+        // In the overview, a file already shown under Recents is noise twice.
+        if (emptyQuery && m.kind === "file" && recentIds.has(m.id)) continue;
+        const label = categoryForKind(m.kind).label;
+        const bucket = buckets.get(label);
+        if (bucket) bucket.push(m);
+        else buckets.set(label, [m]);
+      }
+      for (const [label, items] of buckets) {
+        out.push({ type: "header", label });
+        for (const m of items) {
+          out.push({ type: "mention", mention: m });
+        }
+      }
+      // Escape hatch for explicit scoping (and the kinds that need a
+      // drill-in flow, e.g. Past Messages). Only in the zero-query view —
+      // once the user types, results ARE the interface.
+      if (emptyQuery) {
         out.push({ type: "header", label: "Browse" });
         for (const cat of MENTION_CATEGORIES) {
           out.push({ type: "category", cat });
         }
-        return out;
-      }
-      // Blended: results are already ranked by Rust (nucleo), capped
-      // top-N. JS just renders in the order Rust returned them — no
-      // second scoring pass.
-      for (const m of results) {
-        out.push({ type: "mention", mention: m });
       }
       return out;
     }, [scope, query, results, recentFiles, projectPath]);
@@ -476,7 +500,7 @@ export const MentionPicker = forwardRef<MentionPickerHandle, MentionPickerProps>
           return false;
         },
       }),
-      [activeRow, navIndices.length, pastSession, scope, initialScope]
+      [activeRow, navIndices.length, pastSession, scope, initialScope],
     );
 
     // Dismiss on click outside the picker AND outside the host editor.
@@ -538,9 +562,13 @@ export const MentionPicker = forwardRef<MentionPickerHandle, MentionPickerProps>
         className={cn(
           "atlas-mention-picker",
           "rounded-lg overflow-hidden",
-          "bg-bg-secondary border border-border-default",
-          "shadow-[0_8px_24px_rgba(0,0,0,0.5)]",
-          "flex flex-col"
+          // Solid AMOLED panel. Deliberately NOT frosted: backdrop-blur (plus a
+          // grain overlay) made the compositor re-blend this layer against the
+          // composer beneath it, which glitched against the blinking caret and
+          // shifting message layout. Opaque black has no such coupling.
+          "bg-black border border-white/10",
+          "shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_8px_24px_rgba(0,0,0,0.6)]",
+          "flex flex-col",
         )}
         // Keep mouse interactions from blurring CM:
         onMouseDown={(e) => e.preventDefault()}
@@ -553,54 +581,49 @@ export const MentionPicker = forwardRef<MentionPickerHandle, MentionPickerProps>
           zIndex: 9999,
         }}
       >
-            {rows.length === 0 ||
-            (rows.length === 1 && rows[0].type === "header") ? (
-              <div className="flex-1 px-3 py-6 text-center text-[11px] text-text-tertiary leading-snug">
-                {indexing &&
-                (scope === null || scope === "file" || scope === "folder") ? (
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="size-1.5 rounded-full bg-text-tertiary animate-pulse" />
-                    Indexing files…
-                  </span>
-                ) : (
-                  emptyStateCopy({
-                    scope,
-                    pastSession: pastSession !== null,
-                    query: query.trim(),
-                    hasProject: projectPath !== null,
-                  })
-                )}
-              </div>
+        {rows.length === 0 || (rows.length === 1 && rows[0].type === "header") ? (
+          <div className="flex-1 px-3 py-6 text-center text-[11px] text-text-tertiary leading-snug">
+            {indexing && (scope === null || scope === "file" || scope === "folder") ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="size-1.5 rounded-full bg-text-tertiary animate-pulse" />
+                Indexing files…
+              </span>
             ) : (
-              <VirtualizedRows
-                rows={rows}
-                activeRowIdx={activeRowIdx}
-                navIndices={navIndices}
-                setActive={setActive}
-                setScope={setScope}
-                setPastSession={setPastSession}
-                onSelect={onSelectRef}
-              />
+              emptyStateCopy({
+                scope,
+                pastSession: pastSession !== null,
+                query: query.trim(),
+                hasProject: projectPath !== null,
+              })
             )}
-            <div className="border-t border-border-default px-3 h-[26px] flex items-center justify-between shrink-0">
-              <span className="text-[9px] text-text-tertiary uppercase tracking-wider">
-                {scope
-                  ? `Scope: ${categoryForKind(scope).label}`
-                  : query
-                    ? "Filtered"
-                    : "Top: recents · then categories"}
-              </span>
-              <span className="flex items-center gap-1.5 text-[9px] text-text-tertiary">
-                <Kbd>↑↓</Kbd>
-                <Kbd>↵</Kbd>
-                <span>select</span>
-                <Kbd>esc</Kbd>
-              </span>
-            </div>
+          </div>
+        ) : (
+          <VirtualizedRows
+            rows={rows}
+            activeRowIdx={activeRowIdx}
+            navIndices={navIndices}
+            setActive={setActive}
+            setScope={setScope}
+            setPastSession={setPastSession}
+            onSelect={onSelectRef}
+          />
+        )}
+        <div className="border-t border-white/10 px-3 h-[34px] flex items-center justify-between shrink-0">
+          <span className="flex items-center gap-1.5 text-[9px] text-text-tertiary">
+            <Kbd>↑↓</Kbd>
+            <span>navigate</span>
+            <Kbd>↵</Kbd>
+            <span>select</span>
+          </span>
+          <span className="flex items-center gap-1.5 text-[9px] text-text-tertiary">
+            <Kbd>esc</Kbd>
+            <span>close</span>
+          </span>
+        </div>
       </div>,
-      document.body
+      document.body,
     );
-  }
+  },
 );
 
 // ── Virtualized row list ────────────────────────────────────────────────────
@@ -611,7 +634,7 @@ export const MentionPicker = forwardRef<MentionPickerHandle, MentionPickerProps>
 // inside the slot, so we don't pay measureElement cost.
 
 const ROW_HEIGHT = 26;
-const PICKER_INNER_MAX_HEIGHT = 336; // 360 (picker max) − 24 (footer)
+const PICKER_INNER_MAX_HEIGHT = 326; // 360 (picker max) − 34 (footer)
 
 function VirtualizedRows({
   rows,
@@ -646,10 +669,47 @@ function VirtualizedRows({
     virtualizer.scrollToIndex(activeRowIdx, { align: "auto" });
   }, [activeRowIdx, virtualizer]);
 
+  // O(1) rowIdx → navIdx lookup for hover. The inline handlers used to run
+  // `navIndices.indexOf(i)` — a linear scan per mouseenter event.
+  const navIdxByRow = useMemo(() => {
+    const map = new Map<number, number>();
+    navIndices.forEach((rowIdx, navIdx) => map.set(rowIdx, navIdx));
+    return map;
+  }, [navIndices]);
+
+  // Hover re-targets the active row ONLY while not scrolling. During a wheel
+  // flick, rows slide under a stationary cursor and fire mouseenter per
+  // frame; each setActive re-rendered the whole visible window mid-scroll —
+  // the same class of jank the chat virtualizer fixed by gating work on
+  // "is the user scrolling".
+  const handleHover = useCallback(
+    (rowIdx: number) => {
+      if (virtualizer.isScrolling) return;
+      const navIdx = navIdxByRow.get(rowIdx);
+      if (navIdx !== undefined) setActive(navIdx);
+    },
+    [virtualizer, navIdxByRow, setActive],
+  );
+
+  const handleActivate = useCallback(
+    (row: Row) => {
+      if (row.type === "category") {
+        setScope(row.cat.kind);
+        setActive(0);
+      } else if (row.type === "session") {
+        setPastSession(row.session);
+        setActive(0);
+      } else if (row.type === "mention") {
+        onSelect.current(row.mention);
+      }
+    },
+    [setScope, setPastSession, setActive, onSelect],
+  );
+
   return (
     <div
       ref={parentRef}
-      className="flex-1 overflow-y-auto py-1"
+      className="flex-1 overflow-y-auto overflow-x-hidden py-1"
       style={{ maxHeight: PICKER_INNER_MAX_HEIGHT }}
     >
       <div
@@ -659,132 +719,113 @@ function VirtualizedRows({
           position: "relative",
         }}
       >
-        {virtualizer.getVirtualItems().map((vRow) => {
-          const i = vRow.index;
-          const row = rows[i];
-          const style: React.CSSProperties = {
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: "100%",
-            height: ROW_HEIGHT,
-            transform: `translateY(${vRow.start}px)`,
-          };
-          if (row.type === "header") {
-            return (
-              <div
-                key={`h-${i}`}
-                style={style}
-                className="eyebrow px-3 pt-2 pb-1"
-              >
-                {row.label}
-              </div>
-            );
-          }
-          const isActive = i === activeRowIdx;
-          if (row.type === "category") {
-            return (
-              <button
-                key={`c-${row.cat.kind}`}
-                style={style}
-                onMouseEnter={() => {
-                  const navIdx = navIndices.indexOf(i);
-                  if (navIdx >= 0) setActive(navIdx);
-                }}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  setScope(row.cat.kind);
-                  setActive(0);
-                }}
-                className={cn(
-                  "text-left px-3 flex items-center gap-2 text-[11.5px]",
-                  isActive
-                    ? "bg-[var(--bg-selected)] text-[var(--text-primary)]"
-                    : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
-                )}
-              >
-                <span className="opacity-75 w-4 flex items-center justify-center">
-                  <CategoryIcon kind={row.cat.kind} />
-                </span>
-                <span>{row.cat.label}</span>
-              </button>
-            );
-          }
-          if (row.type === "session") {
-            return (
-              <button
-                key={`s-${row.session.id}`}
-                style={style}
-                onMouseEnter={() => {
-                  const navIdx = navIndices.indexOf(i);
-                  if (navIdx >= 0) setActive(navIdx);
-                }}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  setPastSession(row.session);
-                  setActive(0);
-                }}
-                className={cn(
-                  "text-left px-3 flex items-center gap-2 text-[11.5px]",
-                  isActive
-                    ? "bg-[var(--bg-selected)] text-[var(--text-primary)]"
-                    : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
-                )}
-                title={row.session.filePath}
-              >
-                <span className="opacity-75 w-4 flex items-center justify-center">
-                  <MessageSquare size={11} />
-                </span>
-                <span className="truncate flex-1 min-w-0">
-                  {row.session.title}
-                </span>
-                <span className="text-[10px] text-text-tertiary shrink-0">
-                  {row.session.messageCount} msgs
-                </span>
-              </button>
-            );
-          }
-          const m = row.mention;
-          return (
-            <button
-              key={`m-${m.kind}-${m.id}`}
-              style={style}
-              onMouseEnter={() => {
-                const navIdx = navIndices.indexOf(i);
-                if (navIdx >= 0) setActive(navIdx);
-              }}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                onSelect.current(m);
-              }}
-              className={cn(
-                "text-left px-3 flex items-center gap-2 text-[11.5px]",
-                isActive
-                  ? "bg-[var(--bg-selected)] text-[var(--text-primary)]"
-                  : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
-              )}
-              title={mentionTitle(m)}
-            >
-              <span className="opacity-75 w-4 flex items-center justify-center">
-                {m.kind === "knowledge" && m.icon ? (
-                  <span style={{ fontSize: 12, lineHeight: 1 }}>{m.icon}</span>
-                ) : (
-                  mentionGlyph(m)
-                )}
-              </span>
-              <span className="truncate min-w-0 flex-shrink-0">
-                {primaryLabel(m)}
-              </span>
-              <span className="flex-1 min-w-0 text-[10px] text-text-tertiary truncate">
-                {row.recentLabel ?? secondaryLabel(m)}
-              </span>
-            </button>
-          );
-        })}
+        {/* Key by the virtualizer's slot, not row content. Content-derived
+            keys collided while async results streamed in (the same mention
+            surfacing in two list revisions at different indices), which left
+            stale absolutely-positioned nodes double-painted in one slot. */}
+        {virtualizer.getVirtualItems().map((vRow) => (
+          <PickerRow
+            key={vRow.key}
+            row={rows[vRow.index]}
+            rowIdx={vRow.index}
+            start={vRow.start}
+            isActive={vRow.index === activeRowIdx}
+            onHover={handleHover}
+            onActivate={handleActivate}
+          />
+        ))}
       </div>
     </div>
   );
 }
+
+/** One row, memoized: a hover/keyboard move flips `isActive` on exactly two
+ *  rows, so every other visible row skips re-rendering — that full-window
+ *  re-render per mouse movement was the bulk of the picker's scroll cost. */
+const PickerRow = memo(function PickerRow({
+  row,
+  rowIdx,
+  start,
+  isActive,
+  onHover,
+  onActivate,
+}: {
+  row: Row;
+  rowIdx: number;
+  start: number;
+  isActive: boolean;
+  onHover: (rowIdx: number) => void;
+  onActivate: (row: Row) => void;
+}) {
+  const style: React.CSSProperties = {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: "100%",
+    height: ROW_HEIGHT,
+    transform: `translateY(${start}px)`,
+  };
+  if (row.type === "header") {
+    return (
+      <div style={style} className="eyebrow px-3 pt-2 pb-1 truncate">
+        {row.label}
+      </div>
+    );
+  }
+  const common = {
+    style,
+    onMouseEnter: () => onHover(rowIdx),
+    onMouseDown: (e: React.MouseEvent) => {
+      e.preventDefault();
+      onActivate(row);
+    },
+    className: cn(
+      "text-left px-3 flex items-center gap-2 text-[11.5px]",
+      isActive
+        ? "bg-[var(--bg-selected)] text-[var(--text-primary)]"
+        : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
+    ),
+  };
+  if (row.type === "category") {
+    return (
+      <button {...common}>
+        <span className="opacity-75 w-4 flex items-center justify-center">
+          <CategoryIcon kind={row.cat.kind} />
+        </span>
+        <span>{row.cat.label}</span>
+      </button>
+    );
+  }
+  if (row.type === "session") {
+    return (
+      <button {...common} title={row.session.filePath}>
+        <span className="opacity-75 w-4 flex items-center justify-center">
+          <MessageSquare size={11} />
+        </span>
+        <span className="truncate flex-1 min-w-0">{row.session.title}</span>
+        <span className="text-[10px] text-text-tertiary shrink-0">
+          {row.session.messageCount} msgs
+        </span>
+      </button>
+    );
+  }
+  const m = row.mention;
+  return (
+    <button {...common} title={mentionTitle(m)}>
+      <span className="opacity-75 w-4 flex items-center justify-center">
+        {m.kind === "knowledge" && m.icon ? (
+          <span style={{ fontSize: 12, lineHeight: 1 }}>{m.icon}</span>
+        ) : (
+          mentionGlyph(m)
+        )}
+      </span>
+      <span className="truncate min-w-0">{primaryLabel(m)}</span>
+      <span className="flex-1 min-w-0 text-[10px] text-text-tertiary truncate">
+        {row.recentLabel ?? secondaryLabel(m)}
+      </span>
+    </button>
+  );
+});
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -823,18 +864,30 @@ function mentionGlyph(m: MentionData) {
 function CategoryIcon({ kind }: { kind: MentionKind }) {
   const size = 11;
   switch (kind) {
-    case "file":         return <FileText size={size} />;
-    case "folder":       return <Folder size={size} />;
-    case "symbol":       return <Hash size={size} />;
-    case "knowledge":    return <BookOpen size={size} />;
-    case "skill":        return <Zap size={size} />;
-    case "component":    return <Zap size={size} />;
-    case "repo":         return <FolderGit2 size={size} />;
-    case "workspace":    return <Boxes size={size} />;
-    case "paper":        return <Newspaper size={size} />;
-    case "branch":       return <GitBranch size={size} />;
-    case "past_message": return <MessageSquare size={size} />;
-    case "past_session": return <MessageSquare size={size} />;
+    case "file":
+      return <FileText size={size} />;
+    case "folder":
+      return <Folder size={size} />;
+    case "symbol":
+      return <Hash size={size} />;
+    case "knowledge":
+      return <BookOpen size={size} />;
+    case "skill":
+      return <Zap size={size} />;
+    case "component":
+      return <Zap size={size} />;
+    case "repo":
+      return <FolderGit2 size={size} />;
+    case "workspace":
+      return <Boxes size={size} />;
+    case "paper":
+      return <Newspaper size={size} />;
+    case "branch":
+      return <GitBranch size={size} />;
+    case "past_message":
+      return <MessageSquare size={size} />;
+    case "past_session":
+      return <MessageSquare size={size} />;
   }
 }
 
@@ -856,16 +909,26 @@ function secondaryLabel(m: MentionData): string {
     case "file":
     case "folder":
       return dirOf(m.displayName);
-    case "symbol":       return `${m.symbolKind} · ${shortPath(m.filePath)}`;
-    case "knowledge":    return m.folder ? `${m.folder} · ${m.source}` : m.source;
-    case "skill":        return m.scope === "project" ? `${m.description} · project` : m.description;
-    case "component":    return `${m.componentKind} · pack: ${m.pack}`;
-    case "repo":         return m.hasReadme ? "cloned · README" : "cloned";
-    case "workspace":    return m.orgName ? `${m.orgName} · ${shortPath(m.absPath)}` : shortPath(m.absPath);
-    case "paper":        return m.authors[0] ?? "";
-    case "branch":       return m.refKind + (m.isCurrent ? " · HEAD" : "");
-    case "past_message": return m.sessionTitle;
-    case "past_session": return "session transcript";
+    case "symbol":
+      return `${m.symbolKind} · ${shortPath(m.filePath)}`;
+    case "knowledge":
+      return m.folder ? `${m.folder} · ${m.source}` : m.source;
+    case "skill":
+      return m.scope === "project" ? `${m.description} · project` : m.description;
+    case "component":
+      return `${m.componentKind} · pack: ${m.pack}`;
+    case "repo":
+      return m.hasReadme ? "cloned · README" : "cloned";
+    case "workspace":
+      return m.orgName ? `${m.orgName} · ${shortPath(m.absPath)}` : shortPath(m.absPath);
+    case "paper":
+      return m.authors[0] ?? "";
+    case "branch":
+      return m.refKind + (m.isCurrent ? " · HEAD" : "");
+    case "past_message":
+      return m.sessionTitle;
+    case "past_session":
+      return "session transcript";
   }
 }
 
@@ -904,22 +967,34 @@ function emptyStateCopy(args: {
   }
   return args.query
     ? `No matches for "${args.query}".`
-    : "Pick a category, or type to search.";
+    : "Type to search files, folders, notes, repos, branches…";
 }
 
 function mentionTitle(m: MentionData): string {
   switch (m.kind) {
-    case "file":         return m.absPath;
-    case "folder":       return m.absPath;
-    case "symbol":       return `${m.filePath}:${m.line}`;
-    case "knowledge":    return m.filePath;
-    case "skill":        return m.description || m.filePath;
-    case "component":    return m.description || m.filePath;
-    case "repo":         return m.absPath;
-    case "workspace":    return m.absPath;
-    case "paper":        return m.metadataPath;
-    case "branch":       return `${m.refKind} ${m.id} (${m.sha.slice(0, 7)})`;
-    case "past_message": return m.content;
-    case "past_session": return m.sessionTitle;
+    case "file":
+      return m.absPath;
+    case "folder":
+      return m.absPath;
+    case "symbol":
+      return `${m.filePath}:${m.line}`;
+    case "knowledge":
+      return m.filePath;
+    case "skill":
+      return m.description || m.filePath;
+    case "component":
+      return m.description || m.filePath;
+    case "repo":
+      return m.absPath;
+    case "workspace":
+      return m.absPath;
+    case "paper":
+      return m.metadataPath;
+    case "branch":
+      return `${m.refKind} ${m.id} (${m.sha.slice(0, 7)})`;
+    case "past_message":
+      return m.content;
+    case "past_session":
+      return m.sessionTitle;
   }
 }

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { invoke } from "@tauri-apps/api/core";
-import { toast } from "sonner";
 import {
   ArrowLeft,
   Copy,
@@ -15,6 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGitStore } from "../../stores/git-store";
+import { handleGitError } from "../../lib/git-errors";
 import { useArtifactsStore } from "@/features/artifacts/stores/artifacts-store";
 import { useReviewStore } from "@/features/review-agents/stores/review-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
@@ -37,7 +37,7 @@ export function HistoryView() {
     try {
       await fn();
     } catch (e) {
-      toast.error(String(e));
+      handleGitError(e);
     }
   };
 
@@ -148,19 +148,32 @@ export function HistoryView() {
       {log.length === 0 ? (
         <div className="px-3 py-8 text-center text-[11px] text-text-tertiary">No history</div>
       ) : (
-        log.map((c) => (
-          <button
-            key={c.hash}
-            onClick={() => void actions.loadCommit(c.hash)}
-            className="w-full text-left flex flex-col gap-0.5 px-3 py-1.5 border-b border-border-subtle hover:bg-bg-hover group"
-          >
-            <span className="text-[11px] text-text-secondary group-hover:text-text-primary truncate">
-              {c.message}
-            </span>
-            <span className="text-[9px] text-text-tertiary font-mono">
-              {c.short_hash} · {c.author} · {c.date}
-            </span>
-          </button>
+        log.map((c, i) => (
+          <div key={c.hash} className="relative group">
+            <button
+              onClick={() => void actions.loadCommit(c.hash)}
+              className="w-full text-left flex flex-col gap-0.5 px-3 py-1.5 border-b border-border-subtle hover:bg-bg-hover"
+            >
+              <span className="text-[11px] text-text-secondary group-hover:text-text-primary truncate pr-12">
+                {c.message}
+              </span>
+              <span className="text-[9px] text-text-tertiary font-mono">
+                {c.short_hash} · {c.author} · {c.date}
+              </span>
+            </button>
+            {i === 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void run(() => actions.undoCommit());
+                }}
+                className="absolute right-2 top-1.5 opacity-0 group-hover:opacity-100 px-1.5 h-[16px] rounded border border-border-default text-[9px] text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+                title="Undo this commit — changes return to the staged area (blocked once pushed)"
+              >
+                Undo
+              </button>
+            )}
+          </div>
         ))
       )}
     </div>
@@ -185,7 +198,10 @@ function ResetMenu({ onReset }: { onReset: (mode: "soft" | "mixed" | "hard") => 
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
         <button
-          className={cn("p-1 rounded hover:bg-bg-hover", open ? "text-text-primary" : "text-text-tertiary hover:text-text-primary")}
+          className={cn(
+            "p-1 rounded hover:bg-bg-hover",
+            open ? "text-text-primary" : "text-text-tertiary hover:text-text-primary",
+          )}
           title="Reset current branch to this commit"
         >
           <RotateCcw size={12} />
@@ -257,8 +273,17 @@ function CommitSessions({ sha }: { sha: string }) {
     // The sha travels with the request so the Session lands on this commit's
     // Checkpoint rather than at the top of a conversation that may have
     // produced several.
-    useArtifactsStore.getState().actions.openSession({ sessionId, projectPath: repoPath, commitSha: sha });
-    addTab({ id: "artifacts", type: "artifacts", title: "Timeline", closable: true, dirty: false, data: {} });
+    useArtifactsStore
+      .getState()
+      .actions.openSession({ sessionId, projectPath: repoPath, commitSha: sha });
+    addTab({
+      id: "artifacts",
+      type: "artifacts",
+      title: "Timeline",
+      closable: true,
+      dirty: false,
+      data: {},
+    });
   };
 
   return (

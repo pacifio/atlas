@@ -9,7 +9,7 @@ function Kbd({ className, ...props }: React.ComponentProps<"kbd">) {
         "pointer-events-none inline-flex h-[18px] w-fit min-w-[18px] items-center justify-center gap-1 rounded-[4px]",
         "bg-bg-elevated border border-border-default px-1.5 font-sans text-[10px] leading-none font-medium text-text-tertiary select-none",
         "[&_svg:not([class*='size-'])]:size-3",
-        className
+        className,
       )}
       {...props}
     />
@@ -27,7 +27,7 @@ function KbdGroup({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 /** Split a string like "⌘⇧F" or "⌘," into individual key glyphs. */
-export function splitKeys(combo: string): string[] {
+function splitKeys(combo: string): string[] {
   // Modifier glyphs are single chars; non-modifier "keys" may be multi-char names like "Enter".
   // We just split codepoints — works because all our combos are single-char per slot.
   return Array.from(combo);

@@ -1,12 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import {
-  CheckCircle2,
-  XCircle,
-  AlertTriangle,
-  ClipboardList,
-  CircleHelp,
-} from "lucide-react";
+import { CheckCircle2, XCircle, AlertTriangle, ClipboardList } from "lucide-react";
 import { toast } from "sonner";
 import { useChatStore } from "../stores/chat-store";
 import { agents } from "../lib/agents-api";
@@ -15,6 +9,7 @@ import { Kbd } from "@/ui/kbd";
 import { Markdown } from "@/lib/markdown";
 import { extractPlanMarkdown } from "../lib/plans";
 import { extractQuestions } from "../lib/questions";
+import { ApprovalCard } from "./approval-card";
 import type { PermissionOptionRef, PendingPermission } from "@/types/acp";
 import { AGENT_LABEL, type AgentType } from "@/types/agent";
 
@@ -29,7 +24,7 @@ function isReject(kind: string) {
 // codex-acp emits "No, and tell Codex what to do differently"). Rewrite any
 // OTHER agent's brand to the agent actually bound to this session so the card
 // never names the wrong agent. Ordered longest-first to avoid partial matches.
-const AGENT_BRANDS = ["Claude Code", "Codex", "Claude"];
+const AGENT_BRANDS = ["Claude Code", "Codex", "Claude", "OpenCode", "Cursor"];
 function relabelAgentBrand(label: string, agentType: AgentType): string {
   const display = (AGENT_LABEL as Record<string, string>)[agentType] ?? "the agent";
   let out = label;
@@ -226,108 +221,26 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
     );
   }
 
-  // AskUserQuestion — render the rich question(s) + answer choices inline.
-  // Each answer maps to the matching ACP option when the adapter exposed the
-  // choices as permission options; otherwise clicking it answers in words via
-  // the free-text path (cancel + send). Esc still backs out.
+  // AskUserQuestion — the stepper card (one question per step, radio /
+  // checkbox options, free text, progress dots). All questions are answered,
+  // not just the first. Submit either resolves a matching ACP option (single
+  // single-select answer) or cancels the request and sends the composed
+  // answers as a user message — see the card's own header for the contract.
+  // Esc still backs out via this modal's keyboard handler.
   if (questions) {
-    const primaryQ = questions[0];
-    const acpByName = new Map(
-      current.options.map((o) => [o.name.trim().toLowerCase(), o] as const),
-    );
-    const answer = (o: { label: string }) => {
-      const match = acpByName.get(o.label.trim().toLowerCase());
-      if (match) resolve(match.optionId);
-      else {
-        cancel();
-        onSendMessage?.(o.label);
-      }
-    };
-    // ACP options with no corresponding answer choice (e.g. an explicit
-    // reject/cancel) — surfaced below so the user can still decline.
-    const specLabels = new Set(
-      questions.flatMap((q) => q.options.map((o) => o.label.trim().toLowerCase())),
-    );
-    const extraOptions = current.options.filter(
-      (o) => !specLabels.has(o.name.trim().toLowerCase()),
-    );
-
     return (
       <div className="px-4 pt-2">
-        <div className="mx-auto w-full max-w-[720px] overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[0_8px_24px_rgba(0,0,0,0.35)]">
-          <div className="flex items-start gap-2 px-3 pt-3">
-            <CircleHelp className="mt-0.5 size-3.5 shrink-0 text-accent" />
-            <div className="flex-1 min-w-0">
-              {primaryQ.header && (
-                <div className="text-[11px] uppercase tracking-wide text-text-secondary">
-                  {primaryQ.header}
-                </div>
-              )}
-              <div className="text-[13px] font-medium leading-snug text-text-primary">
-                {primaryQ.question || "The agent has a question"}
-              </div>
-              {primaryQ.multiSelect && (
-                <div className="mt-0.5 text-[11px] text-text-tertiary">
-                  Multiple choices apply — pick the closest, or answer in your
-                  own words below.
-                </div>
-              )}
-              {queueNote && (
-                <div className="mt-0.5 text-[11px] text-text-secondary">{queueNote}</div>
-              )}
-            </div>
-          </div>
-
-          {/* Additional questions (rare) shown as context. */}
-          {questions.length > 1 && (
-            <div className="mx-3 mt-2 space-y-1 rounded-md border border-border-default bg-bg-base px-3 py-2">
-              {questions.slice(1).map((q, i) => (
-                <div key={i} className="text-[11px] text-text-secondary">
-                  {q.header && <span className="text-text-tertiary">{q.header}: </span>}
-                  {q.question}
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="flex flex-col gap-1 px-3 py-2.5">
-            {primaryQ.options.map((o, i) => (
-              <QuestionOption
-                key={`${o.label}-${i}`}
-                index={i + 1}
-                label={o.label}
-                description={o.description}
-                onSelect={() => answer(o)}
-              />
-            ))}
-            {extraOptions.map((opt) => (
-              <PermissionOption
-                key={opt.optionId}
-                index={0}
-                option={opt}
-                agentType={agentType}
-                onSelect={() => resolve(opt.optionId)}
-              />
-            ))}
-          </div>
-
-          <div className="border-t border-border-default px-3 py-2.5">
-            <textarea
-              ref={textRef}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  submitText();
-                }
-              }}
-              rows={1}
-              placeholder="Answer in your own words…"
-              className="w-full resize-none rounded-md border border-border-default bg-bg-base px-2.5 py-1.5 text-[12px] text-text-primary outline-none placeholder:text-text-tertiary focus:border-[var(--border-focus)]"
-            />
-          </div>
-        </div>
+        <ApprovalCard
+          key={current.requestId}
+          questions={questions}
+          acpOptions={current.options}
+          queueNote={queueNote}
+          onResolveOption={resolve}
+          onAnswerText={(text) => {
+            cancel();
+            onSendMessage?.(text);
+          }}
+        />
       </div>
     );
   }
@@ -339,12 +252,9 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
         <div className="flex items-start gap-2 px-3 pt-3">
           <div className="flex-1 min-w-0">
             <div className="text-[13px] font-medium leading-snug text-text-primary">
-              The agent wants to run{" "}
-              <span className="font-mono text-text-primary">{title}</span>?
+              The agent wants to run <span className="font-mono text-text-primary">{title}</span>?
             </div>
-            {queueNote && (
-              <div className="mt-0.5 text-[11px] text-text-secondary">{queueNote}</div>
-            )}
+            {queueNote && <div className="mt-0.5 text-[11px] text-text-secondary">{queueNote}</div>}
           </div>
         </div>
 
@@ -410,7 +320,9 @@ function PermissionOption({
         <span
           className={cn(
             "flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold",
-            isPrimary ? "bg-[var(--bg-base)]/15 text-[var(--bg-base)]" : "bg-bg-elevated text-text-secondary",
+            isPrimary
+              ? "bg-[var(--bg-base)]/15 text-[var(--bg-base)]"
+              : "bg-bg-elevated text-text-secondary",
           )}
         >
           {index}
@@ -419,47 +331,10 @@ function PermissionOption({
       <Icon className="size-3.5 shrink-0" />
       <span className="min-w-0 flex-1 font-medium break-words">{label}</span>
       {isPrimary && (
-        <Kbd className="border-[var(--bg-base)]/20 bg-[var(--bg-base)]/10 text-[var(--bg-base)]">↵</Kbd>
+        <Kbd className="border-[var(--bg-base)]/20 bg-[var(--bg-base)]/10 text-[var(--bg-base)]">
+          ↵
+        </Kbd>
       )}
-    </button>
-  );
-}
-
-/**
- * An AskUserQuestion answer choice — label + optional description. Distinct from
- * PermissionOption (which is allow/reject-shaped): every answer is a neutral,
- * equally-weighted pick, numbered for quick scanning.
- */
-function QuestionOption({
-  index,
-  label,
-  description,
-  onSelect,
-}: {
-  index: number;
-  label: string;
-  description?: string;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        "flex w-full min-w-0 items-start gap-2.5 rounded-md border border-border-default bg-bg-base px-2.5 py-2 text-left text-[12px] transition-colors outline-none hover:bg-bg-hover",
-      )}
-    >
-      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded bg-bg-elevated text-[10px] font-semibold text-text-secondary">
-        {index}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block font-medium break-words text-text-primary">{label}</span>
-        {description && (
-          <span className="mt-0.5 block text-[11px] font-normal leading-snug text-text-secondary break-words">
-            {description}
-          </span>
-        )}
-      </span>
     </button>
   );
 }

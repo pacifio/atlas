@@ -327,8 +327,7 @@ export const useClaudeSetupStore = createSelectors(
             phase: "not-authed",
             authRun: {
               phase: "failed",
-              message:
-                p.message ?? "Sign-in subprocess didn't complete successfully.",
+              message: p.message ?? "Sign-in subprocess didn't complete successfully.",
             },
           });
           return;

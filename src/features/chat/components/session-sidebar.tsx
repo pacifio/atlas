@@ -1,12 +1,6 @@
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import {
-  X,
-  MessageSquare,
-  Search,
-  PanelLeftClose,
-  Plus,
-} from "lucide-react";
+import { X, MessageSquare, Search, PanelLeft, Plus } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
@@ -14,7 +8,14 @@ import { cn } from "@/lib/utils";
 import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { isBusyAgentStatus, agentTypeFromPluginId } from "@/types/agent";
-import { ClaudeIcon, CodexIcon } from "@/components/agent-icons";
+import {
+  ClaudeIcon,
+  CodexIcon,
+  OpenCodeIcon,
+  CursorIcon,
+  KiloIcon,
+} from "@/components/agent-icons";
+import { AGENT_LABEL, pluginIdForAgent, type SwitchableAgent } from "@/types/agent";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { timeAgo } from "@/lib/time-ago";
 import { useProjectStore } from "@/features/project/stores/project-store";
@@ -26,21 +27,43 @@ import {
   listClaudeSessions,
   listCodexSessions,
   listCerseiSessions,
+  listKiloSessions,
   deleteClaudeSession,
   cerseiDeleteSession,
   codexDeleteSession,
+  kiloDeleteSession,
   type ClaudeSessionMeta,
 } from "../lib/claude-api";
-import {
-  ensureAgent,
-  getAgentSync,
-  CODEX_PLUGIN_ID,
-  CERSEI_PLUGIN_ID,
-  DEFAULT_PLUGIN_ID,
-} from "../lib/agents-api";
+import { ensureAgent, getAgentSync } from "../lib/agents-api";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { useRecentChatsStore } from "@/features/workspaces/stores/recent-chats-store";
 import { resumeSessionFast, ResumeError } from "../lib/resume-session";
+
+/** Short per-row agent tag. "claude" doubles as the legacy default for rows
+ *  with no metadata, so the mapping from AgentType is centralised here instead
+ *  of repeated ternaries that silently mislabel new agents. */
+type SidebarAgent = "claude" | "codex" | "opencode" | "cursor" | "kilo" | "cersei";
+
+function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
+  if (
+    agentType === "codex" ||
+    agentType === "opencode" ||
+    agentType === "cursor" ||
+    agentType === "kilo" ||
+    agentType === "cersei"
+  )
+    return agentType;
+  return "claude";
+}
+
+const AGENT_TYPE_BY_SIDEBAR: Record<SidebarAgent, SwitchableAgent> = {
+  claude: "claude-code",
+  codex: "codex",
+  opencode: "opencode",
+  cursor: "cursor",
+  kilo: "kilo",
+  cersei: "cersei",
+};
 
 /** Compact token count: 1234 → "1.2k", 1_200_000 → "1.2M". */
 function formatTokenCount(n: number): string {
@@ -58,7 +81,7 @@ interface SidebarItem {
   messageCount: number;
   /** Which coding agent ran this session (drives the row icon). Defaults to
    *  "claude" — historical Claude-only sessions + anything without metadata. */
-  agent: "claude" | "codex" | "cersei";
+  agent: SidebarAgent;
   // agent-only
   filePath?: string;
   /** Cumulative tokens processed (native Atlas agent sessions only). */
@@ -69,9 +92,30 @@ interface SidebarItem {
 
 interface SessionSidebarProps {
   tabId: string;
+  /**
+   * Where this list is being rendered.
+   *
+   * `"sidebar"` (default) — the resizable left column inside the chat panel,
+   * gated on `chatSidebar.visible`.
+   *
+   * `"dropdown"` — the body of the header's session picker. Same data, same
+   * handlers, different chrome: no fixed width, no resize handle, no border,
+   * and NOT gated on the sidebar's visibility (the picker exists precisely so
+   * history is reachable with the sidebar closed).
+   *
+   * This is a variant rather than a second component on purpose. Building the
+   * list means merging live tabs with three agents' on-disk listings and
+   * suppressing twins, and OPENING a row is ~180 lines of resume logic with
+   * several hard-won edge cases (orphan tabs, Codex rows with no JSONL, stale
+   * clicks). Duplicating either would guarantee they drift.
+   */
+  variant?: "sidebar" | "dropdown";
+  /** Called after a row is opened — lets the picker close itself. */
+  onOpened?: () => void;
 }
 
-export function SessionSidebar({ tabId }: SessionSidebarProps) {
+export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: SessionSidebarProps) {
+  const asDropdown = variant === "dropdown";
   const queryClient = useQueryClient();
   const project = useProjectStore.use.currentProject();
   // `currentProject` is a legacy field that's transiently null during boot and
@@ -82,9 +126,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
   const activeWorkspaceId = useWorkspaceStore.use.activeWorkspaceId();
   const workspaces = useWorkspaceStore.use.workspaces();
   const resolvedCwd =
-    project?.path ??
-    workspaces.find((w) => w.id === activeWorkspaceId)?.path ??
-    "";
+    project?.path ?? workspaces.find((w) => w.id === activeWorkspaceId)?.path ?? "";
   // STICKY cwd. Even with the workspace fallback, `currentProject` and
   // `activeWorkspaceId`/`workspaces` can momentarily DISAGREE mid-switch (e.g.
   // when opening a Codex/Cersei session or hitting "+"), collapsing `resolvedCwd`
@@ -199,12 +241,8 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
   } = useChatStore.use.actions();
 
   const chatSidebar = useLayoutStore.use.chatSidebar();
-  const {
-    toggleChatSidebar,
-    setChatSidebarWidth,
-    addTab,
-    setActiveTab,
-  } = useLayoutStore.use.actions();
+  const { toggleChatSidebar, setChatSidebarWidth, addTab, setActiveTab } =
+    useLayoutStore.use.actions();
 
   const [search, setSearch] = useState("");
 
@@ -275,6 +313,23 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
     placeholderData: keepPreviousData,
   });
 
+  // Kilo sessions — SQLite at ~/.local/share/kilo/kilo.db, same no-watcher
+  // poll + merge treatment as Codex.
+  const kiloQueryKey = ["kilo-sessions", cwd] as const;
+  const {
+    data: kiloList = [],
+    isSuccess: kiloReady,
+    isPlaceholderData: kiloPlaceholder,
+  } = useQuery({
+    queryKey: kiloQueryKey,
+    queryFn: () => listKiloSessions(cwd),
+    enabled: cwd.length > 0,
+    staleTime: 30_000,
+    refetchInterval: 4000,
+    refetchIntervalInBackground: false,
+    placeholderData: keepPreviousData,
+  });
+
   // Start (or replace) the Rust file watcher for this cwd. The single
   // `atlas:sessions-changed` listener below dispatches against `queryKey`
   // closed over the current cwd, so the listener doesn't have to be
@@ -301,18 +356,17 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
     const key = ["claude-sessions", cwd] as const;
     const codexKey = ["codex-sessions", cwd] as const;
     const cerseiKey = ["cersei-sessions", cwd] as const;
+    const kiloKey = ["kilo-sessions", cwd] as const;
     const invalidate = () => {
       queryClient.invalidateQueries({ queryKey: key });
       queryClient.invalidateQueries({ queryKey: codexKey });
       queryClient.invalidateQueries({ queryKey: cerseiKey });
+      queryClient.invalidateQueries({ queryKey: kiloKey });
     };
-    const unlistenPromise = listen<{ cwd: string }>(
-      "atlas:sessions-changed",
-      (e) => {
-        if (e.payload.cwd !== cwd) return;
-        invalidate();
-      }
-    );
+    const unlistenPromise = listen<{ cwd: string }>("atlas:sessions-changed", (e) => {
+      if (e.payload.cwd !== cwd) return;
+      invalidate();
+    });
     window.addEventListener("focus", invalidate);
     return () => {
       unlistenPromise.then((u) => u());
@@ -352,19 +406,17 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
       liveAgents.map((s) => {
         const id = s.acpSessionId ?? `live-${s.id}`;
         return [id, s] as const;
-      })
+      }),
     );
     // Merge both agents' disk listings into one map, tagging each row with the
     // agent that produced it so the row icon + resume routing are correct even
     // when there's no live session to infer the agent from. Claude is inserted
     // first; a Codex id never collides with a Claude JSONL id.
-    const diskById = new Map<
-      string,
-      { meta: ClaudeSessionMeta; agent: "claude" | "codex" | "cersei" }
-    >();
+    const diskById = new Map<string, { meta: ClaudeSessionMeta; agent: SidebarAgent }>();
     for (const d of agentList) diskById.set(d.id, { meta: d, agent: "claude" });
     for (const d of codexList) diskById.set(d.id, { meta: d, agent: "codex" });
     for (const d of cerseiList) diskById.set(d.id, { meta: d, agent: "cersei" });
+    for (const d of kiloList) diskById.set(d.id, { meta: d, agent: "kilo" });
 
     // An unbound live row (`live-<tabId>` key — after an agent switch or
     // clearSession dropped the binding but kept messages, or during the
@@ -395,12 +447,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
     const TWIN_WINDOW_MS = 10 * 60 * 1000;
     for (const [id, live] of Array.from(liveById)) {
       if (!id.startsWith("live-")) continue;
-      const liveAgent =
-        live.agentType === "codex"
-          ? "codex"
-          : live.agentType === "cersei"
-            ? "cersei"
-            : "claude";
+      const liveAgent = sidebarAgentOf(live.agentType);
       const first = normFirstUser(live.firstUserContent ?? "");
       if (!first) continue;
       const diskTs = diskPreviews.get(`${liveAgent}|${first}`);
@@ -414,10 +461,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
       }
     }
 
-    const allIds = new Set<string>([
-      ...liveById.keys(),
-      ...diskById.keys(),
-    ]);
+    const allIds = new Set<string>([...liveById.keys(), ...diskById.keys()]);
 
     const agents: SidebarItem[] = Array.from(allIds, (id) => {
       const live = liveById.get(id);
@@ -465,13 +509,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
         // Agent identity: prefer the live session's, else the agent that
         // produced the disk row (Claude JSONL vs Codex rollout). Drives the
         // row icon AND which agent process handleOpenAgent resumes through.
-        agent: live
-          ? live.agentType === "codex"
-            ? "codex"
-            : live.agentType === "cersei"
-              ? "cersei"
-              : "claude"
-          : (diskEntry?.agent ?? "claude"),
+        agent: live ? sidebarAgentOf(live.agentType) : (diskEntry?.agent ?? "claude"),
         filePath: disk?.file_path,
         totalTokens: disk?.total_tokens,
       };
@@ -482,7 +520,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
     return agents
       .filter((a) => a.messageCount > 0)
       .sort((a, b) => (b.lastUpdated ?? "").localeCompare(a.lastUpdated ?? ""));
-  }, [agentList, codexList, cerseiList, tabSummaries]);
+  }, [agentList, codexList, cerseiList, kiloList, tabSummaries]);
 
   // Self-heal the workspace panel's persisted "Chats" list for THIS project.
   // That list (`atlas-recent-chats`) is recorded on agent activity and never
@@ -494,12 +532,13 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
   // old project's lists.
   useEffect(() => {
     if (!cwd) return;
-    if (!agentReady || !codexReady || !cerseiReady) return;
-    if (agentPlaceholder || codexPlaceholder || cerseiPlaceholder) return;
+    if (!agentReady || !codexReady || !cerseiReady || !kiloReady) return;
+    if (agentPlaceholder || codexPlaceholder || cerseiPlaceholder || kiloPlaceholder) return;
     const diskIds = new Set<string>([
       ...agentList.map((d) => d.id),
       ...codexList.map((d) => d.id),
       ...cerseiList.map((d) => d.id),
+      ...kiloList.map((d) => d.id),
     ]);
     const liveAcp = new Set<string>();
     const liveTabs = new Set<string>();
@@ -526,12 +565,15 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
     agentReady,
     codexReady,
     cerseiReady,
+    kiloReady,
     agentPlaceholder,
     codexPlaceholder,
     cerseiPlaceholder,
+    kiloPlaceholder,
     agentList,
     codexList,
     cerseiList,
+    kiloList,
     tabSummaries,
   ]);
 
@@ -593,24 +635,15 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
     // Pick the agent that actually ran this session. This was hardcoded to the
     // default (Claude), so clicking a Codex row tried to resume it through the
     // Claude process → `loadSession` failed → it fell back to a blank session.
-    const pluginId =
-      item.agent === "codex"
-        ? CODEX_PLUGIN_ID
-        : item.agent === "cersei"
-          ? CERSEI_PLUGIN_ID
-          : DEFAULT_PLUGIN_ID;
+    const resumedAgentTypeMapped = AGENT_TYPE_BY_SIDEBAR[item.agent];
+    const pluginId = pluginIdForAgent(resumedAgentTypeMapped);
     // The composer's agent label must follow the RESUMED session's real agent,
     // not whatever was selected in this tab. Without this, opening (say) an
     // Atlas/Codex session into a Claude-Code tab left the composer on Claude;
     // the user then "switched" agents, which (correctly) spawns a NEW chat —
     // so resuming forced an annoying detour. `item.agent` is already narrowed
     // to a shipped agent, so map it straight to the composer's SwitchableAgent.
-    const resumedAgentType =
-      item.agent === "codex"
-        ? "codex"
-        : item.agent === "cersei"
-          ? "cersei"
-          : "claude-code";
+    const resumedAgentType = resumedAgentTypeMapped;
 
     // Decide target tab. If the current tab's session is mid-flight
     // (running OR waiting on the user), we MUST NOT overwrite it — the agent is
@@ -619,9 +652,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
     // instead. Otherwise replace in-place (idle tab is fair game).
     const currentRunning = isBusyAgentStatus(storeSnapshot[tabId]?.status);
     const targetTabId = currentRunning
-      ? `chat-${Date.now().toString(36)}-${Math.random()
-          .toString(36)
-          .slice(2, 6)}`
+      ? `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
       : tabId;
 
     if (currentRunning) {
@@ -663,6 +694,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
       queryClient.invalidateQueries({ queryKey });
       queryClient.invalidateQueries({ queryKey: codexQueryKey });
       queryClient.invalidateQueries({ queryKey: cerseiQueryKey });
+      queryClient.invalidateQueries({ queryKey: kiloQueryKey });
     }
     // Relabel the composer to the resumed session's agent (no-op if already
     // matching). Keeps the existing binding — does NOT spawn a new chat.
@@ -763,7 +795,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
         targetTabId,
         snapshot.current_mode,
         snapshot.available_modes,
-        agentTypeFromPluginId(snapshot.plugin_id)
+        agentTypeFromPluginId(snapshot.plugin_id),
       );
       // Seed the ACP model picker too (Claude Code / Codex). On resume the agent
       // may not re-advertise models, so setAcpModels falls back to the cache.
@@ -786,6 +818,9 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
         await cerseiDeleteSession(cwd, item.id);
       } else if (item.agent === "codex") {
         await codexDeleteSession(item.id);
+      } else if (item.agent === "kilo") {
+        // Kilo rows soft-archive in ~/.local/share/kilo/kilo.db by id.
+        await kiloDeleteSession(item.id);
       } else if (item.filePath) {
         await deleteClaudeSession(item.filePath);
       } else {
@@ -798,9 +833,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
       useRecentChatsStore.getState().actions.removeBySession(item.id);
     } catch (err) {
       console.error("Failed to delete session:", err);
-      toast.error(
-        `Couldn't delete session: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      toast.error(`Couldn't delete session: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       // Always refetch so the list reflects on-disk truth — whether the delete
       // succeeded (row gone) or failed (row stays). All three keys, since a
@@ -808,6 +841,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
       queryClient.invalidateQueries({ queryKey });
       queryClient.invalidateQueries({ queryKey: codexQueryKey });
       queryClient.invalidateQueries({ queryKey: cerseiQueryKey });
+      queryClient.invalidateQueries({ queryKey: kiloQueryKey });
     }
   };
 
@@ -838,10 +872,10 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
-    [chatSidebar.width, setChatSidebarWidth]
+    [chatSidebar.width, setChatSidebarWidth],
   );
 
-  if (!chatSidebar.visible) {
+  if (!asDropdown && !chatSidebar.visible) {
     return null;
   }
 
@@ -862,11 +896,23 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
   return (
     <div
       ref={containerRef}
-      style={{ width: chatSidebar.width }}
-      className="relative shrink-0 h-full flex flex-col border-r border-[var(--border-default)] bg-[var(--bg-sidebar)]"
+      style={asDropdown ? undefined : { width: chatSidebar.width }}
+      className={cn(
+        "relative flex flex-col",
+        asDropdown
+          ? "h-[min(420px,60vh)] w-[340px]"
+          : "shrink-0 h-full border-r border-[var(--border-default)] bg-[var(--bg-sidebar)]",
+      )}
     >
       {/* Search — full-width row matching the GitHub panel's search */}
-      <div className="flex items-center gap-1.5 h-[32px] shrink-0 border-b border-border-default bg-bg-primary px-3">
+      <div
+        className={cn(
+          "flex items-center gap-1.5 h-[32px] shrink-0 px-3",
+          // The dropdown sits on a blurred, translucent panel — an opaque fill
+          // here would punch a solid rectangle through the blur.
+          asDropdown ? "border-b border-white/5" : "border-b border-border-default bg-bg-primary",
+        )}
+      >
         <Search size={11} className="text-text-tertiary shrink-0" />
         <input
           value={search}
@@ -896,15 +942,18 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
           return (
             <div
               key={`${item.kind}-${item.id}`}
-              onClick={() =>
-                item.kind === "agent" ? handleOpenAgent(item) : undefined
-              }
+              onClick={() => {
+                if (item.kind !== "agent") return;
+                handleOpenAgent(item);
+                // Dismiss the picker; the sidebar variant stays put.
+                onOpened?.();
+              }}
               className={cn(
                 "group relative w-full text-left px-3 py-3 transition-colors flex flex-col gap-1 cursor-pointer select-none",
                 active
                   ? "bg-[var(--bg-selected)] text-[var(--text-primary)] opacity-100"
                   : "text-[var(--text-secondary)] opacity-80 hover:opacity-100 hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
-                !isLast && "border-b border-[var(--border-default)]"
+                !isLast && "border-b border-[var(--border-default)]",
               )}
             >
               <div className="flex items-start gap-2 min-w-0 pr-5">
@@ -913,11 +962,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
                   title={
                     item.kind !== "agent"
                       ? "AI Chat"
-                      : item.agent === "codex"
-                        ? "Codex"
-                        : item.agent === "cersei"
-                          ? "Atlas"
-                          : "Claude Code"
+                      : AGENT_LABEL[AGENT_TYPE_BY_SIDEBAR[item.agent]]
                   }
                 >
                   {isRunning ? (
@@ -925,6 +970,12 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
                   ) : item.kind === "agent" ? (
                     item.agent === "codex" ? (
                       <CodexIcon className="size-3" />
+                    ) : item.agent === "opencode" ? (
+                      <OpenCodeIcon className="size-3" />
+                    ) : item.agent === "cursor" ? (
+                      <CursorIcon className="size-3" />
+                    ) : item.agent === "kilo" ? (
+                      <KiloIcon className="size-3" />
                     ) : item.agent === "cersei" ? (
                       <AtlasIcon size={12} />
                     ) : (
@@ -934,9 +985,7 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
                     <MessageSquare size={11} className="text-[var(--accent-primary)]" />
                   )}
                 </span>
-                <span className="text-[11px] leading-snug line-clamp-2 flex-1">
-                  {item.title}
-                </span>
+                <span className="text-[11px] leading-snug line-clamp-2 flex-1">{item.title}</span>
               </div>
               <div className="pl-[18px] flex items-center gap-1.5">
                 <span className="text-[9px] text-[var(--text-tertiary)]">
@@ -959,15 +1008,15 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
                 (item.agent === "cersei" ||
                   item.agent === "codex" ||
                   (item.agent === "claude" && !!item.filePath)) && (
-                <button
-                  onClick={(e) => handleDeleteAgent(e, item)}
-                  aria-label="Delete session"
-                  className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 flex items-center justify-center w-4 h-4 rounded text-[var(--text-tertiary)] hover:text-[var(--status-error)] hover:bg-[var(--bg-elevated)] transition-opacity"
-                  title="Delete session"
-                >
-                  <X size={10} />
-                </button>
-              )}
+                  <button
+                    onClick={(e) => handleDeleteAgent(e, item)}
+                    aria-label="Delete session"
+                    className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 flex items-center justify-center w-4 h-4 rounded text-[var(--text-tertiary)] hover:text-[var(--status-error)] hover:bg-[var(--bg-elevated)] transition-opacity"
+                    title="Delete session"
+                  >
+                    <X size={10} />
+                  </button>
+                )}
             </div>
           );
         })}
@@ -976,13 +1025,22 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
       {/* Bottom mini-bar. Height matches the left panel's collapsed Git
           strip (a 28px button + its 1px top border = 29px) so this
           footer's top border lines up horizontally with the Git strip's. */}
-      <div className="flex items-center justify-between px-1.5 h-[29px] border-t border-[var(--border-default)] bg-[var(--bg-sidebar)]">
+      <div
+        className={cn(
+          "flex items-center justify-between px-1.5 h-[29px]",
+          // Same rule as the search row above: an opaque fill would punch a
+          // solid strip through the picker's blurred panel.
+          asDropdown
+            ? "border-t border-white/5"
+            : "border-t border-[var(--border-default)] bg-[var(--bg-sidebar)]",
+        )}
+      >
         <button
           onClick={toggleChatSidebar}
           className="flex items-center justify-center w-6 h-6 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
           title="Hide sidebar (⌘⌥J)"
         >
-          <PanelLeftClose size={12} />
+          <PanelLeft size={12} />
         </button>
         <button
           onClick={handleNewChat}
@@ -993,12 +1051,15 @@ export function SessionSidebar({ tabId }: SessionSidebarProps) {
         </button>
       </div>
 
-      {/* Resize handle — subtle, matches main panel handles */}
-      <div
-        onMouseDown={onResizeStart}
-        className="absolute top-0 -right-px w-px h-full bg-border-default hover:bg-accent transition-colors cursor-col-resize"
-        title="Drag to resize"
-      />
+      {/* Resize handle — subtle, matches main panel handles. The dropdown has
+          its own fixed size, so it has nothing to resize. */}
+      {!asDropdown && (
+        <div
+          onMouseDown={onResizeStart}
+          className="absolute top-0 -right-px w-px h-full bg-border-default hover:bg-accent transition-colors cursor-col-resize"
+          title="Drag to resize"
+        />
+      )}
     </div>
   );
 }

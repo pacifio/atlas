@@ -3,17 +3,11 @@
 // Fed by the native `git_diff_line_status` engine via the `setDiffStatus` effect.
 
 import { EditorView, gutter, GutterMarker } from "@codemirror/view";
-import {
-  StateField,
-  StateEffect,
-  RangeSet,
-  type Extension,
-  type Text,
-} from "@codemirror/state";
+import { StateField, StateEffect, RangeSet, type Extension, type Text } from "@codemirror/state";
 import type { DiffLineStatus } from "@/features/git/lib/git-diff-api";
 
 /** Push a fresh line-status snapshot into the gutter. */
-export const setDiffStatus = StateEffect.define<DiffLineStatus>();
+const setDiffStatus = StateEffect.define<DiffLineStatus>();
 
 class BarMarker extends GutterMarker {
   constructor(readonly cls: string) {

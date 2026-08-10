@@ -1,16 +1,10 @@
 import { useMemo, useState, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { toast } from "sonner";
-import {
-  Check,
-  Search,
-  Loader2,
-  GitMerge,
-  AlertTriangle,
-  Ban,
-} from "lucide-react";
+import { Check, Search, Loader2, GitMerge, AlertTriangle, Ban } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGitStore, type MergePreview } from "../../stores/git-store";
+import { handleGitError } from "../../lib/git-errors";
 
 /**
  * GitHub-Desktop-style "Choose a branch to merge into <current>" dialog.
@@ -38,9 +32,7 @@ export function MergeBranchDialog({
   // Everything except the branch we're merging *into*.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return branchesFull.filter(
-      (b) => !b.isCurrent && (!q || b.name.toLowerCase().includes(q)),
-    );
+    return branchesFull.filter((b) => !b.isCurrent && (!q || b.name.toLowerCase().includes(q)));
   }, [branchesFull, query]);
 
   // Reset all transient state whenever the dialog closes.
@@ -86,6 +78,25 @@ export function MergeBranchDialog({
     preview.kind !== "uptodate" &&
     preview.kind !== "invalid";
 
+  const doRebase = async () => {
+    if (!selected) return;
+    setMerging(true);
+    try {
+      await actions.rebase(selected);
+      toast.success(`Rebased ${branch} onto ${selected}`);
+      onOpenChange(false);
+    } catch (e) {
+      // Conflicts pause the rebase — the in-progress banner + conflicts
+      // view take over; other failures get the typed treatment.
+      handleGitError(e);
+      onOpenChange(false);
+    } finally {
+      void actions.refreshStatusNow();
+      void actions.loadInProgress();
+      setMerging(false);
+    }
+  };
+
   const doMerge = async () => {
     if (!selected) return;
     setMerging(true);
@@ -101,7 +112,7 @@ export function MergeBranchDialog({
       if (wasConflicts) {
         toast.warning(`Merged ${selected} with conflicts — resolve them to finish`);
       } else {
-        toast.error(String(e));
+        handleGitError(e);
       }
       onOpenChange(false);
     } finally {
@@ -128,14 +139,12 @@ export function MergeBranchDialog({
             <Dialog.Title className="text-[13px] font-semibold text-text-primary flex items-center gap-1.5">
               <GitMerge size={13} className="text-text-secondary shrink-0" />
               <span>
-                Merge into{" "}
-                <span className="font-mono text-accent">{branch || "—"}</span>
+                Merge into <span className="font-mono text-accent">{branch || "—"}</span>
               </span>
             </Dialog.Title>
             <Dialog.Description className="text-[11px] text-text-tertiary mt-1">
               Choose a branch to merge into{" "}
-              <span className="font-mono">{branch || "the current branch"}</span>
-              .
+              <span className="font-mono">{branch || "the current branch"}</span>.
             </Dialog.Description>
           </div>
 
@@ -204,6 +213,19 @@ export function MergeBranchDialog({
                 Cancel
               </button>
               <button
+                onClick={() => void doRebase()}
+                disabled={!canMerge}
+                title={selected ? `Rebase ${branch} onto ${selected}` : "Rebase"}
+                className={cn(
+                  "px-3 h-7 rounded text-[11px] font-medium transition-colors",
+                  canMerge
+                    ? "text-text-primary border border-border-default hover:bg-bg-hover"
+                    : "text-text-tertiary bg-bg-hover cursor-not-allowed",
+                )}
+              >
+                Rebase
+              </button>
+              <button
                 onClick={() => void doMerge()}
                 disabled={!canMerge}
                 className={cn(
@@ -213,11 +235,7 @@ export function MergeBranchDialog({
                     : "text-text-tertiary bg-bg-hover cursor-not-allowed",
                 )}
               >
-                {merging ? (
-                  <Loader2 size={11} className="animate-spin" />
-                ) : (
-                  <GitMerge size={11} />
-                )}
+                {merging ? <Loader2 size={11} className="animate-spin" /> : <GitMerge size={11} />}
                 {selected ? `Merge ${selected}` : "Merge"}
               </button>
             </div>
@@ -258,8 +276,7 @@ function MergePreviewLine({
   const src = <span className="font-mono">{selected}</span>;
   const dst = <span className="font-mono">{current}</span>;
   const n = preview.commitCount;
-  const plural = (count: number, word: string) =>
-    `${count} ${word}${count === 1 ? "" : "s"}`;
+  const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
   switch (preview.kind) {
     case "uptodate":
@@ -280,8 +297,8 @@ function MergePreviewLine({
         <p className="text-[11px] text-[var(--status-warning)] flex items-center gap-1.5">
           <AlertTriangle size={11} className="shrink-0" />
           <span>
-            {plural(preview.conflictedFiles, "file")} will conflict when merging{" "}
-            {src} into {dst}. You can still merge and resolve them.
+            {plural(preview.conflictedFiles, "file")} will conflict when merging {src} into {dst}.
+            You can still merge and resolve them.
           </span>
         </p>
       );

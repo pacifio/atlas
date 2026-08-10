@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   Panel,
   PanelGroup,
   PanelResizeHandle,
+  type ImperativePanelHandle,
 } from "react-resizable-panels";
 import { useLayoutStore } from "../stores/layout-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
@@ -48,8 +49,23 @@ export function AppLayout() {
   }, [overlayOpen, setSidebarOpen]);
 
   const showLeft = leftPanel.visible && !!currentProject;
+
+  // The left panel stays mounted and is collapsed/expanded imperatively (see the
+  // Panel below). `defaultSize` is only read on first mount, so the initial
+  // visibility is captured once — otherwise a panel that starts hidden would
+  // render at full width for a frame and then snap shut.
+  const leftPanelRef = useRef<ImperativePanelHandle>(null);
+  const leftInitiallyVisible = useRef(showLeft);
+  useEffect(() => {
+    const panel = leftPanelRef.current;
+    if (!panel) return;
+    if (showLeft && panel.isCollapsed()) panel.expand();
+    else if (!showLeft && !panel.isCollapsed()) panel.collapse();
+  }, [showLeft]);
   const showRight = rightPanel.visible && !!currentProject;
   const showStatus = bottomPanel.visible;
+  const isLinux =
+    typeof window !== "undefined" && navigator.userAgent.toLowerCase().includes("linux");
 
   return (
     // `relative` so the workspace rail + scrim can be absolutely-positioned
@@ -91,22 +107,41 @@ export function AppLayout() {
 
         <div className="flex-1 min-h-0">
           <PanelGroup direction="horizontal" autoSaveId="atlas-main-layout">
-            {showLeft && (
-              <>
-                {/* Conditionally-rendered Panels MUST carry a stable `id` (not
-                    just `order`) — without it react-resizable-panels can't match
-                    panels across mount/unmount, so rapidly toggling left/right
-                    corrupts its internal layout state ("Invalid layout total
-                    size" + setState-on-unmounted), and an invariant throw with
-                    no error boundary tears down the whole React root (looks like
-                    a full app reload). Defaults sum to 100 for the 3-panel case;
-                    RRP normalizes the 1-/2-panel cases. */}
-                <Panel id="atlas-left" order={1} defaultSize={18} minSize={14} maxSize={28}>
-                  <LeftPanel />
-                </Panel>
-                <PanelResizeHandle className="w-px bg-border-default hover:bg-accent data-[resize-handle-active]:bg-accent transition-colors cursor-col-resize" />
-              </>
-            )}
+            {/* The left panel is ALWAYS MOUNTED and collapsed to zero width when
+                hidden — never conditionally rendered.
+
+                Toggling it used to unmount the whole subtree, so every ⌘B paid to
+                rebuild the file tree from scratch: re-flatten the loaded tree,
+                rebuild the git status/dirty-dir maps, re-create the virtualizer,
+                and force react-resizable-panels to re-derive the whole group's
+                layout because a Panel had appeared. None of that paints
+                progressively, which is why opening showed nothing and then
+                everything at once.
+                This is what VS Code does — `explorerView.ts` overrides
+                `setVisible()` and guards work with `isBodyVisible()`, but never
+                destroys the tree. Showing the panel becomes a paint.
+                (Panels still carry a stable `id`: RRP matches panels by id, and
+                without one its layout state corrupts.) */}
+            <Panel
+              id="atlas-left"
+              order={1}
+              ref={leftPanelRef}
+              collapsible
+              collapsedSize={0}
+              defaultSize={leftInitiallyVisible.current ? 18 : 0}
+              minSize={14}
+              maxSize={28}
+            >
+              <LeftPanel />
+            </Panel>
+            <PanelResizeHandle
+              className={cn(
+                "w-px bg-border-default hover:bg-accent data-[resize-handle-active]:bg-accent transition-colors cursor-col-resize",
+                // Kept in the tree (removing it would re-derive the layout, the
+                // very thing we're avoiding) but inert while collapsed.
+                !showLeft && "pointer-events-none invisible",
+              )}
+            />
 
             <Panel id="atlas-center" order={2} defaultSize={64} minSize={30}>
               <CenterPanel />
@@ -129,25 +164,27 @@ export function AppLayout() {
       {/* OVERLAY mode only (unpinned). When docked, the sidebar is the in-flow
           column above and there is no scrim/rail. */}
       {!sidebarPinned && (
-      <>
-      {/* Scrim — subtle dim + click-to-close (the frosted rail carries the
+        <>
+          {/* Scrim — subtle dim + click-to-close (the frosted rail carries the
           depth, same as the notification overlay). Only interactive while open;
           fades via `opacity` (compositor-only, no layout). */}
-      <div
-        className={cn(
-          // Strong dim + blur so the (possibly lagging) main content is HIDDEN
-          // while the switcher is open and during its enter/exit — the animation
-          // reads as a clean focus transition rather than exposing a mid-load
-          // centre. Both are compositor-cheap once established.
-          "absolute inset-0 z-[55] bg-black/28 backdrop-blur-md transition-opacity ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
-          // Closing is 50% slower than opening (300 → 450ms).
-          sidebarOpen ? "opacity-100 duration-300" : "opacity-0 pointer-events-none duration-[450ms]",
-        )}
-        onClick={() => setSidebarOpen(false)}
-        aria-hidden
-      />
+          <div
+            className={cn(
+              // Strong dim + blur so the (possibly lagging) main content is HIDDEN
+              // while the switcher is open and during its enter/exit — the animation
+              // reads as a clean focus transition rather than exposing a mid-load
+              // centre. Both are compositor-cheap once established.
+              "absolute inset-0 z-[55] bg-black/28 backdrop-blur-md transition-opacity ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
+              // Closing is 50% slower than opening (300 → 450ms).
+              sidebarOpen
+                ? "opacity-100 duration-300"
+                : "opacity-0 pointer-events-none duration-[450ms]",
+            )}
+            onClick={() => setSidebarOpen(false)}
+            aria-hidden
+          />
 
-      {/* Workspace rail — an OVERLAY (Linear-style), toggled by Cmd+⇧. Always
+          {/* Workspace rail — an OVERLAY (Linear-style), toggled by Cmd+⇧. Always
           mounted; it sits ABOVE the content (never in flow), so toggling it does
           zero layout work on the shell — the content underneath stays perfectly
           still. It SLIDES (GPU `translateX`) AND FADES (`opacity`) together for a
@@ -161,21 +198,22 @@ export function AppLayout() {
           NOT set `will-change` here (it would isolate the layer and flatten the
           backdrop to nothing — the panel would look merely transparent). Closed =
           parked off the left edge, transparent. */}
-      <div
-        className={cn(
-          "absolute left-0 top-0 h-screen w-[244px] z-[60] border-r border-[var(--border-default)] bg-[var(--bg-elevated)]/60 backdrop-blur-2xl shadow-[var(--shadow-overlay)] transition-[transform,opacity] ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none [backface-visibility:hidden]",
-          // Closing (slide-out) is 50% slower than opening (300 → 450ms).
-          sidebarOpen ? "duration-300" : "duration-[450ms]",
-        )}
-        style={{
-          transform: sidebarOpen ? "translateX(0)" : "translateX(-244px)",
-          opacity: sidebarOpen ? 1 : 0,
-        }}
-        aria-hidden={!sidebarOpen}
-      >
-        <WorkspaceSidebar />
-      </div>
-      </>
+          <div
+            className={cn(
+              "absolute left-0 top-0 h-screen w-[244px] z-[60] border-r border-[var(--border-default)] backdrop-blur-2xl shadow-[var(--shadow-overlay)] transition-[transform,opacity] ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none [backface-visibility:hidden]",
+              // Closing (slide-out) is 50% slower than opening (300 → 450ms).
+              sidebarOpen ? "duration-300" : "duration-[450ms]",
+              `${isLinux ? "bg-[var(--bg-elevated)]/95" : "bg-[var(--bg-elevated)]/60"}`,
+            )}
+            style={{
+              transform: sidebarOpen ? "translateX(0)" : "translateX(-244px)",
+              opacity: sidebarOpen ? 1 : 0,
+            }}
+            aria-hidden={!sidebarOpen}
+          >
+            <WorkspaceSidebar />
+          </div>
+        </>
       )}
     </div>
   );

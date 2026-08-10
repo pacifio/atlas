@@ -1,12 +1,16 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { createSelectors } from "@/lib/create-selectors";
+import { detectLanguage, type EditorLanguage } from "../lib/languages";
 
 interface Buffer {
   path: string;
   originalContent: string;
   dirty: boolean;
-  language: string;
+  /** The grammar this buffer is parsed with, or `"plaintext"` when there is
+   *  none. Resolved through the language registry, which guarantees a
+   *  non-plaintext value has a loader behind it (see lib/languages.ts). */
+  language: EditorLanguage;
   /** Disk mtime (unix ms) at the last read/save — the freshness gate for
    *  external-change revalidation. 0 until first known. */
   diskMtimeMs: number;
@@ -32,21 +36,6 @@ interface EditorActions {
     closeBuffer: (path: string) => void;
     setActive: (path: string) => void;
   };
-}
-
-function detectLanguage(path: string): string {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  const map: Record<string, string> = {
-    ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
-    rs: "rust", py: "python", go: "go", rb: "ruby", java: "java",
-    json: "json", toml: "toml", yaml: "yaml", yml: "yaml",
-    md: "markdown", html: "html", css: "css", scss: "scss",
-    sh: "shell", zsh: "shell", bash: "shell",
-    sql: "sql", xml: "xml", svg: "xml",
-    c: "c", cpp: "cpp", h: "c", hpp: "cpp",
-    swift: "swift", kt: "kotlin",
-  };
-  return map[ext] ?? "plaintext";
 }
 
 export const useEditorStore = createSelectors(
@@ -117,6 +106,6 @@ export const useEditorStore = createSelectors(
             s.activeBufferPath = path;
           }),
       },
-    }))
-  )
+    })),
+  ),
 );

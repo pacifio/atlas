@@ -43,7 +43,10 @@ function loadModelIds(provider: string): Promise<string[]> {
   const p = modelchat
     .models(provider)
     .then((rows) => {
-      const curated = curateModels(provider, rows.map((r) => r.id));
+      const curated = curateModels(
+        provider,
+        rows.map((r) => r.id),
+      );
       modelListCache.set(provider, curated);
       modelListInFlight.delete(provider);
       return curated;
@@ -99,8 +102,7 @@ export function ProviderModelPills({
   useEffect(() => {
     if (provider || configuredIds.length === 0) return;
     const pref = prefRef.current;
-    const next =
-      pref && configuredIds.includes(pref.provider) ? pref.provider : configuredIds[0];
+    const next = pref && configuredIds.includes(pref.provider) ? pref.provider : configuredIds[0];
     onProvider(next);
   }, [provider, configuredIds, onProvider]);
 
@@ -208,7 +210,10 @@ export function ProviderModelPills({
         className="flex w-full items-center gap-2 px-2.5 h-[26px] text-left text-[11px] font-mono text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer outline-none"
       >
         {starred && (
-          <Star size={10} className="shrink-0 fill-[var(--accent-primary)] text-[var(--accent-primary)]" />
+          <Star
+            size={10}
+            className="shrink-0 fill-[var(--accent-primary)] text-[var(--accent-primary)]"
+          />
         )}
         <span className="min-w-0 flex-1 truncate">{id}</span>
         <span
@@ -235,7 +240,9 @@ export function ProviderModelPills({
       <Popover.Trigger asChild>
         <button className={PILL_CLASS} title="Model — click to choose provider + model">
           <ProviderLogo id={provider || viewProvider} size={13} />
-          {loadingModels && <Loader2 size={10} className="animate-spin text-[var(--text-tertiary)]" />}
+          {loadingModels && (
+            <Loader2 size={10} className="animate-spin text-[var(--text-tertiary)]" />
+          )}
           <span className="max-w-[150px] truncate font-mono">
             {model || (loadingModels ? "Loading…" : "Select model")}
           </span>
@@ -314,7 +321,9 @@ export function ProviderModelPills({
                               Recommended for coding
                             </div>
                             {pinned.map((id) => renderModel(id, true))}
-                            {rest.length > 0 && <div className="my-1 h-px bg-[var(--border-subtle)]" />}
+                            {rest.length > 0 && (
+                              <div className="my-1 h-px bg-[var(--border-subtle)]" />
+                            )}
                           </>
                         )}
                         {rest.map((id) => renderModel(id, false))}
@@ -345,21 +354,23 @@ export function ProviderModelPills({
 
           {/* RTK compression toggle (Cursor "MAX Mode"-style footer). */}
           {showCompress && (
-          <button
-            onClick={() => onCompress?.(!compress)}
-            className="flex w-full items-center gap-2 border-t border-[var(--border-subtle)] px-2.5 py-2 text-left text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer outline-none"
-            title="Tool-output compression — shrinks tool results to save tokens"
-          >
-            <span className="flex-1">Compress Tokens</span>
-            <span
-              className={cn(
-                "flex h-3.5 w-6 items-center rounded-full px-0.5 transition-colors",
-                compress ? "bg-[var(--accent-primary)] justify-end" : "bg-[var(--bg-base)] justify-start",
-              )}
+            <button
+              onClick={() => onCompress?.(!compress)}
+              className="flex w-full items-center gap-2 border-t border-[var(--border-subtle)] px-2.5 py-2 text-left text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer outline-none"
+              title="Tool-output compression — shrinks tool results to save tokens"
             >
-              <span className="h-2.5 w-2.5 rounded-full bg-[var(--bg-elevated)]" />
-            </span>
-          </button>
+              <span className="flex-1">Compress Tokens</span>
+              <span
+                className={cn(
+                  "flex h-3.5 w-6 items-center rounded-full px-0.5 transition-colors",
+                  compress
+                    ? "bg-[var(--accent-primary)] justify-end"
+                    : "bg-[var(--bg-base)] justify-start",
+                )}
+              >
+                <span className="h-2.5 w-2.5 rounded-full bg-[var(--bg-elevated)]" />
+              </span>
+            </button>
           )}
         </Popover.Content>
       </Popover.Portal>

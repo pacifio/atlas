@@ -20,6 +20,12 @@
 export interface FlushCtx {
   workspaceId: string | null;
   path: string | null;
+  /** Why the flush is running. A `"switch"` stays on screen — a registrant
+   *  holding non-user data (app-state metadata) may fire-and-forget to keep
+   *  the switch's critical path short. Anything terminal (`"quit"`, close)
+   *  must await everything. Defaults to `"quit"` semantics when absent so an
+   *  unaware caller gets the safe behavior. */
+  reason?: "switch" | "quit";
 }
 
 export type FlushFn = (ctx: FlushCtx) => Promise<void>;
@@ -50,9 +56,7 @@ export function registerFlush(id: string, flush: FlushFn): () => void {
  * pending writes have hit disk. Individual failures are swallowed (logged) so
  * a single bad store can't strand a workspace switch.
  */
-export async function flushAll(
-  ctx: FlushCtx = { workspaceId: null, path: null },
-): Promise<void> {
+export async function flushAll(ctx: FlushCtx = { workspaceId: null, path: null }): Promise<void> {
   const pending = Array.from(registry.values()).map((r) =>
     r.flush(ctx).catch((e) => {
       console.warn(`flushAll: "${r.id}" flush failed:`, e);

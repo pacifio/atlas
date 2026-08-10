@@ -91,7 +91,13 @@ export function ReviewAgentsPanel() {
         prev.some((c) => c.hash === sha)
           ? prev
           : [
-              { hash: sha, short_hash: sha.slice(0, 7), message: "(selected commit)", author: "", date: "" },
+              {
+                hash: sha,
+                short_hash: sha.slice(0, 7),
+                message: "(selected commit)",
+                author: "",
+                date: "",
+              },
               ...prev,
             ],
       );

@@ -159,8 +159,8 @@ export interface TreeLayout {
 
 /** Column width (x per depth) and row height (y per leaf). Sized to fit a
  *  fixed-width card per node with breathing room so labels never collide. */
-export const COL_W = 270;
-export const ROW_H = 66;
+const COL_W = 270;
+const ROW_H = 66;
 /** Card geometry (the view renders each node as a 3-line card of this size). */
 export const CARD_W = 198;
 export const CARD_H = 54;

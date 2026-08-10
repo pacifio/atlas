@@ -106,9 +106,7 @@ export function KnowledgeSidebar({
   }, [loadRepos]);
 
   const handleDeleteRepo = async (name: string) => {
-    await invoke("delete_cloned_repo", { projectPath, repoName: name }).catch(
-      () => {},
-    );
+    await invoke("delete_cloned_repo", { projectPath, repoName: name }).catch(() => {});
     logEvent({
       source: "github",
       kind: "repo-delete",
@@ -150,19 +148,13 @@ export function KnowledgeSidebar({
         </span>
         <button
           onClick={() =>
-            treeExpandedCount > 0
-              ? treeRef.current?.collapseAll()
-              : treeRef.current?.expandAll()
+            treeExpandedCount > 0 ? treeRef.current?.collapseAll() : treeRef.current?.expandAll()
           }
           className="p-1 rounded text-text-tertiary hover:bg-bg-hover hover:text-text-secondary transition-colors cursor-pointer"
           title={treeExpandedCount > 0 ? "Collapse all" : "Expand all"}
           style={{ width: 22, height: 22 }}
         >
-          {treeExpandedCount > 0 ? (
-            <FoldVertical size={12} />
-          ) : (
-            <UnfoldVertical size={12} />
-          )}
+          {treeExpandedCount > 0 ? <FoldVertical size={12} /> : <UnfoldVertical size={12} />}
         </button>
         <button
           onClick={onOpenGraph}
@@ -296,7 +288,6 @@ export function KnowledgeSidebar({
             )}
           </div>
         )}
-
       </div>
 
       {/* Repositories — bottom section */}
@@ -334,11 +325,7 @@ export function KnowledgeSidebar({
                   }}
                   title={repo.path}
                 >
-                  <GitBranch
-                    size={11}
-                    className="text-text-muted shrink-0"
-                    strokeWidth={1.5}
-                  />
+                  <GitBranch size={11} className="text-text-muted shrink-0" strokeWidth={1.5} />
                   <span className="truncate flex-1 text-left">{repo.display_name}</span>
                   <button
                     type="button"

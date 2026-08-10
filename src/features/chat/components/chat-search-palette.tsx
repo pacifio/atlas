@@ -24,11 +24,8 @@ export function ChatSearchPalette({
 
   // Only user messages, with their original indices.
   const userMessages = useMemo(
-    () =>
-      messages
-        .map((m, i) => ({ m, i }))
-        .filter(({ m }) => m.role === "user"),
-    [messages]
+    () => messages.map((m, i) => ({ m, i })).filter(({ m }) => m.role === "user"),
+    [messages],
   );
 
   const filtered = useMemo(() => {
@@ -75,7 +72,7 @@ export function ChatSearchPalette({
             "w-[560px] max-h-[440px] rounded-xl overflow-hidden",
             "bg-[var(--bg-secondary)] border border-[var(--border-default)]",
             "shadow-[var(--shadow-overlay)]",
-            "flex flex-col"
+            "flex flex-col",
           )}
           onOpenAutoFocus={(e) => {
             e.preventDefault();
@@ -100,9 +97,7 @@ export function ChatSearchPalette({
           <div className="flex-1 overflow-y-auto hide-scrollbar py-1">
             {filtered.length === 0 ? (
               <div className="px-4 py-6 text-center text-[11px] text-[var(--text-tertiary)]">
-                {userMessages.length === 0
-                  ? "No user messages yet."
-                  : "No matches."}
+                {userMessages.length === 0 ? "No user messages yet." : "No matches."}
               </div>
             ) : (
               filtered.slice(0, 200).map(({ m, i }, idx) => {
@@ -122,14 +117,12 @@ export function ChatSearchPalette({
                     }}
                     className={cn(
                       "w-full flex items-start gap-3 px-4 py-2 text-left cursor-pointer",
-                      active
-                        ? "bg-[var(--bg-selected)]"
-                        : "hover:bg-[var(--bg-hover)]"
+                      active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
                     )}
                   >
                     <span
                       className={cn(
-                        "mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 bg-[var(--accent-primary-muted)]"
+                        "mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 bg-[var(--accent-primary-muted)]",
                       )}
                     >
                       <User size={10} className="text-[var(--accent-primary)]" />

@@ -123,9 +123,16 @@ impl<'a> Capture<'a> {
         model: Option<&str>,
         cwd: Option<&str>,
     ) -> Result<String> {
-        let session_id =
-            self.store
-                .upsert_session(&key.workspace_id, key.source, &key.native_session_id, agent, model, cwd, self.mode)?;
+        let session_id = self.store.upsert_session(
+            &key.workspace_id,
+            key.source,
+            &key.native_session_id,
+            agent,
+            model,
+            None,
+            cwd,
+            self.mode,
+        )?;
 
         self.store.begin_turn(&session_id, turn_seq)?;
 
@@ -171,6 +178,7 @@ impl<'a> Capture<'a> {
         key: &SessionKey,
         agent: Option<&str>,
         model: Option<&str>,
+        branch: Option<&str>,
         cwd: Option<&str>,
     ) -> Result<String> {
         self.store.upsert_session(
@@ -179,9 +187,24 @@ impl<'a> Capture<'a> {
             &key.native_session_id,
             agent,
             model,
+            branch,
             cwd,
             self.mode,
         )
+    }
+
+    /// Record the branch the Session started on, if it does not have one.
+    ///
+    /// Separate from [`record_prompt`](Self::record_prompt) rather than a
+    /// seventh positional parameter beside `agent`, `model` and `cwd`: four
+    /// adjacent `Option<&str>` arguments is a signature callers transpose
+    /// silently, and the compiler cannot help. Idempotent — the store keeps the
+    /// first value, so calling it on every prompt costs one indexed no-op
+    /// update and a Session is never retro-labelled by a mid-conversation
+    /// checkout.
+    pub fn note_branch(&mut self, session_id: &str, branch: Option<&str>) -> Result<()> {
+        let Some(branch) = branch else { return Ok(()) };
+        self.store.set_branch_if_absent(session_id, branch)
     }
 
     /// Derive and set a Session's title from a prompt, if it has none yet.

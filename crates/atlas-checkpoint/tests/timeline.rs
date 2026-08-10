@@ -294,3 +294,138 @@ fn the_writer_keeps_writing_while_a_reader_is_open() {
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].id, session_id);
 }
+
+/// The recent-Checkpoints jump list.
+///
+/// Worth its own test because the query is the only one in the store that
+/// JOINs, and it builds its column list by prefixing `CHECKPOINT_COLUMNS` — a
+/// hand-assembled SELECT whose column order the row mapper depends on. A typo
+/// there is a runtime error no type checks.
+#[test]
+fn recent_checkpoints_are_newest_first_and_carry_their_session_title() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, session_id) = seeded(dir.path());
+
+    for (i, sha) in ["aaaaaaa1111111111111111111111111111111111", "bbbbbbb2222222222222222222222222222222222"]
+        .iter()
+        .enumerate()
+    {
+        store
+            .upsert_checkpoint(CheckpointInput {
+                session_id: &session_id,
+                commit_sha: sha,
+                patch_id: None,
+                branch: Some("main"),
+                git_author_name: None,
+                git_author_email: None,
+                files_touched: &["src/lib.rs".into()],
+                insertions: (i as i64 + 1) * 10,
+                deletions: i as i64,
+                sync_state: atlas_checkpoint::SyncState::Local,
+            })
+            .expect("checkpoint recorded");
+    }
+
+    let rows = timeline::recent_checkpoints(&store, WORKSPACE, 10, |sha| {
+        Some(format!("subject for {}", &sha[..4]))
+    })
+    .expect("read");
+
+    assert_eq!(rows.len(), 2);
+    // Newest first — the whole point of the ordering.
+    assert!(rows[0].at >= rows[1].at, "{rows:?}");
+    // The JOIN actually landed a title rather than a NULL.
+    assert!(rows.iter().all(|r| r.session_title.is_some()), "{rows:?}");
+    // Column order survived the `c.`-prefixing: these come from different
+    // positions in the SELECT and a shifted mapper would cross them.
+    let by_sha = rows.iter().find(|r| r.commit_sha.starts_with("bbb")).expect("row");
+    assert_eq!(by_sha.insertions, 20);
+    assert_eq!(by_sha.deletions, 1);
+    assert_eq!(by_sha.branch.as_deref(), Some("main"));
+    assert_eq!(by_sha.files, 1);
+    assert_eq!(by_sha.commit_subject.as_deref(), Some("subject for bbbb"));
+
+    // The limit is honoured, and honoured against the *newest*.
+    let one = timeline::recent_checkpoints(&store, WORKSPACE, 1, |_| None).expect("read");
+    assert_eq!(one.len(), 1);
+    assert_eq!(one[0].commit_sha, rows[0].commit_sha);
+}
+
+/// Another Workspace's Checkpoints are not this Workspace's — the scoping runs
+/// through the JOIN, which is the easiest thing to get wrong when adding one.
+#[test]
+fn recent_checkpoints_are_scoped_to_their_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, session_id) = seeded(dir.path());
+    store
+        .upsert_checkpoint(CheckpointInput {
+            session_id: &session_id,
+            commit_sha: "ccccccc3333333333333333333333333333333333",
+            patch_id: None,
+            branch: None,
+            git_author_name: None,
+            git_author_email: None,
+            files_touched: &[],
+            insertions: 0,
+            deletions: 0,
+            sync_state: atlas_checkpoint::SyncState::Local,
+        })
+        .expect("checkpoint recorded");
+
+    let mine = timeline::recent_checkpoints(&store, WORKSPACE, 10, |_| None).expect("read");
+    assert_eq!(mine.len(), 1);
+
+    let other = timeline::recent_checkpoints(&store, "ws-someone-else", 10, |_| None).expect("read");
+    assert!(other.is_empty(), "{other:?}");
+}
+
+/// The branch a Session started on reaches the row even with no commit.
+///
+/// `branches` used to come only from Checkpoints, so the overwhelming majority
+/// of Sessions — the ones that never produced a commit — had none, and the
+/// Timeline's branch filter could not see them.
+#[test]
+fn a_session_carries_its_starting_branch_without_any_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut store, session_id) = seeded(dir.path());
+
+    {
+        let mut capture = Capture::new(&mut store, WorkspaceMode::Local);
+        capture.note_branch(&session_id, Some("feat/atlas-tokens")).expect("branch recorded");
+        // Idempotent: a checkout mid-conversation must not retro-label the row.
+        capture.note_branch(&session_id, Some("main")).expect("second note is a no-op");
+    }
+
+    let rows = timeline::sessions(&store, WORKSPACE).expect("read");
+    let row = rows.iter().find(|r| r.id == session_id).expect("row");
+    assert_eq!(row.branches, vec!["feat/atlas-tokens".to_string()]);
+    assert_eq!(row.checkpoint_count, 0, "no commit, and still a branch");
+}
+
+/// An agent that reports only context occupancy is not reported as token spend.
+///
+/// ACP agents (Claude Code, Codex) emit no input/output split, so `totalTokens`
+/// stays 0 and the gauge travels in its own fields. Folding it into the total
+/// would inflate every ACP row — and a compaction would make the number go
+/// *down*, which no cumulative counter should ever do.
+#[test]
+fn context_occupancy_travels_separately_from_a_token_split() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut store, session_id) = seeded(dir.path());
+
+    {
+        let mut capture = Capture::new(&mut store, WorkspaceMode::Local);
+        capture
+            .record_usage(
+                &session_id,
+                &TokenTotals { context_used: Some(853_100), context_size: Some(1_000_000), ..Default::default() },
+            )
+            .expect("usage recorded");
+    }
+
+    let rows = timeline::sessions(&store, WORKSPACE).expect("read");
+    let row = rows.iter().find(|r| r.id == session_id).expect("row");
+    assert_eq!(row.total_tokens, 0, "occupancy is not consumption");
+    assert_eq!(row.context_used, Some(853_100));
+    assert_eq!(row.context_size, Some(1_000_000));
+}

@@ -82,8 +82,7 @@ export function CommandSuggestions({
       <div className="flex-1 overflow-y-auto py-1 hide-scrollbar">
         {items.map((s, i) => {
           const isActive = i === activeIndex;
-          const Icon =
-            s.kind === "dir" ? Folder : s.kind === "command" ? TerminalSquare : FileText;
+          const Icon = s.kind === "dir" ? Folder : s.kind === "command" ? TerminalSquare : FileText;
           return (
             <button
               key={`${s.kind}:${s.name}`}

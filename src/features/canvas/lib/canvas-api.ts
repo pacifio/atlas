@@ -13,11 +13,6 @@ export function canvasMediaUpload(projectPath: string, srcPath: string): Promise
   return invoke<string>("canvas_media_upload", { projectPath, srcPath });
 }
 
-/** Resolve a canvas media rel name to a base64 data URL (asset protocol 403s .atlas). */
-export function canvasMediaDataUrl(projectPath: string, src: string): Promise<string> {
-  return invoke<string>("canvas_media_data_url", { projectPath, src });
-}
-
 /** Compact codebase-structure summary (top files by dependency rank) for the AI
  *  copilot's architecture prompts. Empty string if the codebase index isn't built. */
 export function canvasCodebaseContext(projectPath: string, maxFiles?: number): Promise<string> {

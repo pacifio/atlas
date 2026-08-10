@@ -50,7 +50,7 @@ export function GanttTimeline({ data }: { data: MissionControlUsage }) {
     const bucketMs = span / BUCKETS;
     let maxCell = 1;
     const cells = rows.map((r) => {
-      const arr = new Array<number>(BUCKETS).fill(0);
+      const arr = Array.from<number>({ length: BUCKETS }).fill(0);
       for (const [date, tokens] of r.days) {
         const ms = Date.parse(`${date}T12:00:00`);
         if (Number.isNaN(ms)) continue;
@@ -84,7 +84,10 @@ export function GanttTimeline({ data }: { data: MissionControlUsage }) {
       <div className="px-1.5 pb-1 space-y-1.5">
         {rows.map((r, ri) => (
           <div key={r.path} className="flex items-center gap-2">
-            <div className="w-[120px] shrink-0 truncate text-[11px] text-[var(--text-secondary)]" title={r.name}>
+            <div
+              className="w-[120px] shrink-0 truncate text-[11px] text-[var(--text-secondary)]"
+              title={r.name}
+            >
               {r.name}
             </div>
             <div className="relative flex-1 h-5 rounded bg-[var(--bg-base)] overflow-hidden">

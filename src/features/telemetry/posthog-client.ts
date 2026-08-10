@@ -105,8 +105,7 @@ export async function initTelemetry(): Promise<void> {
     setEnabled(cfg.enabled);
     // Whichever arrived first wins: an identity pushed by the auth store while
     // we were still initialising, or the account Rust already knew about.
-    const boot =
-      pendingIdentity ?? (cfg.accountId ? { distinctId: cfg.accountId } : null);
+    const boot = pendingIdentity ?? (cfg.accountId ? { distinctId: cfg.accountId } : null);
     if (boot) identify(boot);
   } catch {
     /* posthog init failure must never break app boot */
@@ -134,6 +133,32 @@ export function identify(id: TelemetryIdentity): void {
     });
     if (id.orgId) posthog.group("organisation", id.orgId);
     pendingIdentity = null;
+  } catch {
+    /* never throw into the app */
+  }
+}
+
+/**
+ * Attribute subsequent renderer events to an Organisation.
+ *
+ * The mirror of Rust's `telemetry_set_org`: posthog-js keeps its own state, so
+ * a crash reported from the renderer would otherwise land ungrouped even while
+ * every Rust event carried the org. Registered as a super-property *as well as*
+ * a group so it survives into `$exception` events, which is the only kind this
+ * client sends.
+ *
+ * Called on every org change — including switches while signed out and to
+ * local-only orgs, which is exactly the case sign-in-driven grouping missed.
+ */
+export function setOrgGroup(orgId: string | null): void {
+  if (!started) return;
+  try {
+    if (orgId) {
+      posthog.group("organisation", orgId);
+      posthog.register({ atlas_org_id: orgId });
+    } else {
+      posthog.unregister("atlas_org_id");
+    }
   } catch {
     /* never throw into the app */
   }
@@ -175,10 +200,7 @@ export function setEnabled(on: boolean): void {
  * Report a client-side failure. No-op unless posthog is started and the user
  * has opted in. Swallows all errors so telemetry can never crash the app.
  */
-export function captureClientError(
-  error: unknown,
-  context: Record<string, unknown> = {},
-): void {
+export function captureClientError(error: unknown, context: Record<string, unknown> = {}): void {
   if (!started || !enabled) return;
   // Drop known-benign, non-actionable noise before it hits PostHog quota.
   if (isIgnoredError(error)) return;

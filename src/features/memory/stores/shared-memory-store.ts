@@ -6,11 +6,7 @@
 
 import { create } from "zustand";
 import { createSelectors } from "@/lib/create-selectors";
-import {
-  sharedMemory,
-  type MemoryEvent,
-  type SharedState,
-} from "../lib/shared-memory-api";
+import { sharedMemory, type MemoryEvent, type SharedState } from "../lib/shared-memory-api";
 
 const EMPTY_STATE: SharedState = {
   lastSeq: 0,

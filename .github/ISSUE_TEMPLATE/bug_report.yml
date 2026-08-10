@@ -1,0 +1,81 @@
+name: Bug Report
+description: Something is broken, or behaves in a way it shouldn't
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Write as much or as little as you have. A one-line note is a fine issue;
+        so is a long writeup with code references. Only the first box is required —
+        everything below it is optional, so skip anything that doesn't apply.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What's going on?
+      description: >-
+        Markdown and code blocks render here, so this box can hold anything from a
+        single sentence to a full investigation. If you have them, useful things to
+        include: what you expected instead, how to see it in the app, screenshots or
+        a screen recording, relevant log lines, what you've already checked or ruled
+        out, and your Atlas version / OS + version / which agent was active if it's
+        relevant.
+      placeholder: |
+        Terminal tab loses scrollback when I switch away and back.
+
+        Only happens after the pane has been split. Probably around
+        src/features/terminal/stores/ — the buffer lives in the PTY, so
+        the remount may be dropping the subscription rather than the bytes.
+
+        Checked: the PTY process itself isn't dying (still shows in Activity
+        Monitor), so this looks like a frontend subscription issue, not a
+        backend one.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area is this in?
+      description: Optional — leave it alone if you're not sure.
+      multiple: true
+      options:
+        - "Not sure"
+        - "agents / chat"
+        - "editor"
+        - "terminal"
+        - "browser"
+        - "knowledge"
+        - "memory"
+        - "git / checkpoints"
+        - "canvas"
+        - "settings"
+        - "install / updates"
+        - "other"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: confidence
+    attributes:
+      label: How sure are you?
+      description: >-
+        Optional. "Not sure" is a real answer and won't get the issue closed —
+        it just tells us to reproduce before anyone starts fixing.
+      options:
+        - "I saw it happen and can trigger it again"
+        - "I saw it happen once, haven't reproduced it"
+        - "Not sure it's a bug — might be my setup, or my misunderstanding"
+    validations:
+      required: false
+
+  - type: input
+    id: prior_art
+    attributes:
+      label: Seen it handled well elsewhere?
+      description: >-
+        Optional, and only if it applies. If another app gets this right, naming it
+        is often more useful than a paragraph describing what you want.
+      placeholder: "The Next.js dev overlay — errors get a dismissible box with a copy button"
+    validations:
+      required: false

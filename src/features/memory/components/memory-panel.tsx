@@ -29,7 +29,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { PanelSkeleton } from "@/components/panel-skeleton";
 import { Markdown } from "@/lib/markdown";
 import { timeAgo } from "@/lib/time-ago";
-import { ClaudeIcon, CodexIcon } from "@/components/agent-icons";
+import {
+  ClaudeIcon,
+  CodexIcon,
+  OpenCodeIcon,
+  CursorIcon,
+  KiloIcon,
+} from "@/components/agent-icons";
+import { CaptureSessionsView } from "./capture-sessions-view";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useMemoryStore } from "../stores/memory-store";
@@ -74,6 +81,19 @@ export function MemoryPanel() {
     invoke<unknown[]>("cersei_list_sessions", { projectPath })
       .then((s) => setCerseiCount(s.length))
       .catch(() => setCerseiCount(0));
+  }, [projectPath, sub]);
+
+  // Capture-backed agents (OpenCode / Cursor / Kilo) — their sessions live in
+  // Atlas's own capture store; one GROUP BY gives all the badge counts.
+  const [captureCounts, setCaptureCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!projectPath) {
+      setCaptureCounts({});
+      return;
+    }
+    invoke<Record<string, number>>("capture_agent_session_counts", { projectPath })
+      .then(setCaptureCounts)
+      .catch(() => setCaptureCounts({}));
   }, [projectPath, sub]);
 
   return (
@@ -125,6 +145,7 @@ export function MemoryPanel() {
               claudeCount={claudeCount}
               codexCount={codexCount}
               cerseiCount={cerseiCount}
+              captureCounts={captureCounts}
             />
           </PillGroup>
         </div>
@@ -162,6 +183,8 @@ export function MemoryPanel() {
           )
         ) : sub === "cersei" ? (
           <AtlasMemoryView projectPath={projectPath} />
+        ) : sub === "opencode" || sub === "cursor" || sub === "kilo" ? (
+          <CaptureSessionsView projectPath={projectPath} agent={sub} />
         ) : loading && !data ? (
           <PanelSkeleton rows={8} />
         ) : !projectPath ? (
@@ -228,7 +251,9 @@ function Centered({ children }: { children: React.ReactNode }) {
 
 // ── Coding-agent combobox ────────────────────────────────────────────────────
 
-type AgentSub = "claude" | "codex" | "cersei";
+type AgentSub = "claude" | "codex" | "cersei" | "opencode" | "cursor" | "kilo";
+
+const AGENT_SUBS: readonly AgentSub[] = ["claude", "codex", "cersei", "opencode", "cursor", "kilo"];
 
 interface CodingAgentOption {
   sub: AgentSub;
@@ -247,23 +272,49 @@ function CodingAgentMenu({
   claudeCount,
   codexCount,
   cerseiCount,
+  captureCounts,
 }: {
   sub: string;
   setSub: (s: AgentSub) => void;
   claudeCount: number;
   codexCount: number;
   cerseiCount: number;
+  /** Per-plugin-id session counts from the capture store (opencode/cursor/kilo). */
+  captureCounts: Record<string, number>;
 }) {
   const options = useMemo<CodingAgentOption[]>(
     () => [
       { sub: "cersei", label: "Atlas", icon: <AtlasIcon size={14} />, count: cerseiCount },
-      { sub: "claude", label: "Claude Code", icon: <ClaudeIcon className="size-3.5" />, count: claudeCount },
+      {
+        sub: "claude",
+        label: "Claude Code",
+        icon: <ClaudeIcon className="size-3.5" />,
+        count: claudeCount,
+      },
       { sub: "codex", label: "Codex", icon: <CodexIcon className="size-3.5" />, count: codexCount },
+      {
+        sub: "opencode",
+        label: "OpenCode",
+        icon: <OpenCodeIcon className="size-3.5" />,
+        count: captureCounts["opencode"] ?? 0,
+      },
+      {
+        sub: "cursor",
+        label: "Cursor",
+        icon: <CursorIcon className="size-3.5" />,
+        count: captureCounts["cursor"] ?? 0,
+      },
+      {
+        sub: "kilo",
+        label: "Kilo",
+        icon: <KiloIcon className="size-3.5" />,
+        count: captureCounts["kilo"] ?? 0,
+      },
     ],
-    [claudeCount, codexCount, cerseiCount],
+    [claudeCount, codexCount, cerseiCount, captureCounts],
   );
 
-  const isAgentActive = sub === "claude" || sub === "codex" || sub === "cersei";
+  const isAgentActive = AGENT_SUBS.includes(sub as AgentSub);
   // Remember the last agent so the pill keeps its identity while the user is on
   // a non-agent tab (Graph/Policy/…).
   const [lastAgent, setLastAgent] = useState<AgentSub>(
@@ -324,7 +375,9 @@ function CodingAgentMenu({
         <span className={cn(isAgentActive ? "opacity-100" : "opacity-60")}>{selected.icon}</span>
         {selected.label}
         {selected.count > 0 && (
-          <span className="text-[9px] tabular-nums text-[var(--text-tertiary)]">{selected.count}</span>
+          <span className="text-[9px] tabular-nums text-[var(--text-tertiary)]">
+            {selected.count}
+          </span>
         )}
         <ChevronDown
           size={11}
@@ -345,7 +398,9 @@ function CodingAgentMenu({
           </div>
           <div className="mb-1 h-px bg-[var(--border-default)]" />
           {filtered.length === 0 ? (
-            <div className="px-2 py-1.5 text-[10px] text-[var(--text-tertiary)]">No agents found</div>
+            <div className="px-2 py-1.5 text-[10px] text-[var(--text-tertiary)]">
+              No agents found
+            </div>
           ) : (
             filtered.map((o) => {
               const active = sub === o.sub;
@@ -440,8 +495,7 @@ function ClaudeView({ claude }: { claude: ClaudeMemory | null }) {
   }, [claude]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected =
-    items.find((i) => i.id === selectedId) ?? items[0] ?? null;
+  const selected = items.find((i) => i.id === selectedId) ?? items[0] ?? null;
 
   // Cross-tab navigation (e.g. from Timeline): select + scroll to the doc.
   const navTarget = useMemoryStore.use.navTarget();
@@ -503,9 +557,7 @@ function ClaudeView({ claude }: { claude: ClaudeMemory | null }) {
                   onClick={() => setSelectedId(it.id)}
                   className={cn(
                     "w-full text-left px-3 py-2 border-b border-[var(--border-subtle)] transition-colors cursor-pointer flex flex-col gap-0.5",
-                    active
-                      ? "bg-[var(--bg-selected)]"
-                      : "hover:bg-[var(--bg-hover)]",
+                    active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
                   )}
                 >
                   <div className="flex items-center gap-1.5 min-w-0">
@@ -638,8 +690,8 @@ function CodexView({ codex }: { codex: CodexMemory | null }) {
           <p className="text-[12px] text-[var(--text-secondary)]">No Codex memory yet</p>
           <p className="text-[11px] text-[var(--text-tertiary)] leading-relaxed">
             Codex tracks per-project sessions in its state database and reads an{" "}
-            <code className="text-[10px]">AGENTS.md</code> if present. Run Codex in this
-            project to populate it.
+            <code className="text-[10px]">AGENTS.md</code> if present. Run Codex in this project to
+            populate it.
           </p>
         </div>
       </Centered>
@@ -690,9 +742,7 @@ function CodexView({ codex }: { codex: CodexMemory | null }) {
       {/* AGENTS.md drawer */}
       {showAgents && hasAgents && (
         <div className="shrink-0 max-h-[40%] overflow-y-auto hide-scrollbar border-b border-[var(--border-default)] bg-[var(--bg-sidebar)] px-4 py-3 space-y-2">
-          {codex.agents_md && (
-            <AgentsCard label="AGENTS.md · project" body={codex.agents_md} />
-          )}
+          {codex.agents_md && <AgentsCard label="AGENTS.md · project" body={codex.agents_md} />}
           {codex.global_agents_md && (
             <AgentsCard label="AGENTS.md · global" body={codex.global_agents_md} />
           )}
@@ -770,7 +820,9 @@ function CodexRow({
             {cleanTitle(t.title || t.first_user_message) || "Untitled session"}
           </span>
         </span>
-        <span className={cn(COL.model, "truncate font-mono text-[10px] text-[var(--text-tertiary)]")}>
+        <span
+          className={cn(COL.model, "truncate font-mono text-[10px] text-[var(--text-tertiary)]")}
+        >
           {t.model || "—"}
         </span>
         <span className={cn(COL.branch, "truncate")}>
@@ -791,7 +843,12 @@ function CodexRow({
             <span className="text-[var(--text-ghost)] text-[11px]">—</span>
           )}
         </span>
-        <span className={cn(COL.tokens, "text-right tabular-nums text-[11px] text-[var(--text-tertiary)]")}>
+        <span
+          className={cn(
+            COL.tokens,
+            "text-right tabular-nums text-[11px] text-[var(--text-tertiary)]",
+          )}
+        >
           {t.tokens_used ? formatTokens(t.tokens_used) : "—"}
         </span>
         <span className={cn(COL.updated, "text-right text-[10px] text-[var(--text-tertiary)]")}>
@@ -799,7 +856,9 @@ function CodexRow({
             ? timeAgo(new Date(t.updated_at * 1000).toISOString(), { suffix: true })
             : "—"}
         </span>
-        <span className={cn(COL.chevron, "flex items-center justify-end text-[var(--text-tertiary)]")}>
+        <span
+          className={cn(COL.chevron, "flex items-center justify-end text-[var(--text-tertiary)]")}
+        >
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
       </button>
@@ -862,12 +921,7 @@ function MetaChip({
     <div className="flex items-center gap-1.5">
       <Icon size={11} className="text-[var(--text-ghost)]" />
       <span className="text-[10px] text-[var(--text-tertiary)]">{label}</span>
-      <span
-        className={cn(
-          "text-[11px] text-[var(--text-secondary)]",
-          mono && "font-mono",
-        )}
-      >
+      <span className={cn("text-[11px] text-[var(--text-secondary)]", mono && "font-mono")}>
         {value}
       </span>
     </div>

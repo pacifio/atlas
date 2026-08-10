@@ -39,7 +39,13 @@ interface ModuleEntry {
  * palettes read as one consistent system.
  */
 const MODULES: ModuleEntry[] = [
-  { id: "chat", type: "chat", label: "New Agents Chat", icon: AtlasIcon as ElementType<LucideProps>, shortcut: "⌘T" },
+  {
+    id: "chat",
+    type: "chat",
+    label: "New Agents Chat",
+    icon: AtlasIcon as ElementType<LucideProps>,
+    shortcut: "⌘T",
+  },
   { id: "model-chat", type: "model-chat", label: "New Chat", icon: MessageSquare },
   { id: "terminal", type: "terminal", label: "New Terminal", icon: Terminal, shortcut: "⌘⇧T" },
   { id: "knowledge", type: "knowledge", label: "Knowledge", icon: Brain },
@@ -79,9 +85,7 @@ export function NewTabPalette({
     const q = query.trim().toLowerCase();
     if (!q) return MODULES;
     return MODULES.filter(
-      (m) =>
-        m.label.toLowerCase().includes(q) ||
-        m.type.toLowerCase().includes(q),
+      (m) => m.label.toLowerCase().includes(q) || m.type.toLowerCase().includes(q),
     );
   }, [query]);
 

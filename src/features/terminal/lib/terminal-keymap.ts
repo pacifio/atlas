@@ -44,12 +44,30 @@ export function createTerminalKeymap(term: Terminal): (e: KeyboardEvent) => Keym
 
     // --- Word / line navigation → readline sequences to the shell ---
     if (!shiftKey && !ctrlKey) {
-      if (altKey && key === "ArrowLeft") { sel = null; return "\x1bb"; }    // backward-word
-      if (altKey && key === "ArrowRight") { sel = null; return "\x1bf"; }   // forward-word
-      if (metaKey && key === "ArrowLeft") { sel = null; return "\x01"; }    // beginning-of-line
-      if (metaKey && key === "ArrowRight") { sel = null; return "\x05"; }   // end-of-line
-      if (altKey && key === "Backspace") { sel = null; return "\x1b\x7f"; } // backward-kill-word
-      if (metaKey && key === "Backspace") { sel = null; return "\x15"; }    // kill line to start
+      if (altKey && key === "ArrowLeft") {
+        sel = null;
+        return "\x1bb";
+      } // backward-word
+      if (altKey && key === "ArrowRight") {
+        sel = null;
+        return "\x1bf";
+      } // forward-word
+      if (metaKey && key === "ArrowLeft") {
+        sel = null;
+        return "\x01";
+      } // beginning-of-line
+      if (metaKey && key === "ArrowRight") {
+        sel = null;
+        return "\x05";
+      } // end-of-line
+      if (altKey && key === "Backspace") {
+        sel = null;
+        return "\x1b\x7f";
+      } // backward-kill-word
+      if (metaKey && key === "Backspace") {
+        sel = null;
+        return "\x15";
+      } // kill line to start
     }
 
     // --- Keyboard selection (Shift+←/→, +Option=word, +Cmd=line) ---
@@ -60,9 +78,17 @@ export function createTerminalKeymap(term: Terminal): (e: KeyboardEvent) => Keym
       const text = buf.getLine(row)?.translateToString(true) ?? "";
       const eol = text.replace(/\s+$/, "").length;
       if (key === "ArrowLeft") {
-        sel.focus = metaKey ? 0 : altKey ? prevWordBoundary(text, sel.focus) : Math.max(0, sel.focus - 1);
+        sel.focus = metaKey
+          ? 0
+          : altKey
+            ? prevWordBoundary(text, sel.focus)
+            : Math.max(0, sel.focus - 1);
       } else {
-        sel.focus = metaKey ? eol : altKey ? nextWordBoundary(text, sel.focus) : Math.min(eol, sel.focus + 1);
+        sel.focus = metaKey
+          ? eol
+          : altKey
+            ? nextWordBoundary(text, sel.focus)
+            : Math.min(eol, sel.focus + 1);
       }
       const start = Math.min(sel.anchor, sel.focus);
       const len = Math.abs(sel.anchor - sel.focus);

@@ -12,7 +12,7 @@ import { useUsageReport } from "@/features/monitor/stores/usage-report-store";
 const UsagePanel = lazy(() =>
   import("@/features/monitor/components/usage-panel").then((m) => ({
     default: m.UsagePanel,
-  }))
+  })),
 );
 
 /**

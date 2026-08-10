@@ -6,6 +6,7 @@ import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store"
 import { useRecentChatsStore } from "@/features/workspaces/stores/recent-chats-store";
 import type { Organisation } from "../types";
 import { slugify } from "../types";
+import { syncOrgTelemetry } from "../lib/org-telemetry";
 import { auth, type AccountOrg } from "@/features/auth/lib/auth-api";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { toast } from "sonner";
@@ -17,11 +18,7 @@ const uuid = (): string =>
 
 /** Whether `name` (case-insensitive, trimmed) is already used by an org other
  *  than `exceptId`. Enforces GitHub-style globally-unique org names. */
-function nameTaken(
-  name: string,
-  orgs: Organisation[],
-  exceptId?: string,
-): boolean {
+function nameTaken(name: string, orgs: Organisation[], exceptId?: string): boolean {
   const norm = name.trim().toLowerCase();
   return orgs.some((o) => o.id !== exceptId && o.name.trim().toLowerCase() === norm);
 }
@@ -126,11 +123,7 @@ interface OrgState {
      * Rejects with the user-facing string from Rust on server failure — the
      * caller toasts it. Resolves to the new LOCAL org id.
      */
-    createOrgSynced: (
-      name: string,
-      slug: string,
-      cloud: boolean,
-    ) => Promise<string>;
+    createOrgSynced: (name: string, slug: string, cloud: boolean) => Promise<string>;
     /** Rename an org. Returns `false` (no-op) if the name is blank or already
      *  taken by ANOTHER org (case-insensitive), so no two orgs collide. */
     rename: (id: string, name: string) => boolean;
@@ -170,6 +163,12 @@ export const useOrgStore = createSelectors(
           organisations: payload.organisations ?? [],
           activeOrganisationId: payload.activeOrganisationId ?? null,
         });
+        // Boot attribution. Rust seeds the same value from `state.json` at
+        // startup, so this is usually a no-op — but a profile whose active org
+        // is decided during hydrate (a v2 migration, a repaired pointer) would
+        // otherwise report events against the pre-migration org for the rest of
+        // the session.
+        syncOrgTelemetry(payload.activeOrganisationId ?? null);
       },
 
       createOrg: (name, slug) => {
@@ -234,9 +233,7 @@ export const useOrgStore = createSelectors(
         if (raced) {
           set((s) => ({
             organisations: s.organisations.map((o) =>
-              o.id === raced.id
-                ? { ...o, name: trimmed, slug: handle, syncEnabled: true }
-                : o,
+              o.id === raced.id ? { ...o, name: trimmed, slug: handle, syncEnabled: true } : o,
             ),
           }));
           scheduleAppStateSave();
@@ -268,9 +265,7 @@ export const useOrgStore = createSelectors(
         // Reject if ANOTHER org already has this name (case-insensitive).
         if (nameTaken(trimmed, get().organisations, id)) return false;
         set((s) => ({
-          organisations: s.organisations.map((o) =>
-            o.id === id ? { ...o, name: trimmed } : o,
-          ),
+          organisations: s.organisations.map((o) => (o.id === id ? { ...o, name: trimmed } : o)),
         }));
         scheduleAppStateSave();
         return true;
@@ -294,9 +289,7 @@ export const useOrgStore = createSelectors(
         // Atlas's org-scoped tracking is removed.) The caller (deleteOrgAndData)
         // must have already switched away if this is the active org.
         const ws = useWorkspaceStore.getState();
-        const orgPaths = new Set(
-          ws.workspaces.filter((w) => w.orgId === id).map((w) => w.path),
-        );
+        const orgPaths = new Set(ws.workspaces.filter((w) => w.orgId === id).map((w) => w.path));
         ws.actions.removeWorkspacesForOrg(id);
         const rc = useRecentChatsStore.getState();
         for (const c of rc.items) {
@@ -312,9 +305,7 @@ export const useOrgStore = createSelectors(
       setActiveWorkspaceForOrg: (orgId, workspaceId) => {
         set((s) => ({
           organisations: s.organisations.map((o) =>
-            o.id === orgId
-              ? { ...o, activeWorkspaceId: workspaceId ?? undefined }
-              : o,
+            o.id === orgId ? { ...o, activeWorkspaceId: workspaceId ?? undefined } : o,
           ),
         }));
         // Persisted via the switch's flushAppStateSave / scheduleAppStateSave.
@@ -322,7 +313,12 @@ export const useOrgStore = createSelectors(
 
       setSwitching: (v) => set({ orgSwitching: v }),
 
-      setActiveOrganisation: (id) => set({ activeOrganisationId: id }),
+      // The one place the active org changes, so the one place analytics
+      // attribution has to follow it.
+      setActiveOrganisation: (id) => {
+        set({ activeOrganisationId: id });
+        syncOrgTelemetry(id);
+      },
 
       mergeServerOrgs: (serverOrgs) => {
         // Repair first: earlier builds could append a local org for a server id
@@ -347,9 +343,7 @@ export const useOrgStore = createSelectors(
           // Adopt a same-named, still-local org rather than duplicating it —
           // covers an org created offline that later arrives from the server.
           const adoptIdx = next.findIndex(
-            (o) =>
-              !o.remoteId &&
-              o.name.trim().toLowerCase() === s.name.trim().toLowerCase(),
+            (o) => !o.remoteId && o.name.trim().toLowerCase() === s.name.trim().toLowerCase(),
           );
           if (adoptIdx !== -1) {
             next = next.map((o, i) =>
@@ -403,6 +397,10 @@ export const useOrgStore = createSelectors(
             ),
           }));
           scheduleAppStateSave();
+          // The org id did not change but its *kind* did — local→cloud — and
+          // with it what telemetry may say about it (a synced org has a
+          // server-side name worth defining on the group). Re-resolve.
+          if (get().activeOrganisationId === id) syncOrgTelemetry(id);
           logEvent({
             source: "project",
             kind: "org-enable-sync",
@@ -425,9 +423,3 @@ export const useOrgStore = createSelectors(
     },
   })),
 );
-
-/** Convenience: the active `Organisation` record (or null). */
-export function activeOrganisation(): Organisation | null {
-  const { organisations, activeOrganisationId } = useOrgStore.getState();
-  return organisations.find((o) => o.id === activeOrganisationId) ?? null;
-}

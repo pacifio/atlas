@@ -63,7 +63,8 @@ export function ResearchPanel() {
     queryKey: ["research", "search", activeQuery?.src, activeQuery?.q],
     queryFn: () => {
       if (!activeQuery) return [];
-      const command = activeQuery.src === "semantic-scholar" ? "search_semantic_scholar" : "search_arxiv";
+      const command =
+        activeQuery.src === "semantic-scholar" ? "search_semantic_scholar" : "search_arxiv";
       return invokeWithTimeout<ArxivPaper[]>(command, { query: activeQuery.q, maxResults: 15 });
     },
     enabled: !!activeQuery,
@@ -86,7 +87,11 @@ export function ResearchPanel() {
         paperTitle: paper.title,
       });
     } catch {}
-    setDownloadingIds((s) => { const n = new Set(s); n.delete(paper.id); return n; });
+    setDownloadingIds((s) => {
+      const n = new Set(s);
+      n.delete(paper.id);
+      return n;
+    });
   };
 
   const handleSaveToKnowledge = async (paper: ArxivPaper) => {
@@ -132,8 +137,16 @@ export function ResearchPanel() {
       {/* Search bar */}
       <div className="px-3 py-2 border-b border-border-subtle bg-bg-primary shrink-0 space-y-1.5">
         <div className="flex items-center gap-1">
-          <SourceButton label="arXiv" active={source === "arxiv"} onClick={() => setSource("arxiv")} />
-          <SourceButton label="Semantic Scholar" active={source === "semantic-scholar"} onClick={() => setSource("semantic-scholar")} />
+          <SourceButton
+            label="arXiv"
+            active={source === "arxiv"}
+            onClick={() => setSource("arxiv")}
+          />
+          <SourceButton
+            label="Semantic Scholar"
+            active={source === "semantic-scholar"}
+            onClick={() => setSource("semantic-scholar")}
+          />
         </div>
         <div className="flex gap-1.5">
           <div className="flex-1 flex items-center gap-2 h-7 rounded border border-border-default bg-bg-secondary px-2 focus-within:ring-1 focus-within:ring-border-focus">
@@ -142,7 +155,9 @@ export function ResearchPanel() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              placeholder={source === "arxiv" ? "Search arXiv papers..." : "Search Semantic Scholar..."}
+              placeholder={
+                source === "arxiv" ? "Search arXiv papers..." : "Search Semantic Scholar..."
+              }
               className="flex-1 bg-transparent outline-none text-[11px] text-text-primary placeholder:text-text-tertiary"
             />
           </div>
@@ -153,7 +168,7 @@ export function ResearchPanel() {
               "h-7 px-3 rounded text-[10px] font-medium transition-colors",
               query.trim() && !search.isFetching
                 ? "bg-accent text-text-inverse hover:bg-accent-hover"
-                : "bg-bg-elevated text-text-tertiary"
+                : "bg-bg-elevated text-text-tertiary",
             )}
           >
             {search.isFetching ? <Loader2 size={11} className="animate-spin" /> : "Search"}
@@ -171,7 +186,9 @@ export function ResearchPanel() {
                 Trending in AI & Math
               </span>
               <button
-                onClick={() => queryClient.invalidateQueries({ queryKey: ["research", "trending"] })}
+                onClick={() =>
+                  queryClient.invalidateQueries({ queryKey: ["research", "trending"] })
+                }
                 className="ml-auto text-[9px] text-text-tertiary hover:text-text-secondary"
               >
                 {trending.isFetching ? <Loader2 size={9} className="animate-spin" /> : "Refresh"}
@@ -184,7 +201,10 @@ export function ResearchPanel() {
             )}
             {trending.error && (
               <div className="px-4 py-6 text-[11px] text-text-tertiary text-center">
-                Failed to load trending papers. <button onClick={() => trending.refetch()} className="text-accent underline">Retry</button>
+                Failed to load trending papers.{" "}
+                <button onClick={() => trending.refetch()} className="text-accent underline">
+                  Retry
+                </button>
               </div>
             )}
             {trending.data?.map((paper) => (
@@ -206,7 +226,10 @@ export function ResearchPanel() {
 
         {search.error && (
           <div className="px-4 py-6 text-[11px] text-text-tertiary text-center">
-            Search failed. <button onClick={() => search.refetch()} className="text-accent underline">Retry</button>
+            Search failed.{" "}
+            <button onClick={() => search.refetch()} className="text-accent underline">
+              Retry
+            </button>
           </div>
         )}
 
@@ -287,7 +310,7 @@ function PaperCard({
             size={12}
             className={cn(
               "text-text-tertiary shrink-0 transition-transform mt-1",
-              expanded && "rotate-180"
+              expanded && "rotate-180",
             )}
           />
         </div>
@@ -315,7 +338,13 @@ function PaperCard({
             {hasProject && paper.pdf_url && (
               <ActionButton
                 onClick={onDownload}
-                icon={downloading ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}
+                icon={
+                  downloading ? (
+                    <Loader2 size={10} className="animate-spin" />
+                  ) : (
+                    <Download size={10} />
+                  )
+                }
                 label={downloading ? "Downloading..." : "Download PDF"}
                 accent
               />
@@ -358,7 +387,7 @@ function ActionButton({
         accent
           ? "bg-accent-muted text-accent hover:bg-accent/20"
           : "bg-bg-elevated border border-border-default text-text-secondary hover:text-text-primary hover:bg-bg-hover",
-        disabled && "opacity-50 cursor-default"
+        disabled && "opacity-50 cursor-default",
       )}
     >
       {icon}
@@ -383,7 +412,7 @@ function SourceButton({
         "px-2 py-0.5 rounded text-[9px] font-medium transition-colors",
         active
           ? "bg-accent text-text-inverse"
-          : "bg-bg-elevated text-text-tertiary border border-border-default hover:text-text-secondary hover:bg-bg-hover"
+          : "bg-bg-elevated text-text-tertiary border border-border-default hover:text-text-secondary hover:bg-bg-hover",
       )}
     >
       {label}

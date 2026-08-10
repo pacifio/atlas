@@ -28,11 +28,18 @@ export interface SessionSummary {
   messageCount: number;
   toolCallCount: number;
   checkpointCount: number;
+  /** Every branch touched: the starting branch first, then Checkpoint branches. */
   branches: string[];
   insertions: number;
   deletions: number;
   filesTouched: number;
+  /** Input + output. `0` for an agent that reports no split — see `contextUsed`. */
   totalTokens: number;
+  /** Context-window occupancy, for agents that report only that (every ACP
+   *  agent). Deliberately not folded into `totalTokens`: occupancy is not
+   *  consumption, and a compaction makes it go down. */
+  contextUsed: number | null;
+  contextSize: number | null;
   needsAttention: boolean;
   attentionReason: string | null;
 }
@@ -121,6 +128,30 @@ export const DEFAULT_FILTERS: TimelineFilters = {
   toolCalls: true,
   checkpoints: true,
 };
+
+/**
+ * One Checkpoint on the board — mirrors `atlas_checkpoint::CheckpointRow` plus
+ * the project tag `commands::capture::BoardCheckpoint` adds.
+ *
+ * Deliberately smaller than a `TimelineEntry`: this is a jump target, not a
+ * reading surface.
+ */
+export interface BoardCheckpoint {
+  sessionId: string;
+  /** The Session's title, so a row says which work produced the commit. */
+  sessionTitle: string | null;
+  commitSha: string;
+  /** Read from git at display time; `null` if the repo moved or the commit is gone. */
+  commitSubject: string | null;
+  branch: string | null;
+  linkState: LinkState;
+  insertions: number;
+  deletions: number;
+  files: number;
+  at: string;
+  projectPath: string;
+  projectName: string;
+}
 
 /**
  * A board row: a Session plus the project it came from.

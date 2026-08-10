@@ -11,16 +11,9 @@ export interface AgentInfo {
   display_name: string;
 }
 
-export type StopReason =
-  | "end_turn"
-  | "max_tokens"
-  | "max_turn_requests"
-  | "refusal"
-  | "cancelled";
+export type StopReason = "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | "cancelled";
 
-export type PermissionDecision =
-  | { kind: "selected"; option_id: string }
-  | { kind: "cancelled" };
+export type PermissionDecision = { kind: "selected"; option_id: string } | { kind: "cancelled" };
 
 // `SessionUpdate` in the schema is a discriminated union by `sessionUpdate`.
 // We pin the variants we care about and leave the rest opaque.

@@ -70,12 +70,22 @@ function findPane(node: TreeNode, paneId: string): PaneNode | null {
   return null;
 }
 
-function splitPaneInTree(node: TreeNode, paneId: string, direction: SplitDirection, newPane: PaneNode): boolean {
+function splitPaneInTree(
+  node: TreeNode,
+  paneId: string,
+  direction: SplitDirection,
+  newPane: PaneNode,
+): boolean {
   if (node.type === "split") {
     for (let i = 0; i < node.children.length; i++) {
       const child = node.children[i];
       if (child.type === "pane" && child.id === paneId) {
-        node.children[i] = { type: "split", id: genId("split"), direction, children: [child, newPane] };
+        node.children[i] = {
+          type: "split",
+          id: genId("split"),
+          direction,
+          children: [child, newPane],
+        };
         return true;
       }
       if (splitPaneInTree(child, paneId, direction, newPane)) return true;
@@ -138,9 +148,19 @@ export const useTerminalStore = createSelectors(
             if (!t) return;
             const newPtyId = genId("pty");
             const newPaneId = genId("pane");
-            const newPane: PaneNode = { type: "pane", id: newPaneId, terminals: [newPtyId], activeTerminalId: newPtyId };
+            const newPane: PaneNode = {
+              type: "pane",
+              id: newPaneId,
+              terminals: [newPtyId],
+              activeTerminalId: newPtyId,
+            };
             if (t.root.type === "pane" && t.root.id === paneId) {
-              t.root = { type: "split", id: genId("split"), direction, children: [t.root, newPane] };
+              t.root = {
+                type: "split",
+                id: genId("split"),
+                direction,
+                children: [t.root, newPane],
+              };
             } else {
               splitPaneInTree(t.root, paneId, direction, newPane);
             }
@@ -158,7 +178,10 @@ export const useTerminalStore = createSelectors(
             pane.terminals = pane.terminals.filter((id) => id !== ptyId);
             if (pane.terminals.length === 0) {
               const result = removePaneFromTree(t.root, paneId);
-              if (!result) { delete s.tabs[tabId]; return; }
+              if (!result) {
+                delete s.tabs[tabId];
+                return;
+              }
               t.root = result;
               if (t.activePaneId === paneId) {
                 t.activePaneId = collectPanes(t.root)[0]?.id ?? null;
@@ -177,7 +200,10 @@ export const useTerminalStore = createSelectors(
             const t = s.tabs[tabId];
             if (!t) return;
             const result = removePaneFromTree(t.root, paneId);
-            if (!result) { delete s.tabs[tabId]; return; }
+            if (!result) {
+              delete s.tabs[tabId];
+              return;
+            }
             t.root = result;
             if (t.activePaneId === paneId) {
               t.activePaneId = collectPanes(t.root)[0]?.id ?? null;
@@ -224,6 +250,6 @@ export const useTerminalStore = createSelectors(
             for (const id of tabIds) delete s.tabs[id];
           }),
       },
-    }))
-  )
+    })),
+  ),
 );

@@ -15,7 +15,7 @@ import type { BlameLine } from "@/features/git/lib/git-blame-api";
 
 /** Push a fresh blame snapshot into the editor. An empty array clears the
  *  state entirely (untracked file / not a repo → nothing is rendered). */
-export const setBlame = StateEffect.define<BlameLine[]>();
+const setBlame = StateEffect.define<BlameLine[]>();
 
 /** Convenience: dispatch a blame snapshot onto a view. */
 export function applyBlame(view: EditorView, lines: BlameLine[]): void {
@@ -126,9 +126,7 @@ const blameDecorations = ViewPlugin.fromClass(
     }
 
     update(update: ViewUpdate) {
-      const blameChanged = update.transactions.some((tr) =>
-        tr.effects.some((e) => e.is(setBlame)),
-      );
+      const blameChanged = update.transactions.some((tr) => tr.effects.some((e) => e.is(setBlame)));
       if (update.docChanged || update.selectionSet || update.focusChanged || blameChanged) {
         this.decorations = this.build(update.view);
       }

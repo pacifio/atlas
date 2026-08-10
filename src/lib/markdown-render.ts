@@ -25,25 +25,13 @@ import rehypeStringify from "rehype-stringify";
 const SANITIZE_SCHEMA = {
   ...defaultSchema,
   // Allow the inline SVG kind-glyph inside mention chips.
-  tagNames: [
-    ...(defaultSchema.tagNames ?? []),
-    "svg",
-    "path",
-    "rect",
-    "line",
-    "circle",
-  ],
+  tagNames: [...(defaultSchema.tagNames ?? []), "svg", "path", "rect", "line", "circle"],
   attributes: {
     ...defaultSchema.attributes,
     code: [...(defaultSchema.attributes?.code ?? []), ["className"]],
     pre: [...(defaultSchema.attributes?.pre ?? []), ["className"]],
     // `span` also carries our mention-chip pills (class + kind + title).
-    span: [
-      ...(defaultSchema.attributes?.span ?? []),
-      ["className"],
-      "dataMentionKind",
-      "title",
-    ],
+    span: [...(defaultSchema.attributes?.span ?? []), ["className"], "dataMentionKind", "title"],
     svg: [
       "className",
       "viewBox",
@@ -107,7 +95,95 @@ function baseName(s: string): string {
 
 // Lucide icon node data (v0.468.0) per mention kind — identical to the glyphs
 // the `#`/`@` picker renders, so a sent message matches what you typed.
-const MENTION_GLYPH: Record<string, [string, Record<string, string | number>][]> = {"skill":[["path",{"d":"M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"}]],"command":[["rect",{"width":"18","height":"18","x":"3","y":"3","rx":"2"}],["line",{"x1":"9","x2":"15","y1":"15","y2":"9"}]],"agent":[["path",{"d":"M12 8V4H8"}],["rect",{"width":"16","height":"12","x":"4","y":"8","rx":"2"}],["path",{"d":"M2 14h2"}],["path",{"d":"M20 14h2"}],["path",{"d":"M15 13v2"}],["path",{"d":"M9 13v2"}]],"rule":[["path",{"d":"m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"}],["path",{"d":"m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"}],["path",{"d":"M7 21h10"}],["path",{"d":"M12 3v18"}],["path",{"d":"M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"}]],"file":[["path",{"d":"M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"}],["path",{"d":"M14 2v4a2 2 0 0 0 2 2h4"}],["path",{"d":"M10 9H8"}],["path",{"d":"M16 13H8"}],["path",{"d":"M16 17H8"}]],"folder":[["path",{"d":"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"}]],"symbol":[["line",{"x1":"4","x2":"20","y1":"9","y2":"9"}],["line",{"x1":"4","x2":"20","y1":"15","y2":"15"}],["line",{"x1":"10","x2":"8","y1":"3","y2":"21"}],["line",{"x1":"16","x2":"14","y1":"3","y2":"21"}]],"knowledge":[["path",{"d":"M12 7v14"}],["path",{"d":"M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"}]],"repo":[["path",{"d":"M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v5"}],["circle",{"cx":"13","cy":"12","r":"2"}],["path",{"d":"M18 19c-2.8 0-5-2.2-5-5v8"}],["circle",{"cx":"20","cy":"19","r":"2"}]],"paper":[["path",{"d":"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"}],["path",{"d":"M18 14h-8"}],["path",{"d":"M15 18h-5"}],["path",{"d":"M10 6h8v4h-8V6Z"}]],"branch":[["line",{"x1":"6","x2":"6","y1":"3","y2":"15"}],["circle",{"cx":"18","cy":"6","r":"3"}],["circle",{"cx":"6","cy":"18","r":"3"}],["path",{"d":"M18 9a9 9 0 0 1-9 9"}]],"past_message":[["path",{"d":"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"}]],"past_session":[["path",{"d":"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"}]]};
+const MENTION_GLYPH: Record<string, [string, Record<string, string | number>][]> = {
+  skill: [
+    [
+      "path",
+      {
+        d: "M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z",
+      },
+    ],
+  ],
+  command: [
+    ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
+    ["line", { x1: "9", x2: "15", y1: "15", y2: "9" }],
+  ],
+  agent: [
+    ["path", { d: "M12 8V4H8" }],
+    ["rect", { width: "16", height: "12", x: "4", y: "8", rx: "2" }],
+    ["path", { d: "M2 14h2" }],
+    ["path", { d: "M20 14h2" }],
+    ["path", { d: "M15 13v2" }],
+    ["path", { d: "M9 13v2" }],
+  ],
+  rule: [
+    ["path", { d: "m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z" }],
+    ["path", { d: "m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z" }],
+    ["path", { d: "M7 21h10" }],
+    ["path", { d: "M12 3v18" }],
+    ["path", { d: "M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2" }],
+  ],
+  file: [
+    ["path", { d: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" }],
+    ["path", { d: "M14 2v4a2 2 0 0 0 2 2h4" }],
+    ["path", { d: "M10 9H8" }],
+    ["path", { d: "M16 13H8" }],
+    ["path", { d: "M16 17H8" }],
+  ],
+  folder: [
+    [
+      "path",
+      {
+        d: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
+      },
+    ],
+  ],
+  symbol: [
+    ["line", { x1: "4", x2: "20", y1: "9", y2: "9" }],
+    ["line", { x1: "4", x2: "20", y1: "15", y2: "15" }],
+    ["line", { x1: "10", x2: "8", y1: "3", y2: "21" }],
+    ["line", { x1: "16", x2: "14", y1: "3", y2: "21" }],
+  ],
+  knowledge: [
+    ["path", { d: "M12 7v14" }],
+    [
+      "path",
+      {
+        d: "M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z",
+      },
+    ],
+  ],
+  repo: [
+    [
+      "path",
+      {
+        d: "M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v5",
+      },
+    ],
+    ["circle", { cx: "13", cy: "12", r: "2" }],
+    ["path", { d: "M18 19c-2.8 0-5-2.2-5-5v8" }],
+    ["circle", { cx: "20", cy: "19", r: "2" }],
+  ],
+  paper: [
+    [
+      "path",
+      {
+        d: "M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2",
+      },
+    ],
+    ["path", { d: "M18 14h-8" }],
+    ["path", { d: "M15 18h-5" }],
+    ["path", { d: "M10 6h8v4h-8V6Z" }],
+  ],
+  branch: [
+    ["line", { x1: "6", x2: "6", y1: "3", y2: "15" }],
+    ["circle", { cx: "18", cy: "6", r: "3" }],
+    ["circle", { cx: "6", cy: "18", r: "3" }],
+    ["path", { d: "M18 9a9 9 0 0 1-9 9" }],
+  ],
+  past_message: [["path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" }]],
+  past_session: [["path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" }]],
+};
 
 /** Build the kind glyph as a hast `<span class=icon><svg>…</svg></span>`. */
 function iconWrap(kind: string): Hast | null {
@@ -202,11 +278,7 @@ function rehypeMentionChips() {
       if (!node.children) return;
       const next: Hast[] = [];
       for (const child of node.children) {
-        if (
-          child.type === "element" &&
-          child.tagName &&
-          MENTION_SKIP_TAGS.has(child.tagName)
-        ) {
+        if (child.type === "element" && child.tagName && MENTION_SKIP_TAGS.has(child.tagName)) {
           next.push(child); // leave tokens inside code literal
           continue;
         }

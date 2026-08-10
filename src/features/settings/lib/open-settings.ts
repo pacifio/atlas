@@ -1,8 +1,5 @@
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
-import {
-  useSettingsNav,
-  type SettingsSection,
-} from "../stores/settings-nav-store";
+import { useSettingsNav, type SettingsSection } from "../stores/settings-nav-store";
 
 /**
  * Open the Settings tab already showing `section`.

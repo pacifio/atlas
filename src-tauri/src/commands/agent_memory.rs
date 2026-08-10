@@ -374,8 +374,104 @@ pub async fn collect_corpus(project_path: &str) -> Vec<MemoryDoc> {
     // every agent through the same embedding + the `search_memory` tool — they
     // were previously reachable ONLY via manual `~`/`@note` mentions.
     docs.extend(read_knowledge_docs(&project_path));
+    // Capture-backed sessions for every agent WITHOUT a dedicated reader above
+    // (opencode / cursor / kilo / any future ACP plugin) — see the fn doc.
+    let pp = project_path.clone();
+    docs.extend(
+        tokio::task::spawn_blocking(move || read_capture_docs(&pp))
+            .await
+            .unwrap_or_default(),
+    );
 
     docs
+}
+
+/// Agents whose sessions are already indexed by a dedicated, richer reader —
+/// the capture fallback must skip them or every Claude/Codex/cersei session
+/// would enter the corpus twice under two different sources.
+fn capture_covered_agent(agent: &str) -> bool {
+    agent.starts_with("claude") || agent == "codex" || agent == "cersei"
+}
+
+/// Generic corpus reader over Atlas's OWN capture store (`.atlas/sessions.db`,
+/// atlas-checkpoint). The capture middleware records EVERY agent's sessions +
+/// redacted message bodies with the plugin id in the `agent` column, so this
+/// one reader gives opencode / cursor / kilo — and any future ACP plugin —
+/// memory-corpus coverage with zero per-agent code. `source` is the plugin id
+/// verbatim (it becomes the Graph corpus + the Memory tab's agent grouping).
+/// No-op when capture is disabled for the project — those agents then
+/// contribute only via the promoted shared-memory events, same as before.
+fn read_capture_docs(project_path: &str) -> Vec<MemoryDoc> {
+    use atlas_agents::transcript::strip_injected_context;
+    const TEXT_CAP: usize = 12 * 1024;
+
+    let store = match crate::commands::capture::open_reader(project_path) {
+        Ok(Some(s)) => s,
+        _ => return Vec::new(),
+    };
+    let sessions = match store.sessions_for_workspace(project_path) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(target: "atlas::memory", "capture corpus read failed: {e}");
+            return Vec::new();
+        }
+    };
+
+    let mut out: Vec<MemoryDoc> = Vec::new();
+    for s in sessions {
+        let Some(agent) = s.agent.as_deref() else {
+            continue;
+        };
+        if capture_covered_agent(agent) {
+            continue;
+        }
+        let messages = store.messages_for_session(&s.id).unwrap_or_default();
+        // Transcript text from the always-inline 2 KB previews (bounded, role
+        // tagged, injection-stripped) — parity between Codex's title-only docs
+        // and cersei's full transcripts without pulling spilled blobs.
+        let mut text = String::new();
+        let mut first_user = String::new();
+        for m in &messages {
+            let clean = strip_injected_context(&m.preview);
+            let clean = clean.trim();
+            if clean.is_empty() {
+                continue;
+            }
+            if first_user.is_empty() && m.role == atlas_checkpoint::Role::User {
+                first_user = clean.to_string();
+            }
+            if text.len() < TEXT_CAP {
+                text.push_str(m.role.as_str());
+                text.push_str(": ");
+                let room = TEXT_CAP - text.len().min(TEXT_CAP);
+                text.extend(clean.chars().take(room));
+                text.push('\n');
+            }
+        }
+        let title_raw = s
+            .title
+            .as_deref()
+            .map(strip_injected_context)
+            .unwrap_or_default();
+        let title_raw = title_raw.trim().to_string();
+        let title_src = if title_raw.is_empty() { &first_user } else { &title_raw };
+        if title_src.trim().is_empty() && text.trim().is_empty() {
+            continue; // nothing indexable (e.g. a bound-but-never-messaged session)
+        }
+        out.push(MemoryDoc {
+            id: format!("{agent}:{}", s.native_session_id),
+            title: short_title(title_src),
+            summary: short_title(if first_user.is_empty() { title_src } else { &first_user }),
+            kind: "thread".into(),
+            source: agent.to_string(),
+            file_path: None, // capture rows live in SQLite, not an editable file
+            timestamp_ms: s.updated_at.timestamp_millis(),
+            text: if text.trim().is_empty() { title_src.clone() } else { text },
+            aliases: vec![],
+            links: vec![],
+        });
+    }
+    out
 }
 
 /// Fold the project knowledge base (`.atlas/knowledge/**/*.md`) into the corpus

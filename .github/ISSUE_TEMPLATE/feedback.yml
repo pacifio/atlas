@@ -1,0 +1,63 @@
+name: Feature Request / Feedback
+description: Suggest something, propose work, or tell us what feels clumsy
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Write as much or as little as you have. A one-line idea is a fine issue;
+        so is a long proposal with implementation notes. Only the first box is
+        required — everything below it is optional.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Tell us more
+      description: >-
+        What would you like Atlas to do, or what feels slow, clumsy, or confusing?
+        Markdown and code blocks render here, so this box can also hold a full
+        writeup — current behaviour, the ask, implementation notes, files to touch,
+        what you've already checked or ruled out, how you'd verify it — if you've
+        already thought it through that far.
+      placeholder: |
+        The send keybinding in chat should be configurable — Enter-to-send
+        fights muscle memory when composing multi-line prompts.
+
+        Notes: the keymap is registered in the chat composer; CodeMirror
+        keymap precedence matters here, so a user binding has to be added
+        with high precedence rather than appended.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area is this about?
+      description: Optional — leave it alone if you're not sure.
+      multiple: true
+      options:
+        - "Not sure"
+        - "agents / chat"
+        - "editor"
+        - "terminal"
+        - "browser"
+        - "knowledge"
+        - "memory"
+        - "git / checkpoints"
+        - "canvas"
+        - "settings"
+        - "install / updates"
+        - "other"
+    validations:
+      required: false
+
+  - type: input
+    id: prior_art
+    attributes:
+      label: Seen it done well elsewhere?
+      description: >-
+        Optional, and only if it applies. If another app already solves this,
+        naming it is often worth more than a paragraph describing what you want.
+      placeholder: "Zed — the model picker lives right in the chat panel"
+    validations:
+      required: false

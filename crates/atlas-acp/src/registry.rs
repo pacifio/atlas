@@ -94,12 +94,59 @@ impl AgentSpec {
         }
     }
 
-    /// OpenCode ACP bridge. Same placeholder caveat as `codex()`.
+    /// OpenCode — the `opencode` CLI speaks ACP natively over stdio via its
+    /// `acp` subcommand (verified live against 1.3.15: protocol v1,
+    /// `loadSession`, session `list`/`resume`/`fork`, image prompts, and a
+    /// `models` blob + `build`/`plan` modes on `session/new`). Auth is the
+    /// user's own `opencode auth login`; unauthenticated installs still work
+    /// with the free OpenCode Zen models. Model selection uses
+    /// `session/set_model` (it does NOT implement `session/set_config_option`)
+    /// — see `AcpBackend::set_session_model`'s fallback.
     pub fn opencode() -> Self {
         Self {
             spec_id: "opencode".into(),
-            display_name: "OpenCode (ACP)".into(),
-            command: "opencode-acp".into(),
+            display_name: "OpenCode".into(),
+            command: "opencode acp".into(),
+        }
+    }
+
+    /// Cursor — `cursor-agent acp` speaks stock ACP v1 over stdio (verified
+    /// live against 2026.07.23 + the official doc, which names the binary
+    /// `agent`; the installed CLI ships it as `cursor-agent`). Models arrive
+    /// in the `session/new` `models` blob and switch via `session/set_model`
+    /// (its `set_config_option` takes plain-string values our typed request
+    /// can't produce — the backend's set_model fallback covers it). Modes are
+    /// agent/plan/ask. Auth is the user's own `cursor-agent login`
+    /// (method id `cursor_login`); quota exhaustion on free plans arrives as a
+    /// NORMAL assistant message, not an error. Slash commands were never
+    /// observed (`available_commands_update` may simply not fire).
+    pub fn cursor() -> Self {
+        Self {
+            spec_id: "cursor".into(),
+            display_name: "Cursor".into(),
+            command: "cursor-agent acp".into(),
+        }
+    }
+
+    /// Kilo Code — `kilo acp` (npm `@kilocode/cli`, an OpenCode fork) speaks
+    /// ACP v1 as NDJSON over stdio (probed live against 7.4.20). It is on the
+    /// newer config-options dialect: `session/new`/`load` return NO
+    /// `modes`/`models` blobs — modes, models (~300, `provider/model`) and a
+    /// reasoning-effort level all arrive as `configOptions` selects (see
+    /// `schema.rs`'s normalisers). `session/set_mode` and
+    /// `session/set_config_option` both work (the backend's set-model ladder
+    /// succeeds on its first rung). `loadSession: true` with FULL transcript
+    /// replay; ACP session ids are Kilo's real `ses_…` ids
+    /// (`~/.local/share/kilo/kilo.db`). No terminal methods — shell output
+    /// streams as `tool_call_update` content. Auth is the user's own
+    /// `kilo auth login` (method id `kilo-login`); NOTE its `terminal-auth`
+    /// meta still says `command: "opencode"` (fork residue) — never exec it
+    /// verbatim. The embedded HTTP server makes `session/new` take ~1s extra.
+    pub fn kilo() -> Self {
+        Self {
+            spec_id: "kilo".into(),
+            display_name: "Kilo Code".into(),
+            command: "kilo acp".into(),
         }
     }
 
@@ -109,6 +156,8 @@ impl AgentSpec {
             Self::claude_code_rs(),
             Self::codex(),
             Self::opencode(),
+            Self::cursor(),
+            Self::kilo(),
         ]
     }
 }
@@ -249,7 +298,15 @@ impl AgentRegistry {
         })
         .await?;
         self.register_session(agent_id, resp.session_id.clone())?;
-        let info: NewSessionInfo = resp.into();
+        let session_id = resp.session_id.clone();
+        let mut info: NewSessionInfo = resp.into();
+        // Agents still on the pre-config-options dialect (OpenCode, Cursor)
+        // answer with a top-level `models` blob that the typed
+        // `NewSessionResponse` drops on the floor — without this their model
+        // picker never renders. Recover it from the raw wire.
+        if info.models.is_none() {
+            info.models = self.take_sniffed_models(agent_id, session_id.0.as_ref());
+        }
         // Diagnostic: surface what the agent advertised for model selection, so a
         // missing model picker can be diagnosed (agent didn't send `models` vs.
         // a parse gap). Logs once per new session.
@@ -285,8 +342,18 @@ impl AgentRegistry {
         self.register_session(agent_id, session_id)?;
         // Project the (non_exhaustive, unstable-gated) `modes` blob to JSON the
         // same way `new_session` does, so the manager can seed the available
-        // session-mode list for the resumed session.
-        let modes = resp.modes.as_ref().and_then(|m| serde_json::to_value(m).ok());
+        // session-mode list for the resumed session. Config-options-dialect
+        // agents (Kilo) advertise modes only as a `configOptions` select —
+        // fall back to normalising that (mirrors `NewSessionInfo::from`).
+        let modes = resp
+            .modes
+            .as_ref()
+            .and_then(|m| serde_json::to_value(m).ok())
+            .or_else(|| {
+                serde_json::to_value(&resp.config_options)
+                    .ok()
+                    .and_then(|co| crate::schema::modes_blob_from_config_options(&co))
+            });
         Ok(modes)
     }
 
@@ -312,6 +379,18 @@ impl AgentRegistry {
 
     /// Install a lifecycle guard for a session. Idempotent — if a
     /// guard for this session already exists, the call is a no-op.
+    /// Collect the legacy `models` blob the driver's wire tap captured for this
+    /// session, if the agent sent one. `None` for agents on the config-options
+    /// dialect (whose models come through the typed response) and for agents
+    /// with no model selection at all.
+    fn take_sniffed_models(&self, agent_id: AgentId, session_id: &str) -> Option<serde_json::Value> {
+        self.inner
+            .get(&agent_id)?
+            .runtime
+            .model_sniffer
+            .take(session_id)
+    }
+
     /// Called from `new_session` / `load_session`.
     pub fn register_session(&self, agent_id: AgentId, session_id: SessionId) -> Result<()> {
         let entry = self
@@ -467,6 +546,29 @@ impl AgentRegistry {
                 ))
                 .block_task()
                 .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// `session/set_model` — the model-selection RPC agents with a `models`
+    /// blob accept (OpenCode, Cursor; the TS SDK calls it
+    /// `unstable_setSessionModel`). The Rust crate has no typed request for it,
+    /// so it goes out as an `UntypedMessage`. Verified live against
+    /// `opencode acp` 1.3.15 and `cursor-agent` 2026.07.23.
+    pub async fn set_session_model(
+        &self,
+        agent_id: AgentId,
+        session_id: SessionId,
+        model_id: String,
+    ) -> Result<()> {
+        let connection = self.connection(agent_id)?;
+        rpc_timeout("session/set_model", TUNING_RPC_SECS, async {
+            let msg = agent_client_protocol::UntypedMessage::new(
+                "session/set_model",
+                serde_json::json!({ "sessionId": session_id, "modelId": model_id }),
+            )?;
+            connection.send_request(msg).block_task().await?;
             Ok(())
         })
         .await

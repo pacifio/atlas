@@ -247,7 +247,6 @@ pub fn browser_embed_create(
     let id_finished = id.clone();
 
     let builder = tauri::webview::WebviewBuilder::new(&label, WebviewUrl::External(parsed))
-        .visible(false)
         .data_directory(profile)
         .on_page_load(move |webview, payload| {
             let url = payload.url().to_string();
@@ -273,13 +272,14 @@ pub fn browser_embed_create(
             }
         });
 
-    window
+    let webview = window
         .add_child(
             builder,
             Position::Logical(LogicalPosition::new(rect.x, rect.y)),
             Size::Logical(LogicalSize::new(rect.width.max(1.0), rect.height.max(1.0))),
         )
         .map_err(|e| format!("failed to embed browser webview: {e}"))?;
+    let _ = webview.hide();
 
     Ok(())
 }

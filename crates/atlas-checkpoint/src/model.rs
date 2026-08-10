@@ -266,6 +266,11 @@ pub struct Session {
     pub title: Option<String>,
     pub agent: Option<String>,
     pub model: Option<String>,
+    /// The branch the repository was on when the Session started.
+    ///
+    /// Recorded at prompt time rather than derived from Checkpoints: most
+    /// Sessions never produce a commit, and those had no branch at all.
+    pub branch: Option<String>,
     pub cwd: Option<String>,
     pub token_totals: TokenTotals,
     /// Reserved for a later opt-in enrichment pass. Stays null.

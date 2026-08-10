@@ -67,8 +67,7 @@ interface ModelChatState {
 }
 
 const uid = () =>
-  globalThis.crypto?.randomUUID?.() ??
-  `mc-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+  globalThis.crypto?.randomUUID?.() ?? `mc-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
 
 function makeMessage(role: ChatMessage["role"], content: string): ChatMessage {
   return {
@@ -191,8 +190,7 @@ export const useModelChatStore = createSelectors(
             const sessions = { ...st.sessions };
             delete sessions[id];
             const metas = st.metas.filter((m) => m.id !== id);
-            const activeId =
-              st.activeId === id ? (metas[0]?.id ?? null) : st.activeId;
+            const activeId = st.activeId === id ? (metas[0]?.id ?? null) : st.activeId;
             return { sessions, metas, activeId };
           });
         },
@@ -226,9 +224,7 @@ export const useModelChatStore = createSelectors(
           const userMsg = makeMessage("user", trimmed);
           const assistantMsg = makeMessage("assistant", "");
           const title =
-            session.title === "New Chat"
-              ? trimmed.slice(0, 60) || "Image"
-              : session.title;
+            session.title === "New Chat" ? trimmed.slice(0, 60) || "Image" : session.title;
           const messages = [...session.messages, userMsg, assistantMsg];
 
           const streamId = uid();
@@ -275,20 +271,14 @@ export const useModelChatStore = createSelectors(
         },
 
         stop: (id) => {
-          const sid = Object.entries(get().streamToSession).find(
-            ([, s]) => s === id,
-          )?.[0];
+          const sid = Object.entries(get().streamToSession).find(([, s]) => s === id)?.[0];
           if (sid) void modelchat.cancel(sid).catch(() => {});
         },
       },
     };
 
     // Single delta handler shared by the listener + the send() catch.
-    function onEvent(
-      setFn: typeof set,
-      getFn: typeof get,
-      e: ModelChatEvent,
-    ): void {
+    function onEvent(setFn: typeof set, getFn: typeof get, e: ModelChatEvent): void {
       const id = getFn().streamToSession[e.stream_id];
       if (!id) return;
 
@@ -351,12 +341,7 @@ export const useModelChatStore = createSelectors(
       }
     }
 
-    function finish(
-      setFn: typeof set,
-      getFn: typeof get,
-      id: string,
-      streamId: string,
-    ): void {
+    function finish(setFn: typeof set, getFn: typeof get, id: string, streamId: string): void {
       setFn((st) => {
         const streaming = { ...st.streaming };
         delete streaming[id];

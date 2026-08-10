@@ -243,7 +243,7 @@ fn a_dead_watcher_moves_the_workspace_to_stopped() {
 
     assert_eq!(health.state, HealthState::Stopped);
     assert!(
-        health.issues.iter().any(|i| i.reason.contains("git watcher")),
+        health.issues.iter().any(|i| i.reason.contains("Git watcher")),
         "{:?}",
         health.issues
     );

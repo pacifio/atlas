@@ -1,20 +1,38 @@
-import { lazy, Suspense, memo, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChatStore } from "../stores/chat-store";
+import { useDetailPanelStore } from "../stores/detail-panel-store";
 import { appendNextStepsDirective } from "../lib/next-steps";
-import { agents, ensureAgent, CODEX_PLUGIN_ID, CERSEI_PLUGIN_ID, DEFAULT_PLUGIN_ID, codexStatus } from "../lib/agents-api";
+import { stripInjectedContext } from "../lib/atlas-context";
+import { agents, ensureAgent, CODEX_PLUGIN_ID, codexStatus } from "../lib/agents-api";
 import { loadCachedAcpModes } from "../lib/acp-modes-cache";
-import { warmAcpModels, otherAcpAgent } from "../lib/warm-acp-models";
+import { warmAcpModels, otherAcpAgents } from "../lib/warm-acp-models";
 import type { ImageAttachment, SessionKey } from "@/types/agents";
-import { hasInFlightToolCalls, isBusyAgentStatus, agentTypeFromPluginId } from "@/types/agent";
+import type { ChatMessage } from "@/types/agent";
 import {
-  composePrompt,
-  type MentionData,
-  type MentionSkill,
-} from "../lib/mentions";
+  hasInFlightToolCalls,
+  isBusyAgentStatus,
+  agentTypeFromPluginId,
+  pluginIdForAgent,
+  AGENT_LABEL,
+  type SwitchableAgent,
+} from "@/types/agent";
+import { composePrompt, type MentionData, type MentionSkill } from "../lib/mentions";
 import { sharedMemory } from "@/features/memory/lib/shared-memory-api";
 import { usePaneFind } from "../lib/use-pane-find";
+import { useDefaultAgentType } from "../hooks/use-default-agent";
 import { MessageInput } from "./message-input";
 import { SessionSidebar } from "./session-sidebar";
+import { ChatHeader } from "./chat-header";
+import { openNewAgentChat } from "../lib/open-agent-session";
+import { workspacePathForTab } from "../lib/tab-workspace";
+import { useQueryClient } from "@tanstack/react-query";
+import { prefetchTextDiff } from "@/features/git/lib/git-diff-api";
+import { getEditParts, getFilePathFromInput } from "../lib/tool-files";
+import { OPEN_TURN_DIFF_EVENT, toRepoRelative, type TurnDiffRequest } from "../lib/open-turn-diff";
+
+/** Height the floating header occupies — the transcript pads its content by
+ *  this much so the first row clears the bar. Must match `ChatHeader`'s bar. */
+const HEADER_INSET = 46;
 import { PermissionModal } from "./permission-modal";
 import { ClaudeSetupBanner } from "@/features/claude-setup/components/claude-setup-banner";
 import { NodeSetupBanner } from "@/features/node-setup/components/node-setup-banner";
@@ -27,29 +45,31 @@ import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup
 const BashHistoryPanel = lazy(() =>
   import("./bash-history-panel").then((m) => ({ default: m.BashHistoryPanel })),
 );
-const PlansPanel = lazy(() =>
-  import("./plans-panel").then((m) => ({ default: m.PlansPanel })),
-);
+const PlansPanel = lazy(() => import("./plans-panel").then((m) => ({ default: m.PlansPanel })));
 const ChatSearchPalette = lazy(() =>
   import("./chat-search-palette").then((m) => ({
     default: m.ChatSearchPalette,
   })),
 );
 
-// `MessagesList` transitively imports `react-markdown` + `rehype-highlight` +
-// `remark-gfm` (~330 KB raw / 101 KB gzip) via `message-item.tsx`. Lazy so
-// an empty-chat first paint doesn't preload the markdown vendor chunk;
-// loads on demand the first time messages exist for this tab.
-const MessagesList = lazy(() =>
-  import("./messages-list").then((m) => ({ default: m.MessagesList })),
+// The transcript transitively imports the markdown vendor chunk
+// (`remark-gfm` + `rehype-highlight`, ~330 KB raw / 101 KB gzip). Lazy so an
+// empty-chat first paint doesn't preload it; loads the first time this tab has
+// messages.
+const Transcript = lazy(() => import("./transcript").then((m) => ({ default: m.Transcript })));
+import type { TranscriptHandle } from "./transcript";
+// Diffs + tool output live here rather than inline in the thread — see the
+// module header for why that's a perf decision as much as a UX one.
+const DetailPanel = lazy(() => import("./detail-panel").then((m) => ({ default: m.DetailPanel })));
+// Full-screen side-by-side diff for a turn's changes. Lazy: it pulls the
+// virtualizer + the diff-highlight worker, and most sessions never open it.
+const GitDiffModal = lazy(() =>
+  import("@/features/git/components/git-diff-modal").then((m) => ({
+    default: m.GitDiffModal,
+  })),
 );
-import type { MessagesListHandle } from "./messages-list";
 import {
   Sparkles,
-  User,
-  TerminalSquare,
-  ClipboardList,
-  ListFilter,
   Search,
   Loader2,
   ChevronDown,
@@ -59,10 +79,9 @@ import {
   FlaskConical,
 } from "lucide-react";
 import { AtlasIcon } from "@/components/atlas-icon";
+import { copyText } from "@/lib/clipboard";
 import { PanelSkeleton } from "@/components/panel-skeleton";
-import { Kbd, KbdGroup } from "@/ui/kbd";
 import { logEvent } from "@/features/log/lib/log";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
@@ -72,7 +91,7 @@ interface ChatPanelProps {
 }
 
 // Once-per-app-session guard for the background Codex pre-warm (below).
-let codexPrewarmStarted = false;
+let acpPrewarmStarted = false;
 
 /** Rebind a session whose agent process died: respawn the plugin (its spawn
  *  cache was reset on disconnect) and RESUME the same session id where the
@@ -84,18 +103,10 @@ async function rebindDisconnectedSession(tabId: string): Promise<boolean> {
   const cs = useChatStore.getState();
   const sess = cs.sessions[tabId];
   if (!sess) return false;
-  const pluginId =
-    sess.agentType === "codex"
-      ? CODEX_PLUGIN_ID
-      : sess.agentType === "cersei"
-        ? CERSEI_PLUGIN_ID
-        : DEFAULT_PLUGIN_ID;
+  const pluginId = pluginIdForAgent(sess.agentType);
   try {
     const agent = await ensureAgent(pluginId);
-    const cwd =
-      sess.workingDirectory ||
-      useProjectStore.getState().currentProject?.path ||
-      "/";
+    const cwd = sess.workingDirectory || useProjectStore.getState().currentProject?.path || "/";
     let key: SessionKey;
     if (sess.acpSessionId) {
       try {
@@ -117,6 +128,66 @@ async function rebindDisconnectedSession(tabId: string): Promise<boolean> {
   }
 }
 
+/**
+ * The before/after text a single turn produced, per file.
+ *
+ * Walks the turn's assistant run — `turnId` is `t:<first assistant message id>`,
+ * the same formula the row projection uses — and folds every edit tool call into
+ * one before/after pair per path. Multiple edits to the same file concatenate in
+ * order, so a turn that touched a file three times reads as one diff rather than
+ * three competing ones.
+ *
+ * A `Write` carries whole content (`old` empty), which is why a file CREATED by
+ * the turn renders in full. An `Edit` carries only the replaced fragment, so its
+ * diff covers that fragment — honest about what the record holds. A file the
+ * turn only deleted contributes no edit parts and simply does not appear, which
+ * is the correct answer: there is nothing to browse.
+ */
+function collectTurnEdits(
+  messages: ChatMessage[],
+  turnId: string,
+  repoPath: string,
+  preferredFile?: string,
+): {
+  files: string[];
+  initial: string;
+  sources: Record<string, { old: string; new: string }>;
+} {
+  const firstId = turnId.startsWith("t:") ? turnId.slice(2) : turnId;
+  const start = messages.findIndex((m) => m.id === firstId);
+  const sources: Record<string, { old: string; new: string }> = {};
+  const order: string[] = [];
+
+  if (start >= 0) {
+    // The turn is the consecutive assistant run beginning at that message.
+    for (let i = start; i < messages.length && messages[i].role === "assistant"; i++) {
+      for (const tc of messages[i].toolCalls) {
+        const args = tc.arguments ?? {};
+        const parts = getEditParts(tc.toolName, args);
+        if (parts.length === 0) continue;
+        const abs = getFilePathFromInput(args);
+        if (!abs) continue;
+        const path = toRepoRelative(abs, repoPath);
+        if (!sources[path]) {
+          sources[path] = { old: "", new: "" };
+          order.push(path);
+        }
+        for (const p of parts) {
+          sources[path].old += p.old;
+          sources[path].new += p.neu;
+        }
+      }
+    }
+  }
+
+  const wanted = preferredFile ? toRepoRelative(preferredFile, repoPath) : "";
+  return {
+    files: order,
+    initial: wanted && sources[wanted] ? wanted : (order[0] ?? ""),
+    sources,
+  };
+}
+
 export function ChatPanel({ tabId }: ChatPanelProps) {
   // Subscribe to ONLY this tab's session. Streaming chunks on other tabs
   // shouldn't repaint this panel — immer preserves reference equality for
@@ -125,36 +196,120 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   const session = useChatStore((s) => s.sessions[tabId]);
   const { createSession, addMessage, updateSessionStatus, setSessionTitle } =
     useChatStore.use.actions();
-  const [roleFilter, setRoleFilter] = useState<"all" | "user" | "assistant">(
-    "all",
-  );
+  const [roleFilter, setRoleFilter] = useState<"all" | "user" | "assistant">("all");
   const [bashPanelOpen, setBashPanelOpen] = useState(false);
   const [plansPanelOpen, setPlansPanelOpen] = useState(false);
+  // Narrow boolean — changes only when the detail panel opens or closes.
+  const detailOpen = useDetailPanelStore((s) => !!s.targets[tabId]);
+
+  // Full-screen diff. Driven by a window event rather than a prop chain so a row
+  // opening it re-renders nothing in the transcript.
+  const [turnDiff, setTurnDiff] = useState<{
+    files: string[];
+    initial: string;
+    sources: Record<string, { old: string; new: string }>;
+  } | null>(null);
+
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent<TurnDiffRequest>).detail;
+      if (!detail?.turnId) return;
+      const repo = useProjectStore.getState().currentProject?.path ?? "";
+      const messages = useChatStore.getState().sessions[tabId]?.messages ?? [];
+      const next = collectTurnEdits(messages, detail.turnId, repo, detail.file);
+      // Start the diff BEFORE the modal exists. The viewer would otherwise wait
+      // for its own mount to fire the same request, putting an IPC round trip
+      // after the open animation rather than underneath it.
+      const src = next.sources[next.initial];
+      if (src) prefetchTextDiff(queryClient, repo, next.initial, src);
+      setTurnDiff(next);
+    };
+    window.addEventListener(OPEN_TURN_DIFF_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_TURN_DIFF_EVENT, onOpen);
+  }, [tabId, queryClient]);
+
+  // Warm everything the diff modal needs while the reader is idle, so opening
+  // it is a paint rather than a fetch: the chunk itself (which now pulls the
+  // panel with it), and the syntax-highlight worker — WebKit suspends idle
+  // workers, and a cold one costs a round trip on the first highlighted file.
+  useEffect(() => {
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, o?: { timeout?: number }) => number;
+    };
+    const load = () => {
+      void import("@/features/git/components/git-diff-modal");
+      void import("@/features/git/lib/diff-highlight-cache").then((m) =>
+        m.warmDiffHighlightWorker?.(),
+      );
+    };
+    // Short timeout: this competes with nothing the reader can see, and waiting
+    // four seconds meant an early click still paid full price.
+    if (typeof w.requestIdleCallback === "function") {
+      w.requestIdleCallback(load, { timeout: 1200 });
+    } else {
+      const t = window.setTimeout(load, 800);
+      return () => window.clearTimeout(t);
+    }
+  }, []);
   // Cmd+F find — scoped to this pane + tab (see usePaneFind).
   const [searchPaletteOpen, setSearchPaletteOpen] = usePaneFind(tabId);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Scroll-to-bottom state is owned here so the floating button can live
   // next to the Claude-setup pill above the input (instead of inside
-  // MessagesList). MessagesList publishes the "scrolled up" bit via
+  // the transcript). Transcript publishes the "scrolled up" bit via
   // `onShowJumpChange` and exposes `scrollToBottom` via its ref.
-  const messagesListRef = useRef<MessagesListHandle>(null);
+  const messagesListRef = useRef<TranscriptHandle>(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [jumpCount, setJumpCount] = useState(0);
-  // Stable so MessagesList's `[showJumpToBottom, newCount, onShowJumpChange]`
+  // Stable so the transcript's `[showJump, newCount, onShowJumpChange]`
   // effect doesn't re-fire on every ChatPanel render (i.e. every stream chunk).
   const onShowJumpChange = useCallback((visible: boolean, count?: number) => {
     setShowJumpToBottom(visible);
     setJumpCount(count ?? 0);
   }, []);
 
+  // The role filter is applied here rather than inside the transcript: the
+  // projection turns a message list into turns and rows, so handing it a
+  // pre-filtered list keeps that pass single-purpose. Identity is preserved in
+  // the (overwhelmingly common) "all" case so the projection memo isn't
+  // invalidated on every render.
+  // Header label. Prefer the session's own title; fall back to the first user
+  // message (what the history list shows) so a chat that hasn't been titled yet
+  // still reads as itself rather than "New Chat".
+  const headerTitle = useMemo(() => {
+    const t = stripInjectedContext(session?.title ?? "").trim();
+    if (t && t !== "New Chat") return t;
+    const first = stripInjectedContext(session?.firstUserContent ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return first.slice(0, 60) || "New chat";
+  }, [session?.title, session?.firstUserContent]);
+
+  const filteredMessages = useMemo(
+    () =>
+      roleFilter === "all"
+        ? (session?.messages ?? [])
+        : (session?.messages ?? []).filter((m) => m.role === roleFilter),
+    [session?.messages, roleFilter],
+  );
+
   const acpSessionId = session?.acpSessionId ?? "";
 
+  // Which agent a fresh chat starts on — Claude Code when it's installed +
+  // authed, otherwise the native Atlas agent. `null` while the Claude probe is
+  // still deciding on a first-ever launch: creating the session then would pin
+  // it to the wrong agent (and, for Claude, to a disabled composer), so we wait
+  // the few hundred ms it takes. The transcript already renders its skeleton
+  // for a session-less tab.
+  const defaultAgentType = useDefaultAgentType();
+
   useEffect(() => {
-    if (!session) {
-      createSession(tabId);
+    if (!session && defaultAgentType) {
+      createSession(tabId, defaultAgentType);
     }
-  }, [tabId, session, createSession]);
+  }, [tabId, session, createSession, defaultAgentType]);
 
   // Bind an ACP agent + session to this tab as soon as the panel mounts.
   // The agent spawn takes 1–3 s warm and up to 30 s on a cold `npx` cache,
@@ -175,16 +330,16 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // Bind to THIS session's chosen agent (Claude by default, or Codex),
         // not a single global default — so per-tab agents run in parallel.
         const at = useChatStore.getState().sessions[tabId]?.agentType;
-        const pluginId =
-          at === "codex"
-            ? CODEX_PLUGIN_ID
-            : at === "cersei"
-              ? CERSEI_PLUGIN_ID
-              : DEFAULT_PLUGIN_ID;
+        const pluginId = pluginIdForAgent(at);
         const agent = await ensureAgent(pluginId);
         if (cancelled) return;
-        const project = useProjectStore.getState().currentProject;
-        const cwd = project?.path ?? "/";
+        // Resolve cwd from THIS tab's workspace, not the global currentProject:
+        // background workspaces keep their chat panels mounted, so a bind that
+        // fires after a workspace switch (failed-bind retry, agent change)
+        // would otherwise create the session against the WRONG repo — and a
+        // "/" fallback would dodge the running-workspace eviction guard.
+        const cwd =
+          workspacePathForTab(tabId) ?? useProjectStore.getState().currentProject?.path ?? "/";
         const key = await agents.newSession(agent.agent_id, cwd);
         if (cancelled) return;
         // Guard against an agent switch that landed mid-bind: if the tab's
@@ -193,21 +348,13 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // (e.g. Codex) session under the newly-chosen agent. The deps now watch
         // agentType, so the effect re-runs and binds the right agent.
         const nowAt = useChatStore.getState().sessions[tabId]?.agentType;
-        const nowPlugin =
-          nowAt === "codex"
-            ? CODEX_PLUGIN_ID
-            : nowAt === "cersei"
-              ? CERSEI_PLUGIN_ID
-              : DEFAULT_PLUGIN_ID;
-        if (nowPlugin !== pluginId) return;
+        if (pluginIdForAgent(nowAt) !== pluginId) return;
         // Apply the tab's permission mode BEFORE exposing the binding.
         // `setAcpBinding` is what flushes any queued send, so if we set the
         // mode after it the first turn can race ahead of (e.g.)
         // bypassPermissions and still trigger a stray prompt on turn one.
         // Awaiting here guarantees the agent is in the right mode first.
-        const mode =
-          useChatStore.getState().sessions[tabId]?.claudePermissionMode ??
-          "default";
+        const mode = useChatStore.getState().sessions[tabId]?.claudePermissionMode ?? "default";
         if (mode !== "default") {
           try {
             await agents.setMode(key, mode);
@@ -216,9 +363,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           }
           if (cancelled) return;
         }
-        useChatStore
-          .getState()
-          .actions.setAcpBinding(tabId, agent.agent_id, key.session_id, cwd);
+        useChatStore.getState().actions.setAcpBinding(tabId, agent.agent_id, key.session_id, cwd);
         // Seed the composer mode picker from the freshly-created session's
         // advertised modes (Codex: read-only / auto / full-access). The modes
         // are seeded into the Rust SessionState by `new_session`, so the
@@ -246,15 +391,13 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
                   tabId,
                   snap.current_mode,
                   modes,
-                  agentTypeFromPluginId(snap.plugin_id)
+                  agentTypeFromPluginId(snap.plugin_id),
                 );
             }
             // Seed the ACP model picker (Claude Code / Codex) from the snapshot's
             // advertised models. Empty when the agent exposes no model selection.
             if (models.length > 0) {
-              useChatStore
-                .getState()
-                .actions.setAcpModels(tabId, snap.current_model, models);
+              useChatStore.getState().actions.setAcpModels(tabId, snap.current_model, models);
             }
             // Boot finished (with or without modes) — drop the loading state.
             useChatStore.getState().actions.setAcpModesPending(tabId, false);
@@ -334,8 +477,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           // model stamp/badge again in resumed sessions.
           // Re-read the agent type from the store — the closed-over `session`
           // is the render-time value and can be stale after the await.
-          const at =
-            useChatStore.getState().sessions[tabId]?.agentType ?? "claude-code";
+          const at = useChatStore.getState().sessions[tabId]?.agentType ?? "claude-code";
           const cached = loadCachedAcpModels(at);
           if (cached && cached.availableModels.length > 0) {
             useChatStore
@@ -358,24 +500,23 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     session?.acpAvailableModels?.length,
   ]);
 
-  // While a chat is active on one ACP agent, prefetch the OTHER agent's model
-  // list in the background so switching to it is instant (cached). Fire-and-
+  // While a chat is active on one ACP agent, prefetch the other used agents'
+  // model lists in the background so switching is instant (cached). Fire-and-
   // forget, once per app session per agent.
   useEffect(() => {
     const at = session?.agentType;
     if (!at) return;
-    const other = otherAcpAgent(at);
-    if (!other) return;
+    const others = otherAcpAgents(at);
+    if (others.length === 0) return;
     const cwd = useProjectStore.getState().currentProject?.path ?? "/";
-    void warmAcpModels(other, cwd);
+    for (const other of others) void warmAcpModels(other, cwd);
   }, [session?.agentType]);
 
   // Shift+Tab → cycle the agent permission mode. Registered on the window in
   // capture phase so the browser's default focus traversal never steals it.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key !== "Tab" || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey)
-        return;
+      if (e.key !== "Tab" || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
       const root = rootRef.current;
       const active = document.activeElement as HTMLElement | null;
       // Only intercept when focus is somewhere inside this chat panel.
@@ -405,25 +546,33 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   // by an effect that didn't re-run. The create-effect above still seeds the
   // fast path for freshly-created sessions.
 
-  // Pre-warm the Codex agent in the background. The ~3-4s a fresh switch to
-  // Codex pays is dominated by spawning `npx @agentclientprotocol/codex-acp` + the
-  // ACP initialize handshake; `ensureAgent` does exactly that (deduped/cached,
-  // no session, no auth), so paying it ahead of time makes the actual switch
-  // fast. Gated on the user having used Codex before (a persisted modes cache
-  // exists) so we never spawn it for people who only use Claude. Runs once per
-  // app session, deferred so it never competes with the primary (Claude) bind.
+  // Pre-warm secondary ACP agents in the background. The ~3-4s a fresh switch
+  // pays is dominated by spawning the adapter (npx / CLI) + the ACP initialize
+  // handshake; `ensureAgent` does exactly that (deduped/cached, no session, no
+  // auth), so paying it ahead of time makes the actual switch fast. Gated per
+  // agent on the user having used it before (a persisted modes cache exists) so
+  // we never spawn agents someone only ever ignores. Runs once per app session,
+  // deferred and staggered so it never competes with the primary (Claude) bind.
   useEffect(() => {
-    if (codexPrewarmStarted) return;
-    if (!loadCachedAcpModes("codex")) return; // never used Codex → skip
-    codexPrewarmStarted = true;
-    const t = setTimeout(() => {
-      void ensureAgent(CODEX_PLUGIN_ID).catch(() => {
-        // Not installed / not ready — the real switch surfaces a proper error;
-        // allow a later retry by clearing the once-flag.
-        codexPrewarmStarted = false;
-      });
-    }, 1500);
-    return () => clearTimeout(t);
+    if (acpPrewarmStarted) return;
+    acpPrewarmStarted = true;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    (["codex", "opencode", "cursor", "kilo"] as const).forEach((at, i) => {
+      if (!loadCachedAcpModes(at)) return; // never used → skip
+      timers.push(
+        setTimeout(
+          () => {
+            void ensureAgent(pluginIdForAgent(at)).catch(() => {
+              // Not installed / not ready — the real switch surfaces a proper
+              // error; allow a later retry by clearing the once-flag.
+              acpPrewarmStarted = false;
+            });
+          },
+          1500 + i * 1000,
+        ),
+      );
+    });
+    return () => timers.forEach(clearTimeout);
   }, []);
 
   // Drain the per-tab queue when the agent transitions back to idle OR
@@ -434,9 +583,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   const prevStatusRef = useRef<string | null>(null);
   const prevAcpRef = useRef<string | undefined>(undefined);
   const prevResumingRef = useRef(false);
-  const handleSendRef = useRef<
-    ((content: string, mentions: MentionData[]) => void) | null
-  >(null);
+  const handleSendRef = useRef<((content: string, mentions: MentionData[]) => void) | null>(null);
   const handleStopRef = useRef<(() => void) | null>(null);
   // STABLE wrappers passed to the memoized <ChatComposer> so it doesn't
   // re-render on every ChatPanel render (i.e. every streaming chunk). The real
@@ -448,10 +595,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     [],
   );
   const onStopStable = useCallback(() => handleStopRef.current?.(), []);
-  const onScrollToBottomStable = useCallback(
-    () => messagesListRef.current?.scrollToBottom(),
-    [],
-  );
+  const onScrollToBottomStable = useCallback(() => messagesListRef.current?.scrollToBottom(), []);
   useEffect(() => {
     const cur = session?.status ?? "idle";
     const prev = prevStatusRef.current;
@@ -498,7 +642,19 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     return () => window.removeEventListener("atlas:chat-send", handler);
   }, [tabId]);
 
-  if (!session) return null;
+  // No session yet. Normally a single frame (the effect above creates it on
+  // mount); on a first-ever launch it also covers the brief wait for the Claude
+  // Code probe that decides which agent this chat starts on. Show the transcript
+  // skeleton rather than a blank pane so that wait doesn't read as a broken tab.
+  if (!session) {
+    return (
+      <div ref={rootRef} className="h-full overflow-hidden">
+        <div className="mx-auto w-full max-w-[760px] pt-[46px]">
+          <PanelSkeleton rows={6} />
+        </div>
+      </div>
+    );
+  }
 
   const handleStop = () => {
     const cs = useChatStore.getState();
@@ -576,10 +732,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     });
 
     if (session.messages.length === 0) {
-      setSessionTitle(
-        tabId,
-        actualContent.slice(0, 40) + (actualContent.length > 40 ? "..." : ""),
-      );
+      setSessionTitle(tabId, actualContent.slice(0, 40) + (actualContent.length > 40 ? "..." : ""));
     }
 
     updateSessionStatus(tabId, "running");
@@ -606,21 +759,13 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     // Best-effort, invisible: record that this turn applied one or more skills
     // so cross-agent shared memory reflects it (no view projection — see
     // EventKind::SkillUsed). Fire-and-forget; must never block or break send.
-    const usedSkills = mentions.filter(
-      (m): m is MentionSkill => m.kind === "skill",
-    );
-    const memoryProject =
-      useProjectStore.getState().currentProject?.path ?? null;
+    const usedSkills = mentions.filter((m): m is MentionSkill => m.kind === "skill");
+    const memoryProject = useProjectStore.getState().currentProject?.path ?? null;
     if (usedSkills.length > 0 && memoryProject) {
       void sharedMemory
-        .appendEvent(
-          memoryProject,
-          bound.acpAgentId,
-          bound.acpSessionId,
-          "skill_used",
-          null,
-          { skills: usedSkills.map((m) => m.skillName) },
-        )
+        .appendEvent(memoryProject, bound.acpAgentId, bound.acpSessionId, "skill_used", null, {
+          skills: usedSkills.map((m) => m.skillName),
+        })
         .catch(() => {});
     }
 
@@ -645,9 +790,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      useChatStore
-        .getState()
-        .actions.addMessage(tabId, "assistant", `agent send error: ${msg}`);
+      useChatStore.getState().actions.addMessage(tabId, "assistant", `agent send error: ${msg}`);
       useChatStore.getState().actions.updateSessionStatus(tabId, "error");
       logEvent({
         source: "agent",
@@ -671,131 +814,59 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
       <SessionSidebar tabId={tabId} />
 
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Chat toolbar */}
-        {session.messages.length > 0 && (
-          <div className="flex items-center gap-2 px-3 h-[32px] border-b border-[var(--border-default)] shrink-0">
-            <button
-              onClick={() => setSearchPaletteOpen(true)}
-              className="flex items-center gap-2 h-6.5 pl-2.5 pr-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer outline-none transition-colors min-w-[280px]"
-              title="Search messages (⌘F)"
-            >
-              <Search size={11} />
-              <span>Find in chat…</span>
-              <span className="ml-auto">
-                <KbdGroup>
-                  <Kbd className="h-[16px] w-fit min-w-[16px]">⌘</Kbd>
-                  <Kbd className="h-[16px] w-fit min-w-[16px]">F</Kbd>
-                </KbdGroup>
-              </span>
-            </button>
-            <div className="flex-1" />
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <button
-                  className="flex items-center gap-1 px-2 h-6 rounded text-[10px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer outline-none transition-colors"
-                  title="Filter messages"
-                >
-                  <ListFilter size={11} />
-                  <span className="capitalize">{roleFilter}</span>
-                </button>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content
-                  align="end"
-                  sideOffset={4}
-                  className="rounded-md border border-[var(--border-default)] bg-[var(--bg-secondary)] shadow-[var(--shadow-overlay)] py-1 min-w-[140px]"
-                  style={{ zIndex: 9999 }}
-                >
-                  {(["all", "user", "assistant"] as const).map((f) => (
-                    <DropdownMenu.Item
-                      key={f}
-                      onClick={() => setRoleFilter(f)}
-                      className={cn(
-                        "flex items-center gap-2 px-3 h-[26px] text-[11px] cursor-default outline-none capitalize",
-                        roleFilter === f
-                          ? "text-[var(--text-primary)] bg-[var(--bg-selected)]"
-                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
-                      )}
-                    >
-                      {f === "user" ? (
-                        <User size={10} />
-                      ) : f === "assistant" ? (
-                        <Sparkles size={10} />
-                      ) : (
-                        <ListFilter size={10} />
-                      )}
-                      <span>{f}</span>
-                    </DropdownMenu.Item>
-                  ))}
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
-            <button
-              onClick={() => {
-                setBashPanelOpen((v) => !v);
-                setPlansPanelOpen(false);
-              }}
-              className={cn(
-                "flex items-center gap-1 px-2 h-6 rounded text-[10px] cursor-pointer outline-none transition-colors",
-                bashPanelOpen
-                  ? "text-[var(--text-primary)] bg-[var(--bg-selected)]"
-                  : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]",
-              )}
-              title="Toggle bash call history"
-            >
-              <TerminalSquare size={11} />
-              Bash
-            </button>
-            <button
-              onClick={() => {
-                setPlansPanelOpen((v) => !v);
-                setBashPanelOpen(false);
-              }}
-              className={cn(
-                "flex items-center gap-1 px-2 h-6 rounded text-[10px] cursor-pointer outline-none transition-colors",
-                plansPanelOpen
-                  ? "text-[var(--text-primary)] bg-[var(--bg-selected)]"
-                  : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]",
-              )}
-              title="Toggle plans history"
-            >
-              <ClipboardList size={11} />
-              Plans
-            </button>
-          </div>
-        )}
-
+        {/* The header FLOATS over the transcript rather than sitting above it in
+            the column. That is what lets the thread scroll underneath and be
+            progressively blurred by the band the transcript draws at its top
+            edge — a `backdrop-filter` can only blur what is painted behind it,
+            and a header that owns its own row has nothing behind it but the
+            panel background. The transcript reserves `HEADER_INSET` of top
+            padding so the first row still starts below the bar. */}
         {session.messages.length === 0 ? (
           <div className="flex-1 overflow-y-auto">
-            {session.transcriptLoading ? (
-              <LoadingTranscriptState />
-            ) : (
-              <WelcomeState />
-            )}
+            {session.transcriptLoading ? <LoadingTranscriptState /> : <WelcomeState />}
           </div>
         ) : (
-          <Suspense fallback={<LoadingTranscriptState />}>
-            <MessagesList
-              ref={messagesListRef}
-              tabId={tabId}
-              acpSessionId={acpSessionId}
-              messages={session.messages}
-              roleFilter={roleFilter}
-              isStreaming={session.status === "running"}
-              agentType={session.agentType}
-              onShowJumpChange={onShowJumpChange}
-            />
-          </Suspense>
+          <div className="relative flex-1 min-h-0 flex flex-col">
+            <Suspense fallback={<LoadingTranscriptState />}>
+              <Transcript
+                ref={messagesListRef}
+                tabId={tabId}
+                acpSessionId={acpSessionId}
+                messages={filteredMessages}
+                isStreaming={session.status === "running"}
+                agentType={session.agentType}
+                topInset={HEADER_INSET}
+                onShowJumpChange={onShowJumpChange}
+              />
+            </Suspense>
+            <div className="absolute inset-x-0 top-0 z-20">
+              <ChatHeader
+                tabId={tabId}
+                title={headerTitle}
+                roleFilter={roleFilter}
+                onRoleFilterChange={setRoleFilter}
+                onOpenSearch={() => setSearchPaletteOpen(true)}
+                bashPanelOpen={bashPanelOpen}
+                onToggleBash={() => {
+                  setBashPanelOpen((v) => !v);
+                  setPlansPanelOpen(false);
+                }}
+                plansPanelOpen={plansPanelOpen}
+                onTogglePlans={() => {
+                  setPlansPanelOpen((v) => !v);
+                  setBashPanelOpen(false);
+                }}
+                onNewSession={openNewAgentChat}
+              />
+            </div>
+          </div>
         )}
 
         <div className="relative">
           {/* Permission / question prompt — an inline card pinned above the
               composer (plan reviews still render as a centered modal). */}
-          <PermissionModal
-            tabId={tabId}
-            onSendMessage={(t) => handleSend(t, [])}
-          />
-          {/* Bottom fade lives in MessagesList; the centered floating
+          <PermissionModal tabId={tabId} onSendMessage={(t) => handleSend(t, [])} />
+          {/* Bottom fade lives in the transcript; the centered floating
               row (setup pill + scroll-to-bottom) lives inside
               ChatComposer below. */}
           <ChatComposer
@@ -817,9 +888,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             messages={session.messages}
             onJump={(idx) => {
               if (roleFilter !== "all") setRoleFilter("all");
-              window.dispatchEvent(
-                new CustomEvent("atlas:chat-jump", { detail: { index: idx } }),
-              );
+              window.dispatchEvent(new CustomEvent("atlas:chat-jump", { detail: { index: idx } }));
             }}
             onClose={() => setBashPanelOpen(false)}
           />
@@ -832,6 +901,35 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         </Suspense>
       )}
 
+      {/* Diff / tool-output detail. Gated on a narrow boolean selector so the
+          chunk isn't fetched until the reader first opens it, and so this
+          subscription only fires on open/close — never on a streaming chunk.
+          The panel's own store owns the target, so toggling it re-renders zero
+          transcript rows. */}
+      {detailOpen && (
+        <Suspense fallback={null}>
+          <DetailPanel tabId={tabId} messages={session.messages} />
+        </Suspense>
+      )}
+
+      {turnDiff !== null && turnDiff.files.length > 0 && (
+        <Suspense fallback={null}>
+          <GitDiffModal
+            open
+            onOpenChange={(o) => !o && setTurnDiff(null)}
+            repoPath={useProjectStore.getState().currentProject?.path ?? ""}
+            files={turnDiff.files}
+            initialFile={turnDiff.initial}
+            textSources={turnDiff.sources}
+            title={
+              turnDiff.files.length === 1
+                ? (turnDiff.files[0].split("/").pop() ?? "Changes")
+                : `${turnDiff.files.length} files changed`
+            }
+          />
+        </Suspense>
+      )}
+
       {searchPaletteOpen && (
         <Suspense fallback={null}>
           <ChatSearchPalette
@@ -839,9 +937,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             onOpenChange={setSearchPaletteOpen}
             messages={session.messages}
             onJump={(idx) =>
-              window.dispatchEvent(
-                new CustomEvent("atlas:chat-jump", { detail: { index: idx } }),
-              )
+              window.dispatchEvent(new CustomEvent("atlas:chat-jump", { detail: { index: idx } }))
             }
           />
         </Suspense>
@@ -859,8 +955,8 @@ function DisconnectedBanner({ tabId }: { tabId: string }) {
   return (
     <div className="max-w-[720px] mx-auto mb-2 flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[12px]">
       <span className="text-[var(--text-secondary)]">
-        The agent process exited. Your conversation is safe — restart to
-        continue where you left off.
+        The agent process exited. Your conversation is safe — restart to continue where you left
+        off.
       </span>
       <button
         disabled={restarting}
@@ -912,11 +1008,7 @@ const ChatComposer = memo(function ChatComposer({
   onScrollToBottom,
 }: {
   tabId: string;
-  onSend: (
-    message: string,
-    mentions: MentionData[],
-    attachments?: ImageAttachment[],
-  ) => void;
+  onSend: (message: string, mentions: MentionData[], attachments?: ImageAttachment[]) => void;
   onStop: () => void;
   running: boolean;
   stopping: boolean;
@@ -927,17 +1019,19 @@ const ChatComposer = memo(function ChatComposer({
   // The Claude install/auth gating only applies to Claude sessions. A Codex
   // chat must not be blocked by Claude's status (Codex inherits its own
   // ~/.codex / OPENAI auth); it surfaces its own errors from the spawn path.
-  const isClaude =
-    useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code") ===
-    "claude-code";
+  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
+  const isClaude = agentType === "claude-code";
+  const isCodex = agentType === "codex";
   const phase = useClaudeSetupStore.use.phase();
 
-  // Codex sign-in state (only for Codex sessions). `null` = still probing.
+  // Codex sign-in state (Codex sessions ONLY — probing ~/.codex/auth.json for
+  // any other agent both wastes a call and, worse, blocks that agent's
+  // composer on Codex's auth state). `null` = still probing.
   const [codexAuthed, setCodexAuthed] = useState<boolean | null>(null);
   // Auth-classified turn failure on a Codex session → surface the sign-in
   // pill (the probe state below) instead of a generic error banner.
   useEffect(() => {
-    if (isClaude) return;
+    if (!isCodex) return;
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
       if (detail?.agentType !== "codex") return;
@@ -947,10 +1041,10 @@ const ChatComposer = memo(function ChatComposer({
     };
     window.addEventListener("atlas:auth-required", handler);
     return () => window.removeEventListener("atlas:auth-required", handler);
-  }, [isClaude, tabId]);
+  }, [isCodex, tabId]);
   const [codexSigningIn, setCodexSigningIn] = useState(false);
   useEffect(() => {
-    if (isClaude) return;
+    if (!isCodex) return;
     let cancelled = false;
     codexStatus()
       .then((a) => !cancelled && setCodexAuthed(a))
@@ -958,8 +1052,38 @@ const ChatComposer = memo(function ChatComposer({
     return () => {
       cancelled = true;
     };
-  }, [isClaude]);
-  const codexNeedsAuth = !isClaude && codexAuthed === false;
+  }, [isCodex]);
+  const codexNeedsAuth = isCodex && codexAuthed === false;
+
+  // OpenCode / Cursor auth is terminal-only (`opencode auth login` /
+  // `cursor-agent login`) and neither agent should block the composer
+  // (OpenCode works unauthenticated with the free Zen models; Cursor errors
+  // surface per-turn), so nothing is probed. An auth-classified turn failure
+  // just shows an instruction pill until the tab rebinds or it's dismissed.
+  const terminalLoginCommand =
+    agentType === "opencode"
+      ? "opencode auth login"
+      : agentType === "cursor"
+        ? "cursor-agent login"
+        : agentType === "kilo"
+          ? "kilo auth login"
+          : null;
+  const [terminalAuthHint, setTerminalAuthHint] = useState(false);
+  useEffect(() => {
+    if (!terminalLoginCommand) {
+      setTerminalAuthHint(false);
+      return;
+    }
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
+      if (detail?.agentType !== agentType) return;
+      const sess = useChatStore.getState().sessions[tabId];
+      if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;
+      setTerminalAuthHint(true);
+    };
+    window.addEventListener("atlas:auth-required", handler);
+    return () => window.removeEventListener("atlas:auth-required", handler);
+  }, [agentType, terminalLoginCommand, tabId]);
   const signInCodex = async () => {
     setCodexSigningIn(true);
     try {
@@ -982,14 +1106,12 @@ const ChatComposer = memo(function ChatComposer({
 
   const disabled = (isClaude && phase !== "ready") || codexNeedsAuth;
 
-  const setupVisible = (isClaude && phase !== "ready") || codexNeedsAuth;
+  const setupVisible = (isClaude && phase !== "ready") || codexNeedsAuth || terminalAuthHint;
   // Node install pill (bundled-nvm). Non-blocking — informs only, doesn't
   // disable the composer. Shown for both agents since `npx` powers both.
   const nodePhase = useNodeSetupStore.use.phase();
   const nodeBusy =
-    nodePhase === "installing" ||
-    nodePhase === "installed" ||
-    nodePhase === "failed";
+    nodePhase === "installing" || nodePhase === "installed" || nodePhase === "failed";
   const showRow = setupVisible || nodeBusy || showJumpToBottom;
 
   return (
@@ -1024,9 +1146,22 @@ const ChatComposer = memo(function ChatComposer({
                   ) : (
                     <LogIn size={11} />
                   )}
-                  {codexSigningIn
-                    ? "Opening OpenAI sign-in…"
-                    : "Sign in to Codex with ChatGPT"}
+                  {codexSigningIn ? "Opening OpenAI sign-in…" : "Sign in to Codex with ChatGPT"}
+                </button>
+              )}
+              {terminalAuthHint && terminalLoginCommand && (
+                <button
+                  key="terminal-auth-hint"
+                  onClick={() => {
+                    void copyText(terminalLoginCommand);
+                    setTerminalAuthHint(false);
+                  }}
+                  title="Copies the command; run it in a terminal, then send again."
+                  className="atlas-pill-in inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[11px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                >
+                  <LogIn size={11} />
+                  {AGENT_LABEL[agentType as SwitchableAgent] ?? "Agent"} needs auth — copy `
+                  {terminalLoginCommand}`
                 </button>
               )}
               {showJumpToBottom && (
@@ -1088,8 +1223,7 @@ function WelcomeState() {
             aria-hidden
             className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-[260px] w-[260px] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-[0.16]"
             style={{
-              background:
-                "radial-gradient(circle, var(--accent-primary) 0%, transparent 68%)",
+              background: "radial-gradient(circle, var(--accent-primary) 0%, transparent 68%)",
             }}
           />
           <AtlasIcon
@@ -1116,9 +1250,7 @@ function WelcomeState() {
             <button
               key={text}
               onClick={() =>
-                window.dispatchEvent(
-                  new CustomEvent("atlas:chat-prefill", { detail: { text } }),
-                )
+                window.dispatchEvent(new CustomEvent("atlas:chat-prefill", { detail: { text } }))
               }
               style={{ animationDelay: `${120 + i * 50}ms` }}
               className="group atlas-fade-in relative flex flex-col gap-2.5 rounded-xl border border-[var(--border-default)] bg-[var(--bg-secondary)] p-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:bg-[var(--bg-elevated)] hover:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.7)] cursor-pointer"

@@ -111,12 +111,16 @@ export function MemoryTimelineCalendar({
 
   // The anchor day we're focused on (default: most recent activity, else today).
   const [anchorDay, setAnchorDay] = useState<number>(() =>
-    model.activityDays.length ? model.activityDays[model.activityDays.length - 1] : startOfDay(Date.now()),
+    model.activityDays.length
+      ? model.activityDays[model.activityDays.length - 1]
+      : startOfDay(Date.now()),
   );
   useEffect(() => {
     // When the project/data changes, snap to its latest activity day.
     setAnchorDay(
-      model.activityDays.length ? model.activityDays[model.activityDays.length - 1] : startOfDay(Date.now()),
+      model.activityDays.length
+        ? model.activityDays[model.activityDays.length - 1]
+        : startOfDay(Date.now()),
     );
   }, [model.activityDays]);
 
@@ -258,7 +262,9 @@ export function MemoryTimelineCalendar({
                   <span
                     className={cn(
                       "text-[11px] truncate",
-                      b.is_current ? "text-[var(--text-primary)] font-medium" : "text-[var(--text-secondary)]",
+                      b.is_current
+                        ? "text-[var(--text-primary)] font-medium"
+                        : "text-[var(--text-secondary)]",
                     )}
                   >
                     {b.name}
@@ -299,7 +305,9 @@ export function MemoryTimelineCalendar({
           >
             Today
           </button>
-          <span className="text-[12px] font-medium text-[var(--text-primary)] tabular-nums ml-1">{rangeLabel}</span>
+          <span className="text-[12px] font-medium text-[var(--text-primary)] tabular-nums ml-1">
+            {rangeLabel}
+          </span>
         </div>
 
         {/* Day-column headers */}
@@ -318,9 +326,9 @@ export function MemoryTimelineCalendar({
                   className={cn(
                     "text-[13px] tabular-nums leading-none",
                     isToday
-                      // `w-6 h-6` (was w-5) so two-digit dates (10–31) aren't
-                      // cramped/clipped inside the today circle.
-                      ? "text-[var(--bg-base)] bg-[var(--accent-primary)] rounded-full w-6 h-6 flex items-center justify-center font-semibold mt-0.5"
+                      ? // `w-6 h-6` (was w-5) so two-digit dates (10–31) aren't
+                        // cramped/clipped inside the today circle.
+                        "text-[var(--bg-base)] bg-[var(--accent-primary)] rounded-full w-6 h-6 flex items-center justify-center font-semibold mt-0.5"
                       : "text-[var(--text-secondary)]",
                   )}
                 >

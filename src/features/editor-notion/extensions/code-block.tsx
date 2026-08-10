@@ -52,12 +52,7 @@ function CodeBlockView({ node, updateAttributes }: NodeViewProps) {
           }}
         />
         <span style={{ flex: 1 }} />
-        <button
-          type="button"
-          className="atlas-code-copy"
-          onClick={handleCopy}
-          title="Copy"
-        >
+        <button type="button" className="atlas-code-copy" onClick={handleCopy} title="Copy">
           {copied ? <Check size={11} strokeWidth={1.7} /> : <Copy size={11} strokeWidth={1.7} />}
           {copied ? " Copied" : ""}
         </button>
@@ -66,9 +61,7 @@ function CodeBlockView({ node, updateAttributes }: NodeViewProps) {
           types — wrap in <pre> for the design's monospace block frame
           and let lowlight paint hljs token classes inside. */}
       <pre>
-        <NodeViewContent
-          className={`hljs language-${language}`}
-        />
+        <NodeViewContent className={`hljs language-${language}`} />
       </pre>
     </NodeViewWrapper>
   );

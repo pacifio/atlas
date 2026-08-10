@@ -13,7 +13,7 @@ import { classifyFile, type FileKind } from "@/lib/file-types";
 /** Resolve the file kind, sniffing the bytes for unrecognized extensions:
  *  extension classification is an allowlist, so unknown names fall to
  *  "unsupported" — but if the bytes are UTF-8/ASCII text we treat it as text. */
-export async function resolveFileKind(path: string): Promise<FileKind> {
+async function resolveFileKind(path: string): Promise<FileKind> {
   let kind = classifyFile(path);
   if (kind === "unsupported") {
     try {

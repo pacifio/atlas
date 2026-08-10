@@ -7,11 +7,7 @@ import { useMemoryStore } from "../stores/memory-store";
 import { MemoryTimelineCalendar } from "./memory-timeline-calendar";
 import { MemoryTimelinePanel, type PanelItem } from "./memory-timeline-panel";
 import { memoryGraph } from "../lib/memory-graph-api";
-import type {
-  MemoryTimeline,
-  TimelineCommit,
-  TimelineMemory,
-} from "../lib/memory-timeline-api";
+import type { MemoryTimeline, TimelineCommit, TimelineMemory } from "../lib/memory-timeline-api";
 
 // ── Influence chain over the timeline (memory → session → commit) ──
 function buildChain(t: MemoryTimeline) {
@@ -63,11 +59,14 @@ type Chain = ReturnType<typeof buildChain>;
 
 function affectingItems(selectedId: string, chain: Chain, t: MemoryTimeline): PanelItem[] {
   const notes = new Map<string, string>();
-  const add = (mid: string, note: string) => { if (!notes.has(mid)) notes.set(mid, note); };
+  const add = (mid: string, note: string) => {
+    if (!notes.has(mid)) notes.set(mid, note);
+  };
   if (selectedId.startsWith("commit:")) {
     const sha = selectedId.slice(7);
     for (const sid of chain.commitToSessions.get(sha) ?? [])
-      for (const mid of chain.sessionToMems.get(sid) ?? []) add(mid, `fed a run → ${sha.slice(0, 7)}`);
+      for (const mid of chain.sessionToMems.get(sid) ?? [])
+        add(mid, `fed a run → ${sha.slice(0, 7)}`);
   } else if (selectedId.startsWith("session:")) {
     for (const mid of chain.sessionToMems.get(selectedId.slice(8)) ?? []) add(mid, "fed this run");
   } else if (selectedId.startsWith("branch:")) {
@@ -116,7 +115,8 @@ export function MemoryTimelineView() {
       if ((chain.sessionToMems.get(ses.id)?.length ?? 0) > 0) s.add(`session:${ses.id}`);
     for (const c of timeline.commits) {
       const sids = chain.commitToSessions.get(c.sha) ?? [];
-      if (sids.some((sid) => (chain.sessionToMems.get(sid)?.length ?? 0) > 0)) s.add(`commit:${c.sha}`);
+      if (sids.some((sid) => (chain.sessionToMems.get(sid)?.length ?? 0) > 0))
+        s.add(`commit:${c.sha}`);
     }
     return s;
   }, [timeline, chain]);
@@ -128,7 +128,13 @@ export function MemoryTimelineView() {
         const s = timeline?.sessions.find((x) => x.id === id.slice(8));
         if (s) {
           const sub =
-            s.agent === "codex" ? "codex" : s.agent === "cersei" ? "cersei" : "claude";
+            s.agent === "codex" ||
+            s.agent === "cersei" ||
+            s.agent === "opencode" ||
+            s.agent === "cursor" ||
+            s.agent === "kilo"
+              ? s.agent
+              : "claude";
           navigateToMemory(sub, s.id);
         }
         return;
@@ -138,6 +144,9 @@ export function MemoryTimelineView() {
       if (doc.startsWith("codex:")) navigateToMemory("codex", doc);
       else if (doc.startsWith("claude:")) navigateToMemory("claude", doc);
       else if (doc.startsWith("cersei:")) navigateToMemory("cersei", doc);
+      else if (doc.startsWith("opencode:")) navigateToMemory("opencode", doc);
+      else if (doc.startsWith("cursor:")) navigateToMemory("cursor", doc);
+      else if (doc.startsWith("kilo:")) navigateToMemory("kilo", doc);
     },
     [timeline, navigateToMemory],
   );
@@ -165,12 +174,21 @@ export function MemoryTimelineView() {
             note = `impacts ${sha.slice(0, 7)} on ${chain.commitBySha.get(sha)?.branch ?? "?"}`;
           } else note = "linked to a run";
         }
-        items.push({ id: h.id, title: m.title, source: m.source, note, ts_ms: m.ts_ms, score: h.score });
+        items.push({
+          id: h.id,
+          title: m.title,
+          source: m.source,
+          note,
+          ts_ms: m.ts_ms,
+          score: h.score,
+        });
       }
       setHighlightIds(hi);
       setSearchItems(items);
       if (items.length === 0)
-        setSearchError("No indexed memory matched. Build the Graph tab first if results look empty.");
+        setSearchError(
+          "No indexed memory matched. Build the Graph tab first if results look empty.",
+        );
     } catch (e) {
       const msg = String(e);
       setSearchError(
@@ -208,7 +226,11 @@ export function MemoryTimelineView() {
     );
   }
   if (loading && !timeline) {
-    return <Centered><Loader2 size={18} className="animate-spin text-[var(--text-tertiary)]" /></Centered>;
+    return (
+      <Centered>
+        <Loader2 size={18} className="animate-spin text-[var(--text-tertiary)]" />
+      </Centered>
+    );
   }
   if (!timeline || !chain) {
     return (
@@ -234,9 +256,11 @@ export function MemoryTimelineView() {
     : selectedId
       ? affectingItems(selectedId, chain, timeline)
       : [];
-  const panelTitle = searchMode ? `Impact of “${query.trim()}”` : selectionTitle(selectedId, timeline);
+  const panelTitle = searchMode
+    ? `Impact of “${query.trim()}”`
+    : selectionTitle(selectedId, timeline);
   const panelSubtitle = searchMode
-    ? searchError ?? `${searchItems!.length} memories · ${highlightIds?.size ?? 0} git targets`
+    ? (searchError ?? `${searchItems!.length} memories · ${highlightIds?.size ?? 0} git targets`)
     : "memory affecting this, newest first";
 
   return (
@@ -318,7 +342,11 @@ export function MemoryTimelineView() {
               className="flex-1 min-w-0 bg-transparent outline-none text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]"
             />
             {(query || searchMode) && !searching && (
-              <button onClick={clearSearch} className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] shrink-0" title="Clear">
+              <button
+                onClick={clearSearch}
+                className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] shrink-0"
+                title="Clear"
+              >
                 <X size={15} />
               </button>
             )}
@@ -353,5 +381,9 @@ function selectionTitle(selectedId: string | null, t: MemoryTimeline): string {
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="h-full flex items-center justify-center text-[var(--text-tertiary)] text-[12px]">{children}</div>;
+  return (
+    <div className="h-full flex items-center justify-center text-[var(--text-tertiary)] text-[12px]">
+      {children}
+    </div>
+  );
 }

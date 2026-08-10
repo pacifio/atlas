@@ -5,7 +5,7 @@
 
 export const SKILLS_CHANGED_EVENT = "atlas:skills-changed";
 
-export function emitSkillsChanged(): void {
+function emitSkillsChanged(): void {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(SKILLS_CHANGED_EVENT));
   }

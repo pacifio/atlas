@@ -17,7 +17,7 @@ const ACTIVE: ReadonlySet<string> = new Set(["running", "waiting"]);
 
 /** Non-reactive: running-session count for a workspace path. Used by the
  *  residency manager to avoid discarding a workspace with live agents. */
-export function runningCountForPath(path: string): number {
+function runningCountForPath(path: string): number {
   const sessions = useChatStore.getState().sessions;
   let n = 0;
   for (const s of Object.values(sessions)) {

@@ -13,7 +13,7 @@
 
 # Atlas
 
-Atlas is version control for coding agents at scale. Run **Claude Code**, **Codex**, and Atlas's own native agent side by side on the same codebase, with shared memory between them and a searchable history of what each one changed.
+Atlas is an open source software factory that coordinates automation of the entire software development lifecycle. Teams use Atlas to coordinate fleets of agents that share context across your codebase to open issues, document changes, and execute on new tasks all in one interface.
 
 - **Run agents in parallel.** Multiple sessions across tabs, each streaming independently. Switching tabs never freezes or drops a run in flight.
 - **One memory, three agents.** A decision Claude Code made shows up in Codex's next prompt. Plans, file changes, failures, and architecture notes are shared automatically, matched on-device against what you're asking about.
@@ -130,6 +130,26 @@ To use the Claude Code agent, install the `claude` CLI and put it on your `PATH`
 
 Requires **[Bun](https://bun.sh/)**, **Rust** (stable, via [rustup](https://rustup.rs/)), and **Xcode Command Line Tools**.
 
+### System Prerequisites
+* **Linux System Dependencies**: GTK 3, WebKit2GTK (4.1), and GLib headers:
+
+  * **Debian / Ubuntu / Linux Mint**:
+    ```bash
+    sudo apt install -y libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+    ```
+  * **Fedora / RHEL**:
+    ```bash
+    sudo dnf install glib2-devel gtk3-devel webkit2gtk4.1-devel
+    ```
+  * **Arch Linux / Manjaro**:
+    ```bash
+    sudo pacman -S glib2 gtk3 webkit2gtk-4.1
+    ```
+  * **openSUSE**:
+    ```bash
+    sudo zypper install glib2-devel gtk3-devel webkit2gtk3-devel
+    ```
+---
 ```bash
 git clone https://github.com/pacifio/atlas
 cd atlas

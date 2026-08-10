@@ -1,4 +1,4 @@
-export const TAB_TYPES = [
+const TAB_TYPES = [
   "chat",
   "model-chat",
   "canvas",

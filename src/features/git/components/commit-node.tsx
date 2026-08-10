@@ -62,9 +62,7 @@ export const CommitRowView = memo(function CommitRowView({
   }
   const gutterWidth = GRAPH_LEFT_PAD + (rowMaxLane + 2) * LANE_WIDTH;
   // Only branch-class refs in compact mode; fullscreen shows all.
-  const visibleRefs = compact
-    ? row.refs.filter((r) => r.kind === "branch")
-    : row.refs;
+  const visibleRefs = compact ? row.refs.filter((r) => r.kind === "branch") : row.refs;
 
   return (
     <div
@@ -73,17 +71,12 @@ export const CommitRowView = memo(function CommitRowView({
         "group flex items-center cursor-pointer select-none",
         selected
           ? "bg-[var(--accent-primary)]/15 text-[var(--text-primary)]"
-          : "hover:bg-[var(--bg-hover)] text-[var(--text-secondary)]"
+          : "hover:bg-[var(--bg-hover)] text-[var(--text-secondary)]",
       )}
       style={{ height: ROW_HEIGHT }}
     >
       {/* SVG gutter */}
-      <svg
-        width={gutterWidth}
-        height={ROW_HEIGHT}
-        className="shrink-0"
-        aria-hidden
-      >
+      <svg width={gutterWidth} height={ROW_HEIGHT} className="shrink-0" aria-hidden>
         {row.segments.map((seg, idx) => (
           <path
             key={idx}
@@ -105,12 +98,7 @@ export const CommitRowView = memo(function CommitRowView({
       </svg>
 
       {/* Row content — flush against the gutter; per-row gutter sizing handles the offset */}
-      <div
-        className={cn(
-          "flex-1 min-w-0 flex items-center gap-2 pl-0",
-          compact ? "pr-3" : "pr-4"
-        )}
-      >
+      <div className={cn("flex-1 min-w-0 flex items-center gap-2 pl-0", compact ? "pr-3" : "pr-4")}>
         {/* Refs + message — flexes to fill remaining space */}
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           {visibleRefs.slice(0, 4).map((r) => (
@@ -118,7 +106,7 @@ export const CommitRowView = memo(function CommitRowView({
               key={`${r.kind}:${r.name}`}
               className={cn(
                 "px-1 h-[14px] rounded-sm border text-[9px] font-mono leading-none flex items-center shrink-0",
-                badgeClass(r.kind, r.isCurrent)
+                badgeClass(r.kind, r.isCurrent),
               )}
               title={`${r.kind}: ${r.name}`}
             >
@@ -128,7 +116,7 @@ export const CommitRowView = memo(function CommitRowView({
           <span
             className={cn(
               "text-[12px] truncate",
-              selected ? "text-[var(--text-primary)] font-medium" : ""
+              selected ? "text-[var(--text-primary)] font-medium" : "",
             )}
           >
             {row.message}

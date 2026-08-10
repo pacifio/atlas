@@ -42,7 +42,7 @@ pub struct TimelineCommit {
 pub struct TimelineSession {
     id: String,
     title: String,
-    agent: String, // "codex" | "claude" | "cersei"
+    agent: String, // "codex" | "claude" | "cersei" | a capture plugin id ("opencode"/"cursor"/"kilo")
     branch: Option<String>,
     sha: Option<String>,
     ts_ms: i64,
@@ -137,6 +137,40 @@ pub async fn memory_timeline(
             ts_ms: ts,
             end_ms: end,
             detail,
+        });
+    }
+    // Capture-backed agents (opencode/cursor/kilo/future plugins) — sessions
+    // from Atlas's own capture store; skip agents that already have a dedicated
+    // loop above so nothing lands twice.
+    let cap_pp = pp.clone();
+    let capture_sessions = tokio::task::spawn_blocking(move || {
+        let store = match crate::commands::capture::open_reader(&cap_pp) {
+            Ok(Some(s)) => s,
+            _ => return Vec::new(),
+        };
+        store.sessions_for_workspace(&cap_pp).unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default();
+    for s in capture_sessions {
+        let Some(agent) = s.agent.clone() else { continue };
+        if agent.starts_with("claude") || agent == "codex" || agent == "cersei" {
+            continue;
+        }
+        let title = s
+            .title
+            .as_deref()
+            .map(|t| collapse(&atlas_agents::transcript::strip_injected_context(t)))
+            .unwrap_or_default();
+        sessions.push(TimelineSession {
+            id: s.native_session_id,
+            title: if title.is_empty() { "Untitled session".into() } else { title },
+            agent,
+            branch: s.branch,
+            sha: None,
+            ts_ms: s.started_at.timestamp_millis(),
+            end_ms: s.updated_at.timestamp_millis().max(s.started_at.timestamp_millis()),
+            detail: s.model.unwrap_or_default(),
         });
     }
     sessions.retain(|s| s.ts_ms > 0);

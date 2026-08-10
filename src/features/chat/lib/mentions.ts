@@ -38,22 +38,22 @@ export type MentionKind =
 
 export interface MentionFile {
   kind: "file";
-  id: string;            // absolute path; also the de-dupe key
-  displayName: string;   // relative path
+  id: string; // absolute path; also the de-dupe key
+  displayName: string; // relative path
   absPath: string;
 }
 
 export interface MentionFolder {
   kind: "folder";
-  id: string;            // absolute path
-  displayName: string;   // relative path (e.g. "src/features/chat")
+  id: string; // absolute path
+  displayName: string; // relative path (e.g. "src/features/chat")
   absPath: string;
 }
 
 export interface MentionSymbol {
   kind: "symbol";
-  id: string;            // `${name}@${file_path}:${line}`
-  displayName: string;   // name
+  id: string; // `${name}@${file_path}:${line}`
+  displayName: string; // name
   signature: string;
   filePath: string;
   line: number;
@@ -62,13 +62,13 @@ export interface MentionSymbol {
 
 export interface MentionKnowledge {
   kind: "knowledge";
-  id: string;            // entry id — path under `.atlas/knowledge/`, may include "/"
-  displayName: string;   // title
+  id: string; // entry id — path under `.atlas/knowledge/`, may include "/"
+  displayName: string; // title
   /** Per-note emoji/glyph from `_meta.json` (same source the knowledge
    *  tree uses). Null when the note has no custom icon. */
   icon: string | null;
   filePath: string;
-  source: string;        // "note" | "paper" | "chat" | ...
+  source: string; // "note" | "paper" | "chat" | ...
   /** Parent folder portion of `id` (e.g. "Adib" for "Adib/weekly-notes").
    *  Surfaces the user's "spaces" — nested subfolders under
    *  `.atlas/knowledge/`. Null for top-level entries. */
@@ -79,7 +79,7 @@ export interface MentionSkill {
   kind: "skill";
   /** `${scope}:${name}` — dedupe key across scopes. */
   id: string;
-  displayName: string;   // skill name (the `#skill:<name>` token)
+  displayName: string; // skill name (the `#skill:<name>` token)
   description: string;
   scope: "global" | "project";
   /** Sanitized on-disk name, passed to `skills_read` at compose time. */
@@ -94,7 +94,7 @@ export interface MentionComponent {
   kind: "component";
   /** `${scope}:${componentKind}:${pack}:${name}` — dedupe key. */
   id: string;
-  displayName: string;   // component name (the `#<kind>:<name>` token)
+  displayName: string; // component name (the `#<kind>:<name>` token)
   description: string;
   /** "command" | "agent" | "rule". */
   componentKind: PackComponentKind;
@@ -108,17 +108,17 @@ export interface MentionComponent {
 
 export interface MentionRepo {
   kind: "repo";
-  id: string;            // absolute path to the cloned repo
-  displayName: string;   // repo folder name
+  id: string; // absolute path to the cloned repo
+  displayName: string; // repo folder name
   absPath: string;
   hasReadme: boolean;
 }
 
 export interface MentionWorkspace {
   kind: "workspace";
-  id: string;            // workspace id — dedupe key
-  displayName: string;   // workspace name
-  absPath: string;       // the project path, expanded into the prompt at send
+  id: string; // workspace id — dedupe key
+  displayName: string; // workspace name
+  absPath: string; // the project path, expanded into the prompt at send
   /** Owning org name, shown as the secondary label to disambiguate. */
   orgName: string | null;
 }
@@ -126,15 +126,15 @@ export interface MentionWorkspace {
 export interface MentionPaper {
   kind: "paper";
   id: string;
-  displayName: string;   // title
+  displayName: string; // title
   authors: string[];
   metadataPath: string;
 }
 
 export interface MentionBranch {
   kind: "branch";
-  id: string;            // ref name
-  displayName: string;   // short name
+  id: string; // ref name
+  displayName: string; // short name
   sha: string;
   refKind: "branch" | "remote" | "tag";
   isCurrent: boolean;
@@ -142,21 +142,21 @@ export interface MentionBranch {
 
 export interface MentionPastMessage {
   kind: "past_message";
-  id: string;            // `${sessionId}#${msgIdx}`
-  displayName: string;   // truncated content
+  id: string; // `${sessionId}#${msgIdx}`
+  displayName: string; // truncated content
   sessionId: string;
   sessionTitle: string;
   timestamp: string | null;
-  content: string;       // the message body — small, fine to keep inline
+  content: string; // the message body — small, fine to keep inline
 }
 
 export interface MentionPastSession {
   kind: "past_session";
-  id: string;            // the session id (JSONL stem = acpSessionId)
-  displayName: string;   // session title/preview
+  id: string; // the session id (JSONL stem = acpSessionId)
+  displayName: string; // session title/preview
   sessionId: string;
   sessionTitle: string;
-  filePath: string;      // JSONL transcript path — read + formatted at send time
+  filePath: string; // JSONL transcript path — read + formatted at send time
 }
 
 export type MentionData =
@@ -185,18 +185,28 @@ export interface MentionCategory {
 }
 
 export const MENTION_CATEGORIES: readonly MentionCategory[] = [
-  { kind: "file",         label: "Files",           aliases: ["file", "f/"],              weight: 1.0  },
-  { kind: "folder",       label: "Folders",         aliases: ["folder", "dir", "d/"],     weight: 0.95 },
-  { kind: "symbol",       label: "Symbols",         aliases: ["symbol", "sym", "s/"],     weight: 0.85 },
-  { kind: "knowledge",    label: "Knowledge",       aliases: ["note", "knowledge", "k/"], weight: 0.85 },
-  { kind: "skill",        label: "Skills",          aliases: ["skill", "sk/"],            weight: 0.9  },
-  { kind: "component",    label: "Pack Components", aliases: ["command", "agent", "rule", "cmd", "c/"], weight: 0.88 },
-  { kind: "repo",         label: "Cloned Repos",    aliases: ["repo", "github", "gh/"],   weight: 0.8  },
-  { kind: "workspace",    label: "Workspaces",      aliases: ["workspace", "project", "ws", "w/"], weight: 0.82 },
-  { kind: "paper",        label: "Papers",          aliases: ["paper", "p/"],             weight: 0.7  },
-  { kind: "branch",       label: "Branches",        aliases: ["branch", "b/"],            weight: 0.6  },
-  { kind: "past_message", label: "Past Messages",   aliases: ["msg", "message", "m/"],    weight: 0.55 },
-  { kind: "past_session", label: "Past Sessions",   aliases: ["session", "sess/"],        weight: 0.5  },
+  { kind: "file", label: "Files", aliases: ["file", "f/"], weight: 1.0 },
+  { kind: "folder", label: "Folders", aliases: ["folder", "dir", "d/"], weight: 0.95 },
+  { kind: "symbol", label: "Symbols", aliases: ["symbol", "sym", "s/"], weight: 0.85 },
+  { kind: "knowledge", label: "Knowledge", aliases: ["note", "knowledge", "k/"], weight: 0.85 },
+  { kind: "skill", label: "Skills", aliases: ["skill", "sk/"], weight: 0.9 },
+  {
+    kind: "component",
+    label: "Pack Components",
+    aliases: ["command", "agent", "rule", "cmd", "c/"],
+    weight: 0.88,
+  },
+  { kind: "repo", label: "Cloned Repos", aliases: ["repo", "github", "gh/"], weight: 0.8 },
+  {
+    kind: "workspace",
+    label: "Workspaces",
+    aliases: ["workspace", "project", "ws", "w/"],
+    weight: 0.82,
+  },
+  { kind: "paper", label: "Papers", aliases: ["paper", "p/"], weight: 0.7 },
+  { kind: "branch", label: "Branches", aliases: ["branch", "b/"], weight: 0.6 },
+  { kind: "past_message", label: "Past Messages", aliases: ["msg", "message", "m/"], weight: 0.55 },
+  { kind: "past_session", label: "Past Sessions", aliases: ["session", "sess/"], weight: 0.5 },
 ];
 
 export function categoryForKind(kind: MentionKind): MentionCategory {
@@ -244,17 +254,13 @@ export interface PastSessionRef {
   messageCount: number;
 }
 
-export async function listPastSessions(
-  ctx: MentionContext
-): Promise<PastSessionRef[]> {
+export async function listPastSessions(ctx: MentionContext): Promise<PastSessionRef[]> {
   if (!ctx.projectPath) return [];
   try {
     const sessions = await listClaudeSessions(ctx.projectPath);
     return sessions.map((s) => ({
       id: s.id,
-      title: s.preview && s.preview !== "(no user message)"
-        ? s.preview
-        : "Untitled session",
+      title: s.preview && s.preview !== "(no user message)" ? s.preview : "Untitled session",
       filePath: s.file_path,
       lastModified: s.last_modified,
       messageCount: s.message_count,
@@ -267,7 +273,7 @@ export async function listPastSessions(
 export async function listMessagesInPastSession(
   session: PastSessionRef,
   query: string,
-  signal: AbortSignal
+  signal: AbortSignal,
 ): Promise<MentionPastMessage[]> {
   let dump;
   try {
@@ -375,18 +381,31 @@ export async function searchMentions(
   ctx: MentionContext,
 ): Promise<MentionData[]> {
   if (scope === "past_message") return [];
+  // Past sessions: list the project's Claude transcripts, filtered by title.
+  // (This category used to be a dead row — locked scope returned nothing.)
+  if (scope === "past_session") {
+    const q = stripCategoryAlias(query, "past_session").trim().toLowerCase();
+    const sessions = await listPastSessions(ctx);
+    return sessions
+      .filter((s) => !q || s.title.toLowerCase().includes(q))
+      .slice(0, 30)
+      .map((s) => ({
+        kind: "past_session" as const,
+        id: s.id,
+        displayName: s.title,
+        sessionId: s.id,
+        sessionTitle: s.title,
+        filePath: s.filePath,
+      }));
+  }
   // Skills take the cheaper path: list the canonical store(s) and
-  // substring-filter JS-side (no Rust `mention_search` change needed). Only
-  // reachable when scope is locked to "skill" — i.e. the `#` trigger or the
-  // Skills category — so the unscoped `@` blend stays unchanged.
+  // substring-filter JS-side (no Rust `mention_search` change needed). They
+  // also join the unscoped `@` blend below, capped so they never crowd files.
   // The `#` rail (scope locked to "skill") invokes skills AND pack-delivered
   // components (command/agent/rule) — both inline their body at send time.
   if (scope === "skill") {
     const q = stripCategoryAlias(query, "skill");
-    const [sk, comps] = await Promise.all([
-      searchSkills(q, ctx),
-      searchPackComponents(q, ctx),
-    ]);
+    const [sk, comps] = await Promise.all([searchSkills(q, ctx), searchPackComponents(q, ctx)]);
     return [...sk, ...comps];
   }
   if (scope === "component") {
@@ -409,18 +428,37 @@ export async function searchMentions(
     await ensureKnowledgeMentionCache(ctx.projectPath);
   }
   try {
-    const results = await invoke<MentionData[]>("mention_search", {
-      query: stripCategoryAlias(query, scope ?? "file"),
+    const stripped = stripCategoryAlias(query, scope ?? "file");
+    // Unscoped `@`: blend the JS-owned kinds (workspaces, skills) alongside
+    // the Rust-ranked kinds so ONE search reaches everything — files, folders,
+    // notes, repos, branches, papers, symbols, workspaces, skills. The JS
+    // kinds are small lists; they're appended after the Rust results and the
+    // picker groups the flat list into per-kind sections for display.
+    if (scope === null) {
+      const [results, skillMatches] = await Promise.all([
+        invoke<MentionData[]>("mention_search", {
+          query: stripped,
+          scope,
+          projectPath: ctx.projectPath,
+          workspaceId: activeWorkspaceId(),
+        }),
+        searchSkills(stripped, ctx).catch(() => [] as MentionSkill[]),
+      ]);
+      const q = stripped.trim();
+      return [
+        ...results,
+        ...searchWorkspaces(stripped, ctx),
+        // Zero-query overview keeps skills to a taster; a real query shows
+        // every matching skill (still bounded by the store size).
+        ...skillMatches.slice(0, q ? 10 : 3),
+      ];
+    }
+    return await invoke<MentionData[]>("mention_search", {
+      query: stripped,
       scope,
       projectPath: ctx.projectPath,
       workspaceId: activeWorkspaceId(),
     });
-    // Blend JS-owned workspaces into the unscoped `@` results (Rust doesn't
-    // know about them). A few entries, so a simple prepend is fine.
-    if (scope === null) {
-      return [...searchWorkspaces(stripCategoryAlias(query, "file"), ctx), ...results];
-    }
-    return results;
   } catch (e) {
     console.warn("mention_search invoke failed:", e);
     return [];
@@ -435,18 +473,12 @@ function searchWorkspaces(query: string, ctx: MentionContext): MentionWorkspace[
   const q = query.trim().toLowerCase();
   const { workspaces } = useWorkspaceStore.getState();
   const { organisations, activeOrganisationId } = useOrgStore.getState();
-  const orgName =
-    organisations.find((o) => o.id === activeOrganisationId)?.name ?? null;
+  const orgName = organisations.find((o) => o.id === activeOrganisationId)?.name ?? null;
   const currentPath = ctx.projectPath;
   return workspaces
     .filter((w) => !w.orgId || w.orgId === activeOrganisationId) // active org
     .filter((w) => w.path !== currentPath) // never mention the current project
-    .filter(
-      (w) =>
-        !q ||
-        w.name.toLowerCase().includes(q) ||
-        w.path.toLowerCase().includes(q),
-    )
+    .filter((w) => !q || w.name.toLowerCase().includes(q) || w.path.toLowerCase().includes(q))
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((w) => ({
       kind: "workspace" as const,
@@ -461,10 +493,7 @@ function searchWorkspaces(query: string, ctx: MentionContext): MentionWorkspace[
  *  and (when a project is open) project scope, then substring-filters by name
  *  or description. Project skills sort first (more specific), then alpha.
  *  Reuses the existing `skills_list` IPC — no new backend command. */
-async function searchSkills(
-  query: string,
-  ctx: MentionContext,
-): Promise<MentionSkill[]> {
+async function searchSkills(query: string, ctx: MentionContext): Promise<MentionSkill[]> {
   const q = query.trim().toLowerCase();
   const sources: { scope: "global" | "project"; projectPath: string | null }[] = [
     { scope: "global", projectPath: null },
@@ -497,11 +526,7 @@ async function searchSkills(
     // gate hid freshly installed skills (not yet projected to any agent →
     // `enabledAgents` empty) — which read as "skills not indexed yet". Every
     // installed skill in scope is a valid mention target, so we show them all.
-    if (
-      q &&
-      !meta.name.toLowerCase().includes(q) &&
-      !meta.description.toLowerCase().includes(q)
-    ) {
+    if (q && !meta.name.toLowerCase().includes(q) && !meta.description.toLowerCase().includes(q)) {
       continue;
     }
     seen.add(id);
@@ -677,7 +702,7 @@ function formatSessionTranscript(dump: ChatMessageDump[]): string {
 
 export async function composePrompt(
   prosePlainText: string,
-  mentions: MentionData[]
+  mentions: MentionData[],
 ): Promise<string> {
   if (mentions.length === 0) return prosePlainText;
   const wireMentions = await Promise.all(
@@ -716,7 +741,7 @@ export async function composePrompt(
         return { ...m, inlineBody };
       }
       return m;
-    })
+    }),
   );
   try {
     return await invoke<string>("compose_prompt", {

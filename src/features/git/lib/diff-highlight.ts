@@ -21,10 +21,7 @@ const CACHE_CAP = 8000;
  * `null` when the language is unsupported / the line is empty or too long — in
  * which case the caller should render the raw text unchanged.
  */
-export function highlightDiffLine(
-  language: string,
-  content: string,
-): DiffToken[] | null {
+export function highlightDiffLine(language: string, content: string): DiffToken[] | null {
   const id = hljsIdForLanguage(language);
   if (!id) return null;
 

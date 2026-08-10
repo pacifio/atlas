@@ -39,10 +39,7 @@ export function KnowledgeInspector({
   const [tab, setTab] = useState<"outline" | "links">("outline");
   const backlinks = useBacklinks(entryId ?? null);
 
-  const headingDepthOf = useMemo(
-    () => (lvl: number) => (lvl === 3 ? 16 : 0),
-    [],
-  );
+  const headingDepthOf = useMemo(() => (lvl: number) => (lvl === 3 ? 16 : 0), []);
 
   return (
     <aside
@@ -86,10 +83,7 @@ export function KnowledgeInspector({
         })}
       </div>
 
-      <div
-        className="flex-1 overflow-y-auto min-h-0"
-        style={{ padding: "12px 14px" }}
-      >
+      <div className="flex-1 overflow-y-auto min-h-0" style={{ padding: "12px 14px" }}>
         {tab === "outline" && (
           <>
             <div
@@ -133,10 +127,7 @@ export function KnowledgeInspector({
               })
             )}
 
-            <div
-              className="mt-6 pt-3.5 border-t border-border-subtle"
-              style={{ marginTop: 22 }}
-            >
+            <div className="mt-6 pt-3.5 border-t border-border-subtle" style={{ marginTop: 22 }}>
               <div className="eyebrow mb-2.5" style={{ fontSize: 9.5 }}>
                 Page stats
               </div>
@@ -160,10 +151,7 @@ export function KnowledgeInspector({
               Pages linking here · {backlinks.length}
             </div>
             {backlinks.length === 0 ? (
-              <div
-                className="text-text-muted italic"
-                style={{ fontSize: 11 }}
-              >
+              <div className="text-text-muted italic" style={{ fontSize: 11 }}>
                 No backlinks yet. Reference this page from another note with
                 <span className="mono"> [[note-id]] </span>
                 and it'll show up here.
@@ -187,8 +175,12 @@ export function KnowledgeInspector({
                       textAlign: "left",
                       cursor: "pointer",
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "var(--bg-hover)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "transparent";
+                    }}
                   >
                     <span style={{ fontSize: 14, lineHeight: 1, color: "var(--text-tertiary)" }}>
                       ›

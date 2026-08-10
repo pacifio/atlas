@@ -6,11 +6,7 @@
 // `id` doubles as the keychain account name (see Rust `byok.rs`) and must stay
 // stable. `env` is the conventional environment variable a consumer injects.
 
-export type ProviderCategory =
-  | "Frontier"
-  | "Inference"
-  | "Gateway"
-  | "Embeddings";
+export type ProviderCategory = "Frontier" | "Inference" | "Gateway" | "Embeddings";
 
 export interface ProviderDef {
   id: string;
@@ -183,8 +179,7 @@ export const PROVIDERS: ProviderDef[] = [
     name: "Azure OpenAI",
     env: "AZURE_API_KEY",
     category: "Gateway",
-    docsUrl:
-      "https://learn.microsoft.com/azure/ai-services/openai/quickstart",
+    docsUrl: "https://learn.microsoft.com/azure/ai-services/openai/quickstart",
   },
 
   // ── Embeddings & audio ───────────────────────────────────────────
