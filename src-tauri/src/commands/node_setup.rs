@@ -56,14 +56,20 @@ pub struct NodeStatus {
 /// (covers nvm/fnm/volta/brew). Mirrors `claude_setup::resolve_cli`.
 async fn resolve_cli(name: &str) -> Option<String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    // `-lic`, not `-lc` — interactive so ~/.zshrc PATH exports (nvm init,
+    // opencode, …) are seen; rc noise handled by taking the last line. See
+    // `claude_setup::resolve_cli` / `atlas_acp::spawn::probe_shell`.
     let probe = AsyncCommand::new(&shell)
-        .args(["-lc", &format!("command -v {name} 2>/dev/null")])
+        .args(["-lic", &format!("command -v {name} 2>/dev/null")])
         .output();
     if let Ok(Ok(out)) = timeout(Duration::from_secs(5), probe).await {
         if out.status.success() {
-            let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if p.starts_with('/') && Path::new(&p).exists() {
-                return Some(p);
+            let raw = String::from_utf8_lossy(&out.stdout);
+            if let Some(p) = raw.lines().rev().find(|l| !l.trim().is_empty()) {
+                let p = p.trim();
+                if p.starts_with('/') && Path::new(p).exists() {
+                    return Some(p.to_string());
+                }
             }
         }
     }

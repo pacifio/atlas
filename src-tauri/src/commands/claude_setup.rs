@@ -40,15 +40,22 @@ use tokio::time::timeout;
 /// in `atlas_acp::sanitize_host_env`) if the shell probe fails or times out.
 async fn resolve_cli(name: &str) -> String {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    // `-lic`, not `-lc`: zsh only reads ~/.zshrc in interactive shells, and
+    // that's where many installers put their PATH export — a login-only probe
+    // finds the CLI in dev (terminal-inherited PATH) but not in the bundled
+    // app. Interactive rcs can echo noise, so take the LAST non-empty line.
     let probe = AsyncCommand::new(&shell)
-        .args(["-lc", &format!("command -v {name} 2>/dev/null")])
+        .args(["-lic", &format!("command -v {name} 2>/dev/null")])
         .output();
     if let Ok(Ok(out)) = timeout(Duration::from_secs(5), probe).await {
         if out.status.success() {
-            let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            // Accept only a real absolute path (not a shell function/alias name).
-            if p.starts_with('/') && std::path::Path::new(&p).exists() {
-                return p;
+            let raw = String::from_utf8_lossy(&out.stdout);
+            if let Some(p) = raw.lines().rev().find(|l| !l.trim().is_empty()) {
+                let p = p.trim();
+                // Accept only a real absolute path (not a shell function/alias name).
+                if p.starts_with('/') && std::path::Path::new(p).exists() {
+                    return p.to_string();
+                }
             }
         }
     }

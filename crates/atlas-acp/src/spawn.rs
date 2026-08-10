@@ -80,7 +80,10 @@ fn resolve_program_abs(program: &str) -> Option<String> {
         if !out.status.success() {
             return None;
         }
-        let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        // Interactive rc files can echo noise before the real answer — take
+        // the LAST non-empty line (see `probe_shell` on why `-i` matters).
+        let raw = String::from_utf8_lossy(&out.stdout);
+        let p = raw.lines().rev().find(|l| !l.trim().is_empty())?.trim().to_string();
         // Accept only a real absolute path (not a shell function/alias name).
         (p.starts_with('/') && std::path::Path::new(&p).exists()).then_some(p)
     });
@@ -90,17 +93,27 @@ fn resolve_program_abs(program: &str) -> Option<String> {
     resolved
 }
 
-/// Run `$SHELL -lc <script>` with an OWNED timeout: on expiry the probe child
+/// Run `$SHELL -lic <script>` with an OWNED timeout: on expiry the probe child
 /// is killed (so its reader thread exits promptly) instead of being abandoned
 /// to run forever — the old `recv_timeout`-only pattern leaked one thread AND
 /// one login shell per timed-out probe.
+///
+/// `-i` (interactive) is NOT optional: zsh only reads `~/.zshrc` in
+/// interactive shells, and that's where most CLI installers put their PATH
+/// export (OpenCode writes `export PATH=~/.opencode/bin:$PATH` there). A
+/// login-only `-lc` probe reads `.zprofile`/`.zlogin` but skips `.zshrc`, so
+/// the bundled app couldn't find `opencode` even though the terminal (and
+/// `tauri dev`) could — agent worked in dev, ENOENT in production. Mirrors
+/// `claude_setup::resolve_cli`, which already probes with `-lic` for the same
+/// reason. Interactive rcs can print noise; callers must parse defensively
+/// (last line / filtered entries).
 fn probe_shell(
     shell: &str,
     script: &str,
     timeout: std::time::Duration,
 ) -> Option<std::process::Output> {
     let child = std::process::Command::new(shell)
-        .args(["-lc", script])
+        .args(["-lic", script])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -295,8 +308,9 @@ fn enrich_path() {
 fn merge_login_shell_path() {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
-    // `-lc` loads the user's full login config (where
-    // nvm/fnm/etc. mutate PATH). Owned timeout: the probe child is killed on
+    // `probe_shell` runs `-lic` — login AND interactive, so both
+    // `.zprofile` (nvm/fnm) and `.zshrc` (opencode, most curl-installers)
+    // PATH exports are seen. Owned timeout: the probe child is killed on
     // expiry instead of leaking (see `probe_shell`).
     let Some(out) = probe_shell(
         &shell,
@@ -309,8 +323,13 @@ fn merge_login_shell_path() {
         return;
     }
 
+    // Interactive rc files can print noise lines before the real answer —
+    // `printf` emits no trailing newline, so the PATH is the LAST line.
     let raw = String::from_utf8_lossy(&out.stdout);
-    let entries: Vec<String> = raw
+    let Some(path_line) = raw.lines().rev().find(|l| !l.trim().is_empty()) else {
+        return;
+    };
+    let entries: Vec<String> = path_line
         .trim()
         .split(':')
         .filter(|s| !s.is_empty() && s.starts_with('/'))
@@ -330,6 +349,9 @@ fn apply_cheap_path_extras() {
         extras.push(format!("{home}/.local/bin"));
         extras.push(format!("{home}/.bun/bin"));
         extras.push(format!("{home}/.cargo/bin"));
+        // Agent-CLI install dirs whose PATH export lives only in ~/.zshrc
+        // (interactive-only) — deterministic backstop for the shell probe.
+        extras.push(format!("{home}/.opencode/bin"));
     }
     extras.push("/opt/homebrew/bin".into());
     extras.push("/opt/homebrew/sbin".into());
