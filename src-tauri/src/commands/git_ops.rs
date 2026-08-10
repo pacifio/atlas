@@ -1,51 +1,44 @@
 //! Extended git operations for the unified Source-Control manager.
 //!
-//! Mirrors the dugite-shaped CLI calls GitHub Desktop uses, built on the
-//! same `std::process::Command` spawn pattern as `git.rs`. Every spawn sets
-//! `GIT_TERMINAL_PROMPT=0` so a missing credential fails fast with a
-//! readable error instead of hanging on a tty prompt (push/pull rely on the
-//! user's system credential helper / ssh-agent). Mutating commands emit
-//! `atlas:git-changed` via the watcher helper so the UI refreshes live.
+//! Mirrors the dugite-shaped CLI calls GitHub Desktop uses, executed through
+//! the `atlas-git` chokepoint (real git binary, so hooks run; failures come
+//! back as typed [`GitErrorPayload`]s with friendly messages instead of raw
+//! stderr). `GIT_TERMINAL_PROMPT=0` is set by the executor so a missing
+//! credential fails fast with a routable `auth-failed` error instead of
+//! hanging on a tty prompt. Mutating commands emit `atlas:git-changed` via
+//! the watcher helper so the UI refreshes live; long operations additionally
+//! stream their output as `atlas:git:op` events (see [`git_commit_v2`]).
 
+use atlas_git::{GitCommand, GitErrorCode, GitErrorPayload};
 use serde::Serialize;
 use std::path::Path;
-use std::process::Command;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use crate::commands::git_watcher::emit_synthetic_change;
 
 const US: char = '\u{1f}'; // unit separator for --format parsing
 
-/// Run git in `path`, returning stdout. Fails with trimmed stderr on a
-/// non-zero exit. `GIT_TERMINAL_PROMPT=0` prevents credential hangs.
-fn git_out(path: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(path)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if err.is_empty() {
-            "git command failed".into()
-        } else {
-            err
-        });
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+/// Run git in `path`, returning stdout. Failures are classified into a
+/// typed payload by the `atlas-git` executor.
+fn git_out(path: &str, args: &[&str]) -> Result<String, GitErrorPayload> {
+    Ok(GitCommand::new(path, args).run()?.stdout)
 }
 
 /// Run a mutating git command, then notify the watcher so listeners refresh.
-fn git_mut(app: &AppHandle, path: &str, args: &[&str]) -> Result<String, String> {
+fn git_mut(app: &AppHandle, path: &str, args: &[&str]) -> Result<String, GitErrorPayload> {
     let out = git_out(path, args)?;
     emit_synthetic_change(app, Path::new(path));
     Ok(out)
 }
 
+/// spawn_blocking join failure → internal payload (never a raw string).
+fn join_err(e: tokio::task::JoinError) -> GitErrorPayload {
+    GitErrorPayload::internal(e.to_string())
+}
+
 // ── Read models ──────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BranchInfo {
     pub name: String,
@@ -60,13 +53,13 @@ pub struct BranchInfo {
     pub date: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RemoteInfo {
     pub name: String,
     pub url: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct StashEntry {
     pub index: u32,
     pub message: String,
@@ -86,7 +79,7 @@ pub struct CommitDetail {
     pub diff: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InProgress {
     pub merge: bool,
@@ -115,7 +108,7 @@ fn parse_track(track: &str) -> (u32, u32) {
 }
 
 #[tauri::command]
-pub async fn git_branches_full(path: String) -> Result<Vec<BranchInfo>, String> {
+pub async fn git_branches_full(path: String) -> Result<Vec<BranchInfo>, GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let fmt = format!(
             "%(refname:short){US}%(HEAD){US}%(upstream:short){US}%(upstream:track){US}%(contents:subject){US}%(committerdate:relative){US}%(refname)"
@@ -167,7 +160,7 @@ pub async fn git_branches_full(path: String) -> Result<Vec<BranchInfo>, String> 
         Ok(branches)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
@@ -176,13 +169,13 @@ pub async fn git_rename_branch(
     old_name: String,
     new_name: String,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         git_mut(&app, &path, &["branch", "-m", &old_name, &new_name])?;
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
@@ -191,21 +184,21 @@ pub async fn git_branch_delete(
     name: String,
     force: bool,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let flag = if force { "-D" } else { "-d" };
         git_mut(&app, &path, &["branch", flag, &name])?;
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_merge_branch(path: String, branch: String, app: AppHandle) -> Result<String, String> {
+pub async fn git_merge_branch(path: String, branch: String, app: AppHandle) -> Result<String, GitErrorPayload> {
     tokio::task::spawn_blocking(move || git_mut(&app, &path, &["merge", "--no-edit", &branch]))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(join_err)?
 }
 
 /// Dry-run preview of merging `branch` into the current branch — what GitHub
@@ -229,21 +222,20 @@ pub struct MergePreview {
     pub conflicted_files: u32,
 }
 
-fn merge_preview(path: &str, branch: &str) -> Result<MergePreview, String> {
+fn merge_preview(path: &str, branch: &str) -> Result<MergePreview, GitErrorPayload> {
     let head = git_out(path, &["rev-parse", "HEAD"])?.trim().to_string();
     let theirs = git_out(path, &["rev-parse", "--verify", &format!("{branch}^{{commit}}")])
-        .map_err(|_| format!("branch '{branch}' not found"))?
+        .map_err(|_| GitErrorPayload::internal(format!("branch '{branch}' not found")))?
         .trim()
         .to_string();
 
     // Unrelated histories → no common ancestor → merge would refuse.
-    let base = Command::new("git")
-        .args(["merge-base", &head, &theirs])
-        .current_dir(path)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !base.status.success() {
+    // `merge-base` exits 1 on no ancestor — an accepted outcome, not an error.
+    let base = GitCommand::new(path, &["merge-base", &head, &theirs])
+        .read_only()
+        .success_codes(&[0, 1])
+        .run()?;
+    if base.exit_code != 0 {
         return Ok(MergePreview { kind: "invalid".into(), commit_count: 0, conflicted_files: 0 });
     }
 
@@ -257,11 +249,11 @@ fn merge_preview(path: &str, branch: &str) -> Result<MergePreview, String> {
     }
 
     // Conflict detection via `git merge-tree --write-tree` (git 2.38+, with
-    // `--name-only` in 2.40+). It returns a NON-ZERO exit on conflicts, so we
-    // can't use `git_out` (which treats non-zero as an error) — capture the
-    // raw status/stdout/stderr instead.
-    let mt = Command::new("git")
-        .args([
+    // `--name-only` in 2.40+). Exit 1 = conflicts; usage errors (unsupported
+    // flags on an older git) surface as other non-zero codes.
+    let mt = GitCommand::new(
+        path,
+        &[
             "merge-tree",
             "--write-tree",
             "--name-only",
@@ -269,19 +261,19 @@ fn merge_preview(path: &str, branch: &str) -> Result<MergePreview, String> {
             "-z",
             &head,
             &theirs,
-        ])
-        .current_dir(path)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .output()
-        .map_err(|e| e.to_string())?;
+        ],
+    )
+    .read_only()
+    .success_codes(&[0, 1, 2, 128, 129])
+    .run()?;
 
-    if mt.status.success() {
+    if mt.exit_code == 0 {
         return Ok(MergePreview { kind: "clean".into(), commit_count, conflicted_files: 0 });
     }
 
     // Non-zero: conflicts (exit 1) OR the flags are unsupported on an older git
     // (usage error / exit 129). Degrade gracefully so the merge stays available.
-    let stderr = String::from_utf8_lossy(&mt.stderr);
+    let stderr = &mt.stderr;
     if stderr.contains("usage:") || stderr.contains("unknown option") || stderr.contains("not a valid option") {
         return Ok(MergePreview { kind: "unsupported".into(), commit_count, conflicted_files: 0 });
     }
@@ -289,40 +281,91 @@ fn merge_preview(path: &str, branch: &str) -> Result<MergePreview, String> {
     // Conflict output (`-z`, `--name-only`): `<tree-oid>\0` then each conflicted
     // path `\0`-separated. Drop empties (section separators); first field is the
     // oid, the rest are the conflicted files.
-    let stdout = String::from_utf8_lossy(&mt.stdout);
-    let mut fields = stdout.split('\0').filter(|s| !s.is_empty());
+    let mut fields = mt.stdout.split('\0').filter(|s| !s.is_empty());
     let _oid = fields.next();
     let conflicted_files = fields.count() as u32;
     Ok(MergePreview { kind: "conflicts".into(), commit_count, conflicted_files })
 }
 
 #[tauri::command]
-pub async fn git_merge_preview(path: String, branch: String) -> Result<MergePreview, String> {
+pub async fn git_merge_preview(path: String, branch: String) -> Result<MergePreview, GitErrorPayload> {
     tokio::task::spawn_blocking(move || merge_preview(&path, &branch))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(join_err)?
 }
 
 // ── Remote sync ──────────────────────────────────────────────────────────
+//
+// Network ops run `--progress` and stream through `atlas:git:op` when the
+// caller supplies an `op_id` (percent parsed by `atlas_git::progress` with
+// GitHub Desktop's weighted step tables); without one they run buffered,
+// keeping older call sites working.
 
-#[tauri::command]
-pub async fn git_fetch(path: String, app: AppHandle) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || git_mut(&app, &path, &["fetch", "--all", "--prune"]))
-        .await
-        .map_err(|e| e.to_string())?
+fn run_remote_op(
+    app: &AppHandle,
+    path: &str,
+    kind: &'static str,
+    op_id: Option<String>,
+    args: &[&str],
+) -> Result<String, GitErrorPayload> {
+    let Some(id) = op_id else {
+        return git_mut(app, path, args);
+    };
+    let emitter = OpEmitter::new(app.clone(), id, path.to_string(), kind);
+    emitter.started();
+    let sink = ProgressSink {
+        emitter: &emitter,
+        parser: std::sync::Mutex::new(atlas_git::progress::ProgressParser::new(
+            &atlas_git::progress::steps_for(kind),
+        )),
+    };
+    let result = GitCommand::new(path, args).run_streaming(&sink);
+    emit_synthetic_change(app, Path::new(path));
+    match result {
+        Ok(o) => {
+            emitter.done(None);
+            Ok(o.stdout)
+        }
+        Err(e) => {
+            emitter.done(Some(&e));
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
-pub async fn git_pull(path: String, rebase: bool, app: AppHandle) -> Result<String, String> {
+pub async fn git_fetch(
+    path: String,
+    op_id: Option<String>,
+    app: AppHandle,
+) -> Result<String, GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        let mut args = vec!["pull"];
+        run_remote_op(&app, &path, "fetch", op_id, &["fetch", "--all", "--prune", "--progress"])
+    })
+    .await
+    .map_err(join_err)?
+}
+
+#[tauri::command]
+pub async fn git_pull(
+    path: String,
+    rebase: bool,
+    remote: Option<String>,
+    op_id: Option<String>,
+    app: AppHandle,
+) -> Result<String, GitErrorPayload> {
+    tokio::task::spawn_blocking(move || {
+        let mut args = vec!["pull", "--progress"];
         if rebase {
             args.push("--rebase");
         }
-        git_mut(&app, &path, &args)
+        if let Some(r) = remote.as_deref() {
+            args.push(r);
+        }
+        run_remote_op(&app, &path, "pull", op_id, &args)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
@@ -330,32 +373,184 @@ pub async fn git_push(
     path: String,
     force_with_lease: bool,
     follow_tags: bool,
+    remote: Option<String>,
+    op_id: Option<String>,
     app: AppHandle,
-) -> Result<String, String> {
+) -> Result<String, GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        let mut args = vec!["push"];
+        let mut args = vec!["push", "--progress"];
         if force_with_lease {
             args.push("--force-with-lease");
         }
         if follow_tags {
             args.push("--follow-tags");
         }
-        git_mut(&app, &path, &args)
+        if let Some(r) = remote.as_deref() {
+            args.push(r);
+        }
+        run_remote_op(&app, &path, "push", op_id, &args)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
-/// Push the current branch to `origin` and set it as upstream.
+/// Push the current branch to a remote (default `origin`) and set upstream.
 #[tauri::command]
-pub async fn git_publish_branch(path: String, app: AppHandle) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || git_mut(&app, &path, &["push", "-u", "origin", "HEAD"]))
-        .await
-        .map_err(|e| e.to_string())?
+pub async fn git_publish_branch(
+    path: String,
+    remote: Option<String>,
+    op_id: Option<String>,
+    app: AppHandle,
+) -> Result<String, GitErrorPayload> {
+    tokio::task::spawn_blocking(move || {
+        let r = remote.unwrap_or_else(|| "origin".into());
+        run_remote_op(&app, &path, "push", op_id, &["push", "--progress", "-u", &r, "HEAD"])
+    })
+    .await
+    .map_err(join_err)?
+}
+
+/// Clone `url` into `dest` with streamed progress (previously missing from
+/// the source-control surface entirely — only the GitHub panel's shallow
+/// clone existed).
+#[tauri::command]
+pub async fn git_clone(
+    url: String,
+    dest: String,
+    op_id: String,
+    app: AppHandle,
+) -> Result<(), GitErrorPayload> {
+    tokio::task::spawn_blocking(move || {
+        let parent = Path::new(&dest)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .filter(|p| !p.as_os_str().is_empty())
+            .ok_or_else(|| GitErrorPayload::internal("invalid clone destination"))?;
+        std::fs::create_dir_all(&parent)
+            .map_err(|e| GitErrorPayload::internal(format!("cannot create {}: {e}", parent.display())))?;
+
+        let emitter = OpEmitter::new(app.clone(), op_id, dest.clone(), "clone");
+        emitter.started();
+        let sink = ProgressSink {
+            emitter: &emitter,
+            parser: std::sync::Mutex::new(atlas_git::progress::ProgressParser::new(
+                &atlas_git::progress::steps_for("clone"),
+            )),
+        };
+        let result = GitCommand::new(&parent, &["clone", "--recursive", "--progress", "--", &url, &dest])
+            .run_streaming(&sink);
+        match result {
+            Ok(_) => {
+                emitter.done(None);
+                Ok(())
+            }
+            Err(e) => {
+                emitter.done(Some(&e));
+                Err(e)
+            }
+        }
+    })
+    .await
+    .map_err(join_err)?
+}
+
+/// Rebase the current branch onto `base`, streaming output (`Rebasing
+/// (n/m)` lines land in the live strip). Conflicts pause the rebase — the
+/// in-progress banner + conflicts view take over, and continue/abort go
+/// through `git_op_control` as usual. Previously only `pull --rebase`
+/// existed; a real branch rebase was missing entirely.
+#[tauri::command]
+pub async fn git_rebase(
+    path: String,
+    base: String,
+    op_id: Option<String>,
+    app: AppHandle,
+) -> Result<String, GitErrorPayload> {
+    tokio::task::spawn_blocking(move || {
+        run_remote_op(&app, &path, "rebase", op_id, &["rebase", &base])
+    })
+    .await
+    .map_err(join_err)?
+}
+
+/// Undo the last commit (`reset --soft HEAD~1` — changes return to the
+/// index). Refused when the commit is already on the upstream: rewriting
+/// pushed history needs an explicit force-push decision, not an "undo".
+#[tauri::command]
+pub async fn git_undo_commit(path: String, app: AppHandle) -> Result<(), GitErrorPayload> {
+    tokio::task::spawn_blocking(move || {
+        // HEAD must have a parent.
+        GitCommand::new(&path, &["rev-parse", "--verify", "HEAD~1"])
+            .read_only()
+            .run()
+            .map_err(|_| GitErrorPayload::internal("The first commit of a repository can't be undone."))?;
+        // Not already pushed: with an upstream, ahead must be ≥ 1.
+        let ahead = GitCommand::new(&path, &["rev-list", "--count", "@{upstream}..HEAD"])
+            .read_only()
+            .success_codes(&[0, 128])
+            .run()?;
+        if ahead.exit_code == 0 && ahead.stdout.trim().parse::<u32>().unwrap_or(0) == 0 {
+            return Err(GitErrorPayload::internal(
+                "This commit is already pushed. Revert it instead of undoing it.",
+            ));
+        }
+        git_mut(&app, &path, &["reset", "--soft", "HEAD~1"])?;
+        Ok(())
+    })
+    .await
+    .map_err(join_err)?
+}
+
+/// Squash the last `count` commits into one with `message`. Implemented as
+/// `reset --soft HEAD~N` + a fresh commit — equivalent to an interactive
+/// tail squash, without the todo-file machinery. Refused when the range
+/// reaches into pushed history (same guard as undo).
+#[tauri::command]
+pub async fn git_squash_last(
+    path: String,
+    count: u32,
+    summary: String,
+    description: Option<String>,
+    app: AppHandle,
+) -> Result<(), GitErrorPayload> {
+    if count < 2 {
+        return Err(GitErrorPayload::internal("Squash needs at least 2 commits."));
+    }
+    tokio::task::spawn_blocking(move || {
+        GitCommand::new(&path, &["rev-parse", "--verify", &format!("HEAD~{count}")])
+            .read_only()
+            .run()
+            .map_err(|_| GitErrorPayload::internal("Not enough commits to squash."))?;
+        let ahead = GitCommand::new(&path, &["rev-list", "--count", "@{upstream}..HEAD"])
+            .read_only()
+            .success_codes(&[0, 128])
+            .run()?;
+        if ahead.exit_code == 0 && ahead.stdout.trim().parse::<u32>().unwrap_or(0) < count {
+            return Err(GitErrorPayload::internal(
+                "Some of these commits are already pushed — squashing would rewrite shared history.",
+            ));
+        }
+
+        GitCommand::new(&path, &["reset", "--soft", &format!("HEAD~{count}")]).run()?;
+        let mut message = summary.trim().to_string();
+        if let Some(d) = description.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+            message.push_str("\n\n");
+            message.push_str(d);
+        }
+        message.push('\n');
+        let commit = GitCommand::new(&path, &["commit", "-F", "-"])
+            .stdin(message.into_bytes())
+            .run();
+        emit_synthetic_change(&app, Path::new(&path));
+        commit?;
+        Ok(())
+    })
+    .await
+    .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_remotes(path: String) -> Result<Vec<RemoteInfo>, String> {
+pub async fn git_remotes(path: String) -> Result<Vec<RemoteInfo>, GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let out = git_out(&path, &["remote", "-v"])?;
         let mut seen = std::collections::HashSet::new();
@@ -376,7 +571,7 @@ pub async fn git_remotes(path: String) -> Result<Vec<RemoteInfo>, String> {
         Ok(remotes)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
@@ -385,29 +580,29 @@ pub async fn git_remote_add(
     name: String,
     url: String,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         git_mut(&app, &path, &["remote", "add", &name, &url])?;
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_remote_remove(path: String, name: String, app: AppHandle) -> Result<(), String> {
+pub async fn git_remote_remove(path: String, name: String, app: AppHandle) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         git_mut(&app, &path, &["remote", "remove", &name])?;
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 // ── Stash ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn git_stash_list(path: String) -> Result<Vec<StashEntry>, String> {
+pub async fn git_stash_list(path: String) -> Result<Vec<StashEntry>, GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let out = git_out(
             &path,
@@ -437,7 +632,7 @@ pub async fn git_stash_list(path: String) -> Result<Vec<StashEntry>, String> {
         Ok(stashes)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
@@ -445,7 +640,7 @@ pub async fn git_stash_push(
     path: String,
     message: Option<String>,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let mut args = vec!["stash".to_string(), "push".to_string()];
         if let Some(m) = message.filter(|m| !m.trim().is_empty()) {
@@ -457,7 +652,7 @@ pub async fn git_stash_push(
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 /// Stash only the given paths (e.g. a single file flagged in a review).
@@ -468,9 +663,9 @@ pub async fn git_stash_paths(
     paths: Vec<String>,
     message: Option<String>,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<(), GitErrorPayload> {
     if paths.is_empty() {
-        return Err("no paths to stash".to_string());
+        return Err(GitErrorPayload::internal("no paths to stash"));
     }
     tokio::task::spawn_blocking(move || {
         let mut args = vec!["stash".to_string(), "push".to_string()];
@@ -485,37 +680,37 @@ pub async fn git_stash_paths(
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_stash_apply(path: String, index: u32, app: AppHandle) -> Result<(), String> {
+pub async fn git_stash_apply(path: String, index: u32, app: AppHandle) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         git_mut(&app, &path, &["stash", "apply", &format!("stash@{{{index}}}")])?;
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_stash_pop(path: String, index: u32, app: AppHandle) -> Result<(), String> {
+pub async fn git_stash_pop(path: String, index: u32, app: AppHandle) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         git_mut(&app, &path, &["stash", "pop", &format!("stash@{{{index}}}")])?;
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_stash_drop(path: String, index: u32, app: AppHandle) -> Result<(), String> {
+pub async fn git_stash_drop(path: String, index: u32, app: AppHandle) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         git_mut(&app, &path, &["stash", "drop", &format!("stash@{{{index}}}")])?;
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 // ── Working tree / history ops ───────────────────────────────────────────
@@ -523,7 +718,7 @@ pub async fn git_stash_drop(path: String, index: u32, app: AppHandle) -> Result<
 /// Discard tracked changes (staged + worktree) for `files`, back to HEAD.
 /// Untracked files are left alone (deleting them is destructive).
 #[tauri::command]
-pub async fn git_discard(path: String, files: Vec<String>, app: AppHandle) -> Result<(), String> {
+pub async fn git_discard(path: String, files: Vec<String>, app: AppHandle) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let mut args = vec![
             "restore".to_string(),
@@ -537,7 +732,7 @@ pub async fn git_discard(path: String, files: Vec<String>, app: AppHandle) -> Re
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 /// "Revert" ADDED files (new / untracked). There's no HEAD version to restore,
@@ -551,7 +746,7 @@ pub async fn git_delete_added(
     path: String,
     files: Vec<String>,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         // Remove from the index if it was staged-new; ignore untracked ones.
         let mut args = vec![
@@ -568,13 +763,13 @@ pub async fn git_delete_added(
         for f in &files {
             let abs = Path::new(&path).join(f);
             if abs.exists() {
-                std::fs::remove_file(&abs).map_err(|e| format!("Failed to delete {f}: {e}"))?;
+                std::fs::remove_file(&abs).map_err(|e| GitErrorPayload::internal(format!("Failed to delete {f}: {e}")))?;
             }
         }
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
@@ -583,7 +778,7 @@ pub async fn git_reset(
     target: String,
     mode: String,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let flag = match mode.as_str() {
             "soft" => "--soft",
@@ -594,30 +789,32 @@ pub async fn git_reset(
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_revert(path: String, sha: String, app: AppHandle) -> Result<String, String> {
+pub async fn git_revert(path: String, sha: String, app: AppHandle) -> Result<String, GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         // Plain revert first; merge commits need a parent (-m 1).
         match git_mut(&app, &path, &["revert", "--no-edit", &sha]) {
             Ok(o) => Ok(o),
-            Err(e) if e.contains("is a merge") || e.contains("mainline") => {
+            Err(e)
+                if e.raw_stderr.contains("is a merge") || e.raw_stderr.contains("mainline") =>
+            {
                 git_mut(&app, &path, &["revert", "--no-edit", "-m", "1", &sha])
             }
             Err(e) => Err(e),
         }
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_cherry_pick(path: String, sha: String, app: AppHandle) -> Result<String, String> {
+pub async fn git_cherry_pick(path: String, sha: String, app: AppHandle) -> Result<String, GitErrorPayload> {
     tokio::task::spawn_blocking(move || git_mut(&app, &path, &["cherry-pick", &sha]))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(join_err)?
 }
 
 /// Extended commit: summary + optional description, optional `--amend`.
@@ -628,7 +825,7 @@ pub async fn git_commit_ex(
     description: Option<String>,
     amend: bool,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let mut args = vec!["commit".to_string()];
         if amend {
@@ -645,33 +842,33 @@ pub async fn git_commit_ex(
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_diff_staged(path: String) -> Result<String, String> {
+pub async fn git_diff_staged(path: String) -> Result<String, GitErrorPayload> {
     tokio::task::spawn_blocking(move || git_out(&path, &["diff", "--cached"]))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_diff_unstaged(path: String) -> Result<String, String> {
+pub async fn git_diff_unstaged(path: String) -> Result<String, GitErrorPayload> {
     tokio::task::spawn_blocking(move || git_out(&path, &["diff"]))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(join_err)?
 }
 
 // ── Tags ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn git_tags(path: String) -> Result<Vec<String>, String> {
+pub async fn git_tags(path: String) -> Result<Vec<String>, GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let out = git_out(&path, &["tag", "--sort=-creatordate"])?;
         Ok(out.lines().filter(|l| !l.is_empty()).map(String::from).collect())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
@@ -681,7 +878,7 @@ pub async fn git_create_tag(
     target: Option<String>,
     message: Option<String>,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let mut args = vec!["tag".to_string(), "-a".to_string(), name];
         args.push("-m".into());
@@ -694,23 +891,23 @@ pub async fn git_create_tag(
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_delete_tag(path: String, name: String, app: AppHandle) -> Result<(), String> {
+pub async fn git_delete_tag(path: String, name: String, app: AppHandle) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         git_mut(&app, &path, &["tag", "-d", &name])?;
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 // ── Commit detail (history view) ─────────────────────────────────────────
 
 #[tauri::command]
-pub async fn git_show(path: String, sha: String) -> Result<CommitDetail, String> {
+pub async fn git_show(path: String, sha: String) -> Result<CommitDetail, GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let fmt = format!("%H{US}%h{US}%an{US}%ae{US}%ad{US}%s{US}%b");
         let meta = git_out(
@@ -732,13 +929,13 @@ pub async fn git_show(path: String, sha: String) -> Result<CommitDetail, String>
         })
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }
 
 // ── In-progress operation detection (conflict banner) ────────────────────
 
 #[tauri::command]
-pub async fn git_inprogress(path: String) -> Result<InProgress, String> {
+pub async fn git_inprogress(path: String) -> Result<InProgress, GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let git_dir = git_out(&path, &["rev-parse", "--absolute-git-dir"])?
             .trim()
@@ -752,7 +949,254 @@ pub async fn git_inprogress(path: String) -> Result<InProgress, String> {
         })
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
+}
+
+// ── Streaming operations (`atlas:git:op`) ────────────────────────────────
+//
+// Long-running git commands (commit with hooks today; push/pull/clone with
+// progress in later phases) stream their output live so the UI can show a
+// busy state with real feedback instead of appearing hung. One event name,
+// discriminated by `phase`:
+//   started → output* → done{ok, error?}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitOpEventPayload<'a> {
+    op_id: &'a str,
+    repo: &'a str,
+    kind: &'a str,
+    phase: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<&'a GitErrorPayload>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    percent: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<&'a str>,
+}
+
+/// Emits `atlas:git:op` events for one operation; also the `OpSink` handed
+/// to the streaming executor, so child output forwards line by line.
+pub(crate) struct OpEmitter {
+    app: AppHandle,
+    op_id: String,
+    repo: String,
+    kind: &'static str,
+}
+
+impl OpEmitter {
+    pub(crate) fn new(app: AppHandle, op_id: String, repo: String, kind: &'static str) -> Self {
+        OpEmitter { app, op_id, repo, kind }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit(
+        &self,
+        phase: &str,
+        stream: Option<&str>,
+        line: Option<&str>,
+        ok: Option<bool>,
+        error: Option<&GitErrorPayload>,
+        percent: Option<f32>,
+        title: Option<&str>,
+    ) {
+        let _ = self.app.emit(
+            "atlas:git:op",
+            GitOpEventPayload {
+                op_id: &self.op_id,
+                repo: &self.repo,
+                kind: self.kind,
+                phase,
+                stream,
+                line,
+                ok,
+                error,
+                percent,
+                title,
+            },
+        );
+    }
+
+    pub(crate) fn started(&self) {
+        self.emit("started", None, None, None, None, None, None);
+    }
+
+    pub(crate) fn done(&self, error: Option<&GitErrorPayload>) {
+        self.emit("done", None, None, Some(error.is_none()), error, None, None);
+    }
+
+    pub(crate) fn progress(&self, fraction: f32, title: &str) {
+        self.emit("progress", None, None, None, None, Some(fraction * 100.0), Some(title));
+    }
+}
+
+/// Sink that forwards output lines AND feeds them through a weighted
+/// progress parser, emitting `progress` phases as percent advances.
+struct ProgressSink<'a> {
+    emitter: &'a OpEmitter,
+    parser: std::sync::Mutex<atlas_git::progress::ProgressParser>,
+}
+
+impl atlas_git::OpSink for ProgressSink<'_> {
+    fn output(&self, stream: atlas_git::Stream, line: &str) {
+        atlas_git::OpSink::output(self.emitter, stream, line);
+        if let Ok(mut parser) = self.parser.lock() {
+            if let Some((fraction, title)) = parser.advance(line) {
+                self.emitter.progress(fraction, &title);
+            }
+        }
+    }
+}
+
+impl atlas_git::OpSink for OpEmitter {
+    fn output(&self, stream: atlas_git::Stream, line: &str) {
+        let name = match stream {
+            atlas_git::Stream::Stdout => "stdout",
+            atlas_git::Stream::Stderr => "stderr",
+        };
+        self.emit("output", Some(name), Some(line), None, None, None, None);
+    }
+}
+
+#[cfg(unix)]
+fn is_executable(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+}
+#[cfg(not(unix))]
+fn is_executable(_p: &Path) -> bool {
+    true
+}
+
+/// Does this repo have any commit-phase hooks? Used to classify an
+/// otherwise-unrecognized commit failure as `hook-failed` — git prints no
+/// stable marker when a hook rejects, but if hooks exist and the commit
+/// died unclassified, the hook is by far the likeliest cause.
+fn commit_hooks_present(path: &str) -> bool {
+    let configured = GitCommand::new(path, &["config", "--get", "core.hooksPath"])
+        .read_only()
+        .success_codes(&[0, 1])
+        .run()
+        .ok()
+        .filter(|o| o.exit_code == 0 && !o.stdout.trim().is_empty())
+        .map(|o| o.stdout.trim().to_string());
+    let hooks_dir = match configured {
+        Some(d) => d,
+        None => match GitCommand::new(path, &["rev-parse", "--git-path", "hooks"]).read_only().run() {
+            Ok(o) => o.stdout.trim().to_string(),
+            Err(_) => return false,
+        },
+    };
+    if hooks_dir.is_empty() {
+        return false;
+    }
+    let base = Path::new(&hooks_dir);
+    let base = if base.is_absolute() {
+        base.to_path_buf()
+    } else {
+        Path::new(path).join(base)
+    };
+    ["pre-commit", "prepare-commit-msg", "commit-msg", "post-commit"]
+        .iter()
+        .any(|h| {
+            let hp = base.join(h);
+            hp.is_file() && is_executable(&hp)
+        })
+}
+
+/// Streaming commit (v2): message via `commit -F -` stdin (multiline-safe),
+/// live hook output as `atlas:git:op` events, and typed errors. Hooks run —
+/// we shell out to the real git binary and never pass `--no-verify` — and
+/// their stdout/stderr streams to the UI instead of being swallowed.
+///
+/// `co_authors` ("Name <email>" strings) are merged as `Co-authored-by`
+/// trailers via `git interpret-trailers`, matching GitHub Desktop's
+/// attribution format. Amending with an EMPTY summary keeps the original
+/// message (`--amend --no-edit`) — previously amend always demanded a new
+/// one.
+#[tauri::command]
+pub async fn git_commit_v2(
+    path: String,
+    summary: String,
+    description: Option<String>,
+    amend: bool,
+    co_authors: Option<Vec<String>>,
+    op_id: String,
+    app: AppHandle,
+) -> Result<(), GitErrorPayload> {
+    tokio::task::spawn_blocking(move || {
+        let emitter = OpEmitter::new(app.clone(), op_id, path.clone(), "commit");
+        emitter.started();
+
+        let keep_message = amend && summary.trim().is_empty();
+
+        let result = if keep_message {
+            GitCommand::new(&path, &["commit", "--amend", "--no-edit"]).run_streaming(&emitter)
+        } else {
+            let mut message = summary.trim().to_string();
+            if let Some(d) = description.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+                message.push_str("\n\n");
+                message.push_str(d);
+            }
+            message.push('\n');
+
+            let authors: Vec<String> = co_authors
+                .unwrap_or_default()
+                .into_iter()
+                .map(|a| a.trim().to_string())
+                .filter(|a| !a.is_empty())
+                .collect();
+            if !authors.is_empty() {
+                // interpret-trailers handles placement + dedup against any
+                // trailers the user already typed in the description.
+                let mut targs: Vec<String> =
+                    vec!["interpret-trailers".into(), "--no-divider".into()];
+                for a in &authors {
+                    targs.push("--trailer".into());
+                    targs.push(format!("Co-authored-by={a}"));
+                }
+                message = GitCommand::new_owned(&path, targs)
+                    .stdin(message.into_bytes())
+                    .run()?
+                    .stdout;
+            }
+
+            let mut args = vec!["commit", "-F", "-"];
+            if amend {
+                args.push("--amend");
+            }
+            GitCommand::new(&path, &args)
+                .stdin(message.into_bytes())
+                .run_streaming(&emitter)
+        };
+
+        // The index/HEAD may have moved even on failure (e.g. a post-commit
+        // hook failing after the commit landed) — always refresh listeners.
+        emit_synthetic_change(&app, Path::new(&path));
+
+        match result {
+            Ok(_) => {
+                emitter.done(None);
+                Ok(())
+            }
+            Err(mut e) => {
+                if e.code == GitErrorCode::Generic && commit_hooks_present(&path) {
+                    e.code = GitErrorCode::HookFailed;
+                    e.message = atlas_git::error::friendly_message(GitErrorCode::HookFailed, &[], None);
+                }
+                emitter.done(Some(&e));
+                Err(e)
+            }
+        }
+    })
+    .await
+    .map_err(join_err)?
 }
 
 /// Abort or continue an in-progress merge/rebase/cherry-pick/revert.
@@ -762,7 +1206,7 @@ pub async fn git_op_control(
     kind: String,
     action: String, // "abort" | "continue"
     app: AppHandle,
-) -> Result<String, String> {
+) -> Result<String, GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let flag = if action == "continue" {
             "--continue"
@@ -776,5 +1220,5 @@ pub async fn git_op_control(
         git_mut(&app, &path, &[kind.as_str(), flag])
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(join_err)?
 }

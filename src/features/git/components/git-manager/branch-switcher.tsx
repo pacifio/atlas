@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { toast } from "sonner";
 import { GitBranch, Check, Plus, Search, Trash2, GitMerge } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGitStore } from "../../stores/git-store";
+import { handleGitError } from "../../lib/git-errors";
 
 /** Branch switcher popover: filter, checkout, create, delete, merge-into-current. */
 export function BranchSwitcher() {
@@ -24,7 +24,7 @@ export function BranchSwitcher() {
     try {
       await fn();
     } catch (e) {
-      toast.error(String(e));
+      handleGitError(e);
     }
   };
 

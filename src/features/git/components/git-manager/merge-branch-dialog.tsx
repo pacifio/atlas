@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Check, Search, Loader2, GitMerge, AlertTriangle, Ban } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGitStore, type MergePreview } from "../../stores/git-store";
+import { handleGitError } from "../../lib/git-errors";
 
 /**
  * GitHub-Desktop-style "Choose a branch to merge into <current>" dialog.
@@ -77,6 +78,25 @@ export function MergeBranchDialog({
     preview.kind !== "uptodate" &&
     preview.kind !== "invalid";
 
+  const doRebase = async () => {
+    if (!selected) return;
+    setMerging(true);
+    try {
+      await actions.rebase(selected);
+      toast.success(`Rebased ${branch} onto ${selected}`);
+      onOpenChange(false);
+    } catch (e) {
+      // Conflicts pause the rebase — the in-progress banner + conflicts
+      // view take over; other failures get the typed treatment.
+      handleGitError(e);
+      onOpenChange(false);
+    } finally {
+      void actions.refreshStatusNow();
+      void actions.loadInProgress();
+      setMerging(false);
+    }
+  };
+
   const doMerge = async () => {
     if (!selected) return;
     setMerging(true);
@@ -92,7 +112,7 @@ export function MergeBranchDialog({
       if (wasConflicts) {
         toast.warning(`Merged ${selected} with conflicts — resolve them to finish`);
       } else {
-        toast.error(String(e));
+        handleGitError(e);
       }
       onOpenChange(false);
     } finally {
@@ -191,6 +211,19 @@ export function MergeBranchDialog({
                 className="px-3 h-7 rounded text-[11px] text-text-secondary hover:bg-bg-hover transition-colors"
               >
                 Cancel
+              </button>
+              <button
+                onClick={() => void doRebase()}
+                disabled={!canMerge}
+                title={selected ? `Rebase ${branch} onto ${selected}` : "Rebase"}
+                className={cn(
+                  "px-3 h-7 rounded text-[11px] font-medium transition-colors",
+                  canMerge
+                    ? "text-text-primary border border-border-default hover:bg-bg-hover"
+                    : "text-text-tertiary bg-bg-hover cursor-not-allowed",
+                )}
+              >
+                Rebase
               </button>
               <button
                 onClick={() => void doMerge()}

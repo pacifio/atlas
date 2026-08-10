@@ -1,3 +1,4 @@
+use atlas_git::{GitCommand, GitErrorPayload};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -533,39 +534,43 @@ pub async fn git_diff_file(path: String, file: String) -> Result<String, String>
     }).await.map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn git_stage(path: String, files: Vec<String>) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let mut args = vec!["add".to_string()];
-        args.extend(files);
-        Command::new("git").args(&args).current_dir(&path).output().map_err(|e| e.to_string())?;
-        Ok(())
-    }).await.map_err(|e| e.to_string())?
+/// spawn_blocking join failure → internal payload (never a raw string).
+fn join_err(e: tokio::task::JoinError) -> GitErrorPayload {
+    GitErrorPayload::internal(e.to_string())
 }
 
 #[tauri::command]
-pub async fn git_unstage(path: String, files: Vec<String>) -> Result<(), String> {
+pub async fn git_stage(path: String, files: Vec<String>) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        let mut args = vec!["restore".to_string(), "--staged".to_string()];
+        let mut args: Vec<String> = vec!["add".into(), "--".into()];
         args.extend(files);
-        Command::new("git").args(&args).current_dir(&path).output().map_err(|e| e.to_string())?;
+        GitCommand::new_owned(&path, args).run()?;
         Ok(())
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_commit(path: String, message: String) -> Result<(), String> {
+pub async fn git_unstage(path: String, files: Vec<String>) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        let output = Command::new("git")
-            .args(["commit", "-m", &message])
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).to_string());
-        }
+        let mut args: Vec<String> = vec!["restore".into(), "--staged".into(), "--".into()];
+        args.extend(files);
+        GitCommand::new_owned(&path, args).run()?;
         Ok(())
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(join_err)?
+}
+
+#[tauri::command]
+pub async fn git_commit(path: String, message: String) -> Result<(), GitErrorPayload> {
+    tokio::task::spawn_blocking(move || {
+        GitCommand::new(&path, &["commit", "-m", &message]).run()?;
+        Ok(())
+    })
+    .await
+    .map_err(join_err)?
 }
 
 #[tauri::command]
@@ -594,30 +599,33 @@ pub async fn git_list_branches(path: String) -> Result<Vec<GitBranch>, String> {
 }
 
 #[tauri::command]
-pub async fn git_checkout(path: String, branch: String) -> Result<(), String> {
+pub async fn git_checkout(path: String, branch: String) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        let output = Command::new("git").args(["checkout", &branch]).current_dir(&path).output().map_err(|e| e.to_string())?;
-        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).to_string()); }
+        GitCommand::new(&path, &["checkout", &branch]).run()?;
         Ok(())
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_create_branch(path: String, name: String) -> Result<(), String> {
+pub async fn git_create_branch(path: String, name: String) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        let output = Command::new("git").args(["checkout", "-b", &name]).current_dir(&path).output().map_err(|e| e.to_string())?;
-        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).to_string()); }
+        GitCommand::new(&path, &["checkout", "-b", &name]).run()?;
         Ok(())
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(join_err)?
 }
 
 #[tauri::command]
-pub async fn git_delete_branch(path: String, name: String) -> Result<(), String> {
+pub async fn git_delete_branch(path: String, name: String) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        let output = Command::new("git").args(["branch", "-d", &name]).current_dir(&path).output().map_err(|e| e.to_string())?;
-        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).to_string()); }
+        GitCommand::new(&path, &["branch", "-d", &name]).run()?;
         Ok(())
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(join_err)?
 }
 
 /// One line of blame output, in final-file order (`line` is 1-based).

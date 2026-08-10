@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
 import { RefreshCw, ArrowDown, ArrowUp, UploadCloud, Loader2, GitMerge } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGitStore } from "../../stores/git-store";
+import { handleGitError } from "../../lib/git-errors";
 import { BranchSwitcher } from "./branch-switcher";
 import { MergeBranchDialog } from "./merge-branch-dialog";
+import { GitErrorDialog } from "./git-error-dialog";
 import { ChangesView } from "./changes-view";
 import { HistoryView } from "./history-view";
 import { StashesView } from "./stashes-view";
@@ -29,6 +30,7 @@ export function GitManagerPanel() {
   const [view, setView] = useState<View>("changes");
   const [busy, setBusy] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
+  const activeOp = useGitStore.use.activeOp();
 
   useEffect(() => {
     if (repoPath) void actions.refreshAll(repoPath).catch(() => {});
@@ -46,7 +48,7 @@ export function GitManagerPanel() {
     try {
       await fn();
     } catch (e) {
-      toast.error(String(e));
+      handleGitError(e);
     } finally {
       setBusy(null);
     }
@@ -65,7 +67,15 @@ export function GitManagerPanel() {
   const changedCount = files.length;
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col relative">
+      {/* Weighted progress for streaming network ops (fetch/pull/push/clone). */}
+      {activeOp?.running && activeOp.progress && (
+        <div
+          className="absolute top-0 left-0 h-[2px] bg-accent transition-[width] duration-200 z-10"
+          style={{ width: `${Math.min(100, activeOp.progress.percent)}%` }}
+          title={activeOp.progress.title}
+        />
+      )}
       {/* Toolbar: branch + sync */}
       <div className="shrink-0 flex items-center gap-1 px-1.5 h-[29px] border-b border-border-default">
         <BranchSwitcher />
@@ -132,6 +142,7 @@ export function GitManagerPanel() {
       </div>
 
       <MergeBranchDialog open={mergeOpen} onOpenChange={setMergeOpen} />
+      <GitErrorDialog />
     </div>
   );
 }

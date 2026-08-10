@@ -76,6 +76,10 @@ atlas-codeindex = { path = "../crates/atlas-codeindex" }
 # Structured side-by-side git diff engine (vendors delta's word-diff). Drives
 # `commands::gitdiff` (diff viewer + editor gutter).
 atlas-gitdiff = { path = "../crates/atlas-gitdiff" }
+# Git execution chokepoint: real-binary spawns (hooks run), typed stderr →
+# error taxonomy with friendly messages, porcelain-v2 status, streaming
+# output. Drives `commands::git`, `commands::git_ops`, `commands::git_snapshot`.
+atlas-git = { path = "../crates/atlas-git" }
 # Single source of truth for secret redaction. Capture scrubs agent content on
 # the way *into* the local store rather than on the way out to the network, so
 # nothing downstream — sync, export, share, support bundles — has to remember to

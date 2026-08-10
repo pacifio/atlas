@@ -1,0 +1,12 @@
+[package]
+name = "atlas-git"
+version = "0.1.0"
+edition = "2021"
+description = "Git execution layer for Atlas: a single spawn chokepoint over the real git binary (hooks run), a typed stderr->error taxonomy with friendly messages (ported from GitHub Desktop/dugite), porcelain-v2 status parsing, and streaming output for long operations."
+
+[lib]
+name = "atlas_git"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+regex = "1"

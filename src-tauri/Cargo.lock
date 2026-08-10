@@ -358,6 +358,7 @@ dependencies = [
  "atlas-checkpoint",
  "atlas-codeindex",
  "atlas-embed",
+ "atlas-git",
  "atlas-gitdiff",
  "atlas-memory",
  "atlas-review",
@@ -514,6 +515,14 @@ dependencies = [
  "candle-transformers",
  "serde_json",
  "tokenizers 0.23.1",
+]
+
+[[package]]
+name = "atlas-git"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde",
 ]
 
 [[package]]
