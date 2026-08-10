@@ -72,8 +72,15 @@ interface ChatInputProps {
   placeholder?: string;
   /** Fires on every doc change. Receives the plain text body. */
   onChange?: (value: string) => void;
-  /** Fires on Cmd/Ctrl+Enter — the submit gesture. */
+  /** Fires on Cmd/Ctrl+Enter — the submit gesture. Also fires on bare Enter
+   *  when `enterToSend` is true. */
   onSubmit?: () => void;
+  /** When true (default), bare Enter submits and Shift+Enter inserts a
+   *  newline — the Slack/Discord/ChatGPT convention. When false, Enter
+   *  always inserts a newline and only Cmd/Ctrl+Enter submits (the old
+   *  default). Read live via ref so toggling the setting takes effect
+   *  without remounting the view. */
+  enterToSend?: boolean;
   /** Fires whenever the `@` trigger range changes (open or close). */
   onMentionTrigger?: (trigger: MentionTrigger | null) => void;
   /** Fires whenever the `/` trigger range changes (open or close). */
@@ -110,6 +117,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     placeholder = "Message Atlas... (@ to mention, / for commands)",
     onChange,
     onSubmit,
+    enterToSend = true,
     onMentionTrigger,
     onSlashTrigger,
     keyInterceptor,
@@ -131,6 +139,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   onChangeRef.current = onChange;
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
+  const enterToSendRef = useRef(enterToSend);
+  enterToSendRef.current = enterToSend;
   const onMentionTriggerRef = useRef(onMentionTrigger);
   onMentionTriggerRef.current = onMentionTrigger;
   const onSlashTriggerRef = useRef(onSlashTrigger);
@@ -246,6 +256,24 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       },
     ]);
 
+    // Enter-to-send. `Prec.high` places this above lang-markdown's Enter
+    // (which would otherwise continue a bullet) but below the pickers'
+    // `Prec.highest` keymap, so Enter still confirms an open @ / # / slash
+    // selection instead of firing a send. Declaring no `shift` handler
+    // leaves Shift+Enter to fall through to plain newline insertion.
+    const enterSubmitKeymap = Prec.high(
+      keymap.of([
+        {
+          key: "Enter",
+          run: () => {
+            if (!enterToSendRef.current) return false;
+            onSubmitRef.current?.();
+            return true;
+          },
+        },
+      ]),
+    );
+
     const view = new EditorView({
       parent,
       state: EditorState.create({
@@ -269,6 +297,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           // Soft wrap so the composer feels like a textarea.
           EditorView.lineWrapping,
           submitKeymap,
+          enterSubmitKeymap,
           keymap.of([...historyKeymap, ...defaultKeymap]),
           cmPlaceholder(placeholder),
           theme,

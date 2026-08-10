@@ -223,6 +223,7 @@ export function TerminalPanel({ tabId }: TerminalPanelProps) {
               <BlockTerminal
                 isActive={isActiveInPane && isPaneActive}
                 terminalKey={ptyId}
+                tabId={tabId}
                 onFocus={() => {
                   setActiveTerminalInPane(tabId, pane.id, ptyId);
                   setActivePane(tabId, pane.id);

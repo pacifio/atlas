@@ -43,6 +43,30 @@ interface BrowserNav {
 
 type BrowserMode = "live" | "reader";
 
+/** Window-relative rect the native child webview is positioned to. */
+interface EmbedRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Sub-pixel geometry churn isn't worth a native reposition. */
+const RECT_EPSILON = 0.5;
+
+function rectsMatch(a: EmbedRect, b: EmbedRect): boolean {
+  return (
+    Math.abs(a.x - b.x) < RECT_EPSILON &&
+    Math.abs(a.y - b.y) < RECT_EPSILON &&
+    Math.abs(a.width - b.width) < RECT_EPSILON &&
+    Math.abs(a.height - b.height) < RECT_EPSILON
+  );
+}
+
+/** Frames of stillness before the settle loop parks itself. ~200ms at 60Hz —
+ *  long enough to ride out a CSS transition's easing tail. */
+const SETTLE_FRAMES = 12;
+
 interface BrowserPanelProps {
   tabId?: string;
   initialUrl?: string;
@@ -110,8 +134,25 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [embedError, setEmbedError] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const currentProject = useProjectStore.use.currentProject();
+
+  /** Previous frame's rect — drives the "geometry has settled" counter only. */
+  const prevRectRef = useRef<EmbedRect | null>(null);
+  const stableCountRef = useRef(0);
+  /** Last rect we told Rust about. Deliberately SEPARATE from `prevRectRef`:
+   *  bounds are diffed against what the native webview is actually parked at,
+   *  never against the previous frame. A transition moving <0.5px/frame reads
+   *  as "unchanged" every single frame, so a previous-frame diff would let the
+   *  placeholder drift arbitrarily far while the webview never moves.
+   *  `null` = nothing sent yet, or the last send failed — either way, re-send. */
+  const sentRectRef = useRef<EmbedRect | null>(null);
+  /** Last visibility we told Rust about; `null` = unknown, so re-send. */
+  const lastVisibleRef = useRef<boolean | null>(null);
+  /** Handle for the settle loop (see `pump`), or null when parked. */
+  const rafRef = useRef<number | null>(null);
+  const idleFramesRef = useRef(0);
 
   // ── Live: geometry + lifecycle ──────────────────────────────────────────
 
@@ -124,10 +165,94 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
     const el = placeholderRef.current;
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    // display:none (inactive tab) collapses to 0 — treat as "hidden".
     if (r.width <= 0 || r.height <= 0) return null;
-    return { x: r.left, y: r.top, width: r.width, height: r.height };
+
+    const winW = window.innerWidth;
+    const winH = window.innerHeight;
+    const x1 = Math.max(0, Math.min(winW, r.left));
+    const y1 = Math.max(0, Math.min(winH, r.top));
+    const x2 = Math.max(0, Math.min(winW, r.right));
+    const y2 = Math.max(0, Math.min(winH, r.bottom));
+    const width = x2 - x1;
+    const height = y2 - y1;
+
+    if (width <= 0 || height <= 0 || !Number.isFinite(x1) || !Number.isFinite(y1)) return null;
+    return { x: x1, y: y1, width, height };
   }, []);
+
+  // Single source of truth for the native webview's visibility & bounds.
+  // Returns true while geometry is still moving, so the settle loop knows it
+  // can't park yet.
+  const syncVisibility = useCallback((): boolean => {
+    if (modeRef.current !== "live" || !createdRef.current) return false;
+    const rect = currentRect();
+    const prevRect = prevRectRef.current;
+    const isStable = !!rect && !!prevRect && rectsMatch(rect, prevRect);
+
+    // Drives the settle loop. Starts as "did it move since last frame", but a
+    // reposition also counts: a drift slower than the epsilon reads as stable
+    // every frame, and without this the loop would park mid-transition and
+    // stop tracking a still-moving element.
+    let changed = !isStable;
+
+    if (rect) {
+      stableCountRef.current = isStable ? stableCountRef.current + 1 : 1;
+      prevRectRef.current = rect;
+
+      // Diffed against the last SENT rect, not the previous frame — see
+      // `sentRectRef`. Cached optimistically and invalidated on failure so a
+      // rejected call retries on the next sync instead of stranding the
+      // webview at stale bounds forever.
+      const sent = sentRectRef.current;
+      if (!sent || !rectsMatch(rect, sent)) {
+        changed = true;
+        sentRectRef.current = rect;
+        invoke("browser_embed_set_bounds", { id: embedId, rect }).catch(() => {
+          sentRectRef.current = null;
+        });
+      }
+    } else {
+      stableCountRef.current = 0;
+      prevRectRef.current = null;
+    }
+
+    // Require stable geometry (at least 2 consecutive checks) before showing native webview
+    const isGeometryStable = rect && stableCountRef.current >= 2;
+    const visible = !!isGeometryStable && !overlayOpenRef.current;
+    if (lastVisibleRef.current !== visible) {
+      lastVisibleRef.current = visible;
+      invoke("browser_embed_set_visible", { id: embedId, visible }).catch(() => {
+        // Same self-healing rationale as bounds: without this, one swallowed
+        // rejection leaves the pane natively hidden while the cache claims
+        // it's visible, and nothing ever retries.
+        lastVisibleRef.current = null;
+      });
+    }
+
+    return changed;
+  }, [embedId, currentRect]);
+
+  /**
+   * Kick a short rAF burst so a CSS transition (splitter drag, panel collapse)
+   * is tracked frame-by-frame, then park once the rect holds still for
+   * `SETTLE_FRAMES`. The previous shape ran rAF unconditionally for the life of
+   * the window — and since the browser is a persistent module that survives tab
+   * switches, that was a forced layout read every frame forever, per embed.
+   */
+  const pump = useCallback(() => {
+    idleFramesRef.current = 0;
+    if (rafRef.current !== null) return; // already running; the reset above extends it
+    const step = () => {
+      const moving = syncVisibility();
+      idleFramesRef.current = moving ? 0 : idleFramesRef.current + 1;
+      if (idleFramesRef.current >= SETTLE_FRAMES) {
+        rafRef.current = null;
+        return;
+      }
+      rafRef.current = requestAnimationFrame(step);
+    };
+    rafRef.current = requestAnimationFrame(step);
+  }, [syncVisibility]);
 
   const ensureLive = useCallback(
     async (url: string) => {
@@ -135,23 +260,42 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
       if (!rect) return;
       try {
         if (!createdRef.current) {
+          logEvent({
+            source: "atlas",
+            kind: "browser-embed",
+            summary: `Creating embedded browser child webview ${embedId} for ${url}`,
+            status: "success",
+            payload: { id: embedId, url, rect },
+          });
           await invoke("browser_embed_create", { id: embedId, url, rect });
           createdRef.current = true;
           registerEmbed();
+          setEmbedError(null);
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              pump();
+            });
+          });
         } else {
           await invoke("browser_embed_navigate", { id: embedId, url });
+          // A later successful navigation has to retire the fallback, or one
+          // transient failure pins the panel to the error UI for the rest of
+          // the tab's life even though the embed is working again.
+          setEmbedError(null);
         }
       } catch (e) {
+        const errorMsg = String(e);
+        setEmbedError(errorMsg);
         logEvent({
           source: "atlas",
           kind: "browser-embed",
-          summary: `Failed to load ${url} in embedded browser`,
+          summary: `Failed to load ${url} in embedded browser; activating fallback`,
           status: "failure",
-          payload: { url, error: String(e) },
+          payload: { url, error: errorMsg },
         });
       }
     },
-    [embedId, currentRect, registerEmbed],
+    [embedId, currentRect, registerEmbed, pump],
   );
 
   // Listen for Rust-owned navigation deltas for this embed.
@@ -172,39 +316,37 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
     };
   }, [embedId, groupId, tabId, focusThisGroup]);
 
-  // Single source of truth for the native webview's visibility. The webview is
-  // shown only when it's Live, created, has a non-zero rect (visible tab), AND
-  // no DOM overlay is open on top of it. `set_bounds` keeps it positioned for
-  // the restore even while hidden.
-  const syncVisibility = useCallback(() => {
-    if (modeRef.current !== "live" || !createdRef.current) return;
-    const rect = currentRect();
-    if (rect) {
-      invoke("browser_embed_set_bounds", { id: embedId, rect }).catch(() => {});
-    }
-    const visible = !!rect && !overlayOpenRef.current;
-    invoke("browser_embed_set_visible", { id: embedId, visible }).catch(() => {});
-  }, [embedId, currentRect]);
-
-  // Track geometry + visibility. ResizeObserver fires both when the panel
-  // resizes AND when the tab is hidden (display:none → size 0), so it doubles
-  // as the show/hide trigger for the native overlay.
+  // Track geometry + visibility across layout changes & transitions.
+  // `mode` is a dependency because the placeholder div only exists in Live
+  // mode — a Live→Reader→Live round-trip mounts a NEW node, and without the
+  // re-run the observer would stay attached to the detached one and silently
+  // stop reporting.
   useEffect(() => {
+    if (mode !== "live") return;
     const el = placeholderRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(syncVisibility);
+
+    const ro = new ResizeObserver(pump);
     ro.observe(el);
-    window.addEventListener("resize", syncVisibility);
+    window.addEventListener("resize", pump);
+    window.addEventListener("fullscreenchange", pump);
+    pump();
+
     return () => {
       ro.disconnect();
-      window.removeEventListener("resize", syncVisibility);
+      window.removeEventListener("resize", pump);
+      window.removeEventListener("fullscreenchange", pump);
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
     };
-  }, [syncVisibility]);
+  }, [mode, pump]);
 
   // Hide/restore the moment a DOM overlay opens or closes.
   useEffect(() => {
-    syncVisibility();
-  }, [overlayOpen, syncVisibility]);
+    pump();
+  }, [overlayOpen, pump]);
 
   // Create the embed once we have an initial URL and the placeholder is laid out.
   useEffect(() => {
@@ -216,16 +358,24 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
   }, [mode, initialUrl]);
 
   // Toggle the native overlay's visibility when switching Live⇄Reader, and
-  // (re)show + reposition when returning to Live. Routed through syncVisibility
-  // so it respects overlay suppression (can't re-show while a popup is open).
+  // (re)show + reposition when returning to Live.
   useEffect(() => {
     if (!createdRef.current) return;
     if (mode === "live") {
-      syncVisibility();
+      pump();
     } else {
-      invoke("browser_embed_set_visible", { id: embedId, visible: false }).catch(() => {});
+      // Reader mode tears the placeholder out of the tree, so the next Live
+      // pass starts from scratch: drop both caches or the re-show is skipped
+      // as "already sent" and the webview never comes back.
+      lastVisibleRef.current = false;
+      sentRectRef.current = null;
+      prevRectRef.current = null;
+      stableCountRef.current = 0;
+      invoke("browser_embed_set_visible", { id: embedId, visible: false }).catch(() => {
+        lastVisibleRef.current = null;
+      });
     }
-  }, [mode, embedId, syncVisibility]);
+  }, [mode, embedId, pump]);
 
   // Destroy the native webview when the tab closes (panel unmounts).
   useEffect(() => {
@@ -537,6 +687,49 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
       {/* ── Live mode: placeholder the native webview is positioned over ── */}
       {isLive && (
         <div ref={placeholderRef} className="flex-1 relative bg-bg-base">
+          {/* Safe fallback UI when native webview containment or creation fails */}
+          {embedError && (
+            <div className="absolute inset-0 flex items-center justify-center p-6 pointer-events-auto bg-bg-base z-10">
+              <div className="flex max-w-[380px] flex-col items-center gap-4 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border-default bg-bg-secondary">
+                  <Globe size={22} className="text-text-tertiary" />
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-sm font-medium text-text-primary">Native Embed Fallback</p>
+                  <p className="text-xs leading-relaxed text-text-tertiary">
+                    The embedded live browser could not be native-contained in this panel area. You
+                    can view in Reader mode or open in a separate window:
+                  </p>
+                  <p className="truncate pt-1 font-mono text-[10px] text-text-tertiary">
+                    {embedError}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 pt-1 w-full max-w-[280px]">
+                  <button
+                    onClick={toggleReader}
+                    className="flex items-center justify-center gap-2 rounded-md bg-text-primary px-3 py-2 text-xs font-medium text-bg-base transition-opacity hover:opacity-90 cursor-pointer"
+                  >
+                    <BookOpen size={14} />
+                    Switch to Reader mode
+                  </button>
+                  <button
+                    onClick={openBrowserWindow}
+                    className="flex items-center justify-center gap-2 rounded-md border border-border-default bg-bg-secondary px-3 py-2 text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary cursor-pointer"
+                  >
+                    <AppWindow size={14} />
+                    Open in a new window
+                  </button>
+                  <button
+                    onClick={openExternal}
+                    className="flex items-center justify-center gap-2 rounded-md border border-border-default bg-bg-secondary px-3 py-2 text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary cursor-pointer"
+                  >
+                    <ExternalLink size={14} />
+                    Open in default browser
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           {/* Shown when an overlay forces the native webview to hide — it sits
               UNDER the webview, so it's only visible while the webview is gone. */}
           {createdRef.current && overlayOpen && (

@@ -15,7 +15,7 @@ import { useBrowserOverlayStore } from "../stores/browser-overlay-store";
  * Deliberately NOT [role="tooltip"], so hover tooltips don't flash the browser.
  */
 const OVERLAY_SELECTOR =
-  '[role="dialog"], [role="menu"], [data-hint-overlay], [data-browser-suppress]';
+  '[role="dialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper], [data-hint-overlay], [data-browser-suppress], [data-overlay], [data-modal], [data-state="open"][data-side]';
 
 export function BrowserOverlayWatcher() {
   const embedCount = useBrowserOverlayStore.use.embedCount();
@@ -42,7 +42,14 @@ export function BrowserOverlayWatcher() {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["role", "data-state", "style", "data-browser-suppress"],
+      attributeFilter: [
+        "role",
+        "data-state",
+        "style",
+        "data-browser-suppress",
+        "data-overlay",
+        "data-modal",
+      ],
     });
 
     return () => {

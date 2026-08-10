@@ -8,6 +8,7 @@ import { LayoutSwitcher } from "@/features/layout/components/layout-switcher";
 import { SearchOverlay } from "@/components/search-overlay";
 import { useHotkeys } from "@/hooks/use-hotkey";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { useTerminalStore } from "@/features/terminal/stores/terminal-store";
 import { useProjectStore, type AppStateWire } from "@/features/project/stores/project-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { listenAgents, resetAgentByAgentId } from "@/features/chat/lib/agents-api";
@@ -346,11 +347,8 @@ export function App() {
     const groupTabs = st.tabs.filter((t) => groupOf(t) === g);
     const activeTab = st.tabs.find((t) => t.id === st.activeByGroup[g]);
 
-    const focusTerminalSoon = () => {
-      // Ask the active block terminal to focus once the tab is mounted/visible.
-      requestAnimationFrame(() => {
-        window.dispatchEvent(new CustomEvent("atlas:focus-terminal"));
-      });
+    const focusTerminalSoon = (tabId: string) => {
+      useTerminalStore.getState().actions.requestTerminalFocus(tabId);
     };
 
     if (activeTab?.type === "terminal") {
@@ -368,17 +366,18 @@ export function App() {
     const existing = groupTabs.find((t) => t.type === "terminal");
     if (existing) {
       setActiveTab(existing.id);
-      focusTerminalSoon();
+      focusTerminalSoon(existing.id);
     } else {
+      const newTabId = `terminal-${Date.now()}`;
       addTab({
-        id: `terminal-${Date.now()}`,
+        id: newTabId,
         type: "terminal",
         title: "Terminal",
         closable: true,
         dirty: false,
         data: {},
       });
-      focusTerminalSoon();
+      focusTerminalSoon(newTabId);
     }
   };
   const currentProject = useProjectStore.use.currentProject();
@@ -541,7 +540,7 @@ export function App() {
         }
         if (permissionState !== "granted") return;
         sendNotification({
-          title: `Atlas — ${sessionProjectName(acpSessionId)}`,
+          title: `Atlas: ${sessionProjectName(acpSessionId)}`,
           body: "Agent task finished.",
         });
       } catch (e) {
@@ -564,7 +563,7 @@ export function App() {
         }
         if (permissionState !== "granted") return;
         sendNotification({
-          title: `Atlas — ${sessionProjectName(acpSessionId)} needs permission`,
+          title: `Atlas: ${sessionProjectName(acpSessionId)} needs permission`,
           body: `Approve "${toolTitle}" to continue.`,
         });
       } catch (e) {
