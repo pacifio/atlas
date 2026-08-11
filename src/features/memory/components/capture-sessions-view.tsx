@@ -37,7 +37,7 @@ export function CaptureSessionsView({
         setSessions(
           rows
             .filter((r) => r.agent === agent)
-            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+            .sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt)),
         );
       })
       .catch(() => {
@@ -152,7 +152,7 @@ export function CaptureSessionsView({
                   {s.messageCount || "—"}
                 </span>
                 <span className="w-[110px] shrink-0 text-right text-[10px] text-[var(--text-tertiary)]">
-                  {s.updatedAt ? timeAgo(s.updatedAt, { suffix: true }) : "—"}
+                  {s.lastActivityAt ? timeAgo(s.lastActivityAt, { suffix: true }) : "—"}
                 </span>
               </div>
             ))

@@ -37,8 +37,11 @@ export type SessionState = "attention" | "live" | "imported" | "done";
 
 export function sessionState(session: SessionSummary, now = Date.now()): SessionState {
   if (session.needsAttention) return "attention";
-  if (now - new Date(session.updatedAt).getTime() < LIVE_WINDOW_MS) return "live";
+  // Imported before live: an import writes the row *now*, so a transcript read
+  // seconds ago passes the liveness test while being months old. A corpus
+  // re-import would otherwise turn the entire board green at once.
   if (session.source === "external_jsonl") return "imported";
+  if (now - new Date(session.updatedAt).getTime() < LIVE_WINDOW_MS) return "live";
   return "done";
 }
 
@@ -53,23 +56,62 @@ export function sessionState(session: SessionSummary, now = Date.now()): Session
  */
 export function tokenLabel(session: SessionSummary): string | null {
   if (session.totalTokens > 0) return `${formatTokens(session.totalTokens)} tok`;
-  if (session.contextUsed == null) return null;
-  const size = session.contextSize ? ` / ${formatTokens(session.contextSize)}` : "";
-  return `${formatTokens(session.contextUsed)}${size} ctx`;
+  if (session.contextUsed != null) {
+    const size = session.contextSize ? ` / ${formatTokens(session.contextSize)}` : "";
+    return `${formatTokens(session.contextUsed)}${size} ctx`;
+  }
+  // A Session that only ever read cache still spent something, and saying
+  // nothing at all reads as "no data" rather than "no fresh tokens".
+  const cached = session.cacheReadTokens + session.cacheCreationTokens;
+  return cached > 0 ? `${formatTokens(cached)} cached` : null;
 }
 
-/** `84.2K`, `1.24M` — the design's token shorthand. */
+/** `1.2M in · 84.0K out · 900.1K cache read` — the full spend, for a tooltip. */
+export function tokenBreakdown(session: SessionSummary): string | null {
+  const parts: string[] = [];
+  if (session.totalTokens > 0) parts.push(`${formatTokens(session.totalTokens)} in + out`);
+  if (session.cacheCreationTokens > 0) {
+    parts.push(`${formatTokens(session.cacheCreationTokens)} cache write`);
+  }
+  if (session.cacheReadTokens > 0) {
+    parts.push(`${formatTokens(session.cacheReadTokens)} cache read`);
+  }
+  if (session.contextUsed != null) parts.push(`${formatTokens(session.contextUsed)} context`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/**
+ * `84.2K`, `1.24M`, `1.55B` — the design's token shorthand.
+ *
+ * The billions tier is not theoretical: every request re-reads the cached
+ * prefix, so a few months of sessions on this project report 1.5B cache-read
+ * tokens. Without it that renders as `1548.47M`, which is both wider than the
+ * column and harder to read than the number it stands for.
+ */
 export function formatTokens(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
 }
 
-/** `47m`, `1h 04m` — zero-padded minutes so the column stays aligned. */
+/**
+ * `47m`, `1h 04m`, `142h`, `58d` — zero-padded minutes so the column stays
+ * aligned, and **bounded** so no value can escape the cell that holds it.
+ *
+ * The stat tiles are a fifth of the panel each and render this at 28px. An
+ * unbounded `1234h 56m` overflowed its tile and painted across the one beside
+ * it. Minutes stop earning their space long before then: nobody reads the `06m`
+ * in `42488h 06m`, and an org-wide total is legitimately in the thousands of
+ * hours even once the underlying figure is honest.
+ */
 export function formatDuration(seconds: number): string {
   const minutes = Math.max(0, Math.round(seconds / 60));
   if (minutes < 60) return `${minutes}m`;
-  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 100) return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
+  if (hours < 1000) return `${hours}h`;
+  return `${Math.round(hours / 24).toLocaleString()}d`;
 }
 
 /**
@@ -149,16 +191,20 @@ function shortDate(date: Date): string {
 }
 
 /**
- * Sessions grouped by the local day they were last written to.
+ * Sessions grouped by the local day they were last **active**.
  *
  * The board, the weekly chart and the calendar all need this and each built its
  * own copy of the loop; the calendar's keyed on a different field for a while
  * before anyone noticed. One function, one key.
+ *
+ * That key is `lastActivityAt`, never `updatedAt`. `updatedAt` moves whenever
+ * the row is rewritten, so a bulk import of a year of transcripts filed all of
+ * them under Today — 106 sessions, in the report that prompted this.
  */
 export function bucketByDay(sessions: BoardSession[]): Map<number, BoardSession[]> {
   const byDay = new Map<number, BoardSession[]>();
   for (const session of sessions) {
-    const key = startOfDay(new Date(session.updatedAt));
+    const key = startOfDay(new Date(session.lastActivityAt));
     const bucket = byDay.get(key);
     if (bucket) bucket.push(session);
     else byDay.set(key, [session]);
@@ -191,7 +237,7 @@ export function groupByDay(sessions: BoardSession[]): DayBucket[] {
 
 /** `4 sessions · 2h 11m · 486.3K tok` — the right-hand side of a day header. */
 function totals(rows: BoardSession[]): string {
-  const seconds = rows.reduce((a, s) => a + s.durationSeconds, 0);
+  const seconds = rows.reduce((a, s) => a + s.activeSeconds, 0);
   const tokens = rows.reduce((a, s) => a + s.totalTokens, 0);
   return [
     `${rows.length} session${rows.length === 1 ? "" : "s"}`,
@@ -223,7 +269,7 @@ export function lastSevenDays(sessions: BoardSession[]): WeekDay[] {
     const rows = byDay.get(key) ?? [];
     return {
       key,
-      minutes: Math.round(rows.reduce((a, s) => a + s.durationSeconds, 0) / 60),
+      minutes: Math.round(rows.reduce((a, s) => a + s.activeSeconds, 0) / 60),
       label: shortDate(date),
       full: date.toLocaleDateString(undefined, {
         weekday: "short",

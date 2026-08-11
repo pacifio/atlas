@@ -41,7 +41,7 @@ export function CalendarView({
 
   // Anchor on the newest row rather than on today — see the module note.
   const anchor = useMemo(() => {
-    const newest = sessions[0] ? new Date(sessions[0].updatedAt) : new Date();
+    const newest = sessions[0] ? new Date(sessions[0].lastActivityAt) : new Date();
     return new Date(newest.getFullYear(), newest.getMonth() + offset, 1);
   }, [sessions, offset]);
 
@@ -59,7 +59,7 @@ export function CalendarView({
       inMonth: date.getMonth() === monthStart.getMonth(),
       isToday: key === today,
       rows,
-      minutes: Math.round(rows.reduce((a, s) => a + s.durationSeconds, 0) / 60),
+      minutes: Math.round(rows.reduce((a, s) => a + s.activeSeconds, 0) / 60),
     };
   });
   // A month that fits in five weeks should not render a sixth empty row.
@@ -67,7 +67,7 @@ export function CalendarView({
   const visible = cells.slice(0, rowCount * 7);
 
   const monthRows = visible.filter((c) => c.inMonth).flatMap((c) => c.rows);
-  const monthMinutes = Math.round(monthRows.reduce((a, s) => a + s.durationSeconds, 0) / 60);
+  const monthMinutes = Math.round(monthRows.reduce((a, s) => a + s.activeSeconds, 0) / 60);
   const monthTokens = monthRows.reduce((a, s) => a + s.totalTokens, 0);
 
   const weekdays = useMemo(
@@ -281,7 +281,7 @@ function DayCard({
               </span>
             </span>
             <span className="shrink-0 font-mono text-[10.5px] text-[var(--text-secondary)]">
-              {formatDuration(s.durationSeconds)}
+              {formatDuration(s.activeSeconds)}
             </span>
           </div>
         ))}

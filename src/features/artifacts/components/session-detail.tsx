@@ -40,7 +40,14 @@ import {
   type TimelineEntry,
   type TimelineFilters,
 } from "../types";
-import { agentLabel, formatDuration, prettyModel, sessionTitle, tokenLabel } from "../lib/board";
+import {
+  agentLabel,
+  formatDuration,
+  prettyModel,
+  sessionTitle,
+  tokenBreakdown,
+  tokenLabel,
+} from "../lib/board";
 import { exportSession, type ExportFormat } from "../lib/export";
 import { observeSize } from "../lib/shared-resize-observer";
 import { animatedScrollTo } from "../lib/scroll-to";
@@ -690,7 +697,7 @@ function Masthead({ detail }: { detail: Detail }) {
             </Chip>
           )}
           <span className="font-mono text-[10.5px] text-[var(--text-tertiary)]">
-            {timeAgo(s.updatedAt, { suffix: true })} · {formatDuration(s.durationSeconds)}
+            {timeAgo(s.lastActivityAt, { suffix: true })} · {formatDuration(s.activeSeconds)}
           </span>
           {s.needsAttention && (
             <span
@@ -706,17 +713,11 @@ function Masthead({ detail }: { detail: Detail }) {
       </div>
 
       <div className="mt-5 grid grid-cols-4 overflow-hidden rounded-md border border-[var(--border-default)]">
-        <Metric label="Duration" value={formatDuration(s.durationSeconds)} sub={clock(s)} />
+        <Metric label="Active" value={formatDuration(s.activeSeconds)} sub={clock(s)} />
         <Metric
           label="Tokens"
           value={tokens ?? "—"}
-          sub={
-            s.totalTokens > 0
-              ? "in + out"
-              : s.contextUsed != null
-                ? "context window"
-                : "not reported"
-          }
+          sub={tokenBreakdown(s) ?? (s.contextUsed != null ? "context window" : "not reported")}
           divided
         />
         <Metric
@@ -2486,11 +2487,17 @@ function matches(entry: TimelineEntry, needle: string): boolean {
   return haystack(entry).includes(needle);
 }
 
-/** `18:29 → 19:27`, the span under the duration metric. */
+/**
+ * `18:29 → 19:27 · 2h 14m span`, under the active-time metric.
+ *
+ * Both numbers, because they answer different questions: the metric is agent
+ * time and this is the wall-clock span it happened inside. Showing only one
+ * invites reading it as the other.
+ */
 function clock(s: Detail["summary"]): string {
   const fmt = (iso: string) =>
     new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  return `${fmt(s.startedAt)} → ${fmt(s.updatedAt)}`;
+  return `${fmt(s.startedAt)} → ${fmt(s.lastActivityAt)} · ${formatDuration(s.wallSeconds)} span`;
 }
 
 function time(iso: string): string {

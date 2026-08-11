@@ -23,8 +23,16 @@ export interface SessionSummary {
   /** `acp`, `cersei` or `external_jsonl`. */
   source: string;
   startedAt: string;
+  /** When the row was last *written*. Liveness only — never group or sort on
+   *  it: an import or a token update bumps it and neither is work. */
   updatedAt: string;
-  durationSeconds: number;
+  /** When the Session last did work. The key for ordering and day grouping. */
+  lastActivityAt: string;
+  /** Agent time — turn spans when the agent reported them, otherwise the
+   *  gap-capped sum of message intervals. Not the wall-clock span. */
+  activeSeconds: number;
+  /** First activity to last, idle included. Usually much larger. */
+  wallSeconds: number;
   messageCount: number;
   toolCallCount: number;
   checkpointCount: number;
@@ -35,6 +43,10 @@ export interface SessionSummary {
   filesTouched: number;
   /** Input + output. `0` for an agent that reports no split — see `contextUsed`. */
   totalTokens: number;
+  /** Cache writes and cache reads. Real spend, carried beside the split rather
+   *  than inside it — for a cache-heavy agent they dwarf both. */
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
   /** Context-window occupancy, for agents that report only that (every ACP
    *  agent). Deliberately not folded into `totalTokens`: occupancy is not
    *  consumption, and a compaction makes it go down. */

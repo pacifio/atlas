@@ -16,7 +16,7 @@ use rusqlite::Connection;
 use crate::error::{Error, Result};
 
 /// Bump when adding a migration, and add the matching arm in [`migrate`].
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     // Fast path, outside any transaction: the overwhelmingly common case is a
@@ -69,6 +69,11 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             // Same tolerance as V6, for the same reason: pure ALTER TABLE, and
             // a store that half-applied it must still be openable.
             apply_tolerant(conn, V7)?;
+        }
+        if found < 8 {
+            // Same tolerance again: one ALTER TABLE, two indexes, and three
+            // repair statements that are all safe to re-run.
+            apply_tolerant(conn, V8)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
@@ -130,6 +135,48 @@ const V7: &str = r#"
 -- moment the prompt is sent, so recording it there gives every Session one, and
 -- a Session that later lands commits on other branches shows the union.
 ALTER TABLE agent_session ADD COLUMN branch TEXT;
+"#;
+
+const V8: &str = r#"
+-- When the Session last did work, as opposed to when its row was last written.
+--
+-- `updated_at` is stamped with the wall clock by every write there is: an
+-- upsert, a title derivation, a token update, an import. The Timeline read it
+-- as the end of the Session and got `updated_at - started_at` as a duration,
+-- so a transcript that ran in June and was imported in July reported 1395
+-- hours, and the day grouping filed a year of history under Today. Activity
+-- and mutation are two different facts and now live in two different columns.
+ALTER TABLE agent_session ADD COLUMN last_activity_at TEXT;
+
+-- Backfill from the only timestamps in the store that were never the wall clock
+-- at write time: a message carries the transcript's own stamp, and a turn ends
+-- when the turn ended.
+UPDATE agent_session SET last_activity_at = (
+    SELECT MAX(stamp) FROM (
+        SELECT MAX(created_at) AS stamp FROM agent_message WHERE session_id = agent_session.id
+        UNION ALL
+        SELECT MAX(ended_at) AS stamp FROM turn WHERE session_id = agent_session.id
+    )
+);
+
+-- A Session with no message and no closed turn has nothing better to offer.
+UPDATE agent_session SET last_activity_at = updated_at WHERE last_activity_at IS NULL;
+
+-- Board ordering and day bucketing.
+CREATE INDEX IF NOT EXISTS idx_session_activity
+    ON agent_session (workspace_id, last_activity_at);
+
+-- Covers the gap-capped active-time scan, which reads (session_id, created_at)
+-- and nothing else.
+CREATE INDEX IF NOT EXISTS idx_message_activity
+    ON agent_message (session_id, created_at);
+
+-- Re-read every transcript once. Token usage was never parsed out of the JSONL,
+-- so every imported Session carries an empty total — and progress is keyed on
+-- file size, which means a naive re-run skips the entire corpus. Clearing this
+-- is the whole token backfill. Re-reading is idempotent: every line carries the
+-- agent's own message id, and the usage write is a replace rather than a sum.
+DELETE FROM import_progress;
 "#;
 
 const V1: &str = r#"
@@ -514,4 +561,6 @@ pub const REQUIRED_INDEXES: &[&str] = &[
     "idx_checkpoint_patch",
     "idx_checkpoint_outbox",
     "idx_file_touch_unconsumed",
+    "idx_session_activity",
+    "idx_message_activity",
 ];

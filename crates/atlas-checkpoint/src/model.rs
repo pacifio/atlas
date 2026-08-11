@@ -277,6 +277,13 @@ pub struct Session {
     pub summary: Option<String>,
     pub started_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// When this Session last did work — its newest message stamp or turn end.
+    ///
+    /// Deliberately not `updated_at`, which is a row-mutation clock: deriving a
+    /// title, recording usage or re-importing a transcript all bump that and
+    /// none of them is work happening now. Null only for a Session with no
+    /// message and no closed turn.
+    pub last_activity_at: Option<DateTime<Utc>>,
     /// Something went wrong recording this Session and a human should know.
     pub needs_attention: bool,
     pub attention_reason: Option<String>,
