@@ -3,9 +3,10 @@
 // `message-input.tsx` can wire it identically.
 //
 // Differences vs mentions:
-//   - Triggers ONLY when `/` sits at the start of the line (after optional
-//     whitespace). Slash commands replace the message; `foo /bar` mid-line
-//     shouldn't open a picker.
+//   - `detectTrigger` below scans backward from the caret for a `/`
+//     preceded by whitespace or start-of-line, same as the mention
+//     extension's `@`/`~` scan — so a slash command can sit anywhere in the
+//     message, not just at the very start.
 //   - There is no document-level state field — selecting a command
 //     either runs an app-level handler (e.g. `/login` opens a dialog) or
 //     leaves the literal `/foo` text in place for passthrough commands.
@@ -86,25 +87,35 @@ function detectTrigger(view: EditorView): SlashTrigger | null {
   const sel = view.state.selection.main;
   if (!sel.empty) return null;
   const caret = sel.head;
-  // Only the FIRST line of the document can host a slash command — the
-  // composer is single-message and slash commands replace the message,
-  // so multi-line input with a `/` somewhere makes no sense.
-  if (view.state.doc.lines > 1) return null;
   const line = view.state.doc.lineAt(caret);
-  const before = view.state.doc.sliceString(line.from, caret);
-  const match = before.match(/^(\s*)\/([^\s/]*)$/);
-  if (!match) return null;
-  const leading = match[1].length;
-  const from = line.from + leading;
-  const query = match[2];
-  const coords = view.coordsAtPos(from);
-  if (!coords) return null;
-  return {
-    from,
-    to: caret,
-    query,
-    anchor: { x: coords.left, y: coords.top },
-  };
+  // Scan backward from the caret for the most recent `/` on this line,
+  // stopping (no trigger) at the first whitespace encountered first. This
+  // means the `/` must be part of the token currently being typed, mirroring
+  // `cm-mention-extension.ts`'s `@`/`~` scan.
+  const lineBefore = view.state.doc.sliceString(line.from, caret);
+  for (let i = lineBefore.length - 1; i >= 0; i--) {
+    const ch = lineBefore[i];
+    if (ch === "/") {
+      const prev = i > 0 ? lineBefore[i - 1] : "";
+      if (prev && !/\s/.test(prev) && prev !== "(" && prev !== "[") {
+        return null;
+      }
+      const from = line.from + i;
+      const query = lineBefore.slice(i + 1);
+      const coords = view.coordsAtPos(from);
+      if (!coords) return null;
+      return {
+        from,
+        to: caret,
+        query,
+        anchor: { x: coords.left, y: coords.top },
+      };
+    }
+    if (/\s/.test(ch)) {
+      return null;
+    }
+  }
+  return null;
 }
 
 // `clearSlashRange` used to live here. It moved to `./cm-clear-range` — it

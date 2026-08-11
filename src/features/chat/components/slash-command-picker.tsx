@@ -1,11 +1,13 @@
 // Floating slash-command picker. Same architecture as `mention-picker.tsx`:
 // portal-anchored, imperative handle, no DOM focus. Opens when the trigger
-// plugin (`cm-slash-extension.ts`) reports a `/` at the start of the line.
+// plugin (`cm-slash-extension.ts`) reports a `/` preceded by whitespace or
+// start-of-line, anywhere in the composer.
 //
-// Phase 1 wires only `/login` as an Atlas-handled command (opens the
-// existing `ClaudeLoginDialog`). Every other command in the catalogue is
-// marked `unsupported` and renders greyed out — the picker is primarily a
-// discoverability surface for now.
+// Per ADR 0003, the bound agent's own ACP `available_commands_update` is the
+// only source of commands — there is no local catalogue. `message-input.tsx`
+// merges in a few host-handled guard rows (`/login`, `/skills`, and
+// `/clear`/`/logout` dimmed-unavailable rows) alongside whatever the agent
+// advertises.
 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -15,15 +17,25 @@ import { cn } from "@/lib/utils";
 
 /** Where the command is dispatched.
  *
- * - `atlas-login` — opens Atlas's own `ClaudeLoginDialog` (the adapter
- *   filters `/login` from its slash list, so sending it as text is a
- *   no-op; we drive a host-side OAuth flow instead).
+ * - `atlas-login` / `codex-login` — opens Atlas's own sign-in dialog for the
+ *   bound agent (the ACP adapter filters `/login` from its slash list, so
+ *   sending it as text is a no-op; we drive a host-side OAuth flow instead).
+ * - `open-settings` — host-handled, opens Settings on a fixed section
+ *   (currently only `/skills`).
+ * - `unavailable` — host-handled guard row for a command the agent doesn't
+ *   support (e.g. `/clear`/`/logout`, blocklisted by the ACP adapter).
+ *   Selecting it just closes the picker.
  * - `passthrough` — sent verbatim as the user's next prompt. The agent
  *   (claude-agent-acp's SDK) processes it locally and emits the response
  *   as `<local-command-stdout>…</local-command-stdout>` blocks which flow
  *   through the normal `agent_message_chunk` pipeline and render in the
  *   chat thread alongside regular assistant output. */
-export type SlashCommandHandler = "atlas-login" | "codex-login" | "passthrough";
+export type SlashCommandHandler =
+  | "atlas-login"
+  | "codex-login"
+  | "open-settings"
+  | "unavailable"
+  | "passthrough";
 
 export interface SlashCommand {
   /** Unique slug used both as the visible command name and matched query. */
@@ -46,6 +58,9 @@ export interface SlashCommandPickerHandle {
   moveUp(): void;
   commit(): boolean;
   goBack(): boolean;
+  /** The currently-highlighted row, if any. Used by Tab-to-complete, which
+   *  needs the full command name without sending. */
+  activeCommand(): SlashCommand | null;
 }
 
 export interface SlashCommandPickerProps {
@@ -54,180 +69,34 @@ export interface SlashCommandPickerProps {
   anchor: { x: number; y: number } | null;
   onSelect: (cmd: SlashCommand) => void;
   onClose: () => void;
-  /** Override the catalogue (e.g. Codex's ACP-reported commands). When absent
-   *  the curated Claude Code list is used. */
-  commands?: SlashCommand[];
+  /** The bound agent's ACP-advertised commands, plus any host-handled guard
+   *  rows the caller merges in. ADR 0003: there is no local fallback
+   *  catalogue — ACP advertisement is the only source. */
+  commands: SlashCommand[];
+  /** True between session start and the first `available_commands_update` —
+   *  renders a loading message instead of "no commands match". */
+  loading?: boolean;
   /** Footer label (e.g. "Codex commands"). */
   footerLabel?: string;
 }
 
-// ── Command catalogue ──────────────────────────────────────────────────────
-//
-// Curated from the Claude Code CLI command list. `/login` is the only
-// host-handled command (opens Atlas's sign-in dialog); everything else is
-// `passthrough` — the picker drops the command text into the composer
-// and either auto-sends it (no args) or waits for the user to fill in
-// arguments before pressing Enter. The agent (claude-agent-acp) handles
-// the actual command logic and emits the response into the chat thread.
-
-export const SLASH_COMMANDS: SlashCommand[] = [
-  {
-    name: "login",
-    signature: "/login",
-    description: "Sign in to your Anthropic account.",
-    handler: "atlas-login",
-  },
-  {
-    name: "logout",
-    signature: "/logout",
-    description: "Sign out from your Anthropic account.",
-    handler: "passthrough",
-  },
-  {
-    name: "agents",
-    signature: "/agents",
-    description: "Manage agent configurations.",
-    handler: "passthrough",
-  },
-  {
-    name: "add-dir",
-    signature: "/add-dir <path>",
-    description: "Add a working directory for file access in this session.",
-    handler: "passthrough",
-  },
-  {
-    name: "clear",
-    signature: "/clear [name]",
-    description: "Start a new conversation with empty context.",
-    handler: "passthrough",
-  },
-  {
-    name: "compact",
-    signature: "/compact",
-    description: "Summarize the conversation to free up context.",
-    handler: "passthrough",
-  },
-  {
-    name: "model",
-    signature: "/model [model]",
-    description: "Set the AI model for the current session.",
-    handler: "passthrough",
-  },
-  {
-    name: "effort",
-    signature: "/effort [level]",
-    description: "Set the model effort level (low/medium/high/xhigh/max).",
-    handler: "passthrough",
-  },
-  {
-    name: "context",
-    signature: "/context",
-    description: "Visualize current context usage.",
-    handler: "passthrough",
-  },
-  {
-    name: "memory",
-    signature: "/memory",
-    description: "Edit CLAUDE.md memory files and auto-memory entries.",
-    handler: "passthrough",
-  },
-  {
-    name: "resume",
-    signature: "/resume [session]",
-    description: "Resume a previous conversation.",
-    handler: "passthrough",
-  },
-  {
-    name: "rewind",
-    signature: "/rewind",
-    description: "Rewind the conversation or code to a previous point.",
-    handler: "passthrough",
-  },
-  {
-    name: "diff",
-    signature: "/diff",
-    description: "Open an interactive diff viewer for uncommitted changes.",
-    handler: "passthrough",
-  },
-  {
-    name: "permissions",
-    signature: "/permissions",
-    description: "Manage allow / ask / deny rules for tool permissions.",
-    handler: "passthrough",
-  },
-  {
-    name: "config",
-    signature: "/config",
-    description: "Open the Settings interface.",
-    handler: "passthrough",
-  },
-  {
-    name: "status",
-    signature: "/status",
-    description: "Show version, model, account, and connectivity.",
-    handler: "passthrough",
-  },
-  {
-    name: "usage",
-    signature: "/usage",
-    description: "Show session cost, plan usage limits, and activity stats.",
-    handler: "passthrough",
-  },
-  {
-    name: "doctor",
-    signature: "/doctor",
-    description: "Diagnose and verify your Claude Code installation.",
-    handler: "passthrough",
-  },
-  {
-    name: "mcp",
-    signature: "/mcp",
-    description: "Manage MCP server connections and OAuth.",
-    handler: "passthrough",
-  },
-  {
-    name: "hooks",
-    signature: "/hooks",
-    description: "View hook configurations for tool events.",
-    handler: "passthrough",
-  },
-  {
-    name: "ide",
-    signature: "/ide",
-    description: "Manage IDE integrations and show status.",
-    handler: "passthrough",
-  },
-  {
-    name: "init",
-    signature: "/init",
-    description: "Initialize project with a CLAUDE.md guide.",
-    handler: "passthrough",
-  },
-  {
-    name: "review",
-    signature: "/review [PR]",
-    description: "Review a pull request locally in the current session.",
-    handler: "passthrough",
-  },
-  {
-    name: "security-review",
-    signature: "/security-review",
-    description: "Analyze pending changes for security vulnerabilities.",
-    handler: "passthrough",
-  },
-  {
-    name: "feedback",
-    signature: "/feedback",
-    description: "Submit feedback, report a bug, or share the conversation.",
-    handler: "passthrough",
-  },
-  {
-    name: "help",
-    signature: "/help",
-    description: "Show help and available commands.",
-    handler: "passthrough",
-  },
-];
+/** Highlight every case-insensitive occurrence of `query` in `text`. */
+function highlightMatches(text: string, query: string) {
+  const q = query.trim();
+  if (!q) return text;
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = text.split(new RegExp(`(${escaped})`, "gi"));
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <mark key={i} className="bg-[var(--bg-selected)] text-[var(--text-primary)] rounded-[2px]">
+        {part}
+      </mark>
+    ) : (
+      part
+    ),
+  );
+}
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -236,7 +105,7 @@ const GAP = 6;
 
 export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashCommandPickerProps>(
   function SlashCommandPicker(
-    { open, query, anchor, onSelect, onClose, commands, footerLabel },
+    { open, query, anchor, onSelect, onClose, commands, loading, footerLabel },
     ref,
   ) {
     const [active, setActive] = useState(0);
@@ -245,17 +114,27 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
       if (open) setActive(0);
     }, [open, query]);
 
-    // The agent's own commands when provided (Codex), else the curated Claude list.
-    const catalogue = commands ?? SLASH_COMMANDS;
-
-    // Filter by query against name + description. Cheap linear scan.
+    // Tiered sort: exact name match, then name prefix, then name substring,
+    // then description substring. Alphabetical within each tier. Unmatched
+    // rows are dropped rather than kept in catalogue order, so a query
+    // narrows the list instead of just reordering it.
     const rows = useMemo(() => {
       const q = query.trim().toLowerCase();
-      if (!q) return catalogue;
-      return catalogue.filter(
-        (c) => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q),
-      );
-    }, [query, catalogue]);
+      if (!q) return commands;
+      const tierOf = (c: SlashCommand): number => {
+        const name = c.name.toLowerCase();
+        if (name === q) return 0;
+        if (name.startsWith(q)) return 1;
+        if (name.includes(q)) return 2;
+        if (c.description.toLowerCase().includes(q)) return 3;
+        return -1;
+      };
+      return commands
+        .map((c) => ({ c, tier: tierOf(c) }))
+        .filter((x) => x.tier >= 0)
+        .sort((a, b) => a.tier - b.tier || a.c.name.localeCompare(b.c.name))
+        .map((x) => x.c);
+    }, [query, commands]);
 
     useEffect(() => {
       if (active >= rows.length) setActive(0);
@@ -285,6 +164,7 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
           return true;
         },
         goBack: () => false,
+        activeCommand: () => activeRow ?? null,
       }),
       [activeRow, rows.length],
     );
@@ -331,12 +211,13 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
         <div className="flex-1 overflow-y-auto py-1">
           {rows.length === 0 ? (
             <div className="px-3 py-6 text-center text-[11px] text-[var(--text-tertiary)] leading-snug">
-              No commands match &ldquo;/{query}&rdquo;.
+              {loading ? "Loading commands…" : `No commands match "/${query}".`}
             </div>
           ) : (
             rows.map((cmd, i) => {
               const isActive = i === active;
               const needsArgs = commandRequiresArgs(cmd);
+              const unavailable = cmd.handler === "unavailable";
               return (
                 <button
                   key={cmd.name}
@@ -347,17 +228,19 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
                   }}
                   className={cn(
                     "w-full text-left px-3 h-[26px] flex items-center gap-2 text-[11.5px]",
-                    isActive
-                      ? "bg-[var(--bg-selected)] text-[var(--text-primary)]"
-                      : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
+                    unavailable
+                      ? "opacity-50"
+                      : isActive
+                        ? "bg-[var(--bg-selected)] text-[var(--text-primary)]"
+                        : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
                   )}
                   title={cmd.description}
                 >
                   <span className="font-mono text-[var(--text-primary)] shrink-0 min-w-[80px]">
-                    /{cmd.name}
+                    /{highlightMatches(cmd.name, query)}
                   </span>
                   <span className="truncate text-[10.5px] text-[var(--text-tertiary)] min-w-0 flex-1">
-                    {cmd.description}
+                    {highlightMatches(cmd.description, query)}
                   </span>
                   {needsArgs && (
                     <span

@@ -461,28 +461,34 @@ function Composer({
     inputRef.current?.insertMention(mention, t.from, t.to);
   }, []);
 
-  const keyInterceptor = useCallback((key: "Up" | "Down" | "Enter" | "Escape" | "Backspace") => {
-    const p = pickerRef.current;
-    const t = triggerRef.current;
-    if (!t || !p) return false;
-    switch (key) {
-      case "Up":
-        p.moveUp();
-        return true;
-      case "Down":
-        p.moveDown();
-        return true;
-      case "Enter":
-        return p.commit();
-      case "Escape":
-        if (p.goBack()) return true;
-        setTrigger(null);
-        return true;
-      case "Backspace":
-        if (t.query === "" && p.goBack()) return true;
-        return false;
-    }
-  }, []);
+  const keyInterceptor = useCallback(
+    (key: "Up" | "Down" | "Enter" | "Escape" | "Backspace" | "Tab") => {
+      const p = pickerRef.current;
+      const t = triggerRef.current;
+      if (!t || !p) return false;
+      switch (key) {
+        case "Up":
+          p.moveUp();
+          return true;
+        case "Down":
+          p.moveDown();
+          return true;
+        case "Enter":
+          return p.commit();
+        case "Escape":
+          if (p.goBack()) return true;
+          setTrigger(null);
+          return true;
+        case "Backspace":
+          if (t.query === "" && p.goBack()) return true;
+          return false;
+        case "Tab":
+          // No slash picker on this composer — Tab is never intercepted.
+          return false;
+      }
+    },
+    [],
+  );
 
   const submit = () => {
     if (running) {

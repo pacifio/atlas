@@ -16,8 +16,7 @@ import {
   AGENT_LABEL,
   type SwitchableAgent,
 } from "@/types/agent";
-import { composePrompt, type MentionData, type MentionSkill } from "../lib/mentions";
-import { sharedMemory } from "@/features/memory/lib/shared-memory-api";
+import { composePrompt, type MentionData } from "../lib/mentions";
 import { usePaneFind } from "../lib/use-pane-find";
 import { useDefaultAgentType } from "../hooks/use-default-agent";
 import { MessageInput } from "./message-input";
@@ -754,19 +753,6 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     // directive + the block are stripped from the thread. Gated on the setting.
     if (useProjectStore.getState().settings.adaptiveSuggestions !== "off") {
       wirePrompt = appendNextStepsDirective(wirePrompt);
-    }
-
-    // Best-effort, invisible: record that this turn applied one or more skills
-    // so cross-agent shared memory reflects it (no view projection — see
-    // EventKind::SkillUsed). Fire-and-forget; must never block or break send.
-    const usedSkills = mentions.filter((m): m is MentionSkill => m.kind === "skill");
-    const memoryProject = useProjectStore.getState().currentProject?.path ?? null;
-    if (usedSkills.length > 0 && memoryProject) {
-      void sharedMemory
-        .appendEvent(memoryProject, bound.acpAgentId, bound.acpSessionId, "skill_used", null, {
-          skills: usedSkills.map((m) => m.skillName),
-        })
-        .catch(() => {});
     }
 
     // Non-blocking send: returns the instant the prompt is queued onto the
