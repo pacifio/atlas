@@ -212,20 +212,17 @@ export interface MentionTrigger {
  *  runs after the view finishes committing. */
 export function mentionTriggerPlugin(
   onChange: (trigger: MentionTrigger | null) => void,
-  // Returns whether the `#` skill picker is enabled. Read live so the active
-  // agent (e.g. Cersei, which has no skills) can toggle it without remounting.
-  allowSkill: () => boolean = () => true,
 ): ViewPlugin<{ last: MentionTrigger | null; pending: number }> {
   return ViewPlugin.define((view) => {
     const state = {
       last: null as MentionTrigger | null,
       pending: 0,
     };
-    schedule(view, state, onChange, allowSkill);
+    schedule(view, state, onChange);
     return {
       update(u: ViewUpdate) {
         if (!u.docChanged && !u.selectionSet && !u.viewportChanged) return;
-        schedule(u.view, state, onChange, allowSkill);
+        schedule(u.view, state, onChange);
       },
     };
   });
@@ -235,13 +232,12 @@ function schedule(
   view: EditorView,
   state: { last: MentionTrigger | null; pending: number },
   onChange: (t: MentionTrigger | null) => void,
-  allowSkill: () => boolean,
 ): void {
   const ticket = ++state.pending;
   queueMicrotask(() => {
     // Drop the stale schedule if another update has fired since.
     if (ticket !== state.pending) return;
-    recompute(view, state, onChange, allowSkill);
+    recompute(view, state, onChange);
   });
 }
 
@@ -249,12 +245,11 @@ function recompute(
   view: EditorView,
   state: { last: MentionTrigger | null; pending: number },
   onChange: (t: MentionTrigger | null) => void,
-  allowSkill: () => boolean,
 ): void {
   // The view may have been destroyed between the queueMicrotask schedule
   // and its callback firing (e.g. component unmount inside the same tick).
   if (!view.dom.isConnected) return;
-  const trig = detectTrigger(view, allowSkill);
+  const trig = detectTrigger(view);
   if (sameTrigger(state.last, trig)) return;
   state.last = trig;
   onChange(trig);
@@ -273,7 +268,7 @@ function sameTrigger(a: MentionTrigger | null, b: MentionTrigger | null): boolea
   );
 }
 
-function detectTrigger(view: EditorView, allowSkill: () => boolean): MentionTrigger | null {
+function detectTrigger(view: EditorView): MentionTrigger | null {
   const sel = view.state.selection.main;
   if (!sel.empty) return null;
   const caret = sel.head;
@@ -285,10 +280,11 @@ function detectTrigger(view: EditorView, allowSkill: () => boolean): MentionTrig
   for (let i = lineBefore.length - 1; i >= 0; i--) {
     const ch = lineBefore[i];
     // `@` → unscoped picker; `~` → knowledge-only (mirrors the Tiptap KB
-    // editor's `~` shortcut so chat and notes behave the same); `#` →
-    // skills-only (the `#skill:` invoke rail). The whitespace-precedence
-    // guard below keeps `C#`, `issue#3`, `a@b` from opening the picker.
-    if (ch === "@" || ch === "~" || (ch === "#" && allowSkill())) {
+    // editor's `~` shortcut so chat and notes behave the same). `#`
+    // (skills-only invoke) was retired — skills are invoked through the `/`
+    // picker's passthrough now (ADR 0001). The whitespace-precedence guard
+    // below keeps `C#`, `issue#3`, `a@b` from opening the picker.
+    if (ch === "@" || ch === "~") {
       const prev = i > 0 ? lineBefore[i - 1] : "";
       if (prev && !/\s/.test(prev) && prev !== "(" && prev !== "[") {
         return null;
@@ -309,7 +305,7 @@ function detectTrigger(view: EditorView, allowSkill: () => boolean): MentionTrig
         to: caret,
         query,
         anchor: { x: coords.left, y: coords.top },
-        scope: ch === "~" ? "knowledge" : ch === "#" ? "skill" : null,
+        scope: ch === "~" ? "knowledge" : null,
       };
     }
     if (/\s/.test(ch)) {
@@ -324,7 +320,7 @@ function detectTrigger(view: EditorView, allowSkill: () => boolean): MentionTrig
 /** A key passes through this when the picker is open. The interceptor is a
  *  mutable ref the parent sets; CodeMirror's keymap looks it up live so we
  *  don't have to reconfigure the view every time the picker opens. */
-export type MentionKey = "Up" | "Down" | "Enter" | "Escape" | "Backspace";
+export type MentionKey = "Up" | "Down" | "Enter" | "Escape" | "Backspace" | "Tab";
 export type MentionKeyInterceptor = (key: MentionKey) => boolean;
 
 export const mentionKeymap = (getInterceptor: () => MentionKeyInterceptor | null) => {
@@ -342,6 +338,10 @@ export const mentionKeymap = (getInterceptor: () => MentionKeyInterceptor | null
     // The interceptor returns false to let CM's default delete handler run
     // when there's nothing to back-navigate to.
     { key: "Backspace", run: tryIntercept("Backspace") },
+    // Tab-to-complete for the slash picker only — the mention picker's
+    // interceptor returns false for "Tab" so list-indent Tab keeps working
+    // when a mention/knowledge picker happens to be open.
+    { key: "Tab", run: tryIntercept("Tab") },
   ];
 };
 
@@ -493,8 +493,8 @@ const ICON_GIT_BRANCH = lucideSvg(
 const ICON_MESSAGE_SQUARE = lucideSvg(
   `<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`,
 );
-// Lucide "zap" — skill mentions (the `#skill:` invoke rail). Keep in sync
-// with the `Zap` icon used in mention-picker.tsx's CategoryIcon.
+// Lucide "zap" — pack-component mentions. Keep in sync with the `Zap` icon
+// used in mention-picker.tsx's CategoryIcon.
 const ICON_ZAP = lucideSvg(`<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>`);
 
 function kindGlyph(kind: MentionKind): string {
@@ -507,8 +507,6 @@ function kindGlyph(kind: MentionKind): string {
       return ICON_HASH;
     case "knowledge":
       return ICON_BOOK_OPEN;
-    case "skill":
-      return ICON_ZAP;
     case "component":
       return ICON_ZAP;
     case "repo":
@@ -536,8 +534,6 @@ function chipTitle(m: MentionData): string {
       return `${m.symbolKind} · ${m.filePath}:${m.line}`;
     case "knowledge":
       return `${m.source} · ${m.filePath}`;
-    case "skill":
-      return m.description || m.displayName;
     case "component":
       return m.description || m.displayName;
     case "repo":

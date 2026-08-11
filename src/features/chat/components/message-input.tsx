@@ -63,7 +63,6 @@ import { imageMimeFromPath } from "@/features/model-chat/lib/model-capabilities"
 import type { ImageAttachment } from "@/types/agents";
 import type {
   MentionFile,
-  MentionSkill,
   MentionWorkspace,
   MentionRepo,
   MentionPastSession,
@@ -72,6 +71,7 @@ import type {
 import { toast } from "sonner";
 import { useComposerFileDrop } from "../hooks/use-composer-file-drop";
 import { useProjectStore } from "@/features/project/stores/project-store";
+import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import type { MentionTrigger } from "../lib/cm-mention-extension";
 import type { SlashTrigger } from "../lib/cm-slash-extension";
@@ -608,7 +608,7 @@ export function MessageInput({
   // only re-renders composers, not the whole settings surface.
   const enterToSend = useProjectStore((s) => s.settings.enterToSend);
   // `agentType` widened to a SwitchableAgent (drops "custom") for the composer
-  // sub-components (skill/session scope, agent switcher) + the label lookup.
+  // sub-components (session scope, agent switcher) + the label lookup.
   const switchableAgent: SwitchableAgent =
     agentType === "codex" ||
     agentType === "opencode" ||
@@ -672,11 +672,14 @@ export function MessageInput({
   // ACP-reported slash commands for this session. Both adapters advertise
   // their real command list via `available_commands_update` — Codex's arrives
   // with the binding, Claude's a few seconds after session/new (the SDK
-  // discovers skills/plugins/MCP prompts first), so Claude falls back to the
-  // curated catalogue until the live list lands. The native agent has no
-  // slash commands; its trigger is suppressed at the wiring site below.
+  // discovers skills/plugins/MCP prompts first). Per ADR 0003 there is no
+  // fallback catalogue: the picker shows a loading state (see
+  // `slashCommandsLoading` below) during that gap instead. The native agent
+  // has no slash commands; its trigger is suppressed at the wiring site
+  // below.
   const availableCommands = useChatStore((s) => s.sessions[tabId]?.availableCommands);
-  const agentSlashCommands = useMemo<SlashCommand[] | undefined>(() => {
+  const slashCommandsLoading = availableCommands === undefined;
+  const agentSlashCommands = useMemo<SlashCommand[]>(() => {
     if (
       agentType !== "codex" &&
       agentType !== "claude-code" &&
@@ -684,7 +687,7 @@ export function MessageInput({
       agentType !== "cursor" &&
       agentType !== "kilo"
     )
-      return undefined;
+      return [];
     const fromAgent: SlashCommand[] = (availableCommands ?? [])
       .map((c) => {
         const o = (c ?? {}) as {
@@ -702,16 +705,11 @@ export function MessageInput({
         };
       })
       .filter((c) => c.name && c.name !== "login");
-    // Claude: until the ACP list arrives, `undefined` selects the picker's
-    // curated fallback (which carries its own `/login`).
-    if (agentType === "claude-code" && fromAgent.length === 0) return undefined;
-    // OpenCode / Cursor / Kilo auth is terminal-only — no host dialog, so no
-    // synthetic `/login`; the composer's auth pill covers them.
-    if (agentType === "opencode" || agentType === "cursor" || agentType === "kilo")
-      return fromAgent;
     // `/login` is Atlas-handled, not advertised by either adapter: it opens
-    // the host sign-in dialog for the bound agent.
-    const login: SlashCommand =
+    // the host sign-in dialog for the bound agent. OpenCode / Cursor / Kilo
+    // auth is terminal-only — no host dialog, so no synthetic `/login`;
+    // the composer's auth pill covers them.
+    const login: SlashCommand | null =
       agentType === "codex"
         ? {
             name: "login",
@@ -719,13 +717,47 @@ export function MessageInput({
             description: "Sign in to Codex (ChatGPT or API key).",
             handler: "codex-login" as const,
           }
-        : {
-            name: "login",
-            signature: "/login",
-            description: "Sign in to your Anthropic account.",
-            handler: "atlas-login" as const,
-          };
-    return [login, ...fromAgent];
+        : agentType === "claude-code"
+          ? {
+              name: "login",
+              signature: "/login",
+              description: "Sign in to your Anthropic account.",
+              handler: "atlas-login" as const,
+            }
+          : null;
+    // Host-handled guard rows, merged in alongside whatever the agent
+    // advertises. `/skills` opens Settings for any supported agent.
+    // `/clear`/`/logout` are dimmed for Claude Code specifically — the ACP
+    // adapter blocklists both from `available_commands_update`, so without
+    // these rows selecting the typed name would silently do nothing; with
+    // them the picker explains why and points at the TUI instead.
+    const guards: SlashCommand[] = [
+      {
+        name: "skills",
+        signature: "/skills",
+        description: "Open Skills settings.",
+        handler: "open-settings",
+      },
+      ...(agentType === "claude-code"
+        ? [
+            {
+              name: "clear",
+              signature: "/clear",
+              description: "Not available in Atlas — use the Claude Code TUI.",
+              handler: "unavailable" as const,
+            },
+            {
+              name: "logout",
+              signature: "/logout",
+              description: "Not available in Atlas — use the Claude Code TUI.",
+              handler: "unavailable" as const,
+            },
+          ]
+        : []),
+    ];
+    const guardNames = new Set(guards.map((g) => g.name));
+    const deduped = fromAgent.filter((c) => !guardNames.has(c.name));
+    return [...(login ? [login] : []), ...guards, ...deduped];
   }, [agentType, availableCommands]);
   const queue = useChatStore((s) => s.queues[tabId] ?? EMPTY_QUEUE);
 
@@ -946,11 +978,6 @@ export function MessageInput({
     }
   }, [imageSupported, handleDropFiles]);
 
-  const handlePickSkill = useCallback((skill: MentionSkill) => {
-    inputRef.current?.insertMention(skill);
-    requestAnimationFrame(() => inputRef.current?.focus());
-  }, []);
-
   const handlePickWorkspace = useCallback((workspace: MentionWorkspace) => {
     inputRef.current?.insertMention(workspace);
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -1122,6 +1149,13 @@ export function MessageInput({
     [imageSupported],
   );
 
+  // `submit` (below) is defined after `handleSlashSelect` but the latter
+  // needs to invoke it — routed through a ref (set right after `submit` is
+  // declared) rather than a direct reference, since a `useCallback` deps
+  // array is evaluated eagerly on every render and would otherwise read
+  // `submit` before its `const` initializes.
+  const submitRef = useRef<() => void>(() => {});
+
   const handleSlashSelect = useCallback(
     (cmd: SlashCommand) => {
       const t = slashTriggerRef.current;
@@ -1135,6 +1169,24 @@ export function MessageInput({
         setSlashTrigger(null);
         if (cmd.handler === "codex-login") setCodexLoginOpen(true);
         else openLoginDialog();
+        inputRef.current?.focus();
+        return;
+      }
+
+      if (cmd.handler === "open-settings") {
+        clearSlashRange(view, t.from, t.to);
+        setSlashTrigger(null);
+        openSettingsSection("skills");
+        inputRef.current?.focus();
+        return;
+      }
+
+      if (cmd.handler === "unavailable") {
+        // Host-handled guard row — the agent doesn't support this command
+        // (or the ACP adapter blocklists it from advertisement). Nothing to
+        // run; just close the picker and drop the typed token.
+        clearSlashRange(view, t.from, t.to);
+        setSlashTrigger(null);
         inputRef.current?.focus();
         return;
       }
@@ -1168,72 +1220,111 @@ export function MessageInput({
         return;
       }
 
-      // No required args — fire and forget. Clear the composer (the
-      // user's `/query` doesn't need to linger) and dispatch via the
-      // panel's normal send path.
-      clearSlashRange(view, t.from, t.to);
-      inputRef.current?.clear();
-      setValue("");
+      // No required args — commit the full command name in place of the
+      // typed token (the query may be a prefix, e.g. "he" → "help"), then
+      // run the normal submit path so trim/mentions/queueing behave exactly
+      // like pressing Enter on typed text. Since the trigger can now sit
+      // mid-message, this preserves any surrounding text instead of wiping
+      // the whole composer.
+      const insertText = `/${cmd.name}`;
+      view.dispatch({
+        changes: { from: t.from, to: t.to, insert: insertText },
+        selection: { anchor: t.from + insertText.length },
+      });
       setSlashTrigger(null);
-      onSend(`/${cmd.name}`, []);
+      submitRef.current();
     },
-    [openLoginDialog, onSend, disabled],
+    [openLoginDialog, disabled],
   );
 
-  // Forward Up/Down/Enter/Esc/Backspace from CodeMirror to whichever
+  // Forward Up/Down/Enter/Esc/Backspace/Tab from CodeMirror to whichever
   // picker is open. Slash and mention pickers are mutually exclusive in
   // practice (slash only fires at line start of an otherwise-empty
   // composer), but we still route deterministically.
-  const keyInterceptor = useCallback((key: "Up" | "Down" | "Enter" | "Escape" | "Backspace") => {
-    // Slash takes precedence when both happen to be open.
-    const sp = slashPickerRef.current;
-    const st = slashTriggerRef.current;
-    if (st && sp) {
+  const keyInterceptor = useCallback(
+    (key: "Up" | "Down" | "Enter" | "Escape" | "Backspace" | "Tab") => {
+      // Slash takes precedence when both happen to be open.
+      const sp = slashPickerRef.current;
+      const st = slashTriggerRef.current;
+      if (st && sp) {
+        switch (key) {
+          case "Up":
+            sp.moveUp();
+            return true;
+          case "Down":
+            sp.moveDown();
+            return true;
+          case "Enter":
+            return sp.commit();
+          case "Escape":
+            setSlashTrigger(null);
+            return true;
+          case "Backspace":
+            // Let CM delete a query char or the `/` itself (which closes
+            // the picker via the trigger detector).
+            return false;
+          case "Tab": {
+            const active = sp.activeCommand();
+            if (!active) return true;
+            // Only real passthrough commands get "complete without sending"
+            // — that's for filling in args before Enter. Host-handled rows
+            // (login, open-settings, unavailable guards) take no args, so
+            // completing them into plain text would let a guard row like
+            // dimmed `/clear` slip past its own handler on the next Enter
+            // and get sent to the agent as literal passthrough text — the
+            // exact silent no-op these guard rows exist to prevent. Those
+            // run through the normal commit path instead, same as Enter.
+            if (active.handler !== "passthrough") {
+              return sp.commit();
+            }
+            // Complete to the full command name (never sends). The caret
+            // lands right after a trailing space, which the trigger
+            // detector reads as "hit whitespace" and closes the picker on
+            // its own — same as if the user had typed the space by hand.
+            const view = inputRef.current?.view();
+            if (!view) return true;
+            const insertText = `/${active.name} `;
+            view.dispatch({
+              changes: { from: st.from, to: st.to, insert: insertText },
+              selection: { anchor: st.from + insertText.length },
+            });
+            return true;
+          }
+        }
+      }
+
+      const p = pickerRef.current;
+      const t = triggerRef.current;
+      if (!t || !p) return false;
       switch (key) {
         case "Up":
-          sp.moveUp();
+          p.moveUp();
           return true;
         case "Down":
-          sp.moveDown();
+          p.moveDown();
           return true;
         case "Enter":
-          return sp.commit();
+          return p.commit();
         case "Escape":
-          setSlashTrigger(null);
+          // At a sublevel, Esc pops back. At the top level, it closes.
+          if (p.goBack()) return true;
+          setTrigger(null);
           return true;
         case "Backspace":
-          // Let CM delete a query char or the `/` itself (which closes
-          // the picker via the trigger detector).
+          // Only consume Backspace when at a sublevel AND the query is
+          // empty — otherwise let CM delete a character in the query (or
+          // the `@` itself, which closes the picker via the trigger
+          // detector).
+          if (t.query === "" && p.goBack()) return true;
+          return false;
+        case "Tab":
+          // Not handled for the mention picker — fall through to CM's
+          // default Tab handling (list indent / outdent).
           return false;
       }
-    }
-
-    const p = pickerRef.current;
-    const t = triggerRef.current;
-    if (!t || !p) return false;
-    switch (key) {
-      case "Up":
-        p.moveUp();
-        return true;
-      case "Down":
-        p.moveDown();
-        return true;
-      case "Enter":
-        return p.commit();
-      case "Escape":
-        // At a sublevel, Esc pops back. At the top level, it closes.
-        if (p.goBack()) return true;
-        setTrigger(null);
-        return true;
-      case "Backspace":
-        // Only consume Backspace when at a sublevel AND the query is
-        // empty — otherwise let CM delete a character in the query (or
-        // the `@` itself, which closes the picker via the trigger
-        // detector).
-        if (t.query === "" && p.goBack()) return true;
-        return false;
-    }
-  }, []);
+    },
+    [],
+  );
 
   // Auto-focus the composer whenever this panel mounts (tab switch back into
   // chat). If the CodeMirror chunk hasn't resolved yet, the next re-render
@@ -1364,6 +1455,7 @@ export function MessageInput({
     stagedImages,
     githubSyncing,
   ]);
+  submitRef.current = submit;
 
   const trimmed = value.trim();
   // Tri-state button:
@@ -1513,11 +1605,6 @@ export function MessageInput({
                 onSlashTrigger={agentType === "cersei" ? undefined : setSlashTrigger}
                 onPasteImages={handlePasteImages}
                 keyInterceptor={keyInterceptor}
-                // All agents (incl. the native Atlas/cersei agent) support skills
-                // now — the `#` rail inlines a skill body via compose_prompt, and the
-                // native agent additionally loads Atlas-enabled skills via its Skill
-                // tool. (`agentType` retained for other per-agent gating above.)
-                allowSkillMention={true}
               />
             ) : (
               // Same-height empty slot so the panel layout doesn't reflow when
@@ -1536,7 +1623,6 @@ export function MessageInput({
                 onAddFilesOrPhotos={() => void pickFilesOrPhotos()}
                 onAttachMedia={() => void pickMedia()}
                 onTakeScreenshot={(mode) => void handleTakeScreenshot(mode)}
-                onPickSkill={handlePickSkill}
                 onCloneRepo={(repo) => void handleCloneRepo(repo)}
                 onPickSession={handlePickSession}
                 onPickWorkspace={handlePickWorkspace}
@@ -1636,8 +1722,9 @@ export function MessageInput({
           anchor={trigger?.anchor ?? null}
           initialScope={trigger?.scope ?? null}
           projectPath={projectPath}
-          // Per-agent skill gating: the `#` rail only lists skills enabled for
-          // the active agent (registry ids "claude-code" / "codex" match agentType).
+          // Per-agent component gating: pack components (command/agent/rule)
+          // only list ones enabled for the active agent (registry ids
+          // "claude-code" / "codex" match agentType).
           agentId={agentType}
           onSelect={handleMentionSelect}
           onClose={() => setTrigger(null)}
@@ -1652,6 +1739,7 @@ export function MessageInput({
           onSelect={handleSlashSelect}
           onClose={() => setSlashTrigger(null)}
           commands={agentSlashCommands}
+          loading={slashCommandsLoading}
           footerLabel={
             agentType === "codex"
               ? "Codex commands"
@@ -1659,7 +1747,7 @@ export function MessageInput({
                 ? "OpenCode commands"
                 : agentType === "cursor"
                   ? "Cursor commands"
-                  : agentType === "claude-code" && agentSlashCommands
+                  : agentType === "claude-code"
                     ? "Claude Code commands"
                     : undefined
           }

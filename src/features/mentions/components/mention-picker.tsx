@@ -8,8 +8,8 @@
 //     the ranked results surface them. Empty query shows a zero-query
 //     overview (recents + a slice of each kind) with a "Browse" category
 //     tail as an escape hatch for explicit scoping + past messages.
-//   • Scope locked (category pick, `~`, `#`, or an alias like `@note `):
-//     results from that kind only.
+//   • Scope locked (category pick, `~`, or an alias like `@note `): results
+//     from that kind only.
 //
 // Keyboard contract: the parent component forwards Up/Down/Enter/Esc via
 // the imperative handle so CM's focus stays put — the picker never has
@@ -91,8 +91,8 @@ export interface MentionPickerProps {
   anchor: { x: number; y: number } | null;
   /** Active project root — required for project-scoped sources. */
   projectPath: string | null;
-  /** Active chat agent's skill-registry id. When set, the `#` skill rail only
-   *  lists skills enabled for this agent (per-agent skill/pack gating). */
+  /** Active chat agent's skill-registry id. When set, pack-component
+   *  mentions (command/agent/rule) only list ones enabled for this agent. */
   agentId?: string;
   /** A mention was picked. Parent inserts the chip. */
   onSelect: (mention: MentionData) => void;
@@ -296,9 +296,9 @@ export const MentionPicker = forwardRef<MentionPickerHandle, MentionPickerProps>
       };
     }, [open]);
 
-    // Re-run the search when skills/packs change on disk (install, projection,
-    // adopt, …) so a freshly installed skill/component shows up without the
-    // user reopening the picker. Mirrors the file-index refresh above.
+    // Re-run the search when packs change on disk (install, projection,
+    // adopt, …) so a freshly installed component shows up without the user
+    // reopening the picker. Mirrors the file-index refresh above.
     useEffect(() => {
       if (!open) return;
       const onChanged = () => setIndexNonce((n) => n + 1);
@@ -336,18 +336,9 @@ export const MentionPicker = forwardRef<MentionPickerHandle, MentionPickerProps>
       }
       if (scope) {
         // Group results under per-kind sub-headers. Homogeneous scopes collapse
-        // to a single header (unchanged); the `#` rail (skills + pack components)
-        // splits into Skills / Commands / Agents / Rules.
+        // to a single header (unchanged); the "component" scope (pack-delivered
+        // commands/agents/rules) splits into Commands / Agents / Rules.
         const groupOf = (m: MentionData): { key: string; label: string } => {
-          // Skills can be installed globally or per-workspace — segment them so
-          // the user sees which scope a skill came from.
-          if (m.kind === "skill") {
-            const ws = m.scope === "project";
-            return {
-              key: `skill:${m.scope}`,
-              label: ws ? "Workspace Skills" : "Global Skills",
-            };
-          }
           if (m.kind === "component") {
             const label =
               m.componentKind === "command"
@@ -872,8 +863,6 @@ function CategoryIcon({ kind }: { kind: MentionKind }) {
       return <Hash size={size} />;
     case "knowledge":
       return <BookOpen size={size} />;
-    case "skill":
-      return <Zap size={size} />;
     case "component":
       return <Zap size={size} />;
     case "repo":
@@ -913,8 +902,6 @@ function secondaryLabel(m: MentionData): string {
       return `${m.symbolKind} · ${shortPath(m.filePath)}`;
     case "knowledge":
       return m.folder ? `${m.folder} · ${m.source}` : m.source;
-    case "skill":
-      return m.scope === "project" ? `${m.description} · project` : m.description;
     case "component":
       return `${m.componentKind} · pack: ${m.pack}`;
     case "repo":
@@ -980,8 +967,6 @@ function mentionTitle(m: MentionData): string {
       return `${m.filePath}:${m.line}`;
     case "knowledge":
       return m.filePath;
-    case "skill":
-      return m.description || m.filePath;
     case "component":
       return m.description || m.filePath;
     case "repo":
