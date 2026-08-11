@@ -1679,6 +1679,30 @@
   }
 }
 
+/* Pixel-grid loader cell (see `loading-state.tsx`). Opacity only — nine 2.5px
+   cells, no transform and no layout, so the loader sits inside the transcript
+   without ever touching the scroll path. Duration and delay come from the
+   pattern, inline. */
+@keyframes atlas-pixel-on {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.atlas-pixel-cell {
+  animation-name: atlas-pixel-on;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .atlas-pixel-cell {
+    animation: none;
+  }
+}
+
 /* Markdown that has not finished parsing yet — see `CachedMarkdown`.
    Rendered as the raw source at the same size as the formatted result, so an
    unparsed block occupies roughly its final height instead of collapsing to
