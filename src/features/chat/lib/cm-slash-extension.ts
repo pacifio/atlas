@@ -5,8 +5,14 @@
 // Differences vs mentions:
 //   - `detectTrigger` below scans backward from the caret for a `/`
 //     preceded by whitespace or start-of-line, same as the mention
-//     extension's `@`/`~` scan — so a slash command can sit anywhere in the
-//     message, not just at the very start.
+//     extension's `@`/`~` scan — so the picker opens anywhere in the message.
+//     It additionally reports `atStart`, because *completing* a command
+//     anywhere is safe (it only inserts text) while *running* one is not:
+//     Claude Code resolves a passthrough command only when it occupies byte 0
+//     of the message (`claude-agent-acp` gates on `firstText.startsWith("/")`
+//     — mirrored server-side by `memory_pack::is_slash_command`). Auto-sending
+//     a mid-message command would ship it as prose and silently do nothing, so
+//     `message-input.tsx` gates submission on that flag.
 //   - There is no document-level state field — selecting a command
 //     either runs an app-level handler (e.g. `/login` opens a dialog) or
 //     leaves the literal `/foo` text in place for passthrough commands.
@@ -23,6 +29,9 @@ export interface SlashTrigger {
   to: number;
   /** What the user typed after the `/`. Empty right after the keystroke. */
   query: string;
+  /** Is the `/` at document position 0? Only there can a passthrough command
+   *  actually resolve, so this gates auto-submit (not completion). */
+  atStart: boolean;
   /** Viewport coords of the trigger position — anchor for the popover. */
   anchor: { x: number; y: number };
 }
@@ -78,6 +87,7 @@ function sameTrigger(a: SlashTrigger | null, b: SlashTrigger | null): boolean {
     a.from === b.from &&
     a.to === b.to &&
     a.query === b.query &&
+    a.atStart === b.atStart &&
     a.anchor.x === b.anchor.x &&
     a.anchor.y === b.anchor.y
   );
@@ -108,6 +118,9 @@ function detectTrigger(view: EditorView): SlashTrigger | null {
         from,
         to: caret,
         query,
+        // Byte 0 of the whole document, not merely of this line — a `/foo` on
+        // line 2 is still prose to the agent's resolver.
+        atStart: from === 0,
         anchor: { x: coords.left, y: coords.top },
       };
     }

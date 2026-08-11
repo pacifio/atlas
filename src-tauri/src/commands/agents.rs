@@ -562,6 +562,17 @@ pub async fn agents_send(
     let store = app.state::<SharedMemoryStore>();
     store.register_session(&key.session_id, &cwd, &snapshot.plugin_id);
 
+    // Slash-command turns ship verbatim: Claude Code only resolves a command
+    // (skills included) when it sits at byte 0, so prepending any block below
+    // would demote `/skill-name` to prose and the command would never fire. See
+    // `memory_pack::is_slash_command`. Returning here — rather than composing
+    // and stripping later — deliberately leaves the sync clock un-advanced and
+    // `mark_sent` uncalled, so whatever memory was pending still rides the next
+    // conversational turn instead of being consumed by a turn that dropped it.
+    if memory_pack::is_slash_command(&text) {
+        return manager.send(&key, text).map_err(|e| e.to_string());
+    }
+
     // v2 push: per-turn shared-memory block, gated by this session's sync clock
     // (0 ⇒ first sync = full current state; >0 ⇒ delta since last turn). Cheap
     // in-memory read, so no timeout needed here.

@@ -1221,17 +1221,26 @@ export function MessageInput({
       }
 
       // No required args — commit the full command name in place of the
-      // typed token (the query may be a prefix, e.g. "he" → "help"), then
-      // run the normal submit path so trim/mentions/queueing behave exactly
-      // like pressing Enter on typed text. Since the trigger can now sit
-      // mid-message, this preserves any surrounding text instead of wiping
-      // the whole composer.
+      // typed token (the query may be a prefix, e.g. "he" → "help"). Since
+      // the trigger can sit mid-message, replacing just [from, to] preserves
+      // any surrounding text instead of wiping the whole composer.
       const insertText = `/${cmd.name}`;
       view.dispatch({
         changes: { from: t.from, to: t.to, insert: insertText },
         selection: { anchor: t.from + insertText.length },
       });
       setSlashTrigger(null);
+      if (!t.atStart) {
+        // Mid-message: complete the text and stop. Only a command at byte 0
+        // resolves — auto-sending from here would ship `/foo` to the agent as
+        // prose and silently do nothing. Leaving it in the composer matches
+        // the mention picker (Enter selects, it doesn't send) and keeps the
+        // user's next Enter meaningful.
+        inputRef.current?.focus();
+        return;
+      }
+      // At byte 0 the command will actually run, so fall through to the normal
+      // submit path — trim/mentions/queueing behave exactly like a typed Enter.
       submitRef.current();
     },
     [openLoginDialog, disabled],
@@ -1239,8 +1248,8 @@ export function MessageInput({
 
   // Forward Up/Down/Enter/Esc/Backspace/Tab from CodeMirror to whichever
   // picker is open. Slash and mention pickers are mutually exclusive in
-  // practice (slash only fires at line start of an otherwise-empty
-  // composer), but we still route deterministically.
+  // practice (each trigger requires its own sigil to open the token being
+  // typed), but we still route deterministically.
   const keyInterceptor = useCallback(
     (key: "Up" | "Down" | "Enter" | "Escape" | "Backspace" | "Tab") => {
       // Slash takes precedence when both happen to be open.
