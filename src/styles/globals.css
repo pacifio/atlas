@@ -1692,3 +1692,23 @@
   overflow-wrap: anywhere;
   color: inherit;
 }
+
+/* Toast descriptions — sonner ships a light-theme colour we never overrode.
+   `[data-sonner-toast][data-styled] [data-description]` is hardcoded to
+   `#3f3f3f`, and the dark-theme rule that replaces it only applies when the
+   Toaster is given `theme="dark"` — ours is themed by hand through
+   `toastOptions.style`, which reaches the container and the title but not the
+   description. The result was near-black body text on `--bg-elevated`: a git
+   failure would print its whole reason and none of it could be read.
+
+   `pre-wrap` for the same reason. The body of these is raw command output,
+   which arrives with its own line breaks — collapsing them ran eight `hint:`
+   lines into one grey paragraph. Single-line descriptions are unaffected.
+
+   Specificity has to match sonner's own selector, hence the doubled
+   attribute — a class alone loses to it. */
+[data-sonner-toast][data-styled="true"] [data-description] {
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

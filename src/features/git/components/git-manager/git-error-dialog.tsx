@@ -69,7 +69,11 @@ export function GitErrorDialog() {
                   )}
                   <button
                     onClick={() => actions.dismissErrorDialog()}
-                    className="px-3 h-7 rounded text-[11px] font-medium text-white bg-accent hover:opacity-90 transition-colors"
+                    // `text-text-inverse`, never `text-white`: `--accent-primary`
+                    // IS white in this theme, so a white label on it renders an
+                    // empty button. Every other filled accent button in the app
+                    // pairs the fill with the inverse token for this reason.
+                    className="px-3 h-7 rounded text-[11px] font-medium text-text-inverse bg-accent hover:opacity-90 transition-colors"
                   >
                     Dismiss
                   </button>
