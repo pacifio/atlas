@@ -5,9 +5,17 @@ import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { useNotificationsStore } from "@/features/notifications/stores/notifications-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
-import { PanelLeft, PanelRight, Bell, Layers, ArrowDownToLine, Loader2 } from "lucide-react";
+import {
+  PanelLeft,
+  PanelRight,
+  Bell,
+  Layers,
+  ArrowDownToLine,
+  Loader2,
+  Hammer,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import type { Window as TauriWindow } from "@tauri-apps/api/window";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
@@ -18,6 +26,7 @@ import { CapturePopover } from "@/features/capture/components/capture-popover";
 import { StatusDot } from "@/features/capture/components/capture-status";
 import type { Binding, CaptureHealth } from "@/features/capture/types";
 import { activeWorkspaceId } from "@/features/workspaces/lib/active-workspace";
+import { isDev } from "@/lib/env";
 
 function useTauriWindow() {
   const windowRef = useRef<TauriWindow | null>(null);
@@ -125,6 +134,9 @@ export function Titlebar() {
           a fresh install has no project open, and sign-in must be reachable
           from that empty state rather than hidden behind opening a folder. */}
       <div className="flex items-center gap-1.5">
+        {/* Dev-mode flag lives outside the `currentProject` guard too — it's
+            a build/runtime indicator, not project-dependent. */}
+        <DevModePill />
         {currentProject && (
           <>
             <UpdateButton />
@@ -241,6 +253,27 @@ function ProjectLabel({
           </Popover.Portal>
         )}
       </Popover.Root>
+    </div>
+  );
+}
+
+/**
+ * Same pill shape and fill as `ProjectLabel`, just with a deep-purple border
+ * instead of the neutral one, shown only when the app is running via
+ * `bun run dev:app` specifically. `isDev` alone also matches `bun run dev`
+ * (Vite-only, no Tauri shell, where `invoke()` doesn't work) — `isTauri()`
+ * narrows to an actual Tauri window, so the two together are true only for
+ * the real `tauri dev` session this pill is meant to flag.
+ */
+function DevModePill() {
+  if (!isDev || !isTauri()) return null;
+  return (
+    <div
+      className="flex h-[19px] shrink-0 items-center gap-1 rounded-full border border-[#5b21b6] bg-[#0C0C0C] px-2 text-[11px] leading-none font-medium text-[var(--text-secondary)]"
+      title="Running via `bun run dev:app`"
+    >
+      <Hammer size={11} />
+      Dev Mode
     </div>
   );
 }
