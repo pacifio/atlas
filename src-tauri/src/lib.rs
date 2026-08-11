@@ -647,6 +647,7 @@ pub fn run() {
             commands::skills::skills_path,
             commands::skills::skills_adopt,
             commands::skills::agents_list_skill_targets,
+            commands::skills::skills_list_plugins,
             commands::skills::tools_list,
             commands::skills::skills_reconcile,
             commands::skills::skills_project,
