@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "dev:app": "node scripts/with-posthog-env.mjs tauri dev",
     "build:app": "node scripts/with-posthog-env.mjs tauri build --bundles app",
-    "build:app:dmg": "node scripts/with-posthog-env.mjs tauri build --bundles app,dmg",
+    "build:app:dmg": "node scripts/with-posthog-env.mjs tauri build --bundles app,dmg && bash scripts/set-dmg-icon.sh",
     "lint": "oxlint src/",
     "format": "oxfmt --write src/",
     "format:check": "oxfmt --check src/",

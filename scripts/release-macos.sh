@@ -185,6 +185,7 @@ if [[ "${UNIVERSAL}" == "1" ]]; then
   rm -f "${DMG_OUT}"
   log "Building DMG at ${DMG_OUT}"
   hdiutil create -volname "Atlas" -srcfolder "${UNI_DIR}/Atlas.app" -ov -format UDZO "${DMG_OUT}" >/dev/null
+  bash "$(dirname "$0")/set-dmg-icon.sh" src-tauri/icons/icon.icns "${DMG_OUT}"
   codesign --force --sign "${APPLE_SIGNING_IDENTITY}" "${DMG_OUT}"
 
   # Notarize the DMG via xcrun notarytool (Tauri's automated notarization
@@ -243,6 +244,9 @@ else
     -format UDZO \
     "${DMG_PATH}" >/dev/null
   rm -rf "${STAGING}"
+
+  log "Setting DMG icon"
+  bash "$(dirname "$0")/set-dmg-icon.sh" src-tauri/icons/icon.icns "${DMG_PATH}"
 
   log "Signing DMG"
   codesign --force --sign "${APPLE_SIGNING_IDENTITY}" "${DMG_PATH}"
