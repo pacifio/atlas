@@ -27,6 +27,7 @@ import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { CachedMarkdown } from "@/lib/markdown-cache";
 import { StreamingMarkdown } from "./streaming-markdown";
+import { LoadingState } from "./loading-state";
 
 /** Avatar glyphs that never vary per message, hoisted to module scope so a
  *  thread of N rows allocates ZERO extra elements for them. The agent-side
@@ -222,12 +223,7 @@ export const MessageItem = memo(function MessageItem({
             {streaming &&
               !message.content &&
               message.toolCalls.length === 0 &&
-              !message.thinking && (
-                <div className="flex items-center gap-2 text-[12px] font-medium text-[var(--text-secondary)]">
-                  <Loader2 size={13} className="animate-spin text-[var(--accent-primary)]" />
-                  <span>Working…</span>
-                </div>
-              )}
+              !message.thinking && <LoadingState label="Working" />}
 
             {/* Thinking accordion — collapsible, default closed once stream
               settles; auto-open while actively streaming so the user sees

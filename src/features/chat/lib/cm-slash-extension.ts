@@ -3,9 +3,16 @@
 // `message-input.tsx` can wire it identically.
 //
 // Differences vs mentions:
-//   - Triggers ONLY when `/` sits at the start of the line (after optional
-//     whitespace). Slash commands replace the message; `foo /bar` mid-line
-//     shouldn't open a picker.
+//   - `detectTrigger` below scans backward from the caret for a `/`
+//     preceded by whitespace or start-of-line, same as the mention
+//     extension's `@`/`~` scan — so the picker opens anywhere in the message.
+//     It additionally reports `atStart`, because *completing* a command
+//     anywhere is safe (it only inserts text) while *running* one is not:
+//     Claude Code resolves a passthrough command only when it occupies byte 0
+//     of the message (`claude-agent-acp` gates on `firstText.startsWith("/")`
+//     — mirrored server-side by `memory_pack::is_slash_command`). Auto-sending
+//     a mid-message command would ship it as prose and silently do nothing, so
+//     `message-input.tsx` gates submission on that flag.
 //   - There is no document-level state field — selecting a command
 //     either runs an app-level handler (e.g. `/login` opens a dialog) or
 //     leaves the literal `/foo` text in place for passthrough commands.
@@ -22,6 +29,9 @@ export interface SlashTrigger {
   to: number;
   /** What the user typed after the `/`. Empty right after the keystroke. */
   query: string;
+  /** Is the `/` at document position 0? Only there can a passthrough command
+   *  actually resolve, so this gates auto-submit (not completion). */
+  atStart: boolean;
   /** Viewport coords of the trigger position — anchor for the popover. */
   anchor: { x: number; y: number };
 }
@@ -77,6 +87,7 @@ function sameTrigger(a: SlashTrigger | null, b: SlashTrigger | null): boolean {
     a.from === b.from &&
     a.to === b.to &&
     a.query === b.query &&
+    a.atStart === b.atStart &&
     a.anchor.x === b.anchor.x &&
     a.anchor.y === b.anchor.y
   );
@@ -86,25 +97,38 @@ function detectTrigger(view: EditorView): SlashTrigger | null {
   const sel = view.state.selection.main;
   if (!sel.empty) return null;
   const caret = sel.head;
-  // Only the FIRST line of the document can host a slash command — the
-  // composer is single-message and slash commands replace the message,
-  // so multi-line input with a `/` somewhere makes no sense.
-  if (view.state.doc.lines > 1) return null;
   const line = view.state.doc.lineAt(caret);
-  const before = view.state.doc.sliceString(line.from, caret);
-  const match = before.match(/^(\s*)\/([^\s/]*)$/);
-  if (!match) return null;
-  const leading = match[1].length;
-  const from = line.from + leading;
-  const query = match[2];
-  const coords = view.coordsAtPos(from);
-  if (!coords) return null;
-  return {
-    from,
-    to: caret,
-    query,
-    anchor: { x: coords.left, y: coords.top },
-  };
+  // Scan backward from the caret for the most recent `/` on this line,
+  // stopping (no trigger) at the first whitespace encountered first. This
+  // means the `/` must be part of the token currently being typed, mirroring
+  // `cm-mention-extension.ts`'s `@`/`~` scan.
+  const lineBefore = view.state.doc.sliceString(line.from, caret);
+  for (let i = lineBefore.length - 1; i >= 0; i--) {
+    const ch = lineBefore[i];
+    if (ch === "/") {
+      const prev = i > 0 ? lineBefore[i - 1] : "";
+      if (prev && !/\s/.test(prev) && prev !== "(" && prev !== "[") {
+        return null;
+      }
+      const from = line.from + i;
+      const query = lineBefore.slice(i + 1);
+      const coords = view.coordsAtPos(from);
+      if (!coords) return null;
+      return {
+        from,
+        to: caret,
+        query,
+        // Byte 0 of the whole document, not merely of this line — a `/foo` on
+        // line 2 is still prose to the agent's resolver.
+        atStart: from === 0,
+        anchor: { x: coords.left, y: coords.top },
+      };
+    }
+    if (/\s/.test(ch)) {
+      return null;
+    }
+  }
+  return null;
 }
 
 // `clearSlashRange` used to live here. It moved to `./cm-clear-range` — it

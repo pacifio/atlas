@@ -76,8 +76,13 @@ export function SessionStats({ sessions }: { sessions: BoardSession[] }) {
       week,
       points,
       line,
-      seconds: sessions.reduce((a, s) => a + s.durationSeconds, 0),
+      seconds: sessions.reduce((a, s) => a + s.activeSeconds, 0),
       tokens: sessions.reduce((a, s) => a + s.totalTokens, 0),
+      cached: sessions.reduce((a, s) => a + s.cacheReadTokens + s.cacheCreationTokens, 0),
+      // Sessions whose only figure is a context gauge — the ACP agents. The
+      // tile has to say so rather than showing a dash that could equally mean
+      // "nothing recorded".
+      contextOnly: sessions.filter((s) => s.totalTokens === 0 && s.contextUsed != null).length,
       checkpoints: sessions.reduce((a, s) => a + s.checkpointCount, 0),
       linked: sessions.filter((s) => s.checkpointCount > 0).length,
       live: sessions.filter((s) => sessionState(s) === "live").length,
@@ -85,7 +90,19 @@ export function SessionStats({ sessions }: { sessions: BoardSession[] }) {
     };
   }, [sessions]);
 
-  const { week, points, line, seconds, tokens, checkpoints, linked, live, weekMinutes } = chart;
+  const {
+    week,
+    points,
+    line,
+    seconds,
+    tokens,
+    cached,
+    contextOnly,
+    checkpoints,
+    linked,
+    live,
+    weekMinutes,
+  } = chart;
   const cursor = points[hover ?? 0];
 
   return (
@@ -96,9 +113,27 @@ export function SessionStats({ sessions }: { sessions: BoardSession[] }) {
       <Stat
         label="Tracked"
         value={formatDuration(seconds)}
-        sub={`across ${sessions.length} session${sessions.length === 1 ? "" : "s"}`}
+        sub={`agent time · ${sessions.length} session${sessions.length === 1 ? "" : "s"}`}
       />
-      <Stat label="Tokens" value={tokens > 0 ? formatTokens(tokens) : "—"} sub="in + out" divided />
+      {/* The sub-label says which measurement the value *is*. It used to read
+          "in + out" unconditionally, above a dash, on a board where every row
+          reported a context gauge and nothing else. */}
+      <Stat
+        label="Tokens"
+        value={tokens > 0 ? formatTokens(tokens) : cached > 0 ? formatTokens(cached) : "—"}
+        sub={
+          tokens > 0
+            ? cached > 0
+              ? `in + out · ${formatTokens(cached)} cached`
+              : "in + out"
+            : cached > 0
+              ? "cache only"
+              : contextOnly > 0
+                ? "context only"
+                : "not reported"
+        }
+        divided
+      />
       <Stat
         label="Checkpoints"
         value={String(checkpoints)}
@@ -242,8 +277,13 @@ function Stat({
         )}
         {label}
       </span>
+      {/* `truncate`, not just `whitespace-nowrap`: a nowrap span with no
+          overflow rule ignores its `min-w-0` parent and paints straight across
+          the neighbouring tile. A long value now clips at its own border and
+          keeps the whole figure in the tooltip. */}
       <span
-        className="mt-[7px] whitespace-nowrap text-[28px] font-semibold leading-[1.1] tracking-[-0.03em]"
+        title={value}
+        className="mt-[7px] min-w-0 truncate text-[28px] font-semibold leading-[1.1] tracking-[-0.03em]"
         style={{ color: tone ?? "var(--text-primary)" }}
       >
         {value}

@@ -95,10 +95,6 @@ interface ChatInputProps {
    * picker is open and routes accordingly.
    */
   keyInterceptor?: MentionKeyInterceptor | null;
-  /** When false, the `#` skill mention picker is disabled (the active agent
-   *  has no skill integration). Read live so switching agents takes effect
-   *  without remounting the view. Defaults to true. */
-  allowSkillMention?: boolean;
   /** Offered clipboard image files BEFORE the default file-paste handling.
    *  Return true to consume them (e.g. stage as inline attachments); false
    *  falls through to the path-paste path. Read live via ref. */
@@ -121,7 +117,6 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onMentionTrigger,
     onSlashTrigger,
     keyInterceptor,
-    allowSkillMention = true,
     onPasteImages,
     extraExtensions,
     minHeight = 44,
@@ -149,8 +144,6 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     keyInterceptor,
   );
   keyInterceptorRef.current = keyInterceptor;
-  const allowSkillRef = useRef(allowSkillMention);
-  allowSkillRef.current = allowSkillMention;
   const onPasteImagesRef = useRef(onPasteImages);
   onPasteImagesRef.current = onPasteImages;
 
@@ -367,10 +360,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             },
           }),
           ...mentionExtension,
-          mentionTriggerPlugin(
-            (t) => onMentionTriggerRef.current?.(t),
-            () => allowSkillRef.current,
-          ),
+          mentionTriggerPlugin((t) => onMentionTriggerRef.current?.(t)),
           slashTriggerPlugin((t) => onSlashTriggerRef.current?.(t)),
           // Prec.highest puts the picker keymap above lang-markdown's
           // Enter binding (which would otherwise continue a bullet) and

@@ -58,10 +58,17 @@ pub enum EventKind {
     SessionEnd,
     TodoAdded,
     TodoDone,
-    /// A `#skill:<name>` was applied in a sent message. Recorded so cross-agent
-    /// memory reflects "this session used skill X", but intentionally invisible
-    /// — no view projection (it's a lightweight audit breadcrumb, not state).
-    SkillUsed,
+    /// Catches any kind string this build doesn't recognize — e.g. a retired
+    /// kind (like the old `skill_used`) still sitting in an existing
+    /// project's `events.jsonl`. Without this, `serde_json::from_str` fails
+    /// the WHOLE line on an unknown `kind`, `filter_map(..).ok()` drops it
+    /// silently, and if it happened to be the log's last event, the derived
+    /// `last_seq` regresses behind the true file tail — the next appended
+    /// event then reuses a `seq` still on disk. Folding this into no view
+    /// bucket (below) makes it inert either way, but at least `seq` stays
+    /// continuous across the upgrade.
+    #[serde(other)]
+    Unknown,
 }
 
 /// A new event as handed to [`SharedMemoryStore::append_event`]. `seq`/`ts` are
@@ -274,11 +281,11 @@ impl SharedState {
                 self.session_agents
                     .insert(ev.session_id.clone(), ev.agent.clone());
             }
-            EventKind::SessionEnd
-            | EventKind::TodoAdded
-            | EventKind::TodoDone
-            | EventKind::SkillUsed => {
+            EventKind::SessionEnd | EventKind::TodoAdded | EventKind::TodoDone => {
                 // Recorded in the log for audit; no view projection in MVP.
+            }
+            EventKind::Unknown => {
+                // Kept only to advance `last_seq`; no view projection.
             }
         }
     }
@@ -664,22 +671,6 @@ mod tests {
             key: key.into(),
             payload,
         }
-    }
-
-    #[test]
-    fn skill_used_is_recorded_but_not_projected() {
-        // Invisible by design: the seq advances (it's in the log) but it never
-        // surfaces in any compiled view.
-        let s = fold_events(vec![ev(
-            1,
-            EventKind::SkillUsed,
-            "",
-            serde_json::json!({ "skills": ["review-rust-diff"] }),
-        )]);
-        assert_eq!(s.last_seq, 1);
-        assert!(s.active_plan.is_none());
-        assert!(s.decisions.is_empty());
-        assert!(s.recent_changes.is_empty());
     }
 
     #[test]

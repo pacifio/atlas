@@ -802,3 +802,147 @@ fn a_large_corpus_imports_in_reasonable_time() {
         started.elapsed()
     );
 }
+
+// ── Token usage ─────────────────────────────────────────────────────────────
+//
+// The importer read no usage at all, so every imported Session reported zero
+// tokens and the Timeline's Tokens tile was permanently a dash. The usage is on
+// the assistant lines — and the same logical message is written more than once,
+// which is the part that has to be got right.
+
+/// An assistant line carrying a usage block, keyed by request.
+fn usage_line(uuid: &str, request: &str, text: &str, input: u64, output: u64) -> String {
+    serde_json::json!({
+        "type": "assistant",
+        "uuid": uuid,
+        "requestId": request,
+        "timestamp": "2026-07-01T10:00:00.000Z",
+        "message": {
+            "role": "assistant",
+            "content": text,
+            "model": "claude-opus-5",
+            "usage": {
+                "input_tokens": input,
+                "output_tokens": output,
+                "cache_creation_input_tokens": 29_002,
+                "cache_read_input_tokens": 15_565,
+            },
+        },
+    })
+    .to_string()
+}
+
+fn import_once(root: &Path, lines: &[String]) -> Store {
+    let transcripts = root.join("transcripts");
+    transcript(&transcripts, "sess-usage", lines);
+    let mut store = store_in(root);
+    import_all(&mut store, WORKSPACE, &TranscriptSource::new(&transcripts), WorkspaceMode::Local)
+        .expect("imports");
+    store
+}
+
+#[test]
+fn usage_is_read_off_the_transcript_and_reaches_the_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = import_once(
+        dir.path(),
+        &[
+            line("user", "u1", "Add rate limiting"),
+            usage_line("a1", "req_1", "Done.", 2, 1_009),
+        ],
+    );
+
+    let sessions = store.sessions_for_workspace(WORKSPACE).unwrap();
+    let totals = sessions[0].token_totals;
+    assert_eq!(totals.input_tokens, 2);
+    assert_eq!(totals.output_tokens, 1_009);
+    assert_eq!(totals.cache_creation_tokens, 29_002, "cache writes are spend too");
+    assert_eq!(totals.cache_read_tokens, 15_565);
+    assert_eq!(
+        sessions[0].model.as_deref(),
+        Some("claude-opus-5"),
+        "the model comes off the same lines"
+    );
+}
+
+#[test]
+fn repeated_lines_for_one_request_are_counted_once() {
+    let dir = tempfile::tempdir().unwrap();
+    // Three copies of one request and one of another — the ratio a real
+    // transcript shows, where 18 usage lines were 8 requests.
+    let store = import_once(
+        dir.path(),
+        &[
+            line("user", "u1", "Go"),
+            usage_line("a1", "req_1", "Working.", 2, 1_000),
+            usage_line("a1b", "req_1", "Working.", 2, 1_000),
+            usage_line("a1c", "req_1", "Working.", 2, 1_000),
+            usage_line("a2", "req_2", "Done.", 5, 500),
+        ],
+    );
+
+    let totals = store.sessions_for_workspace(WORKSPACE).unwrap()[0].token_totals;
+    assert_eq!(totals.output_tokens, 1_500, "two requests, not four lines");
+    assert_eq!(totals.input_tokens, 7);
+    assert_eq!(
+        totals.cache_read_tokens, 31_130,
+        "the cache figures collapse per request as well"
+    );
+}
+
+#[test]
+fn re_importing_a_grown_transcript_does_not_double_the_totals() {
+    let dir = tempfile::tempdir().unwrap();
+    let transcripts = dir.path().join("transcripts");
+    let mut lines = vec![line("user", "u1", "Go"), usage_line("a1", "req_1", "Done.", 2, 1_000)];
+    transcript(&transcripts, "sess-usage", &lines);
+
+    let mut store = store_in(dir.path());
+    let source = TranscriptSource::new(&transcripts);
+    import_all(&mut store, WORKSPACE, &source, WorkspaceMode::Local).unwrap();
+
+    lines.push(usage_line("a2", "req_2", "More.", 3, 700));
+    transcript(&transcripts, "sess-usage", &lines);
+    import_all(&mut store, WORKSPACE, &source, WorkspaceMode::Local).unwrap();
+
+    let totals = store.sessions_for_workspace(WORKSPACE).unwrap()[0].token_totals;
+    assert_eq!(totals.output_tokens, 1_700, "the whole file, once");
+    assert_eq!(totals.input_tokens, 5);
+    // A replace, not a sum: the file is always re-read from its first byte.
+    assert_eq!(totals.cache_read_tokens, 31_130);
+}
+
+#[test]
+fn usage_on_a_tool_only_assistant_line_is_not_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool_only = serde_json::json!({
+        "type": "assistant",
+        "uuid": "a1",
+        "requestId": "req_1",
+        "timestamp": "2026-07-01T10:00:00.000Z",
+        "message": {
+            "role": "assistant",
+            "model": "claude-opus-5",
+            "content": [{ "type": "tool_use", "id": "call_1", "name": "Bash", "input": { "command": "ls" } }],
+            "usage": { "input_tokens": 4, "output_tokens": 88 },
+        },
+    })
+    .to_string();
+
+    let store = import_once(dir.path(), &[line("user", "u1", "List them"), tool_only]);
+    let totals = store.sessions_for_workspace(WORKSPACE).unwrap()[0].token_totals;
+    assert_eq!(totals.output_tokens, 88, "a line with no text still spent tokens");
+    assert_eq!(
+        store.sessions_for_workspace(WORKSPACE).unwrap()[0].model.as_deref(),
+        Some("claude-opus-5"),
+        "and still names its model"
+    );
+}
+
+#[test]
+fn a_transcript_with_no_usage_reports_none_rather_than_zeros() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = import_once(dir.path(), &a_conversation());
+    let totals = store.sessions_for_workspace(WORKSPACE).unwrap()[0].token_totals;
+    assert_eq!(totals, Default::default(), "nothing recorded stays nothing recorded");
+}

@@ -44,6 +44,7 @@ import { useChatStore } from "../stores/chat-store";
 import { saveThreadToKb, drawDiagram } from "../lib/turn-actions";
 import { cn } from "@/lib/utils";
 import { GradualBlur } from "@/components/gradual-blur";
+import { LoadingState } from "./loading-state";
 import {
   UserRowView,
   ProseRowView,
@@ -157,20 +158,17 @@ const savedScroll = new Map<string, Saved>();
  * Without it the transcript sits completely unchanged after send, which reads
  * as the message having been dropped.
  *
- * A text label rather than a spinner or bouncing dots — see the shimmer's note
- * in `globals.css`. It occupies a row of prose-height so its arrival and
- * departure don't jolt the thread it sits under.
+ * A pixel-grid wavefront, a shimmering label and an elapsed timer rather than a
+ * spinner — see `loading-state.tsx` and the shimmer's note in `globals.css`.
+ * The timer matters here specifically: this is the one moment in a turn with no
+ * other evidence that anything is happening, and "42.4s" answers the question
+ * the reader is actually asking. It occupies a fixed-height row so its arrival
+ * and departure don't jolt the thread it sits under.
  */
 function WorkingIndicator() {
   return (
     <div className="mx-auto w-full max-w-[760px] px-6 pt-2 pb-3">
-      <span
-        role="status"
-        aria-live="polite"
-        className="atlas-thinking-shimmer text-[13px] leading-[22px] font-medium"
-      >
-        Thinking…
-      </span>
+      <LoadingState label="Thinking" />
     </div>
   );
 }

@@ -73,7 +73,7 @@ function toMarkdown(detail: SessionDetail): string {
   if (s.model) lines.push(`- **Model** — ${prettyModel(s.model)}`);
   if (s.branches[0]) lines.push(`- **Branch** — \`${s.branches[0]}\``);
   lines.push(`- **Started** — ${new Date(s.startedAt).toLocaleString()}`);
-  lines.push(`- **Duration** — ${formatDuration(s.durationSeconds)}`);
+  lines.push(`- **Duration** — ${formatDuration(s.activeSeconds)}`);
   const tokens = tokenLabel(s);
   if (tokens) lines.push(`- **Tokens** — ${tokens}`);
   lines.push(`- **Tool calls** — ${s.toolCallCount}`);

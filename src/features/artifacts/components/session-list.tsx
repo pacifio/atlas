@@ -14,7 +14,7 @@
  * actually ran.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   Check,
@@ -39,6 +39,7 @@ import {
   tokenLabel,
   type SessionState,
 } from "../lib/board";
+import { observeSize } from "../lib/shared-resize-observer";
 import type { BoardSession } from "../types";
 
 interface Props {
@@ -57,6 +58,17 @@ const FOLD_AT = 3;
 export function SessionList({ sessions, loading, filtered, onOpen }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const days = useMemo(() => groupByDay(sessions), [sessions]);
+  const [compact, setCompact] = useState(false);
+  const root = useRef<HTMLDivElement | null>(null);
+
+  // Through the shared observer, not a new one — the module note on
+  // `shared-resize-observer` is about exactly this list.
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    setCompact(el.clientWidth < COMPACT_WIDTH);
+    return observeSize(el, (entry) => setCompact(entry.contentRect.width < COMPACT_WIDTH));
+  }, [loading, days.length]);
 
   const toggle = (key: string) =>
     setExpanded((prev) => {
@@ -76,7 +88,7 @@ export function SessionList({ sessions, loading, filtered, onOpen }: Props) {
   if (days.length === 0) return <Empty filtered={filtered} />;
 
   return (
-    <div>
+    <div ref={root}>
       {days.map((day) => {
         const items = clusterRows(day.sessions);
         return (
@@ -102,6 +114,7 @@ export function SessionList({ sessions, loading, filtered, onOpen }: Props) {
                   session={item.session}
                   first={i === 0}
                   last={i === items.length - 1}
+                  compact={compact}
                   onOpen={onOpen}
                 />
               ) : (
@@ -112,6 +125,7 @@ export function SessionList({ sessions, loading, filtered, onOpen }: Props) {
                   last={i === items.length - 1}
                   expanded={expanded.has(`${day.label}:${item.title}`)}
                   onToggle={() => toggle(`${day.label}:${item.title}`)}
+                  compact={compact}
                   onOpen={onOpen}
                 />
               ),
@@ -132,6 +146,20 @@ export function SessionList({ sessions, loading, filtered, onOpen }: Props) {
  */
 const ROW_GRID = "grid grid-cols-[22px_minmax(0,1fr)_28px_92px_68px] items-center gap-4 px-5";
 
+/**
+ * The same grid without the model column, and with tighter gutters.
+ *
+ * Below this width the fixed columns eat the title: with the 420px source
+ * control panel open, a row's title had a couple of centimetres and the model
+ * name — the least important thing in the row — kept its full 92px. The model
+ * stays available in the detail view and the agent chip stays here, so nothing
+ * is actually lost.
+ */
+const ROW_GRID_COMPACT = "grid grid-cols-[22px_minmax(0,1fr)_28px_68px] items-center gap-3 px-3";
+
+/** Row width below which the model column is dropped. */
+const COMPACT_WIDTH = 720;
+
 /** Row height. Two lines of content, so taller than the single-line first pass. */
 const ROW_H = "h-14";
 
@@ -139,11 +167,14 @@ function SessionRow({
   session,
   first,
   last,
+  compact,
   onOpen,
 }: {
   session: BoardSession;
   first: boolean;
   last: boolean;
+  /** Narrow enough that the model column has to go — see `ROW_GRID_COMPACT`. */
+  compact: boolean;
   onOpen: (id: string, projectPath: string) => void;
 }) {
   const state = sessionState(session);
@@ -164,7 +195,7 @@ function SessionRow({
       onClick={() => onOpen(session.id, session.projectPath)}
       title={session.attentionReason ?? undefined}
       className={cn(
-        ROW_GRID,
+        compact ? ROW_GRID_COMPACT : ROW_GRID,
         ROW_H,
         "w-full cursor-pointer text-left transition-colors hover:bg-[var(--bg-hover)]",
         !last && "border-b border-dashed border-[var(--border-default)]",
@@ -208,20 +239,23 @@ function SessionRow({
 
       <AgentChip agent={session.agent} />
 
-      <span className="justify-self-end truncate font-mono text-[11px] text-[var(--text-tertiary)]">
-        {prettyModel(session.model) ?? ""}
-      </span>
+      {!compact && (
+        <span className="justify-self-end truncate font-mono text-[11px] text-[var(--text-tertiary)]">
+          {prettyModel(session.model) ?? ""}
+        </span>
+      )}
 
       {/* A recording session's duration is still climbing, so it is marked —
           green with a leading dot, matching the node on the rail. */}
       <span
+        title={`${formatDuration(session.wallSeconds)} span`}
         className={cn(
           "justify-self-end whitespace-nowrap font-mono text-[11px]",
           state === "live" ? "text-[var(--capture-live)]" : "text-[var(--text-secondary)]",
         )}
       >
         {state === "live" && <span className="mr-1">·</span>}
-        {formatDuration(session.durationSeconds)}
+        {formatDuration(session.activeSeconds)}
       </span>
     </button>
   );
@@ -454,6 +488,7 @@ function ClusterRow({
   first,
   last,
   expanded,
+  compact,
   onToggle,
   onOpen,
 }: {
@@ -461,10 +496,12 @@ function ClusterRow({
   first: boolean;
   last: boolean;
   expanded: boolean;
+  compact: boolean;
   onToggle: () => void;
   onOpen: (id: string, projectPath: string) => void;
 }) {
-  const minutes = item.sessions.reduce((a, s) => a + s.durationSeconds, 0);
+  // Seconds, like every other duration here — `formatDuration` takes seconds.
+  const seconds = item.sessions.reduce((a, s) => a + s.activeSeconds, 0);
   return (
     <>
       <button
@@ -472,7 +509,7 @@ function ClusterRow({
         onClick={onToggle}
         aria-expanded={expanded}
         className={cn(
-          ROW_GRID,
+          compact ? ROW_GRID_COMPACT : ROW_GRID,
           ROW_H,
           "w-full cursor-pointer text-left transition-colors hover:bg-[var(--bg-hover)]",
           !last && !expanded && "border-b border-dashed border-[var(--border-default)]",
@@ -524,9 +561,9 @@ function ClusterRow({
         </span>
 
         <span />
-        <span />
+        {!compact && <span />}
         <span className="justify-self-end whitespace-nowrap font-mono text-[11px] text-[var(--text-secondary)]">
-          {formatDuration(minutes)}
+          {formatDuration(seconds)}
         </span>
       </button>
 
@@ -546,6 +583,7 @@ function ClusterRow({
               // cut off.
               first={false}
               last={i === item.sessions.length - 1}
+              compact={compact}
               onOpen={onOpen}
             />
           ))}

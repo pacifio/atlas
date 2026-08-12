@@ -266,7 +266,7 @@ fn brief(detail: &SessionDetail, sources: &mut Vec<SourceRef>) -> String {
     line(&mut out, "Model", s.model.clone().unwrap_or_default());
     line(&mut out, "Branch", s.branches.first().cloned().unwrap_or_default());
     line(&mut out, "Started", s.started_at.clone());
-    line(&mut out, "Duration", format!("{} minutes", s.duration_seconds / 60));
+    line(&mut out, "Active time", format!("{} minutes", s.active_seconds / 60));
     line(
         &mut out,
         "Turns",

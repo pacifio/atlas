@@ -1293,7 +1293,10 @@ pub async fn artifacts_board(projects: Vec<String>) -> Result<Vec<BoardSession>,
         // rather than as concatenated per-project lists. Sorting before the cap
         // is what makes the cap mean "newest" rather than "whichever projects
         // happened to be read first".
-        out.sort_by(|a, b| b.session.started_at.cmp(&a.session.started_at));
+        // On last activity, matching `session_summaries`' own ordering — the cap
+        // has to mean "most recently worked on", and a Session started in June
+        // and resumed today is today's work.
+        out.sort_by(|a, b| b.session.last_activity_at.cmp(&a.session.last_activity_at));
         out.truncate(limit);
         Ok(out)
     })

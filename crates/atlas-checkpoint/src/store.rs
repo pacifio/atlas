@@ -357,6 +357,45 @@ impl Store {
         Ok(())
     }
 
+    /// Replace a Session's usage split with a freshly recomputed one.
+    ///
+    /// The importer's path, and a replace rather than the merge above on
+    /// purpose: the importer always re-reads a transcript from its first byte,
+    /// so the number it hands over is the whole truth for that file. An
+    /// additive path would double every total on the next tick that saw the
+    /// file grow.
+    ///
+    /// The context gauge is preserved — it is a different measurement, written
+    /// by a different producer — and neither timestamp moves: re-parsing a June
+    /// transcript in July is not work happening in July.
+    pub fn replace_usage_totals(&self, session_id: &str, usage: &TokenTotals) -> Result<()> {
+        self.require_writer()?;
+        let existing: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT token_totals FROM agent_session WHERE id = ?1",
+                [session_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let mut merged: TokenTotals = existing
+            .as_deref()
+            .and_then(|raw| serde_json::from_str(raw).ok())
+            .unwrap_or_default();
+
+        merged.input_tokens = usage.input_tokens;
+        merged.output_tokens = usage.output_tokens;
+        merged.cache_creation_tokens = usage.cache_creation_tokens;
+        merged.cache_read_tokens = usage.cache_read_tokens;
+
+        let json = serde_json::to_string(&merged).unwrap_or_else(|_| "{}".into());
+        self.conn.execute(
+            &format!("UPDATE agent_session SET token_totals = ?2{RESYNC_SESSION} WHERE id = ?1"),
+            rusqlite::params![session_id, json],
+        )?;
+        Ok(())
+    }
+
     /// Move a Session's `started_at` earlier, when a better source of truth
     /// (the transcript's own timestamps) knows when it really began.
     ///
@@ -527,9 +566,19 @@ impl Store {
             ],
         )?;
 
+        // Two clocks, on purpose. `updated_at` is when the row was written and
+        // drives liveness and the outbox. `last_activity_at` is when the work
+        // happened, which for an imported transcript is months earlier — and it
+        // only ever moves forward, because a re-import walks a file from the
+        // top and must not drag a Session's activity back to its first line.
         tx.execute(
-            "UPDATE agent_session SET updated_at = ?2 WHERE id = ?1",
-            rusqlite::params![input.session_id, now.to_rfc3339()],
+            "UPDATE agent_session
+                SET updated_at = ?2,
+                    last_activity_at = CASE
+                        WHEN last_activity_at IS NULL OR last_activity_at < ?3 THEN ?3
+                        ELSE last_activity_at END
+              WHERE id = ?1",
+            rusqlite::params![input.session_id, now.to_rfc3339(), created_at.to_rfc3339()],
         )?;
 
         tx.commit()?;
@@ -543,10 +592,21 @@ impl Store {
     /// not quietly erase the record that the original turn was torn.
     pub fn complete_turn(&self, session_id: &str, turn_seq: i64) -> Result<()> {
         self.require_writer()?;
+        let now = Utc::now().to_rfc3339();
         self.conn.execute(
             "UPDATE turn SET state = 'completed', ended_at = ?3
               WHERE session_id = ?1 AND turn_seq = ?2 AND state = 'open'",
-            rusqlite::params![session_id, turn_seq, Utc::now().to_rfc3339()],
+            rusqlite::params![session_id, turn_seq, now],
+        )?;
+        // A turn ending is the clearest activity signal there is. Monotonic for
+        // the same reason as in `record_message`.
+        self.conn.execute(
+            "UPDATE agent_session
+                SET last_activity_at = CASE
+                        WHEN last_activity_at IS NULL OR last_activity_at < ?2 THEN ?2
+                        ELSE last_activity_at END
+              WHERE id = ?1",
+            rusqlite::params![session_id, now],
         )?;
         Ok(())
     }
@@ -598,6 +658,113 @@ impl Store {
         workspace_id: &str,
     ) -> Result<HashMap<String, i64>> {
         self.counts_by_session("tool_call", workspace_id)
+    }
+
+    /// Turn time per Session, as `session_id -> (seconds, closed turns)`.
+    ///
+    /// Each turn span is clamped to `cap_seconds` before it is summed, because
+    /// `complete_turn` stamps the wall clock: a turn whose completion event
+    /// arrived after a laptop sleep would otherwise report the sleep as
+    /// thinking. The turn count travels with the seconds so the read model can
+    /// tell "this Session worked for zero seconds" from "this Session has no
+    /// turn rows at all" — imported transcripts are entirely the latter.
+    ///
+    /// One `GROUP BY`, like the count aggregates above and for the same reason.
+    pub fn turn_active_seconds(
+        &self,
+        workspace_id: &str,
+        cap_seconds: i64,
+    ) -> Result<HashMap<String, (i64, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.session_id,
+                    CAST(ROUND(SUM(MIN(MAX((julianday(t.ended_at) - julianday(t.started_at))
+                                           * 86400.0, 0.0), ?2))) AS INTEGER),
+                    COUNT(*)
+               FROM turn t
+               JOIN agent_session s ON s.id = t.session_id
+              WHERE s.workspace_id = ?1 AND t.ended_at IS NOT NULL
+              GROUP BY t.session_id",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![workspace_id, cap_seconds as f64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                (row.get::<_, i64>(1)?, row.get::<_, i64>(2)?),
+            ))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<HashMap<_, _>>>()?)
+    }
+
+    /// Gap-capped message time per Session, as `session_id -> seconds`.
+    ///
+    /// The fallback for every Session with no turn rows — which is every
+    /// imported transcript. Sums the gaps between consecutive messages, each
+    /// clamped to `idle_cap_seconds`: a gap longer than that is a developer who
+    /// walked away, not an agent that thought for three hours. Summing the
+    /// unclamped span is how a June transcript reported four hundred hours.
+    pub fn message_active_seconds(
+        &self,
+        workspace_id: &str,
+        idle_cap_seconds: i64,
+    ) -> Result<HashMap<String, i64>> {
+        let mut stmt = self.conn.prepare(
+            "WITH stamps AS (
+                 SELECT m.session_id AS sid,
+                        julianday(m.created_at) AS t,
+                        LAG(julianday(m.created_at))
+                            OVER (PARTITION BY m.session_id ORDER BY m.created_at, m.seq) AS prev
+                   FROM agent_message m
+                   JOIN agent_session s ON s.id = m.session_id
+                  WHERE s.workspace_id = ?1
+             )
+             SELECT sid,
+                    CAST(ROUND(SUM(MIN(MAX((t - prev) * 86400.0, 0.0), ?2))) AS INTEGER)
+               FROM stamps
+              WHERE prev IS NOT NULL
+              GROUP BY sid",
+        )?;
+        let rows = stmt.query_map(
+            rusqlite::params![workspace_id, idle_cap_seconds as f64],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        Ok(rows.collect::<rusqlite::Result<HashMap<_, _>>>()?)
+    }
+
+    /// [`Self::turn_active_seconds`] for one Session — the detail view's path.
+    pub fn turn_active_seconds_for(
+        &self,
+        session_id: &str,
+        cap_seconds: i64,
+    ) -> Result<(i64, i64)> {
+        Ok(self.conn.query_row(
+            "SELECT COALESCE(CAST(ROUND(SUM(MIN(MAX((julianday(ended_at) - julianday(started_at))
+                                                     * 86400.0, 0.0), ?2))) AS INTEGER), 0),
+                    COUNT(*)
+               FROM turn
+              WHERE session_id = ?1 AND ended_at IS NOT NULL",
+            rusqlite::params![session_id, cap_seconds as f64],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?)
+    }
+
+    /// [`Self::message_active_seconds`] for one Session.
+    pub fn message_active_seconds_for(
+        &self,
+        session_id: &str,
+        idle_cap_seconds: i64,
+    ) -> Result<i64> {
+        Ok(self.conn.query_row(
+            "WITH stamps AS (
+                 SELECT julianday(created_at) AS t,
+                        LAG(julianday(created_at)) OVER (ORDER BY created_at, seq) AS prev
+                   FROM agent_message
+                  WHERE session_id = ?1
+             )
+             SELECT COALESCE(CAST(ROUND(SUM(MIN(MAX((t - prev) * 86400.0, 0.0), ?2))) AS INTEGER), 0)
+               FROM stamps
+              WHERE prev IS NOT NULL",
+            rusqlite::params![session_id, idle_cap_seconds as f64],
+            |row| row.get(0),
+        )?)
     }
 
     /// `session_id -> COUNT(*)` for one child table, scoped to a Workspace.
@@ -2195,7 +2362,7 @@ fn next_seq(tx: &rusqlite::Transaction<'_>) -> Result<i64> {
 
 const SESSION_COLUMNS: &str = "id, workspace_id, source, native_session_id, title, agent, model, \
      cwd, token_totals, summary, started_at, updated_at, needs_attention, \
-     attention_reason, redaction_counts, sync_state, branch";
+     attention_reason, redaction_counts, sync_state, branch, last_activity_at";
 
 fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<Session> {
     let source: String = row.get(2)?;
@@ -2221,6 +2388,7 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<Session> {
             .unwrap_or(serde_json::Value::Null),
         sync_state: SyncState::parse(&sync_state).unwrap_or(SyncState::Local),
         branch: row.get(16)?,
+        last_activity_at: row.get::<_, Option<String>>(17)?.map(parse_time),
     })
 }
 

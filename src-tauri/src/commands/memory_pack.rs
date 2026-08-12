@@ -265,6 +265,43 @@ pub fn compose_injection(
     format!("{}\n\n{}", parts.join("\n\n"), user_text)
 }
 
+/// Does this turn's text open with a slash command (`/skill-name [args]`)?
+///
+/// Load-bearing for correctness, not a nicety. Claude Code resolves slash
+/// commands — including skills — only when the command sits at **byte 0 of the
+/// first text block** (`claude-agent-acp` gates on `firstText.startsWith("/")`,
+/// and `promptToClaude` anchors its rewrites with `^`). Every context block
+/// Atlas *prepends* therefore pushes the command off byte 0 and demotes it to
+/// prose: the command silently never fires. It is most visible on skills marked
+/// `disable-model-invocation: true`, because the model cannot see those in its
+/// own skill list either, so the turn dead-ends in "that skill isn't installed"
+/// instead of the model quietly invoking it anyway and masking the failure.
+///
+/// Deliberately rejects absolute paths — `/Users/me/foo.rs is broken` opens with
+/// a slash but is prose, and the interior `/` is what tells the two apart. A
+/// command token runs to whitespace or end-of-string over
+/// `[A-Za-z0-9_:-]` (`:` so plugin commands like `/codex:rescue` qualify).
+pub fn is_slash_command(text: &str) -> bool {
+    let Some(rest) = text.strip_prefix('/') else {
+        return false;
+    };
+    let mut chars = rest.chars();
+    // A command name opens alphanumeric: rules out `/ hello`, `/-x`, and `//`.
+    match chars.next() {
+        Some(c) if c.is_ascii_alphanumeric() => {}
+        _ => return false,
+    }
+    for c in chars {
+        if c.is_whitespace() {
+            return true; // token closed cleanly, args may follow
+        }
+        if !(c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':') {
+            return false; // e.g. the `/` in `/Users/me` — a path, not a command
+        }
+    }
+    true
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Truncate to at most `max` characters (char-boundary safe), appending `…`.
@@ -416,5 +453,43 @@ mod tests {
         assert!(w.starts_with("--- RECENT SESSION ---\n"));
         assert!(w.contains("(last 2 turns · raw)"));
         assert!(w.ends_with("--- END RECENT SESSION ---"));
+    }
+
+    #[test]
+    fn test_is_slash_command_accepts_commands() {
+        assert!(is_slash_command("/improve-codebase-architecture"));
+        assert!(is_slash_command("/diagnosing-bugs"));
+        assert!(is_slash_command("/codex:rescue")); // plugin command
+        assert!(is_slash_command("/to_spec"));
+        assert!(is_slash_command("/grill-with-docs some argument text"));
+        assert!(is_slash_command("/handoff\nmultiline args"));
+    }
+
+    #[test]
+    fn test_is_slash_command_rejects_prose_and_paths() {
+        // The discriminator: an interior `/` means path, not command.
+        assert!(!is_slash_command(
+            "/Users/me/Developer/atlas/src/foo.rs is broken"
+        ));
+        assert!(!is_slash_command("/etc/hosts"));
+        assert!(!is_slash_command("please run /implement for me"));
+        assert!(!is_slash_command("no slash here"));
+        assert!(!is_slash_command("/"));
+        assert!(!is_slash_command("/ leading space"));
+        assert!(!is_slash_command(""));
+    }
+
+    /// Regression: the composed wire text for a slash-command turn must keep the
+    /// command at byte 0. Prepending any context block demotes it to prose and
+    /// Claude Code never resolves the skill — the bug this guard exists to stop.
+    #[test]
+    fn test_injection_would_displace_a_slash_command() {
+        let text = "/improve-codebase-architecture";
+        assert!(is_slash_command(text));
+        let injected = compose_injection(Some("--- PROJECT MEMORY ---\nx"), None, text);
+        assert!(
+            !injected.starts_with('/'),
+            "injection moves the command off byte 0 — callers must skip it for slash turns"
+        );
     }
 }

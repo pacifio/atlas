@@ -1,7 +1,7 @@
 // The composer's "+" attach menu. Presentation only: the file dialogs,
 // image-vs-path routing, GitHub clone, and session referencing all live in the
-// parent (`message-input.tsx`). Skill/session lists reuse the `#`/`@` rails'
-// search sources so the menu and rails cannot drift.
+// parent (`message-input.tsx`). The session list reuses the `@` rail's
+// search source so the menu and rail cannot drift.
 //
 // The two searchable submenus (GitHub, Sessions) embed a text <input> inside a
 // Radix `SubContent` and stop keydown propagation so Radix's typeahead doesn't
@@ -26,7 +26,6 @@ import {
   Paperclip,
   Plus,
   Search,
-  SquareSlash,
   Star,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -37,15 +36,14 @@ import type { GithubRepo, ClonedRepo } from "@/features/github/types";
 import {
   searchMentions,
   listPastSessions,
-  type MentionSkill,
   type MentionWorkspace,
   type PastSessionRef,
 } from "../lib/mentions";
 
 interface ComposerAddMenuProps {
   disabled?: boolean;
-  /** Project root — scopes skills/sessions to this project, and is the clone
-   *  destination root for GitHub repos (`<project>/.atlas/repos`). */
+  /** Project root — scopes sessions/workspaces to this project, and is the
+   *  clone destination root for GitHub repos (`<project>/.atlas/repos`). */
   projectPath: string | null;
   /** Skill-registry agent id (e.g. "claude-code" | "codex" | "cersei"). */
   agentId?: string;
@@ -54,7 +52,6 @@ interface ComposerAddMenuProps {
   onAddFilesOrPhotos: () => void;
   onAttachMedia: () => void;
   onTakeScreenshot: (mode: "region" | "full") => void;
-  onPickSkill: (skill: MentionSkill) => void;
   onCloneRepo: (repo: GithubRepo) => void;
   onPickSession: (session: PastSessionRef) => void;
   /** Reference another project in the active org — inserts a `@workspace`
@@ -121,7 +118,6 @@ export function ComposerAddMenu({
   onAddFilesOrPhotos,
   onAttachMedia,
   onTakeScreenshot,
-  onPickSkill,
   onCloneRepo,
   onPickSession,
   onPickWorkspace,
@@ -129,28 +125,6 @@ export function ComposerAddMenu({
   onSwitchAgent,
 }: ComposerAddMenuProps) {
   const [open, setOpen] = useState(false);
-  // null = not loaded yet (spinner on first open); [] = loaded, none found.
-  const [skills, setSkills] = useState<MentionSkill[] | null>(null);
-  const [skillsError, setSkillsError] = useState(false);
-
-  // Lazy-load skills the first time the menu opens.
-  useEffect(() => {
-    if (!open || skills !== null) return;
-    let cancelled = false;
-    searchMentions("", "skill", { projectPath, agentId })
-      .then((found) => {
-        if (cancelled) return;
-        setSkills(found.filter((m): m is MentionSkill => m.kind === "skill"));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setSkills([]);
-        setSkillsError(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, skills, projectPath, agentId]);
 
   return (
     <DropdownMenu.Root open={open} onOpenChange={setOpen}>
@@ -164,7 +138,7 @@ export function ComposerAddMenu({
               ? "opacity-50 cursor-default"
               : "hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer",
           )}
-          title="Attach files, media, repos, skills, or a past session"
+          title="Attach files, media, repos, or a past session"
         >
           <Plus size={13} />
         </button>
@@ -215,61 +189,6 @@ export function ComposerAddMenu({
           <DropdownMenu.Separator className="my-1 h-px bg-[var(--border-default)]" />
 
           <GithubSubmenu projectPath={projectPath} onCloneRepo={onCloneRepo} />
-
-          <DropdownMenu.Sub>
-            <DropdownMenu.SubTrigger className={ITEM_CLASS}>
-              <SquareSlash size={11} />
-              <span>Skills</span>
-              <ChevronRight size={11} className="ml-auto text-[var(--text-tertiary)]" />
-            </DropdownMenu.SubTrigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.SubContent
-                sideOffset={6}
-                className={cn(
-                  CONTENT_CLASS,
-                  "min-w-[220px] max-w-[280px] max-h-[320px] overflow-y-auto",
-                )}
-                style={{ zIndex: 9999 }}
-              >
-                {skills === null ? (
-                  <div className="flex items-center gap-2 px-3 h-[26px] text-[11px] text-[var(--text-tertiary)]">
-                    <Loader2 size={11} className="animate-spin" />
-                    Loading skills…
-                  </div>
-                ) : skills.length === 0 ? (
-                  <div className="px-3 py-1.5 text-[11px] text-[var(--text-tertiary)]">
-                    {skillsError ? "Couldn't load skills." : "No skills installed"}
-                  </div>
-                ) : (
-                  skills.map((skill) => (
-                    <DropdownMenu.Item
-                      key={skill.id}
-                      className={cn(ITEM_CLASS, "h-auto items-start py-1.5")}
-                      onSelect={() => onPickSkill(skill)}
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="truncate text-[var(--text-primary)]">
-                            {skill.displayName}
-                          </span>
-                          {skill.scope === "project" && (
-                            <span className="shrink-0 rounded px-1 text-[9px] leading-4 border border-[var(--border-default)] text-[var(--text-tertiary)]">
-                              project
-                            </span>
-                          )}
-                        </div>
-                        {skill.description && (
-                          <div className="text-[10px] text-[var(--text-tertiary)] line-clamp-2">
-                            {skill.description}
-                          </div>
-                        )}
-                      </div>
-                    </DropdownMenu.Item>
-                  ))
-                )}
-              </DropdownMenu.SubContent>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Sub>
 
           <SessionsSubmenu
             projectPath={projectPath}

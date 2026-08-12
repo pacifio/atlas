@@ -228,10 +228,12 @@ export function MergeBranchDialog({
               <button
                 onClick={() => void doMerge()}
                 disabled={!canMerge}
+                // `text-text-inverse` on the accent fill, never `text-white` —
+                // see the note in `git-error-dialog`.
                 className={cn(
                   "flex items-center gap-1.5 px-3 h-7 rounded text-[11px] font-medium transition-colors",
                   canMerge
-                    ? "text-white bg-accent hover:opacity-90"
+                    ? "text-text-inverse bg-accent hover:opacity-90"
                     : "text-text-tertiary bg-bg-hover cursor-not-allowed",
                 )}
               >

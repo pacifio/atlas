@@ -5,9 +5,17 @@ import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { useNotificationsStore } from "@/features/notifications/stores/notifications-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
-import { PanelLeft, PanelRight, Bell, Layers, ArrowDownToLine, Loader2 } from "lucide-react";
+import {
+  PanelLeft,
+  PanelRight,
+  Bell,
+  Layers,
+  ArrowDownToLine,
+  Loader2,
+  Hammer,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import type { Window as TauriWindow } from "@tauri-apps/api/window";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
@@ -18,6 +26,7 @@ import { CapturePopover } from "@/features/capture/components/capture-popover";
 import { StatusDot } from "@/features/capture/components/capture-status";
 import type { Binding, CaptureHealth } from "@/features/capture/types";
 import { activeWorkspaceId } from "@/features/workspaces/lib/active-workspace";
+import { isDev } from "@/lib/env";
 
 function useTauriWindow() {
   const windowRef = useRef<TauriWindow | null>(null);
@@ -125,6 +134,11 @@ export function Titlebar() {
           a fresh install has no project open, and sign-in must be reachable
           from that empty state rather than hidden behind opening a folder. */}
       <div className="flex items-center gap-1.5">
+        {/* Dev-mode flag lives outside the `currentProject` guard too — it's
+            a build/runtime indicator, not project-dependent. Its own divider
+            travels with it, so the coloured capsule never sits flush against
+            the neutral icon row. */}
+        <DevModePill />
         {currentProject && (
           <>
             <UpdateButton />
@@ -242,6 +256,67 @@ function ProjectLabel({
         )}
       </Popover.Root>
     </div>
+  );
+}
+
+/**
+ * A glossy blue capsule, shown only when the app is running via
+ * `bun run dev:app` specifically. `isDev` alone also matches `bun run dev`
+ * (Vite-only, no Tauri shell, where `invoke()` doesn't work) — `isTauri()`
+ * narrows to an actual Tauri window, so the two together are true only for
+ * the real `tauri dev` session this pill is meant to flag.
+ *
+ * The one saturated element in a monochrome titlebar, which is the point: it
+ * must be impossible to mistake a dev window for the shipped app. Blue rather
+ * than the old purple because purple appears nowhere else in Atlas, while blue
+ * is already the app's informational hue (`--status-info`).
+ *
+ * Built from three stacked layers rather than a flat fill — a vertical
+ * gradient body, a blurred crown highlight, and an inset rim — so it reads as
+ * a lit physical capsule at 20px instead of a coloured rectangle. All of it is
+ * static paint: no transitions, no hover, no transform. It's an indicator, not
+ * a control, so it takes no pointer events and never moves.
+ */
+function DevModePill() {
+  if (!isDev || !isTauri()) return null;
+  return (
+    <>
+      <div
+        className="relative flex h-5 shrink-0 items-center gap-1 overflow-hidden rounded-full px-2 text-[11px] leading-none font-medium text-white"
+        style={{
+          background: "linear-gradient(to bottom, #3b82f6, #2563eb)",
+          boxShadow:
+            "0 1px 5px 0 rgba(37,99,235,0.35), 0 1px 0 0 rgba(255,255,255,0.25) inset, 0 -2px 6px 0 rgba(37,99,235,0.5) inset",
+        }}
+        title="Running via `bun run dev:app`"
+      >
+        {/* Crown highlight — the light source. Blurred so its lower edge melts
+          into the body instead of banding across the glyphs. */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-0 z-0 h-2/5 w-4/5 -translate-x-1/2 rounded-t-full"
+          style={{
+            background:
+              "linear-gradient(180deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0) 80%, transparent 100%)",
+            filter: "blur(1px)",
+          }}
+        />
+        {/* Rim — keeps the capsule's edge legible against the black titlebar. */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-0 rounded-full"
+          style={{
+            boxShadow:
+              "0 0 0 1px rgba(255,255,255,0.10) inset, 0 1px 0 0 rgba(255,255,255,0.18) inset",
+          }}
+        />
+        <Hammer size={11} className="relative z-10" />
+        <span className="relative z-10">Dev Mode</span>
+      </div>
+      {/* Travels with the pill so the one coloured element in the titlebar is
+          never flush against the neutral icons beside it. */}
+      <div className="mx-0.5 h-4 w-px shrink-0 bg-border-default" aria-hidden />
+    </>
   );
 }
 

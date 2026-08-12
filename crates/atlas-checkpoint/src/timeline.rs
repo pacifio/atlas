@@ -52,9 +52,21 @@ pub struct SessionSummary {
     pub source: String,
     pub started_at: String,
     pub updated_at: String,
-    /// Wall-clock span of the Session. Not agent time — a Session left open
-    /// overnight reads as overnight, which is the honest number.
-    pub duration_seconds: i64,
+    /// When the Session last did work. The board orders and groups on this —
+    /// never on `updated_at`, which moves whenever the row is rewritten.
+    pub last_activity_at: String,
+    /// Agent time: the sum of the Session's turns when the agent reported
+    /// them, otherwise the gap-capped sum of its message intervals.
+    ///
+    /// This used to be `updated_at - started_at`, which is neither agent time
+    /// nor an honest span — a transcript imported six weeks after it ran
+    /// reported the six weeks. See [`IDLE_CAP_SECONDS`] and
+    /// [`TURN_CAP_SECONDS`] for what the caps are protecting against.
+    pub active_seconds: i64,
+    /// First activity to last, idle included. Usually much larger than
+    /// `active_seconds`, and still worth showing — it is the answer to "when
+    /// was I working on this", which agent time cannot give.
+    pub wall_seconds: i64,
     pub message_count: i64,
     pub tool_call_count: i64,
     pub checkpoint_count: i64,
@@ -69,6 +81,12 @@ pub struct SessionSummary {
     /// Input + output. Zero for an agent that reports no split — see
     /// `context_used`.
     pub total_tokens: i64,
+    /// Cache writes and cache reads, carried beside the split rather than
+    /// inside it. They are real spend and were being dropped on the floor, but
+    /// folding them into `total_tokens` would make "in + out" mean something
+    /// else — for a cache-heavy agent they dwarf both.
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
     /// Context-window occupancy, for agents that report only that.
     ///
     /// ACP agents (Claude Code, Codex) do not emit a usage split, so
@@ -238,6 +256,8 @@ pub struct ToolTally {
 pub fn sessions(store: &Store, workspace_id: &str) -> Result<Vec<SessionSummary>> {
     let message_counts = store.message_counts(workspace_id)?;
     let tool_call_counts = store.tool_call_counts_by_session(workspace_id)?;
+    let turn_time = store.turn_active_seconds(workspace_id, TURN_CAP_SECONDS)?;
+    let message_time = store.message_active_seconds(workspace_id, IDLE_CAP_SECONDS)?;
 
     let mut by_session: HashMap<String, Vec<Checkpoint>> = HashMap::new();
     for checkpoint in store.checkpoints_for_workspace(workspace_id)? {
@@ -252,10 +272,34 @@ pub fn sessions(store: &Store, workspace_id: &str) -> Result<Vec<SessionSummary>
             checkpoints,
             message_counts.get(&session.id).copied().unwrap_or(0),
             tool_call_counts.get(&session.id).copied().unwrap_or(0),
+            active_seconds(
+                turn_time.get(&session.id).copied(),
+                message_time.get(&session.id).copied().unwrap_or(0),
+            ),
         ));
     }
-    out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    out.sort_by(|a, b| b.last_activity_at.cmp(&a.last_activity_at));
     Ok(out)
+}
+
+/// A gap longer than this between two messages is a developer who walked away.
+pub const IDLE_CAP_SECONDS: i64 = 300;
+/// A turn that "ran" longer than this did not run: its completion event arrived
+/// after a sleep, a restart or a crash reconciliation.
+pub const TURN_CAP_SECONDS: i64 = 1_800;
+
+/// Which clock a Session's agent time comes from.
+///
+/// Turn spans when the agent reported turns at all — they are agent time by
+/// construction. Imported transcripts have no turn rows, so they fall back to
+/// the gap-capped message intervals. The turn *count* is what distinguishes the
+/// two cases: a Session with turns that summed to zero seconds really did work
+/// for under a second, and must not silently switch clocks.
+fn active_seconds(turns: Option<(i64, i64)>, message_seconds: i64) -> i64 {
+    match turns {
+        Some((seconds, spans)) if spans > 0 => seconds,
+        _ => message_seconds,
+    }
 }
 
 /// One Session's summary row.
@@ -269,6 +313,7 @@ fn summarize(
     checkpoints: &[Checkpoint],
     message_count: i64,
     tool_call_count: i64,
+    active_seconds: i64,
 ) -> SessionSummary {
     // Starting branch first, then the Checkpoint branches — so a row that shows
     // one branch shows the one the work began on rather than whichever sorted
@@ -290,6 +335,9 @@ fn summarize(
     files.dedup();
 
     let totals = &session.token_totals;
+    // A Session recorded before the activity column existed, and with neither a
+    // message nor a closed turn to backfill from, has only its mutation clock.
+    let last_activity = session.last_activity_at.unwrap_or(session.updated_at);
     SessionSummary {
         id: session.id.clone(),
         title: session.title.clone(),
@@ -298,7 +346,9 @@ fn summarize(
         source: session.source.as_str().to_string(),
         started_at: session.started_at.to_rfc3339(),
         updated_at: session.updated_at.to_rfc3339(),
-        duration_seconds: (session.updated_at - session.started_at).num_seconds().max(0),
+        last_activity_at: last_activity.to_rfc3339(),
+        active_seconds,
+        wall_seconds: (last_activity - session.started_at).num_seconds().max(0),
         message_count,
         tool_call_count,
         checkpoint_count: checkpoints.len() as i64,
@@ -307,6 +357,8 @@ fn summarize(
         deletions: checkpoints.iter().map(|c| c.deletions).sum(),
         files_touched: files.len() as i64,
         total_tokens: (totals.input_tokens + totals.output_tokens) as i64,
+        cache_creation_tokens: totals.cache_creation_tokens as i64,
+        cache_read_tokens: totals.cache_read_tokens as i64,
         context_used: totals.context_used.map(|n| n as i64),
         context_size: totals.context_size.map(|n| n as i64),
         needs_attention: session.needs_attention,
@@ -432,6 +484,10 @@ pub fn detail(
         &checkpoints,
         store.message_count(session_id)?,
         store.tool_call_count(session_id)?,
+        active_seconds(
+            Some(store.turn_active_seconds_for(session_id, TURN_CAP_SECONDS)?),
+            store.message_active_seconds_for(session_id, IDLE_CAP_SECONDS)?,
+        ),
     );
     Ok(Some(SessionDetail { summary, entries, counts, tools }))
 }
@@ -557,6 +613,23 @@ mod tests {
 
     fn entry(kind: EntryKind, turn: i64, at: &str, id: &str) -> TimelineEntry {
         TimelineEntry::blank(id.into(), kind, at.into(), turn)
+    }
+
+    #[test]
+    fn turn_time_wins_whenever_the_agent_reported_turns() {
+        // Turns are agent time by construction, so they win even when they sum
+        // to less than the messages' wall gaps.
+        assert_eq!(active_seconds(Some((120, 3)), 4_000), 120);
+        // A Session whose turns really did take under a second is not the same
+        // as one with no turn rows, and must not silently switch clocks.
+        assert_eq!(active_seconds(Some((0, 2)), 4_000), 0);
+    }
+
+    #[test]
+    fn a_session_with_no_turn_rows_falls_back_to_message_gaps() {
+        // Every imported transcript — the importer records no turns at all.
+        assert_eq!(active_seconds(None, 420), 420);
+        assert_eq!(active_seconds(Some((0, 0)), 420), 420);
     }
 
     #[test]

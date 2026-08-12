@@ -5,6 +5,8 @@
 //! timeline, checked end to end: written through `Capture`, read back through
 //! `timeline`, with nothing mocked in between.
 
+use chrono::{DateTime, Duration, TimeZone, Utc};
+
 use atlas_checkpoint::model::WorkspaceMode;
 use atlas_checkpoint::timeline::{self, EntryKind};
 use atlas_checkpoint::{
@@ -428,4 +430,190 @@ fn context_occupancy_travels_separately_from_a_token_split() {
     assert_eq!(row.total_tokens, 0, "occupancy is not consumption");
     assert_eq!(row.context_used, Some(853_100));
     assert_eq!(row.context_size, Some(1_000_000));
+}
+
+// ── Active time ─────────────────────────────────────────────────────────────
+//
+// The Timeline reported `updated_at - started_at` as a Session's duration.
+// `updated_at` is stamped with the wall clock by every write there is, so a
+// transcript that ran in June and was imported in July read as 1395 hours, and
+// the board's stat rail summed 474 of those into 42488h. These pin the two
+// facts that replaced it: agent time, and an honest span beside it.
+
+/// A turn stamped with the transcript's own clock, the way the importer writes.
+fn assistant_at(turn_seq: i64, body: &str, at: DateTime<Utc>) -> TurnContent {
+    TurnContent {
+        turn_seq,
+        native_message_id: Some(format!("msg-{turn_seq}-{}", at.timestamp())),
+        role: Role::Assistant,
+        mode: Mode::Text,
+        body: body.to_string(),
+        created_at: Some(at),
+    }
+}
+
+fn june(day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 6, day, hour, minute, 0).unwrap()
+}
+
+/// Messages at the given times, on a Session with no closed turns — the shape
+/// every imported transcript has.
+fn imported_session(dir: &std::path::Path, native: &str, stamps: &[DateTime<Utc>]) -> (Store, String) {
+    let mut store = store_in(dir);
+    let id = {
+        let mut capture = Capture::new(&mut store, WorkspaceMode::Local);
+        // `ensure_session` + `record_turn`, exactly as the importer does it —
+        // never `record_prompt`, which opens a turn and stamps the prompt with
+        // the wall clock because it is the live-capture path.
+        let id = capture
+            .ensure_session(&key(native), Some("claude-code"), None, None, None)
+            .expect("session");
+        for (i, at) in stamps.iter().enumerate() {
+            capture.record_turn(&id, assistant_at(i as i64 + 1, "Looked at it.", *at)).unwrap();
+        }
+        id
+    };
+    // What the importer does at the end of a file.
+    store.backdate_session(&id, stamps[0]).expect("backdated");
+    (store, id)
+}
+
+#[test]
+fn an_imported_sessions_duration_is_its_work_not_the_time_since_it_ran() {
+    let dir = tempfile::tempdir().unwrap();
+    // Two minutes of work on the 1st of June, read back today.
+    let (mut store, session_id) = imported_session(
+        dir.path(),
+        "june-1",
+        &[june(1, 16, 10), june(1, 16, 11), june(1, 16, 12)],
+    );
+
+    // Every one of these bumps `updated_at` to now — which is exactly how the
+    // old duration became "weeks".
+    {
+        let mut capture = Capture::new(&mut store, WorkspaceMode::Local);
+        capture.record_usage(&session_id, &TokenTotals { input_tokens: 10, ..Default::default() }).unwrap();
+    }
+
+    let rows = timeline::sessions(&store, WORKSPACE).expect("read");
+    let row = rows.iter().find(|r| r.id == session_id).expect("row");
+
+    assert!(
+        row.active_seconds <= 180,
+        "two minutes of messages, not the weeks since: {}s",
+        row.active_seconds
+    );
+    assert!(
+        row.wall_seconds < 3 * 3600,
+        "the honest span is the transcript's own, not the time since the import: {}s",
+        row.wall_seconds
+    );
+    assert!(
+        row.last_activity_at.starts_with("2026-06-01"),
+        "activity is June, whatever day the row was written: {}",
+        row.last_activity_at
+    );
+}
+
+#[test]
+fn idle_time_between_messages_is_capped_rather_than_counted() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = june(2, 9, 0);
+    let (store, session_id) = imported_session(
+        dir.path(),
+        "gappy",
+        &[
+            base,
+            base + Duration::seconds(60),
+            // Lunch. Contributes the cap, not four hours.
+            base + Duration::hours(4),
+            base + Duration::hours(4) + Duration::seconds(60),
+        ],
+    );
+
+    let rows = timeline::sessions(&store, WORKSPACE).expect("read");
+    let row = rows.iter().find(|r| r.id == session_id).expect("row");
+
+    // The prompt shares the first stamp, so the intervals are 0, 60, capped, 60.
+    assert_eq!(row.active_seconds, 60 + timeline::IDLE_CAP_SECONDS + 60);
+    assert!(row.wall_seconds >= 4 * 3600, "the span still tells the truth");
+}
+
+#[test]
+fn a_bulk_import_does_not_file_a_years_history_under_today() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_in(dir.path());
+    {
+        let mut capture = Capture::new(&mut store, WorkspaceMode::Local);
+        for (i, day) in [1u32, 15, 29].iter().enumerate() {
+            let at = june(*day, 11, 0);
+            let id = capture
+                .ensure_session(&key(&format!("day-{day}")), Some("claude-code"), None, None, None)
+                .unwrap();
+            capture.record_turn(&id, assistant_at(i as i64 + 1, "Done.", at)).unwrap();
+        }
+    }
+
+    let rows = timeline::sessions(&store, WORKSPACE).expect("read");
+    let days: std::collections::HashSet<&str> =
+        rows.iter().map(|r| &r.last_activity_at[..10]).collect();
+    assert_eq!(days.len(), 3, "three days of work stay three days: {days:?}");
+    // And the rows written moments ago all share one `updated_at` day, which is
+    // precisely why grouping on it was wrong.
+    assert!(rows.iter().all(|r| r.updated_at != r.last_activity_at));
+}
+
+#[test]
+fn recording_usage_does_not_count_as_activity() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut store, session_id) =
+        imported_session(dir.path(), "quiet", &[june(3, 8, 0), june(3, 8, 5)]);
+
+    let before = timeline::sessions(&store, WORKSPACE)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.id == session_id)
+        .unwrap()
+        .last_activity_at;
+
+    {
+        let mut capture = Capture::new(&mut store, WorkspaceMode::Local);
+        capture.record_usage(&session_id, &TokenTotals { input_tokens: 42, ..Default::default() }).unwrap();
+    }
+
+    let after = timeline::sessions(&store, WORKSPACE)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.id == session_id)
+        .unwrap()
+        .last_activity_at;
+    assert_eq!(before, after, "bookkeeping is not work");
+}
+
+#[test]
+fn cache_tokens_reach_the_row_without_inflating_the_split() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut store, session_id) = seeded(dir.path());
+
+    {
+        let mut capture = Capture::new(&mut store, WorkspaceMode::Local);
+        capture
+            .record_usage(
+                &session_id,
+                &TokenTotals {
+                    input_tokens: 1_000,
+                    output_tokens: 500,
+                    cache_creation_tokens: 29_002,
+                    cache_read_tokens: 15_565,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+    }
+
+    let rows = timeline::sessions(&store, WORKSPACE).expect("read");
+    let row = rows.iter().find(|r| r.id == session_id).expect("row");
+    assert_eq!(row.total_tokens, 1_500, "\"in + out\" means in + out");
+    assert_eq!(row.cache_creation_tokens, 29_002);
+    assert_eq!(row.cache_read_tokens, 15_565);
 }

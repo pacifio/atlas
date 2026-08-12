@@ -19,6 +19,10 @@ import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store"
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { skills } from "@/features/skills/lib/skills-api";
 import type { PackComponentKind } from "@/features/skills/lib/types";
+// NOTE: skills are no longer a mention kind — inlining a skill body into the
+// prompt was retired (see docs/adr/0001-slash-tokens-pass-through-skills-are-not-inlined.md).
+// Skill invocation goes through the agent-advertised `/` passthrough now.
+// Pack-delivered components (command/agent/rule) are unrelated and stay.
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,7 +31,6 @@ export type MentionKind =
   | "folder"
   | "symbol"
   | "knowledge"
-  | "skill"
   | "component"
   | "repo"
   | "workspace"
@@ -73,21 +76,6 @@ export interface MentionKnowledge {
    *  Surfaces the user's "spaces" — nested subfolders under
    *  `.atlas/knowledge/`. Null for top-level entries. */
   folder: string | null;
-}
-
-export interface MentionSkill {
-  kind: "skill";
-  /** `${scope}:${name}` — dedupe key across scopes. */
-  id: string;
-  displayName: string; // skill name (the `#skill:<name>` token)
-  description: string;
-  scope: "global" | "project";
-  /** Sanitized on-disk name, passed to `skills_read` at compose time. */
-  skillName: string;
-  /** Project root for project-scope reads; null for global. */
-  projectPath: string | null;
-  /** Absolute path to the canonical `SKILL.md` (Rust read fallback). */
-  filePath: string;
 }
 
 export interface MentionComponent {
@@ -164,7 +152,6 @@ export type MentionData =
   | MentionFolder
   | MentionSymbol
   | MentionKnowledge
-  | MentionSkill
   | MentionComponent
   | MentionRepo
   | MentionWorkspace
@@ -189,7 +176,6 @@ export const MENTION_CATEGORIES: readonly MentionCategory[] = [
   { kind: "folder", label: "Folders", aliases: ["folder", "dir", "d/"], weight: 0.95 },
   { kind: "symbol", label: "Symbols", aliases: ["symbol", "sym", "s/"], weight: 0.85 },
   { kind: "knowledge", label: "Knowledge", aliases: ["note", "knowledge", "k/"], weight: 0.85 },
-  { kind: "skill", label: "Skills", aliases: ["skill", "sk/"], weight: 0.9 },
   {
     kind: "component",
     label: "Pack Components",
@@ -221,9 +207,10 @@ export interface MentionContext {
   /** Project root (cwd for the chat). Required by per-project sources. */
   projectPath: string | null;
   /** Active chat agent's skill-registry id (e.g. "claude-code" | "codex").
-   *  When set, the `#` skill rail only offers skills enabled for this agent,
-   *  so disabling a skill/pack for an agent removes it from that agent's chat.
-   *  Undefined = no agent filter (legacy callers). */
+   *  When set, pack-component mentions (command/agent/rule) only offer ones
+   *  enabled for this agent, so disabling a pack for an agent removes its
+   *  components from that agent's chat. Undefined = no agent filter (legacy
+   *  callers). */
   agentId?: string;
 }
 
@@ -339,8 +326,6 @@ export function toShortForm(m: MentionData): string {
       return `@symbol:${m.displayName}`;
     case "knowledge":
       return `@note:${m.id}`;
-    case "skill":
-      return `#skill:${m.displayName}`;
     case "component":
       return `#${m.componentKind}:${m.displayName}`;
     case "repo":
@@ -398,21 +383,11 @@ export async function searchMentions(
         filePath: s.filePath,
       }));
   }
-  // Skills take the cheaper path: list the canonical store(s) and
-  // substring-filter JS-side (no Rust `mention_search` change needed). They
-  // also join the unscoped `@` blend below, capped so they never crowd files.
-  // The `#` rail (scope locked to "skill") invokes skills AND pack-delivered
-  // components (command/agent/rule) — both inline their body at send time.
-  if (scope === "skill") {
-    const q = stripCategoryAlias(query, "skill");
-    const [sk, comps] = await Promise.all([searchSkills(q, ctx), searchPackComponents(q, ctx)]);
-    return [...sk, ...comps];
-  }
   if (scope === "component") {
     return searchPackComponents(stripCategoryAlias(query, "component"), ctx);
   }
-  // Workspaces live in a JS store — resolve them JS-side (like skills), so an
-  // agent in one project can be handed another project's path via @workspace.
+  // Workspaces live in a JS store — resolve them JS-side, so an agent in one
+  // project can be handed another project's path via @workspace.
   if (scope === "workspace") {
     return searchWorkspaces(stripCategoryAlias(query, "workspace"), ctx);
   }
@@ -429,29 +404,19 @@ export async function searchMentions(
   }
   try {
     const stripped = stripCategoryAlias(query, scope ?? "file");
-    // Unscoped `@`: blend the JS-owned kinds (workspaces, skills) alongside
-    // the Rust-ranked kinds so ONE search reaches everything — files, folders,
-    // notes, repos, branches, papers, symbols, workspaces, skills. The JS
-    // kinds are small lists; they're appended after the Rust results and the
-    // picker groups the flat list into per-kind sections for display.
+    // Unscoped `@`: blend the JS-owned kinds (workspaces) alongside the
+    // Rust-ranked kinds so ONE search reaches everything — files, folders,
+    // notes, repos, branches, papers, symbols, workspaces. The JS kinds are
+    // small lists; they're appended after the Rust results and the picker
+    // groups the flat list into per-kind sections for display.
     if (scope === null) {
-      const [results, skillMatches] = await Promise.all([
-        invoke<MentionData[]>("mention_search", {
-          query: stripped,
-          scope,
-          projectPath: ctx.projectPath,
-          workspaceId: activeWorkspaceId(),
-        }),
-        searchSkills(stripped, ctx).catch(() => [] as MentionSkill[]),
-      ]);
-      const q = stripped.trim();
-      return [
-        ...results,
-        ...searchWorkspaces(stripped, ctx),
-        // Zero-query overview keeps skills to a taster; a real query shows
-        // every matching skill (still bounded by the store size).
-        ...skillMatches.slice(0, q ? 10 : 3),
-      ];
+      const results = await invoke<MentionData[]>("mention_search", {
+        query: stripped,
+        scope,
+        projectPath: ctx.projectPath,
+        workspaceId: activeWorkspaceId(),
+      });
+      return [...results, ...searchWorkspaces(stripped, ctx)];
     }
     return await invoke<MentionData[]>("mention_search", {
       query: stripped,
@@ -489,69 +454,9 @@ function searchWorkspaces(query: string, ctx: MentionContext): MentionWorkspace[
     }));
 }
 
-/** Skill search for the `#skill:` rail. Lists the canonical store for global
- *  and (when a project is open) project scope, then substring-filters by name
- *  or description. Project skills sort first (more specific), then alpha.
- *  Reuses the existing `skills_list` IPC — no new backend command. */
-async function searchSkills(query: string, ctx: MentionContext): Promise<MentionSkill[]> {
-  const q = query.trim().toLowerCase();
-  const sources: { scope: "global" | "project"; projectPath: string | null }[] = [
-    { scope: "global", projectPath: null },
-  ];
-  if (ctx.projectPath) {
-    sources.push({ scope: "project", projectPath: ctx.projectPath });
-  }
-
-  const lists = await Promise.all(
-    sources.map(async (s) => {
-      try {
-        const metas = await skills.list(s.scope, s.projectPath);
-        return metas.map((meta) => ({ meta, source: s }));
-      } catch (e) {
-        console.warn(`skills_list (${s.scope}) failed:`, e);
-        return [];
-      }
-    }),
-  );
-
-  const seen = new Set<string>();
-  const out: MentionSkill[] = [];
-  for (const { meta, source } of lists.flat()) {
-    const id = `${source.scope}:${meta.name}`;
-    if (seen.has(id)) continue;
-    // NOTE: we intentionally do NOT gate by per-agent enablement here. Selecting
-    // a skill in the picker inlines its SKILL.md body into the prompt (see
-    // compose_prompt), which works for ANY agent regardless of whether the skill
-    // is symlinked into that agent's native skills dir. The old `enabledAgents`
-    // gate hid freshly installed skills (not yet projected to any agent →
-    // `enabledAgents` empty) — which read as "skills not indexed yet". Every
-    // installed skill in scope is a valid mention target, so we show them all.
-    if (q && !meta.name.toLowerCase().includes(q) && !meta.description.toLowerCase().includes(q)) {
-      continue;
-    }
-    seen.add(id);
-    out.push({
-      kind: "skill",
-      id,
-      displayName: meta.name,
-      description: meta.description,
-      scope: source.scope,
-      skillName: meta.name,
-      projectPath: source.projectPath,
-      filePath: meta.path,
-    });
-  }
-
-  out.sort((a, b) => {
-    if (a.scope !== b.scope) return a.scope === "project" ? -1 : 1;
-    return a.displayName.localeCompare(b.displayName);
-  });
-  return out;
-}
-
-/** Pack-component search for the `#` rail — lists installed-pack commands,
- *  agents, and rules (via `pack_components_list`) and substring-filters by name,
- *  description, or kind. Grouped by kind, then alpha. Mirrors `searchSkills`. */
+/** Pack-component search — lists installed-pack commands, agents, and rules
+ *  (via `pack_components_list`) and substring-filters by name, description,
+ *  or kind. Grouped by kind, then alpha. */
 async function searchPackComponents(
   query: string,
   ctx: MentionContext,
@@ -582,7 +487,7 @@ async function searchPackComponents(
     const id = `${source.scope}:${meta.kind}:${meta.pack}:${meta.name}`;
     if (seen.has(id)) continue;
     // Per-agent gating: only offer pack components (command/agent/rule) that the
-    // pack has projected to the active agent. Mirrors the skill filter above.
+    // pack has projected to the active agent.
     if (ctx.agentId && !meta.enabledAgents.includes(ctx.agentId)) {
       continue;
     }
@@ -714,22 +619,10 @@ export async function composePrompt(
             useKnowledgeStore.getState().entries.find((e) => e.id === m.id)?.content ?? null,
         };
       }
-      // Skills have no in-memory store, so read the frontmatter-stripped body
-      // now (one cheap IPC per mentioned skill). Rust falls back to reading
-      // `filePath` if this is null.
-      if (m.kind === "skill") {
-        let inlineBody: string | null = null;
-        try {
-          inlineBody = (await skills.read(m.scope, m.skillName, m.projectPath)).body;
-        } catch (e) {
-          console.warn("skills.read for compose failed:", e);
-        }
-        return { ...m, inlineBody };
-      }
       // Past session: read the JSONL transcript now and format it into a
       // plain-text conversation the agent can reference. Kept lightweight in
       // the chip (just filePath); the (potentially large) body only
-      // materializes here, at send time — same lazy pattern skills use.
+      // materializes here, at send time.
       if (m.kind === "past_session") {
         let inlineBody: string | null = null;
         try {

@@ -96,7 +96,11 @@ pub enum ReviewSource {
 }
 
 fn git(path: &str, args: &[&str]) -> Result<String, String> {
+    // Read-only, every caller — `--no-optional-locks` keeps a review's diff
+    // reads from taking `.git/index.lock` out from under a concurrent commit.
+    // See the note on `git_read` in `commands/git.rs`.
     let out = Command::new("git")
+        .arg("--no-optional-locks")
         .args(args)
         .current_dir(path)
         .output()

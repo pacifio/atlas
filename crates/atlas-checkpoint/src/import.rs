@@ -54,7 +54,7 @@ use serde::{Deserialize, Serialize};
 use crate::blobs;
 use crate::capture::{Capture, SessionKey, ToolCallContent, TurnContent};
 use crate::error::{Error, Result};
-use crate::model::{Mode, Role, Source, ToolStatus, WorkspaceMode};
+use crate::model::{Mode, Role, Source, TokenTotals, ToolStatus, WorkspaceMode};
 use crate::store::Store;
 use crate::tools::{canonical_name, ToolName};
 
@@ -319,6 +319,14 @@ fn import_file(
     // matching `tool_result` carries just the id. Remembered per file so the
     // result's upsert does not downgrade the stored name to `Other`.
     let mut call_meta: HashMap<String, (ToolName, i64)> = HashMap::new();
+    // Usage, deduplicated by request — see `read_usage`. Accumulated for the
+    // whole file and written once at the end, because the total is only true
+    // once the file has been read.
+    let mut usage_by_request: HashMap<String, TokenTotals> = HashMap::new();
+    // `read_turn` only sees `message.model` on lines that carry text, so a
+    // transcript whose assistant lines are all tool calls would never name its
+    // model. Taken from any line that has one.
+    let mut model_seen: Option<String> = None;
     let no_locations = serde_json::json!([]);
 
     {
@@ -353,6 +361,34 @@ fn import_file(
             // command caveat become a Session's title.
             if value.get("isMeta").and_then(serde_json::Value::as_bool) == Some(true) {
                 continue;
+            }
+
+            // Read before the "nothing usable here" filter below: a tool-only
+            // assistant line produces no turn and no tool_result, and dropping
+            // it would silently lose the usage of every tool-calling request.
+            if let Some(line_usage) = read_usage(&value) {
+                let slot = usage_by_request.entry(line_usage.key).or_default();
+                // Per-field max rather than overwrite: two copies of one
+                // request disagree when the first was written mid-stream, and
+                // the finished one is the larger.
+                slot.input_tokens = slot.input_tokens.max(line_usage.totals.input_tokens);
+                slot.output_tokens = slot.output_tokens.max(line_usage.totals.output_tokens);
+                slot.cache_creation_tokens =
+                    slot.cache_creation_tokens.max(line_usage.totals.cache_creation_tokens);
+                slot.cache_read_tokens =
+                    slot.cache_read_tokens.max(line_usage.totals.cache_read_tokens);
+            }
+            // Assistant lines only: the model is a property of what answered,
+            // and a user line that happens to carry one is echoing the client's
+            // request rather than reporting what ran.
+            if model_seen.is_none()
+                && value.get("type").and_then(serde_json::Value::as_str) == Some("assistant")
+            {
+                model_seen = value
+                    .get("message")
+                    .and_then(|m| m.get("model"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
             }
 
             let created_at = line_timestamp(&value);
@@ -504,6 +540,30 @@ fn import_file(
 
     if let Some(id) = &session_id {
         outcome.sessions_imported += imported_here;
+
+        // The whole-file total, deduplicated by request and written as a
+        // replace. After an I/O error this covers only the prefix that was
+        // read, which is correct: the progress marker below is not advanced, so
+        // the next pass recomputes the file from the top.
+        let mut usage = TokenTotals::default();
+        for request in usage_by_request.values() {
+            usage.input_tokens = usage.input_tokens.saturating_add(request.input_tokens);
+            usage.output_tokens = usage.output_tokens.saturating_add(request.output_tokens);
+            usage.cache_creation_tokens =
+                usage.cache_creation_tokens.saturating_add(request.cache_creation_tokens);
+            usage.cache_read_tokens =
+                usage.cache_read_tokens.saturating_add(request.cache_read_tokens);
+        }
+        if usage != TokenTotals::default() {
+            store.replace_usage_totals(id, &usage)?;
+        }
+        // The model, when the Session did not already have one — `COALESCE` in
+        // the upsert takes the new value and leaves an existing one alone.
+        if let Some(model) = &model_seen {
+            let mut capture = Capture::new(store, mode);
+            capture.ensure_session(&session_key, None, Some(model.as_str()), None, None)?;
+        }
+
         // Live capture stamped "now" at first sighting; the transcript knows
         // when the conversation really began. Without this, a year of imported
         // history all dates from the day the import ran.
@@ -520,6 +580,47 @@ fn import_file(
         store.set_import_progress(&key, size)?;
     }
     Ok(())
+}
+
+/// The usage one assistant line reports, with the request it belongs to.
+struct UsageLine {
+    key: String,
+    totals: TokenTotals,
+}
+
+/// Read `message.usage` off an assistant line.
+///
+/// The transcript writes the same logical assistant message more than once — a
+/// streaming record, then its rewrite — and every copy repeats the same usage
+/// block. On a real transcript here, 18 usage lines collapsed to 8 requests:
+/// summing lines instead of requests over-counts by 2.2x. `requestId` is the
+/// key that collapses them, falling back to the message id and then the line's
+/// own uuid so a line without one is at least counted once rather than merged
+/// into a neighbour.
+fn read_usage(value: &serde_json::Value) -> Option<UsageLine> {
+    let message = value.get("message")?;
+    let usage = message.get("usage")?;
+    let key = value
+        .get("requestId")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| message.get("id").and_then(serde_json::Value::as_str))
+        .or_else(|| value.get("uuid").and_then(serde_json::Value::as_str))?
+        .to_string();
+
+    let field = |name: &str| usage.get(name).and_then(serde_json::Value::as_u64).unwrap_or(0);
+    let totals = TokenTotals {
+        input_tokens: field("input_tokens"),
+        output_tokens: field("output_tokens"),
+        cache_creation_tokens: field("cache_creation_input_tokens"),
+        cache_read_tokens: field("cache_read_input_tokens"),
+        ..Default::default()
+    };
+    // A usage block of all zeros carries no information and would otherwise
+    // occupy a request slot, so an empty total stays empty.
+    if totals == TokenTotals::default() {
+        return None;
+    }
+    Some(UsageLine { key, totals })
 }
 
 /// One usable line of a transcript.
