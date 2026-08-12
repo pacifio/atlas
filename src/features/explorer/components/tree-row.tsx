@@ -50,8 +50,8 @@ interface TreeRowProps {
   isDropTarget?: boolean;
   /** Dim this row while it's the active drag source. */
   isDragging?: boolean;
-  /** When set, paints a small git-status dot in the left gutter (e.g. a
-   *  modified/added/untracked marker). Pass a CSS color string. */
+  /** When set, paints a small git-status dot at the trailing edge. File names
+   *  use the same color; folders retain their neutral typography. */
   gitColor?: string | null;
 }
 
@@ -182,16 +182,10 @@ export function TreeRow({
         ...style,
       }}
     >
-      {/* Left slot: chevron (folders) / spacer (files), OR a git-status dot.
-          A COLLAPSED folder with changes shows the dot IN PLACE of its right
-          chevron (so the dot never overlaps the arrow); expanding restores the
-          down chevron (its children then carry their own dots). A changed file
-          shows the dot in its (otherwise empty) gutter slot. */}
-      {!isEditing && gitColor && (!isDir || !isExpanded) ? (
-        <span className="w-3 shrink-0 flex items-center justify-center" aria-hidden>
-          <span className="rounded-full" style={{ width: 6, height: 6, background: gitColor }} />
-        </span>
-      ) : isDir ? (
+      {/* The left slot is intentionally stable: a folder always owns its
+          chevron and a file always owns its spacer. Git state lives beside the
+          filename at the row's trailing edge, where it cannot displace either. */}
+      {isDir ? (
         <ChevronRight
           size={12}
           className={cn(
@@ -244,20 +238,30 @@ export function TreeRow({
             else onCancel?.();
           }}
           className={cn(
-            "flex-1 min-w-0 font-mono text-[12px] leading-none bg-bg-input border border-border-default rounded px-1 py-0.5",
+            "flex-1 min-w-0 font-mono text-[11px] leading-4 bg-bg-input border border-border-default rounded px-1 py-0.5",
             "text-text-primary outline-none focus:border-border-focus",
           )}
         />
       ) : (
         <span
           className={cn(
-            "truncate font-mono text-[12px] leading-none flex-1 min-w-0",
+            "truncate font-mono text-[11px] leading-4 flex-1 min-w-0",
             isDir && "text-text-primary",
           )}
+          style={!isDir && gitColor ? { color: gitColor } : undefined}
         >
           {name}
         </span>
       )}
+
+      {!isEditing && gitColor ? (
+        <span
+          className="ml-auto grid h-3 w-3 shrink-0 place-items-center"
+          aria-label={isDir ? "Contains changed files" : "Git status changed"}
+        >
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: gitColor }} />
+        </span>
+      ) : null}
 
       {trailing && !isEditing ? (
         <span className="shrink-0 flex items-center gap-0.5">{trailing}</span>

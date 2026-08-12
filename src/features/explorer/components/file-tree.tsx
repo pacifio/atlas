@@ -21,6 +21,11 @@ import { useFileTreeDragDrop, ROOT_DROP } from "../hooks/use-file-tree-drag-drop
 import { useExternalFileDrop } from "../hooks/use-external-file-drop";
 import { ROW_HEIGHT } from "../lib/tree-constants";
 import {
+  gitStatusPresentation,
+  moreProminentGitStatus,
+  type GitStatusPresentation,
+} from "../lib/git-status-presentation";
+import {
   ContextMenu,
   ContextMenuTrigger,
   ContextMenuContent,
@@ -43,24 +48,6 @@ interface FlatRow {
 /** Tab types whose `data.filePath` points at a file on disk — these must be
  *  re-pointed/closed when that file is renamed or deleted. */
 const FILE_TAB_TYPES = new Set(["editor", "media", "svg", "pdf", "unsupported"]);
-
-/** Map a git porcelain status char to a gutter-dot color, matching the
- *  Source Control panel's convention (`changes-view.tsx:statusBadge`). */
-function gitStatusColor(status: string): string {
-  switch (status) {
-    case "?": // untracked
-    case "A": // added
-      return "var(--status-success)";
-    case "D": // deleted
-    case "U": // unmerged / conflict
-      return "var(--status-error)";
-    case "R": // renamed
-    case "C": // copied
-      return "var(--status-info)";
-    default: // M and everything else → modified
-      return "var(--status-warning)";
-  }
-}
 
 export function FileTree() {
   const tree = useExplorerStore.use.tree();
@@ -150,18 +137,18 @@ export function FileTree() {
   const gitRepoPath = useGitStore.use.repoPath();
   const { fileColors, dirtyDirs } = useMemo(() => {
     const fileColors = new Map<string, string>();
-    const dirtyDirs = new Set<string>();
+    const dirtyDirs = new Map<string, GitStatusPresentation>();
     const root = gitRepoPath ?? rootPath;
     if (!root) return { fileColors, dirtyDirs };
     for (const f of gitFiles) {
       const abs = `${root}/${f.path}`;
-      fileColors.set(abs, gitStatusColor(f.status));
+      const presentation = gitStatusPresentation(f.status);
+      fileColors.set(abs, presentation.color);
       // Walk ancestors up to (and excluding) the root so each enclosing
       // folder knows it contains a change.
       let dir = abs.slice(0, abs.lastIndexOf("/"));
       while (dir.length > root.length) {
-        if (dirtyDirs.has(dir)) break; // ancestors already recorded
-        dirtyDirs.add(dir);
+        dirtyDirs.set(dir, moreProminentGitStatus(dirtyDirs.get(dir), presentation));
         dir = dir.slice(0, dir.lastIndexOf("/"));
       }
     }
@@ -757,8 +744,8 @@ export function FileTree() {
                   // marker when it contains a change (expanded dirs let their
                   // children carry the signal instead, to avoid double-marking).
                   const gitColor = isDir
-                    ? !node.expanded && dirtyDirs.has(node.entry.path)
-                      ? "var(--status-warning)"
+                    ? !node.expanded
+                      ? (dirtyDirs.get(node.entry.path)?.color ?? null)
                       : null
                     : (fileColors.get(node.entry.path) ?? null);
                   const isSelected = selectedPaths.includes(node.entry.path);
