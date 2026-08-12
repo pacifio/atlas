@@ -4,6 +4,40 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::{AppHandle, Emitter};
 
+/// `git` for a READ-ONLY query — status, log, diff, blame, rev-parse, refs.
+///
+/// **Every read in this module must go through this, not a bare `git` spawn.**
+///
+/// `git status` (and friends) opportunistically REFRESH the index's stat cache,
+/// which means taking `.git/index.lock`. That is invisible until something else
+/// wants the index at the same moment — and in Atlas something always does: the
+/// file watcher fires a status refresh on every write, so `git commit` run from
+/// inside the app (or from a terminal, while the app is open on the same repo)
+/// races our own polling. The failure surfaces far from here, as a `git add`
+/// that exits non-zero — e.g. lint-staged's "Failed to stage changes from
+/// tasks", which is a lost commit, not a lint error.
+///
+/// `--no-optional-locks` tells git to skip exactly those non-essential index
+/// writes, so a background read can never block a user-initiated mutation. It
+/// is what Desktop and VS Code pass on every status call, and what
+/// `atlas_git::GitCommand::read_only()` already does for the source-control
+/// crate — this module predates that crate and spawns git directly.
+///
+/// Only for reads: a command that is SUPPOSED to write the index (`add`,
+/// `commit`, `checkout`) must take the lock, so it uses plain `Command`.
+fn git_read() -> Command {
+    let mut cmd = Command::new("git");
+    cmd.arg("--no-optional-locks");
+    cmd
+}
+
+/// Async twin of [`git_read`], for the parallel status refresh.
+fn git_read_async() -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.arg("--no-optional-locks");
+    cmd
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitStatus {
     pub is_repo: bool,
@@ -153,8 +187,6 @@ fn write_status_cache(project_path: &str, status: &GitStatus) {
 /// The actual git work — parallel subprocesses, filtered flags.
 /// Called both inline (cache miss) and in the background (cache refresh).
 async fn git_status_compute(path: &str) -> Result<GitStatus, String> {
-    use tokio::process::Command as AsyncCommand;
-
     // branch / status / ahead-behind in parallel. We intentionally DON'T
     // gate on a preliminary `rev-parse --is-inside-work-tree` — that was a
     // serial subprocess on the hot path (every refresh paid one extra `git`
@@ -163,11 +195,11 @@ async fn git_status_compute(path: &str) -> Result<GitStatus, String> {
     //   --ignore-submodules=all   skips per-submodule recursion — biggest
     //                             win on monorepos.
     //   --no-renames              skips O(adds × dels) rename detection.
-    let branch_fut = AsyncCommand::new("git")
+    let branch_fut = git_read_async()
         .args(["branch", "--show-current"])
         .current_dir(path)
         .output();
-    let status_fut = AsyncCommand::new("git")
+    let status_fut = git_read_async()
         .args([
             "status",
             "--porcelain=v1",
@@ -176,7 +208,7 @@ async fn git_status_compute(path: &str) -> Result<GitStatus, String> {
         ])
         .current_dir(path)
         .output();
-    let ab_fut = AsyncCommand::new("git")
+    let ab_fut = git_read_async()
         .args(["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
         .current_dir(path)
         .output();
@@ -267,7 +299,7 @@ pub(crate) fn git_log_compute(
     if all {
         args.push("--all".into());
     }
-    let output = Command::new("git")
+    let output = git_read()
         .args(&args)
         .current_dir(path)
         .output()
@@ -334,7 +366,7 @@ pub async fn git_log(
 }
 
 pub(crate) fn git_refs_compute(path: &str) -> Result<GitRefs, String> {
-    let head_sha = Command::new("git")
+    let head_sha = git_read()
         .args(["rev-parse", "HEAD"])
         .current_dir(path)
         .output()
@@ -346,7 +378,7 @@ pub(crate) fn git_refs_compute(path: &str) -> Result<GitRefs, String> {
                 None
             }
         });
-    let head_ref = Command::new("git")
+    let head_ref = git_read()
         .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
         .current_dir(path)
         .output()
@@ -359,7 +391,7 @@ pub(crate) fn git_refs_compute(path: &str) -> Result<GitRefs, String> {
             }
         });
 
-    let out = Command::new("git")
+    let out = git_read()
         .args([
             "for-each-ref",
             "--format=%(refname:short)\x1f%(objectname)\x1f%(refname)",
@@ -404,13 +436,13 @@ pub async fn git_refs(path: String) -> Result<GitRefs, String> {
 #[tauri::command]
 pub async fn git_graph_signature(path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let head = Command::new("git")
+        let head = git_read()
             .args(["rev-parse", "HEAD"])
             .current_dir(&path)
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default();
-        let refs_out = Command::new("git")
+        let refs_out = git_read()
             .args([
                 "for-each-ref",
                 "--format=%(refname) %(objectname)",
@@ -455,7 +487,7 @@ pub struct GitWorkspaceSummary {
 pub async fn git_workspace_summary(path: String) -> Result<GitWorkspaceSummary, String> {
     tokio::task::spawn_blocking(move || {
         let git = |args: &[&str]| -> Option<String> {
-            let out = Command::new("git").args(args).current_dir(&path).output().ok()?;
+            let out = git_read().args(args).current_dir(&path).output().ok()?;
             if !out.status.success() {
                 return None;
             }
@@ -513,7 +545,7 @@ pub async fn git_workspace_summary(path: String) -> Result<GitWorkspaceSummary, 
 #[tauri::command]
 pub async fn git_diff_all(path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let output = Command::new("git")
+        let output = git_read()
             .args(["diff", "HEAD"])
             .current_dir(&path)
             .output()
@@ -525,7 +557,7 @@ pub async fn git_diff_all(path: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn git_diff_file(path: String, file: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let output = Command::new("git")
+        let output = git_read()
             .args(["diff", "HEAD", "--", &file])
             .current_dir(&path)
             .output()
@@ -576,7 +608,7 @@ pub async fn git_commit(path: String, message: String) -> Result<(), GitErrorPay
 #[tauri::command]
 pub async fn git_list_branches(path: String) -> Result<Vec<GitBranch>, String> {
     tokio::task::spawn_blocking(move || {
-        let output = Command::new("git")
+        let output = git_read()
             .args(["branch", "--format=%(refname:short)\x1f%(HEAD)"])
             .current_dir(&path)
             .output()
@@ -649,7 +681,7 @@ pub struct BlameLine {
 #[tauri::command]
 pub async fn git_blame_file(path: String, file: String) -> Result<Vec<BlameLine>, String> {
     tokio::task::spawn_blocking(move || {
-        let output = Command::new("git")
+        let output = git_read()
             .args(["blame", "-w", "--line-porcelain", "--", &file])
             .current_dir(&path)
             .output()

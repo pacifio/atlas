@@ -135,7 +135,9 @@ export function Titlebar() {
           from that empty state rather than hidden behind opening a folder. */}
       <div className="flex items-center gap-1.5">
         {/* Dev-mode flag lives outside the `currentProject` guard too — it's
-            a build/runtime indicator, not project-dependent. */}
+            a build/runtime indicator, not project-dependent. Its own divider
+            travels with it, so the coloured capsule never sits flush against
+            the neutral icon row. */}
         <DevModePill />
         {currentProject && (
           <>
@@ -258,23 +260,63 @@ function ProjectLabel({
 }
 
 /**
- * Same pill shape and fill as `ProjectLabel`, just with a deep-purple border
- * instead of the neutral one, shown only when the app is running via
+ * A glossy blue capsule, shown only when the app is running via
  * `bun run dev:app` specifically. `isDev` alone also matches `bun run dev`
  * (Vite-only, no Tauri shell, where `invoke()` doesn't work) — `isTauri()`
  * narrows to an actual Tauri window, so the two together are true only for
  * the real `tauri dev` session this pill is meant to flag.
+ *
+ * The one saturated element in a monochrome titlebar, which is the point: it
+ * must be impossible to mistake a dev window for the shipped app. Blue rather
+ * than the old purple because purple appears nowhere else in Atlas, while blue
+ * is already the app's informational hue (`--status-info`).
+ *
+ * Built from three stacked layers rather than a flat fill — a vertical
+ * gradient body, a blurred crown highlight, and an inset rim — so it reads as
+ * a lit physical capsule at 20px instead of a coloured rectangle. All of it is
+ * static paint: no transitions, no hover, no transform. It's an indicator, not
+ * a control, so it takes no pointer events and never moves.
  */
 function DevModePill() {
   if (!isDev || !isTauri()) return null;
   return (
-    <div
-      className="flex h-[19px] shrink-0 items-center gap-1 rounded-full border border-[#5b21b6] bg-[#0C0C0C] px-2 text-[11px] leading-none font-medium text-[var(--text-secondary)]"
-      title="Running via `bun run dev:app`"
-    >
-      <Hammer size={11} />
-      Dev Mode
-    </div>
+    <>
+      <div
+        className="relative flex h-5 shrink-0 items-center gap-1 overflow-hidden rounded-full px-2 text-[11px] leading-none font-medium text-white"
+        style={{
+          background: "linear-gradient(to bottom, #3b82f6, #2563eb)",
+          boxShadow:
+            "0 1px 5px 0 rgba(37,99,235,0.35), 0 1px 0 0 rgba(255,255,255,0.25) inset, 0 -2px 6px 0 rgba(37,99,235,0.5) inset",
+        }}
+        title="Running via `bun run dev:app`"
+      >
+        {/* Crown highlight — the light source. Blurred so its lower edge melts
+          into the body instead of banding across the glyphs. */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-0 z-0 h-2/5 w-4/5 -translate-x-1/2 rounded-t-full"
+          style={{
+            background:
+              "linear-gradient(180deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0) 80%, transparent 100%)",
+            filter: "blur(1px)",
+          }}
+        />
+        {/* Rim — keeps the capsule's edge legible against the black titlebar. */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-0 rounded-full"
+          style={{
+            boxShadow:
+              "0 0 0 1px rgba(255,255,255,0.10) inset, 0 1px 0 0 rgba(255,255,255,0.18) inset",
+          }}
+        />
+        <Hammer size={11} className="relative z-10" />
+        <span className="relative z-10">Dev Mode</span>
+      </div>
+      {/* Travels with the pill so the one coloured element in the titlebar is
+          never flush against the neutral icons beside it. */}
+      <div className="mx-0.5 h-4 w-px shrink-0 bg-border-default" aria-hidden />
+    </>
   );
 }
 
