@@ -1520,9 +1520,20 @@ export function MessageInput({
           ref={composerRef}
           data-chat-composer
           className={cn(
-            // `z-10` so the composer paints over — and visually tucks — the
-            // PlanDock's bottom edge (the attached-panel recipe).
-            "relative z-10 rounded-xl border border-[var(--border-default)] bg-[var(--bg-secondary)]",
+            // Positioned + z-indexed so the composer paints over — and visually
+            // tucks — the PlanDock's bottom edge (the attached-panel recipe).
+            //
+            // The VALUE has to clear the floating pill row above the composer
+            // (`z-20` in chat-panel.tsx), not just the PlanDock. This element
+            // has a z-index, so it opens a stacking context, and every dropup
+            // inside it — the model picker, the agent/mode picker, the toolbar
+            // tooltip — is trapped in it: their `z-50` sorts them against each
+            // other and against nothing else. At `z-10` the whole composer,
+            // menus included, painted UNDER the "Scroll to bottom" pill, which
+            // also swallowed clicks on the menu's first row (the pill sets
+            // `pointer-events-auto`). Raising the context is the fix; raising
+            // the menus themselves cannot work from inside it.
+            "relative z-30 rounded-xl border border-[var(--border-default)] bg-[var(--bg-secondary)]",
             "shadow-[0_8px_24px_rgba(0,0,0,0.35)]",
             // Soft macOS-style "active field" glow on focus — a faint
             // accent ring on top of the border shift (the border alone is
