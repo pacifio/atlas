@@ -183,6 +183,8 @@ export interface ChatSession {
   /** Claude-only permission mode. Absent for non-Claude agents (e.g. Codex),
    *  which drive their modes via the generic ACP `acpCurrentMode`/snapshot. */
   claudePermissionMode?: ClaudePermissionMode;
+  /** True only after the user explicitly changes Claude's mode in this tab. */
+  claudePermissionModeExplicit?: boolean;
   /** ACP agent process bound to this tab (set eagerly when the tab mounts). */
   acpAgentId?: string;
   /**
@@ -194,6 +196,8 @@ export interface ChatSession {
   acpSessionId?: string;
   /** Currently selected ACP session mode (default / acceptEdits / plan / …). */
   acpCurrentMode?: string;
+  /** True only after the user explicitly changes an ACP mode in this tab. */
+  acpModeExplicit?: boolean;
   /** Modes the agent advertised for this session — drives the composer's mode
    *  picker for non-Claude agents (e.g. Codex). Seeded from the snapshot. */
   acpAvailableModes?: SessionModeInfo[];

@@ -9,6 +9,13 @@ export interface SessionKey {
   session_id: AcpSessionId;
 }
 
+/** Metadata returned by `agents_new_session` before the binding is exposed. */
+export interface SessionInit {
+  key: SessionKey;
+  current_mode: string | null;
+  available_modes: SessionModeInfo[];
+}
+
 export type TranscriptKind = { kind: "none" } | { kind: "claude_jsonl" } | { kind: "cersei_json" };
 
 /** One image attached to an outbound prompt. Mirrors atlas-acp's

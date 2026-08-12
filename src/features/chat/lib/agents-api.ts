@@ -13,6 +13,7 @@ import type {
   ImageAttachment,
   PluginSpec,
   SessionKey,
+  SessionInit,
   SessionMessage,
   SessionSnapshot,
 } from "@/types/agents";
@@ -42,7 +43,7 @@ export const agents = {
   kill: (agentId: AgentId) => invoke<void>("agents_kill", { agentId }),
 
   newSession: (agentId: AgentId, cwd: string) =>
-    invoke<SessionKey>("agents_new_session", { agentId, cwd }),
+    invoke<SessionInit>("agents_new_session", { agentId, cwd }),
   loadSession: (agentId: AgentId, sessionId: AcpSessionId, cwd: string) =>
     invoke<SessionKey>("agents_load_session", { agentId, sessionId, cwd }),
 

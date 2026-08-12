@@ -290,6 +290,9 @@ interface ChatActions {
      *  project's `.atlas/` don't linger and cause ghost-bound tabs. */
     resetSessions: () => void;
     cycleClaudePermissionMode: (sessionId: string) => void;
+    /** Reflect the mode the agent chose during session creation without
+     *  treating it as an Atlas user override or sending a second RPC. */
+    hydrateClaudePermissionMode: (sessionId: string, mode: ClaudePermissionMode) => void;
     setClaudePermissionMode: (sessionId: string, mode: ClaudePermissionMode) => void;
     /** Seed the generic ACP mode state (current + available list) from a
      *  session snapshot. Used for non-Claude agents (e.g. Codex). */
@@ -587,6 +590,8 @@ export const useChatStore = createSelectors(
               // Permission mode is a Claude Code feature; Codex drives its
               // modes generically via ACP (acpCurrentMode).
               claudePermissionMode: agentType === "claude-code" ? "default" : undefined,
+              claudePermissionModeExplicit: false,
+              acpModeExplicit: false,
               // Optimistically pre-fill a non-Claude agent's mode picker from the
               // persisted cache so switching feels instant; mark pending until the
               // real session confirms (the picker shows a loading state).
@@ -625,6 +630,8 @@ export const useChatStore = createSelectors(
             if (sess.acpSessionId) delete s.pendingPermissions[sess.acpSessionId];
             sess.agentType = agentType;
             sess.claudePermissionMode = agentType === "claude-code" ? "default" : undefined;
+            sess.claudePermissionModeExplicit = false;
+            sess.acpModeExplicit = false;
             // Drop the old ACP binding so the chat panel's mount effect re-binds
             // to the newly chosen agent (deps watch acpSessionId + agentType).
             sess.acpAgentId = undefined;
@@ -666,6 +673,8 @@ export const useChatStore = createSelectors(
               sess.availableCommands = undefined;
               sess.claudePermissionMode =
                 agentType === "claude-code" ? (sess.claudePermissionMode ?? "default") : undefined;
+              sess.claudePermissionModeExplicit = false;
+              sess.acpModeExplicit = false;
               if (agentType === "claude-code") {
                 // Claude has no ACP modes — clear any stale picker state left
                 // by the previously-selected agent so no ghost mode pill shows.
@@ -828,13 +837,24 @@ export const useChatStore = createSelectors(
             const i = CLAUDE_PERMISSION_MODES.indexOf(cur);
             const next = CLAUDE_PERMISSION_MODES[(i + 1) % CLAUDE_PERMISSION_MODES.length];
             session.claudePermissionMode = next;
+            session.claudePermissionModeExplicit = true;
           });
           pushPermissionModeToAgent(get(), sessionId);
         },
+        hydrateClaudePermissionMode: (sessionId, mode) =>
+          set((s) => {
+            const session = s.sessions[sessionId];
+            if (!session) return;
+            session.claudePermissionMode = mode;
+            session.claudePermissionModeExplicit = false;
+          }),
         setClaudePermissionMode: (sessionId, mode) => {
           set((s) => {
             const session = s.sessions[sessionId];
-            if (session) session.claudePermissionMode = mode;
+            if (session) {
+              session.claudePermissionMode = mode;
+              session.claudePermissionModeExplicit = true;
+            }
           });
           pushPermissionModeToAgent(get(), sessionId);
         },
@@ -885,7 +905,10 @@ export const useChatStore = createSelectors(
         setAcpMode: (sessionId, modeId) => {
           set((s) => {
             const session = s.sessions[sessionId];
-            if (session) session.acpCurrentMode = modeId;
+            if (session) {
+              session.acpCurrentMode = modeId;
+              session.acpModeExplicit = true;
+            }
           });
           pushAcpModeToAgent(get(), sessionId);
         },

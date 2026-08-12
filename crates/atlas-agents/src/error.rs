@@ -12,6 +12,8 @@ pub enum Error {
     SessionExists,
     #[error("session worker is gone")]
     WorkerGone,
+    #[error("mode is not advertised by this session: {0}")]
+    InvalidMode(String),
     #[error("acp: {0}")]
     Acp(#[from] atlas_acp::AcpError),
     #[error("io: {0}")]
