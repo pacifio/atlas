@@ -20,11 +20,7 @@ import { openFile } from "@/lib/open-file";
 import { useFileTreeDragDrop, ROOT_DROP } from "../hooks/use-file-tree-drag-drop";
 import { useExternalFileDrop } from "../hooks/use-external-file-drop";
 import { ROW_HEIGHT } from "../lib/tree-constants";
-import {
-  gitStatusPresentation,
-  moreProminentGitStatus,
-  type GitStatusPresentation,
-} from "../lib/git-status-presentation";
+import { buildGitStatusOverlay, type GitStatusPresentation } from "../lib/git-status-presentation";
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -48,6 +44,10 @@ interface FlatRow {
 /** Tab types whose `data.filePath` points at a file on disk — these must be
  *  re-pointed/closed when that file is renamed or deleted. */
 const FILE_TAB_TYPES = new Set(["editor", "media", "svg", "pdf", "unsupported"]);
+
+/** Shared empty map for the no-repo case, so that branch returns a stable
+ *  reference instead of allocating a new one on every memo recompute. */
+const EMPTY_DIRTY_DIRS: ReadonlyMap<string, GitStatusPresentation> = new Map();
 
 export function FileTree() {
   const tree = useExplorerStore.use.tree();
@@ -136,23 +136,9 @@ export function FileTree() {
   const gitFiles = useGitStore.use.files();
   const gitRepoPath = useGitStore.use.repoPath();
   const { fileColors, dirtyDirs } = useMemo(() => {
-    const fileColors = new Map<string, string>();
-    const dirtyDirs = new Map<string, GitStatusPresentation>();
     const root = gitRepoPath ?? rootPath;
-    if (!root) return { fileColors, dirtyDirs };
-    for (const f of gitFiles) {
-      const abs = `${root}/${f.path}`;
-      const presentation = gitStatusPresentation(f.status);
-      fileColors.set(abs, presentation.color);
-      // Walk ancestors up to (and excluding) the root so each enclosing
-      // folder knows it contains a change.
-      let dir = abs.slice(0, abs.lastIndexOf("/"));
-      while (dir.length > root.length) {
-        dirtyDirs.set(dir, moreProminentGitStatus(dirtyDirs.get(dir), presentation));
-        dir = dir.slice(0, dir.lastIndexOf("/"));
-      }
-    }
-    return { fileColors, dirtyDirs };
+    if (!root) return { fileColors: new Map<string, string>(), dirtyDirs: EMPTY_DIRTY_DIRS };
+    return buildGitStatusOverlay(gitFiles, root);
   }, [gitFiles, gitRepoPath, rootPath]);
 
   const virtualizer = useVirtualizer({
