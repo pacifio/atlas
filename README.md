@@ -18,7 +18,7 @@
 
 # Atlas
 
-Atlas is an open source software factory that coordinates automation of the entire software development lifecycle. Teams use Atlas to coordinate fleets of agents that share context across your codebase to open issues, document changes, and execute on new tasks all in one interface.
+Atlas is open source source control for coding agents. Run multiple agents like Claude Code and Codex in parallel, track what each agent changes across your codebase, and query their sessions, decisions, and history from one place. Atlas gives your agents shared memory and context, so you can switch between agents without agents forgetting.
 
 - **Run agents in parallel.** Multiple sessions across tabs, each streaming independently. Switching tabs never freezes or drops a run in flight.
 - **One memory, three agents.** A decision Claude Code made shows up in Codex's next prompt. Plans, file changes, failures, and architecture notes are shared automatically, matched on-device against what you're asking about.
