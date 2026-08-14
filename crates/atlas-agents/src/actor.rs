@@ -162,8 +162,9 @@ pub struct SessionActor {
     /// The live turn's epoch, as returned by `mark_turn_started` — the value
     /// the backend stamps onto this turn's events. Inbound stamped events
     /// whose stamp doesn't match are stragglers from a superseded/cancelled
-    /// turn and are dropped. `None` = no gating basis (no turn started yet,
-    /// or `mark_turn_started` failed) → stamped events fail open (applied).
+    /// turn and are dropped. `None` = no live gating basis (no turn started,
+    /// a normal turn finished, or `mark_turn_started` failed) → stamped events
+    /// fail open (applied).
     current_epoch: Option<u64>,
     /// Sends that arrived while a turn was live. Supersede = cancel-then-send
     /// (the Zed pattern): the incoming Send cancels the running turn and
@@ -648,6 +649,12 @@ impl SessionActor {
         let (status, delta, sweep_to) = match result {
             Ok(stop_reason) => {
                 let cancelled = stop_reason == "cancelled";
+                // Normal completion may be followed by output from detached
+                // work. With no live epoch, stamped session traffic fails open;
+                // cancelled and failed turns retain their stale-event guard.
+                if !cancelled {
+                    self.current_epoch = None;
+                }
                 (
                     SessionStatus::Idle,
                     SessionDelta::TurnFinished { stop_reason, turn_seq },
@@ -1063,9 +1070,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn late_event_from_old_turn_is_dropped() {
-        // An event stamped with a finished turn's epoch must not be applied
-        // after that turn's terminal.
+    async fn late_assistant_event_after_normal_turn_is_applied() {
+        // A normal turn may launch detached work that reports back after the
+        // prompt future resolves. Its assistant output still belongs in the
+        // session transcript even though the actor is already idle.
         let (handle, sink, mut gates, _conn) = setup_gated(1);
         handle.control_tx.send(Control::Send("hi".into())).unwrap();
         settle().await;
@@ -1077,17 +1085,19 @@ mod tests {
         settle().await;
         gates.remove(0).send("end_turn".into()).unwrap();
         settle().await;
-        let before = sink.0.lock().len();
-        // Straggler stamped with the dead turn's epoch: dropped entirely.
+        // A late assistant chunk stamped with the normally completed turn's
+        // epoch must still be applied.
         handle
             .stream_tx
-            .send(acp_stamped(text_chunk_event("straggler"), 1))
+            .send(acp_stamped(text_chunk_event("background result"), 1))
             .unwrap();
         settle().await;
-        assert_eq!(
-            sink.0.lock().len(),
-            before,
-            "an event stamped with a dead turn's epoch must produce no deltas"
+        assert!(
+            sink.0.lock().iter().any(|e| matches!(
+                &e.delta,
+                SessionDelta::TextChunk { delta, .. } if delta == "background result"
+            )),
+            "late assistant output after a normal finish must reach the transcript"
         );
     }
 
