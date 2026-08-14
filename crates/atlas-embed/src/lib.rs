@@ -11,7 +11,8 @@
 //! The crate also hosts a small generative counterpart in [`chat`]: a quantized
 //! Qwen2.5-Instruct decoder for local RAG answers, sharing the same candle stack.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
 pub mod chat;
 
@@ -24,76 +25,131 @@ use tokenizers::{Tokenizer, TruncationDirection, TruncationParams, TruncationStr
 /// BERT position embeddings cap; MiniLM/BERT support up to 512 tokens.
 const MAX_TOKENS: usize = 512;
 
-/// A loaded sentence-embedding model. Runs on the Apple-Silicon GPU via Metal
-/// when the `metal` feature is compiled in (falling back to CPU on init
-/// failure); CPU otherwise.
-pub struct Embedder {
+/// Marker file written next to a model when its GPU backend failed on this
+/// machine — subsequent loads skip the GPU attempt and go straight to CPU.
+/// Same name/convention as the chat model's marker (`memory_chat.rs` reads it
+/// for the LLM); per-model-dir, so switching or re-downloading a model retries.
+pub const GPU_INCOMPATIBLE_MARKER: &str = ".metal_incompatible";
+
+/// Longer warm-up text: candle compiles GPU compute pipelines lazily PER
+/// KERNEL VARIANT, so warming with a single 1-token forward proved nothing
+/// about the kernels a real 300-token document needs — models loaded "fine" on
+/// Metal and then died mid-retrieval with "Failed to create pipeline". Warming
+/// a short and a long shape catches the incompatibility at load time, where the
+/// fallback is clean. (The request-time fallback in `embed_one` covers whatever
+/// this still misses.)
+const WARMUP_LONG: &str = "atlas warm-up text exercising the longer attention and pooling kernel \
+    shapes that a realistic memory document produces during retrieval indexing \
+    so lazy metal pipeline compilation happens here under the load guard and \
+    not in the middle of a user visible query answering pass across the app";
+
+/// The mutable half of the embedder: swapped wholesale when a GPU backend
+/// fails at request time and the model is rebuilt on CPU.
+struct EmbedderCore {
     model: BertModel,
-    tokenizer: Tokenizer,
     device: Device,
+    /// True when `device` is a GPU (Metal/CUDA) — drives the fallback decision
+    /// without matching on cfg-dependent `Device` variants.
+    on_gpu: bool,
+}
+
+/// A loaded sentence-embedding model. Prefers the platform GPU (macOS: Metal
+/// via the `metal` feature; Linux/Windows: CUDA via the `cuda` feature),
+/// falling back to CPU both at load time AND at request time: candle compiles
+/// GPU compute pipelines lazily per kernel variant, so a device that loaded
+/// and warmed up fine can still fail on a new shape mid-session ("Metal error
+/// Failed to create pipeline"). When that happens the model is rebuilt on CPU
+/// in place, a per-model marker skips the GPU on future loads, and the request
+/// is retried — callers never see the transient.
+pub struct Embedder {
+    core: RwLock<EmbedderCore>,
+    tokenizer: Tokenizer,
+    model_dir: PathBuf,
     dim: usize,
 }
 
-/// Try to build the Apple-Silicon Metal device. `None` when the `metal` feature
-/// is off or device init fails. As with the chat model, a successful device does
-/// NOT guarantee candle's Metal *kernels* compile on this OS — hence the guarded
-/// load below. Mirrors `chat::metal_device`.
-#[cfg(feature = "metal")]
-fn metal_device() -> Option<Device> {
-    match Device::new_metal(0) {
-        Ok(d) => Some(d),
-        Err(e) => {
-            eprintln!("atlas-embed: Metal init failed ({e}); using CPU");
-            None
+/// The platform's GPU device, per Atlas policy:
+/// - macOS → Metal, else CPU (CUDA never applies on Apple Silicon)
+/// - Linux/Windows → CUDA, else CPU
+///
+/// `None` when the platform's GPU feature is off or device init fails (e.g.
+/// headless CI). A successful device does NOT guarantee candle's GPU kernels
+/// compile/run on this machine — hence the guarded load + request-time
+/// fallback. Shared with `chat`.
+pub(crate) fn gpu_device() -> Option<Device> {
+    #[cfg(all(target_os = "macos", feature = "metal"))]
+    {
+        match Device::new_metal(0) {
+            Ok(d) => return Some(d),
+            Err(e) => eprintln!("atlas-embed: Metal init failed ({e}); using CPU"),
         }
     }
+    #[cfg(all(not(target_os = "macos"), feature = "cuda"))]
+    {
+        match Device::new_cuda(0) {
+            Ok(d) => return Some(d),
+            Err(e) => eprintln!("atlas-embed: CUDA init failed ({e}); using CPU"),
+        }
+    }
+    None
+}
+
+/// Whether the platform-appropriate GPU backend is compiled into this build.
+pub(crate) fn gpu_compiled() -> bool {
+    cfg!(any(
+        all(target_os = "macos", feature = "metal"),
+        all(not(target_os = "macos"), feature = "cuda")
+    ))
 }
 
 impl Embedder {
     /// Load from a directory containing `config.json`, `tokenizer.json` and
-    /// `model.safetensors`, preferring the Apple-Silicon GPU but resiliently
-    /// falling back to CPU.
+    /// `model.safetensors`, preferring the platform GPU but resiliently falling
+    /// back to CPU.
     ///
-    /// Like the chat model, candle can panic while compiling its Metal kernels on
-    /// an OS/toolchain metallib mismatch. The Metal path is `catch_unwind`-guarded
-    /// (with a warm-up forward inside `load_on` to force lazy kernel compilation)
-    /// and retries on CPU. `ATLAS_EMBED_CPU=1` skips Metal entirely.
+    /// Candle can panic OR return `Err` while compiling its GPU kernels (an
+    /// OS/toolchain metallib mismatch panics; a pipeline-creation failure is a
+    /// plain `Err`). The GPU path is `catch_unwind`-guarded with warm-up
+    /// forwards inside `load_on` — and BOTH failure modes retry on CPU.
+    /// `ATLAS_EMBED_CPU=1` or a persisted [`GPU_INCOMPATIBLE_MARKER`] in the
+    /// model dir skips the GPU attempt entirely.
     pub fn load(model_dir: &Path) -> Result<Self> {
-        let force_cpu = std::env::var_os("ATLAS_EMBED_CPU").is_some();
+        let force_cpu = std::env::var_os("ATLAS_EMBED_CPU").is_some()
+            || model_dir.join(GPU_INCOMPATIBLE_MARKER).exists();
 
-        #[cfg(feature = "metal")]
-        {
-            if !force_cpu {
-                if let Some(dev) = metal_device() {
-                    let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        Self::load_on(model_dir, dev)
-                    }));
-                    match attempt {
-                        Ok(Ok(model)) => return Ok(model),
-                        Ok(Err(e)) => eprintln!(
-                            "atlas-embed: Metal embedder load failed ({e}); falling back to CPU"
-                        ),
-                        Err(_) => eprintln!(
-                            "atlas-embed: Metal embedder kernels failed to compile \
-                             (candle/OS metallib mismatch); falling back to CPU"
-                        ),
-                    }
-                    return Self::load_on(model_dir, Device::Cpu);
+        if gpu_compiled() && !force_cpu {
+            if let Some(dev) = gpu_device() {
+                let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    Self::load_on(model_dir, dev, true)
+                }));
+                match attempt {
+                    Ok(Ok(model)) => return Ok(model),
+                    Ok(Err(e)) => eprintln!(
+                        "atlas-embed: GPU embedder load failed ({e}); falling back to CPU"
+                    ),
+                    Err(_) => eprintln!(
+                        "atlas-embed: GPU embedder kernels failed to compile \
+                         (candle/OS mismatch); falling back to CPU"
+                    ),
                 }
+                // A load-time GPU failure is deterministic on this machine —
+                // persist it so future loads skip the doomed attempt.
+                write_gpu_marker(model_dir, "embedder load failed on gpu");
+                return Self::load_on(model_dir, Device::Cpu, false);
             }
         }
 
-        let _ = force_cpu; // silence unused warning when metal is off
-        Self::load_on(model_dir, Device::Cpu)
+        Self::load_on(model_dir, Device::Cpu, false)
     }
 
-    /// Build the embedder on an explicit device, ending with a warm-up forward so
-    /// candle's lazy Metal kernel compilation surfaces here (inside the caller's
-    /// panic guard) rather than on the first real embed.
-    fn load_on(model_dir: &Path, device: Device) -> Result<Self> {
+    /// Build the embedder on an explicit device, ending with warm-up forwards
+    /// (short + long shape) so candle's lazy GPU kernel compilation surfaces
+    /// here (inside the caller's panic guard) rather than on the first real
+    /// embed. Warm-up failures PROPAGATE — swallowing them was the original
+    /// bug: a broken-on-GPU embedder got cached and every later call failed.
+    fn load_on(model_dir: &Path, device: Device, on_gpu: bool) -> Result<Self> {
         let config_path = model_dir.join("config.json");
         let tokenizer_path = model_dir.join("tokenizer.json");
-        let weights_path = model_dir.join("model.safetensors");
 
         let config_str = std::fs::read_to_string(&config_path)
             .with_context(|| format!("read {}", config_path.display()))?;
@@ -113,27 +169,54 @@ impl Embedder {
             }))
             .map_err(|e| anyhow!("set truncation: {e}"))?;
 
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[weights_path.clone()], DTYPE, &device)
-                .with_context(|| format!("mmap {}", weights_path.display()))?
-        };
-        let model = BertModel::load(vb, &config).context("load BERT weights")?;
+        let core = Self::build_core(model_dir, &config, device, on_gpu)?;
 
         let embedder = Self {
-            model,
+            core: RwLock::new(core),
             tokenizer,
-            device,
+            model_dir: model_dir.to_path_buf(),
             dim,
         };
-        // Warm-up: run one forward so Metal kernels compile now (or panic here,
-        // under the load-time guard) instead of on the first retrieval.
-        let _ = embedder.embed_one("warm");
+        // Warm-up on two shapes; `?` so a GPU pipeline failure lands in the
+        // caller's guarded fallback instead of poisoning the cached embedder.
+        embedder.forward_current("warm")?;
+        embedder.forward_current(WARMUP_LONG)?;
 
         Ok(embedder)
     }
 
+    /// Load the BERT weights onto `device`.
+    fn build_core(
+        model_dir: &Path,
+        config: &Config,
+        device: Device,
+        on_gpu: bool,
+    ) -> Result<EmbedderCore> {
+        let weights_path = model_dir.join("model.safetensors");
+        let vb = unsafe {
+            VarBuilder::from_mmaped_safetensors(&[weights_path.clone()], DTYPE, &device)
+                .with_context(|| format!("mmap {}", weights_path.display()))?
+        };
+        let model = BertModel::load(vb, config).context("load BERT weights")?;
+        Ok(EmbedderCore {
+            model,
+            device,
+            on_gpu,
+        })
+    }
+
     pub fn dim(&self) -> usize {
         self.dim
+    }
+
+    /// The compute backend currently in use ("gpu" covers Metal/CUDA — the
+    /// distinction is the platform's build-time feature).
+    pub fn backend(&self) -> &'static str {
+        if self.core.read().map(|c| c.on_gpu).unwrap_or(false) {
+            "gpu"
+        } else {
+            "cpu"
+        }
     }
 
     /// Embed a batch of texts, one forward pass each (no padding needed).
@@ -142,24 +225,78 @@ impl Embedder {
         texts.iter().map(|t| self.embed_one(t)).collect()
     }
 
+    /// Embed one text, transparently falling back to CPU if the GPU backend
+    /// fails at request time (lazy pipeline compilation means a new input shape
+    /// can fail long after a clean load — the "Failed to create pipeline" bug).
+    /// The rebuilt CPU model replaces the GPU one in place, so the shared
+    /// `Arc<Embedder>` every memory subsystem holds heals for all of them, and
+    /// the per-model marker prevents re-poisoning on the next app start.
     pub fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
+        match self.forward_current(text) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                let on_gpu = self.core.read().map(|c| c.on_gpu).unwrap_or(false);
+                if !on_gpu {
+                    return Err(e);
+                }
+                eprintln!(
+                    "atlas-embed: GPU embed failed at request time ({e}); \
+                     rebuilding on CPU and retrying"
+                );
+                self.rebuild_on_cpu()?;
+                self.forward_current(text)
+            }
+        }
+    }
+
+    /// One guarded forward pass on whatever device the core currently holds.
+    /// Panics inside candle's GPU kernels (metallib mismatches `.unwrap()`
+    /// internally) are converted to `Err` so the fallback path sees them too.
+    fn forward_current(&self, text: &str) -> Result<Vec<f32>> {
         let encoding = self
             .tokenizer
             .encode(text, true)
             .map_err(|e| anyhow!("tokenize: {e}"))?;
-        let ids = encoding.get_ids();
+        let ids = encoding.get_ids().to_vec();
         if ids.is_empty() {
             return Ok(vec![0.0; self.dim]);
         }
+        let core = self
+            .core
+            .read()
+            .map_err(|_| anyhow!("embedder core lock poisoned"))?;
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Self::forward_raw(&core.model, &core.device, &ids)
+        }))
+        .unwrap_or_else(|_| Err(anyhow!("embedding kernel panicked on {}", self.backend())))
+    }
 
-        let input_ids = Tensor::new(ids, &self.device)?.unsqueeze(0)?; // [1, n]
+    /// Replace the core with a CPU build and persist the incompatibility
+    /// marker. Idempotent under races: if another thread already swapped to
+    /// CPU, this is a no-op.
+    fn rebuild_on_cpu(&self) -> Result<()> {
+        let mut core = self
+            .core
+            .write()
+            .map_err(|_| anyhow!("embedder core lock poisoned"))?;
+        if !core.on_gpu {
+            return Ok(()); // another caller already healed it
+        }
+        let config_str = std::fs::read_to_string(self.model_dir.join("config.json"))
+            .context("re-read config.json for CPU fallback")?;
+        let config: Config = serde_json::from_str(&config_str).context("parse config.json")?;
+        *core = Self::build_core(&self.model_dir, &config, Device::Cpu, false)?;
+        write_gpu_marker(&self.model_dir, "embedder gpu failed at request time");
+        Ok(())
+    }
+
+    fn forward_raw(model: &BertModel, device: &Device, ids: &[u32]) -> Result<Vec<f32>> {
+        let input_ids = Tensor::new(ids, device)?.unsqueeze(0)?; // [1, n]
         let token_type_ids = input_ids.zeros_like()?;
         let attention_mask = Tensor::ones_like(&input_ids)?;
 
         // [1, n, hidden]
-        let ys = self
-            .model
-            .forward(&input_ids, &token_type_ids, Some(&attention_mask))?;
+        let ys = model.forward(&input_ids, &token_type_ids, Some(&attention_mask))?;
 
         // Mean-pool over the token dimension → [1, hidden].
         let (_b, n_tokens, _h) = ys.dims3()?;
@@ -172,6 +309,14 @@ impl Embedder {
 
         Ok(normed.squeeze(0)?.to_vec1::<f32>()?)
     }
+}
+
+/// Best-effort marker write — losing it only costs a retry on next launch.
+pub(crate) fn write_gpu_marker(model_dir: &Path, reason: &str) {
+    let _ = std::fs::write(
+        model_dir.join(GPU_INCOMPATIBLE_MARKER),
+        format!("{reason}\n"),
+    );
 }
 
 // ── Vector store ────────────────────────────────────────────────────────────

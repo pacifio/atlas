@@ -8,7 +8,7 @@
 //! model at Q4 answers a short RAG query in a second or two, which is the point:
 //! no API key, no network, the codebase's own memory answered locally.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use candle_core::quantized::gguf_file;
@@ -16,6 +16,8 @@ use candle_core::{Device, Tensor};
 use candle_transformers::generation::LogitsProcessor;
 use candle_transformers::models::quantized_qwen3::ModelWeights;
 use tokenizers::Tokenizer;
+
+use crate::write_gpu_marker;
 
 /// Qwen3 ChatML control tokens. Generation stops at either.
 const STOP_TOKENS: [&str; 2] = ["<|im_end|>", "<|endoftext|>"];
@@ -40,27 +42,15 @@ impl ChatBackend {
     }
 }
 
-/// Try to build the Apple-Silicon Metal device. `None` when the `metal` feature
-/// is off, the caller forced CPU, or device init itself fails (e.g. headless CI).
-/// Note: device init succeeding does NOT mean candle's Metal *kernels* will
-/// compile on this OS — that failure surfaces later, hence the guarded load.
-#[cfg(feature = "metal")]
-fn metal_device() -> Option<Device> {
-    match Device::new_metal(0) {
-        Ok(d) => Some(d),
-        Err(e) => {
-            eprintln!("atlas-embed: Metal init failed ({e}); using CPU");
-            None
-        }
-    }
-}
-
 pub struct QuantizedChatModel {
     model: ModelWeights,
     tokenizer: Tokenizer,
     device: Device,
     stop_ids: Vec<u32>,
     backend: ChatBackend,
+    /// Retained so a request-time GPU failure can rebuild on CPU in place.
+    gguf_path: PathBuf,
+    tokenizer_path: PathBuf,
 }
 
 impl QuantizedChatModel {
@@ -92,34 +82,32 @@ impl QuantizedChatModel {
     ) -> Result<(Self, bool)> {
         let env_cpu = std::env::var_os("ATLAS_EMBED_CPU").is_some();
 
-        #[cfg(feature = "metal")]
-        {
-            if !force_cpu && !env_cpu {
-                if let Some(dev) = metal_device() {
-                    // candle's kernel-compile panic lives inside catch_unwind;
-                    // AssertUnwindSafe because candle types aren't UnwindSafe.
-                    let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        Self::load_on(gguf_path, tokenizer_path, dev, ChatBackend::Metal)
-                    }));
-                    match attempt {
-                        Ok(Ok(model)) => return Ok((model, false)),
-                        Ok(Err(e)) => eprintln!(
-                            "atlas-embed: Metal chat-model load failed ({e}); falling back to CPU"
-                        ),
-                        Err(_) => eprintln!(
-                            "atlas-embed: Metal chat-model kernels failed to compile \
-                             (candle/OS metallib mismatch); falling back to CPU"
-                        ),
-                    }
-                    // Reached only on Metal failure: retry on CPU, flagged as fallback.
-                    let model =
-                        Self::load_on(gguf_path, tokenizer_path, Device::Cpu, ChatBackend::Cpu)?;
-                    return Ok((model, true));
+        if crate::gpu_compiled() && !force_cpu && !env_cpu {
+            // Platform GPU policy (crate::gpu_device): macOS → Metal else CPU;
+            // Linux/Windows → CUDA else CPU.
+            if let Some(dev) = crate::gpu_device() {
+                // candle's kernel-compile panic lives inside catch_unwind;
+                // AssertUnwindSafe because candle types aren't UnwindSafe.
+                let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    Self::load_on(gguf_path, tokenizer_path, dev, ChatBackend::Metal)
+                }));
+                match attempt {
+                    Ok(Ok(model)) => return Ok((model, false)),
+                    Ok(Err(e)) => eprintln!(
+                        "atlas-embed: GPU chat-model load failed ({e}); falling back to CPU"
+                    ),
+                    Err(_) => eprintln!(
+                        "atlas-embed: GPU chat-model kernels failed to compile \
+                         (candle/OS metallib mismatch); falling back to CPU"
+                    ),
                 }
+                // Reached only on GPU failure: retry on CPU, flagged as fallback.
+                let model =
+                    Self::load_on(gguf_path, tokenizer_path, Device::Cpu, ChatBackend::Cpu)?;
+                return Ok((model, true));
             }
         }
 
-        let _ = (force_cpu, env_cpu); // silence unused warnings when metal is off
         let model = Self::load_on(gguf_path, tokenizer_path, Device::Cpu, ChatBackend::Cpu)?;
         Ok((model, false))
     }
@@ -159,6 +147,8 @@ impl QuantizedChatModel {
             device,
             stop_ids,
             backend,
+            gguf_path: gguf_path.to_path_buf(),
+            tokenizer_path: tokenizer_path.to_path_buf(),
         })
     }
 
@@ -170,6 +160,15 @@ impl QuantizedChatModel {
     /// Stream a completion for an already chat-templated `prompt`. `on_token` is
     /// called with each decoded text delta; `should_stop` is polled to support
     /// cooperative cancellation. Returns the full generated text.
+    ///
+    /// Resilient to request-time GPU failures: candle compiles Metal compute
+    /// pipelines lazily per kernel variant, so a model that loaded and warmed up
+    /// cleanly can still fail ("Metal error Failed to create pipeline") on a new
+    /// shape mid-generation. On a GPU error OR panic this rebuilds the model on
+    /// CPU in place, persists the per-model incompatibility marker (so the next
+    /// load skips the GPU), and — if no tokens were streamed yet — transparently
+    /// retries. If tokens were already streamed, it returns a clear error asking
+    /// for a resend rather than duplicating the partial answer.
     ///
     /// Blocking + CPU-heavy — run under `spawn_blocking`.
     pub fn generate<F, S>(
@@ -184,6 +183,57 @@ impl QuantizedChatModel {
         F: FnMut(&str),
         S: Fn() -> bool,
     {
+        let mut emitted = false;
+        let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.generate_inner(
+                prompt,
+                max_tokens,
+                temperature,
+                &mut |s| {
+                    emitted = true;
+                    on_token(s);
+                },
+                &should_stop,
+            )
+        }));
+        let err = match attempt {
+            Ok(Ok(text)) => return Ok(text),
+            Ok(Err(e)) => e,
+            Err(_) => anyhow!("generation kernel panicked on {}", self.backend.as_str()),
+        };
+        if self.backend != ChatBackend::Metal {
+            return Err(err);
+        }
+
+        eprintln!("atlas-embed: GPU generation failed at request time ({err}); rebuilding on CPU");
+        if let Some(dir) = self.gguf_path.parent() {
+            write_gpu_marker(dir, "chat model gpu failed at request time");
+        }
+        *self = Self::load_on(
+            &self.gguf_path.clone(),
+            &self.tokenizer_path.clone(),
+            Device::Cpu,
+            ChatBackend::Cpu,
+        )?;
+
+        if emitted {
+            // Part of the answer already streamed to the UI — a silent retry
+            // would duplicate it. Fail loud once; the model is on CPU now.
+            return Err(anyhow!(
+                "the local model's GPU backend failed mid-answer; switched to CPU — please resend"
+            ));
+        }
+        self.generate_inner(prompt, max_tokens, temperature, &mut on_token, &should_stop)
+    }
+
+    fn generate_inner(
+        &mut self,
+        prompt: &str,
+        max_tokens: usize,
+        temperature: f64,
+        on_token: &mut dyn FnMut(&str),
+        should_stop: &dyn Fn() -> bool,
+    ) -> Result<String> {
         let encoding = self
             .tokenizer
             .encode(prompt, true)
