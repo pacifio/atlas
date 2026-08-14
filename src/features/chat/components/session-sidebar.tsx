@@ -14,8 +14,11 @@ import {
   OpenCodeIcon,
   CursorIcon,
   KiloIcon,
+  ExternalAgentIcon,
+  AgentMonogram,
 } from "@/components/agent-icons";
-import { AGENT_LABEL, pluginIdForAgent, type SwitchableAgent } from "@/types/agent";
+import { pluginIdForAgent, type SwitchableAgent } from "@/types/agent";
+import { agentMeta } from "@/features/agents/lib/agent-meta";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { timeAgo } from "@/lib/time-ago";
 import { useProjectStore } from "@/features/project/stores/project-store";
@@ -42,7 +45,7 @@ import { resumeSessionFast, ResumeError } from "../lib/resume-session";
 /** Short per-row agent tag. "claude" doubles as the legacy default for rows
  *  with no metadata, so the mapping from AgentType is centralised here instead
  *  of repeated ternaries that silently mislabel new agents. */
-type SidebarAgent = "claude" | "codex" | "opencode" | "cursor" | "kilo" | "cersei";
+type SidebarAgent = "claude" | "codex" | "opencode" | "cursor" | "kilo" | "cersei" | (string & {});
 
 function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
   if (
@@ -53,10 +56,12 @@ function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
     agentType === "cersei"
   )
     return agentType;
-  return "claude";
+  if (!agentType || agentType === "custom" || agentType.startsWith("claude")) return "claude";
+  // Registry-installed external agent: its plugin id IS its identity.
+  return agentType;
 }
 
-const AGENT_TYPE_BY_SIDEBAR: Record<SidebarAgent, SwitchableAgent> = {
+const AGENT_TYPE_BY_SIDEBAR: Partial<Record<string, SwitchableAgent>> = {
   claude: "claude-code",
   codex: "codex",
   opencode: "opencode",
@@ -635,7 +640,7 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
     // Pick the agent that actually ran this session. This was hardcoded to the
     // default (Claude), so clicking a Codex row tried to resume it through the
     // Claude process → `loadSession` failed → it fell back to a blank session.
-    const resumedAgentTypeMapped = AGENT_TYPE_BY_SIDEBAR[item.agent];
+    const resumedAgentTypeMapped = AGENT_TYPE_BY_SIDEBAR[item.agent] ?? item.agent;
     const pluginId = pluginIdForAgent(resumedAgentTypeMapped);
     // The composer's agent label must follow the RESUMED session's real agent,
     // not whatever was selected in this tab. Without this, opening (say) an
@@ -962,7 +967,7 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
                   title={
                     item.kind !== "agent"
                       ? "AI Chat"
-                      : AGENT_LABEL[AGENT_TYPE_BY_SIDEBAR[item.agent]]
+                      : agentMeta(AGENT_TYPE_BY_SIDEBAR[item.agent] ?? item.agent).label
                   }
                 >
                   {isRunning ? (
@@ -978,8 +983,12 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
                       <KiloIcon className="size-3" />
                     ) : item.agent === "cersei" ? (
                       <AtlasIcon size={12} />
-                    ) : (
+                    ) : item.agent === "claude" ? (
                       <ClaudeIcon className="size-3" />
+                    ) : agentMeta(item.agent).iconDataUrl ? (
+                      <ExternalAgentIcon dataUrl={agentMeta(item.agent).iconDataUrl!} size={12} />
+                    ) : (
+                      <AgentMonogram label={agentMeta(item.agent).label} size={12} />
                     )
                   ) : (
                     <MessageSquare size={11} className="text-[var(--accent-primary)]" />

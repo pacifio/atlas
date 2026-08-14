@@ -58,6 +58,7 @@ anyhow = "1"
 atlas-agents = { path = "../crates/atlas-agents" }
 atlas-terminal = { path = "../crates/atlas-terminal" }
 atlas-acp = { path = "../crates/atlas-acp" }
+atlas-registry = { path = "../crates/atlas-registry" }
 # Already in the tree transitively (via atlas-cersei → cersei). Promoted to a
 # direct dep ONLY so src/lib.rs can reference cersei_provider::utf8::
 # ATLAS_UTF8_PATCH — a compile-time guard that fails `cargo check` if the

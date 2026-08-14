@@ -1,19 +1,23 @@
 import type { SessionModeInfo } from "./agents";
 
-export type AgentType =
-  | "claude-code"
-  | "codex"
-  | "opencode"
-  | "cursor"
-  | "kilo"
-  | "cersei"
-  | "custom";
+/** The six agents Atlas ships. External (registry-installed) agents extend
+ *  this set at runtime — their agent type IS their plugin id. */
+export type FirstPartyAgent = "claude-code" | "codex" | "opencode" | "cursor" | "kilo" | "cersei";
 
-/** Switchable (Atlas-shipped) agents — excludes the catch-all "custom". */
-export type SwitchableAgent = "claude-code" | "codex" | "opencode" | "cursor" | "kilo" | "cersei";
+/** Agent identity is plugin-id-first and OPEN (Paseo-style): the first-party
+ *  literals keep autocomplete/narrowing, but any registry-installed plugin id
+ *  is a valid agent type. `"custom"` survives as a legacy value only. */
+export type AgentType = FirstPartyAgent | "custom" | (string & {});
 
-/** The coding agents Atlas ships, in switch order (for option+/). */
-export const SWITCHABLE_AGENTS: SwitchableAgent[] = [
+/** Open alias — kept for call-site readability where "switchable" intent
+ *  matters. The actual switchable list is dynamic: `useSwitchableAgents()`
+ *  in features/agents (first-party + installed externals). */
+export type SwitchableAgent = FirstPartyAgent | (string & {});
+
+/** First-party agents in switch order (for option+/). Installed externals are
+ *  appended dynamically by `switchableAgentIds()` — never index UI state off
+ *  this array alone. */
+export const SWITCHABLE_AGENTS: FirstPartyAgent[] = [
   "claude-code",
   "codex",
   "opencode",
@@ -22,7 +26,9 @@ export const SWITCHABLE_AGENTS: SwitchableAgent[] = [
   "cersei",
 ];
 
-export const AGENT_LABEL: Record<SwitchableAgent, string> = {
+/** First-party labels. For externals use `agentMeta(id).label`
+ *  (features/agents/lib/agent-meta). */
+export const AGENT_LABEL: Record<FirstPartyAgent, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
@@ -31,10 +37,10 @@ export const AGENT_LABEL: Record<SwitchableAgent, string> = {
   cersei: "Atlas",
 };
 
-/** The Rust-side spawnable plugin id for each switchable agent (see
+/** The Rust-side spawnable plugin id for each first-party agent (see
  *  `AgentSpec::all_known()` in crates/atlas-acp). Single source of truth —
  *  every agentType→pluginId decision goes through `pluginIdForAgent`. */
-export const PLUGIN_ID_BY_AGENT: Record<SwitchableAgent, string> = {
+export const PLUGIN_ID_BY_AGENT: Record<FirstPartyAgent, string> = {
   "claude-code": "claude-code-ts",
   codex: "codex",
   opencode: "opencode",
@@ -43,17 +49,26 @@ export const PLUGIN_ID_BY_AGENT: Record<SwitchableAgent, string> = {
   cersei: "cersei",
 };
 
-export function pluginIdForAgent(agentType: AgentType | undefined): string {
-  if (agentType && agentType !== "custom") return PLUGIN_ID_BY_AGENT[agentType];
-  return PLUGIN_ID_BY_AGENT["claude-code"];
+function isFirstPartyAgent(agentType: string): agentType is FirstPartyAgent {
+  return Object.prototype.hasOwnProperty.call(PLUGIN_ID_BY_AGENT, agentType);
 }
 
-/** ACP-transport agents (out-of-process adapters) — the ones with modes/models
- *  advertised over ACP and warmable caches. Excludes the native in-process
- *  agent. */
-export const ACP_AGENTS: SwitchableAgent[] = ["claude-code", "codex", "opencode", "cursor", "kilo"];
+export function pluginIdForAgent(agentType: AgentType | undefined): string {
+  if (!agentType || agentType === "custom") return PLUGIN_ID_BY_AGENT["claude-code"];
+  if (isFirstPartyAgent(agentType)) return PLUGIN_ID_BY_AGENT[agentType];
+  // External agents: the agent type IS the plugin id.
+  return agentType;
+}
 
-/** Derive the display agent type from a spawnable plugin id. */
+/** First-party ACP-transport agents (out-of-process adapters) — the ones with
+ *  modes/models advertised over ACP and warmable caches. Excludes the native
+ *  in-process agent. Installed externals are also ACP-transport; consumers
+ *  that care use the dynamic registry, not this constant. */
+export const ACP_AGENTS: FirstPartyAgent[] = ["claude-code", "codex", "opencode", "cursor", "kilo"];
+
+/** Derive the display agent type from a spawnable plugin id. Unknown ids pass
+ *  through unchanged — an external agent's identity is its plugin id, and
+ *  collapsing it (the old `"custom"` fallback) lost it forever. */
 export function agentTypeFromPluginId(pluginId: string): AgentType {
   if (pluginId === "codex") return "codex";
   if (pluginId === "opencode") return "opencode";
@@ -61,7 +76,7 @@ export function agentTypeFromPluginId(pluginId: string): AgentType {
   if (pluginId === "kilo") return "kilo";
   if (pluginId === "cersei") return "cersei";
   if (pluginId.startsWith("claude")) return "claude-code";
-  return "custom";
+  return pluginId;
 }
 export type AgentStatus = "idle" | "running" | "waiting" | "done" | "error";
 

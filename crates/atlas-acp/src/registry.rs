@@ -48,8 +48,21 @@ pub struct ImageAttachment {
 pub struct AgentSpec {
     pub spec_id: String,
     pub display_name: String,
-    /// Shell-words–parseable command string.
+    /// Shell-words–parseable command string (or a `{...}` JSON stdio spec).
     pub command: String,
+    /// Where the user can get/install this agent — used by
+    /// `explain_spawn_failure` for agents without a hardcoded hint (i.e.
+    /// registry-installed externals; sourced from their manifest
+    /// repository/website).
+    #[serde(default)]
+    pub help_url: Option<String>,
+}
+
+/// Provider of additional spawnable specs beyond [`AgentSpec::all_known`] —
+/// implemented by the dynamic ACP registry (`atlas-registry`) so installed
+/// external agents flow through the exact same spawn path as first-party ones.
+pub trait SpecSource: Send + Sync {
+    fn extra_specs(&self) -> Vec<AgentSpec>;
 }
 
 impl AgentSpec {
@@ -61,6 +74,7 @@ impl AgentSpec {
             // to `@agentclientprotocol/claude-agent-acp`. The old name still
             // resolves but no longer receives updates.
             command: "npx -y @agentclientprotocol/claude-agent-acp".into(),
+            help_url: None,
         }
     }
 
@@ -69,6 +83,7 @@ impl AgentSpec {
             spec_id: "claude-code-rs".into(),
             display_name: "Claude Code (Rust)".into(),
             command: "claude-code-acp-rs".into(),
+            help_url: None,
         }
     }
 
@@ -91,6 +106,7 @@ impl AgentSpec {
             spec_id: "codex".into(),
             display_name: "Codex (ACP)".into(),
             command: "npx -y @agentclientprotocol/codex-acp".into(),
+            help_url: None,
         }
     }
 
@@ -107,6 +123,7 @@ impl AgentSpec {
             spec_id: "opencode".into(),
             display_name: "OpenCode".into(),
             command: "opencode acp".into(),
+            help_url: None,
         }
     }
 
@@ -125,6 +142,7 @@ impl AgentSpec {
             spec_id: "cursor".into(),
             display_name: "Cursor".into(),
             command: "cursor-agent acp".into(),
+            help_url: None,
         }
     }
 
@@ -147,6 +165,7 @@ impl AgentSpec {
             spec_id: "kilo".into(),
             display_name: "Kilo Code".into(),
             command: "kilo acp".into(),
+            help_url: None,
         }
     }
 
@@ -179,6 +198,9 @@ struct AgentEntry {
 #[derive(Clone, Default)]
 pub struct AgentRegistry {
     inner: Arc<DashMap<AgentId, AgentEntry>>,
+    /// Dynamic (registry-installed) specs, unioned into `known_specs`.
+    /// `None` = first-party only (tests, minimal hosts).
+    dynamic: Option<Arc<dyn SpecSource>>,
 }
 
 /// Bound an ACP request so a wedged adapter can't hang its caller forever
@@ -208,8 +230,28 @@ impl AgentRegistry {
         Self::default()
     }
 
-    pub fn known_specs() -> Vec<AgentSpec> {
-        AgentSpec::all_known()
+    /// Production constructor: first-party specs plus whatever the dynamic
+    /// registry store has installed.
+    pub fn with_spec_source(source: Arc<dyn SpecSource>) -> Self {
+        Self {
+            inner: Arc::new(DashMap::new()),
+            dynamic: Some(source),
+        }
+    }
+
+    /// First-party specs ∪ dynamic (registry-installed) specs. First-party
+    /// wins on a spec-id collision — a registry install must never shadow a
+    /// built-in agent.
+    pub fn known_specs(&self) -> Vec<AgentSpec> {
+        let mut specs = AgentSpec::all_known();
+        if let Some(source) = &self.dynamic {
+            for spec in source.extra_specs() {
+                if !specs.iter().any(|s| s.spec_id == spec.spec_id) {
+                    specs.push(spec);
+                }
+            }
+        }
+        specs
     }
 
     pub fn list(&self) -> Vec<AgentInfo> {
@@ -230,7 +272,8 @@ impl AgentRegistry {
         spec_id: &str,
         sink: Arc<dyn EventSink>,
     ) -> Result<AgentInfo> {
-        let spec = AgentSpec::all_known()
+        let spec = self
+            .known_specs()
             .into_iter()
             .find(|s| s.spec_id == spec_id)
             .ok_or_else(|| AcpError::UnknownSpec(spec_id.to_string()))?;
@@ -717,4 +760,57 @@ impl AgentRegistry {
 pub enum PermissionDecision {
     Selected { option_id: String },
     Cancelled,
+}
+
+#[cfg(test)]
+mod spec_source_tests {
+    use super::*;
+
+    struct FakeSource(Vec<AgentSpec>);
+    impl SpecSource for FakeSource {
+        fn extra_specs(&self) -> Vec<AgentSpec> {
+            self.0.clone()
+        }
+    }
+
+    fn external(spec_id: &str) -> AgentSpec {
+        AgentSpec {
+            spec_id: spec_id.into(),
+            display_name: spec_id.into(),
+            command: format!("npx -y {spec_id}"),
+            help_url: Some("https://example.com".into()),
+        }
+    }
+
+    #[test]
+    fn known_specs_is_first_party_only_without_a_source() {
+        let registry = AgentRegistry::new();
+        let ids: Vec<String> = registry.known_specs().into_iter().map(|s| s.spec_id).collect();
+        assert_eq!(
+            ids,
+            AgentSpec::all_known().into_iter().map(|s| s.spec_id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn known_specs_unions_dynamic_specs() {
+        let registry = AgentRegistry::with_spec_source(Arc::new(FakeSource(vec![
+            external("amp-acp"),
+        ])));
+        let ids: Vec<String> = registry.known_specs().into_iter().map(|s| s.spec_id).collect();
+        assert!(ids.contains(&"amp-acp".to_string()));
+        assert_eq!(ids.len(), AgentSpec::all_known().len() + 1);
+    }
+
+    #[test]
+    fn first_party_wins_on_spec_id_collision() {
+        // A registry install must never shadow a built-in agent's command.
+        let registry = AgentRegistry::with_spec_source(Arc::new(FakeSource(vec![
+            external("opencode"),
+        ])));
+        let specs = registry.known_specs();
+        let opencode: Vec<&AgentSpec> = specs.iter().filter(|s| s.spec_id == "opencode").collect();
+        assert_eq!(opencode.len(), 1);
+        assert_eq!(opencode[0].command, "opencode acp");
+    }
 }

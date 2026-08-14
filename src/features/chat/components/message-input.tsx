@@ -18,10 +18,10 @@ import { useChatStore } from "../stores/chat-store";
 import { agents } from "../lib/agents-api";
 import {
   CLAUDE_PERMISSION_MODE_LABEL,
-  AGENT_LABEL,
   agentTypeFromPluginId,
   type SwitchableAgent,
 } from "@/types/agent";
+import { agentMeta } from "@/features/agents/lib/agent-meta";
 import {
   cycleChatAgent,
   nextAgentForTab,
@@ -952,7 +952,10 @@ export function MessageInput({
   const pickFilesOrPhotos = useCallback(async () => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const picked = await open({ multiple: true, title: "Attach files or photos" });
+      const picked = await open({
+        multiple: true,
+        title: "Attach files or photos",
+      });
       if (!picked) return;
       const paths = (Array.isArray(picked) ? picked : [picked]) as string[];
       const images: ImageAttachment[] = [];
@@ -1051,10 +1054,11 @@ export function MessageInput({
         // in a whole-desktop capture.
         await new Promise((r) => setTimeout(r, 250));
         const proj = useProjectStore.getState().currentProject?.path ?? null;
-        const res = await invoke<{ path: string; mimeType: string; dataBase64: string } | null>(
-          "capture_screenshot",
-          { mode, projectPath: proj },
-        );
+        const res = await invoke<{
+          path: string;
+          mimeType: string;
+          dataBase64: string;
+        } | null>("capture_screenshot", { mode, projectPath: proj });
         if (!res) return; // cancelled (Esc during region select)
         if (imageSupported) {
           setStagedImages((prev) => [
@@ -1654,10 +1658,10 @@ export function MessageInput({
               <button
                 onClick={() => cycleChatAgent(tabId)}
                 className="flex items-center gap-1.5 px-1.5 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                title={`Coding agent — click to switch to ${AGENT_LABEL[nextAgentForTab(tabId)]} (⌥/)`}
+                title={`Coding agent — click to switch to ${agentMeta(nextAgentForTab(tabId)).label} (⌥/)`}
               >
                 <AgentMark agentType={agentType} className="!h-4 !w-4 !text-[9px] !rounded" />
-                {AGENT_LABEL[switchableAgent]}
+                {agentMeta(switchableAgent).label}
               </button>
               {agentType === "claude-code" && (
                 <button

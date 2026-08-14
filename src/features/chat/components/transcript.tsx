@@ -35,8 +35,9 @@ import {
   useState,
 } from "react";
 import type { ChatMessage } from "@/types/agent";
-import { AGENT_LABEL, type SwitchableAgent } from "@/types/agent";
-import { AgentIcons } from "@/components/agent-icons";
+import { type SwitchableAgent } from "@/types/agent";
+import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { AgentIcons, ExternalAgentIcon, AgentMonogram } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { projectRows, RowKind, type Projection, type Row } from "../lib/turn-rows";
 import { useTranscriptScroll } from "../lib/use-transcript-scroll";
@@ -104,13 +105,17 @@ const BOTTOM_GAP = 28;
 const STICKY_SETTLE_MS = 4000;
 
 function switchable(agentType: string | undefined): SwitchableAgent {
-  return agentType === "codex" ||
+  if (
+    agentType === "codex" ||
     agentType === "opencode" ||
     agentType === "cursor" ||
     agentType === "kilo" ||
     agentType === "cersei"
-    ? agentType
-    : "claude-code";
+  )
+    return agentType;
+  if (!agentType || agentType === "custom" || agentType.startsWith("claude")) return "claude-code";
+  // Registry-installed external agent — identity passes through.
+  return agentType;
 }
 
 /** Resolved ONCE per thread and handed to every row as a stable element — a
@@ -181,8 +186,14 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   const contentRef = useRef<HTMLDivElement>(null);
   const cacheKey = `${tabId}:${acpSessionId}`;
   const agent = switchable(agentType);
-  const agentLabel = AGENT_LABEL[agent];
-  const agentIcon = AGENT_ICON[agent];
+  const agentLabel = agentMeta(agent).label;
+  const agentIcon =
+    AGENT_ICON[agent] ??
+    (agentMeta(agent).iconDataUrl ? (
+      <ExternalAgentIcon dataUrl={agentMeta(agent).iconDataUrl!} size={14} />
+    ) : (
+      <AgentMonogram label={agentMeta(agent).label} size={14} />
+    ));
 
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   /** Turns whose tool-call block the reader has opened. */

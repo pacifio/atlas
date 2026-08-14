@@ -49,4 +49,7 @@ export type MemorySubTab =
   | "policy"
   | "timeline"
   | "shared"
-  | "chat";
+  | "chat"
+  // Registry-installed external agents: their plugin id is their sub-tab
+  // (rendered via the generic CaptureSessionsView).
+  | (string & {});

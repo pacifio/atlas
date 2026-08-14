@@ -133,3 +133,41 @@ export const AgentIcons = {
   Cursor: CursorIcon,
   Kilo: KiloIcon,
 };
+
+/** Registry-installed external agent icon — the manifest's SVG delivered as a
+ *  base64 data URL (asset protocol can't serve the hidden cache dir). */
+export function ExternalAgentIcon({
+  dataUrl,
+  size = 14,
+  className,
+}: {
+  dataUrl: string;
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <img
+      src={dataUrl}
+      width={size}
+      height={size}
+      className={className}
+      style={{ objectFit: "contain", borderRadius: 3 }}
+      alt=""
+      aria-hidden
+    />
+  );
+}
+
+/** Last-resort agent glyph: the label's initial in a monogram — replaces the
+ *  old bare "?" for agents with no icon source (purged registry metadata). */
+export function AgentMonogram({ label, size = 14 }: { label: string; size?: number }) {
+  return (
+    <span
+      className="font-mono font-semibold leading-none"
+      style={{ fontSize: Math.round(size * 0.72) }}
+      aria-hidden
+    >
+      {(label.trim()[0] ?? "?").toUpperCase()}
+    </span>
+  );
+}

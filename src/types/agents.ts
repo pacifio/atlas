@@ -9,7 +9,7 @@ export interface SessionKey {
   session_id: AcpSessionId;
 }
 
-export type TranscriptKind = { kind: "none" } | { kind: "claude_jsonl" };
+export type TranscriptKind = { kind: "none" } | { kind: "claude_jsonl" } | { kind: "cersei_json" };
 
 /** One image attached to an outbound prompt. Mirrors atlas-acp's
  *  `ImageAttachment` (serde camelCase). `dataBase64` is raw base64 — no
@@ -26,6 +26,8 @@ export interface PluginSpec {
   transcript: TranscriptKind;
   supports_modes: boolean;
   supports_models: boolean;
+  /** Registry-installed third-party agent (not first-party, not cersei). */
+  external: boolean;
 }
 
 export type SessionStatus = "idle" | "running" | "waiting" | "error";
@@ -148,11 +150,36 @@ export type AgentDelta =
       message_id: string;
       tool_call: ToolCall;
     }
-  | { kind: "plan_updated"; agent_id: AgentId; session_id: AcpSessionId; plan: PlanEntry[] }
-  | { kind: "mode_changed"; agent_id: AgentId; session_id: AcpSessionId; mode_id: string }
-  | { kind: "model_changed"; agent_id: AgentId; session_id: AcpSessionId; model_id: string }
-  | { kind: "available_commands"; agent_id: AgentId; session_id: AcpSessionId; commands: unknown[] }
-  | { kind: "usage_updated"; agent_id: AgentId; session_id: AcpSessionId; usage: Usage }
+  | {
+      kind: "plan_updated";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      plan: PlanEntry[];
+    }
+  | {
+      kind: "mode_changed";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      mode_id: string;
+    }
+  | {
+      kind: "model_changed";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      model_id: string;
+    }
+  | {
+      kind: "available_commands";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      commands: unknown[];
+    }
+  | {
+      kind: "usage_updated";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      usage: Usage;
+    }
   | {
       kind: "context_usage";
       agent_id: AgentId;
@@ -161,8 +188,18 @@ export type AgentDelta =
       size: number;
       cost: number;
     }
-  | { kind: "compaction"; agent_id: AgentId; session_id: AcpSessionId; active: boolean }
-  | { kind: "compression_saved"; agent_id: AgentId; session_id: AcpSessionId; saved_tokens: number }
+  | {
+      kind: "compaction";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      active: boolean;
+    }
+  | {
+      kind: "compression_saved";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      saved_tokens: number;
+    }
   | {
       kind: "permission_request";
       agent_id: AgentId;
@@ -171,7 +208,12 @@ export type AgentDelta =
       tool_call: unknown;
       options: unknown;
     }
-  | { kind: "permission_resolved"; agent_id: AgentId; session_id: AcpSessionId; request_id: string }
+  | {
+      kind: "permission_resolved";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      request_id: string;
+    }
   | {
       kind: "turn_finished";
       agent_id: AgentId;
@@ -196,4 +238,9 @@ export type AgentDelta =
       delay_ms: number;
       last_error: string;
     }
-  | { kind: "agent_disconnected"; agent_id: AgentId; session_id: AcpSessionId; reason: string };
+  | {
+      kind: "agent_disconnected";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      reason: string;
+    };

@@ -3,9 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { Loader2, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
-import { AgentIcons } from "@/components/agent-icons";
+import { AgentIcons, AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
 import type { SessionSummary } from "@/features/artifacts/types";
-import { AGENT_LABEL, type SwitchableAgent } from "@/types/agent";
+import { agentMeta } from "@/features/agents/lib/agent-meta";
 
 /**
  * Generic Memory sub-view for agents whose sessions live ONLY in Atlas's own
@@ -20,7 +20,9 @@ export function CaptureSessionsView({
   agent,
 }: {
   projectPath: string | null;
-  agent: "opencode" | "cursor" | "kilo";
+  /** Capture-store plugin id: "opencode" | "cursor" | "kilo" or any
+   *  registry-installed external agent's id. */
+  agent: string;
 }) {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [query, setQuery] = useState("");
@@ -60,13 +62,20 @@ export function CaptureSessionsView({
     );
   }, [sessions, query]);
 
-  const Icon =
-    agent === "opencode"
-      ? AgentIcons.OpenCode
-      : agent === "cursor"
-        ? AgentIcons.Cursor
-        : AgentIcons.Kilo;
-  const label = AGENT_LABEL[agent as SwitchableAgent];
+  const meta = agentMeta(agent);
+  const Icon = ({ className }: { className?: string }) =>
+    agent === "opencode" ? (
+      <AgentIcons.OpenCode className={className} />
+    ) : agent === "cursor" ? (
+      <AgentIcons.Cursor className={className} />
+    ) : agent === "kilo" ? (
+      <AgentIcons.Kilo className={className} />
+    ) : meta.iconDataUrl ? (
+      <ExternalAgentIcon dataUrl={meta.iconDataUrl} size={14} className={className} />
+    ) : (
+      <AgentMonogram label={meta.label} size={14} />
+    );
+  const label = meta.label;
 
   if (sessions === null) {
     return (

@@ -60,6 +60,7 @@ pub mod pdf_annotations;
 pub mod plans;
 pub mod pomodoro;
 pub mod recent_files;
+pub mod registry;
 pub mod research;
 pub mod review;
 pub mod search;

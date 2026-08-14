@@ -48,7 +48,7 @@ pub fn managed_node_bin() -> Option<PathBuf> {
 /// terminal does. Bounded by a timeout so a slow/hanging shell rc can't block
 /// the agent spawn. Returns `None` (caller keeps the bare name) if the probe
 /// fails, times out, or the program isn't found.
-fn resolve_program_abs(program: &str) -> Option<String> {
+pub fn resolve_program_abs(program: &str) -> Option<String> {
     // Already absolute → use as-is.
     if program.starts_with('/') {
         return Some(program.to_string());
@@ -238,6 +238,17 @@ pub(crate) fn explain_spawn_failure(spec: &AgentSpec, err: AcpError) -> AcpError
         "the Kilo Code CLI was not found. Install it with \
          `npm install -g @kilocode/cli` (or `brew install Kilo-Org/tap/kilo`) \
          and run `kilo auth login`, then relaunch Atlas."
+    } else if program == "uvx" {
+        "uv (which provides `uvx`) was not found. Install uv \
+         (https://docs.astral.sh/uv) and relaunch Atlas."
+    } else if let Some(url) = spec.help_url.as_deref() {
+        // Registry-installed external agent: point at its own repo/site.
+        return AcpError::other(format!(
+            "Could not start {}: `{}` is not available — the agent's runtime \
+             executable was not found. See {url} for installation instructions \
+             (underlying error: {raw})",
+            spec.display_name, program
+        ));
     } else {
         "the agent's runtime executable was not found on PATH"
     };

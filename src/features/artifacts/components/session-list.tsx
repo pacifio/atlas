@@ -24,8 +24,9 @@ import {
   TriangleAlert,
 } from "lucide-react";
 
-import { AgentIcons } from "@/components/agent-icons";
+import { AgentIcons, AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
+import { agentMeta } from "@/features/agents/lib/agent-meta";
 
 import { cn } from "@/lib/utils";
 
@@ -431,11 +432,10 @@ export function AgentGlyph({
   if (agent.includes("kilo"))
     return <AgentIcons.Kilo style={dim} className={cn(!mono && "text-[var(--agent-kilo-chip)]")} />;
   if (agent.includes("cersei")) return <AtlasIcon size={size} className="rounded-[3px]" />;
-  return (
-    <span className="font-mono" style={{ fontSize: size * 0.8 }}>
-      {agent.slice(0, 1).toUpperCase()}
-    </span>
-  );
+  // Registry-installed external agent: manifest SVG, else a monogram.
+  const meta = agentMeta(agent);
+  if (meta.iconDataUrl) return <ExternalAgentIcon dataUrl={meta.iconDataUrl} size={size} />;
+  return <AgentMonogram label={meta.label} size={size} />;
 }
 
 // ── Clustering ──────────────────────────────────────────────────────────────

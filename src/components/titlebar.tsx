@@ -130,15 +130,15 @@ export function Titlebar() {
         <ProjectLabel name={displayName} orgName={orgName} path={currentProject?.path} />
       </div>
 
+      {/* Dev-mode flag — centered in the titlebar, outside both flex groups.
+          It's a build/runtime indicator, not project-dependent, and it takes
+          no pointer events so window dragging works straight through it. */}
+      <DevModePill />
+
       {/* The account button sits OUTSIDE the `currentProject` guard on purpose:
           a fresh install has no project open, and sign-in must be reachable
           from that empty state rather than hidden behind opening a folder. */}
       <div className="flex items-center gap-1.5">
-        {/* Dev-mode flag lives outside the `currentProject` guard too — it's
-            a build/runtime indicator, not project-dependent. Its own divider
-            travels with it, so the coloured capsule never sits flush against
-            the neutral icon row. */}
-        <DevModePill />
         {currentProject && (
           <>
             <UpdateButton />
@@ -280,7 +280,10 @@ function ProjectLabel({
 function DevModePill() {
   if (!isDev || !isTauri()) return null;
   return (
-    <>
+    // Dead-center of the titlebar, independent of how the left/right icon
+    // groups grow. `pointer-events-none` keeps the strip fully draggable —
+    // it's an indicator, not a control (which also retires its old divider).
+    <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2">
       <div
         className="relative flex h-5 shrink-0 items-center gap-1 overflow-hidden rounded-full px-2 text-[11px] leading-none font-medium text-white"
         style={{
@@ -288,7 +291,6 @@ function DevModePill() {
           boxShadow:
             "0 1px 5px 0 rgba(37,99,235,0.35), 0 1px 0 0 rgba(255,255,255,0.25) inset, 0 -2px 6px 0 rgba(37,99,235,0.5) inset",
         }}
-        title="Running via `bun run dev:app`"
       >
         {/* Crown highlight — the light source. Blurred so its lower edge melts
           into the body instead of banding across the glyphs. */}
@@ -313,10 +315,7 @@ function DevModePill() {
         <Hammer size={11} className="relative z-10" />
         <span className="relative z-10">Dev Mode</span>
       </div>
-      {/* Travels with the pill so the one coloured element in the titlebar is
-          never flush against the neutral icons beside it. */}
-      <div className="mx-0.5 h-4 w-px shrink-0 bg-border-default" aria-hidden />
-    </>
+    </div>
   );
 }
 

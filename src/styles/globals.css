@@ -1379,32 +1379,32 @@
   0%,
   10% {
     background-position:
-      50% calc(0*100%/3),
-      50% calc(1*100%/3),
-      50% calc(2*100%/3),
-      50% calc(3*100%/3);
+      50% calc(0 * 100% / 3),
+      50% calc(1 * 100% / 3),
+      50% calc(2 * 100% / 3),
+      50% calc(3 * 100% / 3);
   }
   33% {
     background-position:
-      100% calc(0*100%/3),
-      calc(100% - var(--g)) calc(1*100%/3),
-      var(--g) calc(2*100%/3),
-      0 calc(3*100%/3);
+      100% calc(0 * 100% / 3),
+      calc(100% - var(--g)) calc(1 * 100% / 3),
+      var(--g) calc(2 * 100% / 3),
+      0 calc(3 * 100% / 3);
   }
   66% {
     background-position:
-      0 calc(0*100%/3),
-      var(--g) calc(1*100%/3),
-      calc(100% - var(--g)) calc(2*100%/3),
-      100% calc(3*100%/3);
+      0 calc(0 * 100% / 3),
+      var(--g) calc(1 * 100% / 3),
+      calc(100% - var(--g)) calc(2 * 100% / 3),
+      100% calc(3 * 100% / 3);
   }
   90%,
   100% {
     background-position:
-      50% calc(0*100%/3),
-      50% calc(1*100%/3),
-      50% calc(2*100%/3),
-      50% calc(3*100%/3);
+      50% calc(0 * 100% / 3),
+      50% calc(1 * 100% / 3),
+      50% calc(2 * 100% / 3),
+      50% calc(3 * 100% / 3);
   }
 }
 
@@ -1729,9 +1729,12 @@
    which arrives with its own line breaks — collapsing them ran eight `hint:`
    lines into one grey paragraph. Single-line descriptions are unaffected.
 
-   Specificity has to match sonner's own selector, hence the doubled
-   attribute — a class alone loses to it. */
-[data-sonner-toast][data-styled="true"] [data-description] {
+   MATCHING sonner's specificity was not enough: at (0,3,0) vs (0,3,0) the
+   winner is import order, and sonner's stylesheet lands after this file in
+   the bundle — so the #3f3f3f still won and git failures stayed unreadable.
+   The extra `[data-sonner-toaster]` ancestor takes this to (0,4,0), beating
+   every sonner description rule regardless of order. */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-description] {
   color: var(--text-secondary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;

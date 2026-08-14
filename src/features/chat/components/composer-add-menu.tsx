@@ -31,7 +31,10 @@ import {
 import { cn } from "@/lib/utils";
 import { AgentIcons } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
-import { SWITCHABLE_AGENTS, AGENT_LABEL, type SwitchableAgent } from "@/types/agent";
+import { type SwitchableAgent } from "@/types/agent";
+import { agentMeta, useSwitchableAgents } from "@/features/agents/lib/agent-meta";
+import { openSettingsSection } from "@/features/settings/lib/open-settings";
+import { AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
 import type { GithubRepo, ClonedRepo } from "@/features/github/types";
 import {
   searchMentions,
@@ -125,6 +128,8 @@ export function ComposerAddMenu({
   onSwitchAgent,
 }: ComposerAddMenuProps) {
   const [open, setOpen] = useState(false);
+  // First-party agents + installed registry externals (re-renders on install).
+  const switchableAgents = useSwitchableAgents();
 
   return (
     <DropdownMenu.Root open={open} onOpenChange={setOpen}>
@@ -209,7 +214,7 @@ export function ComposerAddMenu({
           <DropdownMenu.Separator className="my-1 h-px bg-[var(--border-default)]" />
           <div className="flex items-center justify-between px-2 py-0.5">
             <div className="flex items-center gap-1">
-              {SWITCHABLE_AGENTS.map((a) => {
+              {switchableAgents.map((a) => {
                 const active = a === currentAgent;
                 return (
                   <button
@@ -219,7 +224,7 @@ export function ComposerAddMenu({
                       if (!active) onSwitchAgent(a);
                       setOpen(false);
                     }}
-                    title={`Switch to ${AGENT_LABEL[a]}`}
+                    title={`Switch to ${agentMeta(a).label}`}
                     className={cn(
                       "flex items-center justify-center h-5 w-5 rounded-full border border-[var(--border-default)] transition-colors outline-none cursor-pointer",
                       active
@@ -237,8 +242,12 @@ export function ComposerAddMenu({
                       <AgentIcons.Cursor className="size-3" />
                     ) : a === "kilo" ? (
                       <AgentIcons.Kilo className="size-3" />
-                    ) : (
+                    ) : a === "cersei" ? (
                       <AtlasIcon size={12} className="rounded-[2px]" />
+                    ) : agentMeta(a).iconDataUrl ? (
+                      <ExternalAgentIcon dataUrl={agentMeta(a).iconDataUrl!} size={12} />
+                    ) : (
+                      <AgentMonogram label={agentMeta(a).label} size={12} />
                     )}
                   </button>
                 );
@@ -256,6 +265,20 @@ export function ComposerAddMenu({
               </kbd>
             </span>
           </div>
+          {/* Zed-style registry entry point: opens Settings → Agents so any
+              ACP-registry agent can join the switcher row above. */}
+          <DropdownMenu.Separator className="my-1 h-px bg-[var(--border-default)]" />
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              openSettingsSection("agents");
+            }}
+            className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+          >
+            <Plus size={11} />
+            Add more agents
+          </button>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
@@ -501,7 +524,8 @@ function SessionsSubmenu({
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-[var(--text-primary)]">{s.title}</div>
                         <div className="text-[10px] text-[var(--text-tertiary)]">
-                          {s.messageCount} message{s.messageCount === 1 ? "" : "s"}
+                          {s.messageCount} message
+                          {s.messageCount === 1 ? "" : "s"}
                         </div>
                       </div>
                     </DropdownMenu.Item>

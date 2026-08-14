@@ -58,9 +58,23 @@ impl AgentManager {
     /// `config_dir` is the app config dir (holds `byok-keys.json` +
     /// `cersei-sessions/`); the native agent reads keys + persists sessions there.
     pub fn new(sink: Arc<dyn DeltaSink>, config_dir: std::path::PathBuf) -> Self {
+        Self::with_spec_source(sink, config_dir, None)
+    }
+
+    /// Production constructor: `spec_source` is the dynamic ACP registry
+    /// (`atlas-registry`'s `RegistryStore`) — installed external agents become
+    /// spawnable specs alongside the first-party set. `None` = first-party only.
+    pub fn with_spec_source(
+        sink: Arc<dyn DeltaSink>,
+        config_dir: std::path::PathBuf,
+        spec_source: Option<Arc<dyn atlas_acp::SpecSource>>,
+    ) -> Self {
         Self {
             inner: Arc::new(ManagerInner {
-                acp: AgentRegistry::new(),
+                acp: match spec_source {
+                    Some(source) => AgentRegistry::with_spec_source(source),
+                    None => AgentRegistry::new(),
+                },
                 cersei: atlas_cersei::CerseiRuntime::new(config_dir),
                 sessions: DashMap::new(),
                 agent_plugins: DashMap::new(),
@@ -78,7 +92,7 @@ impl AgentManager {
     }
 
     pub fn list_plugins(&self) -> Vec<PluginSpec> {
-        builtin_plugins()
+        builtin_plugins(&self.inner.acp)
     }
 
     pub fn list_agents(&self) -> Vec<AgentInfo> {
@@ -88,7 +102,8 @@ impl AgentManager {
     /// Spawn a plugin and register the resulting agent. ACP plugins launch a
     /// subprocess; the native `cersei` plugin is registered in-process.
     pub async fn spawn(&self, plugin_id: &str) -> Result<AgentInfo> {
-        let plugin = find_plugin(plugin_id).ok_or_else(|| Error::UnknownPlugin(plugin_id.into()))?;
+        let plugin = find_plugin(&self.inner.acp, plugin_id)
+            .ok_or_else(|| Error::UnknownPlugin(plugin_id.into()))?;
         let event_sink: Arc<dyn EventSink> = Arc::new(self.clone());
 
         let (info, backend): (AgentInfo, Arc<dyn AgentBackend>) =
@@ -198,8 +213,8 @@ impl AgentManager {
         cwd: &str,
         session_id: &str,
     ) -> Result<Vec<Message>> {
-        let plugin =
-            find_plugin(plugin_id).ok_or_else(|| Error::UnknownPlugin(plugin_id.to_string()))?;
+        let plugin = find_plugin(&self.inner.acp, plugin_id)
+            .ok_or_else(|| Error::UnknownPlugin(plugin_id.to_string()))?;
         match plugin.transcript {
             TranscriptKind::None => Ok(Vec::new()),
             TranscriptKind::CerseiJson => Ok(cersei_replay_to_messages(
@@ -243,7 +258,8 @@ impl AgentManager {
 
         let cwd_str = cwd.to_string_lossy().into_owned();
         let plugin_id = self.plugin_id_for(agent_id)?;
-        let plugin = find_plugin(&plugin_id).ok_or_else(|| Error::UnknownPlugin(plugin_id.clone()))?;
+        let plugin = find_plugin(&self.inner.acp, &plugin_id)
+            .ok_or_else(|| Error::UnknownPlugin(plugin_id.clone()))?;
 
         if plugin.transcript == TranscriptKind::CerseiJson {
             // Native agent: the runtime persists its own JSON transcript. Build

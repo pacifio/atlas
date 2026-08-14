@@ -117,6 +117,7 @@ jobs:
           - crate: atlas-memory
           - crate: atlas-redact
             clippy: true
+          - crate: atlas-registry
           - crate: atlas-review
           - crate: atlas-terminal
     steps:

@@ -42,6 +42,7 @@ import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { jumpToSession } from "@/features/chat/lib/tab-workspace";
 import { refreshCachedAcpModels } from "@/features/chat/lib/warm-acp-models";
+import { hydrateAgentRegistry } from "@/features/agents/stores/agent-registry-store";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
 import {
@@ -100,6 +101,10 @@ export function App() {
     // bundled nvm in the background and re-runs ACP discovery when ready.
     void useNodeSetupStore.getState().actions.check();
     void useClaudeSetupStore.getState().actions.refreshStatus();
+    // Agent identity registry (first-party + registry-installed externals):
+    // hydrate once so pickers/glyphs/memory dropdown resolve external
+    // metadata; the marketplace re-hydrates after installs.
+    void hydrateAgentRegistry();
   }, []);
 
   // Refresh the `atlas` CLI helper at `~/.local/bin/atlas` on every
@@ -678,7 +683,10 @@ export function App() {
       for (const [tabId, s] of Object.entries(sessions)) {
         if (s.acpSessionId === acpSessionId) return { tabId, title: s.title };
       }
-      return { tabId: undefined as string | undefined, title: undefined as string | undefined };
+      return {
+        tabId: undefined as string | undefined,
+        title: undefined as string | undefined,
+      };
     };
     const notify = () => useNotificationsStore.getState().actions;
 
@@ -736,7 +744,9 @@ export function App() {
           // "Indexing…" then refresh its status.
           const emit = (active: boolean) =>
             window.dispatchEvent(
-              new CustomEvent("atlas:cersei-index", { detail: { path, active } }),
+              new CustomEvent("atlas:cersei-index", {
+                detail: { path, active },
+              }),
             );
           emit(true);
           void invoke("codebase_index_build", {
@@ -967,7 +977,11 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | null = null;
-    type Payload = { workspaceId?: string; dirs: string[]; fullRefresh: boolean };
+    type Payload = {
+      workspaceId?: string;
+      dirs: string[];
+      fullRefresh: boolean;
+    };
     listen<Payload>("atlas:explorer:changed", (e) => {
       if (cancelled) return;
       // Ignore changes from a backgrounded workspace's resident watcher —

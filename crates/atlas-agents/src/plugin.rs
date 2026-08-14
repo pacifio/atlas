@@ -21,6 +21,10 @@ pub struct PluginSpec {
     pub supports_modes: bool,
     /// Whether the agent supports `session/set_model` style notifications.
     pub supports_models: bool,
+    /// True for registry-installed third-party agents (anything not in
+    /// `atlas_acp::AgentSpec::all_known()` and not the native cersei agent).
+    #[serde(default)]
+    pub external: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -35,10 +39,16 @@ pub enum TranscriptKind {
     CerseiJson,
 }
 
-/// Built-in plugin catalog. Add new entries here to make them selectable in
-/// the UI; ensure the matching `atlas_acp::AgentSpec` exists too.
-pub fn builtin_plugins() -> Vec<PluginSpec> {
-    let mut plugins: Vec<PluginSpec> = atlas_acp::AgentRegistry::known_specs()
+/// Plugin catalog: first-party specs, registry-installed externals (via the
+/// registry's `SpecSource` wired into `acp`), and the native cersei agent.
+/// First-party additions still go through `atlas_acp::AgentSpec::all_known()`.
+pub fn builtin_plugins(acp: &atlas_acp::AgentRegistry) -> Vec<PluginSpec> {
+    let first_party: Vec<String> = atlas_acp::AgentSpec::all_known()
+        .into_iter()
+        .map(|s| s.spec_id)
+        .collect();
+    let mut plugins: Vec<PluginSpec> = acp
+        .known_specs()
         .into_iter()
         .map(|s| PluginSpec {
             plugin_id: s.spec_id.clone(),
@@ -47,6 +57,7 @@ pub fn builtin_plugins() -> Vec<PluginSpec> {
             transcript: classify_transcript(&s.spec_id),
             supports_modes: true,
             supports_models: true,
+            external: !first_party.iter().any(|id| id == &s.spec_id),
         })
         .collect();
     // The native in-process agent (no subprocess command).
@@ -57,12 +68,13 @@ pub fn builtin_plugins() -> Vec<PluginSpec> {
         transcript: TranscriptKind::CerseiJson,
         supports_modes: true,
         supports_models: true,
+        external: false,
     });
     plugins
 }
 
-pub fn find_plugin(plugin_id: &str) -> Option<PluginSpec> {
-    builtin_plugins().into_iter().find(|p| p.plugin_id == plugin_id)
+pub fn find_plugin(acp: &atlas_acp::AgentRegistry, plugin_id: &str) -> Option<PluginSpec> {
+    builtin_plugins(acp).into_iter().find(|p| p.plugin_id == plugin_id)
 }
 
 fn classify_transcript(spec_id: &str) -> TranscriptKind {

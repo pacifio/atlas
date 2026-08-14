@@ -1,5 +1,6 @@
 import { useChatStore } from "@/features/chat/stores/chat-store";
-import { SWITCHABLE_AGENTS, isBusyAgentStatus, type SwitchableAgent } from "@/types/agent";
+import { isBusyAgentStatus, type SwitchableAgent } from "@/types/agent";
+import { switchableAgentIds } from "@/features/agents/lib/agent-meta";
 import { openNewAgentChat } from "./open-agent-session";
 
 /**
@@ -33,11 +34,13 @@ export function switchAgentForTab(tabId: string, next: SwitchableAgent): void {
   window.dispatchEvent(new CustomEvent("atlas:chat-focus", { detail: { tabId } }));
 }
 
-/** The next agent in the ⌥/ rotation for a tab. */
+/** The next agent in the ⌥/ rotation for a tab — first-party agents in their
+ *  fixed order, then any installed registry externals. */
 export function nextAgentForTab(tabId: string): SwitchableAgent {
+  const rotation = switchableAgentIds();
   const cur = useChatStore.getState().sessions[tabId]?.agentType;
-  const idx = SWITCHABLE_AGENTS.indexOf((cur ?? "claude-code") as SwitchableAgent);
-  return SWITCHABLE_AGENTS[(Math.max(idx, 0) + 1) % SWITCHABLE_AGENTS.length];
+  const idx = rotation.indexOf(cur ?? "claude-code");
+  return rotation[(Math.max(idx, 0) + 1) % rotation.length];
 }
 
 /** Advance a chat tab to the next agent (⌥/ and the composer's agent pill). */

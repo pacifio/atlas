@@ -19,10 +19,15 @@ pub use driver::AuthMethodWire;
 pub use error::{AcpError, ErrorClass, Result, classify_message};
 pub use events::{AcpEvent, EventSink};
 pub use registry::{
-    AgentId, AgentInfo, AgentRegistry, AgentSpec, ImageAttachment, PermissionDecision,
+    AgentId, AgentInfo, AgentRegistry, AgentSpec, ImageAttachment, PermissionDecision, SpecSource,
 };
 pub use schema::NewSessionInfo;
 pub use spawn::{managed_node_bin, register_managed_node_bin, sanitize_host_env};
+
+/// Login-shell program resolution, re-exported for the dynamic registry
+/// (`atlas-registry`) which pre-resolves programs when it must emit a JSON
+/// stdio spec (env-carrying commands bypass `resolve_command`).
+pub use spawn::resolve_program_abs as resolve_program;
 
 // Re-export schema types the host needs (so it doesn't have to take a direct
 // dep on `agent-client-protocol-schema`).

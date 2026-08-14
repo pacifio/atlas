@@ -35,11 +35,15 @@ import {
   OpenCodeIcon,
   CursorIcon,
   KiloIcon,
+  ExternalAgentIcon,
+  AgentMonogram,
 } from "@/components/agent-icons";
 import { CaptureSessionsView } from "./capture-sessions-view";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useMemoryStore } from "../stores/memory-store";
+import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
 import type { ClaudeMemory, CodexMemory, CodexThread } from "../lib/memory-types";
 
 // ── Panel shell ─────────────────────────────────────────────────────────────
@@ -91,7 +95,9 @@ export function MemoryPanel() {
       setCaptureCounts({});
       return;
     }
-    invoke<Record<string, number>>("capture_agent_session_counts", { projectPath })
+    invoke<Record<string, number>>("capture_agent_session_counts", {
+      projectPath,
+    })
       .then(setCaptureCounts)
       .catch(() => setCaptureCounts({}));
   }, [projectPath, sub]);
@@ -183,7 +189,7 @@ export function MemoryPanel() {
           )
         ) : sub === "cersei" ? (
           <AtlasMemoryView projectPath={projectPath} />
-        ) : sub === "opencode" || sub === "cursor" || sub === "kilo" ? (
+        ) : sub === "opencode" || sub === "cursor" || sub === "kilo" || isDynamicAgentSub(sub) ? (
           <CaptureSessionsView projectPath={projectPath} agent={sub} />
         ) : loading && !data ? (
           <PanelSkeleton rows={8} />
@@ -251,9 +257,33 @@ function Centered({ children }: { children: React.ReactNode }) {
 
 // ── Coding-agent combobox ────────────────────────────────────────────────────
 
-type AgentSub = "claude" | "codex" | "cersei" | "opencode" | "cursor" | "kilo";
+type AgentSub = "claude" | "codex" | "cersei" | "opencode" | "cursor" | "kilo" | (string & {});
 
-const AGENT_SUBS: readonly AgentSub[] = ["claude", "codex", "cersei", "opencode", "cursor", "kilo"];
+const FIRST_PARTY_AGENT_SUBS = ["claude", "codex", "cersei", "opencode", "cursor", "kilo"] as const;
+
+/** The non-agent panel tabs — anything else in `sub` is an agent identity.
+ *  Registry-installed external agents use their plugin id as their sub. */
+const PANEL_TABS = ["graph", "policy", "timeline", "shared", "chat"] as const;
+
+function isDynamicAgentSub(sub: string): boolean {
+  return (
+    !(FIRST_PARTY_AGENT_SUBS as readonly string[]).includes(sub) &&
+    !(PANEL_TABS as readonly string[]).includes(sub)
+  );
+}
+
+/** First-party plugin ids whose capture counts already surface through the
+ *  fixed dropdown entries — everything else in `capture_agent_session_counts`
+ *  is a dynamic (external) agent. */
+const FIRST_PARTY_PLUGIN_IDS = new Set([
+  "claude-code-ts",
+  "claude-code-rs",
+  "codex",
+  "opencode",
+  "cursor",
+  "kilo",
+  "cersei",
+]);
 
 interface CodingAgentOption {
   sub: AgentSub;
@@ -282,16 +312,38 @@ function CodingAgentMenu({
   /** Per-plugin-id session counts from the capture store (opencode/cursor/kilo). */
   captureCounts: Record<string, number>;
 }) {
+  // Installed externals re-render this menu on install/uninstall (primitive
+  // signature subscription — the useShallow Record trap does not apply).
+  const registrySignature = useAgentRegistryStore((s) => s.signature);
+  const installedExternalIds = useMemo(
+    () =>
+      useAgentRegistryStore
+        .getState()
+        .plugins.filter((p) => p.external)
+        .map((p) => p.plugin_id),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [registrySignature],
+  );
   const options = useMemo<CodingAgentOption[]>(
     () => [
-      { sub: "cersei", label: "Atlas", icon: <AtlasIcon size={14} />, count: cerseiCount },
+      {
+        sub: "cersei",
+        label: "Atlas",
+        icon: <AtlasIcon size={14} />,
+        count: cerseiCount,
+      },
       {
         sub: "claude",
         label: "Claude Code",
         icon: <ClaudeIcon className="size-3.5" />,
         count: claudeCount,
       },
-      { sub: "codex", label: "Codex", icon: <CodexIcon className="size-3.5" />, count: codexCount },
+      {
+        sub: "codex",
+        label: "Codex",
+        icon: <CodexIcon className="size-3.5" />,
+        count: codexCount,
+      },
       {
         sub: "opencode",
         label: "OpenCode",
@@ -310,11 +362,36 @@ function CodingAgentMenu({
         icon: <KiloIcon className="size-3.5" />,
         count: captureCounts["kilo"] ?? 0,
       },
+      // Registry-installed externals (and uninstalled ones with captured
+      // sessions): keyed by plugin id, metadata via the agent registry.
+      ...Array.from(
+        new Set([
+          ...Object.keys(captureCounts).filter(
+            (id) => !FIRST_PARTY_PLUGIN_IDS.has(id) && !id.startsWith("claude"),
+          ),
+          ...installedExternalIds,
+        ]),
+      )
+        .sort((a, b) => agentMeta(a).label.localeCompare(agentMeta(b).label))
+        .map((id) => {
+          const meta = agentMeta(id);
+          return {
+            sub: id,
+            label: meta.label,
+            icon: meta.iconDataUrl ? (
+              <ExternalAgentIcon dataUrl={meta.iconDataUrl} size={14} />
+            ) : (
+              <AgentMonogram label={meta.label} size={14} />
+            ),
+            count: captureCounts[id] ?? 0,
+          };
+        }),
     ],
-    [claudeCount, codexCount, cerseiCount, captureCounts],
+    [claudeCount, codexCount, cerseiCount, captureCounts, installedExternalIds],
   );
 
-  const isAgentActive = AGENT_SUBS.includes(sub as AgentSub);
+  const isAgentActive =
+    (FIRST_PARTY_AGENT_SUBS as readonly string[]).includes(sub) || isDynamicAgentSub(sub);
   // Remember the last agent so the pill keeps its identity while the user is on
   // a non-agent tab (Graph/Policy/…).
   const [lastAgent, setLastAgent] = useState<AgentSub>(
@@ -514,7 +591,10 @@ function ClaudeView({ claude }: { claude: ClaudeMemory | null }) {
   const grouped = useMemo(() => {
     const order: ClaudeItem["section"][] = ["Instructions", "Index", "Memories"];
     return order
-      .map((section) => ({ section, items: items.filter((i) => i.section === section) }))
+      .map((section) => ({
+        section,
+        items: items.filter((i) => i.section === section),
+      }))
       .filter((g) => g.items.length > 0);
   }, [items]);
 
@@ -564,7 +644,9 @@ function ClaudeView({ claude }: { claude: ClaudeMemory | null }) {
                     {it.badge && (
                       <span
                         className="w-1.5 h-1.5 rounded-full shrink-0"
-                        style={{ background: KIND_TINT[it.badge] ?? "var(--text-tertiary)" }}
+                        style={{
+                          background: KIND_TINT[it.badge] ?? "var(--text-tertiary)",
+                        }}
                       />
                     )}
                     <span
@@ -853,7 +935,9 @@ function CodexRow({
         </span>
         <span className={cn(COL.updated, "text-right text-[10px] text-[var(--text-tertiary)]")}>
           {t.updated_at
-            ? timeAgo(new Date(t.updated_at * 1000).toISOString(), { suffix: true })
+            ? timeAgo(new Date(t.updated_at * 1000).toISOString(), {
+                suffix: true,
+              })
             : "—"}
         </span>
         <span

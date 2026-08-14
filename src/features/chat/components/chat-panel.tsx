@@ -13,9 +13,8 @@ import {
   isBusyAgentStatus,
   agentTypeFromPluginId,
   pluginIdForAgent,
-  AGENT_LABEL,
-  type SwitchableAgent,
 } from "@/types/agent";
+import { agentMeta } from "@/features/agents/lib/agent-meta";
 import { composePrompt, type MentionData } from "../lib/mentions";
 import { usePaneFind } from "../lib/use-pane-find";
 import { useDefaultAgentType } from "../hooks/use-default-agent";
@@ -459,7 +458,10 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     let cancelled = false;
     void (async () => {
       try {
-        const snap = await agents.snapshot({ agent_id: agentId, session_id: acpSessionId });
+        const snap = await agents.snapshot({
+          agent_id: agentId,
+          session_id: acpSessionId,
+        });
         if (cancelled) return;
         const models = snap.available_models ?? [];
         console.debug("[acp-models] backfill", {
@@ -1146,8 +1148,7 @@ const ChatComposer = memo(function ChatComposer({
                   className="atlas-pill-in inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[11px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
                 >
                   <LogIn size={11} />
-                  {AGENT_LABEL[agentType as SwitchableAgent] ?? "Agent"} needs auth — copy `
-                  {terminalLoginCommand}`
+                  {agentMeta(agentType).label} needs auth — copy `{terminalLoginCommand}`
                 </button>
               )}
               {showJumpToBottom && (

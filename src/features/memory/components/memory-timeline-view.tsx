@@ -78,7 +78,13 @@ function affectingItems(selectedId: string, chain: Chain, t: MemoryTimeline): Pa
   return [...notes.entries()]
     .map(([mid, note]) => {
       const m = chain.memById.get(mid) as TimelineMemory;
-      return { id: mid, title: m.title, source: m.source, note, ts_ms: m.ts_ms };
+      return {
+        id: mid,
+        title: m.title,
+        source: m.source,
+        note,
+        ts_ms: m.ts_ms,
+      };
     })
     .sort((a, b) => b.ts_ms - a.ts_ms);
 }
@@ -134,7 +140,10 @@ export function MemoryTimelineView() {
             s.agent === "cursor" ||
             s.agent === "kilo"
               ? s.agent
-              : "claude";
+              : !s.agent || s.agent.startsWith("claude")
+                ? "claude"
+                : // Registry-installed external agent — its plugin id is its sub.
+                  s.agent;
           navigateToMemory(sub, s.id);
         }
         return;
@@ -147,6 +156,11 @@ export function MemoryTimelineView() {
       else if (doc.startsWith("opencode:")) navigateToMemory("opencode", doc);
       else if (doc.startsWith("cursor:")) navigateToMemory("cursor", doc);
       else if (doc.startsWith("kilo:")) navigateToMemory("kilo", doc);
+      else {
+        // External agents: "<plugin-id>:<doc>" routes to their capture view.
+        const prefix = doc.split(":")[0];
+        if (prefix && prefix.length < doc.length) navigateToMemory(prefix, doc);
+      }
     },
     [timeline, navigateToMemory],
   );

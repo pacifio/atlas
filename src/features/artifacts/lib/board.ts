@@ -12,6 +12,7 @@
  */
 
 import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
+import { agentMeta } from "@/features/agents/lib/agent-meta";
 
 import type { BoardSession, SessionSummary } from "../types";
 
@@ -163,7 +164,9 @@ export function agentLabel(agent: string): string {
   if (agent.includes("cursor")) return "Cursor";
   if (agent.includes("kilo")) return "Kilo";
   if (agent.includes("cersei")) return "Atlas";
-  return agent;
+  // Registry-installed external agent: resolve its marketplace name (falls
+  // back to a prettified id for purged metadata).
+  return agentMeta(agent).label;
 }
 
 /** Local midnight, the key every day bucket is grouped on. */

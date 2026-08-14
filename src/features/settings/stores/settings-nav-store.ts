@@ -15,6 +15,7 @@ export type SettingsSection =
   | "layouts"
   | "providers"
   | "skills"
+  | "agents"
   | "models"
   | "updates"
   | "keybindings"

@@ -356,8 +356,24 @@ pub fn install_manager(app: &AppHandle) {
         .unwrap_or_else(|_| std::env::temp_dir());
     // Let the memory corpus reader find native-agent transcripts (Chat/Graph).
     super::agent_memory::set_cersei_config_dir(config_dir.clone());
-    let manager = AgentManager::new(sink, config_dir);
+    // Dynamic ACP registry: installed external agents become spawnable specs
+    // alongside the first-party set. Cache-first construction (sync, cheap) so
+    // the marketplace lists instantly; a non-blocking refresh follows.
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let registry_store = atlas_registry::RegistryStore::new(app_data_dir);
+    app.manage(registry_store.clone());
+    let manager = AgentManager::with_spec_source(
+        sink,
+        config_dir,
+        Some(Arc::new(registry_store.clone())),
+    );
     app.manage(manager);
+    tauri::async_runtime::spawn(async move {
+        let _ = registry_store.refresh(false).await;
+    });
 
     // Wire the native agent's `search_memory` tool to Atlas's on-device memory
     // retrieval. The closure resolves `MemoryChatState` lazily (it's managed
@@ -396,7 +412,14 @@ pub fn agents_list_running(manager: State<'_, AgentManager>) -> Vec<AgentInfo> {
 pub async fn agents_spawn(
     plugin_id: String,
     manager: State<'_, AgentManager>,
+    registry: State<'_, atlas_registry::RegistryStore>,
 ) -> Result<AgentInfo, String> {
+    // Self-heal for registry-installed externals: re-download a binary payload
+    // that went missing (killed mid-install, cache purge). No-op otherwise.
+    registry
+        .ensure_ready(&plugin_id)
+        .await
+        .map_err(|e| e.to_string())?;
     manager.spawn(&plugin_id).await.map_err(|e| e.to_string())
 }
 

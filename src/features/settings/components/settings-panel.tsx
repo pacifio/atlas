@@ -13,6 +13,7 @@ import {
   KeyRound,
   LayoutTemplate,
   Zap,
+  WandSparkles,
   Boxes,
   Plus,
   Minus,
@@ -27,6 +28,7 @@ import { LayoutsSettings } from "./layouts-settings";
 import { CodeEditorThemesSettings } from "./code-editor-themes-settings";
 import { AtlasThemesSettings } from "./atlas-themes-settings";
 import { SkillsAndPacks } from "./skills-and-packs";
+import { AgentsMarketplace } from "./agents-marketplace/agents-marketplace";
 import { ModelsManager } from "./models-manager";
 import { useDevFlagsStore } from "../stores/dev-flags-store";
 import { useModelPricingStore } from "../stores/model-pricing-store";
@@ -53,6 +55,7 @@ const SECTIONS: Array<{
   { id: "layouts", label: "Layouts", icon: LayoutTemplate },
   { id: "providers", label: "API Keys", icon: KeyRound },
   { id: "skills", label: "Skills", icon: Zap },
+  { id: "agents", label: "Agents", icon: WandSparkles },
   { id: "models", label: "Local Models", icon: Boxes },
   { id: "updates", label: "Updates", icon: DownloadCloud },
   { id: "keybindings", label: "Keybindings", icon: Keyboard },
@@ -154,6 +157,10 @@ export function SettingsPanel({ initialSection }: { initialSection?: string } = 
       ) : activeSection === "skills" ? (
         <div className="flex-1 min-w-0 min-h-0">
           <SkillsAndPacks />
+        </div>
+      ) : activeSection === "agents" ? (
+        <div className="flex-1 min-w-0 min-h-0">
+          <AgentsMarketplace />
         </div>
       ) : activeSection === "models" ? (
         <div className="flex-1 min-w-0 min-h-0">
