@@ -23,6 +23,8 @@ import {
   type RegistryInstallProgress,
 } from "@/features/agents/lib/agent-registry-api";
 import { hydrateAgentRegistry } from "@/features/agents/stores/agent-registry-store";
+import { downloadTrend, fmtDownloads } from "@/features/agents/lib/download-trends";
+import { TrendSparkline } from "@/components/trend-sparkline";
 
 // ── Module-scope install tracking (survives unmount) ─────────────────────────
 
@@ -215,7 +217,7 @@ export function AgentsMarketplace() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-2.5 max-w-[1100px]">
+          <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-2.5">
             {entries.map((entry) => (
               <AgentCard
                 key={entry.id}
@@ -250,6 +252,10 @@ function AgentCard({
     installing && progress?.total
       ? Math.min(100, (progress.received / progress.total) * 100)
       : null;
+  const trend = useMemo(
+    () => downloadTrend(entry.id, entry.installed),
+    [entry.id, entry.installed],
+  );
   return (
     <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-secondary)] px-3.5 py-3 flex flex-col gap-1.5">
       <div className="flex items-center gap-2.5">
@@ -301,6 +307,16 @@ function AgentCard({
         <span className="font-mono">ID: {entry.id}</span>
         {entry.distributionKind && <span className="font-mono">[{entry.distributionKind}]</span>}
         <span className="flex-1" />
+        {/* 6-month download trend — seeded mock series today, PostHog-backed
+            once the `acp_agent_installed` events accrue. Count wears a text
+            token; only the sparkline mark carries the trend color. */}
+        <span className="tabular-nums">{fmtDownloads(trend.total)}</span>
+        <TrendSparkline
+          points={trend.points}
+          width={64}
+          height={20}
+          label={`≈${trend.total.toLocaleString()} downloads in the last 6 months`}
+        />
         {entry.repository && (
           <button
             onClick={() => void openUrl(entry.repository!)}

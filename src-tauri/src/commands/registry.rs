@@ -66,6 +66,16 @@ pub async fn acp_registry_install(
         );
     };
     let result = store.install(&agent_id, Some(&progress)).await;
+    if result.is_ok() {
+        // Seeds the real per-agent download counts behind the marketplace's
+        // trend charts. Opt-in gated by the client itself; the payload is a
+        // registry id, never user content.
+        use tauri::Manager;
+        app.state::<std::sync::Arc<crate::telemetry::TelemetryClient>>().capture(
+            "acp_agent_installed",
+            serde_json::json!({ "agent_id": agent_id }),
+        );
+    }
     let done = InstallDone {
         agent_id: agent_id.clone(),
         success: result.is_ok(),
@@ -81,9 +91,14 @@ pub async fn acp_registry_install(
 pub fn acp_registry_uninstall(
     agent_id: String,
     purge_cache: bool,
+    app: AppHandle,
     store: State<'_, RegistryStore>,
 ) -> Result<(), String> {
-    store.uninstall(&agent_id, purge_cache).map_err(|e| e.to_string())
+    store.uninstall(&agent_id, purge_cache).map_err(|e| e.to_string())?;
+    use tauri::Manager;
+    app.state::<std::sync::Arc<crate::telemetry::TelemetryClient>>()
+        .capture("acp_agent_uninstalled", serde_json::json!({ "agent_id": agent_id }));
+    Ok(())
 }
 
 /// Metadata for any id ever known — the timeline/memory fallback for
