@@ -21,6 +21,7 @@ import type {
 } from "@/types/agents";
 import { splitAtlasContext } from "../lib/atlas-context";
 import { loadCachedAcpModes, saveCachedAcpModes } from "../lib/acp-modes-cache";
+import { loadLastModePref, saveLastModePref } from "../lib/last-mode-pref";
 import { loadCachedAcpModels, saveCachedAcpModels } from "../lib/acp-models-cache";
 import { resolveModelLabel } from "../lib/model-label";
 import { defaultAgentForNewSession } from "../lib/default-agent";
@@ -150,6 +151,33 @@ function pushAcpModeToAgent(state: ChatState, sessionId: string): void {
     key: { agent_id: session.acpAgentId, session_id: session.acpSessionId },
     modeId: session.acpCurrentMode,
   }).catch((err) => console.warn("agents_set_mode failed:", err));
+}
+
+/** Hydrate the per-agent persisted mode preference (last explicit pick) into
+ *  a freshly-created / freshly-switched tab. A restored pick is marked
+ *  explicit so the chat panel pushes it to the agent at session create (after
+ *  revalidating against the advertised modes); no pick means "defer to the
+ *  agent's own configured default" — never an Atlas-side override. */
+function applyPersistedModePref(sess: ChatSession, agentType: AgentType): void {
+  const pref = loadLastModePref(agentType);
+  if (agentType === "claude-code") {
+    const valid = !!pref && (CLAUDE_PERMISSION_MODES as readonly string[]).includes(pref);
+    sess.claudePermissionMode = valid ? (pref as ClaudePermissionMode) : "default";
+    sess.claudePermissionModeExplicit = valid;
+    return;
+  }
+  // Generic ACP agents: only trust the pick against the optimistic cached
+  // mode list (or when nothing is cached yet) — an id the live agent turns
+  // out not to advertise would stick the picker on its "Mode" fallback.
+  // Session-create revalidates against the real advertised list either way.
+  const cached = loadCachedAcpModes(agentType);
+  const valid =
+    !!pref &&
+    (!cached ||
+      cached.availableModes.length === 0 ||
+      cached.availableModes.some((m) => m.id === pref));
+  sess.acpModeExplicit = valid;
+  if (valid && pref) sess.acpCurrentMode = pref;
 }
 
 /** Push an ACP agent's model selection (Claude Code / Codex) to its bound
@@ -618,6 +646,10 @@ export const useChatStore = createSelectors(
               })(),
             };
             s.activeSessionId = tabId;
+            // Restore the user's last explicit mode pick for this agent so it
+            // survives restarts (marks it explicit; create pushes it after
+            // validating against the agent's advertised modes).
+            applyPersistedModePref(s.sessions[tabId], agentType);
           }),
         switchChatAgent: (tabId, agentType) =>
           set((s) => {
@@ -658,6 +690,9 @@ export const useChatStore = createSelectors(
               sess.acpCurrentMode = cached?.currentMode ?? undefined;
               sess.acpModesPending = true;
             }
+            // Same restore as createSession: the agent's last explicit pick
+            // wins over the optimistic cache seed above.
+            applyPersistedModePref(sess, agentType);
             // Models apply to both agents — seed from cache (empty for cersei).
             const cachedModels = loadCachedAcpModels(agentType);
             sess.acpAvailableModels = cachedModels?.availableModels ?? [];
@@ -830,15 +865,19 @@ export const useChatStore = createSelectors(
             delete s.queues[sessionId];
           }),
         cycleClaudePermissionMode: (sessionId) => {
+          let next: ClaudePermissionMode | undefined;
           set((s) => {
             const session = s.sessions[sessionId];
             if (!session) return;
             const cur = session.claudePermissionMode ?? "default";
             const i = CLAUDE_PERMISSION_MODES.indexOf(cur);
-            const next = CLAUDE_PERMISSION_MODES[(i + 1) % CLAUDE_PERMISSION_MODES.length];
+            next = CLAUDE_PERMISSION_MODES[(i + 1) % CLAUDE_PERMISSION_MODES.length];
             session.claudePermissionMode = next;
             session.claudePermissionModeExplicit = true;
           });
+          // "default" means "defer to the CLI's own configured default" —
+          // cycling back to it DROPS the persisted pick rather than storing it.
+          if (next) saveLastModePref("claude-code", next === "default" ? null : next);
           pushPermissionModeToAgent(get(), sessionId);
         },
         hydrateClaudePermissionMode: (sessionId, mode) =>
@@ -856,6 +895,7 @@ export const useChatStore = createSelectors(
               session.claudePermissionModeExplicit = true;
             }
           });
+          saveLastModePref("claude-code", mode === "default" ? null : mode);
           pushPermissionModeToAgent(get(), sessionId);
         },
         setAcpModes: (sessionId, currentMode, availableModes, sourceAgentType) => {
@@ -910,6 +950,11 @@ export const useChatStore = createSelectors(
               session.acpModeExplicit = true;
             }
           });
+          // Persist the explicit pick per agent. agentType IS the plugin id
+          // for registry-installed externals, so every ACP agent — first-party
+          // or installed — keeps its own record.
+          const at = get().sessions[sessionId]?.agentType;
+          if (at && at !== "claude-code") saveLastModePref(at, modeId);
           pushAcpModeToAgent(get(), sessionId);
         },
         setAcpModels: (sessionId, currentModel, availableModels) => {
