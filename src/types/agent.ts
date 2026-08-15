@@ -9,6 +9,17 @@ export type AgentType =
   | "cersei"
   | "custom";
 
+/**
+ * ACP context-window reading: tokens consumed, the window's total capacity,
+ * and the run's estimated cost. `size` is 0 when the agent doesn't advertise a
+ * limit — consumers must treat the proportion as unknown rather than as zero.
+ */
+export interface ContextUsage {
+  used: number;
+  size: number;
+  cost: number;
+}
+
 /** Switchable (Atlas-shipped) agents — excludes the catch-all "custom". */
 export type SwitchableAgent = "claude-code" | "codex" | "opencode" | "cursor" | "kilo" | "cersei";
 
@@ -204,7 +215,7 @@ export interface ChatSession {
   /** Latest ACP context-window gauge (Claude Code / Codex) from `context_usage`
    *  deltas — `used`/`size` tokens + cost. Snapshotted onto the trailing
    *  assistant message at turn end (ACP agents have no per-turn in/out split). */
-  contextUsage?: { used: number; size: number; cost: number };
+  contextUsage?: ContextUsage;
   /** True while the native agent is compacting its context window. */
   compacting?: boolean;
   /** Reasoning-effort level for the native agent ("" / low / medium / high /
@@ -293,7 +304,7 @@ export interface ChatMessage {
    *  assistant message at turn end. These agents can't report a per-turn
    *  input/output split, so the card shows this `used`/`size` context gauge in
    *  the same slot the native agent uses for `usage`. */
-  contextUsage?: { used: number; size: number; cost: number };
+  contextUsage?: ContextUsage;
   /** Adaptive per-turn footer, frozen onto the trailing assistant message at
    *  turn_finished (mirrors `usage` — never set mid-stream). Drives the
    *  TurnSummaryCard's files-read/modified accordion + action buttons. */
