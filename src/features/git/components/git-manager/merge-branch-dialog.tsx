@@ -28,6 +28,14 @@ export function MergeBranchDialog({
   const [preview, setPreview] = useState<MergePreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [merging, setMerging] = useState(false);
+  // Fetch-on-open: without it every preview compares against WHATEVER the last
+  // fetch left in refs/remotes — unfetched remote commits are invisible to
+  // git, so "merge main" against a stale origin said "already up to date"
+  // while the remote had moved on. GitHub Desktop hides this with a periodic
+  // background fetcher; Atlas fetches when the dialog opens instead. The
+  // `fetchNonce` bump re-runs the live preview once fresh refs land.
+  const [fetching, setFetching] = useState(false);
+  const [fetchNonce, setFetchNonce] = useState(0);
 
   // Everything except the branch we're merging *into*.
   const filtered = useMemo(() => {
@@ -42,7 +50,32 @@ export function MergeBranchDialog({
       setSelected(null);
       setPreview(null);
       setPreviewing(false);
+      setFetching(false);
     }
+  }, [open]);
+
+  // Refresh remote refs the moment the dialog opens (non-blocking — the list
+  // and preview stay usable; they just re-verify once the fetch lands).
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setFetching(true);
+    actions
+      .fetch()
+      .catch(() => {
+        // Offline / no remote — previews still work against local refs.
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setFetching(false);
+        setFetchNonce((n) => n + 1);
+        // Rebuild branchesFull so ahead/behind + remote tips reflect the fetch.
+        void actions.refreshStatusNow();
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Recompute the preview whenever the chosen branch changes.
@@ -68,7 +101,21 @@ export function MergeBranchDialog({
     return () => {
       cancelled = true;
     };
-  }, [selected, actions]);
+  }, [selected, actions, fetchNonce]);
+
+  // The GitHub-Desktop insight the old dialog missed: picking a stale LOCAL
+  // branch (e.g. `main` while `origin/main` is ahead) previews "up to date"
+  // even though the remote has new work. `behind` on a local BranchInfo is
+  // exactly "commits its upstream has that it lacks" — surface it and offer
+  // the upstream ref instead.
+  const selectedInfo = useMemo(
+    () => branchesFull.find((b) => b.name === selected) ?? null,
+    [branchesFull, selected],
+  );
+  const staleUpstream =
+    selectedInfo && !selectedInfo.isRemote && selectedInfo.upstream && selectedInfo.behind > 0
+      ? { upstream: selectedInfo.upstream, behind: selectedInfo.behind }
+      : null;
 
   const canMerge =
     !!selected &&
@@ -199,6 +246,30 @@ export function MergeBranchDialog({
 
           {/* Preview + actions */}
           <div className="border-t border-border-default px-3 py-2.5 flex flex-col gap-2.5">
+            {fetching && (
+              <p className="text-[10px] text-text-tertiary flex items-center gap-1.5">
+                <Loader2 size={10} className="animate-spin shrink-0" />
+                Checking origin for new commits…
+              </p>
+            )}
+            {staleUpstream && (
+              <p className="text-[11px] text-[var(--status-warning)] flex items-start gap-1.5">
+                <AlertTriangle size={11} className="shrink-0 mt-0.5" />
+                <span>
+                  <span className="font-mono">{selected}</span> is behind{" "}
+                  <span className="font-mono">{staleUpstream.upstream}</span> by{" "}
+                  {staleUpstream.behind} commit
+                  {staleUpstream.behind === 1 ? "" : "s"}.{" "}
+                  <button
+                    onClick={() => setSelected(staleUpstream.upstream)}
+                    className="underline underline-offset-2 hover:text-text-primary cursor-pointer"
+                  >
+                    Merge {staleUpstream.upstream} instead
+                  </button>{" "}
+                  to bring in the latest changes.
+                </span>
+              </p>
+            )}
             <MergePreviewLine
               selected={selected}
               current={branch}
