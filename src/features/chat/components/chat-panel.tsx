@@ -13,6 +13,7 @@ import {
   isBusyAgentStatus,
   agentTypeFromPluginId,
   pluginIdForAgent,
+  CLAUDE_PERMISSION_MODES,
 } from "@/types/agent";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
 import { composePrompt, type MentionData } from "../lib/mentions";
@@ -111,10 +112,10 @@ async function rebindDisconnectedSession(tabId: string): Promise<boolean> {
         key = await agents.loadSession(agent.agent_id, sess.acpSessionId, cwd);
       } catch (err) {
         console.warn("resume after disconnect failed; starting fresh:", err);
-        key = await agents.newSession(agent.agent_id, cwd);
+        key = (await agents.newSession(agent.agent_id, cwd)).key;
       }
     } else {
-      key = await agents.newSession(agent.agent_id, cwd);
+      key = (await agents.newSession(agent.agent_id, cwd)).key;
     }
     const actions = useChatStore.getState().actions;
     actions.setAcpBinding(tabId, agent.agent_id, key.session_id, cwd);
@@ -338,7 +339,8 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // "/" fallback would dodge the running-workspace eviction guard.
         const cwd =
           workspacePathForTab(tabId) ?? useProjectStore.getState().currentProject?.path ?? "/";
-        const key = await agents.newSession(agent.agent_id, cwd);
+        const init = await agents.newSession(agent.agent_id, cwd);
+        const key = init.key;
         if (cancelled) return;
         // Guard against an agent switch that landed mid-bind: if the tab's
         // agentType changed since we picked `pluginId`, this binding is for the
@@ -352,14 +354,48 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // mode after it the first turn can race ahead of (e.g.)
         // bypassPermissions and still trigger a stray prompt on turn one.
         // Awaiting here guarantees the agent is in the right mode first.
-        const mode = useChatStore.getState().sessions[tabId]?.claudePermissionMode ?? "default";
-        if (mode !== "default") {
+        const session = useChatStore.getState().sessions[tabId];
+        const selectedMode = session?.claudePermissionMode ?? "default";
+        // `default` means the user has not overridden the agent. Preserve the
+        // mode resolved by Claude/Codex from their own user-level config.
+        const requestedClaudeMode = session?.claudePermissionModeExplicit
+          ? selectedMode
+          : undefined;
+        const requestedAcpMode = session?.acpModeExplicit ? session.acpCurrentMode : undefined;
+        const requestedMode = nowAt === "claude-code" ? requestedClaudeMode : requestedAcpMode;
+        const mode = requestedMode ?? init.current_mode;
+        const modeAdvertised =
+          !mode ||
+          init.available_modes.length === 0 ||
+          init.available_modes.some((m) => m.id === mode);
+        const effectiveMode = modeAdvertised ? mode : init.current_mode;
+        if (effectiveMode && effectiveMode !== init.current_mode) {
           try {
-            await agents.setMode(key, mode);
+            await agents.setMode(key, effectiveMode);
           } catch (err) {
             console.warn("setMode at session create failed:", err);
           }
           if (cancelled) return;
+        }
+        // Seed the store before binding: binding is the point at which queued
+        // sends become eligible, so the first prompt sees the agent's actual
+        // default instead of a hard-coded Atlas fallback.
+        if (!cancelled) {
+          const actions = useChatStore.getState().actions;
+          if (
+            nowAt === "claude-code" &&
+            (effectiveMode ?? init.current_mode) &&
+            CLAUDE_PERMISSION_MODES.includes(
+              (effectiveMode ?? init.current_mode) as (typeof CLAUDE_PERMISSION_MODES)[number],
+            )
+          ) {
+            actions.hydrateClaudePermissionMode(
+              tabId,
+              (effectiveMode ?? init.current_mode) as (typeof CLAUDE_PERMISSION_MODES)[number],
+            );
+          } else if (nowAt !== "claude-code" && init.available_modes.length > 0) {
+            actions.setAcpModes(tabId, effectiveMode, init.available_modes, nowAt);
+          }
         }
         useChatStore.getState().actions.setAcpBinding(tabId, agent.agent_id, key.session_id, cwd);
         // Seed the composer mode picker from the freshly-created session's

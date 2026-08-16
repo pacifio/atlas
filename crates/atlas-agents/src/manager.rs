@@ -37,6 +37,15 @@ pub struct SessionKey {
     pub session_id: String,
 }
 
+/// Metadata returned with a newly-created session. The agent's advertised
+/// mode is available before the UI binds the session and flushes queued text.
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionInit {
+    pub key: SessionKey,
+    pub current_mode: Option<String>,
+    pub available_modes: Vec<SessionModeInfo>,
+}
+
 #[derive(Clone)]
 pub struct AgentManager {
     inner: Arc<ManagerInner>,
@@ -167,7 +176,7 @@ impl AgentManager {
     }
 
     /// Open a fresh session and spawn a worker for it.
-    pub async fn new_session(&self, agent_id: AgentId, cwd: PathBuf) -> Result<SessionKey> {
+    pub async fn new_session(&self, agent_id: AgentId, cwd: PathBuf) -> Result<SessionInit> {
         let cwd_str = cwd.to_string_lossy().into_owned();
         let plugin_id = self.plugin_id_for(agent_id)?;
         let resp: NewSessionInfo = self.backend_for(agent_id)?.new_session(agent_id, cwd).await?;
@@ -179,6 +188,11 @@ impl AgentManager {
             agent_id,
             session_id: session_id_str.clone(),
         };
+        let (current_mode, available_modes) = resp
+            .modes
+            .as_ref()
+            .map(parse_session_modes)
+            .unwrap_or_default();
         self.install_session(
             key.clone(),
             resp.session_id,
@@ -188,7 +202,11 @@ impl AgentManager {
             resp.modes,
             resp.models,
         );
-        Ok(key)
+        Ok(SessionInit {
+            key,
+            current_mode,
+            available_modes,
+        })
     }
 
     /// Read a saved session's transcript straight off disk, WITHOUT spawning an
@@ -424,7 +442,10 @@ impl AgentManager {
     }
 
     pub fn set_mode(&self, key: &SessionKey, mode_id: String) -> Result<()> {
-        self.handle_for(key)?.set_mode(mode_id)
+        let handle = self.handle_for(key)?;
+        let advertised = handle.state.lock().available_modes.clone();
+        validate_mode(&mode_id, &advertised)?;
+        handle.set_mode(mode_id)
     }
 
     pub fn set_model(&self, key: &SessionKey, model_id: String) -> Result<()> {
@@ -729,6 +750,15 @@ fn parse_session_modes(modes: &serde_json::Value) -> (Option<String>, Vec<Sessio
     (current, available)
 }
 
+/// Validate a requested mode without rejecting agents that do not advertise a
+/// mode list (older ACP implementations and Claude's legacy bridge).
+fn validate_mode(mode_id: &str, advertised: &[SessionModeInfo]) -> Result<()> {
+    if advertised.is_empty() || advertised.iter().any(|mode| mode.id == mode_id) {
+        return Ok(());
+    }
+    Err(Error::InvalidMode(mode_id.to_string()))
+}
+
 /// Parse the ACP `SessionModelState` blob (from `session/new`) into
 /// `(current_model_id, available_models)`. The schema serialises camelCase
 /// (`currentModelId`, `availableModels`), each model as `{modelId, name,
@@ -764,4 +794,40 @@ fn parse_session_models(models: &serde_json::Value) -> (Option<String>, Vec<Sess
         })
         .unwrap_or_default();
     (current, available)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn modes() -> Vec<SessionModeInfo> {
+        vec![
+            SessionModeInfo {
+                id: "read-only".into(),
+                name: "Read only".into(),
+                description: None,
+            },
+            SessionModeInfo {
+                id: "danger-full-access".into(),
+                name: "Full access".into(),
+                description: None,
+            },
+        ]
+    }
+
+    #[test]
+    fn advertised_mode_is_accepted() {
+        assert!(validate_mode("danger-full-access", &modes()).is_ok());
+    }
+
+    #[test]
+    fn unknown_advertised_mode_is_rejected() {
+        let err = validate_mode("bypassPermissions", &modes()).unwrap_err();
+        assert!(matches!(err, Error::InvalidMode(mode) if mode == "bypassPermissions"));
+    }
+
+    #[test]
+    fn legacy_agents_without_modes_remain_compatible() {
+        assert!(validate_mode("bypassPermissions", &[]).is_ok());
+    }
 }

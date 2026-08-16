@@ -62,8 +62,8 @@ export async function warmAcpModels(agentType: string, cwd: string): Promise<voi
   warmed.add(at);
   try {
     const agent = await ensureAgent(pluginIdForAgent(at));
-    const key = await agents.newSession(agent.agent_id, cwd);
-    const snap = await agents.snapshot(key);
+    const init = await agents.newSession(agent.agent_id, cwd);
+    const snap = await agents.snapshot(init.key);
     const models = snap.available_models ?? [];
     if (models.length > 0) {
       saveCachedAcpModels(at, {

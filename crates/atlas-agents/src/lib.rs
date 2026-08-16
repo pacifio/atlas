@@ -47,7 +47,7 @@ pub use connection::BackendConnection;
 pub use error::{Error, Result};
 pub use atlas_bus::{EventBus, InboundMiddleware, InboundPipeline, OutboundMiddleware, OutboundPipeline};
 pub use events::{DeltaSink, Emitter, SessionDelta, SessionDeltaEnvelope};
-pub use manager::{AgentManager, SessionKey};
+pub use manager::{AgentManager, SessionInit, SessionKey};
 pub use plugin::{PluginSpec, TranscriptKind, builtin_plugins, find_plugin};
 pub use session::{
     Message, MessageMode, MessageRole, PlanEntry, SessionSnapshot, SessionStatus, ToolCall,

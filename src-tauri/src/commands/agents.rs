@@ -433,7 +433,7 @@ pub async fn agents_new_session(
     agent_id: AgentId,
     cwd: PathBuf,
     manager: State<'_, AgentManager>,
-) -> Result<SessionKey, String> {
+) -> Result<atlas_agents::SessionInit, String> {
     manager
         .new_session(agent_id, cwd)
         .await
