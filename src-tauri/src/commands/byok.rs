@@ -66,6 +66,217 @@ fn write_store(app: &AppHandle, store: &Store) -> Result<(), String> {
     Ok(())
 }
 
+/// Environment-sourced API keys — the user may already export provider keys in
+/// their shell profile. A Finder-launched GUI app never inherits those, so we
+/// probe the login shell ONCE (same `-lic` discipline as PATH enrichment: the
+/// exports usually live in `~/.zshrc`) and merge with the process env (which
+/// wins — it covers `tauri dev` from a terminal). Values stay in memory only;
+/// nothing is written to disk, and the UI gets provider + var name + last4.
+///
+/// Per provider the FIRST var in its list wins. Every provider lists its
+/// canonical var first, then the alias spellings its own SDKs / common tooling
+/// actually read (e.g. Cohere's SDK reads `CO_API_KEY`, DeepInfra's docs use
+/// `DEEPINFRA_API_TOKEN`, ElevenLabs historically `XI_API_KEY`) — a user who
+/// exported ANY recognised spelling gets their key imported.
+const ENV_KEY_VARS: &[(&str, &[&str])] = &[
+    ("anthropic", &["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"]),
+    ("openai", &["OPENAI_API_KEY", "OPENAI_KEY"]),
+    ("google", &["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"]),
+    ("openrouter", &["OPENROUTER_API_KEY", "OPEN_ROUTER_API_KEY"]),
+    ("mistral", &["MISTRAL_API_KEY"]),
+    ("cohere", &["COHERE_API_KEY", "CO_API_KEY"]),
+    ("xai", &["XAI_API_KEY", "GROK_API_KEY"]),
+    ("deepseek", &["DEEPSEEK_API_KEY"]),
+    ("ai21", &["AI21_API_KEY"]),
+    ("groq", &["GROQ_API_KEY"]),
+    ("together", &["TOGETHER_API_KEY", "TOGETHER_AI_API_KEY", "TOGETHERAI_API_KEY"]),
+    ("fireworks", &["FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY"]),
+    ("deepinfra", &["DEEPINFRA_API_KEY", "DEEPINFRA_API_TOKEN"]),
+    ("cerebras", &["CEREBRAS_API_KEY"]),
+    ("replicate", &["REPLICATE_API_TOKEN", "REPLICATE_API_KEY"]),
+    ("perplexity", &["PERPLEXITY_API_KEY", "PPLX_API_KEY"]),
+    ("litellm", &["LITELLM_API_KEY", "LITELLM_MASTER_KEY"]),
+    ("azure", &["AZURE_API_KEY", "AZURE_OPENAI_API_KEY"]),
+    ("voyage", &["VOYAGE_API_KEY", "VOYAGEAI_API_KEY"]),
+    ("huggingface", &["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_API_KEY"]),
+    ("jina", &["JINA_API_KEY"]),
+    ("elevenlabs", &["ELEVENLABS_API_KEY", "ELEVEN_API_KEY", "XI_API_KEY"]),
+];
+
+/// One env-imported key: which provider it maps to, the variable it came from,
+/// and its value. Held in memory only.
+#[derive(Debug, Clone)]
+pub struct EnvKey {
+    pub provider: String,
+    pub env_var: String,
+    pub key: String,
+}
+
+/// provider id → env-sourced key. Probed once per app run.
+fn env_keys() -> &'static BTreeMap<String, EnvKey> {
+    static CACHE: std::sync::OnceLock<BTreeMap<String, EnvKey>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(probe_env_keys)
+}
+
+fn probe_env_keys() -> BTreeMap<String, EnvKey> {
+    // Login-shell pass first (may block up to 5s — callers run off the main
+    // thread), then process env OVERLAYS it: a var exported in the launching
+    // terminal is more current than the profile's.
+    let mut by_var: BTreeMap<String, String> = shell_env_values();
+    for (_, vars) in ENV_KEY_VARS {
+        for var in *vars {
+            if let Ok(v) = std::env::var(var) {
+                if !v.trim().is_empty() {
+                    by_var.insert((*var).to_string(), v.trim().to_string());
+                }
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    for (provider, vars) in ENV_KEY_VARS {
+        for var in *vars {
+            if let Some(v) = by_var.get(*var) {
+                out.insert(
+                    (*provider).to_string(),
+                    EnvKey {
+                        provider: (*provider).to_string(),
+                        env_var: (*var).to_string(),
+                        key: v.clone(),
+                    },
+                );
+                break; // first var in the list wins for this provider
+            }
+        }
+    }
+    out
+}
+
+/// `$SHELL -lic` probe for every known key var, sentinel-framed so rc noise
+/// ahead of the printf can't contaminate the first value. Values may not
+/// contain `` (unit separator) — a safe assumption for API keys.
+fn shell_env_values() -> BTreeMap<String, String> {
+    let vars: Vec<&str> = ENV_KEY_VARS.iter().flat_map(|(_, vs)| vs.iter().copied()).collect();
+    let fmt: String = vars
+        .iter()
+        .map(|v| format!("\"${{{v}}}\""))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let script = format!(
+        "printf 'ATLAS_ENV_PROBE\x1f'; printf '%s\x1f' {fmt}"
+    );
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let child = std::process::Command::new(&shell)
+        .args(["-lic", &script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let Ok(child) = child else { return BTreeMap::new() };
+    let pid = child.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let out = match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(Ok(out)) if out.status.success() => out,
+        _ => {
+            let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).status();
+            return BTreeMap::new();
+        }
+    };
+    let raw = String::from_utf8_lossy(&out.stdout);
+    let Some(after) = raw.rsplit("ATLAS_ENV_PROBE").next() else {
+        return BTreeMap::new();
+    };
+    let values: Vec<&str> = after.split('').collect();
+    vars.iter()
+        .zip(values)
+        .filter(|(_, v)| !v.trim().is_empty())
+        .map(|(var, v)| ((*var).to_string(), v.trim().to_string()))
+        .collect()
+}
+
+/// Non-secret view of an env-imported key for the settings UI.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvKeyMeta {
+    pub provider: String,
+    pub env_var: String,
+    pub last4: String,
+}
+
+/// Env-imported keys (provider + var + last4). Slow on first call (login-shell
+/// probe) — async + spawn_blocking keeps the IPC thread free.
+#[tauri::command]
+pub async fn byok_env_list() -> Vec<EnvKeyMeta> {
+    tokio::task::spawn_blocking(|| {
+        env_keys()
+            .values()
+            .map(|k| EnvKeyMeta {
+                provider: k.provider.clone(),
+                env_var: k.env_var.clone(),
+                last4: k.key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect(),
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Map the BYOK store onto the env vars the auto-managed built-in agent CLIs
+/// read (verified against opencode/kilo's provider docs; cursor uses browser
+/// OAuth and ignores these). Google gets both spellings — the Vercel AI SDK
+/// stack inside opencode reads `GOOGLE_GENERATIVE_AI_API_KEY`, other tooling
+/// reads `GEMINI_API_KEY`.
+fn builtin_agent_env(store: &Store) -> std::collections::HashMap<String, String> {
+    let mut env = std::collections::HashMap::new();
+    let mut add = |provider: &str, vars: &[&str]| {
+        if let Some(k) = store.get(provider) {
+            for var in vars {
+                env.insert((*var).to_string(), k.key.clone());
+            }
+        }
+    };
+    add("anthropic", &["ANTHROPIC_API_KEY"]);
+    add("openai", &["OPENAI_API_KEY"]);
+    add("openrouter", &["OPENROUTER_API_KEY"]);
+    add("google", &["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"]);
+    add("groq", &["GROQ_API_KEY"]);
+    add("deepinfra", &["DEEPINFRA_API_KEY"]);
+    // Env-imported keys OVERLAY the stored ones — when both exist for a
+    // provider, the environment's own key wins (the settings page surfaces
+    // the conflict). Injected under every var spelling the CLIs read, not
+    // just the one it was found as (GEMINI vs GOOGLE_GENERATIVE_AI).
+    let inject_vars = |provider: &str| -> &'static [&'static str] {
+        match provider {
+            "anthropic" => &["ANTHROPIC_API_KEY"],
+            "openai" => &["OPENAI_API_KEY"],
+            "openrouter" => &["OPENROUTER_API_KEY"],
+            "google" => &["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
+            "groq" => &["GROQ_API_KEY"],
+            "deepinfra" => &["DEEPINFRA_API_KEY"],
+            _ => &[],
+        }
+    };
+    for (provider, ek) in env_keys() {
+        for var in inject_vars(provider) {
+            env.insert((*var).to_string(), ek.key.clone());
+        }
+    }
+    env
+}
+
+/// Push the current BYOK keys into the registry store's built-in spawn env so
+/// opencode/kilo work out of the box with Atlas-configured keys — the clean
+/// alternative to their interactive `auth login` TUI, which Atlas cannot
+/// drive (it spawns login subprocesses with stdin closed). Called at boot and
+/// after every key add/remove; live agents keep their env until respawned.
+pub fn sync_builtin_agent_env(app: &AppHandle) {
+    if let Some(registry) = app.try_state::<atlas_registry::RegistryStore>() {
+        registry.set_builtin_env(builtin_agent_env(&read_store(app)));
+    }
+}
+
 /// List configured providers (metadata only — no secrets).
 #[tauri::command]
 pub fn byok_list(app: AppHandle) -> Vec<ProviderKeyMeta> {
@@ -91,7 +302,9 @@ pub fn byok_set(
 ) -> Result<(), String> {
     let mut store = read_store(&app);
     store.insert(provider, StoredKey { key, last4, added_at });
-    write_store(&app, &store)
+    write_store(&app, &store)?;
+    sync_builtin_agent_env(&app);
+    Ok(())
 }
 
 /// Remove a provider's key.
@@ -99,11 +312,21 @@ pub fn byok_set(
 pub fn byok_delete(app: AppHandle, provider: String) -> Result<(), String> {
     let mut store = read_store(&app);
     store.remove(&provider);
-    write_store(&app, &store)
+    write_store(&app, &store)?;
+    sync_builtin_agent_env(&app);
+    Ok(())
 }
 
 /// Read a provider's actual key (for the Model-Chat runtime). `None` if unset.
+///
+/// Env-imported keys take priority over stored ones — the same rule the
+/// built-in agent injection uses, and what the settings page's conflict
+/// warning promises. NOTE: first call may run the login-shell probe (~5s);
+/// every existing caller already runs under `spawn_blocking`.
 #[tauri::command]
 pub fn byok_get(app: AppHandle, provider: String) -> Result<Option<String>, String> {
+    if let Some(ek) = env_keys().get(&provider) {
+        return Ok(Some(ek.key.clone()));
+    }
     Ok(read_store(&app).get(&provider).map(|v| v.key.clone()))
 }

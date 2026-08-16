@@ -43,6 +43,7 @@ import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { jumpToSession } from "@/features/chat/lib/tab-workspace";
 import { refreshCachedAcpModels } from "@/features/chat/lib/warm-acp-models";
 import { hydrateAgentRegistry } from "@/features/agents/stores/agent-registry-store";
+import { AgentLoginDialogHost } from "@/features/chat/components/agent-login-dialog";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
 import {
@@ -1359,6 +1360,7 @@ export function App() {
       <SearchOverlay open={searchOpen} onOpenChange={setSearchOpen} />
       <FilePicker open={filePickerOpen} onOpenChange={setFilePickerOpen} />
       <HintOverlay />
+      <AgentLoginDialogHost />
       <NotificationPanel />
       <FeedbackPanel />
       <UpdateAvailableModal />

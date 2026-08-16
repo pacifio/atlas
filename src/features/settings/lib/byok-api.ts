@@ -14,8 +14,20 @@ export interface ProviderKeyMeta {
  * `byok_get` command. `last4` + `addedAt` are computed here so Rust never has
  * to slice the secret.
  */
+/** One key imported from the user's environment (shell profile / process env).
+ *  Never stored by Atlas — probed at runtime; only the var name + last4 reach
+ *  the UI. When both an env key and a stored key exist, the env key wins. */
+export interface EnvKeyMeta {
+  provider: string;
+  envVar: string;
+  last4: string;
+}
+
 export const byok = {
   list: () => invoke<ProviderKeyMeta[]>("byok_list"),
+
+  /** Env-imported keys. First call may take a few seconds (login-shell probe). */
+  envList: () => invoke<EnvKeyMeta[]>("byok_env_list"),
 
   set: (provider: string, key: string) =>
     invoke<void>("byok_set", {

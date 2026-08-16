@@ -5,11 +5,14 @@
 
 import { create } from "zustand";
 import { createSelectors } from "@/lib/create-selectors";
-import { byok, type ProviderKeyMeta } from "../lib/byok-api";
+import { byok, type EnvKeyMeta, type ProviderKeyMeta } from "../lib/byok-api";
 
 interface ByokState {
   /** provider id → metadata, for configured providers only. */
   keys: Record<string, ProviderKeyMeta>;
+  /** provider id → key imported from the user's environment. Env keys WIN
+   *  over stored keys when both exist (the table flags the conflict). */
+  envKeys: Record<string, EnvKeyMeta>;
   loaded: boolean;
   /** provider id currently being saved/deleted (for inline busy state). */
   pending: string | null;
@@ -23,6 +26,7 @@ interface ByokState {
 export const useByokStore = createSelectors(
   create<ByokState>((set) => ({
     keys: {},
+    envKeys: {},
     loaded: false,
     pending: null,
     actions: {
@@ -35,6 +39,16 @@ export const useByokStore = createSelectors(
         } catch (err) {
           console.error("byok.load failed", err);
           set({ loaded: true });
+        }
+        // Separately and best-effort: the env probe can take a few seconds on
+        // first call (login shell), so it must never gate the stored list.
+        try {
+          const envList = await byok.envList();
+          const envKeys: Record<string, EnvKeyMeta> = {};
+          for (const m of envList) envKeys[m.provider] = m;
+          set({ envKeys });
+        } catch (err) {
+          console.error("byok.envList failed", err);
         }
       },
 

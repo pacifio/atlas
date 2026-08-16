@@ -11,8 +11,6 @@
 // `authenticate()` on the live agent so the already-running session picks the
 // new credentials up without a respawn.
 
-import { toast } from "sonner";
-
 import { agents, ensureAgent, listenAuthRunDone } from "./agents-api";
 import { isOptionalBuiltinAgent, pluginIdForAgent } from "@/types/agent";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
@@ -26,7 +24,10 @@ function awaitAuthRun(
     let unlisten: (() => void) | undefined;
     const timer = setTimeout(() => {
       unlisten?.();
-      resolve({ success: false, message: "Timed out waiting for sign-in to finish." });
+      resolve({
+        success: false,
+        message: "Timed out waiting for sign-in to finish.",
+      });
     }, timeoutMs);
     void listenAuthRunDone((p) => {
       clearTimeout(timer);
@@ -38,8 +39,32 @@ function awaitAuthRun(
   });
 }
 
-/** Run the agent's browser sign-in end to end. Throws with a user-facing
- *  message on any failure. */
+/** Run ONE advertised sign-in method end to end. Terminal-command methods run
+ *  the CLI login (browser flow, streamed via `atlas:auth-run:*`) and then call
+ *  ACP `authenticate()` so the live agent re-reads the fresh credentials
+ *  without a respawn; command-less methods go straight to `authenticate()`
+ *  (the Codex-style RPC flow). Throws with a user-facing message. */
+export async function runSignInMethod(
+  agentId: string,
+  method: { id: string; terminalCommand?: string | null },
+  label: string,
+): Promise<void> {
+  if (method.terminalCommand) {
+    const done = awaitAuthRun();
+    await agents.runAuthMethod(agentId, method.id);
+    const result = await done;
+    if (!result.success) {
+      throw new Error(result.message ?? `Signing in to ${label} failed.`);
+    }
+  }
+  // The adapters explicitly want this after the CLI login ("then call
+  // authenticate() with methodId …"): it re-reads the credentials the login
+  // just wrote, so the live session stops failing without a restart.
+  await agents.authenticate(agentId, method.id);
+}
+
+/** Run the agent's browser sign-in end to end using its first advertised
+ *  method. Throws with a user-facing message on any failure. */
 export async function signInToAgent(agentType: string): Promise<void> {
   const label = agentMeta(agentType).label;
   const agent = await ensureAgent(pluginIdForAgent(agentType));
@@ -51,16 +76,7 @@ export async function signInToAgent(agentType: string): Promise<void> {
       `${label} can't be signed in from Atlas yet — its adapter offered no login command.`,
     );
   }
-  const done = awaitAuthRun();
-  await agents.runAuthMethod(agent.agent_id, method.id);
-  const result = await done;
-  if (!result.success) {
-    throw new Error(result.message ?? `Signing in to ${label} failed.`);
-  }
-  // The adapters explicitly want this after the CLI login ("then call
-  // authenticate() with methodId …"): it re-reads the credentials the login
-  // just wrote, so the live session stops failing without a restart.
-  await agents.authenticate(agent.agent_id, method.id);
+  await runSignInMethod(agent.agent_id, method, label);
 }
 
 /** Whether a failure means "this agent has no credentials".
@@ -87,25 +103,40 @@ export function canSignIn(agentType: string | undefined): boolean {
   return !!agentType && isOptionalBuiltinAgent(agentType);
 }
 
-/** The actionable "you need to sign in" toast, shared by the bind-failure and
- *  turn-failure paths so both offer the same one-click recovery.
- *  `onSignedIn` lets the caller retry whatever failed (a bind, typically). */
+// ── Sign-in dialog plumbing ─────────────────────────────────────────────────
+//
+// `promptSignIn` used to raise an actionable toast; the built-ins now get the
+// SAME modal experience Claude Code and Codex have. Lib code (bind failures,
+// turn failures) can't render a dialog itself, so it dispatches this window
+// event; the app-level `AgentLoginDialogHost` owns the single dialog instance.
+
+export const AGENT_SIGNIN_EVENT = "atlas:agent-signin";
+
+export interface AgentSignInRequest {
+  agentType: string;
+  requestId: number;
+}
+
+let signInSeq = 0;
+const signInCallbacks = new Map<number, () => void>();
+
+/** Retrieve-and-drop the retry callback registered for a dialog request. */
+export function takeSignInCallback(requestId: number): (() => void) | undefined {
+  const cb = signInCallbacks.get(requestId);
+  signInCallbacks.delete(requestId);
+  return cb;
+}
+
+/** Open the agent sign-in dialog (same modal treatment as Claude/Codex),
+ *  shared by the bind-failure and turn-failure paths so both offer the same
+ *  one-click recovery. `onSignedIn` lets the caller retry whatever failed
+ *  (a bind, typically) once credentials land. */
 export function promptSignIn(agentType: string, onSignedIn?: () => void): void {
-  const label = agentMeta(agentType).label;
-  toast.error(`Sign in to ${label} to continue.`, {
-    duration: 15000,
-    action: {
-      label: "Sign in",
-      onClick: () => {
-        const pending = toast.loading(`Opening your browser to sign in to ${label}…`);
-        void signInToAgent(agentType)
-          .then(() => {
-            toast.success(`Signed in to ${label}.`);
-            onSignedIn?.();
-          })
-          .catch((err) => toast.error(String((err as Error)?.message ?? err)))
-          .finally(() => toast.dismiss(pending));
-      },
-    },
-  });
+  const requestId = ++signInSeq;
+  if (onSignedIn) signInCallbacks.set(requestId, onSignedIn);
+  window.dispatchEvent(
+    new CustomEvent<AgentSignInRequest>(AGENT_SIGNIN_EVENT, {
+      detail: { agentType, requestId },
+    }),
+  );
 }

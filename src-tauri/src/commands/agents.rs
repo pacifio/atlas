@@ -365,6 +365,17 @@ pub fn install_manager(app: &AppHandle) {
         .unwrap_or_else(|_| std::env::temp_dir());
     let registry_store = atlas_registry::RegistryStore::new(app_data_dir);
     app.manage(registry_store.clone());
+    // Seed the managed built-ins' spawn env from the BYOK keys on disk plus
+    // any keys the user already exports in their shell — opencode/kilo read
+    // provider API keys from env, which is Atlas's non-interactive substitute
+    // for their `auth login` TUI. Off the main thread: the first call probes
+    // the login shell for exported keys (up to ~5s).
+    {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            super::byok::sync_builtin_agent_env(&app);
+        });
+    }
     let manager = AgentManager::with_spec_source(
         sink,
         config_dir,

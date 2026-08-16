@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Trash2,
   MoreHorizontal,
+  AlertTriangle,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { SecretInput } from "@/ui/secret-input";
@@ -24,7 +25,7 @@ import {
   type ProviderDef,
 } from "../lib/providers";
 import { useByokStore } from "../stores/byok-store";
-import type { ProviderKeyMeta } from "../lib/byok-api";
+import type { EnvKeyMeta, ProviderKeyMeta } from "../lib/byok-api";
 
 /**
  * BYOK provider/key manager — a full-bleed, monochromatic data table inspired
@@ -60,6 +61,7 @@ const TABLE_MIN_W = 200 + 200 + 130 + 110 + 100 + 120 + 32; // 892
 
 export function ProvidersSettings() {
   const keys = useByokStore.use.keys();
+  const envKeys = useByokStore.use.envKeys();
   const loaded = useByokStore.use.loaded();
   const { load } = useByokStore.use.actions();
 
@@ -77,7 +79,7 @@ export function ProvidersSettings() {
     const q = query.trim().toLowerCase();
     let list = PROVIDERS.filter((p) => {
       if (category !== "All" && p.category !== category) return false;
-      if (configuredOnly && !keys[p.id]) return false;
+      if (configuredOnly && !keys[p.id] && !envKeys[p.id]) return false;
       if (
         q &&
         !p.name.toLowerCase().includes(q) &&
@@ -90,8 +92,8 @@ export function ProvidersSettings() {
 
     list = [...list].sort((a, b) => {
       if (sortKey === "configured") {
-        const ca = keys[a.id] ? 0 : 1;
-        const cb = keys[b.id] ? 0 : 1;
+        const ca = keys[a.id] || envKeys[a.id] ? 0 : 1;
+        const cb = keys[b.id] || envKeys[b.id] ? 0 : 1;
         if (ca !== cb) return ca - cb;
       } else if (sortKey === "category" && a.category !== b.category) {
         return PROVIDER_CATEGORIES.indexOf(a.category) - PROVIDER_CATEGORIES.indexOf(b.category);
@@ -99,9 +101,20 @@ export function ProvidersSettings() {
       return a.name.localeCompare(b.name);
     });
     return list;
-  }, [category, query, sortKey, configuredOnly, keys]);
+  }, [category, query, sortKey, configuredOnly, keys, envKeys]);
 
-  const tabs: Array<{ id: ProviderCategory | "All"; label: string; count: number }> = useMemo(
+  // Providers configured BOTH in Atlas and in the user's environment — the env
+  // key wins everywhere (agent spawns, model chat), so the saved one is inert.
+  const conflicts = useMemo(
+    () => PROVIDERS.filter((p) => keys[p.id] && envKeys[p.id]),
+    [keys, envKeys],
+  );
+
+  const tabs: Array<{
+    id: ProviderCategory | "All";
+    label: string;
+    count: number;
+  }> = useMemo(
     () => [
       { id: "All", label: "All", count: PROVIDERS.length },
       ...PROVIDER_CATEGORIES.map((c) => ({
@@ -196,6 +209,18 @@ export function ProvidersSettings() {
         </DropdownMenu.Root>
       </div>
 
+      {conflicts.length > 0 && (
+        <div className="flex items-start gap-2 px-3 py-2 border-b border-border-default bg-[var(--bg-elevated)]/50 text-[11px] text-[var(--status-warning)]">
+          <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+          <span>
+            {conflicts.map((p) => p.name).join(", ")} {conflicts.length === 1 ? "has" : "have"} a
+            key both in Atlas and in your environment (
+            {conflicts.map((p) => envKeys[p.id]!.envVar).join(", ")}). The environment key takes
+            priority; the key saved here is ignored until the env var is removed.
+          </span>
+        </div>
+      )}
+
       {/* Table — both-axis scroll. The min-width track keeps columns from
           collapsing/overlapping when the panel is narrow; the header sticks. */}
       <div className="flex-1 min-h-0 overflow-auto hide-scrollbar">
@@ -221,6 +246,7 @@ export function ProvidersSettings() {
                 key={p.id}
                 provider={p}
                 meta={keys[p.id]}
+                envKey={envKeys[p.id]}
                 expanded={expandedId === p.id}
                 onToggle={() => setExpandedId((cur) => (cur === p.id ? null : p.id))}
               />
@@ -235,15 +261,19 @@ export function ProvidersSettings() {
 function ProviderTableRow({
   provider,
   meta,
+  envKey,
   expanded,
   onToggle,
 }: {
   provider: ProviderDef;
   meta: ProviderKeyMeta | undefined;
+  envKey: EnvKeyMeta | undefined;
   expanded: boolean;
   onToggle: () => void;
 }) {
   const configured = !!meta;
+  const fromEnv = !!envKey;
+  const conflict = configured && fromEnv;
 
   return (
     <div className="border-b border-border-subtle">
@@ -267,9 +297,11 @@ function ProviderTableRow({
         <span className={cn(COL.category, "truncate text-[11px] text-text-secondary")}>
           {provider.category}
         </span>
-        {/* Key */}
+        {/* Key — the env key is the effective one when both exist. */}
         <span className={cn(COL.key, "font-mono text-[11px]")}>
-          {configured ? (
+          {fromEnv ? (
+            <span className="text-text-secondary">••••{envKey!.last4}</span>
+          ) : configured ? (
             <span className="text-text-secondary">••••{meta!.last4}</span>
           ) : (
             <span className="text-text-muted">—</span>
@@ -277,11 +309,27 @@ function ProviderTableRow({
         </span>
         {/* Added */}
         <span className={cn(COL.added, "text-[10px] text-text-tertiary")}>
-          {configured ? timeAgo(meta!.addedAt, { suffix: true }) : "—"}
+          {configured ? timeAgo(meta!.addedAt, { suffix: true }) : fromEnv ? "env" : "—"}
         </span>
         {/* Status */}
         <span className={cn(COL.status, "flex items-center gap-1.5")}>
-          {configured ? (
+          {conflict ? (
+            <span
+              className="flex items-center gap-1 text-[10px] font-medium text-[var(--status-warning)] border border-[var(--status-warning)]/40 rounded-full px-1.5 h-[18px]"
+              title={`${envKey!.envVar} in your environment overrides the key saved in Atlas.`}
+            >
+              <AlertTriangle size={10} />
+              env overrides
+            </span>
+          ) : fromEnv ? (
+            <span
+              className="flex items-center gap-1 text-[10px] font-medium text-text-secondary border border-border-default rounded-full px-1.5 h-[18px]"
+              title={`Imported from ${envKey!.envVar} in your environment.`}
+            >
+              <Check size={10} />
+              from env
+            </span>
+          ) : configured ? (
             <>
               <Check size={12} className="text-text-primary" />
               <span className="text-[11px] text-text-primary">Configured</span>
@@ -299,7 +347,7 @@ function ProviderTableRow({
         </span>
       </button>
 
-      {expanded && <ProviderEditor provider={provider} meta={meta} />}
+      {expanded && <ProviderEditor provider={provider} meta={meta} envKey={envKey} />}
     </div>
   );
 }
@@ -307,9 +355,11 @@ function ProviderTableRow({
 function ProviderEditor({
   provider,
   meta,
+  envKey,
 }: {
   provider: ProviderDef;
   meta: ProviderKeyMeta | undefined;
+  envKey: EnvKeyMeta | undefined;
 }) {
   const pending = useByokStore.use.pending();
   const { save, remove } = useByokStore.use.actions();
@@ -338,6 +388,18 @@ function ProviderEditor({
 
   return (
     <div className="bg-[var(--bg-elevated)]/40 border-t border-border-subtle px-3 py-3">
+      {envKey && (
+        <p
+          className={cn(
+            "mb-2.5 max-w-[640px] text-[10.5px] leading-snug",
+            configured ? "text-[var(--status-warning)]" : "text-text-tertiary",
+          )}
+        >
+          {configured
+            ? `${envKey.envVar} is set in your environment and takes priority — the key saved here is ignored until you unset it.`
+            : `Imported from ${envKey.envVar} in your environment. Saving a key here keeps it as a fallback; the environment key stays in charge.`}
+        </p>
+      )}
       <div className="flex items-start gap-3 max-w-[640px]">
         <div className="flex-1 min-w-0 space-y-2">
           <div className="flex items-center justify-between">

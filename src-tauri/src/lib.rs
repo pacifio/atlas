@@ -570,6 +570,7 @@ pub fn run() {
             commands::byok::byok_set,
             commands::byok::byok_delete,
             commands::byok::byok_get,
+            commands::byok::byok_env_list,
             commands::modelchat::modelchat_models,
             commands::modelchat::modelchat_stream,
             commands::modelchat::modelchat_cancel,

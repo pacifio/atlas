@@ -877,9 +877,10 @@ export function MessageInput({
   // An auth-classified turn failure routes to the sign-in flow (P15) instead
   // of dying as a generic banner. Claude sessions open the login dialog; the
   // Codex sign-in pill is handled in ChatComposer (it owns that probe state);
-  // the auto-managed built-ins get an actionable toast — they have no bespoke
-  // surface, and without one their `Authentication required` error was a dead
-  // end the user could not act on (their CLI isn't on PATH to log in by hand).
+  // the auto-managed built-ins open the shared sign-in dialog (same modal
+  // treatment as Claude/Codex — see AgentLoginDialogHost); without it their
+  // `Authentication required` error was a dead end the user could not act on
+  // (their CLI isn't on PATH to log in by hand).
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;

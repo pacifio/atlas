@@ -44,6 +44,13 @@ struct StoreInner {
     /// cache — this map is just the resolved entry point, refilled from that
     /// extract (no download) by the first `ensure_builtin` after launch.
     builtin_binaries: DashMap<String, install_store::ResolvedBinary>,
+    /// Extra env vars injected into the auto-managed built-ins' spawn specs —
+    /// Atlas's BYOK keys mapped to the env vars those CLIs read
+    /// (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …). Set by the host at boot and
+    /// whenever a key is added/removed; a manifest-declared env var of the
+    /// same name wins. Applies from the NEXT spawn — live agents keep the env
+    /// they started with.
+    builtin_env: RwLock<HashMap<String, String>>,
 }
 
 /// One agent as the marketplace sees it.
@@ -91,6 +98,7 @@ impl RegistryStore {
                 binaries_root: app_data_dir.join("external-agents"),
                 download_locks: DashMap::new(),
                 builtin_binaries: DashMap::new(),
+                builtin_env: RwLock::new(HashMap::new()),
             }),
         }
     }
@@ -368,16 +376,23 @@ impl RegistryStore {
     /// grafts it onto the built-in's existing entry and keeps Atlas's own
     /// display name, so these placeholder names are never shown.
     fn builtin_specs(&self) -> Vec<atlas_acp::AgentSpec> {
+        let extra_env = self.inner.builtin_env.read().clone();
         self.inner
             .builtin_binaries
             .iter()
             .map(|e| atlas_acp::AgentSpec {
                 spec_id: e.key().clone(),
                 display_name: e.key().clone(),
-                command: binary_command(e.key(), e.value()),
+                command: binary_command(e.key(), e.value(), &extra_env),
                 help_url: None,
             })
             .collect()
+    }
+
+    /// Replace the BYOK-derived env injected into the auto-managed built-ins'
+    /// spawn specs (see `builtin_env` on the inner state).
+    pub fn set_builtin_env(&self, env: HashMap<String, String>) {
+        *self.inner.builtin_env.write() = env;
     }
 
     fn spec_for(&self, inst: &InstalledAgent) -> Option<atlas_acp::AgentSpec> {
@@ -523,7 +538,9 @@ fn synthesize_command(binaries_root: &std::path::Path, inst: &InstalledAgent) ->
                 env: target.env.clone(),
             },
         };
-        return Some(binary_command(&inst.id, &resolved));
+        // Marketplace-installed externals get no BYOK env injection — that is
+        // scoped to the auto-managed built-ins (see `builtin_specs`).
+        return Some(binary_command(&inst.id, &resolved, &HashMap::new()));
     }
     if let Some(pkg) = &inst.distribution.npx {
         return Some(package_command("npx -y", &pkg.package, &pkg.args, &pkg.env, &inst.id));
@@ -537,13 +554,21 @@ fn synthesize_command(binaries_root: &std::path::Path, inst: &InstalledAgent) ->
 /// A downloaded binary's entry point → the JSON stdio spec the SDK spawns.
 /// `"node"` entries resolve through the (possibly Atlas-managed) toolchain;
 /// anything else is already an absolute path inside the extract dir.
-fn binary_command(id: &str, resolved: &install_store::ResolvedBinary) -> String {
+fn binary_command(
+    id: &str,
+    resolved: &install_store::ResolvedBinary,
+    extra_env: &HashMap<String, String>,
+) -> String {
     let program = if resolved.entry_cmd == "node" {
         atlas_acp::resolve_program("node").unwrap_or_else(|| "node".to_string())
     } else {
         resolved.entry_cmd.clone()
     };
-    json_stdio_spec(id, &program, &resolved.args, &resolved.env)
+    // BYOK-derived keys first, then the manifest's own env on top — an env var
+    // the registry manifest declares always beats the injected key.
+    let mut env = extra_env.clone();
+    env.extend(resolved.env.iter().map(|(k, v)| (k.clone(), v.clone())));
+    json_stdio_spec(id, &program, &resolved.args, &env)
 }
 
 fn package_command(
