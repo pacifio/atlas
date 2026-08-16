@@ -368,14 +368,11 @@ pub fn install_manager(app: &AppHandle) {
     // Seed the managed built-ins' spawn env from the BYOK keys on disk plus
     // any keys the user already exports in their shell — opencode/kilo read
     // provider API keys from env, which is Atlas's non-interactive substitute
-    // for their `auth login` TUI. Off the main thread: the first call probes
-    // the login shell for exported keys (up to ~5s).
-    {
-        let app = app.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            super::byok::sync_builtin_agent_env(&app);
-        });
-    }
+    // for their `auth login` TUI. The immediate sync uses the instant
+    // process-env snapshot; the login-shell probe runs on its own thread and
+    // re-syncs (+ notifies the settings UI) when it lands.
+    super::byok::sync_builtin_agent_env(app);
+    super::byok::ensure_shell_probe(app);
     let manager = AgentManager::with_spec_source(
         sink,
         config_dir,

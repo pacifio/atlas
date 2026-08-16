@@ -112,30 +112,57 @@ pub struct EnvKey {
     pub key: String,
 }
 
-/// provider id → env-sourced key. Probed once per app run.
-fn env_keys() -> &'static BTreeMap<String, EnvKey> {
-    static CACHE: std::sync::OnceLock<BTreeMap<String, EnvKey>> = std::sync::OnceLock::new();
-    CACHE.get_or_init(probe_env_keys)
+/// Two-phase, NEVER-blocking env-key state. The old `OnceLock::get_or_init`
+/// design made whichever reader arrived first (often the settings screen's
+/// `byok_env_list`, since Settings → API Keys is a common first stop after
+/// launch) wait up to 5s on the login-shell probe. Now:
+///
+/// - Phase 1 (instant, at first read): the process env is scanned — free, and
+///   already correct for terminal-launched sessions.
+/// - Phase 2 (background, kicked once by [`ensure_shell_probe`] at boot):
+///   `$SHELL -lic` fills in profile-exported keys, merges (process env wins),
+///   re-syncs the built-in agents' spawn env, and emits
+///   `atlas:byok-env-updated` so the settings UI refreshes its pills.
+///
+/// Every reader gets the CURRENT snapshot immediately; nothing ever waits.
+struct EnvKeyState {
+    /// Raw env var → value, merged across both phases.
+    by_var: BTreeMap<String, String>,
+    /// True once the login-shell pass finished (or failed) — the snapshot is
+    /// as complete as it will get this run.
+    shell_done: bool,
 }
 
-fn probe_env_keys() -> BTreeMap<String, EnvKey> {
-    // Login-shell pass first (may block up to 5s — callers run off the main
-    // thread), then process env OVERLAYS it: a var exported in the launching
-    // terminal is more current than the profile's.
-    let mut by_var: BTreeMap<String, String> = shell_env_values();
-    for (_, vars) in ENV_KEY_VARS {
-        for var in *vars {
-            if let Ok(v) = std::env::var(var) {
-                if !v.trim().is_empty() {
-                    by_var.insert((*var).to_string(), v.trim().to_string());
+fn env_state() -> &'static parking_lot::RwLock<EnvKeyState> {
+    static STATE: std::sync::OnceLock<parking_lot::RwLock<EnvKeyState>> =
+        std::sync::OnceLock::new();
+    STATE.get_or_init(|| {
+        // Phase 1: process env only — microseconds, never blocks.
+        let mut by_var = BTreeMap::new();
+        for (_, vars) in ENV_KEY_VARS {
+            for var in *vars {
+                if let Ok(v) = std::env::var(var) {
+                    if !v.trim().is_empty() {
+                        by_var.insert((*var).to_string(), v.trim().to_string());
+                    }
                 }
             }
         }
-    }
+        parking_lot::RwLock::new(EnvKeyState {
+            by_var,
+            shell_done: false,
+        })
+    })
+}
+
+/// provider id → env-sourced key, derived from the current (possibly still
+/// phase-1-only) snapshot. Cheap: ~22 table rows against a small map.
+fn env_keys() -> BTreeMap<String, EnvKey> {
+    let state = env_state().read();
     let mut out = BTreeMap::new();
     for (provider, vars) in ENV_KEY_VARS {
         for var in *vars {
-            if let Some(v) = by_var.get(*var) {
+            if let Some(v) = state.by_var.get(*var) {
                 out.insert(
                     (*provider).to_string(),
                     EnvKey {
@@ -149,6 +176,34 @@ fn probe_env_keys() -> BTreeMap<String, EnvKey> {
         }
     }
     out
+}
+
+/// Kick the phase-2 login-shell probe exactly once per app run, on its own
+/// thread. Completion merges the results (process env wins on collision),
+/// re-syncs the built-in agents' spawn env, and notifies the frontend.
+/// Safe to call from anywhere, any number of times.
+pub fn ensure_shell_probe(app: &AppHandle) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let shell = shell_env_values();
+        {
+            let mut state = env_state().write();
+            for (var, value) in shell {
+                // Process env wins: a var exported in the launching terminal
+                // is more current than the shell profile's.
+                state.by_var.entry(var).or_insert(value);
+            }
+            state.shell_done = true;
+        }
+        sync_builtin_agent_env(&app);
+        use tauri::Emitter;
+        let _ = app.emit("atlas:byok-env-updated", ());
+    });
 }
 
 /// `$SHELL -lic` probe for every known key var, sentinel-framed so rc noise
@@ -205,22 +260,20 @@ pub struct EnvKeyMeta {
     pub last4: String,
 }
 
-/// Env-imported keys (provider + var + last4). Slow on first call (login-shell
-/// probe) — async + spawn_blocking keeps the IPC thread free.
+/// Env-imported keys (provider + var + last4). Instant: reads the current
+/// snapshot (process env at minimum) and never waits on the shell probe —
+/// when the probe lands, `atlas:byok-env-updated` fires and the UI refetches.
 #[tauri::command]
-pub async fn byok_env_list() -> Vec<EnvKeyMeta> {
-    tokio::task::spawn_blocking(|| {
-        env_keys()
-            .values()
-            .map(|k| EnvKeyMeta {
-                provider: k.provider.clone(),
-                env_var: k.env_var.clone(),
-                last4: k.key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect(),
-            })
-            .collect()
-    })
-    .await
-    .unwrap_or_default()
+pub fn byok_env_list(app: AppHandle) -> Vec<EnvKeyMeta> {
+    ensure_shell_probe(&app);
+    env_keys()
+        .values()
+        .map(|k| EnvKeyMeta {
+            provider: k.provider.clone(),
+            env_var: k.env_var.clone(),
+            last4: k.key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect(),
+        })
+        .collect()
 }
 
 /// Map the BYOK store onto the env vars the auto-managed built-in agent CLIs
@@ -259,7 +312,7 @@ fn builtin_agent_env(store: &Store) -> std::collections::HashMap<String, String>
         }
     };
     for (provider, ek) in env_keys() {
-        for var in inject_vars(provider) {
+        for var in inject_vars(provider.as_str()) {
             env.insert((*var).to_string(), ek.key.clone());
         }
     }
@@ -321,8 +374,9 @@ pub fn byok_delete(app: AppHandle, provider: String) -> Result<(), String> {
 ///
 /// Env-imported keys take priority over stored ones — the same rule the
 /// built-in agent injection uses, and what the settings page's conflict
-/// warning promises. NOTE: first call may run the login-shell probe (~5s);
-/// every existing caller already runs under `spawn_blocking`.
+/// warning promises. Non-blocking: reads the current snapshot; a
+/// profile-only key can be missed in the first ~seconds after launch (before
+/// the background shell probe lands), in which case the stored key answers.
 #[tauri::command]
 pub fn byok_get(app: AppHandle, provider: String) -> Result<Option<String>, String> {
     if let Some(ek) = env_keys().get(&provider) {

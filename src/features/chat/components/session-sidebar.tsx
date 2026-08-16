@@ -236,6 +236,7 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
     setAcpBinding,
     setAcpModes,
     setAcpModels,
+    setAcpAvailableCommands,
     setSessionAgentType,
     clearSession,
     setSessionTitle,
@@ -807,6 +808,10 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
       if (snapshot.available_models.length > 0) {
         setAcpModels(targetTabId, snapshot.current_model, snapshot.available_models);
       }
+      // Seed the slash-command list — resume clears it and `session/load`
+      // agents don't reliably re-advertise, so the snapshot is the only
+      // source for resumed sessions.
+      setAcpAvailableCommands(targetTabId, snapshot.available_commands ?? []);
       setTranscriptLoading(targetTabId, false);
     })();
   };

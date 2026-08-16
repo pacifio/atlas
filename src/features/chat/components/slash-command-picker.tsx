@@ -11,6 +11,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ import { cn } from "@/lib/utils";
 export type SlashCommandHandler =
   | "atlas-login"
   | "codex-login"
+  | "agent-login"
   | "open-settings"
   | "unavailable"
   | "passthrough";
@@ -253,6 +255,16 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
                 </button>
               );
             })
+          )}
+          {/* The guard/login rows are always present, so the empty-state
+              "Loading commands…" branch above never fires in practice — this
+              row makes the startup gap (agent hasn't advertised its commands
+              yet) read as loading instead of a broken, guards-only list. */}
+          {loading && rows.length > 0 && (
+            <div className="px-3 h-[24px] flex items-center gap-1.5 text-[10px] text-[var(--text-tertiary)]">
+              <Loader2 size={10} className="animate-spin shrink-0" />
+              Loading agent commands…
+            </div>
           )}
         </div>
         <div className="border-t border-[var(--border-default)] px-3 h-[24px] flex items-center justify-between text-[9px] text-[var(--text-tertiary)] uppercase tracking-wider shrink-0">

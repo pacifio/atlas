@@ -55,6 +55,14 @@ struct ManagerInner {
     acp: AgentRegistry,
     cersei: atlas_cersei::CerseiRuntime,
     sessions: DashMap<SessionKey, Arc<SessionHandle>>,
+    /// Session-scoped notifications that arrived BEFORE their session was
+    /// installed. Adapters may fire `available_commands_update` (Codex does)
+    /// the instant they answer `session/new` — before `new_session` has run
+    /// `install_session` — and `dispatch` used to drop those on the floor,
+    /// which is how slash commands went permanently missing. Bounded per key;
+    /// drained (in order, through the actor FIFO) by `install_session`, and
+    /// swept on agent disconnect.
+    pending_notifications: DashMap<SessionKey, Vec<(AcpEvent, Option<u64>)>>,
     agent_plugins: DashMap<AgentId, String>,
     /// Per-agent backend (ACP subprocess vs in-process Cersei), chosen at spawn.
     agent_backends: DashMap<AgentId, Arc<dyn AgentBackend>>,
@@ -86,6 +94,7 @@ impl AgentManager {
                 },
                 cersei: atlas_cersei::CerseiRuntime::new(config_dir),
                 sessions: DashMap::new(),
+                pending_notifications: DashMap::new(),
                 agent_plugins: DashMap::new(),
                 agent_backends: DashMap::new(),
                 emitter: Arc::new(Emitter::new(sink)),
@@ -617,7 +626,17 @@ impl AgentManager {
             plugin_id,
             actor,
         });
-        self.inner.sessions.insert(key, handle);
+        self.inner.sessions.insert(key.clone(), handle.clone());
+
+        // Replay anything the adapter sent before this session existed, in
+        // arrival order and through the same actor FIFO live events use — an
+        // early `available_commands_update` lands in `SessionState` and
+        // re-emits its delta exactly as if it had arrived after install.
+        if let Some((_, events)) = self.inner.pending_notifications.remove(&key) {
+            for (event, turn) in events {
+                handle.route_event(event, turn);
+            }
+        }
     }
 
     fn find_session_by_acp_id(&self, agent_id: AgentId, acp_id: &SessionId) -> Option<Arc<SessionHandle>> {
@@ -656,6 +675,9 @@ impl AgentManager {
                     self.inner.sessions.remove(&key);
                 }
                 self.inner.agent_plugins.remove(&agent_id);
+                self.inner
+                    .pending_notifications
+                    .retain(|k, _| k.agent_id != agent_id);
                 return;
             }
             AcpEvent::SessionUpdate { session_id, .. }
@@ -670,6 +692,28 @@ impl AgentManager {
         // applied on the actor's task ordered before the turn terminal.
         if let Some(handle) = self.find_session_by_acp_id(agent_id, &session_id) {
             handle.route_event(event, turn);
+            return;
+        }
+
+        // No session yet: `session/new` has answered but `install_session`
+        // hasn't run. Buffer session-update notifications (bounded) so
+        // install can replay them; anything else pre-install is dropped as
+        // before (a permission request without a session has no consumer).
+        if matches!(event, AcpEvent::SessionUpdate { .. }) {
+            let Some(sid) = serde_json::to_value(&session_id)
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+            else {
+                return;
+            };
+            let key = SessionKey {
+                agent_id,
+                session_id: sid,
+            };
+            let mut entry = self.inner.pending_notifications.entry(key).or_default();
+            if entry.len() < 32 {
+                entry.push((event, turn));
+            }
         }
     }
 }
@@ -829,5 +873,70 @@ mod tests {
     #[test]
     fn legacy_agents_without_modes_remain_compatible() {
         assert!(validate_mode("bypassPermissions", &[]).is_ok());
+    }
+
+    struct NoopSink;
+    impl DeltaSink for NoopSink {
+        fn emit(&self, _envelope: SessionDeltaEnvelope) {}
+    }
+
+    /// The Codex-shaped race: the adapter answers `session/new` and fires
+    /// `available_commands_update` before the manager has installed the
+    /// session. `dispatch` used to drop it silently — slash commands then
+    /// stayed empty for the whole session. The pre-install buffer must hold
+    /// the event and `install_session` must replay it into `SessionState`.
+    #[tokio::test]
+    async fn early_available_commands_survive_the_install_race() {
+        let mgr = AgentManager::new(
+            Arc::new(NoopSink),
+            std::env::temp_dir().join("atlas-agents-test-config"),
+        );
+        let agent_id = AgentId::new();
+        let acp_sid = SessionId::new("ses_early_commands");
+        let key = SessionKey {
+            agent_id,
+            session_id: "ses_early_commands".into(),
+        };
+
+        // Notification arrives BEFORE the session exists.
+        let update: agent_client_protocol::schema::v1::SessionUpdate =
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": [
+                    { "name": "plan", "description": "Turn plan mode on." },
+                    { "name": "status", "description": "Session status." }
+                ]
+            }))
+            .expect("wire-shaped update parses");
+        mgr.dispatch(
+            agent_id,
+            atlas_acp::AcpEvent::SessionUpdate {
+                session_id: acp_sid.clone(),
+                update,
+            },
+            None,
+        );
+
+        // Session installs afterwards (what new_session does post-response).
+        mgr.install_session(
+            key.clone(),
+            acp_sid,
+            "/tmp".into(),
+            "codex".into(),
+            Vec::new(),
+            None,
+            None,
+        );
+
+        // Replay goes through the actor FIFO — poll briefly for it to land.
+        for _ in 0..200 {
+            if let Ok(snap) = mgr.snapshot(&key) {
+                if snap.available_commands.len() == 2 {
+                    return;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("buffered available_commands_update was never replayed into the session state");
     }
 }

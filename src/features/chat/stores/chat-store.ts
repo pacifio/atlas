@@ -349,6 +349,12 @@ interface ChatActions {
     ) => void;
     /** Pick an ACP model and push it to the bound agent (`session/set_model`). */
     setAcpModel: (sessionId: string, modelId: string) => void;
+    /** Seed the ACP slash-command list from a session snapshot's
+     *  `available_commands` — the recovery path for `available_commands_update`
+     *  deltas that raced ahead of the binding (or a resume) and were dropped
+     *  by the session router. Never clobbers a non-empty live list with an
+     *  empty snapshot. */
+    setAcpAvailableCommands: (sessionId: string, commands: unknown[]) => void;
     /** Native Cersei agent: pick the BYOK provider. Clears the model so the
      *  composer re-selects a default for the new provider before pushing. */
     setCerseiProvider: (sessionId: string, provider: string) => void;
@@ -934,7 +940,10 @@ export const useChatStore = createSelectors(
           // Persist the confirmed modes so the next switch to this agent is
           // instant. Done outside the immer pass (side effect, not state).
           if (availableModes.length > 0 && at && at !== "claude-code") {
-            saveCachedAcpModes(at, { currentMode: currentMode ?? null, availableModes });
+            saveCachedAcpModes(at, {
+              currentMode: currentMode ?? null,
+              availableModes,
+            });
           }
         },
         setAcpModesPending: (sessionId, pending) =>
@@ -956,6 +965,19 @@ export const useChatStore = createSelectors(
           const at = get().sessions[sessionId]?.agentType;
           if (at && at !== "claude-code") saveLastModePref(at, modeId);
           pushAcpModeToAgent(get(), sessionId);
+        },
+        setAcpAvailableCommands: (sessionId, commands) => {
+          set((s) => {
+            const session = s.sessions[sessionId];
+            if (!session) return;
+            // An empty snapshot must not erase a list the live delta already
+            // delivered; it MAY end the picker's loading state (undefined→[])
+            // for agents that genuinely advertise nothing.
+            if (commands.length === 0 && (session.availableCommands?.length ?? 0) > 0) {
+              return;
+            }
+            session.availableCommands = commands;
+          });
         },
         setAcpModels: (sessionId, currentModel, availableModels) => {
           set((s) => {
@@ -979,7 +1001,10 @@ export const useChatStore = createSelectors(
           // `session/load` doesn't re-advertise models).
           const at = get().sessions[sessionId]?.agentType;
           if (availableModels.length > 0 && at) {
-            saveCachedAcpModels(at, { currentModel: currentModel ?? null, availableModels });
+            saveCachedAcpModels(at, {
+              currentModel: currentModel ?? null,
+              availableModels,
+            });
           }
         },
         setAcpModel: (sessionId, modelId) => {
@@ -1529,7 +1554,11 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
           output: session.usage.output_tokens ?? 0,
           cost: session.usage.cost ?? 0,
         };
-        const prev = session.lastUsageSnapshot ?? { input: 0, output: 0, cost: 0 };
+        const prev = session.lastUsageSnapshot ?? {
+          input: 0,
+          output: 0,
+          cost: 0,
+        };
         const turn = {
           input: Math.max(0, cum.input - prev.input),
           output: Math.max(0, cum.output - prev.output),
@@ -1587,7 +1616,11 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
         if (m.role !== "assistant") continue;
         const chips = extractNextSteps(m.content);
         if (chips.length > 0) {
-          m.suggestions = { turnSeq: env.turn_seq ?? 0, status: "ready", chips };
+          m.suggestions = {
+            turnSeq: env.turn_seq ?? 0,
+            status: "ready",
+            chips,
+          };
         }
         break;
       }

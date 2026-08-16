@@ -703,14 +703,11 @@ export function MessageInput({
   const availableCommands = useChatStore((s) => s.sessions[tabId]?.availableCommands);
   const slashCommandsLoading = availableCommands === undefined;
   const agentSlashCommands = useMemo<SlashCommand[]>(() => {
-    if (
-      agentType !== "codex" &&
-      agentType !== "claude-code" &&
-      agentType !== "opencode" &&
-      agentType !== "cursor" &&
-      agentType !== "kilo"
-    )
-      return [];
+    // Every ACP-transport agent gets its advertised commands — first-party AND
+    // registry-installed externals (their agentType IS their plugin id). Only
+    // the native cersei agent (no slash commands) and the legacy "custom"
+    // placeholder bail out.
+    if (agentType === "cersei" || agentType === "custom") return [];
     const fromAgent: SlashCommand[] = (availableCommands ?? [])
       .map((c) => {
         const o = (c ?? {}) as {
@@ -747,7 +744,18 @@ export function MessageInput({
               description: "Sign in to your Anthropic account.",
               handler: "atlas-login" as const,
             }
-          : null;
+          : canSignIn(agentType)
+            ? {
+                // Auto-managed built-ins (Cursor / OpenCode / Kilo): route
+                // through the shared sign-in dialog — their CLI lives in
+                // Atlas's app-data dir, so there is no terminal command to
+                // point the user at.
+                name: "login",
+                signature: "/login",
+                description: `Sign in to ${agentMeta(agentType).label}.`,
+                handler: "agent-login" as const,
+              }
+            : null;
     // Host-handled guard rows, merged in alongside whatever the agent
     // advertises. `/skills` opens Settings for any supported agent.
     // `/clear`/`/logout` are dimmed for Claude Code specifically — the ACP
@@ -1198,12 +1206,18 @@ export function MessageInput({
       const view = inputRef.current?.view();
       if (!t || !view) return;
 
-      if (cmd.handler === "atlas-login" || cmd.handler === "codex-login") {
+      if (
+        cmd.handler === "atlas-login" ||
+        cmd.handler === "codex-login" ||
+        cmd.handler === "agent-login"
+      ) {
         // `/login` doesn't pass through to the agent — open Atlas's own sign-in
-        // dialog (Claude's setup dialog, or the Codex auth modal).
+        // dialog (Claude's setup dialog, the Codex auth modal, or the shared
+        // agent sign-in modal for the managed built-ins).
         clearSlashRange(view, t.from, t.to);
         setSlashTrigger(null);
         if (cmd.handler === "codex-login") setCodexLoginOpen(true);
+        else if (cmd.handler === "agent-login") promptSignIn(agentType);
         else openLoginDialog();
         inputRef.current?.focus();
         return;
@@ -1279,7 +1293,7 @@ export function MessageInput({
       // submit path — trim/mentions/queueing behave exactly like a typed Enter.
       submitRef.current();
     },
-    [openLoginDialog, disabled],
+    [openLoginDialog, disabled, agentType],
   );
 
   // Forward Up/Down/Enter/Esc/Backspace/Tab from CodeMirror to whichever
