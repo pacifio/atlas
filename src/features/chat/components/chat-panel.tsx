@@ -15,7 +15,14 @@ import {
   pluginIdForAgent,
   CLAUDE_PERMISSION_MODES,
 } from "@/types/agent";
-import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { agentMeta, isAgentDisabled } from "@/features/agents/lib/agent-meta";
+import { canSignIn, isAuthError, promptSignIn } from "../lib/agent-signin";
+import { toast } from "sonner";
+
+/** Tab+agent pairs whose bind failure has already been surfaced, so the
+ *  focus-triggered retry doesn't re-toast the same error on every focus.
+ *  Cleared for a pair once its bind finally succeeds. */
+const reportedBindFailures = new Set<string>();
 import { composePrompt, type MentionData } from "../lib/mentions";
 import { usePaneFind } from "../lib/use-pane-find";
 import { useDefaultAgentType } from "../hooks/use-default-agent";
@@ -398,6 +405,10 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           }
         }
         useChatStore.getState().actions.setAcpBinding(tabId, agent.agent_id, key.session_id, cwd);
+        // Bound successfully — re-arm the failure toast so a LATER breakage
+        // (agent crashes, gets uninstalled) is reported again rather than
+        // swallowed by the earlier dedupe.
+        reportedBindFailures.delete(`${tabId}:${pluginId}`);
         // Seed the composer mode picker from the freshly-created session's
         // advertised modes (Codex: read-only / auto / full-access). The modes
         // are seeded into the Rust SessionState by `new_session`, so the
@@ -442,9 +453,32 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         }
       } catch (err) {
         console.warn("Agent session creation failed:", err);
-        // Bind failed (agent not installed / spawn error) — clear the spinner so
-        // the picker doesn't hang in a loading state forever.
-        if (!cancelled) useChatStore.getState().actions.setAcpModesPending(tabId, false);
+        // Bind failed (couldn't set the agent up / spawn error). This used to
+        // be console-only, so a user whose agent wouldn't start just saw a dead
+        // composer with no reason given. The backend's message is the useful
+        // one — `explain_spawn_failure` names the agent and the fix (check your
+        // connection, or sign in with `cursor-agent login`). Deduped per
+        // tab+agent because the focus handler retries this bind.
+        if (!cancelled) {
+          useChatStore.getState().actions.setAcpModesPending(tabId, false);
+          const at = useChatStore.getState().sessions[tabId]?.agentType;
+          const key = `${tabId}:${pluginIdForAgent(at)}`;
+          if (!reportedBindFailures.has(key)) {
+            reportedBindFailures.add(key);
+            // Cursor (and friends) reject `session/new` when signed out, so the
+            // "you need to sign in" case lands HERE, not on the turn-failure
+            // route that raises `atlas:auth-required`. Offer the one-click fix
+            // instead of dumping a raw protocol error, and rebind once it lands.
+            if (at && canSignIn(at) && isAuthError(err)) {
+              promptSignIn(at, () => {
+                reportedBindFailures.delete(key);
+                void ensureBound();
+              });
+            } else {
+              toast.error(String((err as Error)?.message ?? err));
+            }
+          }
+        }
       } finally {
         pending = false;
       }
@@ -596,6 +630,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     const timers: ReturnType<typeof setTimeout>[] = [];
     (["codex", "opencode", "cursor", "kilo"] as const).forEach((at, i) => {
       if (!loadCachedAcpModes(at)) return; // never used → skip
+      if (isAgentDisabled(at)) return; // turned off → never spawn, even to pre-warm
       timers.push(
         setTimeout(
           () => {

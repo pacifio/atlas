@@ -66,6 +66,17 @@ export function pluginIdForAgent(agentType: AgentType | undefined): string {
  *  that care use the dynamic registry, not this constant. */
 export const ACP_AGENTS: FirstPartyAgent[] = ["claude-code", "codex", "opencode", "cursor", "kilo"];
 
+/** The built-ins a user may turn off in Settings → Agents: the three with no
+ *  npx distribution, which Atlas downloads on demand. Mirrors
+ *  `atlas_acp::AUTO_MANAGED_BUILTIN_IDS` (their agentType and plugin id are
+ *  the same string). Claude, Codex and Cersei are the agents Atlas is built
+ *  around — they are always available and never appear here. */
+export const OPTIONAL_BUILTIN_AGENTS: FirstPartyAgent[] = ["cursor", "opencode", "kilo"];
+
+export function isOptionalBuiltinAgent(id: string): boolean {
+  return (OPTIONAL_BUILTIN_AGENTS as string[]).includes(id);
+}
+
 /** Derive the display agent type from a spawnable plugin id. Unknown ids pass
  *  through unchanged — an external agent's identity is its plugin id, and
  *  collapsing it (the old `"custom"` fallback) lost it forever. */

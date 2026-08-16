@@ -65,6 +65,41 @@ pub trait SpecSource: Send + Sync {
     fn extra_specs(&self) -> Vec<AgentSpec>;
 }
 
+/// Built-in agents whose adapter is a plain CLI binary rather than an npm
+/// package. Claude and Codex spawn through `npx -y …`, so npm fetches their
+/// adapter on first run and they work on a machine that never installed
+/// anything by hand; these three do not, and their bare commands
+/// (`cursor-agent acp`, `opencode acp`, `kilo acp`) simply ENOENT there.
+///
+/// `atlas-registry` closes that gap by downloading each one's official binary
+/// from the ACP registry manifest and offering it as a dynamic spec. For these
+/// ids ONLY, that dynamic spec's command REPLACES the bare command below (see
+/// [`AgentRegistry::known_specs`]) — every other id keeps first-party
+/// precedence, so a registry install can never shadow a built-in agent.
+pub const AUTO_MANAGED_BUILTIN_IDS: &[&str] = &["cursor", "opencode", "kilo"];
+
+/// The CLI argv that signs a user in to an auto-managed built-in, appended to
+/// its managed binary.
+///
+/// These three adapters advertise an `authMethod` but ship NO
+/// `_meta.terminal-auth` block, so there is nothing for the host's terminal-auth
+/// runner to execute — and because Atlas downloads their binary into its own
+/// app-data dir, the user has no CLI on `PATH` to run by hand either. Without
+/// this table "sign in" is simply impossible from inside Atlas: the agent
+/// answers every prompt with `Authentication required` forever.
+///
+/// Verified against the downloaded binaries (`--help`): cursor exposes a
+/// top-level `login`; opencode (and its Kilo fork) nest it under `auth login`.
+/// Each opens the browser and prints the URL on stdout, which the auth runner
+/// already streams to the UI.
+pub fn builtin_login_args(spec_id: &str) -> Option<&'static [&'static str]> {
+    match spec_id {
+        "cursor" => Some(&["login"]),
+        "opencode" | "kilo" => Some(&["auth", "login"]),
+        _ => None,
+    }
+}
+
 impl AgentSpec {
     pub fn claude_code_ts() -> Self {
         Self {
@@ -242,12 +277,24 @@ impl AgentRegistry {
     /// First-party specs ∪ dynamic (registry-installed) specs. First-party
     /// wins on a spec-id collision — a registry install must never shadow a
     /// built-in agent.
+    ///
+    /// The one exception is [`AUTO_MANAGED_BUILTIN_IDS`]: those built-ins have
+    /// no npx distribution, so the registry's downloaded binary is strictly
+    /// better than their bare-CLI command and takes over the `command` field
+    /// IN PLACE — same id, same slot, same display name, never a second entry
+    /// for one agent (the plugin catalog keys off `spec_id`). When no binary
+    /// has been acquired the dynamic spec is simply absent and the bare
+    /// command stands, which is the pre-existing behaviour.
     pub fn known_specs(&self) -> Vec<AgentSpec> {
         let mut specs = AgentSpec::all_known();
         if let Some(source) = &self.dynamic {
             for spec in source.extra_specs() {
-                if !specs.iter().any(|s| s.spec_id == spec.spec_id) {
-                    specs.push(spec);
+                match specs.iter().position(|s| s.spec_id == spec.spec_id) {
+                    Some(i) if AUTO_MANAGED_BUILTIN_IDS.contains(&spec.spec_id.as_str()) => {
+                        specs[i].command = spec.command;
+                    }
+                    Some(_) => {}
+                    None => specs.push(spec),
                 }
             }
         }
@@ -806,11 +853,36 @@ mod spec_source_tests {
     fn first_party_wins_on_spec_id_collision() {
         // A registry install must never shadow a built-in agent's command.
         let registry = AgentRegistry::with_spec_source(Arc::new(FakeSource(vec![
-            external("opencode"),
+            external("codex"),
         ])));
         let specs = registry.known_specs();
-        let opencode: Vec<&AgentSpec> = specs.iter().filter(|s| s.spec_id == "opencode").collect();
-        assert_eq!(opencode.len(), 1);
-        assert_eq!(opencode[0].command, "opencode acp");
+        let codex: Vec<&AgentSpec> = specs.iter().filter(|s| s.spec_id == "codex").collect();
+        assert_eq!(codex.len(), 1);
+        assert_eq!(codex[0].command, AgentSpec::codex().command);
+    }
+
+    #[test]
+    fn auto_managed_builtin_takes_the_dynamic_command_in_place() {
+        // cursor/opencode/kilo have no npx distribution, so the registry's
+        // downloaded binary replaces the bare CLI — but stays ONE entry with
+        // the built-in's own display name.
+        let registry = AgentRegistry::with_spec_source(Arc::new(FakeSource(vec![
+            external("cursor"),
+        ])));
+        let specs = registry.known_specs();
+        let cursor: Vec<&AgentSpec> = specs.iter().filter(|s| s.spec_id == "cursor").collect();
+        assert_eq!(cursor.len(), 1);
+        assert_eq!(cursor[0].command, "npx -y cursor");
+        assert_eq!(cursor[0].display_name, AgentSpec::cursor().display_name);
+        assert_eq!(specs.len(), AgentSpec::all_known().len());
+    }
+
+    #[test]
+    fn auto_managed_builtin_keeps_bare_command_without_a_dynamic_spec() {
+        // Nothing acquired (offline / no manifest) → pre-existing behaviour.
+        let registry = AgentRegistry::with_spec_source(Arc::new(FakeSource(vec![])));
+        let specs = registry.known_specs();
+        let cursor = specs.iter().find(|s| s.spec_id == "cursor").unwrap();
+        assert_eq!(cursor.command, "cursor-agent acp");
     }
 }

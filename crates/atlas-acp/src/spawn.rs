@@ -228,16 +228,23 @@ pub(crate) fn explain_spawn_failure(spec: &AgentSpec, err: AcpError) -> AcpError
         "Node.js (which provides `npx`) was not found. Install Node.js \
          (https://nodejs.org) and relaunch Atlas. If it is installed, make sure \
          it is on your login shell's PATH."
+    // The three auto-managed built-ins (AUTO_MANAGED_BUILTIN_IDS). Reaching
+    // this branch means the managed download did NOT happen — Atlas normally
+    // fetches these itself at spawn, so the actionable advice is "check your
+    // connection", not "go install it" (though installing the CLI by hand
+    // still works: a PATH binary is used when no managed one is available).
     } else if program == "opencode" {
-        "the OpenCode CLI was not found. Install it from https://opencode.ai \
-         (then optionally run `opencode auth login`) and relaunch Atlas."
+        "OpenCode could not be set up. Atlas downloads it automatically — check \
+         your internet connection and try again. You can also install it \
+         yourself from https://opencode.ai. Sign in with `opencode auth login`."
     } else if program == "cursor-agent" {
-        "the Cursor CLI was not found. Install it from https://cursor.com/cli \
-         and run `cursor-agent login`, then relaunch Atlas."
+        "Cursor could not be set up. Atlas downloads it automatically — check \
+         your internet connection and try again. You can also install the CLI \
+         yourself from https://cursor.com/cli. Sign in with `cursor-agent login`."
     } else if program == "kilo" {
-        "the Kilo Code CLI was not found. Install it with \
-         `npm install -g @kilocode/cli` (or `brew install Kilo-Org/tap/kilo`) \
-         and run `kilo auth login`, then relaunch Atlas."
+        "Kilo Code could not be set up. Atlas downloads it automatically — check \
+         your internet connection and try again. You can also install it with \
+         `npm install -g @kilocode/cli`. Sign in with `kilo auth login`."
     } else if program == "uvx" {
         "uv (which provides `uvx`) was not found. Install uv \
          (https://docs.astral.sh/uv) and relaunch Atlas."
