@@ -767,7 +767,7 @@ function SettingRow({
  * owns the state and `onChange` is fired on click; otherwise we keep
  * internal state seeded by `defaultChecked` (original behavior).
  */
-function Toggle({
+export function Toggle({
   defaultChecked = false,
   checked,
   onChange,

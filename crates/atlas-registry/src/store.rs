@@ -37,6 +37,13 @@ struct StoreInner {
     /// Serializes concurrent downloads of the same agent (two windows
     /// installing / self-healing at once).
     download_locks: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
+    /// Auto-acquired binaries for the built-ins with no npx distribution
+    /// (`atlas_acp::AUTO_MANAGED_BUILTIN_IDS`), keyed by id. Deliberately NOT
+    /// persisted: these are not installs, so they never touch
+    /// `installed.json`. The on-disk extract under `binaries_root` is the real
+    /// cache — this map is just the resolved entry point, refilled from that
+    /// extract (no download) by the first `ensure_builtin` after launch.
+    builtin_binaries: DashMap<String, install_store::ResolvedBinary>,
 }
 
 /// One agent as the marketplace sees it.
@@ -83,6 +90,7 @@ impl RegistryStore {
                 install_path,
                 binaries_root: app_data_dir.join("external-agents"),
                 download_locks: DashMap::new(),
+                builtin_binaries: DashMap::new(),
             }),
         }
     }
@@ -245,6 +253,95 @@ impl RegistryStore {
         Ok(())
     }
 
+    /// Acquire the managed binary for a built-in agent that has no npx
+    /// distribution — cursor / opencode / kilo, i.e.
+    /// `atlas_acp::AUTO_MANAGED_BUILTIN_IDS`. Claude and Codex spawn via
+    /// `npx -y …`, so npm fetches their adapter on first run; these three are
+    /// plain CLIs, and on a machine that never installed them by hand they
+    /// cannot spawn at all. This closes that gap the way Zed does: the
+    /// official per-platform archive from the registry manifest, downloaded
+    /// on demand and cached.
+    ///
+    /// Cache-first — a completed extract is reused (no network), otherwise the
+    /// archive is downloaded and extracted NOW, so the caller must expect this
+    /// to be slow on a cold cache. sha256 is verified whenever the manifest
+    /// publishes one (kilo/opencode do; cursor does not, so it installs
+    /// unverified — same as Zed).
+    ///
+    /// **Never fails a spawn.** Manifest not fetched yet, no binary for this
+    /// platform, offline, checksum mismatch — every failure just leaves the
+    /// built-in's bare-CLI command in place, which is exactly the behaviour
+    /// that existed before (spawn then fails with `explain_spawn_failure`'s
+    /// install hint). Returns whether a managed binary is now available.
+    pub async fn ensure_builtin(&self, id: &str, progress: Option<&ProgressFn>) -> bool {
+        if !atlas_acp::AUTO_MANAGED_BUILTIN_IDS.contains(&id) {
+            return false;
+        }
+        if self.inner.builtin_binaries.contains_key(id) {
+            return true;
+        }
+        let Some(agent) = self.inner.cache.agent(id) else {
+            tracing::debug!(
+                target: "atlas_registry",
+                "built-in {id}: no manifest entry (yet) — using its PATH command"
+            );
+            return false;
+        };
+        let Some(target) = platform_binary(&agent.distribution) else {
+            tracing::debug!(
+                target: "atlas_registry",
+                "built-in {id}: no binary published for {} — using its PATH command",
+                platform_key()
+            );
+            return false;
+        };
+        let _guard = self.download_lock(id).lock_owned().await;
+        // Re-check under the lock: a concurrent spawn may have just finished
+        // the same download.
+        if self.inner.builtin_binaries.contains_key(id) {
+            return true;
+        }
+        match binary::ensure_binary(
+            &self.inner.binaries_root,
+            id,
+            &agent.version,
+            target,
+            progress,
+        )
+        .await
+        {
+            Ok(resolved) => {
+                self.inner.builtin_binaries.insert(id.to_string(), resolved);
+                true
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "atlas_registry",
+                    "built-in {id}: managed binary unavailable ({e}) — falling back to its PATH command"
+                );
+                false
+            }
+        }
+    }
+
+    /// Whether `id`'s managed built-in binary is acquired and ready to spawn.
+    pub fn builtin_ready(&self, id: &str) -> bool {
+        self.inner.builtin_binaries.contains_key(id)
+    }
+
+    /// Absolute path to `id`'s managed built-in executable, once acquired.
+    ///
+    /// Exists so the host can run the agent's OWN CLI for side flows the ACP
+    /// session can't cover — signing in, above all. These binaries live in
+    /// Atlas's app-data dir and never land on `PATH`, so this is the only way
+    /// anything outside the spawn path can reach them.
+    pub fn builtin_binary_path(&self, id: &str) -> Option<String> {
+        self.inner
+            .builtin_binaries
+            .get(id)
+            .map(|r| r.entry_cmd.clone())
+    }
+
     pub fn is_installed(&self, id: &str) -> bool {
         self.inner
             .installs
@@ -263,6 +360,23 @@ impl RegistryStore {
             .values()
             .filter(|i| i.is_active())
             .filter_map(|inst| self.spec_for(inst))
+            .collect()
+    }
+
+    /// Specs carrying the acquired binary command for auto-managed built-ins.
+    /// Only `command` is consumed downstream — `AgentRegistry::known_specs`
+    /// grafts it onto the built-in's existing entry and keeps Atlas's own
+    /// display name, so these placeholder names are never shown.
+    fn builtin_specs(&self) -> Vec<atlas_acp::AgentSpec> {
+        self.inner
+            .builtin_binaries
+            .iter()
+            .map(|e| atlas_acp::AgentSpec {
+                spec_id: e.key().clone(),
+                display_name: e.key().clone(),
+                command: binary_command(e.key(), e.value()),
+                help_url: None,
+            })
             .collect()
     }
 
@@ -330,8 +444,17 @@ impl RegistryStore {
 }
 
 impl atlas_acp::SpecSource for RegistryStore {
+    /// Installed externals first, auto-managed built-ins LAST — deliberately.
+    /// One id can have both (a machine that installed OpenCode from the
+    /// marketplace before it shipped as a built-in still carries that install
+    /// record), and `known_specs` applies these in order, so the last write
+    /// wins. The managed built-in is the one that tracks the current manifest
+    /// version; an install record is frozen at install time and would pin a
+    /// stale binary.
     fn extra_specs(&self) -> Vec<atlas_acp::AgentSpec> {
-        self.installed_specs()
+        let mut specs = self.installed_specs();
+        specs.extend(self.builtin_specs());
+        specs
     }
 }
 
@@ -400,12 +523,7 @@ fn synthesize_command(binaries_root: &std::path::Path, inst: &InstalledAgent) ->
                 env: target.env.clone(),
             },
         };
-        let program = if resolved.entry_cmd == "node" {
-            atlas_acp::resolve_program("node").unwrap_or_else(|| "node".to_string())
-        } else {
-            resolved.entry_cmd.clone()
-        };
-        return Some(json_stdio_spec(&inst.id, &program, &resolved.args, &resolved.env));
+        return Some(binary_command(&inst.id, &resolved));
     }
     if let Some(pkg) = &inst.distribution.npx {
         return Some(package_command("npx -y", &pkg.package, &pkg.args, &pkg.env, &inst.id));
@@ -414,6 +532,18 @@ fn synthesize_command(binaries_root: &std::path::Path, inst: &InstalledAgent) ->
         return Some(package_command("uvx", &pkg.package, &pkg.args, &pkg.env, &inst.id));
     }
     None
+}
+
+/// A downloaded binary's entry point → the JSON stdio spec the SDK spawns.
+/// `"node"` entries resolve through the (possibly Atlas-managed) toolchain;
+/// anything else is already an absolute path inside the extract dir.
+fn binary_command(id: &str, resolved: &install_store::ResolvedBinary) -> String {
+    let program = if resolved.entry_cmd == "node" {
+        atlas_acp::resolve_program("node").unwrap_or_else(|| "node".to_string())
+    } else {
+        resolved.entry_cmd.clone()
+    };
+    json_stdio_spec(id, &program, &resolved.args, &resolved.env)
 }
 
 fn package_command(
@@ -482,7 +612,7 @@ fn json_stdio_spec(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::{BinaryTarget, PackageTarget};
+    use crate::manifest::{BinaryTarget, PackageTarget, RegistryManifest};
 
     fn installed(dist: Distribution) -> InstalledAgent {
         InstalledAgent {
@@ -539,5 +669,143 @@ mod tests {
         assert_eq!(spec["type"], "stdio");
         assert!(spec["command"].as_str().unwrap().ends_with("/agent"));
         assert!(spec["env"].as_array().unwrap().iter().any(|e| e["name"] == "FOO"));
+    }
+
+    fn empty_store() -> (RegistryStore, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        (RegistryStore::new(dir.path().to_path_buf()), dir)
+    }
+
+    #[tokio::test]
+    async fn ensure_builtin_ignores_agents_that_are_not_auto_managed() {
+        // Claude/Codex ship via npx and must never take this path; neither may
+        // an arbitrary registry id.
+        let (store, _dir) = empty_store();
+        assert!(!store.ensure_builtin("claude-code-ts", None).await);
+        assert!(!store.ensure_builtin("codex", None).await);
+        assert!(!store.ensure_builtin("amp-acp", None).await);
+    }
+
+    #[tokio::test]
+    async fn ensure_builtin_falls_back_when_no_manifest_is_cached() {
+        // Offline first launch: no manifest → no managed binary, no error, and
+        // the built-in keeps its bare PATH command.
+        let (store, _dir) = empty_store();
+        for id in atlas_acp::AUTO_MANAGED_BUILTIN_IDS {
+            assert!(!store.ensure_builtin(id, None).await, "{id} must not resolve");
+            assert!(!store.builtin_ready(id));
+        }
+        assert!(<RegistryStore as atlas_acp::SpecSource>::extra_specs(&store).is_empty());
+    }
+
+    #[tokio::test]
+    async fn ensure_builtin_falls_back_when_the_platform_has_no_binary() {
+        // The manifest knows cursor, but publishes nothing runnable here —
+        // no download is attempted and the bare PATH command stands.
+        let (store, _dir) = empty_store();
+        store.inner.cache.set_manifest_for_tests(RegistryManifest {
+            version: "1.0.0".into(),
+            agents: vec![RegistryAgent {
+                id: "cursor".into(),
+                name: "Cursor".into(),
+                version: "2026.08.11".into(),
+                description: None,
+                repository: None,
+                website: None,
+                authors: None,
+                license: None,
+                icon: None,
+                distribution: Distribution {
+                    // Deliberately a platform we are not running on.
+                    binary: Some(HashMap::from([(
+                        "some-other-platform".to_string(),
+                        BinaryTarget {
+                            archive: "https://example.invalid/x.tar.gz".into(),
+                            cmd: "./cursor-agent".into(),
+                            args: vec!["acp".into()],
+                            env: HashMap::new(),
+                            sha256: None,
+                        },
+                    )])),
+                    npx: None,
+                    uvx: None,
+                },
+            }],
+        });
+        assert!(!store.ensure_builtin("cursor", None).await);
+        assert!(!store.builtin_ready("cursor"));
+    }
+
+    #[test]
+    fn acquired_builtin_is_offered_as_a_spec_carrying_the_binary_command() {
+        let (store, _dir) = empty_store();
+        store.inner.builtin_binaries.insert(
+            "cursor".to_string(),
+            install_store::ResolvedBinary {
+                cache_dir: "/tmp/root/cursor/v1".into(),
+                entry_cmd: "/tmp/root/cursor/v1/dist-package/cursor-agent".into(),
+                args: vec!["acp".into()],
+                env: HashMap::new(),
+            },
+        );
+        let specs = <RegistryStore as atlas_acp::SpecSource>::extra_specs(&store);
+        let cursor = specs.iter().find(|s| s.spec_id == "cursor").unwrap();
+        let spec: serde_json::Value = serde_json::from_str(&cursor.command).unwrap();
+        assert_eq!(spec["command"], "/tmp/root/cursor/v1/dist-package/cursor-agent");
+        assert_eq!(spec["args"][0], "acp");
+    }
+
+    #[test]
+    fn managed_builtin_binary_outranks_a_stale_install_record() {
+        // Seen live: a machine that installed OpenCode from the marketplace
+        // before it shipped as a built-in has BOTH an install record and a
+        // managed binary. The managed one tracks the current manifest version
+        // and must be the command that survives into `known_specs`.
+        let (store, _dir) = empty_store();
+        let mut binaries = HashMap::new();
+        binaries.insert(
+            platform_key().to_string(),
+            BinaryTarget {
+                archive: "https://x/opencode-old.zip".into(),
+                cmd: "./opencode".into(),
+                args: vec!["acp".into()],
+                env: HashMap::new(),
+                sha256: None,
+            },
+        );
+        let mut stale = installed(Distribution {
+            binary: Some(binaries),
+            npx: None,
+            uvx: None,
+        });
+        stale.id = "opencode".into();
+        stale.resolved_binary = Some(install_store::ResolvedBinary {
+            cache_dir: "/stale".into(),
+            entry_cmd: "/stale/opencode".into(),
+            args: vec!["acp".into()],
+            env: HashMap::new(),
+        });
+        store
+            .inner
+            .installs
+            .write()
+            .installed
+            .insert("opencode".into(), stale);
+        store.inner.builtin_binaries.insert(
+            "opencode".to_string(),
+            install_store::ResolvedBinary {
+                cache_dir: "/fresh".into(),
+                entry_cmd: "/fresh/opencode".into(),
+                args: vec!["acp".into()],
+                env: HashMap::new(),
+            },
+        );
+
+        let acp = atlas_acp::AgentRegistry::with_spec_source(Arc::new(store));
+        let specs = acp.known_specs();
+        let opencode: Vec<_> = specs.iter().filter(|s| s.spec_id == "opencode").collect();
+        assert_eq!(opencode.len(), 1, "one entry per agent");
+        let cmd: serde_json::Value = serde_json::from_str(&opencode[0].command).unwrap();
+        assert_eq!(cmd["command"], "/fresh/opencode");
     }
 }

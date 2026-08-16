@@ -19,9 +19,12 @@ import { agents } from "../lib/agents-api";
 import {
   CLAUDE_PERMISSION_MODE_LABEL,
   agentTypeFromPluginId,
+  pluginIdForAgent,
   type SwitchableAgent,
 } from "@/types/agent";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { useAgentAcquire, acquirePercent } from "../lib/agent-acquire";
+import { canSignIn, promptSignIn } from "../lib/agent-signin";
 import {
   cycleChatAgent,
   nextAgentForTab,
@@ -313,6 +316,8 @@ function AcpModePicker({ tabId }: { tabId: string }) {
   const currentMode = useChatStore((s) => s.sessions[tabId]?.acpCurrentMode);
   const availableModes = useChatStore((s) => s.sessions[tabId]?.acpAvailableModes);
   const pending = useChatStore((s) => s.sessions[tabId]?.acpModesPending ?? false);
+  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType);
+  const acquiring = useAgentAcquire(pluginIdForAgent(agentType));
   const { setAcpMode } = useChatStore.use.actions();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -327,6 +332,24 @@ function AcpModePicker({ tabId }: { tabId: string }) {
   }, [open]);
 
   const hasModes = !!availableModes && availableModes.length > 0;
+
+  // Atlas is downloading this agent's binary (first-ever use of Cursor /
+  // OpenCode / Kilo — tens of MB, ~20 s). Takes priority over everything
+  // else here, cached modes included: nothing can start until it lands, and a
+  // silent stall is exactly what this pill exists to prevent.
+  if (acquiring) {
+    const pct = acquirePercent(acquiring);
+    const label = agentMeta(agentType ?? "").label;
+    return (
+      <span
+        className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-tertiary)] select-none tabular-nums"
+        title={`Downloading ${label} — this happens once.`}
+      >
+        <Loader2 size={11} className="shrink-0 animate-spin" />
+        {pct !== null ? `Setting up ${label}… ${pct}%` : `Setting up ${label}…`}
+      </span>
+    );
+  }
 
   // Still booting the session with nothing cached to show — a pure loading
   // pill so the user sees the agent coming up instead of an empty composer.
@@ -853,14 +876,22 @@ export function MessageInput({
 
   // An auth-classified turn failure routes to the sign-in flow (P15) instead
   // of dying as a generic banner. Claude sessions open the login dialog; the
-  // Codex sign-in pill is handled in ChatComposer (it owns that probe state).
+  // Codex sign-in pill is handled in ChatComposer (it owns that probe state);
+  // the auto-managed built-ins get an actionable toast — they have no bespoke
+  // surface, and without one their `Authentication required` error was a dead
+  // end the user could not act on (their CLI isn't on PATH to log in by hand).
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
-      if (detail?.agentType !== "claude-code") return;
+      const at = detail?.agentType;
+      if (!at) return;
       const sess = useChatStore.getState().sessions[tabId];
       if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;
-      openLoginDialog();
+      if (at === "claude-code") {
+        openLoginDialog();
+        return;
+      }
+      if (canSignIn(at)) promptSignIn(at);
     };
     window.addEventListener("atlas:auth-required", handler);
     return () => window.removeEventListener("atlas:auth-required", handler);

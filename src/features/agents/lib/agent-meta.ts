@@ -8,9 +8,11 @@ import {
   AGENT_LABEL,
   PLUGIN_ID_BY_AGENT,
   SWITCHABLE_AGENTS,
+  isOptionalBuiltinAgent,
   type AgentType,
   type FirstPartyAgent,
 } from "@/types/agent";
+import { useProjectStore } from "@/features/project/stores/project-store";
 import { useAgentRegistryStore } from "../stores/agent-registry-store";
 
 export interface AgentMeta {
@@ -84,21 +86,33 @@ function prettifyId(id: string): string {
     .join(" ");
 }
 
+/** Whether the user turned this optional built-in off in Settings → Agents.
+ *  Always false for Claude / Codex / Cersei and for external agents (which are
+ *  uninstalled rather than disabled). Rust enforces the same rule at spawn —
+ *  see `AppSettings::builtin_disabled`. */
+export function isAgentDisabled(agentTypeOrPluginId: string): boolean {
+  if (!isOptionalBuiltinAgent(agentTypeOrPluginId)) return false;
+  return useProjectStore.getState().settings.disabledBuiltinAgents.includes(agentTypeOrPluginId);
+}
+
 /** The dynamic switch list: first-party agents in their fixed order, then
  *  installed external plugin ids sorted by label. Drives option+/ cycling and
- *  the composer "+" agent picker. */
+ *  the composer "+" agent picker. Agents the user turned off are omitted —
+ *  that is what "off" means everywhere the user picks an agent. */
 export function switchableAgentIds(): string[] {
   const { plugins } = useAgentRegistryStore.getState();
   const externals = plugins
     .filter((p) => p.external)
     .map((p) => p.plugin_id)
     .sort((a, b) => agentMeta(a).label.localeCompare(agentMeta(b).label));
-  return [...SWITCHABLE_AGENTS, ...externals];
+  return [...SWITCHABLE_AGENTS, ...externals].filter((id) => !isAgentDisabled(id));
 }
 
 /** Reactive variant for components that must re-render when agents are
- *  installed/uninstalled. Subscribes to the primitive signature only. */
+ *  installed/uninstalled — or turned on/off, hence the settings subscription
+ *  alongside the registry signature. */
 export function useSwitchableAgents(): string[] {
   useAgentRegistryStore((s) => s.signature);
+  useProjectStore((s) => s.settings.disabledBuiltinAgents);
   return switchableAgentIds();
 }
