@@ -117,11 +117,20 @@ export interface AgentSignInRequest {
   requestId: number;
 }
 
-let signInSeq = 0;
-const signInCallbacks = new Map<number, () => void>();
+export interface SignInCallbacks {
+  /** Retry whatever failed (a bind, typically) once credentials land. */
+  onSignedIn?: () => void;
+  /** The dialog was closed WITHOUT signing in. Callers use this to re-arm
+   *  their failure reporting (NOT to retry — a retry would fail again and
+   *  reopen the dialog in a loop). */
+  onDismissed?: () => void;
+}
 
-/** Retrieve-and-drop the retry callback registered for a dialog request. */
-export function takeSignInCallback(requestId: number): (() => void) | undefined {
+let signInSeq = 0;
+const signInCallbacks = new Map<number, SignInCallbacks>();
+
+/** Retrieve-and-drop the callbacks registered for a dialog request. */
+export function takeSignInCallback(requestId: number): SignInCallbacks | undefined {
   const cb = signInCallbacks.get(requestId);
   signInCallbacks.delete(requestId);
   return cb;
@@ -129,11 +138,14 @@ export function takeSignInCallback(requestId: number): (() => void) | undefined 
 
 /** Open the agent sign-in dialog (same modal treatment as Claude/Codex),
  *  shared by the bind-failure and turn-failure paths so both offer the same
- *  one-click recovery. `onSignedIn` lets the caller retry whatever failed
- *  (a bind, typically) once credentials land. */
-export function promptSignIn(agentType: string, onSignedIn?: () => void): void {
+ *  one-click recovery. */
+export function promptSignIn(
+  agentType: string,
+  onSignedIn?: () => void,
+  onDismissed?: () => void,
+): void {
   const requestId = ++signInSeq;
-  if (onSignedIn) signInCallbacks.set(requestId, onSignedIn);
+  if (onSignedIn || onDismissed) signInCallbacks.set(requestId, { onSignedIn, onDismissed });
   window.dispatchEvent(
     new CustomEvent<AgentSignInRequest>(AGENT_SIGNIN_EVENT, {
       detail: { agentType, requestId },

@@ -186,14 +186,26 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   const contentRef = useRef<HTMLDivElement>(null);
   const cacheKey = `${tabId}:${acpSessionId}`;
   const agent = switchable(agentType);
-  const agentLabel = agentMeta(agent).label;
-  const agentIcon =
-    AGENT_ICON[agent] ??
-    (agentMeta(agent).iconDataUrl ? (
-      <ExternalAgentIcon dataUrl={agentMeta(agent).iconDataUrl!} size={14} />
-    ) : (
-      <AgentMonogram label={agentMeta(agent).label} size={14} />
-    ));
+  // Only the just-sent user message plays the bubble entrance (id-scoped —
+  // see UserRowView). Primitive selector: changes once per user send.
+  const justSentMessageId = useChatStore((s) => s.sessions[tabId]?.justSentMessageId);
+  const { label: agentLabel, iconDataUrl: agentIconUrl } = agentMeta(agent);
+  // MEMOIZED, and it must stay that way: this element is handed to every
+  // row, and rows are memo()'d with default shallow compare. The previous
+  // un-memoized `?? <fallback JSX>` allocated a fresh element per Transcript
+  // render for external agents — new prop identity → every row re-rendered
+  // on every streaming delta / window growth / scroll flip, which is what
+  // reintroduced whole-thread blanking during fast scroll.
+  const agentIcon = useMemo(
+    () =>
+      AGENT_ICON[agent] ??
+      (agentIconUrl ? (
+        <ExternalAgentIcon dataUrl={agentIconUrl} size={14} />
+      ) : (
+        <AgentMonogram label={agentLabel} size={14} />
+      )),
+    [agent, agentIconUrl, agentLabel],
+  );
 
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   /** Turns whose tool-call block the reader has opened. */
@@ -644,6 +656,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
                 tabId={tabId}
                 agentLabel={agentLabel}
                 agentIcon={agentIcon}
+                justSentMessageId={justSentMessageId}
                 onExpandTurn={toggleTurn}
                 // Absolute position in the thread, so the newest messages —
                 // the ones on screen after a history load — are parsed first.
@@ -682,7 +695,13 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
       <div
         aria-hidden
         className={cn(
-          "pointer-events-none absolute bottom-0 left-0 right-0 z-[1] h-[42px] transition-opacity duration-200",
+          // `-bottom-[2px]` + 2px extra height: the fade OVERSHOOTS the
+          // container edge. At fractional UI scales the fade's bottom and the
+          // scroller's bottom can round to different device pixels, and during
+          // scroll repaints a 1-2px hairline of text flashed through the seam
+          // above the composer. The overshoot is solid bg-surface over the
+          // inter-panel gap — invisible, and it absorbs the rounding both ways.
+          "pointer-events-none absolute -bottom-[2px] left-0 right-0 z-[1] h-[44px] transition-opacity duration-200",
           more ? "opacity-100" : "opacity-0",
         )}
         style={{
@@ -701,6 +720,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
 /** Row dispatch. Kept out of the list body so the map stays flat. */
 function RowView({
   row,
+  justSentMessageId,
   tabId,
   agentLabel,
   agentIcon,
@@ -711,6 +731,7 @@ function RowView({
   onDiagram,
 }: {
   row: Row;
+  justSentMessageId?: string;
   tabId: string;
   agentLabel: string;
   agentIcon: React.ReactNode;
@@ -722,7 +743,14 @@ function RowView({
 }) {
   switch (row.kind) {
     case RowKind.User:
-      return <UserRowView row={row} priority={priority} onToggleExpand={onToggleExpand} />;
+      return (
+        <UserRowView
+          row={row}
+          priority={priority}
+          justSent={row.id === justSentMessageId}
+          onToggleExpand={onToggleExpand}
+        />
+      );
     case RowKind.Prose:
       return (
         <ProseRowView row={row} agentLabel={agentLabel} agentIcon={agentIcon} priority={priority} />

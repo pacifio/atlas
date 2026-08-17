@@ -196,6 +196,9 @@ export interface ChatSession {
   claudePermissionMode?: ClaudePermissionMode;
   /** True only after the user explicitly changes Claude's mode in this tab. */
   claudePermissionModeExplicit?: boolean;
+  /** Id of the user message sent JUST NOW — the only row that plays the
+   *  composer-side bubble entrance animation (see UserRowView). */
+  justSentMessageId?: string;
   /** ACP agent process bound to this tab (set eagerly when the tab mounts). */
   acpAgentId?: string;
   /**

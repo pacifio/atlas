@@ -659,6 +659,11 @@ export const useChatStore = createSelectors(
           }),
         switchChatAgent: (tabId, agentType) =>
           set((s) => {
+            // Store-boundary guard: agentType feeds plugin resolution,
+            // localStorage cache keys, and Tauri invoke args — a non-string
+            // (a leaked DOM event, once) poisons all three. Mirrors the
+            // total-by-construction rule on agentMeta().
+            if (typeof agentType !== "string") return;
             const sess = s.sessions[tabId];
             if (!sess) return;
             // Drop any pending permissions that belonged to the old binding so a
@@ -776,6 +781,11 @@ export const useChatStore = createSelectors(
             if (role === "user") {
               if (!session.firstUserContent) session.firstUserContent = content;
               session.userMessageCount = (session.userMessageCount ?? 0) + 1;
+              // The ONE row allowed to play the bubble entrance. Resume /
+              // replay paths stamp messages "now", so a timestamp heuristic
+              // animated whole restored threads (and every row mounted during
+              // an early scroll) — id-scoping keeps it to the actual send.
+              session.justSentMessageId = msg.id;
             }
           }),
         appendToolCall: (sessionId, toolName, input) =>

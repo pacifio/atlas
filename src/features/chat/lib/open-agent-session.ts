@@ -192,6 +192,11 @@ export async function openAgentSession({
  * mid-turn spawns a new chat instead of killing the live one.
  */
 export function openNewAgentChat(agent?: SwitchableAgent): void {
+  // This is a public entry point that WILL get wired as an event handler again
+  // someday — a React SyntheticEvent arriving here once reached the store as
+  // agentType and broke the whole bind pipeline. Anything non-string means
+  // "no agent preference".
+  if (typeof agent !== "string") agent = undefined;
   const layout = useLayoutStore.getState();
   const chat = useChatStore.getState();
   const { addTab, setActiveTab } = layout.actions;
@@ -226,7 +231,14 @@ export function openNewAgentChat(agent?: SwitchableAgent): void {
 
   // No chat tab open, or the current chat is mid-turn → fresh tab.
   const id = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  addTab({ id, type: "chat", title: "Agents", closable: true, dirty: false, data: {} });
+  addTab({
+    id,
+    type: "chat",
+    title: "Agents",
+    closable: true,
+    dirty: false,
+    data: {},
+  });
   createSession(id);
   if (agent) switchChatAgent(id, agent);
   setActiveTab(id);

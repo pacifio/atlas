@@ -479,10 +479,17 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             // route that raises `atlas:auth-required`. Offer the one-click fix
             // instead of dumping a raw protocol error, and rebind once it lands.
             if (at && canSignIn(at) && isAuthError(err)) {
-              promptSignIn(at, () => {
-                reportedBindFailures.delete(key);
-                void ensureBound();
-              });
+              promptSignIn(
+                at,
+                () => {
+                  reportedBindFailures.delete(key);
+                  void ensureBound();
+                },
+                // Dismissed without signing in: re-arm reporting only. The
+                // dedupe key used to stay set forever, silently swallowing
+                // every subsequent bind failure for this tab+agent.
+                () => reportedBindFailures.delete(key),
+              );
             } else {
               toast.error(String((err as Error)?.message ?? err));
             }
@@ -932,7 +939,12 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
                   setPlansPanelOpen((v) => !v);
                   setBashPanelOpen(false);
                 }}
-                onNewSession={openNewAgentChat}
+                // Zero-arg wrapper, NOT a bare reference: React would call
+                // openNewAgentChat(SyntheticMouseEvent) and the event object
+                // sailed through `agent?` into the store as agentType —
+                // poisoning the bind ("JSON.stringify cannot serialize cyclic
+                // structures" from agents_spawn) and killing the composer.
+                onNewSession={() => openNewAgentChat()}
               />
             </div>
           </div>
