@@ -780,14 +780,12 @@ export function MessageInput({
   const enterToSend = useProjectStore((s) => s.settings.enterToSend);
   // `agentType` widened to a SwitchableAgent (drops "custom") for the composer
   // sub-components (session scope, agent switcher) + the label lookup.
-  const switchableAgent: SwitchableAgent =
-    agentType === "codex" ||
-    agentType === "opencode" ||
-    agentType === "cursor" ||
-    agentType === "kilo" ||
-    agentType === "cersei"
-      ? agentType
-      : "claude-code";
+  // The union is open (registry externals are valid agent types) — only the
+  // legacy "custom" placeholder collapses to the default. The old five-literal
+  // ladder here silently remapped every EXTERNAL agent to claude-code, which
+  // pointed the grouped picker's current-agent highlight (and session scope)
+  // at the wrong agent.
+  const switchableAgent: SwitchableAgent = agentType === "custom" ? "claude-code" : agentType;
   // Native Cersei agent only: BYOK provider + model selection for the composer.
   const cerseiProvider = useChatStore((s) => s.sessions[tabId]?.cerseiProvider ?? "");
   const cerseiModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel ?? "");

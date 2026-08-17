@@ -47,9 +47,19 @@ function firstPartyOf(id: string): FirstPartyAgent | null {
 }
 
 /** Non-reactive resolver — safe from event handlers, stores, and render paths
- *  that already re-render on registry changes. */
-export function agentMeta(agentTypeOrPluginId: string): AgentMeta {
-  const id = agentTypeOrPluginId;
+ *  that already re-render on registry changes.
+ *
+ *  TOTAL by construction: this is the identity chokepoint every surface
+ *  (glyphs, pills, sidebar, memory, timeline) funnels through, and a single
+ *  non-string slipping in crashed the whole tree ("id.startsWith is not a
+ *  function" inside AgentMark, caught only by the app-level error boundary).
+ *  A missing id resolves to the Claude default instead of throwing — the same
+ *  fallback the rest of the app uses for absent agent identity. */
+export function agentMeta(agentTypeOrPluginId: string | null | undefined): AgentMeta {
+  const id =
+    typeof agentTypeOrPluginId === "string" && agentTypeOrPluginId.length > 0
+      ? agentTypeOrPluginId
+      : "claude-code";
   const firstParty = firstPartyOf(id);
   if (firstParty) {
     return {
@@ -92,7 +102,11 @@ function prettifyId(id: string): string {
  *  see `AppSettings::builtin_disabled`. */
 export function isAgentDisabled(agentTypeOrPluginId: string): boolean {
   if (!isOptionalBuiltinAgent(agentTypeOrPluginId)) return false;
-  return useProjectStore.getState().settings.disabledBuiltinAgents.includes(agentTypeOrPluginId);
+  // `?? []`: settings hydrate async — a pre-hydration read must mean
+  // "nothing disabled", never a crash.
+  return (useProjectStore.getState().settings.disabledBuiltinAgents ?? []).includes(
+    agentTypeOrPluginId,
+  );
 }
 
 /** The dynamic switch list: first-party agents in their fixed order, then
