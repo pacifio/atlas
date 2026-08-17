@@ -83,11 +83,21 @@ export const UserRowView = memo(function UserRowView({
             inline content, and the moment the bubble holds block elements
             (paragraphs, a list, a fence) it stops clamping at all. */}
         <div
-          className="atlas-prose atlas-prose--user min-w-0 max-w-full rounded-2xl rounded-br-md bg-[var(--accent-primary-muted)] px-3.5 py-2 select-text"
+          className={cn(
+            // Apple-squircle read: one big continuous radius (no clipped
+            // corner), a touch more padding — iMessage-adjacent geometry.
+            "atlas-prose atlas-prose--user min-w-0 max-w-full rounded-[20px] bg-[var(--accent-primary-muted)] px-4 py-2.5 select-text",
+            // Entrance only for a message sent JUST NOW — history rows mounted
+            // by the scroll window must not replay it (see globals.css).
+            Date.now() - Date.parse(row.timestamp) < 3000 && "atlas-bubble-in",
+          )}
           style={
             row.expanded
               ? undefined
-              : { maxHeight: M.userMaxLines * M.userLineHeight, overflow: "hidden" }
+              : {
+                  maxHeight: M.userMaxLines * M.userLineHeight,
+                  overflow: "hidden",
+                }
           }
         >
           <CachedMarkdown source={row.text} unstyled priority={priority} />

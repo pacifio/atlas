@@ -686,7 +686,12 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
           more ? "opacity-100" : "opacity-0",
         )}
         style={{
-          background: "linear-gradient(to bottom, transparent, var(--bg-surface))",
+          // The last ~quarter is FULLY solid: a plain two-stop gradient only
+          // reaches 100% opacity at the very last pixel, and the ~97%-opaque
+          // band just above the composer let white text ghost through the
+          // seam (subtle but visible on AMOLED black).
+          background:
+            "linear-gradient(to bottom, transparent, var(--bg-surface) 72%, var(--bg-surface))",
         }}
       />
     </div>

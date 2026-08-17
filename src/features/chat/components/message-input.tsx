@@ -1583,14 +1583,12 @@ export function MessageInput({
             // also swallowed clicks on the menu's first row (the pill sets
             // `pointer-events-auto`). Raising the context is the fix; raising
             // the menus themselves cannot work from inside it.
-            "relative z-30 rounded-xl border border-[var(--border-default)] bg-[var(--bg-secondary)]",
+            // Two-layer shell: this OUTER muted layer carries the toolbar as
+            // its exposed bottom strip; the INNER surface below holds the
+            // input + send button (the focus ring lives there — the "active
+            // field" is the input surface, not the toolbar).
+            "relative z-30 rounded-2xl border border-[var(--border-default)] bg-[var(--bg-secondary)]",
             "shadow-[0_8px_24px_rgba(0,0,0,0.35)]",
-            // Soft macOS-style "active field" glow on focus — a faint
-            // accent ring on top of the border shift (the border alone is
-            // near-invisible against the black surface).
-            "transition-[border-color,box-shadow] duration-150",
-            "focus-within:border-[var(--border-focus)]",
-            "focus-within:ring-1 focus-within:ring-[var(--accent-primary)]/20",
             // Drag-over highlight: a clear accent ring while OS files hover.
             isDropTarget && "border-[var(--accent-primary)] ring-2 ring-[var(--accent-primary)]/40",
             // Hard-disable when the bound agent isn't ready. Dim only — the
@@ -1607,7 +1605,7 @@ export function MessageInput({
           onFocusCapture={handleFocusCapture}
         >
           {githubSyncing !== null && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-[var(--bg-base)]/40 backdrop-blur-[1px]">
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[var(--bg-base)]/40 backdrop-blur-[1px]">
               <span className="flex items-center gap-2 rounded-full bg-[var(--bg-elevated)] px-3 py-1 text-[11px] font-medium text-[var(--text-secondary)] shadow">
                 <Loader2 size={12} className="animate-spin" />
                 Syncing {githubSyncing}…
@@ -1615,75 +1613,139 @@ export function MessageInput({
             </div>
           )}
           {isDropTarget && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-[var(--accent-primary)]/8 backdrop-blur-[1px]">
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[var(--accent-primary)]/8 backdrop-blur-[1px]">
               <span className="rounded-full bg-[var(--bg-elevated)] px-3 py-1 text-[11px] font-medium text-[var(--text-secondary)] shadow">
                 Drop files to attach
               </span>
             </div>
           )}
-          {stagedImages.length > 0 && (
-            <div className="flex flex-wrap gap-2 px-3 pt-3">
-              {stagedImages.map((img, i) => {
-                const src = `data:${img.mimeType};base64,${img.dataBase64}`;
-                return (
-                  <div key={i} className="relative group">
-                    <img
-                      src={src}
-                      alt="attachment"
-                      className="h-14 w-14 object-cover rounded-lg border border-[var(--border-default)]"
-                    />
-                    <button
-                      onClick={() => setStagedImages((prev) => prev.filter((_, j) => j !== i))}
-                      className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-4 h-4 rounded-full bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                      title="Remove image"
-                    >
-                      <X size={9} />
-                    </button>
-                    {/* Zed-style hover preview — a larger floating image above the
-                        thumbnail. `pointer-events-none` so it never blocks the
-                        remove button; only shown on hover. */}
-                    <div className="pointer-events-none absolute bottom-full left-0 z-50 mb-2 hidden group-hover:block">
+          {/* Inner input surface — nested card with its own border + focus
+              glow, sitting proud of the muted shell (reference: the Skiper
+              double-layer composer). The send button lives INSIDE it. */}
+          <div
+            className={cn(
+              "relative m-1 rounded-xl border border-[var(--border-default)] bg-[var(--bg-base)]",
+              "transition-[border-color,box-shadow] duration-150",
+              // Focus treatment at HALF strength: the full border-focus +
+              // /20 accent ring read far too loud on the nested surface.
+              "focus-within:border-[color-mix(in_srgb,var(--border-focus)_50%,var(--border-default))]",
+              "focus-within:ring-1 focus-within:ring-[var(--accent-primary)]/10",
+            )}
+          >
+            {stagedImages.length > 0 && (
+              <div className="flex flex-wrap gap-2 px-3 pt-3">
+                {stagedImages.map((img, i) => {
+                  const src = `data:${img.mimeType};base64,${img.dataBase64}`;
+                  return (
+                    <div key={i} className="relative group">
                       <img
                         src={src}
-                        alt=""
-                        className="max-h-[320px] max-w-[400px] rounded-lg border border-[var(--border-default)] object-contain bg-[var(--bg-elevated)] shadow-[var(--shadow-overlay)]"
+                        alt="attachment"
+                        className="h-14 w-14 object-cover rounded-lg border border-[var(--border-default)]"
                       />
+                      <button
+                        onClick={() => setStagedImages((prev) => prev.filter((_, j) => j !== i))}
+                        className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-4 h-4 rounded-full bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                        title="Remove image"
+                      >
+                        <X size={9} />
+                      </button>
+                      {/* Zed-style hover preview — a larger floating image above the
+                        thumbnail. `pointer-events-none` so it never blocks the
+                        remove button; only shown on hover. */}
+                      <div className="pointer-events-none absolute bottom-full left-0 z-50 mb-2 hidden group-hover:block">
+                        <img
+                          src={src}
+                          alt=""
+                          className="max-h-[320px] max-w-[400px] rounded-lg border border-[var(--border-default)] object-contain bg-[var(--bg-elevated)] shadow-[var(--shadow-overlay)]"
+                        />
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {/* Only the text area is pointer-blocked while `disabled`:
+                  );
+                })}
+              </div>
+            )}
+            {/* Only the text area is pointer-blocked while `disabled`:
               `pointer-events-none` stops click-to-focus/typing AND the focus
               event, so we never trigger the agent-bind listener against a CLI
               that isn't ready. The toolbar below stays live so the agent /
               model pickers remain reachable. */}
-          <div className={cn(disabled && "pointer-events-none")}>
-            {LazyChatInput ? (
-              <LazyChatInput
-                ref={inputRef}
-                initialValue={value}
-                placeholder={effectivePlaceholder}
-                onChange={setValue}
-                onSubmit={submit}
-                enterToSend={enterToSend}
-                onMentionTrigger={setTrigger}
-                // The native agent has no slash commands — suppressing the
-                // trigger here (rather than showing an empty picker) keeps "/"
-                // as plain text for cersei.
-                onSlashTrigger={agentType === "cersei" ? undefined : setSlashTrigger}
-                onPasteImages={handlePasteImages}
-                keyInterceptor={keyInterceptor}
-              />
-            ) : (
-              // Same-height empty slot so the panel layout doesn't reflow when
-              // CodeMirror lands. Non-interactive — by the time the user can
-              // visually find this region the chunk has typically resolved.
-              <div aria-hidden="true" style={{ minHeight: 44 }} className="px-4 pt-3 pb-1" />
-            )}
+            {/* px padding (not rem — see the send button's geometry note):
+                clears the 28px button + 8px inset at any UI scale. */}
+            <div className={cn("pr-[40px]", disabled && "pointer-events-none")}>
+              {LazyChatInput ? (
+                <LazyChatInput
+                  ref={inputRef}
+                  initialValue={value}
+                  placeholder={effectivePlaceholder}
+                  onChange={setValue}
+                  onSubmit={submit}
+                  enterToSend={enterToSend}
+                  onMentionTrigger={setTrigger}
+                  // The native agent has no slash commands — suppressing the
+                  // trigger here (rather than showing an empty picker) keeps "/"
+                  // as plain text for cersei.
+                  onSlashTrigger={agentType === "cersei" ? undefined : setSlashTrigger}
+                  onPasteImages={handlePasteImages}
+                  keyInterceptor={keyInterceptor}
+                />
+              ) : (
+                // Same-height empty slot so the panel layout doesn't reflow when
+                // CodeMirror lands. Non-interactive — by the time the user can
+                // visually find this region the chunk has typically resolved.
+                <div aria-hidden="true" style={{ minHeight: 44 }} className="px-4 pt-3 pb-1" />
+              )}
+            </div>
+            <button
+              onClick={submit}
+              disabled={!buttonEnabled}
+              className={cn(
+                // Reference-style squircle send: a soft rounded-square,
+                // transparent at rest, muted fill + border on hover, pinned
+                // top-right of the input surface (it does not ride down as
+                // the field grows — same as the Skiper component).
+                // Geometry IN PX, not rem: Atlas's UI-scale setting shrinks
+                // the root font-size, so rem utilities (w-7/top-2 → 23px/6.5px
+                // under scale) drift against CodeMirror's hardcoded 12px/16px
+                // padding — the ruler-measured misalignment. CM's first text
+                // line centers at 12px pad + ~10px half-line = 22px; a 28px
+                // button at 8px top centers at 22px at EVERY UI scale.
+                "absolute top-[8px] right-[8px] flex items-center justify-center w-[28px] h-[28px] rounded-lg border transition-colors",
+                buttonEnabled
+                  ? "border-transparent text-[var(--text-primary)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-default)] cursor-pointer"
+                  : "border-transparent text-[var(--text-tertiary)] cursor-not-allowed",
+              )}
+              title={
+                mode === "stop"
+                  ? stopping
+                    ? "Stopping… (waiting for the agent to wind down)"
+                    : "Stop generation"
+                  : mode === "queue"
+                    ? "Queue message (sends after current finishes)"
+                    : `Send to agent (${enterToSend ? "↵" : "⌘↵"})`
+              }
+            >
+              {/* Keyed span so the arrow↔stop swap plays the scale-pop morph
+                (existing `animate-scale-in` — ends at identity, no fill). */}
+              <span
+                key={mode === "stop" ? "stop" : "send"}
+                className="flex items-center justify-center animate-scale-in"
+              >
+                {mode === "stop" ? (
+                  <Square
+                    size={11}
+                    strokeWidth={3}
+                    fill="currentColor"
+                    className={stopping ? "animate-pulse" : undefined}
+                  />
+                ) : (
+                  <ArrowUp size={15} strokeWidth={2.5} />
+                )}
+              </span>
+            </button>
           </div>
-          <div className="flex items-center justify-between px-2 pb-2 pt-1">
+          {/* Footer strip — the exposed band of the outer shell. */}
+          <div className="flex items-center justify-between px-2 pb-1.5 pt-1">
             <div className="flex items-center gap-1">
               <ComposerAddMenu
                 disabled={disabled || githubSyncing !== null}
@@ -1747,39 +1809,6 @@ export function MessageInput({
               {agentType === "cersei" && <EffortPill tabId={tabId} />}
               {agentType === "cersei" && <CerseiMemoryPill />}
               {agentType === "cersei" && <CerseiUsagePill tabId={tabId} />}
-            </div>
-
-            <div className="flex items-center">
-              <button
-                onClick={submit}
-                disabled={!buttonEnabled}
-                className={cn(
-                  "flex items-center justify-center w-7 h-7 rounded-full transition-colors",
-                  buttonEnabled
-                    ? "bg-[var(--text-primary)] text-[var(--bg-primary)] hover:bg-[var(--text-secondary)] cursor-pointer"
-                    : "bg-[var(--bg-elevated)] text-[var(--text-tertiary)] cursor-not-allowed",
-                )}
-                title={
-                  mode === "stop"
-                    ? stopping
-                      ? "Stopping… (waiting for the agent to wind down)"
-                      : "Stop generation"
-                    : mode === "queue"
-                      ? "Queue message (sends after current finishes)"
-                      : `Send to agent (${enterToSend ? "↵" : "⌘↵"})`
-                }
-              >
-                {mode === "stop" ? (
-                  <Square
-                    size={11}
-                    strokeWidth={3}
-                    fill="currentColor"
-                    className={stopping ? "animate-pulse" : undefined}
-                  />
-                ) : (
-                  <ArrowUp size={14} strokeWidth={2.5} />
-                )}
-              </button>
             </div>
           </div>
         </div>

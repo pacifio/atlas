@@ -1734,6 +1734,46 @@
    the bundle — so the #3f3f3f still won and git failures stayed unreadable.
    The extra `[data-sonner-toaster]` ancestor takes this to (0,4,0), beating
    every sonner description rule regardless of order. */
+/* ── Chat micro-animations ───────────────────────────────────────────────────
+   One-shot, GPU-cheap, and they END AT IDENTITY (no fill-mode) — per the
+   frosted-panel lesson, nothing here leaves a lingering transform behind.
+
+   `atlas-bubble-in`: entrance for a freshly-SENT user bubble only. Rows that
+   mount while scrolling up through history must not replay it — the caller
+   gates on message timestamp, not on mount.
+
+   `.cm-placeholder`: CodeMirror re-creates the placeholder element whenever
+   its text changes (e.g. the agent switch retargets "Ask Claude Code…"), so
+   animating the element itself gives the fade-in placeholder without touching
+   CM internals. OPACITY ONLY: the placeholder is an inline element inside
+   CM's line box — forcing `inline-block` to enable transforms shifted its
+   baseline against the caret (visible misalignment), so no translate here. */
+@keyframes atlas-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.atlas-bubble-in {
+  animation: atlas-bubble-in 0.18s ease-out;
+}
+
+@keyframes atlas-placeholder-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.atlas-chat-cm-host .cm-placeholder {
+  animation: atlas-placeholder-in 0.22s ease-out;
+}
+
 [data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-description] {
   color: var(--text-secondary);
   white-space: pre-wrap;
