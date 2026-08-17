@@ -56,7 +56,7 @@ import type {
 } from "./slash-command-picker";
 import { commandRequiresArgs } from "./slash-command-picker";
 import { CodexLoginDialog } from "./codex-login-dialog";
-import { PlanDock } from "./plan-dock";
+import { PlanTasksPill } from "./plan-tasks-pill";
 import { RetryPill } from "./retry-pill";
 import { ComposerAddMenu } from "./composer-add-menu";
 import type { GithubRepo } from "@/features/github/types";
@@ -1712,7 +1712,6 @@ export function MessageInput({
         <RetryPill tabId={tabId} />
 
         {/* Live plan docked on top of the input bar (JetBrains-Air style). */}
-        <PlanDock tabId={tabId} />
 
         <div
           ref={composerRef}
@@ -1932,6 +1931,10 @@ export function MessageInput({
               {agentType === "cersei" && <CerseiMemoryPill />}
               {agentType === "cersei" && <CerseiUsagePill tabId={tabId} />}
             </div>
+            {/* Right side: the live implementation-plan pill (arc progress +
+                count; opens its own morphing task-list panel). Replaces the
+                PlanDock strip that used to sit above the composer. */}
+            <PlanTasksPill tabId={tabId} />
           </div>
         </div>
       </div>

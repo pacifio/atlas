@@ -1762,6 +1762,18 @@
   animation: atlas-bubble-in 0.18s ease-out;
 }
 
+/* Indeterminate arc spinner for in-progress plan steps (SVG ring rotate).
+   Continuous by design — it only renders while a step is actively running. */
+@keyframes atlas-arc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.atlas-arc-spin {
+  animation: atlas-arc-spin 1.1s linear infinite;
+  transform-origin: center;
+}
+
 /* Dropup menu entrance (the composer's + menu and its submenus): a soft
    scale/rise from the trigger. One-shot, ends at identity, no fill-mode. */
 @keyframes atlas-menu-pop {
