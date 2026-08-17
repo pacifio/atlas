@@ -36,7 +36,7 @@ import {
 } from "react";
 import type { ChatMessage } from "@/types/agent";
 import { type SwitchableAgent } from "@/types/agent";
-import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { agentMeta, switchableAgentOf } from "@/features/agents/lib/agent-meta";
 import { AgentIcons, ExternalAgentIcon, AgentMonogram } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { projectRows, RowKind, type Projection, type Row } from "../lib/turn-rows";
@@ -104,19 +104,8 @@ const BOTTOM_GAP = 28;
  *  immediately regardless. */
 const STICKY_SETTLE_MS = 4000;
 
-function switchable(agentType: string | undefined): SwitchableAgent {
-  if (
-    agentType === "codex" ||
-    agentType === "opencode" ||
-    agentType === "cursor" ||
-    agentType === "kilo" ||
-    agentType === "cersei"
-  )
-    return agentType;
-  if (!agentType || agentType === "custom" || agentType.startsWith("claude")) return "claude-code";
-  // Registry-installed external agent — identity passes through.
-  return agentType;
-}
+/** Shared with the composer — see `switchableAgentOf`. */
+const switchable = switchableAgentOf;
 
 /** Resolved ONCE per thread and handed to every row as a stable element — a
  *  session's agent never changes mid-thread, so deriving this per row would be

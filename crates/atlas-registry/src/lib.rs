@@ -7,6 +7,7 @@
 
 mod binary;
 mod cache;
+mod discovery;
 mod error;
 mod install_store;
 mod manifest;
@@ -19,4 +20,5 @@ pub use error::{RegistryError, Result};
 pub use install_store::{InstalledAgent, ResolvedBinary};
 pub use manifest::{BinaryTarget, Distribution, PackageTarget, RegistryAgent, RegistryManifest};
 pub use platform::platform_key;
-pub use store::{RegistryEntryView, RegistryListing, RegistryStore, BUILTIN_REGISTRY_IDS};
+pub use discovery::DiscoveredAgent;
+pub use store::{RegistryEntryView, RegistryListing, RegistryStore};

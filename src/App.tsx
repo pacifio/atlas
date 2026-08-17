@@ -42,7 +42,10 @@ import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { jumpToSession } from "@/features/chat/lib/tab-workspace";
 import { refreshCachedAcpModels } from "@/features/chat/lib/warm-acp-models";
-import { hydrateAgentRegistry } from "@/features/agents/stores/agent-registry-store";
+import {
+  hydrateAgentRegistry,
+  startCatalogListener,
+} from "@/features/agents/stores/agent-registry-store";
 import { AgentLoginDialogHost } from "@/features/chat/components/agent-login-dialog";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
@@ -106,6 +109,9 @@ export function App() {
     // hydrate once so pickers/glyphs/memory dropdown resolve external
     // metadata; the marketplace re-hydrates after installs.
     void hydrateAgentRegistry();
+    // …and stay current: discovery finishes after boot, and installs /
+    // acquisitions / settings toggles all change how an agent launches.
+    startCatalogListener();
   }, []);
 
   // Refresh the `atlas` CLI helper at `~/.local/bin/atlas` on every

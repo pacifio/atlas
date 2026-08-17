@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { ChevronRight, Loader2, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { agents, ensureAgent, CODEX_PLUGIN_ID, type AuthMethodWire } from "../lib/agents-api";
+import { errInfo } from "../lib/agent-signin";
 import { logEvent } from "@/features/log/lib/log";
 
 /**
@@ -44,7 +45,8 @@ export function CodexLoginDialog({
         if (cancelled) return;
         setPhase({ kind: "choose", methods });
       } catch (err) {
-        if (!cancelled) setPhase({ kind: "error", message: String(err) });
+        // `agents_spawn` rejects with a structured `{message, kind}`.
+        if (!cancelled) setPhase({ kind: "error", message: errInfo(err).message });
       }
     })();
     return () => {

@@ -66,6 +66,37 @@ export function listKiloSessions(cwd: string): Promise<ClaudeSessionMeta[]> {
   return invoke<ClaudeSessionMeta[]>("list_kilo_sessions", { projectPath: cwd });
 }
 
+/** One Atlas-recorded session row. Adds `plugin_id` to the shared meta shape,
+ *  because unlike the per-agent listings above this one covers MANY agents and
+ *  the row has to say which.
+ *
+ *  snake_case, like `ClaudeSessionMeta` and every other session payload — the
+ *  sidebar reads `message_count` / `file_path` off these directly, and a
+ *  camelCase mismatch is invisible to TypeScript but silently drops every row
+ *  as "empty". */
+export interface AtlasTranscriptMeta extends ClaudeSessionMeta {
+  plugin_id: string;
+}
+
+/**
+ * Session history for every agent that keeps no transcript of its own —
+ * opencode, cursor, and all registry-installed agents.
+ *
+ * Those agents are `TranscriptKind::None`, so before Atlas recorded them itself
+ * their sessions existed only in the renderer's memory: the history row
+ * vanished as soon as the live session stopped matching (switching agents was
+ * enough) and the conversation was gone. `file_path` points at Atlas's own JSON
+ * under `<config>/agent-transcripts/`.
+ */
+export function listAtlasTranscripts(cwd: string): Promise<AtlasTranscriptMeta[]> {
+  return invoke<AtlasTranscriptMeta[]>("agent_transcripts_list", { cwd });
+}
+
+/** Delete one Atlas-recorded transcript. Idempotent. */
+export function atlasTranscriptDelete(cwd: string, sessionId: string): Promise<void> {
+  return invoke<void>("agent_transcripts_delete", { cwd, sessionId });
+}
+
 /** Archive (soft-delete) a Kilo session — sets `time_archived`, the flag both
  *  Kilo's own UIs and our listing filter on. Reversible from the Kilo CLI. */
 export function kiloDeleteSession(sessionId: string): Promise<void> {

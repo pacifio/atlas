@@ -28,11 +28,19 @@ pub fn save_app_state(
     state: State<'_, AppStateHandle>,
     app: AppHandle,
 ) -> Result<(), String> {
+    let disabled_before = state.lock().settings.disabled_builtin_agents.clone();
     {
         let mut guard = state.lock();
         guard.apply_patch(payload);
     }
     let snapshot = state.lock().clone();
+    // Turning a built-in on/off changes whether it is spawnable, so the agent
+    // catalog every picker reads is now stale. Compared rather than emitted
+    // unconditionally: this command fires on every settings change, and a
+    // catalog re-hydrate per keystroke-adjacent save would be pure churn.
+    if snapshot.settings.disabled_builtin_agents != disabled_before {
+        crate::commands::catalog::emit_catalog_changed(&app, "settings");
+    }
     std::thread::spawn(move || {
         if let Err(e) = AppState::save(&app, &snapshot) {
             tracing::warn!(target: "atlas::app_state", "save failed: {e}");

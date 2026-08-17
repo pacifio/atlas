@@ -223,43 +223,57 @@ pub async fn byok_env_list() -> Vec<EnvKeyMeta> {
     .unwrap_or_default()
 }
 
-/// Map the BYOK store onto the env vars the auto-managed built-in agent CLIs
-/// read (verified against opencode/kilo's provider docs; cursor uses browser
-/// OAuth and ignores these). Google gets both spellings — the Vercel AI SDK
-/// stack inside opencode reads `GOOGLE_GENERATIVE_AI_API_KEY`, other tooling
-/// reads `GEMINI_API_KEY`.
+/// Map the BYOK store onto the env vars agent CLIs read for provider auth.
+///
+/// **Scope is EVERY spawned agent**, not just the built-ins the name suggests
+/// (see `RegistryStore::agent_env`, which consumes this). Marketplace agents
+/// mostly authenticate exactly this way and nothing else: `gemini` refuses to
+/// open a session with "Gemini API key is missing or not configured" and
+/// advertises no runnable login, and `qwen-code` states it "requires setting
+/// the `OPENAI_API_KEY` environment variable". While this was built-ins-only,
+/// installing them from the marketplace produced an agent that could never
+/// start.
+///
+/// Verified against opencode/kilo's provider docs; cursor uses browser OAuth
+/// and ignores these. Google gets both spellings — the Vercel AI SDK stack
+/// inside opencode reads `GOOGLE_GENERATIVE_AI_API_KEY`, other tooling
+/// (including the Gemini CLI) reads `GEMINI_API_KEY`.
+/// Every env-var spelling a stored key for `provider` should be injected under.
+///
+/// [`ENV_KEY_VARS`] is the single source of truth for BOTH directions —
+/// recognising a key the user exported, and handing it to an agent. Keeping two
+/// lists is what broke this: injection covered only six providers while the
+/// settings page happily stored twenty-two, so a user who saved a Mistral, xAI
+/// or DeepSeek key had it accepted and then silently never delivered, and the
+/// agent kept insisting it had no credentials.
+///
+/// Injecting under EVERY recognised spelling (not just a canonical one) is
+/// deliberate: agents disagree about names — the Vercel AI SDK stack inside
+/// opencode reads `GOOGLE_GENERATIVE_AI_API_KEY`, the Gemini CLI reads
+/// `GEMINI_API_KEY`. An extra var an agent doesn't know is inert.
+fn inject_vars_for(provider: &str) -> &'static [&'static str] {
+    ENV_KEY_VARS
+        .iter()
+        .find(|(p, _)| *p == provider)
+        .map(|(_, vars)| *vars)
+        .unwrap_or(&[])
+}
+
 fn builtin_agent_env(store: &Store) -> std::collections::HashMap<String, String> {
     let mut env = std::collections::HashMap::new();
-    let mut add = |provider: &str, vars: &[&str]| {
-        if let Some(k) = store.get(provider) {
-            for var in vars {
+    // Stored (keychain) keys for every provider Atlas knows about.
+    for (provider, vars) in ENV_KEY_VARS {
+        if let Some(k) = store.get(*provider) {
+            for var in *vars {
                 env.insert((*var).to_string(), k.key.clone());
             }
         }
-    };
-    add("anthropic", &["ANTHROPIC_API_KEY"]);
-    add("openai", &["OPENAI_API_KEY"]);
-    add("openrouter", &["OPENROUTER_API_KEY"]);
-    add("google", &["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"]);
-    add("groq", &["GROQ_API_KEY"]);
-    add("deepinfra", &["DEEPINFRA_API_KEY"]);
+    }
     // Env-imported keys OVERLAY the stored ones — when both exist for a
     // provider, the environment's own key wins (the settings page surfaces
-    // the conflict). Injected under every var spelling the CLIs read, not
-    // just the one it was found as (GEMINI vs GOOGLE_GENERATIVE_AI).
-    let inject_vars = |provider: &str| -> &'static [&'static str] {
-        match provider {
-            "anthropic" => &["ANTHROPIC_API_KEY"],
-            "openai" => &["OPENAI_API_KEY"],
-            "openrouter" => &["OPENROUTER_API_KEY"],
-            "google" => &["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
-            "groq" => &["GROQ_API_KEY"],
-            "deepinfra" => &["DEEPINFRA_API_KEY"],
-            _ => &[],
-        }
-    };
+    // the conflict).
     for (provider, ek) in env_keys() {
-        for var in inject_vars(provider) {
+        for var in inject_vars_for(provider) {
             env.insert((*var).to_string(), ek.key.clone());
         }
     }
@@ -329,4 +343,90 @@ pub fn byok_get(app: AppHandle, provider: String) -> Result<Option<String>, Stri
         return Ok(Some(ek.key.clone()));
     }
     Ok(read_store(&app).get(&provider).map(|v| v.key.clone()))
+}
+
+#[cfg(test)]
+mod agent_env_tests {
+    use super::*;
+
+    fn store_with(providers: &[&str]) -> Store {
+        providers
+            .iter()
+            .map(|p| {
+                (
+                    (*p).to_string(),
+                    StoredKey {
+                        key: format!("sk-{p}"),
+                        last4: "aaaa".into(),
+                        added_at: "2026-08-17T00:00:00Z".into(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// A key the settings page accepts must reach agents. Injection used to
+    /// cover six providers while the store accepted all of these, so a saved
+    /// Mistral/xAI/DeepSeek key was silently never delivered and the agent went
+    /// on claiming it had no credentials.
+    #[test]
+    fn every_storable_provider_is_injected() {
+        for (provider, vars) in ENV_KEY_VARS {
+            let env = builtin_agent_env(&store_with(&[provider]));
+            assert!(
+                !env.is_empty(),
+                "{provider} can be stored but is never injected"
+            );
+            for var in *vars {
+                assert_eq!(
+                    env.get(*var).map(String::as_str),
+                    Some(format!("sk-{provider}").as_str()),
+                    "{provider} must be injected as {var}"
+                );
+            }
+        }
+    }
+
+    /// Mirrors `detectKeyNeed` in `src/features/chat/lib/agent-key-need.ts`:
+    /// the in-app prompt offers to collect keys for exactly these providers, so
+    /// each one must actually be deliverable — otherwise the user types a key,
+    /// Atlas says "saved", and nothing changes.
+    #[test]
+    fn the_providers_the_key_prompt_offers_are_all_deliverable() {
+        for provider in [
+            "google",
+            "openai",
+            "anthropic",
+            "openrouter",
+            "xai",
+            "mistral",
+            "groq",
+            "deepseek",
+        ] {
+            let env = builtin_agent_env(&store_with(&[provider]));
+            assert!(!env.is_empty(), "key prompt offers {provider} but it is undeliverable");
+        }
+    }
+
+    #[test]
+    fn google_is_injected_under_both_spellings_agents_use() {
+        // opencode's Vercel AI SDK reads GOOGLE_GENERATIVE_AI_API_KEY; the
+        // Gemini CLI reads GEMINI_API_KEY. Both, or one of them breaks.
+        let env = builtin_agent_env(&store_with(&["google"]));
+        assert_eq!(env.get("GEMINI_API_KEY").unwrap(), "sk-google");
+        assert_eq!(env.get("GOOGLE_GENERATIVE_AI_API_KEY").unwrap(), "sk-google");
+    }
+
+    #[test]
+    fn an_empty_store_injects_nothing() {
+        // No keys → no env → agents keep the cheap plain-command spawn path.
+        assert!(builtin_agent_env(&Store::new()).is_empty());
+    }
+
+    #[test]
+    fn unknown_providers_are_ignored_rather_than_injected_blindly() {
+        // A hand-edited byok-keys.json naming something Atlas has no var
+        // mapping for must not invent an env var.
+        assert!(builtin_agent_env(&store_with(&["not-a-provider"])).is_empty());
+    }
 }

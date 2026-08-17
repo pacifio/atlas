@@ -1,6 +1,7 @@
 pub mod agent_analytics;
 pub mod agent_memory;
 pub mod auth;
+pub mod agent_transcript;
 pub mod agents;
 pub mod app_state;
 pub mod browser;
@@ -16,6 +17,7 @@ pub mod feedback;
 pub mod fileindex;
 pub mod canvas;
 pub mod capture;
+pub mod catalog;
 pub mod claude;
 pub mod kilo;
 pub mod clipboard;

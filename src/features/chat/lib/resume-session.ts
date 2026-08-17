@@ -1,4 +1,5 @@
 import { agents } from "./agents-api";
+import { errInfo } from "./agent-signin";
 import { snapshotMessageToWire } from "./snapshot-message";
 import type { AgentInfo } from "@/types/acp";
 import type { SessionKey, SessionMessage, SessionSnapshot } from "@/types/agents";
@@ -63,12 +64,20 @@ function sameThread(a: SessionMessage[], b: SessionMessage[]): boolean {
 export type ResumeStage = "spawn" | "load" | "snapshot";
 
 export class ResumeError extends Error {
+  /** `atlas_acp::ErrorClass` wire token from the backend, when it sent one. */
+  readonly kind: string | null;
+
   constructor(
     readonly stage: ResumeStage,
     readonly cause: unknown,
   ) {
-    super(cause instanceof Error ? cause.message : String(cause));
+    // `errInfo`, not String(cause): both stages this wraps (`agents_spawn`,
+    // `agents_load_session`) reject with a structured `{message, kind}`, which
+    // stringifies to "[object Object]".
+    const info = errInfo(cause);
+    super(info.message);
     this.name = "ResumeError";
+    this.kind = info.kind;
   }
 }
 

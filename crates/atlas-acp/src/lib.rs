@@ -19,11 +19,15 @@ pub use driver::AuthMethodWire;
 pub use error::{AcpError, ErrorClass, Result, classify_message};
 pub use events::{AcpEvent, EventSink};
 pub use registry::{
-    AUTO_MANAGED_BUILTIN_IDS, AgentId, AgentInfo, AgentRegistry, AgentSpec, ImageAttachment,
-    PermissionDecision, SpecSource, builtin_login_args,
+    AgentId, AgentInfo, AgentRegistry, AgentSpec, BUILTIN_AGENTS, BuiltinAgent, ImageAttachment,
+    PermissionDecision, SpecSource, builtin_agent, builtin_login_args, builtin_registry_ids,
+    is_auto_managed,
 };
 pub use schema::NewSessionInfo;
-pub use spawn::{managed_node_bin, register_managed_node_bin, sanitize_host_env};
+pub use spawn::{
+    invalidate_probe_cache, managed_node_bin, register_managed_node_bin, resolve_programs_abs,
+    sanitize_host_env,
+};
 
 /// Login-shell program resolution, re-exported for the dynamic registry
 /// (`atlas-registry`) which pre-resolves programs when it must emit a JSON

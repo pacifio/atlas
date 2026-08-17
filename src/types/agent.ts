@@ -62,15 +62,26 @@ export function pluginIdForAgent(agentType: AgentType | undefined): string {
 
 /** First-party ACP-transport agents (out-of-process adapters) — the ones with
  *  modes/models advertised over ACP and warmable caches. Excludes the native
- *  in-process agent. Installed externals are also ACP-transport; consumers
- *  that care use the dynamic registry, not this constant. */
+ *  in-process agent.
+ *
+ *  Deliberately first-party-only, and NOT catalog-derived: its one consumer is
+ *  the model pre-warm, which spawns each listed agent at boot. Widening it to
+ *  every discovered/installed external would spawn a subprocess per agent on
+ *  every launch to fill a cache the user may never open. Consumers that need
+ *  the full set use the catalog (`useAgentRegistryStore`). */
 export const ACP_AGENTS: FirstPartyAgent[] = ["claude-code", "codex", "opencode", "cursor", "kilo"];
 
 /** The built-ins a user may turn off in Settings → Agents: the three with no
- *  npx distribution, which Atlas downloads on demand. Mirrors
- *  `atlas_acp::AUTO_MANAGED_BUILTIN_IDS` (their agentType and plugin id are
- *  the same string). Claude, Codex and Cersei are the agents Atlas is built
- *  around — they are always available and never appear here. */
+ *  npx distribution, which Atlas downloads on demand when the user hasn't
+ *  installed them. Mirrors the `optional` entries of `atlas_acp::BUILTIN_AGENTS`
+ *  (their agentType and plugin id are the same string). Claude, Codex and
+ *  Cersei are the agents Atlas is built around — they are always available and
+ *  never appear here.
+ *
+ *  This is the PRE-HYDRATION fallback: once the catalog lands, prefer
+ *  `isOptionalBuiltin(id)` from features/agents/lib/agent-meta, which reads the
+ *  backend's own answer. Kept here (rather than moved) to avoid an import cycle
+ *  — agent-meta imports this module. */
 export const OPTIONAL_BUILTIN_AGENTS: FirstPartyAgent[] = ["cursor", "opencode", "kilo"];
 
 export function isOptionalBuiltinAgent(id: string): boolean {

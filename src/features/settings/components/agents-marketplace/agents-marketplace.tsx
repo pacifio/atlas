@@ -22,12 +22,54 @@ import {
   type AcpRegistryListing,
   type RegistryInstallProgress,
 } from "@/features/agents/lib/agent-registry-api";
-import { hydrateAgentRegistry } from "@/features/agents/stores/agent-registry-store";
+import {
+  hydrateAgentRegistry,
+  useAgentRegistryStore,
+} from "@/features/agents/stores/agent-registry-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
-import { isOptionalBuiltinAgent } from "@/types/agent";
+import { isOptionalBuiltin } from "@/features/agents/lib/agent-meta";
+import type { AgentCatalogEntry } from "@/types/agent-catalog";
 import { Toggle } from "../settings-panel";
 import { downloadTrend, fmtDownloads } from "@/features/agents/lib/download-trends";
 import { TrendSparkline } from "@/components/trend-sparkline";
+
+/** Which action a card offers. Pure and exported so the precedence is tested
+ *  rather than re-read out of JSX.
+ *
+ *  "detected" is the system-first addition: the agent is on the user's PATH and
+ *  spawns from there, but Atlas never installed it — so offering "Remove" would
+ *  be a lie, and offering "Install" alone would hide that it already works. */
+export function cardState(
+  entry: AcpRegistryEntry,
+  catalog: AgentCatalogEntry | undefined,
+): "builtin" | "installed" | "detected" | "install" {
+  if (entry.builtin) return "builtin";
+  if (entry.installed) return "installed";
+  if (catalog?.source === "system-path") return "detected";
+  return "install";
+}
+
+/** A card for an agent found on the user's system that the registry listing
+ *  doesn't cover (or covers under a different id). Deduped by id against the
+ *  real listing by the caller — an agent must never render twice. */
+function syntheticCard(entry: AgentCatalogEntry): AcpRegistryEntry {
+  return {
+    id: entry.id,
+    name: entry.name,
+    version: entry.version ?? "",
+    description: entry.description,
+    repository: entry.repository,
+    website: entry.website,
+    iconDataUrl: entry.iconDataUrl,
+    installed: false,
+    builtin: entry.kind === "builtin" || entry.kind === "native",
+    // It is demonstrably runnable here — it was found on this machine.
+    platformSupported: true,
+    distributionKind: entry.distributionKind,
+    unverified: entry.unverified,
+    unsupportedReason: null,
+  };
+}
 
 // ── Module-scope install tracking (survives unmount) ─────────────────────────
 
@@ -126,12 +168,33 @@ export function AgentsMarketplace() {
     [reload],
   );
 
+  // Catalog-backed annotations: which of these the user already has on their
+  // system. Subscribes to the primitive signature (Record selectors
+  // infinite-loop under useShallow — the store's documented trap).
+  useAgentRegistryStore((s) => s.signature);
+  const catalogById = useAgentRegistryStore.getState().catalogById;
+
   const entries = useMemo(() => {
-    const all = listing?.entries ?? [];
+    const listed = listing?.entries ?? [];
+    // Agents discovered on this machine that the listing doesn't already
+    // cover, so a hand-installed CLI still shows up here.
+    const listedIds = new Set(listed.map((e) => e.id));
+    const detectedOnly = Object.values(catalogById)
+      .filter((e) => e.source === "system-path" && !e.installed && !listedIds.has(e.id))
+      // catalogById is keyed by BOTH id and agentType, so one entry can appear
+      // twice — dedupe before synthesizing cards.
+      .filter((e, i, all) => all.findIndex((o) => o.id === e.id) === i)
+      .map(syntheticCard);
+    const all = [...listed, ...detectedOnly];
+
     const q = query.trim().toLowerCase();
     return all.filter((e) => {
-      if (filter === "installed" && !(e.installed || e.builtin)) return false;
-      if (filter === "not-installed" && (e.installed || e.builtin)) return false;
+      const state = cardState(e, catalogById[e.id]);
+      // "Installed" means "already available to you", which a detected agent
+      // is — it just wasn't Atlas that put it there.
+      const have = e.installed || e.builtin || state === "detected";
+      if (filter === "installed" && !have) return false;
+      if (filter === "not-installed" && have) return false;
       if (!q) return true;
       return (
         e.name.toLowerCase().includes(q) ||
@@ -139,7 +202,17 @@ export function AgentsMarketplace() {
         (e.description ?? "").toLowerCase().includes(q)
       );
     });
-  }, [listing, query, filter]);
+  }, [listing, query, filter, catalogById]);
+
+  /** Cards for agents Atlas found rather than installed, rendered under their
+   *  own heading so "you already have this" reads as a fact, not an offer. */
+  const detectedIds = useMemo(
+    () =>
+      new Set(
+        entries.filter((e) => cardState(e, catalogById[e.id]) === "detected").map((e) => e.id),
+      ),
+    [entries, catalogById],
+  );
 
   return (
     <div className="h-full flex flex-col">
@@ -220,18 +293,39 @@ export function AgentsMarketplace() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-2.5">
-            {entries.map((entry) => (
-              <AgentCard
-                key={entry.id}
-                entry={entry}
-                installing={installingIds.has(entry.id)}
-                progress={progressById.get(entry.id) ?? null}
-                onInstall={() => void install(entry)}
-                onUninstall={() => void uninstall(entry)}
-              />
-            ))}
-          </div>
+          <>
+            {(["detected", "registry"] as const).map((section) => {
+              const inSection = entries.filter((e) =>
+                section === "detected" ? detectedIds.has(e.id) : !detectedIds.has(e.id),
+              );
+              if (inSection.length === 0) return null;
+              return (
+                <div
+                  key={section}
+                  className={cn(section === "registry" && detectedIds.size > 0 && "mt-4")}
+                >
+                  {detectedIds.size > 0 && (
+                    <h3 className="mb-1.5 text-[10.5px] font-medium uppercase tracking-wide text-[var(--text-tertiary)]">
+                      {section === "detected" ? "Detected on your system" : "Registry"}
+                    </h3>
+                  )}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-2.5">
+                    {inSection.map((entry) => (
+                      <AgentCard
+                        key={entry.id}
+                        entry={entry}
+                        catalog={catalogById[entry.id]}
+                        installing={installingIds.has(entry.id)}
+                        progress={progressById.get(entry.id) ?? null}
+                        onInstall={() => void install(entry)}
+                        onUninstall={() => void uninstall(entry)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </>
         )}
       </div>
     </div>
@@ -240,12 +334,14 @@ export function AgentsMarketplace() {
 
 function AgentCard({
   entry,
+  catalog,
   installing,
   progress,
   onInstall,
   onUninstall,
 }: {
   entry: AcpRegistryEntry;
+  catalog: AgentCatalogEntry | undefined;
   installing: boolean;
   progress: RegistryInstallProgress | null;
   onInstall: () => void;
@@ -295,6 +391,7 @@ function AgentCard({
         </div>
         <CardAction
           entry={entry}
+          catalog={catalog}
           installing={installing}
           pct={pct}
           onInstall={onInstall}
@@ -381,22 +478,25 @@ function BuiltinToggle({ entry }: { entry: AcpRegistryEntry }) {
 
 function CardAction({
   entry,
+  catalog,
   installing,
   pct,
   onInstall,
   onUninstall,
 }: {
   entry: AcpRegistryEntry;
+  catalog: AgentCatalogEntry | undefined;
   installing: boolean;
   pct: number | null;
   onInstall: () => void;
   onUninstall: () => void;
 }) {
-  if (entry.builtin) {
+  const state = cardState(entry, catalog);
+  if (state === "builtin") {
     // Cursor / OpenCode / Kilo are optional built-ins: they ship with Atlas but
     // the user can hide them. Claude and Codex are what Atlas is built around
     // and only ever show the badge — there is nothing to switch off.
-    if (isOptionalBuiltinAgent(entry.id)) return <BuiltinToggle entry={entry} />;
+    if (isOptionalBuiltin(entry.id)) return <BuiltinToggle entry={entry} />;
     return (
       <span
         className="flex items-center gap-1 h-6 px-2 rounded-md text-[10.5px] font-medium text-[var(--text-tertiary)] border border-[var(--border-default)]"
@@ -415,7 +515,7 @@ function CardAction({
       </span>
     );
   }
-  if (entry.installed) {
+  if (state === "installed") {
     return (
       <button
         onClick={() => {
@@ -425,6 +525,36 @@ function CardAction({
       >
         Remove
       </button>
+    );
+  }
+  if (state === "detected") {
+    // Atlas found this on the user's PATH and spawns it from there. Nothing to
+    // install and nothing to remove — Atlas doesn't own it. Installing a
+    // managed copy stays available when the registry publishes one, for the
+    // user who wants Atlas to track versions instead.
+    return (
+      <span className="flex items-center gap-1.5">
+        <span
+          className="flex items-center gap-1 h-6 px-2 rounded-md text-[10.5px] font-medium text-[var(--text-tertiary)] border border-[var(--border-default)]"
+          title={
+            catalog?.resolvedPath
+              ? `Found at ${catalog.resolvedPath}. Atlas runs your install.`
+              : "Found on your system. Atlas runs your install."
+          }
+        >
+          <Check size={10} />
+          Detected
+        </span>
+        {entry.platformSupported && entry.distributionKind !== "" && (
+          <button
+            onClick={onInstall}
+            title="Download a copy Atlas manages and updates. Your own install still takes precedence."
+            className="h-6 px-2 rounded-md text-[10.5px] font-medium text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+          >
+            Install copy
+          </button>
+        )}
+      </span>
     );
   }
   return (

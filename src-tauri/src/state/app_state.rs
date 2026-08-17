@@ -394,9 +394,9 @@ pub struct AppSettings {
     /// regardless of this setting. See `src/features/chat/components/chat-input.tsx`.
     #[serde(default = "default_true")]
     pub enter_to_send: bool,
-    /// Built-in agents the user has turned OFF — plugin ids drawn from
-    /// `atlas_acp::AUTO_MANAGED_BUILTIN_IDS` (cursor / opencode / kilo).
-    /// Empty by default: every built-in ships enabled.
+    /// Built-in agents the user has turned OFF — plugin ids drawn from the
+    /// `optional` entries of `atlas_acp::BUILTIN_AGENTS` (cursor / opencode /
+    /// kilo). Empty by default: every built-in ships enabled.
     ///
     /// Only those three are optional. Claude, Codex and Cersei are the agents
     /// Atlas is built around and are always available, so an entry naming one
@@ -408,11 +408,11 @@ pub struct AppSettings {
 impl AppSettings {
     /// Whether `plugin_id` is a built-in the user turned off.
     ///
-    /// The membership test against `AUTO_MANAGED_BUILTIN_IDS` is the guard that
-    /// makes this safe to call from the spawn path: a hand-edited `state.json`
+    /// The `optional` test against the builtin table is the guard that makes
+    /// this safe to call from the spawn path: a hand-edited `state.json`
     /// listing `claude-code-ts` cannot disable Claude.
     pub fn builtin_disabled(&self, plugin_id: &str) -> bool {
-        atlas_acp::AUTO_MANAGED_BUILTIN_IDS.contains(&plugin_id)
+        atlas_acp::builtin_agent(plugin_id).is_some_and(|b| b.optional)
             && self
                 .disabled_builtin_agents
                 .iter()
@@ -606,8 +606,8 @@ mod tests {
     fn every_builtin_is_enabled_by_default() {
         let s = AppSettings::default();
         assert!(s.disabled_builtin_agents.is_empty());
-        for id in atlas_acp::AUTO_MANAGED_BUILTIN_IDS {
-            assert!(!s.builtin_disabled(id), "{id} must ship enabled");
+        for b in atlas_acp::BUILTIN_AGENTS.iter().filter(|b| b.optional) {
+            assert!(!s.builtin_disabled(b.spec_id), "{} must ship enabled", b.spec_id);
         }
     }
 

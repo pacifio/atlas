@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type { AgentId, AgentInfo, AcpSessionId, PermissionDecision } from "@/types/acp";
+import type { AgentCatalog, CatalogChangeReason } from "@/types/agent-catalog";
 import type {
   AgentDelta,
   ImageAttachment,
@@ -38,6 +39,15 @@ export interface AuthRunDone {
 
 export const agents = {
   listPlugins: () => invoke<PluginSpec[]>("agents_list_plugins"),
+  /** The unified agent catalog — identity, availability and login for every
+   *  agent, from one backend answer. Instant (served from memory); supersedes
+   *  assembling identity from `listPlugins` + the registry listing + static
+   *  tables. Subscribe to `atlas:agent-catalog:changed` to know when to
+   *  re-invoke. */
+  catalog: () => invoke<AgentCatalog>("agents_catalog"),
+  /** Re-fetch the manifest and re-probe the system, then answer fresh. The
+   *  escape hatch after installing a CLI by hand mid-session. */
+  refreshCatalog: (force = true) => invoke<AgentCatalog>("agents_catalog_refresh", { force }),
   listRunning: () => invoke<AgentInfo[]>("agents_list_running"),
   spawn: (pluginId: string) => invoke<AgentInfo>("agents_spawn", { pluginId }),
   kill: (agentId: AgentId) => invoke<void>("agents_kill", { agentId }),
@@ -115,6 +125,16 @@ export const listenAuthRunDone = (handler: (p: AuthRunDone) => void): Promise<Un
 export const listenAgents = (handler: (env: AgentDelta) => void): Promise<UnlistenFn> =>
   listen<AgentDelta>("atlas:agents", (e) => handler(e.payload));
 
+/** Fires whenever how-an-agent-launches changes: discovery finished, the
+ *  manifest refreshed, an install/uninstall, a settings toggle, or a
+ *  spawn-time acquisition. Handlers re-invoke `agents.catalog()`. */
+export const listenCatalogChanged = (
+  handler: (reason: CatalogChangeReason) => void,
+): Promise<UnlistenFn> =>
+  listen<{ reason: CatalogChangeReason }>("atlas:agent-catalog:changed", (e) =>
+    handler(e.payload.reason),
+  );
+
 // ── Lazy per-agent registry ─────────────────────────────────────────────────
 // One shared live process PER pluginId. App.tsx pre-spawns the default so the
 // first prompt doesn't pay npx/node cold-start (10–30s); a chat bound to a
@@ -125,8 +145,6 @@ export const listenAgents = (handler: (env: AgentDelta) => void): Promise<Unlist
  *  `pluginIdForAgent(agentType)` over these constants for routing. */
 export const DEFAULT_PLUGIN_ID = "claude-code-ts";
 export const CODEX_PLUGIN_ID = "codex";
-export const OPENCODE_PLUGIN_ID = "opencode";
-export const CURSOR_PLUGIN_ID = "cursor";
 /** Atlas's native in-process agent (atlas-cersei). */
 export const CERSEI_PLUGIN_ID = "cersei";
 

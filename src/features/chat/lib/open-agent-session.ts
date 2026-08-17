@@ -5,6 +5,7 @@ import { useChatStore } from "@/features/chat/stores/chat-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { ensureAgent, getAgentSync } from "./agents-api";
+import { errInfo } from "./agent-signin";
 import {
   isBusyAgentStatus,
   pluginIdForAgent,
@@ -166,7 +167,9 @@ export async function openAgentSession({
   } catch (err) {
     setTranscriptLoading(targetTabId, false);
     setResumePending(targetTabId, false);
-    toast.error(`Couldn't open session: ${err instanceof Error ? err.message : String(err)}`);
+    // `errInfo`: the spawn/load commands in this path reject with a structured
+    // `{message, kind}` that would render as "[object Object]".
+    toast.error(`Couldn't open session: ${errInfo(err).message}`);
   }
 }
 

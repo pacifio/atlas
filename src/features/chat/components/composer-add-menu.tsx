@@ -216,6 +216,17 @@ export function ComposerAddMenu({
             <div className="flex items-center gap-1">
               {switchableAgents.map((a) => {
                 const active = a === currentAgent;
+                const meta = agentMeta(a);
+                // Selection always proceeds normally — these only set
+                // expectations. The spawn-time download itself is already
+                // covered by the composer's `useAgentAcquire` progress pill.
+                const needsDownload = meta.availability === "needs-download";
+                const detected = meta.source === "system-path" && meta.external;
+                const hint = needsDownload
+                  ? " — downloads on first use"
+                  : detected
+                    ? " — detected on your system"
+                    : "";
                 return (
                   <button
                     key={a}
@@ -224,9 +235,14 @@ export function ComposerAddMenu({
                       if (!active) onSwitchAgent(a);
                       setOpen(false);
                     }}
-                    title={`Switch to ${agentMeta(a).label}`}
+                    title={`Switch to ${meta.label}${hint}`}
                     className={cn(
-                      "flex items-center justify-center h-5 w-5 rounded-full border border-[var(--border-default)] transition-colors outline-none cursor-pointer",
+                      "relative flex items-center justify-center h-5 w-5 rounded-full border transition-colors outline-none cursor-pointer",
+                      // A dashed ring reads as "not here yet" without stealing
+                      // the row's limited space for a second glyph.
+                      needsDownload
+                        ? "border-dashed border-[var(--border-default)]"
+                        : "border-[var(--border-default)]",
                       active
                         ? "bg-[var(--bg-elevated)] text-[var(--text-primary)]"
                         : "text-[var(--text-tertiary)] opacity-45 hover:opacity-100 hover:bg-[var(--bg-hover)]",
@@ -244,10 +260,18 @@ export function ComposerAddMenu({
                       <AgentIcons.Kilo className="size-3" />
                     ) : a === "cersei" ? (
                       <AtlasIcon size={12} className="rounded-[2px]" />
-                    ) : agentMeta(a).iconDataUrl ? (
-                      <ExternalAgentIcon dataUrl={agentMeta(a).iconDataUrl!} size={12} />
+                    ) : meta.iconDataUrl ? (
+                      <ExternalAgentIcon dataUrl={meta.iconDataUrl} size={12} />
                     ) : (
-                      <AgentMonogram label={agentMeta(a).label} size={12} />
+                      <AgentMonogram label={meta.label} size={12} />
+                    )}
+                    {needsDownload && (
+                      <Download
+                        size={7}
+                        strokeWidth={3}
+                        aria-hidden
+                        className="absolute -bottom-px -right-px rounded-full bg-[var(--bg-elevated)] text-[var(--text-tertiary)]"
+                      />
                     )}
                   </button>
                 );

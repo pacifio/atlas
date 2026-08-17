@@ -82,6 +82,9 @@ pub async fn acp_registry_install(
         error: result.as_ref().err().map(|e| e.to_string()),
     };
     let _ = app.emit("atlas:registry-install:done", done);
+    if result.is_ok() {
+        crate::commands::catalog::emit_catalog_changed(&app, "install");
+    }
     result.map(|_| ()).map_err(|e| e.to_string())
 }
 
@@ -98,6 +101,7 @@ pub fn acp_registry_uninstall(
     use tauri::Manager;
     app.state::<std::sync::Arc<crate::telemetry::TelemetryClient>>()
         .capture("acp_agent_uninstalled", serde_json::json!({ "agent_id": agent_id }));
+    crate::commands::catalog::emit_catalog_changed(&app, "uninstall");
     Ok(())
 }
 

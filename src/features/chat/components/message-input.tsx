@@ -22,7 +22,7 @@ import {
   pluginIdForAgent,
   type SwitchableAgent,
 } from "@/types/agent";
-import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { agentMeta, switchableAgentOf } from "@/features/agents/lib/agent-meta";
 import { useAgentAcquire, acquirePercent } from "../lib/agent-acquire";
 import { canSignIn, promptSignIn } from "../lib/agent-signin";
 import {
@@ -630,16 +630,13 @@ export function MessageInput({
   // Settings → General → "Enter to send". Narrow selector so a toggle flip
   // only re-renders composers, not the whole settings surface.
   const enterToSend = useProjectStore((s) => s.settings.enterToSend);
-  // `agentType` widened to a SwitchableAgent (drops "custom") for the composer
-  // sub-components (session scope, agent switcher) + the label lookup.
-  const switchableAgent: SwitchableAgent =
-    agentType === "codex" ||
-    agentType === "opencode" ||
-    agentType === "cursor" ||
-    agentType === "kilo" ||
-    agentType === "cersei"
-      ? agentType
-      : "claude-code";
+  // `agentType` normalised for the composer sub-components (session scope,
+  // agent switcher) + the label lookup. This used to be a hardcoded list of the
+  // six first-party agents with everything else falling through to
+  // "claude-code" — so every registry-installed agent showed up in the pill as
+  // "Claude Code". `switchableAgentOf` passes external ids through, which is
+  // what the transcript and sidebar already did.
+  const switchableAgent: SwitchableAgent = switchableAgentOf(agentType);
   // Native Cersei agent only: BYOK provider + model selection for the composer.
   const cerseiProvider = useChatStore((s) => s.sessions[tabId]?.cerseiProvider ?? "");
   const cerseiModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel ?? "");
@@ -883,7 +880,8 @@ export function MessageInput({
   // (their CLI isn't on PATH to log in by hand).
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
+      const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string; reason?: string }>)
+        .detail;
       const at = detail?.agentType;
       if (!at) return;
       const sess = useChatStore.getState().sessions[tabId];
@@ -892,7 +890,7 @@ export function MessageInput({
         openLoginDialog();
         return;
       }
-      if (canSignIn(at)) promptSignIn(at);
+      if (canSignIn(at)) promptSignIn(at, { reason: detail.reason });
     };
     window.addEventListener("atlas:auth-required", handler);
     return () => window.removeEventListener("atlas:auth-required", handler);

@@ -16,13 +16,28 @@ import {
   CLAUDE_PERMISSION_MODES,
 } from "@/types/agent";
 import { agentMeta, isAgentDisabled } from "@/features/agents/lib/agent-meta";
-import { canSignIn, isAuthError, promptSignIn } from "../lib/agent-signin";
+import { bindFailureAction, errInfo, promptSignIn } from "../lib/agent-signin";
 import { toast } from "sonner";
 
 /** Tab+agent pairs whose bind failure has already been surfaced, so the
  *  focus-triggered retry doesn't re-toast the same error on every focus.
  *  Cleared for a pair once its bind finally succeeds. */
 const reportedBindFailures = new Set<string>();
+
+/** Tab+agent pairs we have ALREADY walked through sign-in once.
+ *
+ *  Without this the sign-in flow loops forever: the retry callback clears
+ *  `reportedBindFailures` so the rebind can report afresh, so a rebind that
+ *  fails on auth AGAIN re-opens the dialog, and completing it retries, and so
+ *  on. That is not hypothetical — plenty of registry agents advertise an auth
+ *  method that does not actually authenticate them (`autohand`'s only method is
+ *  `npm install -g autohand-cli`, which installs a CLI and leaves the agent
+ *  still demanding a login). Offering the dialog once and then showing the
+ *  agent's own message is the honest end state.
+ *
+ *  Cleared alongside `reportedBindFailures` when a bind finally succeeds, so a
+ *  genuine re-auth later in the session still gets the dialog. */
+const signInAttempted = new Set<string>();
 import { composePrompt, type MentionData } from "../lib/mentions";
 import { usePaneFind } from "../lib/use-pane-find";
 import { useDefaultAgentType } from "../hooks/use-default-agent";
@@ -85,7 +100,6 @@ import {
   FlaskConical,
 } from "lucide-react";
 import { AtlasIcon } from "@/components/atlas-icon";
-import { copyText } from "@/lib/clipboard";
 import { PanelSkeleton } from "@/components/panel-skeleton";
 import { logEvent } from "@/features/log/lib/log";
 import { cn } from "@/lib/utils";
@@ -407,8 +421,10 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         useChatStore.getState().actions.setAcpBinding(tabId, agent.agent_id, key.session_id, cwd);
         // Bound successfully — re-arm the failure toast so a LATER breakage
         // (agent crashes, gets uninstalled) is reported again rather than
-        // swallowed by the earlier dedupe.
+        // swallowed by the earlier dedupe. Same for the sign-in offer: a token
+        // that expires later in the session deserves the dialog again.
         reportedBindFailures.delete(`${tabId}:${pluginId}`);
+        signInAttempted.delete(`${tabId}:${pluginId}`);
         // Seed the composer mode picker from the freshly-created session's
         // advertised modes (Codex: read-only / auto / full-access). The modes
         // are seeded into the Rust SessionState by `new_session`, so the
@@ -469,13 +485,36 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             // "you need to sign in" case lands HERE, not on the turn-failure
             // route that raises `atlas:auth-required`. Offer the one-click fix
             // instead of dumping a raw protocol error, and rebind once it lands.
-            if (at && canSignIn(at) && isAuthError(err)) {
-              promptSignIn(at, () => {
-                reportedBindFailures.delete(key);
-                void ensureBound();
+            // Only ONCE per tab+agent — see `signInAttempted`.
+            const action = bindFailureAction({
+              agentType: at,
+              err,
+              alreadyAttempted: signInAttempted.has(key),
+            });
+            if (action === "sign-in" && at) {
+              signInAttempted.add(key);
+              // `reason` is what lets the dialog offer in-app key entry rather
+              // than the agent's own (often unusable) auth methods.
+              promptSignIn(at, {
+                reason: errInfo(err).message,
+                onSignedIn: () => {
+                  reportedBindFailures.delete(key);
+                  void ensureBound();
+                },
               });
+            } else if (action === "signed-in-but-refused" && at) {
+              // Signed in already and STILL refused. Say so, and surface the
+              // agent's own words — it is the only thing that can explain what
+              // else it wants.
+              toast.error(
+                `${agentMeta(at).label} still reports no credentials after signing in. ` +
+                  `It said: ${errInfo(err).message}`,
+              );
             } else {
-              toast.error(String((err as Error)?.message ?? err));
+              // `errInfo`, not String(err): these commands reject with a
+              // structured `{message, kind}`, which stringifies to
+              // "[object Object]".
+              toast.error(errInfo(err).message);
             }
           }
         }
@@ -1114,35 +1153,14 @@ const ChatComposer = memo(function ChatComposer({
   }, [isCodex]);
   const codexNeedsAuth = isCodex && codexAuthed === false;
 
-  // OpenCode / Cursor auth is terminal-only (`opencode auth login` /
-  // `cursor-agent login`) and neither agent should block the composer
-  // (OpenCode works unauthenticated with the free Zen models; Cursor errors
-  // surface per-turn), so nothing is probed. An auth-classified turn failure
-  // just shows an instruction pill until the tab rebinds or it's dismissed.
-  const terminalLoginCommand =
-    agentType === "opencode"
-      ? "opencode auth login"
-      : agentType === "cursor"
-        ? "cursor-agent login"
-        : agentType === "kilo"
-          ? "kilo auth login"
-          : null;
-  const [terminalAuthHint, setTerminalAuthHint] = useState(false);
-  useEffect(() => {
-    if (!terminalLoginCommand) {
-      setTerminalAuthHint(false);
-      return;
-    }
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
-      if (detail?.agentType !== agentType) return;
-      const sess = useChatStore.getState().sessions[tabId];
-      if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;
-      setTerminalAuthHint(true);
-    };
-    window.addEventListener("atlas:auth-required", handler);
-    return () => window.removeEventListener("atlas:auth-required", handler);
-  }, [agentType, terminalLoginCommand, tabId]);
+  // OpenCode / Cursor / Kilo auth used to raise a "copy `cursor-agent login`"
+  // pill here. It is gone: `atlas:auth-required` now routes ONLY to the
+  // AgentLoginDialog (see message-input.tsx), which runs the login for the
+  // user instead of asking them to run it themselves. The pill also gave
+  // advice that was wrong on the machines that needed it most — when Atlas
+  // downloaded the CLI into its app-data dir, there was no such command on the
+  // user's PATH to run. The dialog's error phase now shows the real absolute
+  // path as a manual fallback.
   const signInCodex = async () => {
     setCodexSigningIn(true);
     try {
@@ -1165,7 +1183,7 @@ const ChatComposer = memo(function ChatComposer({
 
   const disabled = (isClaude && phase !== "ready") || codexNeedsAuth;
 
-  const setupVisible = (isClaude && phase !== "ready") || codexNeedsAuth || terminalAuthHint;
+  const setupVisible = (isClaude && phase !== "ready") || codexNeedsAuth;
   // Node install pill (bundled-nvm). Non-blocking — informs only, doesn't
   // disable the composer. Shown for both agents since `npx` powers both.
   const nodePhase = useNodeSetupStore.use.phase();
@@ -1206,20 +1224,6 @@ const ChatComposer = memo(function ChatComposer({
                     <LogIn size={11} />
                   )}
                   {codexSigningIn ? "Opening OpenAI sign-in…" : "Sign in to Codex with ChatGPT"}
-                </button>
-              )}
-              {terminalAuthHint && terminalLoginCommand && (
-                <button
-                  key="terminal-auth-hint"
-                  onClick={() => {
-                    void copyText(terminalLoginCommand);
-                    setTerminalAuthHint(false);
-                  }}
-                  title="Copies the command; run it in a terminal, then send again."
-                  className="atlas-pill-in inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[11px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                >
-                  <LogIn size={11} />
-                  {agentMeta(agentType).label} needs auth — copy `{terminalLoginCommand}`
                 </button>
               )}
               {showJumpToBottom && (

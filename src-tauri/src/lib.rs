@@ -539,6 +539,11 @@ pub fn run() {
             commands::registry::acp_registry_install,
             commands::registry::acp_registry_uninstall,
             commands::registry::acp_registry_metadata,
+            // The unified read surface. `agents_list_plugins` /
+            // `acp_registry_list` stay registered and delegating for one
+            // release so a stale frontend keeps working.
+            commands::catalog::agents_catalog,
+            commands::catalog::agents_catalog_refresh,
             commands::agents::agents_list_plugins,
             commands::agents::agents_list_running,
             commands::agents::agents_spawn,
@@ -546,6 +551,8 @@ pub fn run() {
             commands::agents::agents_new_session,
             commands::agents::agents_load_session,
             commands::agents::agents_replay_transcript,
+            commands::agents::agent_transcripts_list,
+            commands::agents::agent_transcripts_delete,
             commands::agents::agents_snapshot,
             commands::agents::agents_send,
             commands::agents::agents_cancel,

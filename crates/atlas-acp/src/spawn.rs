@@ -53,21 +53,10 @@ pub fn resolve_program_abs(program: &str) -> Option<String> {
     if program.starts_with('/') {
         return Some(program.to_string());
     }
-    // Prefer the Atlas-managed Node toolchain (bundled-nvm install) when set —
-    // it's a known-good version and must beat an incompatible system Node.
-    // Checked BEFORE the cache: a toolchain registered mid-session must win
-    // over a stale cached resolution.
-    if let Some(bin) = managed_node_bin() {
-        let candidate = bin.join(program);
-        if candidate.is_file() {
-            return Some(candidate.to_string_lossy().into_owned());
-        }
+    if let Some(managed) = managed_override(program) {
+        return Some(managed);
     }
-    // Once-per-app cache: the login-shell probe costs up to 5s and used to run
-    // (and leak a thread + shell child on timeout) on EVERY agent spawn (M8).
-    static PROBE_CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
-    let cache = PROBE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(hit) = cache.lock().ok().and_then(|c| c.get(program).cloned()) {
+    if let Some(hit) = cache_get(program) {
         return hit;
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
@@ -76,21 +65,156 @@ pub fn resolve_program_abs(program: &str) -> Option<String> {
         &format!("command -v {program} 2>/dev/null"),
         std::time::Duration::from_secs(5),
     )
+    .filter(|out| out.status.success())
     .and_then(|out| {
-        if !out.status.success() {
-            return None;
-        }
         // Interactive rc files can echo noise before the real answer — take
         // the LAST non-empty line (see `probe_shell` on why `-i` matters).
         let raw = String::from_utf8_lossy(&out.stdout);
         let p = raw.lines().rev().find(|l| !l.trim().is_empty())?.trim().to_string();
-        // Accept only a real absolute path (not a shell function/alias name).
-        (p.starts_with('/') && std::path::Path::new(&p).exists()).then_some(p)
+        accept_probed_path(&p)
     });
-    if let Ok(mut c) = cache.lock() {
+    cache_put(program, &resolved);
+    resolved
+}
+
+/// Resolve MANY programs in ONE login-shell call.
+///
+/// The discovery pass asks about every built-in and every manifest agent with
+/// a plain-executable distribution at once; doing that through
+/// [`resolve_program_abs`] would pay the ~1–5 s shell-startup cost per program
+/// (each with its own rc-file evaluation, conda init, nvm sourcing…). One
+/// shell, one script, one timeout instead.
+///
+/// The result map contains an entry for every program that resolved; misses
+/// are simply absent. Both are written to the shared probe cache, so a later
+/// [`resolve_program_abs`] for any of them is free — including the misses,
+/// which is what keeps a machine without `cursor-agent` from re-probing on
+/// every spawn.
+pub fn resolve_programs_abs(programs: &[String]) -> HashMap<String, String> {
+    let mut found: HashMap<String, String> = HashMap::new();
+    let mut pending: Vec<&str> = Vec::new();
+    for program in programs {
+        if program.starts_with('/') {
+            found.insert(program.clone(), program.clone());
+            continue;
+        }
+        if let Some(managed) = managed_override(program) {
+            found.insert(program.clone(), managed);
+            continue;
+        }
+        match cache_get(program) {
+            Some(Some(hit)) => {
+                found.insert(program.clone(), hit);
+            }
+            Some(None) => {}       // cached miss — nothing to probe
+            None => pending.push(program),
+        }
+    }
+    pending.sort_unstable();
+    pending.dedup();
+    if pending.is_empty() {
+        return found;
+    }
+
+    // Each program answers on its own marked line, so interleaved rc-file
+    // noise can never be mistaken for a path: `command -v` output is echoed
+    // only behind the `atlas-probe:<program>:` prefix we control.
+    let script = pending
+        .iter()
+        .map(|p| format!("printf '{PROBE_MARKER}{p}:%s\\n' \"$(command -v {p} 2>/dev/null)\""))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let out = probe_shell(&shell, &script, std::time::Duration::from_secs(5));
+    // A failed/timed-out probe must NOT be cached as a miss: nothing was
+    // learned about these programs, and caching would pin "not installed"
+    // for the rest of the session.
+    let Some(out) = out else { return found };
+    let raw = String::from_utf8_lossy(&out.stdout);
+    let parsed = parse_probe_output(&raw);
+    for program in pending {
+        let resolved = parsed
+            .get(program)
+            .and_then(|p| accept_probed_path(p));
+        cache_put(program, &resolved);
+        if let Some(path) = resolved {
+            found.insert(program.to_string(), path);
+        }
+    }
+    found
+}
+
+/// Drop cached probe results for these programs so the next resolution probes
+/// the shell again. Used when a discovered CLI turns out to be unusable (an
+/// `opencode` too old to speak `acp`), and by a forced discovery refresh.
+pub fn invalidate_probe_cache(programs: &[String]) {
+    if let Ok(mut c) = probe_cache().lock() {
+        for program in programs {
+            c.remove(program);
+        }
+    }
+}
+
+/// Prefix that makes a batched probe's answers unambiguous against rc noise.
+const PROBE_MARKER: &str = "atlas-probe:";
+
+/// Pull `atlas-probe:<program>:<path>` lines out of raw shell output. Pure —
+/// unit-tested against real interactive-rc noise. Later lines win (a program
+/// can only be printed once by our script, but a rc file echoing our marker
+/// back would be pathological either way).
+fn parse_probe_output(raw: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for line in raw.lines() {
+        let Some(rest) = line.trim().strip_prefix(PROBE_MARKER) else {
+            continue;
+        };
+        let Some((program, path)) = rest.split_once(':') else {
+            continue;
+        };
+        let path = path.trim();
+        if path.is_empty() {
+            continue; // `command -v` found nothing
+        }
+        out.insert(program.to_string(), path.to_string());
+    }
+    out
+}
+
+/// A probe answer is usable only if it is a real absolute path — `command -v`
+/// also prints bare names for shell functions/aliases and builtins.
+fn accept_probed_path(path: &str) -> Option<String> {
+    (path.starts_with('/') && std::path::Path::new(path).exists()).then(|| path.to_string())
+}
+
+/// Prefer the Atlas-managed Node toolchain (bundled-nvm install) when set —
+/// it's a known-good version and must beat an incompatible system Node.
+/// Checked BEFORE the cache: a toolchain registered mid-session must win over
+/// a stale cached resolution.
+fn managed_override(program: &str) -> Option<String> {
+    let candidate = managed_node_bin()?.join(program);
+    candidate
+        .is_file()
+        .then(|| candidate.to_string_lossy().into_owned())
+}
+
+/// Once-per-app cache: the login-shell probe costs up to 5s and used to run
+/// (and leak a thread + shell child on timeout) on EVERY agent spawn (M8).
+/// Misses are cached too — that is what stops a machine without `cursor-agent`
+/// from re-probing for it forever.
+fn probe_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
+    static PROBE_CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+    PROBE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// `None` = not cached; `Some(None)` = cached miss.
+fn cache_get(program: &str) -> Option<Option<String>> {
+    probe_cache().lock().ok()?.get(program).cloned()
+}
+
+fn cache_put(program: &str, resolved: &Option<String>) {
+    if let Ok(mut c) = probe_cache().lock() {
         c.insert(program.to_string(), resolved.clone());
     }
-    resolved
 }
 
 /// Run `$SHELL -lic <script>` with an OWNED timeout: on expiry the probe child
@@ -228,23 +352,27 @@ pub(crate) fn explain_spawn_failure(spec: &AgentSpec, err: AcpError) -> AcpError
         "Node.js (which provides `npx`) was not found. Install Node.js \
          (https://nodejs.org) and relaunch Atlas. If it is installed, make sure \
          it is on your login shell's PATH."
-    // The three auto-managed built-ins (AUTO_MANAGED_BUILTIN_IDS). Reaching
-    // this branch means the managed download did NOT happen — Atlas normally
-    // fetches these itself at spawn, so the actionable advice is "check your
-    // connection", not "go install it" (though installing the CLI by hand
-    // still works: a PATH binary is used when no managed one is available).
+    // The three auto-managed built-ins (`BUILTIN_AGENTS`, `auto_managed`).
+    // Reaching this branch means BOTH halves of the ladder came up empty:
+    // discovery found no system install, and the managed download did not
+    // happen either. So the advice names both escapes — install the CLI
+    // yourself (Atlas prefers a system install over its own copy), or fix
+    // whatever stopped the download.
     } else if program == "opencode" {
-        "OpenCode could not be set up. Atlas downloads it automatically — check \
-         your internet connection and try again. You can also install it \
-         yourself from https://opencode.ai. Sign in with `opencode auth login`."
+        "OpenCode was not found on your system and Atlas could not download it. \
+         Install it from https://opencode.ai — Atlas uses your own install when \
+         there is one — or check your internet connection and try again. Sign \
+         in with `opencode auth login`."
     } else if program == "cursor-agent" {
-        "Cursor could not be set up. Atlas downloads it automatically — check \
-         your internet connection and try again. You can also install the CLI \
-         yourself from https://cursor.com/cli. Sign in with `cursor-agent login`."
+        "Cursor was not found on your system and Atlas could not download it. \
+         Install the CLI from https://cursor.com/cli — Atlas uses your own \
+         install when there is one — or check your internet connection and try \
+         again. Sign in with `cursor-agent login`."
     } else if program == "kilo" {
-        "Kilo Code could not be set up. Atlas downloads it automatically — check \
-         your internet connection and try again. You can also install it with \
-         `npm install -g @kilocode/cli`. Sign in with `kilo auth login`."
+        "Kilo Code was not found on your system and Atlas could not download it. \
+         Install it with `npm install -g @kilocode/cli` — Atlas uses your own \
+         install when there is one — or check your internet connection and try \
+         again. Sign in with `kilo auth login`."
     } else if program == "uvx" {
         "uv (which provides `uvx`) was not found. Install uv \
          (https://docs.astral.sh/uv) and relaunch Atlas."
@@ -437,5 +565,54 @@ fn prepend_to_path(extras: &[String]) {
     // PATH per-command via the JSON stdio spec instead).
     unsafe {
         std::env::set_var("PATH", new_path);
+    }
+}
+
+#[cfg(test)]
+mod probe_parser_tests {
+    use super::{accept_probed_path, parse_probe_output};
+
+    /// What a real `$SHELL -lic` run looks like: the answers we asked for,
+    /// buried in whatever the user's rc files decided to print. The marker is
+    /// what makes the answers findable at all.
+    const NOISY: &str = "\
+Loading conda...
+atlas-probe:opencode:/Users/x/.opencode/bin/opencode
+Welcome back!
+atlas-probe:cursor-agent:/usr/local/bin/cursor-agent
+atlas-probe:kilo:
+[oh-my-zsh] plugin 'git' loaded
+";
+
+    #[test]
+    fn markers_are_extracted_from_interactive_rc_noise() {
+        let out = parse_probe_output(NOISY);
+        assert_eq!(out.get("opencode").unwrap(), "/Users/x/.opencode/bin/opencode");
+        assert_eq!(out.get("cursor-agent").unwrap(), "/usr/local/bin/cursor-agent");
+        // `command -v` printed nothing → not installed, and NOT an entry.
+        assert!(!out.contains_key("kilo"));
+        assert_eq!(out.len(), 2, "rc noise never becomes an answer");
+    }
+
+    #[test]
+    fn output_without_any_marker_yields_nothing() {
+        assert!(parse_probe_output("/usr/local/bin/opencode\nsome noise\n").is_empty());
+        assert!(parse_probe_output("").is_empty());
+    }
+
+    #[test]
+    fn a_shell_function_or_alias_is_rejected() {
+        // `command -v` prints the bare name for functions/aliases/builtins;
+        // spawning that would ENOENT.
+        assert_eq!(accept_probed_path("opencode"), None);
+        assert_eq!(accept_probed_path("opencode: aliased to opencode --foo"), None);
+        // …and a path that no longer exists (uninstalled since the rc wrote it).
+        assert_eq!(accept_probed_path("/definitely/not/here/opencode"), None);
+    }
+
+    #[test]
+    fn an_existing_absolute_path_is_accepted() {
+        // `/bin/sh` exists on every platform this app ships to.
+        assert_eq!(accept_probed_path("/bin/sh").as_deref(), Some("/bin/sh"));
     }
 }

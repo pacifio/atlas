@@ -1620,7 +1620,14 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       if (env.error_kind === "auth") {
         window.dispatchEvent(
           new CustomEvent("atlas:auth-required", {
-            detail: { sessionId: env.session_id, agentType: session.agentType },
+            // `reason` carries the agent's own words through to the dialog,
+            // which reads them to tell "needs a provider API key Atlas can
+            // collect in-app" apart from "needs a login flow".
+            detail: {
+              sessionId: env.session_id,
+              agentType: session.agentType,
+              reason: env.error,
+            },
           }),
         );
       }

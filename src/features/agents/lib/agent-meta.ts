@@ -13,6 +13,12 @@ import {
   type FirstPartyAgent,
 } from "@/types/agent";
 import { useProjectStore } from "@/features/project/stores/project-store";
+import {
+  availabilityOf,
+  type AgentAvailability,
+  type AgentCatalogEntry,
+  type AgentSource,
+} from "@/types/agent-catalog";
 import { useAgentRegistryStore } from "../stores/agent-registry-store";
 
 export interface AgentMeta {
@@ -27,6 +33,18 @@ export interface AgentMeta {
   /** `.agent-*` token class for the amark badge ("" for externals). */
   cssClass: string;
   external: boolean;
+  /** How a spawn would launch this agent right now — `null` before the catalog
+   *  hydrates. Never treat as immutable: discovery lands asynchronously and
+   *  corrects it via `atlas:agent-catalog:changed`. */
+  source: AgentSource | null;
+  /** Coarse readiness derived from `source`; `null` pre-hydration. */
+  availability: AgentAvailability | null;
+}
+
+/** The catalog entry for an agentType OR plugin id (the index is keyed by
+ *  both), or null before hydration / for a fully unknown id. */
+export function catalogEntry(agentTypeOrPluginId: string): AgentCatalogEntry | null {
+  return useAgentRegistryStore.getState().catalogById[agentTypeOrPluginId] ?? null;
 }
 
 const FIRST_PARTY_CSS: Record<FirstPartyAgent, string> = {
@@ -50,8 +68,12 @@ function firstPartyOf(id: string): FirstPartyAgent | null {
  *  that already re-render on registry changes. */
 export function agentMeta(agentTypeOrPluginId: string): AgentMeta {
   const id = agentTypeOrPluginId;
+  const catalog = catalogEntry(id);
   const firstParty = firstPartyOf(id);
   if (firstParty) {
+    // First-party branding stays STATIC on purpose: labels, brand icons and
+    // CSS tokens are Atlas's own design, not registry metadata, and this path
+    // is called from non-reactive boot code before any catalog exists.
     return {
       pluginId: PLUGIN_ID_BY_AGENT[firstParty],
       agentType: firstParty,
@@ -60,6 +82,8 @@ export function agentMeta(agentTypeOrPluginId: string): AgentMeta {
       iconDataUrl: null,
       cssClass: FIRST_PARTY_CSS[firstParty],
       external: false,
+      source: catalog?.source ?? null,
+      availability: catalog ? availabilityOf(catalog) : null,
     };
   }
   const { plugins, registryEntries } = useAgentRegistryStore.getState();
@@ -68,12 +92,35 @@ export function agentMeta(agentTypeOrPluginId: string): AgentMeta {
   return {
     pluginId: id,
     agentType: id,
-    label: entry?.name ?? plugin?.display_name ?? prettifyId(id),
+    // Catalog first (it already merged manifest + install + discovery), then
+    // the older sources, then a last-resort prettified id.
+    label: catalog?.name ?? entry?.name ?? plugin?.display_name ?? prettifyId(id),
     firstPartyIcon: null,
-    iconDataUrl: entry?.iconDataUrl ?? null,
+    iconDataUrl: catalog?.iconDataUrl ?? entry?.iconDataUrl ?? null,
     cssClass: "",
     external: true,
+    source: catalog?.source ?? null,
+    availability: catalog ? availabilityOf(catalog) : null,
   };
+}
+
+/** Normalise a session's stored `agentType` to the switchable identity the
+ *  composer / transcript / sidebar key off.
+ *
+ *  The ONLY collapsing this does is legacy and Claude aliasing: `undefined`,
+ *  the retired `"custom"`, and any `claude*` spec id all become `"claude-code"`.
+ *  **Everything else passes through** — a registry-installed agent's plugin id
+ *  IS its identity, and collapsing it loses that permanently.
+ *
+ *  Lives here because three surfaces had hand-rolled copies of this and one of
+ *  them (the composer) was missing the pass-through, so every external agent
+ *  rendered as "Claude Code" in the agent pill — wrong name, wrong icon, and
+ *  the switcher highlighted the wrong row. One implementation, one behaviour. */
+export function switchableAgentOf(agentType: string | undefined): AgentType {
+  if (!agentType || agentType === "custom" || agentType.startsWith("claude")) {
+    return "claude-code";
+  }
+  return agentType;
 }
 
 /** "some-agent-acp" → "Some Agent Acp" — last-resort label for ids with no
@@ -86,26 +133,66 @@ function prettifyId(id: string): string {
     .join(" ");
 }
 
+/** Whether this agent can be turned off in Settings → Agents. Catalog-first
+ *  (the backend's builtin table is the source of truth), falling back to the
+ *  static list before hydration. */
+export function isOptionalBuiltin(agentTypeOrPluginId: string): boolean {
+  const catalog = catalogEntry(agentTypeOrPluginId);
+  if (catalog) return catalog.optional;
+  return isOptionalBuiltinAgent(agentTypeOrPluginId);
+}
+
 /** Whether the user turned this optional built-in off in Settings → Agents.
  *  Always false for Claude / Codex / Cersei and for external agents (which are
  *  uninstalled rather than disabled). Rust enforces the same rule at spawn —
  *  see `AppSettings::builtin_disabled`. */
 export function isAgentDisabled(agentTypeOrPluginId: string): boolean {
-  if (!isOptionalBuiltinAgent(agentTypeOrPluginId)) return false;
+  if (!isOptionalBuiltin(agentTypeOrPluginId)) return false;
   return useProjectStore.getState().settings.disabledBuiltinAgents.includes(agentTypeOrPluginId);
 }
 
-/** The dynamic switch list: first-party agents in their fixed order, then
- *  installed external plugin ids sorted by label. Drives option+/ cycling and
- *  the composer "+" agent picker. Agents the user turned off are omitted —
- *  that is what "off" means everywhere the user picks an agent. */
+/** The dynamic switch list, in three bands:
+ *
+ *  1. First-party agents in their fixed order (Atlas's own, curated).
+ *  2. Marketplace-installed externals, A–Z.
+ *  3. Agents merely DISCOVERED on the user's system, A–Z — they're runnable,
+ *     but they're not something the user asked Atlas to add, so they rank last.
+ *
+ *  Drives option+/ cycling and the composer "+" agent picker. Omitted: agents
+ *  the user turned off (that is what "off" means everywhere the user picks an
+ *  agent) and agents with nothing runnable behind them.
+ *
+ *  Pre-hydration (empty catalog) this degrades to exactly the previous
+ *  behaviour: first-party order plus `plugins`-derived externals. */
 export function switchableAgentIds(): string[] {
-  const { plugins } = useAgentRegistryStore.getState();
-  const externals = plugins
-    .filter((p) => p.external)
-    .map((p) => p.plugin_id)
-    .sort((a, b) => agentMeta(a).label.localeCompare(agentMeta(b).label));
-  return [...SWITCHABLE_AGENTS, ...externals].filter((id) => !isAgentDisabled(id));
+  const { plugins, catalog } = useAgentRegistryStore.getState();
+  const byLabel = (a: string, b: string) => agentMeta(a).label.localeCompare(agentMeta(b).label);
+
+  if (catalog.length === 0) {
+    const externals = plugins
+      .filter((p) => p.external)
+      .map((p) => p.plugin_id)
+      .sort(byLabel);
+    return [...SWITCHABLE_AGENTS, ...externals].filter((id) => !isAgentDisabled(id));
+  }
+
+  const firstPartyIds = new Set<string>(SWITCHABLE_AGENTS);
+  const externals = catalog.filter((e) => e.kind === "external" && !firstPartyIds.has(e.agentType));
+  const installed = externals
+    .filter((e) => e.installed)
+    .map((e) => e.id)
+    .sort(byLabel);
+  const discovered = externals
+    .filter((e) => !e.installed)
+    .map((e) => e.id)
+    .sort(byLabel);
+
+  return [...SWITCHABLE_AGENTS, ...installed, ...discovered].filter((id) => {
+    if (isAgentDisabled(id)) return false;
+    // A first-party agent with no catalog entry yet is still offered — the
+    // pre-hydration contract. Only an entry that says "unavailable" excludes.
+    return catalogEntry(id)?.source !== "unavailable";
+  });
 }
 
 /** Reactive variant for components that must re-render when agents are

@@ -11,9 +11,9 @@
 // `authenticate()` on the live agent so the already-running session picks the
 // new credentials up without a respawn.
 
-import { agents, ensureAgent, listenAuthRunDone } from "./agents-api";
-import { isOptionalBuiltinAgent, pluginIdForAgent } from "@/types/agent";
-import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { agents, listenAuthRunDone } from "./agents-api";
+import { isOptionalBuiltinAgent } from "@/types/agent";
+import { catalogEntry } from "@/features/agents/lib/agent-meta";
 
 /** Resolves when the login subprocess exits. `agents.runAuthMethod` returns as
  *  soon as the process is spawned — completion arrives as an event. */
@@ -63,21 +63,55 @@ export async function runSignInMethod(
   await agents.authenticate(agentId, method.id);
 }
 
-/** Run the agent's browser sign-in end to end using its first advertised
- *  method. Throws with a user-facing message on any failure. */
-export async function signInToAgent(agentType: string): Promise<void> {
-  const label = agentMeta(agentType).label;
-  const agent = await ensureAgent(pluginIdForAgent(agentType));
-  const methods = await agents.listAuthMethods(agent.agent_id);
-  const method = methods[0];
-  if (!method) throw new Error(`${label} didn't offer a sign-in method.`);
-  if (!method.terminalCommand) {
-    throw new Error(
-      `${label} can't be signed in from Atlas yet — its adapter offered no login command.`,
-    );
-  }
-  await runSignInMethod(agent.agent_id, method, label);
+/** Error classification the Rust side computed, when it sent one.
+ *
+ *  The session-lifecycle commands (`agents_spawn` / `agents_new_session` /
+ *  `agents_load_session`) reject with a `CmdError` — `{message, kind}` — rather
+ *  than a bare string, so the frontend no longer has to infer intent from
+ *  English prose. Older commands (and anything thrown locally) still produce
+ *  strings/Errors; both shapes are handled here.
+ *
+ *  Always read `.message` from this rather than stringifying the raw rejection
+ *  — a structured error rendered directly is "[object Object]". */
+export interface ErrInfo {
+  message: string;
+  /** `atlas_acp::ErrorClass` wire token, or null when unclassified. */
+  kind: string | null;
 }
+
+export function errInfo(err: unknown): ErrInfo {
+  if (err && typeof err === "object") {
+    const o = err as { message?: unknown; kind?: unknown };
+    if (typeof o.message === "string") {
+      return {
+        message: o.message,
+        kind: typeof o.kind === "string" ? o.kind : null,
+      };
+    }
+  }
+  return { message: String(err), kind: null };
+}
+
+/** Substring tokens that mean "no credentials".
+ *
+ *  MUST stay in sync with the AUTH bucket of `classify_message` in
+ *  `crates/atlas-acp/src/error.rs` — this is the fallback for errors that
+ *  arrive without a `kind` (legacy string rejections, provider bodies surfaced
+ *  through other commands). `agent-signin.test.ts` guards the parity. */
+const AUTH_TOKENS = [
+  "http 401",
+  "http 403",
+  "authentication",
+  "unauthorized",
+  "invalid x-api-key",
+  "invalid api key",
+  "api key not",
+  "permission_error",
+  "no api key configured",
+  "auth required",
+  "not authenticated",
+  "please run /login",
+];
 
 /** Whether a failure means "this agent has no credentials".
  *
@@ -85,22 +119,70 @@ export async function signInToAgent(agentType: string): Promise<void> {
  *  CLI — so an unauthenticated agent dies at BIND time, before any turn exists.
  *  That path never emits the `atlas:auth-required` delta the turn-failure route
  *  relies on, which is why the bind catch has to recognise it on its own.
- *  Kept in sync with `atlas_acp::classify_message`'s AUTH bucket. */
+ *
+ *  Prefers the backend's own classification; falls back to substring matching. */
 export function isAuthError(err: unknown): boolean {
-  const m = String((err as Error)?.message ?? err).toLowerCase();
-  return (
-    m.includes("authentication") ||
-    m.includes("unauthorized") ||
-    m.includes("not authenticated") ||
-    m.includes("auth required") ||
-    m.includes("http 401") ||
-    m.includes("http 403")
-  );
+  const info = errInfo(err);
+  if (info.kind) return info.kind === "auth";
+  const m = info.message.toLowerCase();
+  return AUTH_TOKENS.some((t) => m.includes(t));
 }
 
-/** True when `agentType` is one Atlas can drive a sign-in for. */
+/** True when Atlas should offer its sign-in dialog for `agentType`.
+ *
+ *  Deliberately NOT "the catalog has a login command for it". An external
+ *  agent's sign-in is only knowable at RUNTIME, from the `authMethods` it
+ *  advertises in its `initialize` response — the backend can't put it in the
+ *  catalog. Restricting this to the catalog's `login` field (which is built
+ *  from the built-in table alone) is what left every registry-installed agent
+ *  with no way to sign in: e.g. `autohand` rejects `session/new` with
+ *  "Please log in to use Autohand" while advertising a perfectly runnable
+ *  `npm install -g autohand-cli` method that `runSignInMethod` can execute.
+ *  The user just saw a raw protocol error.
+ *
+ *  So: externals always get the dialog, which lists whatever they advertise
+ *  and has its own empty state when they advertise nothing. Built-ins go by
+ *  whether Atlas has a login argv for them; Claude and Codex are excluded
+ *  because they own bespoke sign-in surfaces, and the native agent has no
+ *  sign-in at all (it uses BYOK keys). */
 export function canSignIn(agentType: string | undefined): boolean {
-  return !!agentType && isOptionalBuiltinAgent(agentType);
+  if (!agentType) return false;
+  const entry = catalogEntry(agentType);
+  if (entry) {
+    if (entry.kind === "native") return false;
+    if (entry.kind === "external") return true;
+    return entry.login !== null;
+  }
+  return isOptionalBuiltinAgent(agentType);
+}
+
+/** What a failed session bind should do about it. Pure, so the loop-prevention
+ *  rule is testable instead of buried in a component effect. */
+export type BindFailureAction =
+  /** Open the sign-in dialog and rebind when it completes. */
+  | "sign-in"
+  /** Already signed in once and still refused — report the agent's own words. */
+  | "signed-in-but-refused"
+  /** Not an auth problem (or not an agent we can sign in): show the message. */
+  | "report";
+
+/** Decide how to handle a bind failure.
+ *
+ *  The `alreadyAttempted` guard is what stops an infinite dialog loop. The
+ *  sign-in retry callback has to clear the "already reported" dedup so the
+ *  rebind can report afresh — which means a rebind that fails on auth AGAIN
+ *  would re-open the dialog, and completing it would retry, forever. Real
+ *  agents hit this: `autohand`'s only advertised auth method is
+ *  `npm install -g autohand-cli`, which installs a CLI and leaves the agent
+ *  still demanding a login, so the loop would never terminate on its own. */
+export function bindFailureAction(opts: {
+  agentType: string | undefined;
+  err: unknown;
+  alreadyAttempted: boolean;
+}): BindFailureAction {
+  const { agentType, err, alreadyAttempted } = opts;
+  if (!agentType || !canSignIn(agentType) || !isAuthError(err)) return "report";
+  return alreadyAttempted ? "signed-in-but-refused" : "sign-in";
 }
 
 // ── Sign-in dialog plumbing ─────────────────────────────────────────────────
@@ -115,6 +197,10 @@ export const AGENT_SIGNIN_EVENT = "atlas:agent-signin";
 export interface AgentSignInRequest {
   agentType: string;
   requestId: number;
+  /** The failure that triggered this, verbatim. The dialog inspects it to see
+   *  whether the agent is asking for a provider API key it can collect in-app
+   *  (see `detectKeyNeed`) rather than a login it must run. */
+  reason?: string;
 }
 
 let signInSeq = 0;
@@ -129,14 +215,21 @@ export function takeSignInCallback(requestId: number): (() => void) | undefined 
 
 /** Open the agent sign-in dialog (same modal treatment as Claude/Codex),
  *  shared by the bind-failure and turn-failure paths so both offer the same
- *  one-click recovery. `onSignedIn` lets the caller retry whatever failed
- *  (a bind, typically) once credentials land. */
-export function promptSignIn(agentType: string, onSignedIn?: () => void): void {
+ *  one-click recovery.
+ *
+ *  `onSignedIn` lets the caller retry whatever failed (a bind, typically) once
+ *  credentials land. `reason` should be the failure message — pass it whenever
+ *  you have one, because it is what lets the dialog offer in-app key entry
+ *  instead of the agent's own (often unusable) auth methods. */
+export function promptSignIn(
+  agentType: string,
+  opts?: { onSignedIn?: () => void; reason?: string },
+): void {
   const requestId = ++signInSeq;
-  if (onSignedIn) signInCallbacks.set(requestId, onSignedIn);
+  if (opts?.onSignedIn) signInCallbacks.set(requestId, opts.onSignedIn);
   window.dispatchEvent(
     new CustomEvent<AgentSignInRequest>(AGENT_SIGNIN_EVENT, {
-      detail: { agentType, requestId },
+      detail: { agentType, requestId, reason: opts?.reason },
     }),
   );
 }

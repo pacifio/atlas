@@ -65,39 +65,149 @@ pub trait SpecSource: Send + Sync {
     fn extra_specs(&self) -> Vec<AgentSpec>;
 }
 
-/// Built-in agents whose adapter is a plain CLI binary rather than an npm
-/// package. Claude and Codex spawn through `npx -y …`, so npm fetches their
-/// adapter on first run and they work on a machine that never installed
-/// anything by hand; these three do not, and their bare commands
-/// (`cursor-agent acp`, `opencode acp`, `kilo acp`) simply ENOENT there.
+/// Everything Atlas knows about ONE first-party agent that isn't already in
+/// its [`AgentSpec`] — the single source of truth that used to be spread
+/// across four hand-synced lists (`AUTO_MANAGED_BUILTIN_IDS` here, a
+/// `builtin_login_args` match, `BUILTIN_REGISTRY_IDS` in atlas-registry, and
+/// `OPTIONAL_BUILTIN_AGENTS` / `PLUGIN_ID_BY_AGENT` in the frontend).
 ///
-/// `atlas-registry` closes that gap by downloading each one's official binary
-/// from the ACP registry manifest and offering it as a dynamic spec. For these
-/// ids ONLY, that dynamic spec's command REPLACES the bare command below (see
+/// See [`BUILTIN_AGENTS`] for the table itself and the per-field rationale.
+#[derive(Debug, Clone, Copy)]
+pub struct BuiltinAgent {
+    /// Matches [`AgentSpec::spec_id`].
+    pub spec_id: &'static str,
+    /// Ids in the ACP registry manifest that describe this same agent. They
+    /// surface as "Built-in" in the marketplace and are never installable — an
+    /// install would shadow the first-party spec.
+    pub registry_ids: &'static [&'static str],
+    /// The executable to look for on the user's `PATH` when deciding whether
+    /// this agent is already installed system-wide. `None` = the agent is an
+    /// npx-launched adapter, which is "runnable if Node exists" rather than
+    /// "installed", so there is nothing to probe for.
+    pub path_program: Option<&'static str>,
+    /// argv appended to `path_program` to make it speak ACP over stdio.
+    pub acp_args: &'static [&'static str],
+    /// Atlas will download this agent's official binary from the registry
+    /// manifest when no system install is found (see
+    /// `RegistryStore::ensure_builtin`). Only true for the plain-CLI built-ins.
+    pub auto_managed: bool,
+    /// The user can turn this agent off in Settings → Agents. Claude, Codex
+    /// and Cersei are the agents Atlas is built around and are never optional.
+    pub optional: bool,
+    /// The CLI argv that signs a user in, appended to whichever binary is
+    /// resolved (system `PATH` install first, Atlas-managed download second).
+    pub login_args: Option<&'static [&'static str]>,
+}
+
+/// The built-in agent table.
+///
+/// **Why `auto_managed` exists.** Claude and Codex spawn through `npx -y …`,
+/// so npm fetches their adapter on first run and they work on a machine that
+/// never installed anything by hand. cursor/opencode/kilo do not — their bare
+/// commands (`cursor-agent acp`, `opencode acp`, `kilo acp`) simply ENOENT
+/// there. `atlas-registry` closes that gap by downloading each one's official
+/// binary from the ACP registry manifest and offering it as a dynamic spec.
+/// For these ids ONLY, a dynamic spec's command REPLACES the bare command (see
 /// [`AgentRegistry::known_specs`]) — every other id keeps first-party
 /// precedence, so a registry install can never shadow a built-in agent.
-pub const AUTO_MANAGED_BUILTIN_IDS: &[&str] = &["cursor", "opencode", "kilo"];
-
-/// The CLI argv that signs a user in to an auto-managed built-in, appended to
-/// its managed binary.
 ///
-/// These three adapters advertise an `authMethod` but ship NO
-/// `_meta.terminal-auth` block, so there is nothing for the host's terminal-auth
-/// runner to execute — and because Atlas downloads their binary into its own
-/// app-data dir, the user has no CLI on `PATH` to run by hand either. Without
-/// this table "sign in" is simply impossible from inside Atlas: the agent
-/// answers every prompt with `Authentication required` forever.
-///
-/// Verified against the downloaded binaries (`--help`): cursor exposes a
+/// **Why `login_args` exists.** Those same three adapters advertise an
+/// `authMethod` but ship NO `_meta.terminal-auth` block, so there is nothing
+/// for the host's terminal-auth runner to execute — and when Atlas downloaded
+/// the CLI into its own app-data dir, the user had no binary on `PATH` to run
+/// by hand either. Without this "sign in" is simply impossible from inside
+/// Atlas: the agent answers every prompt with `Authentication required`
+/// forever. Verified against the binaries (`--help`): cursor exposes a
 /// top-level `login`; opencode (and its Kilo fork) nest it under `auth login`.
 /// Each opens the browser and prints the URL on stdout, which the auth runner
 /// already streams to the UI.
+///
+/// **Why `path_program` exists.** Atlas prefers whatever the user already
+/// installed over its own downloaded copy (system-first). A hit here becomes
+/// the top rung of the spawn precedence ladder in `atlas-registry`'s
+/// `SpecSource::extra_specs`.
+pub const BUILTIN_AGENTS: &[BuiltinAgent] = &[
+    BuiltinAgent {
+        spec_id: "claude-code-ts",
+        // `claude-acp` in the manifest is the same adapter this launches via npx.
+        registry_ids: &["claude-acp"],
+        path_program: None,
+        acp_args: &[],
+        auto_managed: false,
+        optional: false,
+        login_args: None,
+    },
+    BuiltinAgent {
+        spec_id: "claude-code-rs",
+        registry_ids: &[],
+        path_program: Some("claude-code-acp-rs"),
+        acp_args: &[],
+        auto_managed: false,
+        optional: false,
+        login_args: None,
+    },
+    BuiltinAgent {
+        spec_id: "codex",
+        registry_ids: &["codex-acp"],
+        path_program: None,
+        acp_args: &[],
+        auto_managed: false,
+        optional: false,
+        login_args: None,
+    },
+    BuiltinAgent {
+        spec_id: "opencode",
+        registry_ids: &["opencode"],
+        path_program: Some("opencode"),
+        acp_args: &["acp"],
+        auto_managed: true,
+        optional: true,
+        login_args: Some(&["auth", "login"]),
+    },
+    BuiltinAgent {
+        spec_id: "cursor",
+        registry_ids: &["cursor"],
+        path_program: Some("cursor-agent"),
+        acp_args: &["acp"],
+        auto_managed: true,
+        optional: true,
+        login_args: Some(&["login"]),
+    },
+    BuiltinAgent {
+        spec_id: "kilo",
+        registry_ids: &["kilo"],
+        path_program: Some("kilo"),
+        acp_args: &["acp"],
+        auto_managed: true,
+        optional: true,
+        login_args: Some(&["auth", "login"]),
+    },
+];
+
+/// The table entry for `spec_id`, if it is a built-in.
+pub fn builtin_agent(spec_id: &str) -> Option<&'static BuiltinAgent> {
+    BUILTIN_AGENTS.iter().find(|b| b.spec_id == spec_id)
+}
+
+/// Whether Atlas downloads this agent's binary itself when no system install
+/// is found (cursor / opencode / kilo).
+pub fn is_auto_managed(spec_id: &str) -> bool {
+    builtin_agent(spec_id).is_some_and(|b| b.auto_managed)
+}
+
+/// Every manifest id that duplicates a built-in. Registry entries with these
+/// ids render as "Built-in" in the marketplace and are never installable.
+pub fn builtin_registry_ids() -> Vec<&'static str> {
+    BUILTIN_AGENTS
+        .iter()
+        .flat_map(|b| b.registry_ids.iter().copied())
+        .collect()
+}
+
+/// The CLI argv that signs a user in to a built-in, appended to whichever
+/// binary the host resolved for it. See [`BUILTIN_AGENTS`].
 pub fn builtin_login_args(spec_id: &str) -> Option<&'static [&'static str]> {
-    match spec_id {
-        "cursor" => Some(&["login"]),
-        "opencode" | "kilo" => Some(&["auth", "login"]),
-        _ => None,
-    }
+    builtin_agent(spec_id).and_then(|b| b.login_args)
 }
 
 impl AgentSpec {
@@ -278,19 +388,26 @@ impl AgentRegistry {
     /// wins on a spec-id collision — a registry install must never shadow a
     /// built-in agent.
     ///
-    /// The one exception is [`AUTO_MANAGED_BUILTIN_IDS`]: those built-ins have
-    /// no npx distribution, so the registry's downloaded binary is strictly
-    /// better than their bare-CLI command and takes over the `command` field
-    /// IN PLACE — same id, same slot, same display name, never a second entry
-    /// for one agent (the plugin catalog keys off `spec_id`). When no binary
-    /// has been acquired the dynamic spec is simply absent and the bare
-    /// command stands, which is the pre-existing behaviour.
+    /// The one exception is the auto-managed built-ins (see
+    /// [`BUILTIN_AGENTS`]): they have no npx distribution, so a resolved
+    /// binary — the user's own system install first, Atlas's downloaded copy
+    /// second — is strictly better than their bare-CLI command and takes over
+    /// the `command` field IN PLACE: same id, same slot, same display name,
+    /// never a second entry for one agent (the plugin catalog keys off
+    /// `spec_id`). When nothing has been resolved the dynamic spec is simply
+    /// absent and the bare command stands, which is the pre-existing behaviour.
+    ///
+    /// Note this loop is FIRST-DYNAMIC-WINS for ids it doesn't already know
+    /// (`Some(_) => {}` keeps the earlier entry). The precedence ordering
+    /// between a discovered binary, a managed download and a frozen install
+    /// record therefore has to be resolved by the `SpecSource` itself, which
+    /// emits exactly one spec per id.
     pub fn known_specs(&self) -> Vec<AgentSpec> {
         let mut specs = AgentSpec::all_known();
         if let Some(source) = &self.dynamic {
             for spec in source.extra_specs() {
                 match specs.iter().position(|s| s.spec_id == spec.spec_id) {
-                    Some(i) if AUTO_MANAGED_BUILTIN_IDS.contains(&spec.spec_id.as_str()) => {
+                    Some(i) if is_auto_managed(&spec.spec_id) => {
                         specs[i].command = spec.command;
                     }
                     Some(_) => {}
@@ -884,5 +1001,96 @@ mod spec_source_tests {
         let specs = registry.known_specs();
         let cursor = specs.iter().find(|s| s.spec_id == "cursor").unwrap();
         assert_eq!(cursor.command, "cursor-agent acp");
+    }
+}
+
+/// The builtin table is the single source of truth for four things that used
+/// to be hand-synced lists. These guard it against drifting from the specs it
+/// annotates.
+#[cfg(test)]
+mod builtin_table_tests {
+    use super::*;
+
+    #[test]
+    fn every_table_id_is_a_real_spec_and_every_spec_is_in_the_table() {
+        let spec_ids: Vec<String> = AgentSpec::all_known().into_iter().map(|s| s.spec_id).collect();
+        let table_ids: Vec<&str> = BUILTIN_AGENTS.iter().map(|b| b.spec_id).collect();
+        for id in &table_ids {
+            assert!(spec_ids.iter().any(|s| s == id), "{id} has no AgentSpec");
+        }
+        for id in &spec_ids {
+            assert!(
+                table_ids.iter().any(|t| t == id),
+                "{id} is missing from BUILTIN_AGENTS"
+            );
+        }
+        assert_eq!(table_ids.len(), spec_ids.len(), "no duplicate table entries");
+    }
+
+    #[test]
+    fn the_auto_managed_set_is_exactly_the_three_plain_cli_builtins() {
+        let auto: Vec<&str> = BUILTIN_AGENTS
+            .iter()
+            .filter(|b| b.auto_managed)
+            .map(|b| b.spec_id)
+            .collect();
+        assert_eq!(auto, vec!["opencode", "cursor", "kilo"]);
+        // Optional-in-Settings and auto-managed are the same set: only agents
+        // Atlas downloads for you may be turned off.
+        let optional: Vec<&str> = BUILTIN_AGENTS
+            .iter()
+            .filter(|b| b.optional)
+            .map(|b| b.spec_id)
+            .collect();
+        assert_eq!(auto, optional);
+    }
+
+    #[test]
+    fn login_argv_matches_each_cli() {
+        // Verified against the real binaries' `--help`: cursor exposes a
+        // top-level `login`; opencode/kilo nest it under `auth login`.
+        assert_eq!(builtin_login_args("cursor"), Some(&["login"][..]));
+        assert_eq!(builtin_login_args("opencode"), Some(&["auth", "login"][..]));
+        assert_eq!(builtin_login_args("kilo"), Some(&["auth", "login"][..]));
+        assert_eq!(builtin_login_args("codex"), None);
+        assert_eq!(builtin_login_args("claude-code-ts"), None);
+        assert_eq!(builtin_login_args("amp-acp"), None);
+    }
+
+    #[test]
+    fn auto_managed_builtins_are_probeable_and_speak_acp() {
+        // An auto-managed agent Atlas can't look for on PATH would silently
+        // never take the system-first path.
+        for b in BUILTIN_AGENTS.iter().filter(|b| b.auto_managed) {
+            assert!(b.path_program.is_some(), "{} needs a path_program", b.spec_id);
+            assert_eq!(b.acp_args, &["acp"], "{} argv", b.spec_id);
+            assert!(b.login_args.is_some(), "{} needs login_args", b.spec_id);
+        }
+    }
+
+    #[test]
+    fn builtin_registry_ids_covers_every_manifest_duplicate() {
+        let ids = builtin_registry_ids();
+        for id in ["claude-acp", "codex-acp", "opencode", "cursor", "kilo"] {
+            assert!(ids.contains(&id), "{id} must be marked built-in");
+        }
+        assert_eq!(ids.len(), 5, "no extras — an entry here blocks an install");
+    }
+
+    #[test]
+    fn probe_programs_match_the_bare_spec_commands() {
+        // `path_program` must be the same executable the bare command names,
+        // or a PATH hit would spawn a different binary than the fallback.
+        for b in BUILTIN_AGENTS {
+            let Some(program) = b.path_program else { continue };
+            let spec = AgentSpec::all_known()
+                .into_iter()
+                .find(|s| s.spec_id == b.spec_id)
+                .unwrap();
+            let mut tokens = spec.command.split_whitespace();
+            assert_eq!(tokens.next(), Some(program), "{} program", b.spec_id);
+            let args: Vec<&str> = tokens.collect();
+            assert_eq!(args, b.acp_args, "{} args", b.spec_id);
+        }
     }
 }

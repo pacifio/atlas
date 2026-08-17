@@ -31,6 +31,8 @@ import {
   listCodexSessions,
   listCerseiSessions,
   listKiloSessions,
+  listAtlasTranscripts,
+  atlasTranscriptDelete,
   deleteClaudeSession,
   cerseiDeleteSession,
   codexDeleteSession,
@@ -335,6 +337,27 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
     placeholderData: keepPreviousData,
   });
 
+  // Atlas-recorded transcripts — every agent that keeps none of its own
+  // (opencode, cursor, and all registry-installed agents). Without this their
+  // history existed only while the session was live in the chat-store, so the
+  // row disappeared the moment you switched agents and the conversation was
+  // unrecoverable. Same no-watcher poll treatment as Codex/Kilo.
+  const atlasQueryKey = ["atlas-transcripts", cwd] as const;
+  const { data: atlasList = [] } = useQuery({
+    queryKey: atlasQueryKey,
+    queryFn: () => listAtlasTranscripts(cwd),
+    enabled: cwd.length > 0,
+    staleTime: 30_000,
+    refetchInterval: 4000,
+    refetchIntervalInBackground: false,
+    placeholderData: keepPreviousData,
+  });
+
+  /** Ids Atlas itself recorded — the delete handler routes on this rather than
+   *  sniffing the file path, since these rows carry a `filePath` that only
+   *  Atlas's own delete command will accept. */
+  const atlasRecordedIds = useMemo(() => new Set(atlasList.map((d) => d.id)), [atlasList]);
+
   // Start (or replace) the Rust file watcher for this cwd. The single
   // `atlas:sessions-changed` listener below dispatches against `queryKey`
   // closed over the current cwd, so the listener doesn't have to be
@@ -422,6 +445,10 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
     for (const d of codexList) diskById.set(d.id, { meta: d, agent: "codex" });
     for (const d of cerseiList) diskById.set(d.id, { meta: d, agent: "cersei" });
     for (const d of kiloList) diskById.set(d.id, { meta: d, agent: "kilo" });
+    // Last, and each row tagged with the agent that actually produced it
+    // (`pluginId` from the store) rather than a hardcoded constant — this one
+    // listing covers every agent Atlas records, present and future.
+    for (const d of atlasList) diskById.set(d.id, { meta: d, agent: d.plugin_id });
 
     // An unbound live row (`live-<tabId>` key — after an agent switch or
     // clearSession dropped the binding but kept messages, or during the
@@ -525,7 +552,7 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
     return agents
       .filter((a) => a.messageCount > 0)
       .sort((a, b) => (b.lastUpdated ?? "").localeCompare(a.lastUpdated ?? ""));
-  }, [agentList, codexList, cerseiList, kiloList, tabSummaries]);
+  }, [agentList, codexList, cerseiList, kiloList, atlasList, tabSummaries]);
 
   // Self-heal the workspace panel's persisted "Chats" list for THIS project.
   // That list (`atlas-recent-chats`) is recorded on agent activity and never
@@ -544,6 +571,7 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
       ...codexList.map((d) => d.id),
       ...cerseiList.map((d) => d.id),
       ...kiloList.map((d) => d.id),
+      ...atlasList.map((d) => d.id),
     ]);
     const liveAcp = new Set<string>();
     const liveTabs = new Set<string>();
@@ -826,6 +854,13 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
       } else if (item.agent === "kilo") {
         // Kilo rows soft-archive in ~/.local/share/kilo/kilo.db by id.
         await kiloDeleteSession(item.id);
+      } else if (atlasRecordedIds.has(item.id)) {
+        // Atlas-recorded transcript (opencode / cursor / any registry agent).
+        // Must be checked BEFORE the `filePath` branch below: these rows DO
+        // carry a filePath, but it points into Atlas's own store, and
+        // `deleteClaudeSession` guards against paths outside ~/.claude — so it
+        // would reject the delete and the row would reappear on the next poll.
+        await atlasTranscriptDelete(cwd, item.id);
       } else if (item.filePath) {
         await deleteClaudeSession(item.filePath);
       } else {
