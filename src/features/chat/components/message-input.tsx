@@ -18,18 +18,16 @@ import { useChatStore } from "../stores/chat-store";
 import { agents } from "../lib/agents-api";
 import {
   CLAUDE_PERMISSION_MODE_LABEL,
+  CLAUDE_PERMISSION_MODES,
+  type ClaudePermissionMode,
   agentTypeFromPluginId,
   pluginIdForAgent,
   type SwitchableAgent,
 } from "@/types/agent";
-import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { agentMeta, useSwitchableAgents } from "@/features/agents/lib/agent-meta";
 import { useAgentAcquire, acquirePercent } from "../lib/agent-acquire";
 import { canSignIn, promptSignIn } from "../lib/agent-signin";
-import {
-  cycleChatAgent,
-  nextAgentForTab,
-  switchAgentForTab,
-} from "@/features/chat/lib/switch-agent";
+import { switchAgentForTab } from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
 import { ProviderModelPills } from "./provider-model-pills";
 import { loadCerseiEffort, loadCerseiCompress } from "../lib/cersei-model-pref";
@@ -312,155 +310,102 @@ function displayModeName(name: string): string {
   return /^[a-z][a-z0-9-]*$/.test(name) ? name.charAt(0).toUpperCase() + name.slice(1) : name;
 }
 
-function AcpModePicker({ tabId }: { tabId: string }) {
-  const currentMode = useChatStore((s) => s.sessions[tabId]?.acpCurrentMode);
-  const availableModes = useChatStore((s) => s.sessions[tabId]?.acpAvailableModes);
-  const pending = useChatStore((s) => s.sessions[tabId]?.acpModesPending ?? false);
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType);
-  const acquiring = useAgentAcquire(pluginIdForAgent(agentType));
-  const { setAcpMode } = useChatStore.use.actions();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+type ComposerGroup = "agent" | "mode" | "model";
+const GROUP_ORDER: ComposerGroup[] = ["agent", "mode", "model"];
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    window.addEventListener("mousedown", onDown);
-    return () => window.removeEventListener("mousedown", onDown);
-  }, [open]);
-
-  const hasModes = !!availableModes && availableModes.length > 0;
-
-  // Atlas is downloading this agent's binary (first-ever use of Cursor /
-  // OpenCode / Kilo — tens of MB, ~20 s). Takes priority over everything
-  // else here, cached modes included: nothing can start until it lands, and a
-  // silent stall is exactly what this pill exists to prevent.
-  if (acquiring) {
-    const pct = acquirePercent(acquiring);
-    const label = agentMeta(agentType ?? "").label;
-    return (
-      <span
-        className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-tertiary)] select-none tabular-nums"
-        title={`Downloading ${label} — this happens once.`}
-      >
-        <Loader2 size={11} className="shrink-0 animate-spin" />
-        {pct !== null ? `Setting up ${label}… ${pct}%` : `Setting up ${label}…`}
-      </span>
-    );
+/** Colour class for the Claude permission-mode dot (mirrors the old pill). */
+function claudeModeDotClass(mode: ClaudePermissionMode): string {
+  switch (mode) {
+    case "acceptEdits":
+      return "bg-[var(--status-success)]";
+    case "plan":
+      return "bg-[var(--accent-primary)]";
+    case "bypassPermissions":
+      return "bg-[var(--status-error)]";
+    default:
+      return "bg-[var(--text-tertiary)]";
   }
-
-  // Still booting the session with nothing cached to show — a pure loading
-  // pill so the user sees the agent coming up instead of an empty composer.
-  if (!hasModes) {
-    if (!pending) return null;
-    return (
-      <span
-        className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-tertiary)] select-none"
-        title="Starting agent…"
-      >
-        <Loader2 size={11} className="shrink-0 animate-spin" />
-        Loading modes…
-      </span>
-    );
-  }
-
-  const current = availableModes!.find((m) => m.id === currentMode);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-        title="Permission mode"
-      >
-        {/* We already have (cached) modes — render the pill as settled for an
-            instant, Claude-like feel. The live session reconciles silently in
-            the background; no spinner, since the cached modes are usable now. */}
-        <span
-          className="w-1.5 h-1.5 rounded-full shrink-0"
-          style={{ background: acpModeColor(currentMode) }}
-        />
-        {current ? displayModeName(current.name) : "Mode"}
-      </button>
-      {open && (
-        <div className="absolute bottom-full left-0 mb-1.5 z-50 min-w-[200px] max-w-[280px] rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] p-1 shadow-lg">
-          {availableModes.map((m) => {
-            const active = m.id === currentMode;
-            return (
-              <button
-                key={m.id}
-                onClick={() => {
-                  setAcpMode(tabId, m.id);
-                  setOpen(false);
-                }}
-                className={cn(
-                  "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors",
-                  active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
-                )}
-              >
-                <span
-                  className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full"
-                  style={{ background: acpModeColor(m.id) }}
-                />
-                <span className="flex-1 min-w-0">
-                  <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
-                    {displayModeName(m.name)}
-                    {active && <Check size={11} className="text-[var(--accent-primary)]" />}
-                  </span>
-                  {m.description && (
-                    <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)]">
-                      {m.description}
-                    </span>
-                  )}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
 }
 
 /**
- * Composer model picker for the ACP agents (Claude Code / Codex). These agents
- * advertise their selectable models (id + name + description) in `session/new`
- * — ACP's first-party model selection, the same surface Zed drives. We render a
- * dropup mirroring the mode picker. Hidden when the agent exposes no models or
- * for the native agent (which uses ProviderModelPills + its BYOK catalog).
+ * The composer's grouped, animated picker — coding agent / permission mode /
+ * model unified into one Skiper-style expanding menu. The pill row doubles as
+ * the tab strip: clicking a pill expands a shared panel above it with that
+ * group's items; clicking another tab slides the content toward it
+ * (direction-aware); outside click / Esc / re-click closes. While open, the
+ * unselected pills collapse to icon-only (the reference's tab behaviour).
+ * Keyboard cycling (⌥/ agents, ⇧⇥ modes) is unchanged — this is the
+ * "just let me pick" surface.
+ *
+ * Animation is CSS-only and cheap: the expand is a grid-rows 0fr→1fr
+ * transition (no measuring, no library), group switches are one-shot keyed
+ * slide-ins that end at identity (no fill-mode — the standing rule).
  */
-
-function AcpModelPicker({ tabId }: { tabId: string }) {
+function ComposerGroupsMenu({
+  tabId,
+  currentAgent,
+  onSwitchAgent,
+}: {
+  tabId: string;
+  currentAgent: SwitchableAgent;
+  onSwitchAgent: (agent: SwitchableAgent) => void;
+}) {
+  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
+  const permissionMode = useChatStore((s) => s.sessions[tabId]?.claudePermissionMode ?? "default");
+  const currentMode = useChatStore((s) => s.sessions[tabId]?.acpCurrentMode);
+  const availableModes = useChatStore((s) => s.sessions[tabId]?.acpAvailableModes);
+  const modesPending = useChatStore((s) => s.sessions[tabId]?.acpModesPending ?? false);
   const currentModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel);
   const availableModels = useChatStore((s) => s.sessions[tabId]?.acpAvailableModels);
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
-  const { setAcpModel } = useChatStore.use.actions();
-  const [open, setOpen] = useState(false);
+  const { setAcpMode, setAcpModel, setClaudePermissionMode } = useChatStore.use.actions();
+  const acquiring = useAgentAcquire(pluginIdForAgent(agentType));
+  const switchableAgents = useSwitchableAgents();
+
+  const [openGroup, setOpenGroup] = useState<ComposerGroup | null>(null);
+  const [dir, setDir] = useState(1);
   const [q, setQ] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  // Measured content height driving the shared panel's height tween — group
+  // switches (and async rows landing) morph the container instead of snapping.
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [panelHeight, setPanelHeight] = useState(0);
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setPanelHeight(el.offsetHeight));
+    ro.observe(el);
+    setPanelHeight(el.offsetHeight);
+    return () => ro.disconnect();
+  }, [openGroup]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!openGroup) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpenGroup(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenGroup(null);
+    };
+    const onOther = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== "groups") setOpenGroup(null);
     };
     window.addEventListener("mousedown", onDown);
-    return () => window.removeEventListener("mousedown", onDown);
-  }, [open]);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("atlas:composer-menu-open", onOther);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("atlas:composer-menu-open", onOther);
+    };
+  }, [openGroup]);
 
-  // Self-heal: ACP `session/load` doesn't re-advertise models, so a resumed /
-  // re-bound session can hold an empty list even though the agent has one —
-  // and hiding the picker on empty is exactly the "model selector disappears
-  // mid-session" bug. Fall back to the persisted per-agent cache (the mode
-  // picker self-heals the same way).
+  // Self-heal exactly like the old model picker: `session/load` doesn't
+  // re-advertise models, so fall back to the persisted per-agent cache.
   const models = useMemo(() => {
     if (availableModels && availableModels.length > 0) return availableModels;
     return loadCachedAcpModels(agentType)?.availableModels ?? [];
   }, [availableModels, agentType]);
-
-  const filtered = useMemo(() => {
+  const filteredModels = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return models;
     return models.filter(
@@ -471,76 +416,284 @@ function AcpModelPicker({ tabId }: { tabId: string }) {
     );
   }, [models, q]);
 
-  if (models.length === 0) return null;
-  const current = models.find((m) => m.id === currentModel);
+  const isClaude = agentType === "claude-code";
+  const hasAcpModes = !!availableModes && availableModes.length > 0;
+  const showMode = isClaude || hasAcpModes || modesPending;
+  const showModel = agentType !== "cersei" && models.length > 0;
+
+  const toggle = (g: ComposerGroup) => {
+    setQ("");
+    setOpenGroup((cur) => {
+      if (cur === g) return null;
+      if (cur) setDir(GROUP_ORDER.indexOf(g) > GROUP_ORDER.indexOf(cur) ? 1 : -1);
+      // Mutual exclusion with the + menu — see atlas:composer-menu-open.
+      window.dispatchEvent(new CustomEvent("atlas:composer-menu-open", { detail: "groups" }));
+      return g;
+    });
+  };
+  const close = () => setOpenGroup(null);
+
+  const currentAcpMode = availableModes?.find((m) => m.id === currentMode);
+  const currentModelInfo = models.find((m) => m.id === currentModel);
+
+  // Labels stay visible on every pill — the reference folds unselected tabs
+  // to icon-only, but on a toolbar whose pills are real controls that reads
+  // worse than it looks (deliberately skipped).
+  const labelCls = (_active: boolean) => "ml-1.5 whitespace-nowrap";
+  const pillCls = (active: boolean) =>
+    cn(
+      "flex items-center px-1.5 h-6.5 rounded-full border text-[10px] leading-none font-medium transition-colors cursor-pointer",
+      active
+        ? "border-[var(--border-strong)] bg-[var(--bg-selected)] text-[var(--text-primary)]"
+        : "border-[var(--border-default)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
+    );
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => {
-          setQ("");
-          setOpen((o) => !o);
+    <div ref={ref} className="relative flex items-center gap-1">
+      {/* Shared morphing panel — ONE container whose height tweens to the
+          measured size of whatever group is showing (ResizeObserver on the
+          content), so open/close AND group→group switches all animate through
+          the same surface — the reference's shared-layout feel. */}
+      <div
+        aria-hidden={!openGroup}
+        className="absolute bottom-full left-0 z-50 mb-1.5 w-[300px] overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-overlay)]"
+        style={{
+          height: openGroup ? panelHeight : 0,
+          opacity: openGroup ? 1 : 0,
+          pointerEvents: openGroup ? "auto" : "none",
+          transition: "height 260ms cubic-bezier(0.32,0.72,0,1), opacity 180ms ease-out",
         }}
-        className="flex items-center gap-1 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-        title="Model"
       >
-        <Cpu size={11} className="shrink-0 text-[var(--text-tertiary)]" />
-        <span className="max-w-[120px] truncate">
-          {current ? modelLabel(current) : (currentModel ?? "Model")}
-        </span>
-        <ChevronDown size={10} className="shrink-0 text-[var(--text-tertiary)]" />
-      </button>
-      {open && (
-        <div className="absolute bottom-full left-0 mb-1.5 z-50 w-[260px] overflow-hidden rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-lg">
-          {/* Search combobox */}
-          <div className="flex items-center gap-1.5 h-8 border-b border-[var(--border-subtle)] px-2.5">
-            <Search size={12} className="shrink-0 text-[var(--text-tertiary)]" />
-            <input
-              autoFocus
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search models…"
-              spellCheck={false}
-              className="min-w-0 flex-1 bg-transparent text-[11px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
-            />
-          </div>
-          <div className="max-h-[280px] overflow-y-auto hide-scrollbar p-1">
-            {filtered.length === 0 ? (
-              <div className="px-2.5 py-2 text-[11px] text-[var(--text-tertiary)]">No models</div>
-            ) : (
-              filtered.map((m) => {
-                const active = m.id === currentModel;
-                return (
-                  <button
-                    key={m.id}
-                    onClick={() => {
-                      setAcpModel(tabId, m.id);
-                      setOpen(false);
-                    }}
-                    className={cn(
-                      "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                      active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
-                    )}
-                  >
-                    <span className="flex-1 min-w-0">
-                      <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
-                        <span className="truncate">{modelLabel(m)}</span>
-                        {active && (
-                          <Check size={11} className="shrink-0 text-[var(--accent-primary)]" />
-                        )}
-                      </span>
-                      {m.description && m.description.trim().toLowerCase() !== "recommended" && (
-                        <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)] line-clamp-2">
-                          {m.description}
-                        </span>
+        <div ref={contentRef}>
+          <div
+            key={openGroup ?? "none"}
+            className={cn(dir > 0 ? "atlas-group-slide-left" : "atlas-group-slide-right")}
+          >
+            {openGroup === "agent" && (
+              <div className="max-h-[300px] overflow-y-auto hide-scrollbar p-1">
+                {switchableAgents.map((a) => {
+                  const active = a === currentAgent;
+                  return (
+                    <button
+                      key={a}
+                      onClick={() => {
+                        if (!active) onSwitchAgent(a as SwitchableAgent);
+                        close();
+                      }}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
+                        active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
                       )}
-                    </span>
-                  </button>
-                );
-              })
+                    >
+                      <AgentMark agentType={a} className="!h-4 !w-4 !text-[9px] !rounded" />
+                      <span className="flex-1 truncate text-[11px] font-medium text-[var(--text-primary)]">
+                        {agentMeta(a).label}
+                      </span>
+                      {active && <Check size={11} className="text-[var(--accent-primary)]" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {openGroup === "mode" && isClaude && (
+              <div className="p-1">
+                {CLAUDE_PERMISSION_MODES.map((m) => {
+                  const active = m === permissionMode;
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => {
+                        setClaudePermissionMode(tabId, m);
+                        close();
+                      }}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
+                        active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
+                      )}
+                    >
+                      <span
+                        className={cn("h-1.5 w-1.5 shrink-0 rounded-full", claudeModeDotClass(m))}
+                      />
+                      <span className="flex-1 text-[11px] font-medium text-[var(--text-primary)]">
+                        {CLAUDE_PERMISSION_MODE_LABEL[m]}
+                      </span>
+                      {active && <Check size={11} className="text-[var(--accent-primary)]" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {openGroup === "mode" && !isClaude && (
+              <div className="p-1">
+                {!hasAcpModes ? (
+                  <div className="flex items-center gap-1.5 px-2 py-2 text-[11px] text-[var(--text-tertiary)]">
+                    <Loader2 size={11} className="animate-spin" /> Loading modes…
+                  </div>
+                ) : (
+                  availableModes!.map((m) => {
+                    const active = m.id === currentMode;
+                    return (
+                      <button
+                        key={m.id}
+                        onClick={() => {
+                          setAcpMode(tabId, m.id);
+                          close();
+                        }}
+                        className={cn(
+                          "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
+                          active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
+                        )}
+                      >
+                        <span
+                          className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full"
+                          style={{ background: acpModeColor(m.id) }}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
+                            {displayModeName(m.name)}
+                            {active && <Check size={11} className="text-[var(--accent-primary)]" />}
+                          </span>
+                          {m.description && (
+                            <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)]">
+                              {m.description}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+            {openGroup === "model" && (
+              <>
+                <div className="flex h-8 items-center gap-1.5 border-b border-[var(--border-subtle)] px-2.5">
+                  <Search size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+                  <input
+                    autoFocus
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    placeholder="Search models…"
+                    spellCheck={false}
+                    className="min-w-0 flex-1 bg-transparent text-[11px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
+                  />
+                </div>
+                <div className="max-h-[280px] overflow-y-auto hide-scrollbar p-1">
+                  {filteredModels.length === 0 ? (
+                    <div className="px-2.5 py-2 text-[11px] text-[var(--text-tertiary)]">
+                      No models
+                    </div>
+                  ) : (
+                    filteredModels.map((m) => {
+                      const active = m.id === currentModel;
+                      return (
+                        <button
+                          key={m.id}
+                          onClick={() => {
+                            setAcpModel(tabId, m.id);
+                            close();
+                          }}
+                          className={cn(
+                            "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
+                            active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
+                          )}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
+                              <span className="truncate">{modelLabel(m)}</span>
+                              {active && (
+                                <Check
+                                  size={11}
+                                  className="shrink-0 text-[var(--accent-primary)]"
+                                />
+                              )}
+                            </span>
+                            {m.description &&
+                              m.description.trim().toLowerCase() !== "recommended" && (
+                                <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)] line-clamp-2">
+                                  {m.description}
+                                </span>
+                              )}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>
+      </div>
+
+      {/* Pill tab strip */}
+      <button
+        onClick={() => toggle("agent")}
+        className={pillCls(openGroup === "agent")}
+        title="Coding agent — pick here, ⌥/ cycles"
+      >
+        <AgentMark agentType={agentType} className="!h-4 !w-4 !text-[9px] !rounded" />
+        <span className={labelCls(openGroup === "agent")}>{agentMeta(currentAgent).label}</span>
+      </button>
+
+      {acquiring ? (
+        <span
+          className="flex h-6.5 items-center gap-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] px-2 text-[10px] font-medium leading-none text-[var(--text-tertiary)] select-none tabular-nums"
+          title={`Downloading ${agentMeta(agentType).label} — this happens once.`}
+        >
+          <Loader2 size={11} className="shrink-0 animate-spin" />
+          {acquirePercent(acquiring) !== null
+            ? `Setting up ${agentMeta(agentType).label}… ${acquirePercent(acquiring)}%`
+            : `Setting up ${agentMeta(agentType).label}…`}
+        </span>
+      ) : (
+        showMode && (
+          <button
+            onClick={() => toggle("mode")}
+            className={pillCls(openGroup === "mode")}
+            title="Permission mode — pick here, ⇧⇥ cycles"
+          >
+            {isClaude ? (
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 shrink-0 rounded-full",
+                  claudeModeDotClass(permissionMode),
+                )}
+              />
+            ) : (
+              <span
+                className="h-1.5 w-1.5 shrink-0 rounded-full"
+                style={{ background: acpModeColor(currentMode) }}
+              />
+            )}
+            <span className={labelCls(openGroup === "mode")}>
+              {isClaude
+                ? CLAUDE_PERMISSION_MODE_LABEL[permissionMode]
+                : currentAcpMode
+                  ? displayModeName(currentAcpMode.name)
+                  : modesPending
+                    ? "Loading…"
+                    : "Mode"}
+            </span>
+          </button>
+        )
+      )}
+
+      {showModel && (
+        <button
+          onClick={() => toggle("model")}
+          className={pillCls(openGroup === "model")}
+          title="Model"
+        >
+          <Cpu size={11} className="shrink-0 text-[var(--text-tertiary)]" />
+          <span className={cn(labelCls(openGroup === "model"), "max-w-[120px] truncate")}>
+            {currentModelInfo ? modelLabel(currentModelInfo) : (currentModel ?? "Model")}
+          </span>
+          <ChevronDown size={10} className="ml-0.5 shrink-0 text-[var(--text-tertiary)]" />
+        </button>
       )}
     </div>
   );
@@ -556,7 +709,6 @@ export function MessageInput({
   placeholder = "Message Atlas... (@ to mention, / for commands)",
 }: MessageInputProps) {
   const {
-    cycleClaudePermissionMode,
     enqueueMessage,
     removeQueueItem,
     setAcpModes,
@@ -566,9 +718,6 @@ export function MessageInput({
     setCerseiEffort,
     setCerseiCompress,
   } = useChatStore.use.actions();
-  // Codex/other ACP agents advertise their own permission modes; show the
-  // picker only when this session actually has modes (Claude uses its own pill).
-  const hasAcpModes = useChatStore((s) => (s.sessions[tabId]?.acpAvailableModes?.length ?? 0) > 0);
   // Show the picker as soon as the agent is non-Claude — even before its modes
   // load — so the composer can render a loading pill instead of nothing during
   // the agent spawn + new_session boot.
@@ -625,7 +774,6 @@ export function MessageInput({
   // Narrow per-tab selectors — primitives only, no message-array refs. This
   // component otherwise would re-render on every streaming chunk because it
   // sits inside the active chat panel.
-  const permissionMode = useChatStore((s) => s.sessions[tabId]?.claudePermissionMode ?? "default");
   const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
   // Settings → General → "Enter to send". Narrow selector so a toggle flip
   // only re-renders composers, not the whole settings surface.
@@ -1761,41 +1909,15 @@ export function MessageInput({
                 currentAgent={switchableAgent}
                 onSwitchAgent={handleSwitchAgent}
               />
-              {/* Which coding agent this chat is bound to. Click cycles to the
-                  next agent, exactly like ⌥/ (same helper). */}
-              <button
-                onClick={() => cycleChatAgent(tabId)}
-                className="flex items-center gap-1.5 px-1.5 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                title={`Coding agent — click to switch to ${agentMeta(nextAgentForTab(tabId)).label} (⌥/)`}
-              >
-                <AgentMark agentType={agentType} className="!h-4 !w-4 !text-[9px] !rounded" />
-                {agentMeta(switchableAgent).label}
-              </button>
-              {agentType === "claude-code" && (
-                <button
-                  onClick={() => cycleClaudePermissionMode(tabId)}
-                  className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                  title="Cycle permission mode (⇧⇥)"
-                >
-                  <span
-                    className={cn(
-                      "w-1.5 h-1.5 rounded-full shrink-0",
-                      permissionMode === "default" && "bg-[var(--text-tertiary)]",
-                      permissionMode === "acceptEdits" && "bg-[var(--status-success)]",
-                      permissionMode === "plan" && "bg-[var(--accent-primary)]",
-                      permissionMode === "bypassPermissions" && "bg-[var(--status-error)]",
-                    )}
-                  />
-                  {CLAUDE_PERMISSION_MODE_LABEL[permissionMode]}
-                </button>
-              )}
-              {agentType !== "claude-code" && (hasAcpModes || acpModesPending) && (
-                <AcpModePicker tabId={tabId} />
-              )}
-              {/* ACP first-party model picker — Claude Code / Codex advertise
-                  their models in `session/new` (the native agent uses the BYOK
-                  ProviderModelPills below instead). Renders nothing if empty. */}
-              {agentType !== "cersei" && <AcpModelPicker tabId={tabId} />}
+              {/* Agent / mode / model as one grouped, animated picker — the
+                  pills double as its tab strip. Cycling shortcuts (⌥/ agents,
+                  ⇧⇥ Claude modes) are unchanged. The native agent's BYOK
+                  pickers (ProviderModelPills etc.) stay separate below. */}
+              <ComposerGroupsMenu
+                tabId={tabId}
+                currentAgent={switchableAgent}
+                onSwitchAgent={handleSwitchAgent}
+              />
               {agentType === "cersei" && (
                 <ProviderModelPills
                   provider={cerseiProvider}

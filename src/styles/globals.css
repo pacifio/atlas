@@ -1762,6 +1762,52 @@
   animation: atlas-bubble-in 0.18s ease-out;
 }
 
+/* Dropup menu entrance (the composer's + menu and its submenus): a soft
+   scale/rise from the trigger. One-shot, ends at identity, no fill-mode. */
+@keyframes atlas-menu-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.atlas-menu-pop {
+  transform-origin: bottom left;
+  animation: atlas-menu-pop 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Grouped composer menu: direction-aware content slide when switching tabs.
+   One-shot, ends at identity, no fill-mode (the standing transform rules). */
+@keyframes atlas-group-slide-left {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes atlas-group-slide-right {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.atlas-group-slide-left {
+  animation: atlas-group-slide-left 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.atlas-group-slide-right {
+  animation: atlas-group-slide-right 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
 @keyframes atlas-placeholder-in {
   from {
     opacity: 0;

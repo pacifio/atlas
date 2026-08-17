@@ -682,7 +682,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
       <div
         aria-hidden
         className={cn(
-          "pointer-events-none absolute bottom-0 left-0 right-0 z-[1] h-16 transition-opacity duration-200",
+          "pointer-events-none absolute bottom-0 left-0 right-0 z-[1] h-[42px] transition-opacity duration-200",
           more ? "opacity-100" : "opacity-0",
         )}
         style={{
