@@ -16,7 +16,14 @@ export function workspaceIdForTab(tabId: string): string | null {
     if (view.tabs.some((t) => t.id === tabId)) return wsId;
   }
   const path = useChatStore.getState().sessions[tabId]?.workingDirectory;
-  if (path) return ws.workspaces.find((w) => w.path === path)?.id ?? null;
+  if (path) {
+    // Paths are unique per ORG, not globally (the same folder can be a
+    // workspace in several organisations). Prefer the active workspace when
+    // it matches, so a cross-org twin never claims the active org's tab.
+    const active = ws.workspaces.find((w) => w.id === ws.activeWorkspaceId);
+    if (active?.path === path) return active.id;
+    return ws.workspaces.find((w) => w.path === path)?.id ?? null;
+  }
   return null;
 }
 
