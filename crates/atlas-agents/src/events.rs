@@ -50,6 +50,18 @@ pub enum SessionDelta {
         message_id: String,
         tool_call: ToolCall,
     },
+    /// Append live streaming output (`_meta.terminal_output`) to an existing
+    /// tool call's `result` — the incremental sibling of `ToolCallUpserted`,
+    /// mirroring `TextChunk`. Without it every output chunk re-shipped the
+    /// FULL accumulated result, making a long-running command's IPC cost
+    /// quadratic in its output size. Field changes (status, args, final
+    /// result) still travel as full `ToolCallUpserted` snapshots. Additive:
+    /// old frontends ignore unknown kinds.
+    ToolCallOutputChunk {
+        message_id: String,
+        tool_call_id: String,
+        delta: String,
+    },
     PlanUpdated {
         plan: Vec<PlanEntry>,
     },
@@ -174,8 +186,13 @@ impl Emitter {
     /// Fan one delta out to the bus and the host sink.
     pub fn emit(&self, envelope: SessionDeltaEnvelope) {
         // Bus first (cheap, non-blocking) so an in-process/cloud subscriber sees
-        // the event even if the host sink does heavier work.
-        self.bus.publish(envelope.clone());
+        // the event even if the host sink does heavier work. Guarded: with no
+        // subscribers (the production default — only opt-in taps attach), the
+        // deep clone (full message bodies, full accumulated tool results) was
+        // pure waste on the hottest path in the crate.
+        if self.bus.receiver_count() > 0 {
+            self.bus.publish(envelope.clone());
+        }
         self.sink.emit(envelope);
     }
 }

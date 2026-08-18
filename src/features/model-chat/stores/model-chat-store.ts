@@ -8,6 +8,7 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 import { createSelectors } from "@/lib/create-selectors";
+import { createStreamDeltaBuffer } from "@/lib/stream-delta-buffer";
 import type { ChatMessage } from "@/types/agent";
 import { useUsageStore } from "@/features/monitor/stores/usage-store";
 import { useNotificationsStore } from "@/features/notifications/stores/notifications-store";
@@ -103,6 +104,31 @@ let listenerInstalled = false;
 
 export const useModelChatStore = createSelectors(
   create<ModelChatState>((set, get) => {
+    // Token deltas coalesce here and land as ONE set() per animation frame —
+    // the same batching the agent chat gets — instead of a full-Record spread
+    // + panel render + virtualizer measure per token. MUST be declared before
+    // the `return`: the hoisted `function onEvent` below closes over it, and a
+    // `const` after the return would never initialize (TDZ throw on the first
+    // streamed token — caught by oxlint's no-unreachable).
+    const deltaBuffer = createStreamDeltaBuffer((chunks) => {
+      set((st) => {
+        let sessions = st.sessions;
+        for (const [streamId, delta] of chunks) {
+          const id = st.streamToSession[streamId];
+          if (!id) continue; // stream ended/cancelled before the flush
+          const s = sessions[id];
+          if (!s) continue;
+          const msgs = s.messages.slice();
+          const last = msgs[msgs.length - 1];
+          if (!last || last.role !== "assistant") continue;
+          msgs[msgs.length - 1] = { ...last, content: last.content + delta };
+          if (sessions === st.sessions) sessions = { ...sessions };
+          sessions[id] = { ...s, messages: msgs };
+        }
+        return sessions === st.sessions ? st : { sessions };
+      });
+    });
+
     return {
       metas: [],
       sessions: {},
@@ -283,17 +309,14 @@ export const useModelChatStore = createSelectors(
       if (!id) return;
 
       if (e.kind === "text_delta") {
-        setFn((st) => {
-          const s = st.sessions[id];
-          if (!s) return st;
-          const msgs = s.messages.slice();
-          const last = msgs[msgs.length - 1];
-          if (last && last.role === "assistant") {
-            msgs[msgs.length - 1] = { ...last, content: last.content + e.delta };
-          }
-          return { sessions: { ...st.sessions, [id]: { ...s, messages: msgs } } };
-        });
+        deltaBuffer.push(e.stream_id, e.delta);
         return;
+      }
+
+      // Terminals (and the done-snippet read below) must see the full text —
+      // drain the buffer before the stream mapping is torn down.
+      if (e.kind === "error" || e.kind === "done") {
+        deltaBuffer.flush();
       }
 
       if (e.kind === "usage") {

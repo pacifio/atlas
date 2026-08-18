@@ -191,8 +191,45 @@ impl MemoryRegistry {
         }
     }
 
-    /// Start one `notify` watcher for `cwd`, filtering to corpus-relevant paths and
-    /// coalescing bursts into a single `IndexCorpus{cwd}` via [`debounce_loop`].
+    /// Get-only lookup: the engine if this project is currently open, `None`
+    /// otherwise. Background jobs (index/compact) use this instead of
+    /// [`engine_for`](Self::engine_for) so a stale queued job for a closed
+    /// project skips instead of resurrecting the engine + watcher.
+    pub fn open_engine(&self, cwd: &str) -> Option<Arc<RwLock<MemoryEngine>>> {
+        self.engines.get(cwd).map(|e| e.value().clone())
+    }
+
+    /// Release everything held for `cwd`: dropping the watcher stops the OS watch
+    /// and drops the callback's `sig_tx`, which ends the debounce task; dropping
+    /// the engine frees its in-RAM HNSW/docstore. No persist needed — the indexer
+    /// persists at the end of every `IndexCorpus` pass, so the on-disk state is
+    /// already current. Reopening the project re-runs `engine_for` from scratch.
+    pub fn close_project(&self, cwd: &str) {
+        self.watchers.remove(cwd);
+        self.engines.remove(cwd);
+    }
+
+    /// Start one `notify` watcher for `cwd`'s corpus roots, filtering to
+    /// corpus-relevant paths and coalescing bursts into a single
+    /// `IndexCorpus{cwd}` via [`debounce_loop`].
+    ///
+    /// SCOPED, not a recursive watch of the whole cwd — that was the same
+    /// class of mistake the fileindex watcher already paid for (its unscoped
+    /// recursive root watch covered ~350k paths of target/ + node_modules).
+    /// Here the damage was smaller (raw watcher, no per-event stat storm) but
+    /// still real: every `cargo build`/`npm install` woke the callback
+    /// repo-wide, and the thousands of README/CHANGELOG `.md` files under
+    /// node_modules passed `is_corpus_path` and enqueued spurious IndexCorpus
+    /// jobs for the duration of a build. Worse, the watch was misaimed: most
+    /// of the corpus lives in `~/.claude/projects/<cwd>/memory`, which the
+    /// cwd watch never saw at all. `collect_corpus` reads exactly:
+    ///  - `~/.claude/projects/<encoded>/memory/*.md` → watched recursively,
+    ///  - `<cwd>/CLAUDE.md` + `<cwd>/AGENTS.md` → cwd watched NON-recursively,
+    ///  - `<cwd>/.atlas/codebase-index/docs.json` → watched when present
+    ///    (created later → picked up next open; the codebase-index build
+    ///    enqueues its own reindex anyway),
+    ///  - Codex sqlite under `~/.codex` → not watchable meaningfully (WAL
+    ///    churn); its content rides the debounced reindexes above.
     fn start_watcher(&self, cwd: &str) {
         // Lightweight "something changed" signals from the (sync) notify callback
         // into the async debounce task.
@@ -218,11 +255,46 @@ impl MemoryRegistry {
         match watcher {
             Ok(mut w) => {
                 use notify::Watcher;
-                if let Err(e) = w.watch(Path::new(cwd), notify::RecursiveMode::Recursive) {
-                    tracing::warn!(target: "atlas::memory_indexer", "watch {cwd} failed: {e}");
-                    return;
+                let mut watched_any = false;
+
+                // Project root, NON-recursive: only CLAUDE.md / AGENTS.md at
+                // the top level are corpus.
+                match w.watch(Path::new(cwd), notify::RecursiveMode::NonRecursive) {
+                    Ok(()) => watched_any = true,
+                    Err(e) => {
+                        tracing::warn!(target: "atlas::memory_indexer", "watch {cwd} failed: {e}");
+                    }
                 }
-                self.watchers.insert(cwd.to_string(), w);
+
+                // The Claude memory dir — the bulk of the corpus. Created
+                // eagerly so the watch can attach before the first memory is
+                // ever written.
+                let mem_dir = super::agent_memory::claude_memory_dir(cwd);
+                let _ = std::fs::create_dir_all(&mem_dir);
+                match w.watch(&mem_dir, notify::RecursiveMode::Recursive) {
+                    Ok(()) => watched_any = true,
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "atlas::memory_indexer",
+                            "watch {} failed: {e}", mem_dir.display()
+                        );
+                    }
+                }
+
+                // The persisted codebase index, when it exists.
+                let codebase_index = Path::new(cwd).join(".atlas").join("codebase-index");
+                if codebase_index.is_dir() {
+                    if w
+                        .watch(&codebase_index, notify::RecursiveMode::Recursive)
+                        .is_ok()
+                    {
+                        watched_any = true;
+                    }
+                }
+
+                if watched_any {
+                    self.watchers.insert(cwd.to_string(), w);
+                }
             }
             Err(e) => {
                 tracing::warn!(target: "atlas::memory_indexer", "watcher init failed for {cwd}: {e}");
@@ -232,8 +304,20 @@ impl MemoryRegistry {
 }
 
 /// True for paths the corpus is built from: any `*.md`, `CLAUDE.md`, `AGENTS.md`,
-/// or the codebase index's `codebase-index/docs.json`.
+/// or the codebase index's `codebase-index/docs.json`. Dependency/build trees
+/// are rejected outright — the scoped roots in `start_watcher` shouldn't
+/// deliver them, but a top-level rename can surface such paths in an event
+/// batch, and node_modules is full of README/CHANGELOG `.md` files that would
+/// otherwise trigger a pointless reindex.
 fn is_corpus_path(path: &Path) -> bool {
+    if path.components().any(|c| {
+        matches!(
+            c.as_os_str().to_str(),
+            Some("node_modules") | Some("target") | Some(".git")
+        )
+    }) {
+        return false;
+    }
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if name == "CLAUDE.md" || name == "AGENTS.md" {
         return true;
@@ -341,10 +425,16 @@ async fn index_one(
     cwd: &str,
     provider: &MiniLmProvider,
 ) -> Result<(), String> {
+    // Get-only: a job that outlived its project's close is a skip, not a
+    // resurrection (engine_for here would re-open the engine AND restart the
+    // watcher). Never-opened projects get their cold index at first memory use
+    // (engine_for enqueues one on open).
+    let Some(engine) = registry.open_engine(cwd) else {
+        return Ok(());
+    };
     let corpus = collect_corpus(cwd).await;
     let docs: Vec<CorpusDoc> = corpus.iter().map(to_corpus_doc).collect();
 
-    let engine = registry.engine_for(cwd);
     let mut guard = engine.write().await;
     // If the selected embedding model changed since this project was last indexed
     // (different model id or dim), wipe + rebuild — old vectors live in a different
@@ -376,7 +466,11 @@ async fn index_one(
 /// [`MemoryRegistry::engine_for`] is a safe near-no-op. Takes the engine **write
 /// lock** (consolidation is rare and serialized with indexing on this one task).
 async fn compact_one(registry: &MemoryRegistry, cwd: &str) -> Result<(), String> {
-    let engine = registry.engine_for(cwd);
+    // Get-only for the same reason as `index_one`: don't resurrect a closed
+    // project. Consolidation for it becomes due again next open.
+    let Some(engine) = registry.open_engine(cwd) else {
+        return Ok(());
+    };
     let mut guard = engine.write().await;
     let outcome = atlas_memory::consolidate(&mut guard).map_err(|e| e.to_string())?;
     drop(guard);
@@ -558,6 +652,19 @@ pub async fn force_reindex(
     // enqueue below covers the already-open case.
     let _ = registry.engine_for(&cwd);
     registry.enqueue(Job::IndexCorpus { cwd })
+}
+
+/// Workspace-close teardown: release `cwd`'s engine, FS watcher and debounce
+/// task. Counterpart of `fileindex_close_project`/`git_watch_stop` — without it
+/// every workspace ever opened kept a recursive FSEvents stream + an in-RAM
+/// index for the life of the process.
+#[tauri::command]
+pub async fn memory_indexer_close_project(
+    cwd: String,
+    registry: State<'_, Arc<MemoryRegistry>>,
+) -> Result<(), String> {
+    registry.close_project(cwd.trim_end_matches('/'));
+    Ok(())
 }
 
 #[cfg(test)]

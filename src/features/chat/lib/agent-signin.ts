@@ -203,11 +203,20 @@ export interface AgentSignInRequest {
   reason?: string;
 }
 
-let signInSeq = 0;
-const signInCallbacks = new Map<number, () => void>();
+export interface SignInCallbacks {
+  /** Retry whatever failed (a bind, typically) once credentials land. */
+  onSignedIn?: () => void;
+  /** The dialog was closed WITHOUT signing in. Callers use this to re-arm
+   *  their failure reporting (NOT to retry — a retry would fail again and
+   *  reopen the dialog in a loop). */
+  onDismissed?: () => void;
+}
 
-/** Retrieve-and-drop the retry callback registered for a dialog request. */
-export function takeSignInCallback(requestId: number): (() => void) | undefined {
+let signInSeq = 0;
+const signInCallbacks = new Map<number, SignInCallbacks>();
+
+/** Retrieve-and-drop the callbacks registered for a dialog request. */
+export function takeSignInCallback(requestId: number): SignInCallbacks | undefined {
   const cb = signInCallbacks.get(requestId);
   signInCallbacks.delete(requestId);
   return cb;
@@ -218,15 +227,22 @@ export function takeSignInCallback(requestId: number): (() => void) | undefined 
  *  one-click recovery.
  *
  *  `onSignedIn` lets the caller retry whatever failed (a bind, typically) once
- *  credentials land. `reason` should be the failure message — pass it whenever
- *  you have one, because it is what lets the dialog offer in-app key entry
- *  instead of the agent's own (often unusable) auth methods. */
+ *  credentials land; `onDismissed` fires when the dialog closes WITHOUT a
+ *  sign-in, so callers can re-arm failure reporting instead of retrying into a
+ *  loop. `reason` should be the failure message — pass it whenever you have
+ *  one, because it is what lets the dialog offer in-app key entry instead of
+ *  the agent's own (often unusable) auth methods. */
 export function promptSignIn(
   agentType: string,
-  opts?: { onSignedIn?: () => void; reason?: string },
+  opts?: { onSignedIn?: () => void; onDismissed?: () => void; reason?: string },
 ): void {
   const requestId = ++signInSeq;
-  if (opts?.onSignedIn) signInCallbacks.set(requestId, opts.onSignedIn);
+  if (opts?.onSignedIn || opts?.onDismissed) {
+    signInCallbacks.set(requestId, {
+      onSignedIn: opts.onSignedIn,
+      onDismissed: opts.onDismissed,
+    });
+  }
   window.dispatchEvent(
     new CustomEvent<AgentSignInRequest>(AGENT_SIGNIN_EVENT, {
       detail: { agentType, requestId, reason: opts?.reason },

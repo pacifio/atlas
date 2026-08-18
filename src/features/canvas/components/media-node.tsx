@@ -10,25 +10,48 @@ export interface MediaNodeData extends Record<string, unknown> {
   width?: number;
 }
 
+/** Media files are immutable once placed (a replace mints a new `src`), so the
+ *  base64 payload only ever needs to cross IPC once per app session — without
+ *  this, every canvas (re)mount re-transferred megabytes of JSON-serialized
+ *  base64 per image node. Bounded FIFO so a media-heavy org can't grow the
+ *  cache without limit (deleting a node keeps its file on disk, so there is
+ *  no eviction event to hook). */
+const mediaUrlCache = new Map<string, string>();
+const MEDIA_CACHE_CAP = 64;
+
 /** Image node. (Video was dropped — it made the canvas very slow.) Media lives
  *  under `.atlas/canvas-media/`, which the asset protocol 403s, so we fetch a
  *  base64 data URL via `canvas_media_data_url`. */
 export const MediaNode = memo(function MediaNode({ data, selected }: NodeProps) {
   const d = data as MediaNodeData;
-  const [url, setUrl] = useState<string | null>(null);
+  const cacheKey = `${d.projectPath}|${d.src}`;
+  const [url, setUrl] = useState<string | null>(() => mediaUrlCache.get(cacheKey) ?? null);
 
   useEffect(() => {
+    const cached = mediaUrlCache.get(cacheKey);
+    if (cached) {
+      setUrl(cached);
+      return;
+    }
     let alive = true;
     void invoke<string>("canvas_media_data_url", {
       projectPath: d.projectPath,
       src: d.src,
     })
-      .then((u) => alive && setUrl(u))
+      .then((u) => {
+        mediaUrlCache.delete(cacheKey);
+        mediaUrlCache.set(cacheKey, u);
+        if (mediaUrlCache.size > MEDIA_CACHE_CAP) {
+          const oldest = mediaUrlCache.keys().next().value;
+          if (oldest !== undefined) mediaUrlCache.delete(oldest);
+        }
+        if (alive) setUrl(u);
+      })
       .catch(() => alive && setUrl(null));
     return () => {
       alive = false;
     };
-  }, [d.projectPath, d.src]);
+  }, [cacheKey, d.projectPath, d.src]);
 
   return (
     // Root stays overflow-visible so the connection handles aren't clipped; the

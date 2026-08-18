@@ -158,7 +158,10 @@ export function SessionDetail({
     const container = scrollRef.current;
     if (!container) return;
     cancelScroll.current?.();
-    cancelScroll.current = animatedScrollTo(container, node, { block, offset: 12 });
+    cancelScroll.current = animatedScrollTo(container, node, {
+      block,
+      offset: 12,
+    });
   }, []);
 
   useEffect(() => () => cancelScroll.current?.(), []);
@@ -1144,7 +1147,9 @@ function Node({
         bare ? "size-2" : minor ? "size-5" : "size-8",
         tone,
       )}
-      style={{ marginTop: bare ? NODE_CENTRE - 4 : minor ? NODE_CENTRE - 10 : 0 }}
+      style={{
+        marginTop: bare ? NODE_CENTRE - 4 : minor ? NODE_CENTRE - 10 : 0,
+      }}
     >
       {/* Tool calls render a bare ring. A terminal glyph at 10px added ink
           without adding information — the row beside it already says what ran —
@@ -1661,41 +1666,38 @@ function FilterDrawer({
         aria-label="Filters"
         className="animate-slide-in-right absolute bottom-0 right-0 top-0 z-50 flex w-[340px] flex-col border-l border-[var(--border-default)] bg-[var(--bg-elevated)]/60 shadow-[var(--shadow-overlay)] backdrop-blur-2xl"
       >
-        {/* No title. The panel slides in from the control that names it, and a
-         *  340px column has better uses for its first row than repeating the
-         *  word you just clicked. The count still earns its place — it is the
-         *  one thing you cannot see by looking at the sections below. */}
-        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--border-default)] pl-3.5 pr-2">
-          {activeFilters > 0 && (
-            <span className="font-mono text-[10px] text-[var(--text-tertiary)]">
-              {activeFilters} active
-            </span>
-          )}
-          <div className="flex-1" />
-          {activeFilters > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                setFilters(() => DEFAULT_FILTERS);
-                setFailedOnly(false);
-                setTools(() => new Set());
-              }}
-              className="h-[22px] cursor-pointer rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] px-2.5 font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)]"
-            >
-              Reset
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close filters"
-            className="flex size-6 cursor-pointer items-center justify-center rounded text-[var(--text-tertiary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-          >
-            <X size={14} />
-          </button>
-        </div>
+        {/* No header row at all. With no active filters it was an empty strip
+         *  holding one X — the close button floats over the content instead,
+         *  and the "N active · Reset" affordance rides as the content's first
+         *  row only when there is something to reset. */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close filters"
+          className="absolute right-2 top-2 z-10 flex size-6 cursor-pointer items-center justify-center rounded text-[var(--text-tertiary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+        >
+          <X size={14} />
+        </button>
 
         <div className="hide-scrollbar flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-8 pt-4">
+          {activeFilters > 0 && (
+            <div className="flex items-center gap-2 pr-8">
+              <span className="font-mono text-[10px] text-[var(--text-tertiary)]">
+                {activeFilters} active
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setFilters(() => DEFAULT_FILTERS);
+                  setFailedOnly(false);
+                  setTools(() => new Set());
+                }}
+                className="h-[22px] cursor-pointer rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] px-2.5 font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)]"
+              >
+                Reset
+              </button>
+            </div>
+          )}
           {checkpoints.length > 0 && (
             <Section label="Checkpoints" hint={`${checkpoints.length} commits`}>
               <CheckpointJump checkpoints={checkpoints} onJump={onJump} />
@@ -2496,7 +2498,10 @@ function matches(entry: TimelineEntry, needle: string): boolean {
  */
 function clock(s: Detail["summary"]): string {
   const fmt = (iso: string) =>
-    new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    new Date(iso).toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   return `${fmt(s.startedAt)} → ${fmt(s.lastActivityAt)} · ${formatDuration(s.wallSeconds)} span`;
 }
 

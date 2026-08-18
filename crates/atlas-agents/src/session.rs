@@ -197,6 +197,19 @@ impl SessionState {
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
+        self.snapshot_with_messages(self.messages.clone())
+    }
+
+    /// [`snapshot`](Self::snapshot) minus the transcript (`messages` left
+    /// empty). The full snapshot deep-clones every message + tool result under
+    /// the same lock the streaming actor needs — multi-MB and multi-ms on long
+    /// resumed sessions — yet most callers only want modes/models/cwd-scale
+    /// metadata. Use this everywhere the transcript isn't actually read.
+    pub fn snapshot_meta(&self) -> SessionSnapshot {
+        self.snapshot_with_messages(Vec::new())
+    }
+
+    fn snapshot_with_messages(&self, messages: Vec<Message>) -> SessionSnapshot {
         SessionSnapshot {
             agent_id: self.agent_id,
             session_id: self.session_id.clone(),
@@ -211,7 +224,7 @@ impl SessionState {
             config_options: self.config_options.clone(),
             prompt_image_supported: false,
             plan: self.plan.clone(),
-            messages: self.messages.clone(),
+            messages,
             usage: self.usage.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,

@@ -72,7 +72,7 @@ const ITEM_CLASS =
   "data-[highlighted]:text-[var(--text-primary)]";
 
 const CONTENT_CLASS =
-  "rounded-md border border-[var(--border-default)] bg-[var(--bg-secondary)] " +
+  "atlas-menu-pop rounded-md border border-[var(--border-default)] bg-[var(--bg-secondary)] " +
   "shadow-[var(--shadow-overlay)] py-1";
 
 // Shared search-box header for the searchable submenus. `stopPropagation`
@@ -128,11 +128,30 @@ export function ComposerAddMenu({
   onSwitchAgent,
 }: ComposerAddMenuProps) {
   const [open, setOpen] = useState(false);
+
+  // The composer hosts two floating menus (this + menu and the grouped
+  // agent/mode/model panel). Opening either announces itself; the other
+  // closes — they must never stack (see atlas:composer-menu-open).
+  useEffect(() => {
+    const onOther = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== "add") setOpen(false);
+    };
+    window.addEventListener("atlas:composer-menu-open", onOther);
+    return () => window.removeEventListener("atlas:composer-menu-open", onOther);
+  }, []);
   // First-party agents + installed registry externals (re-renders on install).
   const switchableAgents = useSwitchableAgents();
 
   return (
-    <DropdownMenu.Root open={open} onOpenChange={setOpen}>
+    <DropdownMenu.Root
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o) {
+          window.dispatchEvent(new CustomEvent("atlas:composer-menu-open", { detail: "add" }));
+        }
+      }}
+    >
       <DropdownMenu.Trigger asChild>
         <button
           disabled={disabled}

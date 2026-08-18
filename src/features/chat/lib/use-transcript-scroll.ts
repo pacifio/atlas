@@ -27,11 +27,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { markScrollHot } from "@/lib/scroll-hot";
 
 /** How close to the top (px) the window grows at. Generous on purpose: growing
  *  early happens off-screen and is invisible, growing late is a hitch the reader
  *  is looking straight at. */
-const GROW_MARGIN = 1400;
+const GROW_MARGIN = 2200;
 
 /** Slack (px) within which "there is more below" reads as "you are at the end". */
 const AT_END = 80;
@@ -142,6 +143,10 @@ export function useTranscriptScroll({
   }, [scrollRef, measure]);
 
   const onScroll = useCallback(() => {
+    // Tell the agent-delta flush the reader is mid-gesture — it holds the
+    // batch briefly so the streaming re-render doesn't land inside a scroll
+    // frame (see scroll-hot.ts; that collision is what blanks tiles).
+    markScrollHot();
     if (frame.current !== null) return;
     frame.current = requestAnimationFrame(sample);
   }, [sample]);

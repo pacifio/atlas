@@ -16,12 +16,26 @@ use rusqlite::Connection;
 use crate::error::{Error, Result};
 
 /// Bump when adding a migration, and add the matching arm in [`migrate`].
+// NOTE: the next migration must use version 10 — 9 existed briefly in
+// unreleased 0.3.0-x dev builds (one additive nullable column) and was
+// withdrawn; `migrate` folds such stores back to 8. Reusing 9 would make a
+// real migration indistinguishable from the withdrawn one.
 pub const SCHEMA_VERSION: i64 = 8;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     // Fast path, outside any transaction: the overwhelmingly common case is a
     // database already at the current version.
     let found: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    // Withdrawn dev-only schema 9 (unreleased 0.3.0-x: an additive nullable
+    // `import_progress.resume_state` column for an import-resume CACHE). It
+    // locked every older build out of the store — which read as total data
+    // loss in the Timeline — for something that never deserved a schema gate;
+    // the cache moved to a sidecar file. Fold such stores back to 8; the
+    // orphan column is harmless and stays.
+    if found == 9 {
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        return Ok(());
+    }
     if found > SCHEMA_VERSION {
         return Err(Error::SchemaTooNew {
             found,
@@ -564,3 +578,31 @@ pub const REQUIRED_INDEXES: &[&str] = &[
     "idx_session_activity",
     "idx_message_activity",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The withdrawn dev-only schema 9 (see the note on `SCHEMA_VERSION`) must
+    /// fold back to 8 instead of tripping the too-new gate — it briefly locked
+    /// every older build out of the store, which read as total capture loss.
+    #[test]
+    fn a_store_stamped_with_the_withdrawn_schema_9_folds_back_to_8() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap(); // fresh store at the current version
+        conn.execute_batch("ALTER TABLE import_progress ADD COLUMN resume_state TEXT")
+            .unwrap();
+        conn.pragma_update(None, "user_version", 9).unwrap();
+
+        migrate(&conn).expect("the withdrawn version must not read as too-new");
+        let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
+
+        // A genuinely newer store still refuses.
+        conn.pragma_update(None, "user_version", 10).unwrap();
+        assert!(matches!(
+            migrate(&conn),
+            Err(Error::SchemaTooNew { found: 10, .. })
+        ));
+    }
+}

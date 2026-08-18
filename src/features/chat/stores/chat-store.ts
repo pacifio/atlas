@@ -42,6 +42,12 @@ import {
 } from "../lib/tool-files";
 import type { TurnFile } from "@/types/agent";
 
+/** `firstUserContent` is a preview field, never the full text — see the note
+ *  at its appendMessage write. 200 chars covers every consumer (they slice to
+ *  ≤80) with headroom. */
+const FIRST_USER_PREVIEW_CHARS = 200;
+const firstUserPreview = (prose: string): string => prose.slice(0, FIRST_USER_PREVIEW_CHARS);
+
 /** Rebuild the adaptive per-turn `turnSummary` (files read/modified) from a
  *  loaded transcript's tool calls. `turnSummary` is computed live at
  *  turn_finished and NOT persisted, so a resumed/switched session (the chat is a
@@ -349,6 +355,12 @@ interface ChatActions {
     ) => void;
     /** Pick an ACP model and push it to the bound agent (`session/set_model`). */
     setAcpModel: (sessionId: string, modelId: string) => void;
+    /** Seed the ACP slash-command list from a session snapshot's
+     *  `available_commands` — the recovery path for `available_commands_update`
+     *  deltas that raced ahead of the binding (or a resume) and were dropped
+     *  by the session router. Never clobbers a non-empty live list with an
+     *  empty snapshot. */
+    setAcpAvailableCommands: (sessionId: string, commands: unknown[]) => void;
     /** Native Cersei agent: pick the BYOK provider. Clears the model so the
      *  composer re-selects a default for the new provider before pushing. */
     setCerseiProvider: (sessionId: string, provider: string) => void;
@@ -653,6 +665,11 @@ export const useChatStore = createSelectors(
           }),
         switchChatAgent: (tabId, agentType) =>
           set((s) => {
+            // Store-boundary guard: agentType feeds plugin resolution,
+            // localStorage cache keys, and Tauri invoke args — a non-string
+            // (a leaked DOM event, once) poisons all three. Mirrors the
+            // total-by-construction rule on agentMeta().
+            if (typeof agentType !== "string") return;
             const sess = s.sessions[tabId];
             if (!sess) return;
             // Drop any pending permissions that belonged to the old binding so a
@@ -768,8 +785,21 @@ export const useChatStore = createSelectors(
             session.messages.push(msg);
             session.updatedAt = new Date().toISOString();
             if (role === "user") {
-              if (!session.firstUserContent) session.firstUserContent = content;
+              // Stored PRE-stripped and PRE-truncated: every consumer is a
+              // preview (≤80 chars after their own stripInjectedContext,
+              // which is idempotent), and the sidebar's sessionsSignature
+              // selector concatenates this field on EVERY store write — an
+              // untruncated multi-KB paste made that O(paste bytes) per
+              // keystroke and per streaming frame, for every mounted sidebar.
+              if (!session.firstUserContent) {
+                session.firstUserContent = firstUserPreview(split ? split.prose : content);
+              }
               session.userMessageCount = (session.userMessageCount ?? 0) + 1;
+              // The ONE row allowed to play the bubble entrance. Resume /
+              // replay paths stamp messages "now", so a timestamp heuristic
+              // animated whole restored threads (and every row mounted during
+              // an early scroll) — id-scoping keeps it to the actual send.
+              session.justSentMessageId = msg.id;
             }
           }),
         appendToolCall: (sessionId, toolName, input) =>
@@ -839,6 +869,7 @@ export const useChatStore = createSelectors(
               session.messages = [];
               session.tasks = [];
               session.status = "idle";
+              session.inflightToolIds = undefined;
               session.acpAgentId = undefined;
               session.acpSessionId = undefined;
               session.title = "New Chat";
@@ -934,7 +965,10 @@ export const useChatStore = createSelectors(
           // Persist the confirmed modes so the next switch to this agent is
           // instant. Done outside the immer pass (side effect, not state).
           if (availableModes.length > 0 && at && at !== "claude-code") {
-            saveCachedAcpModes(at, { currentMode: currentMode ?? null, availableModes });
+            saveCachedAcpModes(at, {
+              currentMode: currentMode ?? null,
+              availableModes,
+            });
           }
         },
         setAcpModesPending: (sessionId, pending) =>
@@ -956,6 +990,19 @@ export const useChatStore = createSelectors(
           const at = get().sessions[sessionId]?.agentType;
           if (at && at !== "claude-code") saveLastModePref(at, modeId);
           pushAcpModeToAgent(get(), sessionId);
+        },
+        setAcpAvailableCommands: (sessionId, commands) => {
+          set((s) => {
+            const session = s.sessions[sessionId];
+            if (!session) return;
+            // An empty snapshot must not erase a list the live delta already
+            // delivered; it MAY end the picker's loading state (undefined→[])
+            // for agents that genuinely advertise nothing.
+            if (commands.length === 0 && (session.availableCommands?.length ?? 0) > 0) {
+              return;
+            }
+            session.availableCommands = commands;
+          });
         },
         setAcpModels: (sessionId, currentModel, availableModels) => {
           set((s) => {
@@ -979,7 +1026,10 @@ export const useChatStore = createSelectors(
           // `session/load` doesn't re-advertise models).
           const at = get().sessions[sessionId]?.agentType;
           if (availableModels.length > 0 && at) {
-            saveCachedAcpModels(at, { currentModel: currentModel ?? null, availableModels });
+            saveCachedAcpModels(at, {
+              currentModel: currentModel ?? null,
+              availableModels,
+            });
           }
         },
         setAcpModel: (sessionId, modelId) => {
@@ -1079,7 +1129,12 @@ export const useChatStore = createSelectors(
             }
             // Recompute the cached preview/count from the loaded transcript
             // so the sidebar doesn't have to scan messages on every chunk.
-            session.firstUserContent = messages.find((m) => m.role === "user")?.content;
+            // Same stripped+truncated form as appendMessage (see note there).
+            const firstUserRaw = messages.find((m) => m.role === "user")?.content;
+            session.firstUserContent =
+              firstUserRaw !== undefined
+                ? firstUserPreview(splitAtlasContext(firstUserRaw).prose)
+                : undefined;
             session.userMessageCount = messages.reduce(
               (n, m) => n + (m.role === "user" ? 1 : 0),
               0,
@@ -1113,8 +1168,14 @@ export const useChatStore = createSelectors(
         removeSession: (sessionId) => {
           dropBackendSession(get().sessions[sessionId]);
           set((s) => {
+            // pendingPermissions is keyed by acpSessionId, not tab id — resolve
+            // before the session entry goes away (a stale list would resurface
+            // as a ghost prompt if the same acp session is later resumed).
+            const acp = s.sessions[sessionId]?.acpSessionId;
+            if (acp) delete s.pendingPermissions[acp];
             delete s.sessions[sessionId];
             delete s.drafts[sessionId];
+            delete s.queues[sessionId];
             if (s.activeSessionId === sessionId) {
               const keys = Object.keys(s.sessions);
               s.activeSessionId = keys.length > 0 ? keys[0] : null;
@@ -1125,10 +1186,12 @@ export const useChatStore = createSelectors(
           for (const id of sessionIds) dropBackendSession(get().sessions[id]);
           set((s) => {
             for (const id of sessionIds) {
+              // Same acpSessionId-keying note as removeSession above.
+              const acp = s.sessions[id]?.acpSessionId;
+              if (acp) delete s.pendingPermissions[acp];
               delete s.sessions[id];
               delete s.drafts[id];
               delete s.queues[id];
-              delete s.pendingPermissions[id];
               if (s.activeSessionId === id) s.activeSessionId = null;
             }
           });
@@ -1452,6 +1515,7 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       session.status = terminal;
       session.stopping = undefined;
       session.retryStatus = undefined;
+      session.inflightToolIds = undefined;
       // No permission modal survives its turn: the Rust finalize sweep emits
       // permission_resolved for each, but a lost/raced delta must not leave a
       // clickable modal on an idle turn (its click would strand the session).
@@ -1519,6 +1583,7 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
         env.stop_reason === "end_turn" || env.stop_reason === "cancelled" ? "idle" : "error";
       session.stopping = undefined;
       session.retryStatus = undefined;
+      session.inflightToolIds = undefined;
       delete s.pendingPermissions[env.session_id];
       // Per-turn usage footer (native agent): derive this turn's tokens/cost as
       // the delta from the previous turn's cumulative snapshot, and attach it to
@@ -1529,7 +1594,11 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
           output: session.usage.output_tokens ?? 0,
           cost: session.usage.cost ?? 0,
         };
-        const prev = session.lastUsageSnapshot ?? { input: 0, output: 0, cost: 0 };
+        const prev = session.lastUsageSnapshot ?? {
+          input: 0,
+          output: 0,
+          cost: 0,
+        };
         const turn = {
           input: Math.max(0, cum.input - prev.input),
           output: Math.max(0, cum.output - prev.output),
@@ -1587,7 +1656,11 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
         if (m.role !== "assistant") continue;
         const chips = extractNextSteps(m.content);
         if (chips.length > 0) {
-          m.suggestions = { turnSeq: env.turn_seq ?? 0, status: "ready", chips };
+          m.suggestions = {
+            turnSeq: env.turn_seq ?? 0,
+            status: "ready",
+            chips,
+          };
         }
         break;
       }
@@ -1613,6 +1686,7 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       session.status = "error";
       session.stopping = undefined;
       session.retryStatus = undefined;
+      session.inflightToolIds = undefined;
       // Auth failures route to the agent's sign-in flow (P15) instead of
       // dying as a generic banner. The composer components listen for this
       // (Claude → login dialog, Codex → sign-in pill); native/BYOK keys are
@@ -1716,6 +1790,14 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
           };
         }
       }
+      // Incremental in-flight index — the O(1) source for the composer's
+      // busy check (hasInFlightToolCalls), replacing a per-frame scan of
+      // every message's toolCalls.
+      if (env.tool_call.status === "pending" || env.tool_call.status === "running") {
+        (session.inflightToolIds ??= {})[env.tool_call.id] = true;
+      } else if (session.inflightToolIds) {
+        delete session.inflightToolIds[env.tool_call.id];
+      }
       const found = findToolCall(session, env.tool_call.id);
       if (found) {
         Object.assign(found.tc, toChatToolCall(env.tool_call));
@@ -1739,6 +1821,16 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       session.messages.push(
         stampProducingModel(session, makeAssistantToolMessage(toChatToolCall(env.tool_call))),
       );
+      return;
+    }
+    case "tool_call_output_chunk": {
+      // Incremental live command output — append to the tool's visible result.
+      // A chunk for an unknown id is dropped (matches the Rust apply rule for
+      // lone updates); the next full snapshot carries the authoritative text.
+      const found = findToolCall(session, env.tool_call_id);
+      if (found) {
+        found.tc.result = (found.tc.result ?? "") + env.delta;
+      }
       return;
     }
     case "plan_updated": {

@@ -1,5 +1,9 @@
 import { memo, useEffect, useRef, useState, useMemo } from "react";
-import { CachedMarkdown } from "@/lib/markdown-cache";
+import {
+  CachedMarkdown,
+  parseTransientOffThread,
+  transientWorkerAvailable,
+} from "@/lib/markdown-cache";
 import { parseMarkdown } from "@/lib/markdown-render";
 import {
   splitTopLevelBlocks,
@@ -57,23 +61,38 @@ const TransientMarkdown = memo(function TransientMarkdown({
   const small = source.length <= INLINE_PARSE_LIMIT;
   const inline = useMemo(() => (small ? parseMarkdown(source) : null), [small, source]);
 
-  // Large tail: throttled trailing-edge parse of the LATEST source.
+  // Large tail: throttled trailing-edge parse of the LATEST source. The parse
+  // itself runs on the markdown worker via the transient lane (single slot,
+  // latest-wins, no cache/queue) — synchronously it was O(tail length) of
+  // unified/rehype work on the main thread every 120ms, growing multi-frame
+  // late in a long block, exactly while rAF delta flushes were running. The
+  // sync parse remains only as the no-worker fallback.
   const [big, setBig] = useState("");
   const latest = useRef(source);
   latest.current = source;
   const timer = useRef<number | null>(null);
   const lastRun = useRef(0);
+  const alive = useRef(true);
   useEffect(() => {
     if (small || timer.current !== null) return;
     const due = Math.max(0, TRANSIENT_THROTTLE_MS - (performance.now() - lastRun.current));
     timer.current = window.setTimeout(() => {
       timer.current = null;
       lastRun.current = performance.now();
-      setBig(parseMarkdown(latest.current));
+      if (transientWorkerAvailable()) {
+        void parseTransientOffThread(latest.current).then((html) => {
+          // null/"" = superseded or timed out — skip the tick; a newer parse
+          // is on the way (and settling re-renders through CachedMarkdown).
+          if (alive.current && html) setBig(html);
+        });
+      } else {
+        setBig(parseMarkdown(latest.current));
+      }
     }, due);
   }, [small, source]);
   useEffect(
     () => () => {
+      alive.current = false;
       if (timer.current !== null) window.clearTimeout(timer.current);
     },
     [],

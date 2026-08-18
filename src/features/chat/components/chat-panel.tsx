@@ -431,7 +431,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // snapshot here already carries them. Claude ignores these in favour
         // of its own permission pill.
         try {
-          const snap = await agents.snapshot(key);
+          const snap = await agents.snapshotMeta(key);
           if (!cancelled) {
             // Defensive `?.` — a snapshot from an older agent build may omit
             // these arrays; a throw here used to silently skip ALL seeding.
@@ -460,6 +460,15 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             if (models.length > 0) {
               useChatStore.getState().actions.setAcpModels(tabId, snap.current_model, models);
             }
+            // Seed the slash-command list the same way. An
+            // `available_commands_update` fired between `session/new` and the
+            // binding is dropped by the delta router (no tab matches yet), and
+            // nothing re-emits it — the snapshot is the recovery path, exactly
+            // as for modes/models. Rust buffers pre-install notifications, so
+            // by the time this snapshot lands the commands are in state.
+            useChatStore
+              .getState()
+              .actions.setAcpAvailableCommands(tabId, snap.available_commands ?? []);
             // Boot finished (with or without modes) — drop the loading state.
             useChatStore.getState().actions.setAcpModesPending(tabId, false);
           }
@@ -501,6 +510,10 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
                   reportedBindFailures.delete(key);
                   void ensureBound();
                 },
+                // Dismissed without signing in: re-arm reporting only. The
+                // dedupe key used to stay set forever, silently swallowing
+                // every subsequent bind failure for this tab+agent.
+                onDismissed: () => reportedBindFailures.delete(key),
               });
             } else if (action === "signed-in-but-refused" && at) {
               // Signed in already and STILL refused. Say so, and surface the
@@ -567,7 +580,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     let cancelled = false;
     void (async () => {
       try {
-        const snap = await agents.snapshot({
+        const snap = await agents.snapshotMeta({
           agent_id: agentId,
           session_id: acpSessionId,
         });
@@ -594,6 +607,14 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
               .getState()
               .actions.setAcpModels(tabId, cached.currentModel, cached.availableModels);
           }
+        }
+        // Same backfill for slash commands: a session bound before this
+        // mount (HMR, resume, tab restore) may have missed its
+        // `available_commands_update` — the snapshot carries the list.
+        if (useChatStore.getState().sessions[tabId]?.availableCommands === undefined) {
+          useChatStore
+            .getState()
+            .actions.setAcpAvailableCommands(tabId, snap.available_commands ?? []);
         }
       } catch {
         // best-effort backfill
@@ -707,6 +728,20 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   );
   const onStopStable = useCallback(() => handleStopRef.current?.(), []);
   const onScrollToBottomStable = useCallback(() => messagesListRef.current?.scrollToBottom(), []);
+  // Same stable-identity discipline for the OTHER memo'd siblings that render
+  // once per streaming frame with ChatPanel: fresh inline closures here would
+  // defeat their memo() exactly like they would the composer's.
+  const onPermissionSend = useCallback((t: string) => handleSendRef.current?.(t, []), []);
+  const onOpenSearchStable = useCallback(() => setSearchPaletteOpen(true), []);
+  const onToggleBashStable = useCallback(() => {
+    setBashPanelOpen((v) => !v);
+    setPlansPanelOpen(false);
+  }, []);
+  const onTogglePlansStable = useCallback(() => {
+    setPlansPanelOpen((v) => !v);
+    setBashPanelOpen(false);
+  }, []);
+  const onNewSessionStable = useCallback(() => openNewAgentChat(), []);
   useEffect(() => {
     const cur = session?.status ?? "idle";
     const prev = prevStatusRef.current;
@@ -943,18 +978,17 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
                 title={headerTitle}
                 roleFilter={roleFilter}
                 onRoleFilterChange={setRoleFilter}
-                onOpenSearch={() => setSearchPaletteOpen(true)}
+                onOpenSearch={onOpenSearchStable}
                 bashPanelOpen={bashPanelOpen}
-                onToggleBash={() => {
-                  setBashPanelOpen((v) => !v);
-                  setPlansPanelOpen(false);
-                }}
+                onToggleBash={onToggleBashStable}
                 plansPanelOpen={plansPanelOpen}
-                onTogglePlans={() => {
-                  setPlansPanelOpen((v) => !v);
-                  setBashPanelOpen(false);
-                }}
-                onNewSession={openNewAgentChat}
+                onTogglePlans={onTogglePlansStable}
+                // Zero-arg wrapper, NOT a bare reference: React would call
+                // openNewAgentChat(SyntheticMouseEvent) and the event object
+                // sailed through `agent?` into the store as agentType —
+                // poisoning the bind ("JSON.stringify cannot serialize cyclic
+                // structures" from agents_spawn) and killing the composer.
+                onNewSession={onNewSessionStable}
               />
             </div>
           </div>
@@ -963,7 +997,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         <div className="relative">
           {/* Permission / question prompt — an inline card pinned above the
               composer (plan reviews still render as a centered modal). */}
-          <PermissionModal tabId={tabId} onSendMessage={(t) => handleSend(t, [])} />
+          <PermissionModal tabId={tabId} onSendMessage={onPermissionSend} />
           {/* Bottom fade lives in the transcript; the centered floating
               row (setup pill + scroll-to-bottom) lives inside
               ChatComposer below. */}

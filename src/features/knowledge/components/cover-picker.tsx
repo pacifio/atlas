@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { Upload, X } from "lucide-react";
+import { evictCoverUrl } from "../lib/cover-url-cache";
 
 interface CoverPickerProps {
   value: string | null;
@@ -93,6 +94,9 @@ export function CoverPicker({
         entryId,
         srcPath: selected as string,
       });
+      // The ref is entry-id-stable (`covers/<entryId>.<ext>`) — a re-upload
+      // reuses it, so the cached data URL must go or the old image shows.
+      evictCoverUrl(projectPath, rel);
       onPick(rel);
       onClose();
     } catch (e) {

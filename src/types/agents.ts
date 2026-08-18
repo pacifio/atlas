@@ -158,6 +158,17 @@ export type AgentDelta =
       tool_call: ToolCall;
     }
   | {
+      // Incremental live command output — append `delta` to the tool call's
+      // `result` (the streaming sibling of `tool_call_upserted`; full
+      // snapshots would re-ship the whole accumulated output per chunk).
+      kind: "tool_call_output_chunk";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      message_id: string;
+      tool_call_id: string;
+      delta: string;
+    }
+  | {
       kind: "plan_updated";
       agent_id: AgentId;
       session_id: AcpSessionId;

@@ -7,6 +7,7 @@
 
 import { create } from "zustand";
 import { createSelectors } from "@/lib/create-selectors";
+import { createStreamDeltaBuffer } from "@/lib/stream-delta-buffer";
 import type { ChatMessage } from "@/types/agent";
 import {
   modelchat as providerChat,
@@ -376,6 +377,27 @@ const useMemoryChatStoreBase = create<MemoryChatState>()((set, get) => ({
   },
 }));
 
+// Token deltas coalesce to ONE setState per animation frame (see
+// stream-delta-buffer) instead of a full-Record spread + render per token.
+const deltaBuffer = createStreamDeltaBuffer((chunks) => {
+  useMemoryChatStoreBase.setState((st) => {
+    let sessions = st.sessions;
+    for (const [streamId, delta] of chunks) {
+      const id = st.streamToSession[streamId];
+      if (!id) continue;
+      const s = sessions[id];
+      if (!s) continue;
+      const msgs = s.messages.slice();
+      const last = msgs[msgs.length - 1];
+      if (!last || last.role !== "assistant") continue;
+      msgs[msgs.length - 1] = { ...last, content: last.content + delta };
+      if (sessions === st.sessions) sessions = { ...sessions };
+      sessions[id] = { ...s, messages: msgs };
+    }
+    return sessions === st.sessions ? {} : { sessions };
+  });
+});
+
 function onEvent(
   set: (fn: (st: MemoryChatState) => Partial<MemoryChatState>) => void,
   get: () => MemoryChatState,
@@ -390,17 +412,13 @@ function onEvent(
   if (!id) return;
 
   if (e.kind === "text_delta") {
-    set((st) => {
-      const s = st.sessions[id];
-      if (!s) return {};
-      const msgs = s.messages.slice();
-      const last = msgs[msgs.length - 1];
-      if (last && last.role === "assistant") {
-        msgs[msgs.length - 1] = { ...last, content: last.content + e.delta };
-      }
-      return { sessions: { ...st.sessions, [id]: { ...s, messages: msgs } } };
-    });
+    deltaBuffer.push(e.stream_id, e.delta);
     return;
+  }
+
+  // Terminals persist the session from state — drain buffered text first.
+  if (e.kind === "error" || e.kind === "done") {
+    deltaBuffer.flush();
   }
 
   if (e.kind === "sources") {

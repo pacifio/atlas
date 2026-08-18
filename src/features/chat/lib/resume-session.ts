@@ -153,7 +153,18 @@ export async function resumeSessionFast(opts: {
 
   // Only repaint when the snapshot actually says something different. On a clean
   // resume it doesn't, and skipping saves a full virtualizer re-measure.
-  if (!cb.isStale() && (!fastPainted || !sameThread(fastMessages, snapshot.messages))) {
+  //
+  // And never let a SHORTER snapshot replace the fast paint: stage 1 read the
+  // JSONL just now, so it is strictly fresher disk truth. The manager's
+  // load_session is an idempotent cache — a session whose transcript grew
+  // while cached hands back a stale, shorter snapshot, and repainting from it
+  // deleted the newest user messages from the visible thread.
+  const snapshotIsStale = fastPainted && snapshot.messages.length < fastMessages.length;
+  if (
+    !cb.isStale() &&
+    !snapshotIsStale &&
+    (!fastPainted || !sameThread(fastMessages, snapshot.messages))
+  ) {
     cb.paint(snapshot.messages.map(snapshotMessageToWire));
     cb.onPainted();
   }

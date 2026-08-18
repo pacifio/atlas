@@ -16,7 +16,7 @@
 // a row carries a lot of resume edge-cases — a second implementation would drift
 // from the first within a release.
 
-import { forwardRef, useState } from "react";
+import { forwardRef, memo, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
@@ -75,7 +75,12 @@ interface ChatHeaderProps {
   onNewSession: () => void;
 }
 
-export function ChatHeader({
+// memo: rendered by ChatPanel once per streaming rAF flush; every prop is
+// identity-stable there (strings/booleans + the *Stable useCallback wrappers),
+// so this bails per frame and re-renders only on real header state changes.
+export const ChatHeader = memo(ChatHeaderImpl);
+
+function ChatHeaderImpl({
   tabId,
   title,
   roleFilter,

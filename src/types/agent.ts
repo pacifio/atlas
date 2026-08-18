@@ -113,12 +113,17 @@ export function isBusyAgentStatus(status: string | undefined): boolean {
  *  The composer stays "busy" while tools are in flight even if `status` has
  *  (racily) flipped to idle, so it never re-enables ahead of a still-spinning
  *  tool card. Rust is authoritative — it defers turn-end until tool calls
- *  quiesce — this is the thin view-side guard against any residual race. */
-export function hasInFlightToolCalls(session: { messages: ChatMessage[] } | undefined): boolean {
-  if (!session) return false;
-  return session.messages.some((m) =>
-    m.toolCalls.some((tc) => tc.status === "pending" || tc.status === "running"),
-  );
+ *  quiesce — this is the thin view-side guard against any residual race.
+ *  O(1): reads the store-maintained `inflightToolIds` map (synced on
+ *  tool_call_upserted, swept on every terminal) — ChatPanel calls this once
+ *  per streaming frame, so an O(messages) rescan here was per-frame cost. */
+export function hasInFlightToolCalls(
+  session: { inflightToolIds?: Record<string, true> } | undefined,
+): boolean {
+  const ids = session?.inflightToolIds;
+  if (!ids) return false;
+  for (const _ in ids) return true;
+  return false;
 }
 export type MessageRole = "user" | "assistant" | "system" | "tool";
 export type ClaudePermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
@@ -178,6 +183,10 @@ export interface ChatSession {
     /** ms epoch when this retry status arrived (for the countdown). */
     receivedAt: number;
   };
+  /** Ids of tool calls currently pending/running, maintained incrementally on
+   *  tool_call_upserted and swept (to undefined) on every terminal — the O(1)
+   *  source for `hasInFlightToolCalls`. */
+  inflightToolIds?: Record<string, true>;
   /** Turn identity of this session's current/most-recent turn, taken from the
    *  Rust `turn_seq` on status/terminal deltas. Used to reject a stale terminal
    *  (idle/error) belonging to a turn already superseded by a newer send —
@@ -207,6 +216,9 @@ export interface ChatSession {
   claudePermissionMode?: ClaudePermissionMode;
   /** True only after the user explicitly changes Claude's mode in this tab. */
   claudePermissionModeExplicit?: boolean;
+  /** Id of the user message sent JUST NOW — the only row that plays the
+   *  composer-side bubble entrance animation (see UserRowView). */
+  justSentMessageId?: string;
   /** ACP agent process bound to this tab (set eagerly when the tab mounts). */
   acpAgentId?: string;
   /**

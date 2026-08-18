@@ -44,6 +44,7 @@ import { useTranscriptScroll } from "../lib/use-transcript-scroll";
 import { useChatStore } from "../stores/chat-store";
 import { saveThreadToKb, drawDiagram } from "../lib/turn-actions";
 import { cn } from "@/lib/utils";
+import { isScrollHot } from "@/lib/scroll-hot";
 import { GradualBlur } from "@/components/gradual-blur";
 import { LoadingState } from "./loading-state";
 import {
@@ -145,6 +146,18 @@ interface Saved {
   atEnd: boolean;
 }
 const savedScroll = new Map<string, Saved>();
+/** Bound the cache: entries for closed tabs / dead sessions have no eviction
+ *  hook here, so cap it FIFO — re-inserting on unmount refreshes recency
+ *  (Map iteration order), keeping live tabs safe from eviction. */
+const SAVED_SCROLL_CAP = 100;
+function saveScroll(cacheKey: string, saved: Saved): void {
+  savedScroll.delete(cacheKey);
+  savedScroll.set(cacheKey, saved);
+  if (savedScroll.size > SAVED_SCROLL_CAP) {
+    const oldest = savedScroll.keys().next().value;
+    if (oldest !== undefined) savedScroll.delete(oldest);
+  }
+}
 
 /**
  * Shown while a turn is live but has produced nothing to render yet: the ACP
@@ -175,14 +188,26 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   const contentRef = useRef<HTMLDivElement>(null);
   const cacheKey = `${tabId}:${acpSessionId}`;
   const agent = switchable(agentType);
-  const agentLabel = agentMeta(agent).label;
-  const agentIcon =
-    AGENT_ICON[agent] ??
-    (agentMeta(agent).iconDataUrl ? (
-      <ExternalAgentIcon dataUrl={agentMeta(agent).iconDataUrl!} size={14} />
-    ) : (
-      <AgentMonogram label={agentMeta(agent).label} size={14} />
-    ));
+  // Only the just-sent user message plays the bubble entrance (id-scoped —
+  // see UserRowView). Primitive selector: changes once per user send.
+  const justSentMessageId = useChatStore((s) => s.sessions[tabId]?.justSentMessageId);
+  const { label: agentLabel, iconDataUrl: agentIconUrl } = agentMeta(agent);
+  // MEMOIZED, and it must stay that way: this element is handed to every
+  // row, and rows are memo()'d with default shallow compare. The previous
+  // un-memoized `?? <fallback JSX>` allocated a fresh element per Transcript
+  // render for external agents — new prop identity → every row re-rendered
+  // on every streaming delta / window growth / scroll flip, which is what
+  // reintroduced whole-thread blanking during fast scroll.
+  const agentIcon = useMemo(
+    () =>
+      AGENT_ICON[agent] ??
+      (agentIconUrl ? (
+        <ExternalAgentIcon dataUrl={agentIconUrl} size={14} />
+      ) : (
+        <AgentMonogram label={agentLabel} size={14} />
+      )),
+    [agent, agentIconUrl, agentLabel],
+  );
 
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   /** Turns whose tool-call block the reader has opened. */
@@ -385,6 +410,17 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     const step = () => {
       idle = null;
       timer = null;
+      // Mid-gesture: back off. The rIC `timeout: 400` below silently broke
+      // this effect's founding promise ("requestIdleCallback yields to
+      // scrolling by construction") — it FORCES the step to run during a
+      // long fling, and mounting IDLE_CHUNK rows stalls the main thread
+      // 100-300ms while WKWebView's compositor keeps scrolling on its own
+      // thread into unpainted territory. That is the black-viewport blanking,
+      // no streaming required. Resume a beat after the gesture goes quiet.
+      if (isScrollHot()) {
+        timer = window.setTimeout(step, 180);
+        return;
+      }
       // A scroll-triggered grow is already in flight — let it land first, or
       // the two overwrite each other's anchor.
       if (growPending.current) return;
@@ -543,7 +579,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     return () => {
       const el = scrollRef.current;
       if (!el) return;
-      savedScroll.set(cacheKey, {
+      saveScroll(cacheKey, {
         startIndex,
         scrollTop: el.scrollTop,
         atEnd: atEndRef.current,
@@ -633,6 +669,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
                 tabId={tabId}
                 agentLabel={agentLabel}
                 agentIcon={agentIcon}
+                justSentMessageId={justSentMessageId}
                 onExpandTurn={toggleTurn}
                 // Absolute position in the thread, so the newest messages —
                 // the ones on screen after a history load — are parsed first.
@@ -671,11 +708,22 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
       <div
         aria-hidden
         className={cn(
-          "pointer-events-none absolute bottom-0 left-0 right-0 z-[1] h-16 transition-opacity duration-200",
+          // `-bottom-[2px]` + 2px extra height: the fade OVERSHOOTS the
+          // container edge. At fractional UI scales the fade's bottom and the
+          // scroller's bottom can round to different device pixels, and during
+          // scroll repaints a 1-2px hairline of text flashed through the seam
+          // above the composer. The overshoot is solid bg-surface over the
+          // inter-panel gap — invisible, and it absorbs the rounding both ways.
+          "pointer-events-none absolute -bottom-[2px] left-0 right-0 z-[1] h-[44px] transition-opacity duration-200",
           more ? "opacity-100" : "opacity-0",
         )}
         style={{
-          background: "linear-gradient(to bottom, transparent, var(--bg-surface))",
+          // The last ~quarter is FULLY solid: a plain two-stop gradient only
+          // reaches 100% opacity at the very last pixel, and the ~97%-opaque
+          // band just above the composer let white text ghost through the
+          // seam (subtle but visible on AMOLED black).
+          background:
+            "linear-gradient(to bottom, transparent, var(--bg-surface) 72%, var(--bg-surface))",
         }}
       />
     </div>
@@ -685,6 +733,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
 /** Row dispatch. Kept out of the list body so the map stays flat. */
 function RowView({
   row,
+  justSentMessageId,
   tabId,
   agentLabel,
   agentIcon,
@@ -695,6 +744,7 @@ function RowView({
   onDiagram,
 }: {
   row: Row;
+  justSentMessageId?: string;
   tabId: string;
   agentLabel: string;
   agentIcon: React.ReactNode;
@@ -706,7 +756,17 @@ function RowView({
 }) {
   switch (row.kind) {
     case RowKind.User:
-      return <UserRowView row={row} priority={priority} onToggleExpand={onToggleExpand} />;
+      return (
+        <UserRowView
+          row={row}
+          priority={priority}
+          // Row ids are prefixed (`u:<messageId>`); the store records the raw
+          // message id. The unprefixed compare never matched — the entrance
+          // animation was silently dead until this fix.
+          justSent={row.id === `u:${justSentMessageId}`}
+          onToggleExpand={onToggleExpand}
+        />
+      );
     case RowKind.Prose:
       return (
         <ProseRowView row={row} agentLabel={agentLabel} agentIcon={agentIcon} priority={priority} />

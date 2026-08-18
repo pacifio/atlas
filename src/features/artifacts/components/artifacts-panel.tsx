@@ -57,6 +57,22 @@ function sameDetail(a: Detail | null | undefined, b: Detail | null): boolean {
   );
 }
 
+/**
+ * Same idea for the board list: cheap signature, not a deep compare. A session
+ * only moves on the board when it gains activity (updatedAt) or rows
+ * appear/disappear — first/last cover reordering since the read is sorted.
+ */
+function sameBoard(a: BoardSession[], b: BoardSession[]): boolean {
+  if (a.length !== b.length) return false;
+  if (a.length === 0) return true;
+  const sig = (s: BoardSession | undefined) => `${s?.id}|${s?.updatedAt}`;
+  return (
+    sig(a[0]) === sig(b[0]) &&
+    sig(a[a.length - 1]) === sig(b[b.length - 1]) &&
+    a.every((s, i) => s.id === b[i].id && s.updatedAt === b[i].updatedAt)
+  );
+}
+
 /** The chat half of the split. Wide enough for a code block in an answer. */
 const CHAT_WIDTH = 420;
 
@@ -114,6 +130,12 @@ export function ArtifactsPanel() {
   const open = useArtifactsStore.use.open();
   const projectFilter = useArtifactsStore.use.projectFilter();
   const { openSession, setProjectFilter } = useArtifactsStore.use.actions();
+  // Stable identity for the memo'd board rows — an inline arrow here would
+  // re-render all ~500 of them on every panel render.
+  const onOpenRow = useCallback(
+    (sessionId: string, projectPath: string) => openSession({ sessionId, projectPath }),
+    [openSession],
+  );
   /** True once the first board read has landed. */
   const [loaded, setLoaded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -167,7 +189,12 @@ export function ArtifactsPanel() {
         projects: projectFilter ? [projectFilter] : projectPaths,
       });
       if (seq !== listSeq.current) return; // a newer read owns the state now
-      setSessions(rows);
+      // Same-data bailout, the list-side sibling of `sameDetail`: the poll and
+      // the capture/git events re-read even when nothing changed, and an
+      // unconditional setSessions handed a fresh array identity to the memo'd
+      // grouping + all ~500 rows every 15 s. Signature over the fields that
+      // move when any row changes (ids + updatedAt at both ends + count).
+      setSessions((current) => (sameBoard(current, rows) ? current : rows));
       setError(null);
       setLoaded(true);
     } catch (e) {
@@ -572,7 +599,7 @@ export function ArtifactsPanel() {
                   sessions={visible}
                   loading={!loaded}
                   filtered={narrowed}
-                  onOpen={(sessionId, projectPath) => openSession({ sessionId, projectPath })}
+                  onOpen={onOpenRow}
                 />
               )}
             </div>

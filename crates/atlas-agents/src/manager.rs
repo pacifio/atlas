@@ -55,6 +55,19 @@ struct ManagerInner {
     acp: AgentRegistry,
     cersei: atlas_cersei::CerseiRuntime,
     sessions: DashMap<SessionKey, Arc<SessionHandle>>,
+    /// Session-scoped notifications that arrived BEFORE their session was
+    /// installed. Adapters may fire `available_commands_update` (Codex does)
+    /// the instant they answer `session/new` — before `new_session` has run
+    /// `install_session` — and `dispatch` used to drop those on the floor,
+    /// which is how slash commands went permanently missing. Bounded per key;
+    /// drained (in order, through the actor FIFO) by `install_session`, and
+    /// swept on agent disconnect.
+    pending_notifications: DashMap<SessionKey, Vec<(AcpEvent, Option<u64>)>>,
+    /// Bounded ring of recently-dropped session keys. `dispatch` consults it so
+    /// a straggler delta arriving after tab close is discarded instead of
+    /// re-buffering under `pending_notifications` (where it would sit until the
+    /// whole agent died — one orphan key per closed session).
+    recently_dropped: Mutex<std::collections::VecDeque<SessionKey>>,
     agent_plugins: DashMap<AgentId, String>,
     /// Per-agent backend (ACP subprocess vs in-process Cersei), chosen at spawn.
     agent_backends: DashMap<AgentId, Arc<dyn AgentBackend>>,
@@ -86,6 +99,8 @@ impl AgentManager {
                 },
                 cersei: atlas_cersei::CerseiRuntime::new(config_dir),
                 sessions: DashMap::new(),
+                pending_notifications: DashMap::new(),
+                recently_dropped: Mutex::new(std::collections::VecDeque::new()),
                 agent_plugins: DashMap::new(),
                 agent_backends: DashMap::new(),
                 emitter: Arc::new(Emitter::new(sink)),
@@ -412,6 +427,20 @@ impl AgentManager {
         Ok(snap)
     }
 
+    /// [`snapshot`](Self::snapshot) without the transcript. The full snapshot
+    /// clones every message while holding the SessionState mutex the streaming
+    /// actor locks per chunk — use this for every caller that only reads
+    /// modes/models/commands/cwd metadata.
+    pub fn snapshot_meta(&self, key: &SessionKey) -> Result<SessionSnapshot> {
+        let handle = self.handle_for(key)?;
+        let mut snap = handle.state.lock().snapshot_meta();
+        snap.prompt_image_supported = self
+            .backend_for(key.agent_id)
+            .map(|b| b.prompt_image_supported(key.agent_id))
+            .unwrap_or(false);
+        Ok(snap)
+    }
+
     pub fn send(&self, key: &SessionKey, text: String) -> Result<()> {
         self.handle_for(key)?.send_prompt(text)
     }
@@ -468,6 +497,16 @@ impl AgentManager {
         let Some((_, handle)) = self.inner.sessions.remove(key) else {
             return Ok(()); // already gone — idempotent
         };
+        // Sweep the pre-install buffer and tombstone the key so straggler
+        // deltas arriving after close are discarded, not re-buffered.
+        self.inner.pending_notifications.remove(key);
+        {
+            let mut dropped = self.inner.recently_dropped.lock();
+            dropped.push_back(key.clone());
+            if dropped.len() > 64 {
+                dropped.pop_front();
+            }
+        }
         if let Ok(backend) = self.backend_for(key.agent_id) {
             let _ = backend.drop_session(key.agent_id, &handle.acp_session_id);
         }
@@ -617,7 +656,34 @@ impl AgentManager {
             plugin_id,
             actor,
         });
-        self.inner.sessions.insert(key, handle);
+        self.inner.sessions.insert(key.clone(), handle.clone());
+
+        // A resumed session reuses its acp session id — un-tombstone it so
+        // future pre-install buffering (a later resume) isn't suppressed.
+        self.inner.recently_dropped.lock().retain(|k| k != &key);
+
+        // Replay anything the adapter sent before this session existed, in
+        // arrival order and through the same actor FIFO live events use — an
+        // early `available_commands_update` lands in `SessionState` and
+        // re-emits its delta exactly as if it had arrived after install.
+        //
+        // EXCEPT message content, when the state was seeded from an on-disk
+        // transcript (`load_session`): the adapter streams the session's
+        // HISTORY back as user/agent message chunks during `session/load`,
+        // and those buffered chunks are the same messages the seeds already
+        // hold. Draining them appended day-old content to the thread as
+        // fresh now-stamped messages (and re-emitted it to the UI) — the
+        // "old messages pushed into the chat seconds after resume" bug.
+        // Non-content updates (commands/modes/models/plan) still replay.
+        if let Some((_, events)) = self.inner.pending_notifications.remove(&key) {
+            let seeded = !handle.state.lock().messages.is_empty();
+            for (event, turn) in events {
+                if seeded && is_replay_content_update(&event) {
+                    continue;
+                }
+                handle.route_event(event, turn);
+            }
+        }
     }
 
     fn find_session_by_acp_id(&self, agent_id: AgentId, acp_id: &SessionId) -> Option<Arc<SessionHandle>> {
@@ -656,6 +722,9 @@ impl AgentManager {
                     self.inner.sessions.remove(&key);
                 }
                 self.inner.agent_plugins.remove(&agent_id);
+                self.inner
+                    .pending_notifications
+                    .retain(|k, _| k.agent_id != agent_id);
                 return;
             }
             AcpEvent::SessionUpdate { session_id, .. }
@@ -670,8 +739,50 @@ impl AgentManager {
         // applied on the actor's task ordered before the turn terminal.
         if let Some(handle) = self.find_session_by_acp_id(agent_id, &session_id) {
             handle.route_event(event, turn);
+            return;
+        }
+
+        // No session yet: `session/new` has answered but `install_session`
+        // hasn't run. Buffer session-update notifications (bounded) so
+        // install can replay them; anything else pre-install is dropped as
+        // before (a permission request without a session has no consumer).
+        if matches!(event, AcpEvent::SessionUpdate { .. }) {
+            let Some(sid) = serde_json::to_value(&session_id)
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+            else {
+                return;
+            };
+            let key = SessionKey {
+                agent_id,
+                session_id: sid,
+            };
+            // A straggler for a session we just closed is a drop, not a buffer.
+            if self.inner.recently_dropped.lock().contains(&key) {
+                return;
+            }
+            let mut entry = self.inner.pending_notifications.entry(key).or_default();
+            if entry.len() < 32 {
+                entry.push((event, turn));
+            }
         }
     }
+}
+
+/// True for the `session/load` history-replay chunk kinds — the updates that
+/// are redundant (and harmful, as duplicates) for a session seeded from its
+/// on-disk transcript. See the drain filter in `install_session`.
+fn is_replay_content_update(event: &AcpEvent) -> bool {
+    let AcpEvent::SessionUpdate { update, .. } = event else {
+        return false;
+    };
+    matches!(
+        serde_json::to_value(update)
+            .ok()
+            .and_then(|v| v.get("sessionUpdate").and_then(|s| s.as_str().map(str::to_string)))
+            .as_deref(),
+        Some("user_message_chunk" | "agent_message_chunk" | "agent_thought_chunk")
+    )
 }
 
 impl EventSink for AgentManager {
@@ -829,5 +940,147 @@ mod tests {
     #[test]
     fn legacy_agents_without_modes_remain_compatible() {
         assert!(validate_mode("bypassPermissions", &[]).is_ok());
+    }
+
+    struct NoopSink;
+    impl DeltaSink for NoopSink {
+        fn emit(&self, _envelope: SessionDeltaEnvelope) {}
+    }
+
+    /// The Codex-shaped race: the adapter answers `session/new` and fires
+    /// `available_commands_update` before the manager has installed the
+    /// session. `dispatch` used to drop it silently — slash commands then
+    /// stayed empty for the whole session. The pre-install buffer must hold
+    /// the event and `install_session` must replay it into `SessionState`.
+    #[tokio::test]
+    async fn early_available_commands_survive_the_install_race() {
+        let mgr = AgentManager::new(
+            Arc::new(NoopSink),
+            std::env::temp_dir().join("atlas-agents-test-config"),
+        );
+        let agent_id = AgentId::new();
+        let acp_sid = SessionId::new("ses_early_commands");
+        let key = SessionKey {
+            agent_id,
+            session_id: "ses_early_commands".into(),
+        };
+
+        // Notification arrives BEFORE the session exists.
+        let update: agent_client_protocol::schema::v1::SessionUpdate =
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": [
+                    { "name": "plan", "description": "Turn plan mode on." },
+                    { "name": "status", "description": "Session status." }
+                ]
+            }))
+            .expect("wire-shaped update parses");
+        mgr.dispatch(
+            agent_id,
+            atlas_acp::AcpEvent::SessionUpdate {
+                session_id: acp_sid.clone(),
+                update,
+            },
+            None,
+        );
+
+        // Session installs afterwards (what new_session does post-response).
+        mgr.install_session(
+            key.clone(),
+            acp_sid,
+            "/tmp".into(),
+            "codex".into(),
+            Vec::new(),
+            None,
+            None,
+        );
+
+        // Replay goes through the actor FIFO — poll briefly for it to land.
+        for _ in 0..200 {
+            if let Ok(snap) = mgr.snapshot(&key) {
+                if snap.available_commands.len() == 2 {
+                    return;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("buffered available_commands_update was never replayed into the session state");
+    }
+
+    /// The drain filter: a session installed WITH transcript seeds (the
+    /// `load_session` path) must not re-apply buffered `session/load` history
+    /// chunks — they duplicate the seeds as fresh now-stamped messages (the
+    /// "old messages pushed into the chat seconds after resume" bug). Non-
+    /// content updates must still replay.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn buffered_replay_chunks_do_not_duplicate_a_seeded_transcript() {
+        let mgr = AgentManager::new(
+            Arc::new(NoopSink),
+            std::env::temp_dir().join("atlas-agents-test-config"),
+        );
+        let agent_id = AgentId::new();
+        let acp_sid = SessionId::new("ses_seeded_replay");
+        let key = SessionKey {
+            agent_id,
+            session_id: "ses_seeded_replay".into(),
+        };
+
+        // The adapter's session/load replay fires before install: a history
+        // chunk AND a commands update land in the pre-install buffer.
+        let chunk: agent_client_protocol::schema::v1::SessionUpdate =
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "user_message_chunk",
+                "content": { "type": "text", "text": "day-old prompt from the replay" }
+            }))
+            .expect("wire-shaped chunk parses");
+        mgr.dispatch(
+            agent_id,
+            atlas_acp::AcpEvent::SessionUpdate {
+                session_id: acp_sid.clone(),
+                update: chunk,
+            },
+            None,
+        );
+        let commands: agent_client_protocol::schema::v1::SessionUpdate =
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": [{ "name": "plan", "description": "Turn plan mode on." }]
+            }))
+            .expect("wire-shaped update parses");
+        mgr.dispatch(
+            agent_id,
+            atlas_acp::AcpEvent::SessionUpdate {
+                session_id: acp_sid.clone(),
+                update: commands,
+            },
+            None,
+        );
+
+        // Install with a seeded transcript, as load_session does.
+        mgr.install_session(
+            key.clone(),
+            acp_sid,
+            "/tmp".into(),
+            "claude-code".into(),
+            vec![crate::session::new_user_message("the same prompt, from disk".into())],
+            None,
+            None,
+        );
+
+        // The commands update must replay; the message chunk must NOT append.
+        for _ in 0..200 {
+            if let Ok(snap) = mgr.snapshot(&key) {
+                if snap.available_commands.len() == 1 {
+                    assert_eq!(
+                        snap.messages.len(),
+                        1,
+                        "buffered replay chunk duplicated the seeded transcript"
+                    );
+                    return;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("buffered available_commands_update was never replayed into the seeded session");
     }
 }

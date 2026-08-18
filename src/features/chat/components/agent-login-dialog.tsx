@@ -154,7 +154,7 @@ function AgentLoginDialog({
         payload: { agent: request.agentType, provider: need.provider },
       });
       toast.success(`${need.label} key saved. Restarting ${label}…`);
-      takeSignInCallback(request.requestId)?.();
+      takeSignInCallback(request.requestId)?.onSignedIn?.();
       setTimeout(onClose, 700);
     } catch (err) {
       setPhase({ kind: "error", message: errInfo(err).message });
@@ -180,7 +180,7 @@ function AgentLoginDialog({
         payload: { agent: request.agentType, method: method.id },
       });
       toast.success(`Signed in to ${label}.`);
-      takeSignInCallback(request.requestId)?.();
+      takeSignInCallback(request.requestId)?.onSignedIn?.();
       setTimeout(onClose, 700);
     } catch (err) {
       setPhase({
@@ -202,8 +202,17 @@ function AgentLoginDialog({
     }
   };
 
+  const dismiss = () => {
+    // Reached on ANY close; after a successful sign-in the callbacks were
+    // already taken above, so this take() is a no-op then. On a real
+    // dismissal it lets the caller re-arm its failure reporting — without it
+    // one Esc permanently silenced every later bind failure for the tab.
+    takeSignInCallback(request.requestId)?.onDismissed?.();
+    onClose();
+  };
+
   return (
-    <Dialog.Root open onOpenChange={(o) => !o && onClose()}>
+    <Dialog.Root open onOpenChange={(o) => !o && dismiss()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[var(--z-overlay)] bg-black/60 backdrop-blur-sm" />
         <Dialog.Content

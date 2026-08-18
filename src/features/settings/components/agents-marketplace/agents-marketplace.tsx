@@ -8,7 +8,7 @@
 // settings sections) doesn't lose the spinner; binary downloads stream
 // progress via `atlas:registry-install:progress`.
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, Download, Github, Globe, Loader2, RefreshCw, Search, X } from "lucide-react";
@@ -317,8 +317,8 @@ export function AgentsMarketplace() {
                         catalog={catalogById[entry.id]}
                         installing={installingIds.has(entry.id)}
                         progress={progressById.get(entry.id) ?? null}
-                        onInstall={() => void install(entry)}
-                        onUninstall={() => void uninstall(entry)}
+                        onInstall={install}
+                        onUninstall={uninstall}
                       />
                     ))}
                   </div>
@@ -332,7 +332,12 @@ export function AgentsMarketplace() {
   );
 }
 
-function AgentCard({
+// memo: every install-progress tick bumps the marketplace's version snapshot
+// and re-renders the grid — without this, all ~38 cards (icon <img> + trend
+// sparkline each) re-rendered per tick instead of just the installing one.
+// Handlers take the entry as an argument so the parent can pass its stable
+// useCallbacks instead of per-render arrows.
+const AgentCard = memo(function AgentCard({
   entry,
   catalog,
   installing,
@@ -344,8 +349,8 @@ function AgentCard({
   catalog: AgentCatalogEntry | undefined;
   installing: boolean;
   progress: RegistryInstallProgress | null;
-  onInstall: () => void;
-  onUninstall: () => void;
+  onInstall: (entry: AcpRegistryEntry) => void;
+  onUninstall: (entry: AcpRegistryEntry) => void;
 }) {
   const pct =
     installing && progress?.total
@@ -438,7 +443,7 @@ function AgentCard({
       </div>
     </div>
   );
-}
+});
 
 /** On/off switch for an optional built-in (cursor / opencode / kilo).
  *
@@ -488,8 +493,8 @@ function CardAction({
   catalog: AgentCatalogEntry | undefined;
   installing: boolean;
   pct: number | null;
-  onInstall: () => void;
-  onUninstall: () => void;
+  onInstall: (entry: AcpRegistryEntry) => void;
+  onUninstall: (entry: AcpRegistryEntry) => void;
 }) {
   const state = cardState(entry, catalog);
   if (state === "builtin") {
@@ -519,7 +524,9 @@ function CardAction({
     return (
       <button
         onClick={() => {
-          if (confirm(`Remove ${entry.name}? Chat history from this agent is kept.`)) onUninstall();
+          if (confirm(`Remove ${entry.name}? Chat history from this agent is kept.`)) {
+            onUninstall(entry);
+          }
         }}
         className="h-6 px-2.5 rounded-md text-[10.5px] font-medium text-[var(--text-secondary)] border border-[var(--border-default)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
       >
@@ -547,7 +554,7 @@ function CardAction({
         </span>
         {entry.platformSupported && entry.distributionKind !== "" && (
           <button
-            onClick={onInstall}
+            onClick={() => onInstall(entry)}
             title="Download a copy Atlas manages and updates. Your own install still takes precedence."
             className="h-6 px-2 rounded-md text-[10.5px] font-medium text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           >
@@ -559,7 +566,7 @@ function CardAction({
   }
   return (
     <button
-      onClick={onInstall}
+      onClick={() => onInstall(entry)}
       disabled={!entry.platformSupported}
       className={cn(
         "flex items-center gap-1 h-6 px-2.5 rounded-md text-[10.5px] font-medium border transition-colors",
