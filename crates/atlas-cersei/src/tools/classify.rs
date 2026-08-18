@@ -351,7 +351,7 @@ fn has_short_flag(args: &[&str], flag: char) -> bool {
 }
 
 fn has_long_flag(args: &[&str], flag: &str) -> bool {
-    args.iter().any(|a| *a == flag)
+    args.contains(&flag)
 }
 
 fn is_destructive_segment(segment: &[&str]) -> Option<String> {

@@ -123,10 +123,10 @@ fn mini_diff(old: &str, new: &str) -> String {
 /// before/after instead of re-deriving one from raw tool input. The field names
 /// match the ACP `diff` content block, so the adapter is a rename-free pass
 /// through.
-pub fn diff_metadata(abs_path: &Path, old_text: &str, new_text: &str) -> Value {
+pub fn diff_metadata(target: &Path, old_text: &str, new_text: &str) -> Value {
     serde_json::json!({
         "diff": {
-            "path": abs_path.to_string_lossy(),
+            "path": target.to_string_lossy(),
             "oldText": old_text,
             "newText": new_text,
         }
@@ -172,7 +172,7 @@ impl Tool for EditTool {
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
-        let input = coerce::coerce_edit_args(input);
+        let input = coerce::for_schema(input, &self.input_schema());
         let input: Input = match serde_json::from_value(input) {
             Ok(i) => i,
             Err(e) => {

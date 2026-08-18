@@ -42,9 +42,10 @@ use serde_json::Value;
 use super::classify::{self, Risk};
 use super::sandbox::{self, Sandbox};
 
-/// Directory (relative to the workspace root) holding session-scoped spill
-/// files. Inside the workspace on purpose: containment must permit the model to
-/// read a file the truncation notice told it about (tool spec story 14).
+/// Directory (relative to the workspace root) holding spill files. Inside the
+/// workspace on purpose: containment must permit the model to read a file the
+/// truncation notice told it about (tool spec story 14). Each session gets its
+/// own subdirectory, so one session's teardown cannot delete another's.
 pub const SPILL_DIR: &str = ".atlas/tool-output";
 
 /// The strongest enforcement the host actually provides, resolved at runtime.
@@ -58,7 +59,9 @@ pub enum EnforcementTier {
     Sandboxed,
     /// Containment + approvals. The sandbox is unavailable on this host.
     Contained,
-    /// Approvals only. Containment disabled by explicit user setting.
+    /// Approvals only. Nothing selects this yet — the containment toggle it
+    /// exists for is not a setting a user can reach. Constructible via
+    /// [`ToolPolicy::at_tier`] so the behaviour is pinned before it is wired.
     ApprovalsOnly,
     /// Today's behaviour. Never selected automatically; the floor.
     Legacy,
@@ -164,6 +167,9 @@ pub enum Freshness {
 pub struct ToolPolicy {
     /// Canonicalised workspace root. Every contained path must live under it.
     root: PathBuf,
+    /// Names this policy's spill subdirectory. Two sessions open on the same
+    /// workspace must not delete each other's retained output.
+    session: String,
     tier: EnforcementTier,
     sandbox: Option<Sandbox>,
     /// Approval cache — the thing that makes "Allow for this session" a fact
@@ -180,7 +186,10 @@ impl ToolPolicy {
     /// Build a policy for `root`, resolving the strongest tier this host
     /// supports. `root` is canonicalised; if that fails (the directory does not
     /// exist) the path is used lexically and containment still works.
-    pub fn new(root: impl Into<PathBuf>) -> Arc<Self> {
+    ///
+    /// `session` names this policy's spill subdirectory and nothing else; any
+    /// value unique per session will do.
+    pub fn new(root: impl Into<PathBuf>, session: impl Into<String>) -> Arc<Self> {
         let root = root.into();
         let root = root.canonicalize().unwrap_or(root);
         let sandbox = sandbox::detect(&root);
@@ -191,6 +200,7 @@ impl ToolPolicy {
         };
         Arc::new(Self {
             root,
+            session: session.into(),
             tier,
             sandbox,
             approvals: DashMap::new(),
@@ -203,10 +213,16 @@ impl ToolPolicy {
     /// a sandbox, and by tests that want containment without spawning
     /// `sandbox-exec`.
     pub fn contained(root: impl Into<PathBuf>) -> Arc<Self> {
+        Self::contained_for(root, uuid::Uuid::new_v4().to_string())
+    }
+
+    /// [`Self::contained`] with an explicit session name.
+    pub fn contained_for(root: impl Into<PathBuf>, session: impl Into<String>) -> Arc<Self> {
         let root = root.into();
         let root = root.canonicalize().unwrap_or(root);
         Arc::new(Self {
             root,
+            session: session.into(),
             tier: EnforcementTier::Contained,
             sandbox: None,
             approvals: DashMap::new(),
@@ -218,6 +234,15 @@ impl ToolPolicy {
     /// A policy at a caller-chosen tier. `ApprovalsOnly` and `Legacy` are only
     /// reachable this way — never selected automatically.
     pub fn at_tier(root: impl Into<PathBuf>, tier: EnforcementTier) -> Arc<Self> {
+        Self::at_tier_for(root, tier, uuid::Uuid::new_v4().to_string())
+    }
+
+    /// [`Self::at_tier`] with an explicit session name.
+    pub fn at_tier_for(
+        root: impl Into<PathBuf>,
+        tier: EnforcementTier,
+        session: impl Into<String>,
+    ) -> Arc<Self> {
         let root = root.into();
         let root = root.canonicalize().unwrap_or(root);
         let sandbox = if tier == EnforcementTier::Sandboxed {
@@ -227,6 +252,7 @@ impl ToolPolicy {
         };
         Arc::new(Self {
             root,
+            session: session.into(),
             tier: if tier == EnforcementTier::Sandboxed && sandbox.is_none() {
                 EnforcementTier::Contained
             } else {
@@ -369,10 +395,25 @@ impl ToolPolicy {
             }
         }
 
+        // An escalation re-ask: the sandbox already refused this command once
+        // and the user is being asked whether to run it unconfined. Always a
+        // prompt, never cacheable.
+        if coerced.get(ESCALATION_MARKER).and_then(Value::as_bool) == Some(true) {
+            return Decision::Prompt {
+                reason: "Run this command outside the sandbox, just this once?".to_string(),
+                risk: Risk::Destructive,
+                cache_key: None,
+            };
+        }
+
         // Shell commands are classified per call. This is what replaces "every
         // Bash command gets one verdict": the risk comes from the command, not
         // from a constant on the tool.
         if let Some(command) = shell_command(tool_name, &coerced) {
+            // An empty `TerminalWrite` sends nothing — it polls for output.
+            if command.is_empty() {
+                return Decision::Allow;
+            }
             let verdict = classify::classify(command);
             return match verdict.risk {
                 // Provably read-only and fully parsed — skip the prompt.
@@ -445,21 +486,24 @@ impl ToolPolicy {
 
     // ── Spill directory (D6) ────────────────────────────────────────────────
 
-    /// Session-scoped directory for full copies of truncated output, inside the
+    /// This session's directory for full copies of truncated output, inside the
     /// workspace so the gate permits the model to read them.
     pub fn spill_dir(&self) -> PathBuf {
-        let dir = self.root.join(SPILL_DIR);
+        let dir = self.root.join(SPILL_DIR).join(&self.session);
         if !self.spill_ready.swap(true, Ordering::SeqCst) {
             let _ = std::fs::create_dir_all(&dir);
         }
         dir
     }
 
-    /// Remove the session's spill files. Called at session teardown so long
-    /// sessions do not fill the user's disk (story 15).
+    /// Remove this session's spill files. Called at session teardown so long
+    /// sessions do not fill the user's disk (story 15). Scoped to this session's
+    /// subdirectory: a second session open on the same workspace keeps its own.
     pub fn cleanup(&self) {
         if self.spill_ready.load(Ordering::SeqCst) {
-            let _ = std::fs::remove_dir_all(self.root.join(SPILL_DIR));
+            let _ = std::fs::remove_dir_all(self.spill_dir());
+            // Prune the parent when this was the last session using it.
+            let _ = std::fs::remove_dir(self.root.join(SPILL_DIR));
         }
     }
 }
@@ -507,6 +551,12 @@ fn resolve_symlinks(path: &Path) -> PathBuf {
     }
 }
 
+/// Marker a tool sets when re-asking after the sandbox refused a command.
+///
+/// A granted escalation applies to that one call and is never cached (D1), so
+/// the decision it produces carries no cache key however the user answers.
+pub const ESCALATION_MARKER: &str = "__atlas_escalation";
+
 /// Field names that carry a filesystem path, after dealiasing.
 pub const PATH_FIELDS: &[&str] = &["file_path", "path", "notebook_path"];
 
@@ -519,6 +569,7 @@ fn path_probe_schema(tool_name: &str) -> Value {
     }
     if is_shell_tool(tool_name) {
         props.insert("command".to_string(), Value::Null);
+        props.insert("input".to_string(), Value::Null);
     } else {
         // Edit-shaped tools; harmless for tools that do not declare them,
         // because `for_schema` only renames into fields that are present.
@@ -532,11 +583,23 @@ fn path_probe_schema(tool_name: &str) -> Value {
 fn is_shell_tool(tool_name: &str) -> bool {
     matches!(
         tool_name,
-        "Bash" | "bash" | "Shell" | "shell" | "PowerShell" | "powershell" | "Terminal"
+        "Bash"
+            | "bash"
+            | "Shell"
+            | "shell"
+            | "PowerShell"
+            | "powershell"
+            | "Terminal"
+            | "TerminalStart"
+            | "TerminalWrite"
     )
 }
 
 /// The command text for a shell-class tool, or `None` for everything else.
+///
+/// `TerminalWrite` is included deliberately. Its `input` is typed into a live
+/// shell, so it *is* command execution — treating it as opaque data would make
+/// the persistent terminal a way to run anything under one approval.
 pub fn shell_command<'a>(tool_name: &str, input: &'a Value) -> Option<&'a str> {
     if !is_shell_tool(tool_name) {
         return None;
@@ -545,6 +608,7 @@ pub fn shell_command<'a>(tool_name: &str, input: &'a Value) -> Option<&'a str> {
         .get("command")
         .and_then(Value::as_str)
         .or_else(|| input.get("cmd").and_then(Value::as_str))
+        .or_else(|| input.get("input").and_then(Value::as_str))
 }
 
 /// Every filesystem path this tool call names, as written by the model.
@@ -882,7 +946,143 @@ mod tests {
         assert!(matches!(d, Decision::Deny { .. }), "{d:?}");
     }
 
+    #[test]
+    fn the_persistent_terminal_is_classified_like_any_other_shell() {
+        // It was not: the name list said "Terminal" while the registry emits
+        // "TerminalStart", so no command was ever classified and every start
+        // shared one cache key — approve `npm run dev` once and `rm -rf ~` ran
+        // unprompted for the rest of the session.
+        let tmp = TmpDir::new();
+        let p = policy(tmp.path());
+
+        assert_eq!(
+            p.decide("TerminalStart", PermissionLevel::Execute, &json!({"command": "git status"})),
+            Decision::Allow,
+            "a read-only command should not prompt here either"
+        );
+
+        let Decision::Prompt { cache_key, .. } = p.decide(
+            "TerminalStart",
+            PermissionLevel::Execute,
+            &json!({"command": "npm run dev"}),
+        ) else {
+            panic!("expected a prompt");
+        };
+        p.remember_approval(cache_key.as_deref());
+
+        // The approval must cover that command and nothing else.
+        assert!(
+            matches!(
+                p.decide("TerminalStart", PermissionLevel::Execute, &json!({"command": "rm -rf /"})),
+                Decision::Prompt { .. }
+            ),
+            "one terminal approval must not cover every later command"
+        );
+    }
+
+    #[test]
+    fn terminal_input_is_treated_as_command_execution() {
+        // Text written into a live shell *is* a command. An empty write sends
+        // nothing, so it polls without asking.
+        let tmp = TmpDir::new();
+        let p = policy(tmp.path());
+        assert_eq!(
+            p.decide("TerminalWrite", PermissionLevel::Execute, &json!({"session_id": "s", "input": ""})),
+            Decision::Allow
+        );
+        assert!(matches!(
+            p.decide(
+                "TerminalWrite",
+                PermissionLevel::Execute,
+                &json!({"session_id": "s", "input": "rm -rf /\n"})
+            ),
+            Decision::Prompt { risk: Risk::Destructive, cache_key: None, .. }
+        ));
+    }
+
+    #[test]
+    fn an_escalation_is_always_asked_and_never_remembered() {
+        let tmp = TmpDir::new();
+        let p = policy(tmp.path());
+        let input = json!({ super::ESCALATION_MARKER: true, "command": "ls /etc" });
+        for _ in 0..3 {
+            let Decision::Prompt { cache_key, .. } =
+                p.decide("Bash", PermissionLevel::Dangerous, &input)
+            else {
+                panic!("an escalation must always prompt");
+            };
+            assert!(cache_key.is_none(), "an escalation grant must not be cached");
+            p.remember_approval(cache_key.as_deref());
+        }
+        assert_eq!(p.approval_count(), 0);
+    }
+
+    #[test]
+    fn each_tier_yields_the_expected_decision_for_the_same_input() {
+        let tmp = TmpDir::new();
+        let escape = json!({"file_path": "/etc/hosts", "old_string": "a", "new_string": "b"});
+        let cases = [
+            (EnforcementTier::Contained, true),
+            (EnforcementTier::ApprovalsOnly, false),
+            (EnforcementTier::Legacy, false),
+        ];
+        for (tier, should_deny) in cases {
+            let p = ToolPolicy::at_tier(tmp.path(), tier);
+            let denied = matches!(
+                p.decide("Edit", PermissionLevel::Write, &escape),
+                Decision::Deny { .. }
+            );
+            assert_eq!(
+                denied,
+                should_deny,
+                "{tier:?} should {} an out-of-workspace path",
+                if should_deny { "deny" } else { "permit" }
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_workspace_reached_through_a_symlink_still_works() {
+        // A project directory that is itself a symlink must not have every one
+        // of its own files rejected as "outside the workspace".
+        let base = TmpDir::new();
+        let real = base.path().join("real-proj");
+        std::fs::create_dir_all(real.join("src")).unwrap();
+        std::fs::write(real.join("src/a.rs"), "x").unwrap();
+        let link = base.path().join("linked-proj");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let p = ToolPolicy::contained(&link);
+        assert!(p.contain("src/a.rs").is_ok());
+        assert!(
+            p.contain(&real.join("src/a.rs").to_string_lossy()).is_ok(),
+            "the resolved path is the same file"
+        );
+        assert!(
+            p.contain(&link.join("src/a.rs").to_string_lossy()).is_ok(),
+            "so is the symlinked spelling"
+        );
+    }
+
     // ── Spill directory ─────────────────────────────────────────────────────
+
+    #[test]
+    fn one_sessions_teardown_does_not_delete_anothers_spills() {
+        let tmp = TmpDir::new();
+        let a = ToolPolicy::contained_for(tmp.path(), "session-a");
+        let b = ToolPolicy::contained_for(tmp.path(), "session-b");
+        std::fs::write(a.spill_dir().join("a.txt"), "a").unwrap();
+        std::fs::write(b.spill_dir().join("b.txt"), "b").unwrap();
+        assert_ne!(a.spill_dir(), b.spill_dir());
+        a.cleanup();
+        assert!(!a.spill_dir().exists());
+        assert!(
+            b.spill_dir().join("b.txt").exists(),
+            "a second session open on the same workspace keeps its own output"
+        );
+        b.cleanup();
+    }
 
     #[test]
     fn spill_dir_is_inside_the_workspace_and_cleans_up() {

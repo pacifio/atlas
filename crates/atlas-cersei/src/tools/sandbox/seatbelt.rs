@@ -57,6 +57,18 @@ fn profile(root: &Path) -> (String, Vec<(String, String)>) {
     // Reads: broad, so toolchains work. Narrowed by the denials at the bottom.
     sections.push("; Atlas: read broadly so build tools work.\n(allow file-read*)".to_string());
 
+    // Network. The vendored network policy grants the *supporting* rights — DNS
+    // configuration, the security server, loopback system sockets — but not the
+    // outbound connection itself: Codex injects that from its proxy layer, which
+    // Atlas deliberately did not vendor (network mediation is out of scope).
+    // Without this rule the base policy's `(deny default)` blocks every socket,
+    // so `npm install`, `cargo fetch`, `pip install` and `git push` all fail —
+    // and tier 0 is the default on macOS, so that is every user.
+    sections.push(
+        "; Atlas: the network is not mediated. Sandboxing bounds the filesystem;\n         ; it is not a firewall, and pretending otherwise breaks every build tool.\n         (allow network-outbound)\n(allow network-inbound (local ip))\n(allow system-socket)"
+            .to_string(),
+    );
+
     // Writes: the workspace, plus the temp directories every compiler uses.
     let mut writable: Vec<String> = Vec::new();
     params.push(("ATLAS_ROOT".to_string(), root.to_string_lossy().into_owned()));

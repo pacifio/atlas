@@ -4,10 +4,16 @@
 //! Fixes the classes that make weak BYOK models fail tool calls: stringified
 //! JSON tool args, aliased field names, and code-fenced strings.
 //!
-//! Per tool spec D7 this now runs **once, at dispatch**, driven by each tool's
-//! declared schema plus the shared alias table below — rather than inside the
-//! handful of tools that happened to implement it. SDK-provided and
-//! MCP-discovered tools get the same treatment; previously they got none.
+//! Per tool spec D7 there is now **one table and one function**, driven by each
+//! tool's declared schema — rather than a private alias list inside each of the
+//! handful of tools that happened to implement it. The guard calls it for every
+//! tool, so SDK-provided and MCP-discovered tools get the same treatment;
+//! previously they got none.
+//!
+//! Atlas-owned tools also call it themselves. That is not the old duplication
+//! returning: it is one idempotent function, and it keeps a tool called
+//! directly — by a test, a benchmark, or the offline eval — behaving the way it
+//! does in a session.
 //!
 //! The schema is what makes one shared alias table safe. An alias `X → Y` fires
 //! only when the target tool declares `Y` and does not declare `X`, so mapping
@@ -28,10 +34,17 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("file", "file_path"),
     ("target_file", "file_path"),
     ("notebookPath", "notebook_path"),
-    // Directory-shaped tools name the same idea `path`.
+    // Directory-shaped tools name the same idea `path`. The schema guard makes
+    // the two directions safe together: `path → file_path` fires only for a
+    // tool that declares `file_path` and not `path`, and `file_path → path`
+    // only for one that declares `path` and not `file_path`. A tool declaring
+    // both keeps both. Without the second direction, `List {"file_path": …}`
+    // silently walked the project root and reported that as the answer.
     ("dir", "path"),
     ("directory", "path"),
     ("folder", "path"),
+    ("file_path", "path"),
+    ("filePath", "path"),
     // Edit
     ("oldString", "old_string"),
     ("old_str", "old_string"),
@@ -47,6 +60,9 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("contents", "content"),
     ("text", "content"),
     ("body", "content"),
+    // Skill
+    ("name", "skill"),
+    ("arguments", "args"),
     // Shell
     ("cmd", "command"),
     ("script", "command"),
@@ -57,9 +73,6 @@ pub const ALIASES: &[(&str, &str)] = &[
 /// Field names whose value is free text a model may wrap in a code fence.
 const FENCEABLE: &[&str] = &["old_string", "new_string", "content", "patch", "input"];
 
-/// Legacy alias set kept for the `Edit`-shaped helpers below.
-pub const EDIT_ALIASES: &[(&str, &str)] = ALIASES;
-
 /// If the tool args arrived as a JSON *string* (some providers double-encode),
 /// parse it back into an object. Otherwise return `input` unchanged.
 pub fn unwrap_stringified(input: Value) -> Value {
@@ -68,22 +81,6 @@ pub fn unwrap_stringified(input: Value) -> Value {
         if trimmed.starts_with('{') && trimmed.ends_with('}') {
             if let Ok(parsed @ Value::Object(_)) = serde_json::from_str::<Value>(trimmed) {
                 return parsed;
-            }
-        }
-    }
-    input
-}
-
-/// Rename aliased keys to their canonical names, without clobbering a canonical
-/// key the model already set correctly.
-pub fn dealias(mut input: Value, aliases: &[(&str, &str)]) -> Value {
-    if let Some(obj) = input.as_object_mut() {
-        for (alias, canonical) in aliases {
-            if obj.contains_key(*canonical) {
-                continue;
-            }
-            if let Some(v) = obj.remove(*alias) {
-                obj.insert((*canonical).to_string(), v);
             }
         }
     }
@@ -145,18 +142,6 @@ pub fn for_schema(input: Value, schema: &Value) -> Value {
     input
 }
 
-/// Full pre-pass for Edit-style args, for callers that know the shape without
-/// consulting a schema.
-pub fn coerce_edit_args(input: Value) -> Value {
-    let input = unwrap_stringified(input);
-    let mut input = dealias(input, EDIT_ALIASES);
-    if let Some(obj) = input.as_object_mut() {
-        defence_field(obj, "old_string");
-        defence_field(obj, "new_string");
-    }
-    input
-}
-
 fn defence_field(obj: &mut Map<String, Value>, key: &str) {
     if let Some(Value::String(s)) = obj.get(key) {
         let stripped = strip_code_fences(s);
@@ -191,22 +176,6 @@ mod tests {
     }
 
     #[test]
-    fn dealiases_without_clobber() {
-        let v = json!({"filePath": "a.rs", "oldText": "x", "new_string": "y"});
-        let got = dealias(v, EDIT_ALIASES);
-        assert_eq!(got["file_path"], "a.rs");
-        assert_eq!(got["old_string"], "x");
-        assert_eq!(got["new_string"], "y");
-    }
-
-    #[test]
-    fn canonical_wins_over_alias() {
-        let v = json!({"file_path": "real.rs", "path": "junk.rs"});
-        let got = dealias(v, EDIT_ALIASES);
-        assert_eq!(got["file_path"], "real.rs");
-    }
-
-    #[test]
     fn strips_lang_fence() {
         let s = "```rust\nfn a() {}\n```";
         assert_eq!(strip_code_fences(s), "fn a() {}");
@@ -224,18 +193,37 @@ mod tests {
         assert_eq!(strip_code_fences(s), s);
     }
 
+    // ── Schema-driven pass (D7) ─────────────────────────────────────────────
+
     #[test]
-    fn coerce_edit_end_to_end() {
+    fn canonical_wins_over_alias() {
+        let s = schema(&["file_path"]);
+        let got = for_schema(json!({"file_path": "real.rs", "path": "junk.rs"}), &s);
+        assert_eq!(got["file_path"], "real.rs");
+    }
+
+    #[test]
+    fn an_edit_call_is_coerced_end_to_end() {
+        let s = schema(&["file_path", "old_string", "new_string"]);
         let raw = Value::String(
             r#"{"filePath":"a.rs","oldString":"```\nold\n```","newString":"new"}"#.to_string(),
         );
-        let got = coerce_edit_args(raw);
+        let got = for_schema(raw, &s);
         assert_eq!(got["file_path"], "a.rs");
         assert_eq!(got["old_string"], "old");
         assert_eq!(got["new_string"], "new");
     }
 
-    // ── Schema-driven pass (D7) ─────────────────────────────────────────────
+    #[test]
+    fn the_two_path_alias_directions_do_not_cancel_out() {
+        // `path → file_path` and `file_path → path` both exist. Applied blindly
+        // they would chain and leave neither field set; the schema guard means
+        // only the direction the tool can accept ever fires.
+        let file_shaped = for_schema(json!({"path": "a.rs"}), &schema(&["file_path"]));
+        assert_eq!(file_shaped["file_path"], "a.rs");
+        let dir_shaped = for_schema(json!({"file_path": "src"}), &schema(&["path"]));
+        assert_eq!(dir_shaped["path"], "src");
+    }
 
     #[test]
     fn schema_pass_renames_only_into_declared_fields() {

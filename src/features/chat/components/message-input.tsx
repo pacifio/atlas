@@ -353,22 +353,32 @@ function EnforcementNote({ tabId }: { tabId: string }) {
 
   if (!info) return null;
   // Anything below the top of the ladder is the case the user needs to notice,
-  // so it is tinted rather than left as quiet secondary text.
-  const degraded = info.tier !== "sandboxed";
+  // so it is tinted rather than left as quiet secondary text. `unknown` is
+  // treated as degraded on purpose: a security indicator must never default to
+  // reassurance for a value it does not recognise.
+  const LABELS: Record<string, string> = {
+    sandboxed: "Sandboxed",
+    contained: "Workspace-contained",
+    "approvals-only": "Approvals only",
+    legacy: "Unrestricted",
+  };
+  const label = LABELS[info.tier] ?? "Enforcement unknown";
+  const reassuring = info.tier === "sandboxed";
   return (
     <div className="mt-1 border-t border-[var(--border-default)] px-2 pb-0.5 pt-1.5">
-      <span className="flex items-center gap-1.5 text-[10px] font-medium text-[var(--text-secondary)]">
+      <span
+        className={cn(
+          "flex items-center gap-1.5 text-[10px] font-medium",
+          reassuring ? "text-[var(--text-secondary)]" : "text-[var(--status-warning)]",
+        )}
+      >
         <span
-          className="h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ background: degraded ? "var(--warning, #d97706)" : "var(--success, #16a34a)" }}
+          className={cn(
+            "h-1.5 w-1.5 shrink-0 rounded-full",
+            reassuring ? "bg-[var(--status-success)]" : "bg-[var(--status-warning)]",
+          )}
         />
-        {info.tier === "sandboxed"
-          ? "Sandboxed"
-          : info.tier === "contained"
-            ? "Workspace-contained"
-            : info.tier === "approvals-only"
-              ? "Approvals only"
-              : "Unrestricted"}
+        {label}
       </span>
       <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)]">
         {info.description}

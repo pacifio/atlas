@@ -27,8 +27,6 @@ the Atlas agent. Call with {\"skill\":\"list\"} to see available skills, then \
 {\"skill\":\"<name>\",\"args\":\"...\"} to load one. The returned text is guidance for you to \
 follow; `$ARGUMENTS` in the skill is replaced with `args`. Only use skills listed as available.";
 
-const ALIASES: &[(&str, &str)] = &[("name", "skill"), ("arguments", "args")];
-
 #[derive(Deserialize)]
 struct Input {
     skill: String,
@@ -71,7 +69,7 @@ impl Tool for AtlasSkillTool {
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
-        let input = coerce::dealias(coerce::unwrap_stringified(input), ALIASES);
+        let input = coerce::for_schema(input, &self.input_schema());
         let input: Input = match serde_json::from_value(input) {
             Ok(i) => i,
             Err(e) => {

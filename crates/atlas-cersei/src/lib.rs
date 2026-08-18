@@ -51,6 +51,10 @@ const _CERSEI_CANCEL_PATCH_GUARD: &str = cersei_agent::ATLAS_CANCEL_PATCH;
 // and the image tool's payload — is discarded one frame after being computed,
 // and the UI is left re-deriving a diff from raw tool input.
 const _CERSEI_TOOL_METADATA_PATCH_GUARD: &str = cersei_agent::ATLAS_TOOL_METADATA_PATCH;
+// The remaining two vendored patches. All four are guarded now: a patch without
+// one is the patch a re-vendor drops silently.
+const _CERSEI_RETRY_PATCH_GUARD: &str = cersei_agent::ATLAS_RETRY_PATCH;
+const _CERSEI_DELEGATE_PATCH_GUARD: &str = cersei_agent::ATLAS_DELEGATE_PATCH;
 use uuid::Uuid;
 
 pub use store::SessionMeta;
@@ -280,7 +284,7 @@ impl CerseiRuntime {
             cancelled: AtomicBool::new(false),
             turn_seq: AtomicU64::new(0),
             busy: AtomicBool::new(false),
-            policy: tools::ToolPolicy::new(&cwd),
+            policy: tools::ToolPolicy::new(&cwd, &session_id),
         });
         agent.sessions.insert(session_id.clone(), entry);
         Ok(NewSessionInfo {
@@ -324,7 +328,7 @@ impl CerseiRuntime {
             cancelled: AtomicBool::new(false),
             turn_seq: AtomicU64::new(0),
             busy: AtomicBool::new(false),
-            policy: tools::ToolPolicy::new(&cwd),
+            policy: tools::ToolPolicy::new(&cwd, &sid),
         });
         agent.sessions.insert(sid, entry);
         Ok(Some(modes_blob("default")))
@@ -339,7 +343,8 @@ impl CerseiRuntime {
     /// what will bound it first. Silent degradation is the failure the ladder
     /// exists to prevent, so this is a first-class query rather than a log line.
     pub fn enforcement(&self, cwd: &str) -> Enforcement {
-        let policy = tools::ToolPolicy::new(cwd);
+        // A throwaway session name: this only reports the tier, and never spills.
+        let policy = tools::ToolPolicy::new(cwd, "probe");
         Enforcement {
             tier: policy.tier().as_str().to_string(),
             description: policy.tier().describe().to_string(),

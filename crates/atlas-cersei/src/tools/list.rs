@@ -139,6 +139,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_model_that_says_file_path_still_lists_that_directory() {
+        // `List` declares `path`; a model writing `file_path` is common. When
+        // the alias did not fire, `path` came back `None` and the tool walked
+        // the project root and reported *that* as the answer — a wrong result
+        // with no error anywhere.
+        let tmp = TmpDir::new();
+        std::fs::create_dir_all(tmp.path().join("sub")).unwrap();
+        std::fs::write(tmp.path().join("sub/only-here.rs"), "").unwrap();
+        std::fs::write(tmp.path().join("at-root.rs"), "").unwrap();
+        let r = run(tmp.path(), serde_json::json!({"file_path": "sub"})).await;
+        assert!(!r.is_error, "{}", r.content);
+        assert!(r.content.contains("only-here.rs"), "{}", r.content);
+        assert!(
+            !r.content.contains("at-root.rs"),
+            "listed the project root instead of the requested directory: {}",
+            r.content
+        );
+    }
+
+    #[tokio::test]
     async fn empty_dir() {
         let tmp = TmpDir::new();
         std::fs::create_dir_all(tmp.path().join("empty")).unwrap();

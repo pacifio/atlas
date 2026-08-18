@@ -26,14 +26,16 @@ use serde_json::Value;
 
 use super::{abs_path, coerce, errors};
 
-/// Providers cap image payloads well below this; refusing early gives the model
-/// a message it can act on rather than a provider error it cannot.
-const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
+/// Cap on the **raw** file, chosen so the base64 payload stays under the 5 MB
+/// providers accept. Base64 inflates by four thirds, so capping the raw bytes
+/// at 5 MB would wave through a 6.7 MB payload and let the provider reject it
+/// mid-turn — which is the failure this check exists to prevent.
+const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024 * 3 / 4;
 
 const DESCRIPTION: &str = "Loads an image file and shows it to you. Use it when the user \
 attaches or points at a screenshot, a mockup, a diagram, or a rendered page.\n\n\
 - file_path is absolute or relative to the project root.\n\
-- Supported: PNG, JPEG, GIF, WebP. Up to 5 MB.\n\
+- Supported: PNG, JPEG, GIF, WebP. Up to 3.7 MB.\n\
 - Anything that is not really an image is rejected with an explanation.";
 
 #[derive(Deserialize)]
@@ -142,8 +144,9 @@ impl Tool for ImageViewTool {
         }
         if meta.len() > MAX_IMAGE_BYTES {
             return ToolResult::error(format!(
-                "{display} is {} bytes, over the {MAX_IMAGE_BYTES}-byte limit. Resize or crop it \
-                 first.",
+                "{display} is {} bytes, over the {MAX_IMAGE_BYTES}-byte limit (the limit is on \
+                 the file, because encoding it for the model makes it a third larger). Resize or \
+                 crop it first.",
                 meta.len()
             ));
         }

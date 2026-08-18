@@ -39,23 +39,16 @@ impl ToolTier {
 /// What the selected model can accept. Deliberately a handful of flags rather
 /// than a per-model matrix: a large capability table is how the previous
 /// attempt produced dead code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The default is conservative — nothing. A model wrongly given `ImageView`
+/// fails its whole turn when the provider rejects the request; a model wrongly
+/// denied it simply asks the user to describe the picture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ModelCapabilities {
     /// The model accepts image input. Gates `ImageView` out of the registry
     /// entirely, so an incapable model fails at selection time rather than
     /// three turns into a debugging session.
     pub accepts_images: bool,
-}
-
-impl Default for ModelCapabilities {
-    fn default() -> Self {
-        // Conservative: a model wrongly given `ImageView` fails its whole turn
-        // when the provider rejects the request, whereas a model wrongly denied
-        // it simply asks the user to describe the picture.
-        Self {
-            accepts_images: false,
-        }
-    }
 }
 
 impl ModelCapabilities {

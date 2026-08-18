@@ -31,6 +31,7 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::Deserialize;
 use serde_json::Value;
 
+use super::policy::ToolPolicy;
 use super::{coerce, errors};
 
 /// How long `TerminalStart` waits before deciding the process is long-running
@@ -50,6 +51,14 @@ const PENDING_CAP: usize = 256 * 1024;
 const SESSION_SOFT_CAP: usize = 8;
 /// The most recently used sessions are never evicted.
 const PROTECTED: usize = 3;
+/// How long a session may claim to be busy before eviction stops believing it.
+///
+/// `busy` is set on entry to a call and cleared on the way out. If a call
+/// panics between those points the flag sticks, and a session nothing can evict
+/// is a process nothing reaps. Bounding it costs nothing — a genuinely active
+/// call refreshes `last_used` every poll, and the longest a single call can run
+/// is [`MAX_POLL_MS`].
+const BUSY_TRUST: Duration = Duration::from_secs(180);
 
 /// Output a session has produced but not yet handed to the model.
 struct Pending {
@@ -160,11 +169,12 @@ fn evict(store: &mut HashMap<String, Session>) {
         .iter_mut()
         .map(|(id, s)| {
             let done = s.finished().is_some();
-            (id.clone(), s.last_used, done, s.busy)
+            let busy = s.busy && s.last_used.elapsed() < BUSY_TRUST;
+            (id.clone(), s.last_used, done, busy)
         })
         .collect();
     // Most recent first, so the protected prefix is easy to name.
-    ranked.sort_by(|a, b| b.1.cmp(&a.1));
+    ranked.sort_by_key(|r| std::cmp::Reverse(r.1));
     let protected: std::collections::HashSet<String> =
         ranked.iter().take(PROTECTED).map(|r| r.0.clone()).collect();
 
@@ -186,7 +196,17 @@ fn evict(store: &mut HashMap<String, Session>) {
 }
 
 /// Spawn `command` under a PTY and register it.
-fn spawn(owner: &str, command: &str, cwd: &std::path::Path) -> Result<String, String> {
+///
+/// `sandbox` wraps the command exactly as it does for the one-shot shell. A
+/// persistent terminal that skipped the sandbox would be a way to run anything
+/// the sandbox exists to bound — a longer-lived hole than the one-shot tool,
+/// not a smaller one.
+fn spawn(
+    owner: &str,
+    command: &str,
+    cwd: &std::path::Path,
+    sandbox: Option<&super::sandbox::Sandbox>,
+) -> Result<String, String> {
     let pair = native_pty_system()
         .openpty(PtySize {
             rows: 40,
@@ -196,9 +216,14 @@ fn spawn(owner: &str, command: &str, cwd: &std::path::Path) -> Result<String, St
         })
         .map_err(|e| e.to_string())?;
 
-    let mut cmd = CommandBuilder::new("sh");
-    cmd.arg("-c");
-    cmd.arg(command);
+    let mut argv = vec!["sh".to_string(), "-c".to_string(), command.to_string()];
+    if let Some(sb) = sandbox {
+        argv = sb.wrap(argv);
+    }
+    let mut cmd = CommandBuilder::new(&argv[0]);
+    for arg in &argv[1..] {
+        cmd.arg(arg);
+    }
     cmd.cwd(cwd);
     cmd.env("TERM", "xterm-256color");
     // Nothing here should try to page its output at an agent.
@@ -293,7 +318,7 @@ fn render(command: &str, id: &str, text: &str, exit: Option<&str>, dropped: u64)
     if text.is_empty() {
         out.push_str("(no new output)");
     } else {
-        out.push_str("\n");
+        out.push('\n');
         out.push_str(text);
     }
     out
@@ -316,7 +341,12 @@ struct StartInput {
     timeout: Option<u64>,
 }
 
-pub struct TerminalStartTool;
+#[derive(Default)]
+pub struct TerminalStartTool {
+    /// The session policy, which supplies the sandbox. `None` runs unsandboxed
+    /// — the tier-3 floor, used by tests and direct callers.
+    pub policy: Option<Arc<ToolPolicy>>,
+}
 
 #[async_trait]
 impl Tool for TerminalStartTool {
@@ -357,7 +387,8 @@ impl Tool for TerminalStartTool {
         };
         let yield_ms = input.timeout.unwrap_or(DEFAULT_YIELD_MS).min(MAX_YIELD_MS);
 
-        let id = match spawn(&ctx.session_id, &input.command, &ctx.working_dir) {
+        let sandbox = self.policy.as_ref().and_then(|p| p.sandbox());
+        let id = match spawn(&ctx.session_id, &input.command, &ctx.working_dir, sandbox) {
             Ok(id) => id,
             Err(e) => return ToolResult::error(format!("Failed to start a terminal session: {e}")),
         };
@@ -510,7 +541,7 @@ mod tests {
     #[tokio::test]
     async fn a_finished_command_returns_its_output_and_no_session() {
         let tmp = TmpDir::new();
-        let r = TerminalStartTool
+        let r = TerminalStartTool::default()
             .execute(
                 json!({"command": "echo hello-terminal", "timeout": 5000}),
                 &test_ctx(tmp.path().to_path_buf()),
@@ -532,7 +563,7 @@ mod tests {
     async fn a_long_running_command_yields_a_session_that_survives_the_call() {
         let tmp = TmpDir::new();
         let ctx = test_ctx(tmp.path().to_path_buf());
-        let r = TerminalStartTool
+        let r = TerminalStartTool::default()
             .execute(
                 json!({"command": "echo ready; sleep 30", "timeout": 1500}),
                 &ctx,
@@ -566,7 +597,7 @@ mod tests {
         let tmp = TmpDir::new();
         let mut ctx = test_ctx(tmp.path().to_path_buf());
         ctx.session_id = "input-test".into();
-        let r = TerminalStartTool
+        let r = TerminalStartTool::default()
             .execute(
                 json!({"command": "read line; echo GOT:$line; sleep 5", "timeout": 800}),
                 &ctx,
@@ -595,6 +626,39 @@ mod tests {
             .await;
         assert!(r.is_error);
         assert!(r.content.contains("TerminalStart"), "{}", r.content);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_terminal_session_is_sandboxed_like_the_one_shot_shell() {
+        // It was not: `spawn` built `sh -c` directly, so at tier 0 a
+        // `TerminalStart` reached paths the identical `Bash` call was denied —
+        // a longer-lived hole than the one-shot tool, not a smaller one.
+        let tmp = TmpDir::new();
+        let policy = crate::tools::ToolPolicy::new(tmp.path(), "sandboxed-terminal");
+        if policy.sandbox().is_none() {
+            return; // no sandbox-exec on this host
+        }
+        let mut ctx = test_ctx(tmp.path().to_path_buf());
+        ctx.session_id = "sandboxed-terminal".into();
+        let r = TerminalStartTool {
+            policy: Some(policy),
+        }
+        .execute(
+            json!({
+                "command": "ls ~/Library/Keychains >/dev/null 2>&1 && echo REACHED || echo denied",
+                "timeout": 5000
+            }),
+            &ctx,
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert!(
+            r.content.contains("denied"),
+            "the terminal reached a path the sandbox denies Bash: {}",
+            r.content
+        );
+        shutdown_owner("sandboxed-terminal");
     }
 
     #[test]

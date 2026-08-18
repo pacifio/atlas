@@ -37,7 +37,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use super::policy::ToolPolicy;
+use super::policy::{ToolPolicy, ESCALATION_MARKER};
 use super::{coerce, errors, truncate};
 
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
@@ -277,6 +277,55 @@ impl BashTool {
         self.policy = Some(policy);
         self
     }
+
+    /// Ask whether to re-run `command` outside the sandbox, and do it if the
+    /// user says yes.
+    ///
+    /// The prompt says the command re-runs **from the start**, because that is
+    /// what is being approved: a command that partly succeeded before the
+    /// denial will repeat the part that worked.
+    ///
+    /// Returns `None` when the user declines — the caller then reports the
+    /// original denied result, which is the honest outcome.
+    async fn offer_escalation(&self, command: &str, ctx: &ToolContext) -> Option<ToolResult> {
+        use cersei::tools::permissions::{PermissionDecision, PermissionRequest};
+
+        let request = PermissionRequest {
+            tool_name: self.name().to_string(),
+            tool_input: serde_json::json!({
+                ESCALATION_MARKER: true,
+                "command": command,
+            }),
+            permission_level: PermissionLevel::Dangerous,
+            description: format!(
+                "The sandbox refused an operation in `{command}`. Run it again outside the                  sandbox? It restarts from the beginning."
+            ),
+            id: uuid::Uuid::new_v4().to_string(),
+        };
+        match ctx.permissions.check(&request).await {
+            PermissionDecision::Deny(_) => None,
+            _ => {
+                // Re-enter with the marker set: the sandbox is skipped for this
+                // one call, and `ToolPolicy::decide` guarantees the answer was
+                // never written to the approval cache.
+                let escalated = Self {
+                    cancel: self.cancel.clone(),
+                    policy: self.policy.clone(),
+                };
+                Some(
+                    escalated
+                        .execute(
+                            serde_json::json!({
+                                ESCALATION_MARKER: true,
+                                "command": command,
+                            }),
+                            ctx,
+                        )
+                        .await,
+                )
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -306,6 +355,10 @@ impl Tool for BashTool {
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
         let input = coerce::for_schema(input, &self.input_schema());
+        // A re-entry after the sandbox refused the command: the user has
+        // already been asked, so this run is deliberately unconfined. It applies
+        // to this call only and was never cached — see `ESCALATION_MARKER`.
+        let escalated = input.get(ESCALATION_MARKER).and_then(Value::as_bool) == Some(true);
         let input: Input = match serde_json::from_value(input) {
             Ok(i) => i,
             Err(e) => {
@@ -322,7 +375,11 @@ impl Tool for BashTool {
         // shell command can touch. Classification decides how often the user is
         // interrupted; this decides what the command can reach.
         let mut argv = vec!["sh".to_string(), "-c".to_string(), input.command.clone()];
-        let sandbox = self.policy.as_ref().and_then(|p| p.sandbox().cloned());
+        let sandbox = self
+            .policy
+            .as_ref()
+            .filter(|_| !escalated)
+            .and_then(|p| p.sandbox().cloned());
         if let Some(sb) = &sandbox {
             argv = sb.wrap(argv);
         }
@@ -358,17 +415,18 @@ impl Tool for BashTool {
                     // diff, test, find on an unreadable entry). Surface it as a
                     // non-error result — the output (and any error text) is visible
                     // and the model decides — rather than flagging a failed call.
-                    let hint = sandbox
-                        .as_ref()
-                        .filter(|sb| sb.looks_like_denial(&body))
-                        .map(|_| {
-                            "\n\n[This looks like the sandbox refusing an operation outside the \
-                             workspace. If the command genuinely needs to reach outside it, say \
-                             so and the user can approve it explicitly.]"
-                                .to_string()
-                        })
-                        .unwrap_or_default();
-                    ToolResult::success(format!("{body}\n\n(Command exited with code {code}.){hint}"))
+                    // A sandbox denial is a decision the user can make, not a
+                    // dead end (harness story 6). Ask once; if they agree, the
+                    // command re-runs unconfined for this call and nothing is
+                    // remembered.
+                    if !escalated
+                        && sandbox.as_ref().is_some_and(|sb| sb.looks_like_denial(&body))
+                    {
+                        if let Some(result) = self.offer_escalation(&input.command, ctx).await {
+                            return result;
+                        }
+                    }
+                    ToolResult::success(format!("{body}\n\n(Command exited with code {code}.)"))
                 }
             }
             Ok(Ok(Outcome::Cancelled { output })) => ToolResult::error(format!(

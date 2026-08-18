@@ -1,7 +1,7 @@
 # Attribution
 
-The replacer engine in `replace.rs` (the 9-strategy fallback ladder behind the
-`Edit` tool — `Simple`, `LineTrimmed`, `BlockAnchor`, `WhitespaceNormalized`,
+The replacer engine in `replace.rs` (the fallback ladder behind the `Edit`
+tool — `Simple`, `LineTrimmed`, `BlockAnchor`, `WhitespaceNormalized`,
 `IndentationFlexible`, `EscapeNormalized`, `TrimmedBoundary`, `ContextAware`,
 `MultiOccurrence`), the driver's uniqueness + disproportionate-match guard, and
 the corrective error strings in `errors.rs`, the read pagination/`Did you mean?`
@@ -16,6 +16,9 @@ opencode's edit strategies are themselves derived from:
 - **Cline** — `evals/diff-edits/diff-apply/*` — https://github.com/cline/cline (Apache-2.0)
 - **Gemini CLI** — `packages/core/src/utils/editCorrector.ts` —
   https://github.com/google-gemini/gemini-cli (Apache-2.0)
+
+`PunctuationFolded` — a tenth strategy folding typographic quotes, dashes and
+exotic spaces before comparing — is Atlas's own and has no upstream equivalent.
 
 The Rust port is original code; only the algorithms, strategy ordering, and
 error-message wording were adapted. The 2026 destructive-match guard and the

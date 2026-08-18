@@ -11,115 +11,24 @@
 //! * **Nothing was ever cleaned up.** Every truncation leaked a full copy of
 //!   the output, for the life of the machine.
 //!
-//! Now: head *and* tail with the true omitted count, a spill inside the
-//! workspace that the session removes on teardown, and a streaming
-//! [`HeadTail`] ring so a command emitting gigabytes is never fully buffered
-//! before being thrown away.
+//! Now: [`HeadTail`], a streaming ring that keeps head *and* tail with the true
+//! omitted count and never buffers the middle at all. The caller retains the
+//! full output — the shell tool keeps its capture file — and names a path
+//! inside the workspace, which is a path the gate permits the model to read.
+//!
+//! There is deliberately no string-in, string-out variant. One existed and had
+//! no production caller: capping has to happen *while* output arrives, or the
+//! gigabyte has already been allocated by the time anyone decides to discard
+//! it.
 //!
 //! Standard output and standard error stay chronologically interleaved. That is
 //! deliberate and differs from Codex, which concatenates one after the other
 //! and loses the ordering that makes build output readable.
 
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
 
 /// Default cap for tool output bodies (~30 KB) before head/tail capping.
 pub const MAX_OUTPUT_BYTES: usize = 30_000;
-
-/// Largest byte index `<= max` that lands on a UTF-8 char boundary.
-fn floor_boundary(s: &str, max: usize) -> usize {
-    if max >= s.len() {
-        return s.len();
-    }
-    let mut i = max;
-    while i > 0 && !s.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
-}
-
-/// Smallest byte index `>= min` that lands on a UTF-8 char boundary.
-fn ceil_boundary(s: &str, min: usize) -> usize {
-    let mut i = min.min(s.len());
-    while i < s.len() && !s.is_char_boundary(i) {
-        i += 1;
-    }
-    i
-}
-
-/// The result of capping, with the *true* pre-cap size so neither the user nor
-/// the model can mistake a capped window for the whole thing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Capped {
-    pub body: String,
-    pub original_bytes: usize,
-    pub omitted_bytes: usize,
-    pub spill: Option<PathBuf>,
-}
-
-impl Capped {
-    pub fn was_capped(&self) -> bool {
-        self.omitted_bytes > 0
-    }
-}
-
-/// Cap `output` at `max` bytes, keeping head and tail in a fifty-fifty split.
-///
-/// `spill_dir`, when given, receives a full copy of the output and is named in
-/// the notice. It must be inside the workspace, which is why the caller passes
-/// [`super::policy::ToolPolicy::spill_dir`] rather than a temp directory.
-pub fn cap(output: &str, max: usize, label: &str, spill_dir: Option<&Path>) -> Capped {
-    let total = output.len();
-    if total <= max {
-        return Capped {
-            body: output.to_string(),
-            original_bytes: total,
-            omitted_bytes: 0,
-            spill: None,
-        };
-    }
-
-    let half = max / 2;
-    let head_end = floor_boundary(output, half);
-    let tail_start = ceil_boundary(output, total.saturating_sub(max - head_end));
-    let omitted = tail_start.saturating_sub(head_end);
-
-    let spill = spill_dir.and_then(|dir| write_spill(dir, output));
-    let pointer = match &spill {
-        Some(p) => format!(" Full output is in {}.", p.display()),
-        None => String::new(),
-    };
-
-    let body = format!(
-        "{}\n\n[{label}: {omitted} of {total} bytes omitted from the middle. \
-         Head and tail shown.{pointer}]\n\n{}",
-        &output[..head_end],
-        &output[tail_start..]
-    );
-
-    Capped {
-        body,
-        original_bytes: total,
-        omitted_bytes: omitted,
-        spill,
-    }
-}
-
-/// Convenience wrapper for callers that only want the string.
-pub fn truncate_output(output: String, max: usize, label: &str) -> String {
-    cap(&output, max, label, None).body
-}
-
-fn write_spill(dir: &Path, output: &str) -> Option<PathBuf> {
-    let file = dir.join(format!("output-{}.txt", uuid::Uuid::new_v4()));
-    match std::fs::write(&file, output.as_bytes()) {
-        Ok(()) => Some(file),
-        Err(e) => {
-            tracing::warn!(error = %e, "tool output spill failed");
-            None
-        }
-    }
-}
 
 // ─── Streaming head/tail ring (D5) ──────────────────────────────────────────
 
@@ -214,92 +123,47 @@ impl HeadTail {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::TmpDir;
 
     #[test]
-    fn under_cap_unchanged() {
-        let c = cap("hello", 100, "x", None);
-        assert_eq!(c.body, "hello");
-        assert!(!c.was_capped());
-        assert_eq!(c.original_bytes, 5);
+    fn under_budget_is_verbatim() {
+        let mut ht = HeadTail::new(1000);
+        ht.push(b"hello ");
+        ht.push(b"world");
+        assert_eq!(ht.render("x"), "hello world");
+        assert!(!ht.was_capped());
+        assert_eq!(ht.total(), 11);
     }
 
     #[test]
-    fn keeps_head_and_tail() {
-        // The failing end of a build must survive.
-        let s = format!("{}{}", "S".repeat(1000), "ERROR: it broke".to_string());
-        let c = cap(&s, 100, "Bash output", None);
-        assert!(c.body.starts_with("SSSS"), "head kept");
-        assert!(
-            c.body.ends_with("ERROR: it broke"),
-            "tail kept — this is the whole point: {}",
-            c.body
-        );
-        assert!(c.was_capped());
-    }
-
-    #[test]
-    fn reports_true_totals_not_post_cap_ones() {
-        let s = "a".repeat(10_000);
-        let c = cap(&s, 100, "x", None);
-        assert_eq!(c.original_bytes, 10_000);
-        assert!(
-            c.body.contains("of 10000 bytes omitted"),
-            "the notice must state the real size: {}",
-            c.body
-        );
-        assert_eq!(c.omitted_bytes, 10_000 - 100);
-    }
-
-    #[test]
-    fn respects_char_boundaries_at_both_cuts() {
-        let s = "é".repeat(1000); // 2 bytes each
-        let c = cap(&s, 51, "x", None); // odd cut would split a char at both ends
-        assert!(c.was_capped());
-        // Round-trips as valid UTF-8 by construction; the assertion is that we
-        // got here without panicking on a non-boundary slice.
-        assert!(c.body.contains("omitted from the middle"));
-    }
-
-    #[test]
-    fn spill_lands_inside_the_given_directory_and_is_named() {
-        let tmp = TmpDir::new();
-        let s = "z".repeat(5_000);
-        let c = cap(&s, 100, "Bash output", Some(tmp.path()));
-        let spill = c.spill.expect("spill written");
-        assert!(spill.starts_with(tmp.path()), "spill must be where the caller said");
-        assert_eq!(std::fs::read_to_string(&spill).unwrap().len(), 5_000);
-        assert!(c.body.contains(&spill.display().to_string()));
-    }
-
-    #[test]
-    fn a_failed_spill_still_produces_usable_output() {
-        let s = "z".repeat(5_000);
-        let c = cap(&s, 100, "x", Some(Path::new("/nonexistent/nope")));
-        assert!(c.spill.is_none());
-        assert!(c.was_capped());
-        assert!(c.body.contains("omitted from the middle"));
-    }
-
-    // ── Streaming ring ──────────────────────────────────────────────────────
-
-    #[test]
-    fn ring_keeps_head_and_tail_across_many_chunks() {
+    fn keeps_head_and_tail_across_many_chunks() {
+        // The failing end of a build must survive. Head-only truncation threw
+        // exactly this away.
         let mut ht = HeadTail::new(100);
         ht.push(b"START");
         for _ in 0..1000 {
             ht.push(b"..........");
         }
-        ht.push(b"END");
+        ht.push(b"ERROR: it broke");
         let out = ht.render("Bash output");
         assert!(out.starts_with("START"), "{out}");
-        assert!(out.ends_with("END"), "{out}");
-        assert_eq!(ht.total(), 5 + 10_000 + 3);
+        assert!(out.ends_with("ERROR: it broke"), "{out}");
         assert!(ht.was_capped());
     }
 
     #[test]
-    fn ring_memory_is_flat_regardless_of_volume() {
+    fn reports_true_totals_not_post_cap_ones() {
+        let mut ht = HeadTail::new(100);
+        ht.push(&vec![b'a'; 1000]);
+        assert_eq!(ht.total(), 1000);
+        assert_eq!(ht.omitted(), 900);
+        assert!(
+            ht.render("x").contains("900 of 1000 bytes omitted"),
+            "the notice must state the real size"
+        );
+    }
+
+    #[test]
+    fn memory_is_flat_regardless_of_volume() {
         let mut ht = HeadTail::new(100);
         // One enormous chunk must collapse to its own suffix, not be buffered.
         ht.push(&vec![b'x'; 10_000_000]);
@@ -309,19 +173,24 @@ mod tests {
     }
 
     #[test]
-    fn ring_under_budget_is_verbatim() {
-        let mut ht = HeadTail::new(1000);
-        ht.push(b"hello ");
-        ht.push(b"world");
-        assert_eq!(ht.render("x"), "hello world");
-        assert!(!ht.was_capped());
+    fn a_cut_through_a_multibyte_character_does_not_panic() {
+        // The ring is byte-oriented, so a cut can land mid-character. Rendering
+        // must still produce valid UTF-8 rather than panicking on a slice.
+        let mut ht = HeadTail::new(51);
+        for _ in 0..100 {
+            ht.push("é".as_bytes()); // 2 bytes each
+        }
+        let out = ht.render("x");
+        assert!(out.contains("omitted from the middle"), "{out}");
     }
 
     #[test]
-    fn ring_omitted_count_is_exact() {
-        let mut ht = HeadTail::new(100);
-        ht.push(&vec![b'a'; 1000]);
-        assert_eq!(ht.omitted(), 1000 - 100);
-        assert!(ht.render("x").contains("900 of 1000 bytes omitted"));
+    fn binary_output_renders_rather_than_failing() {
+        // Command output can legitimately be binary. Unlike a file read there
+        // is no path by which it is written back into source, so lossy is the
+        // right call here and only here.
+        let mut ht = HeadTail::new(1000);
+        ht.push(&[0xFF, 0xFE, b'o', b'k']);
+        assert!(ht.render("x").contains("ok"));
     }
 }

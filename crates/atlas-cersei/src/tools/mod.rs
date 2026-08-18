@@ -67,14 +67,15 @@ pub(crate) fn abs_path(working_dir: &Path, file_path: &str) -> PathBuf {
 /// argument to its canonical absolute form before the tool is entered, which is
 /// strictly stronger than what the old `CwdTool` decorator did and applies to
 /// every tool rather than the three that were remembered.
-pub fn atlas_coding(policy: Arc<ToolPolicy>) -> Vec<Box<dyn Tool>> {
-    atlas_coding_with(None, policy, ToolTier::default(), ModelCapabilities::default())
-}
-
-/// Like [`atlas_coding`], but with the turn's cancel token injected into the
-/// tools that manage their own subprocesses (Bash), so Stop kills the process
-/// group instead of letting the command run to completion after cancel — plus
-/// the tier and model capabilities that decide which tools are visible at all.
+///
+/// `cancel` is the turn's cancel token, injected into the tools that manage
+/// their own subprocesses (Bash), so Stop kills the process group instead of
+/// letting the command run to completion after cancel. `tier` and `caps` decide
+/// which tools are visible at all.
+// Built by successive pushes rather than one `vec![]`: which tools are present
+// is conditional on tier, capability and platform, and each entry carries the
+// comment saying why it is there.
+#[allow(clippy::vec_init_then_push)]
 pub fn atlas_coding_with(
     cancel: Option<tokio_util::sync::CancellationToken>,
     policy: Arc<ToolPolicy>,
@@ -90,8 +91,12 @@ pub fn atlas_coding_with(
         policy: Some(policy.clone()),
     }));
     // The persistent terminal: a dev server, a REPL, an interactive installer,
-    // or a build too slow for Bash's timeout.
-    tools.push(Box::new(terminal::TerminalStartTool));
+    // or a build too slow for Bash's timeout. It takes the policy for the same
+    // reason Bash does — a session that outlives the call must not outrun the
+    // sandbox.
+    tools.push(Box::new(terminal::TerminalStartTool {
+        policy: Some(policy.clone()),
+    }));
     tools.push(Box::new(terminal::TerminalWriteTool));
     // `ApplyPatch` already joins working_dir, and the guard now contains the
     // paths inside its patch body as well.
@@ -120,6 +125,12 @@ pub fn atlas_coding_with(
         // walks via the `ignore` crate directly.
         tools.push(Box::new(list::ListTool));
         tools.push(Box::new(t::notebook_edit::NotebookEditTool));
+        // D13 puts these three in a *deferred* tier — described in a searchable
+        // catalogue rather than the default list. That machinery does not exist
+        // yet, and dropping them instead would remove a capability users have
+        // today, so they sit in the structured tier until it does.
+        tools.push(Box::new(t::code_search::CodeSearchTool::new()));
+        tools.push(Box::new(t::exa_search::ExaSearchTool));
     }
 
     // ── Platform-gated ──────────────────────────────────────────────────────

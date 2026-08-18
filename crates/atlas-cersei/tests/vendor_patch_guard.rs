@@ -26,3 +26,19 @@ fn vendored_tool_metadata_patch_is_resolved() {
         "tool-result-metadata-v1"
     );
 }
+
+/// Provider errors are classified before being retried. Without it a rate limit
+/// ends the turn, and a permanently bad key is retried three times before it
+/// does.
+#[test]
+fn vendored_retry_patch_is_resolved() {
+    assert_eq!(cersei_agent::ATLAS_RETRY_PATCH, "retry-classified-v1");
+}
+
+/// The delegate's provider factory is fallible. Without it a rebuild error is a
+/// panic that takes the whole parent turn down through the actor's supervisor,
+/// rather than one failed sub-task rendered in its own tool card.
+#[test]
+fn vendored_delegate_patch_is_resolved() {
+    assert_eq!(cersei_agent::ATLAS_DELEGATE_PATCH, "delegate-fallible-factory");
+}

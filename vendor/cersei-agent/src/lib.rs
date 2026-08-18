@@ -32,6 +32,17 @@ pub const ATLAS_CANCEL_PATCH: &str = "tool-cancel-race-v1";
 /// unpatched crates.io release, so the patch cannot silently regress.
 pub const ATLAS_TOOL_METADATA_PATCH: &str = "tool-result-metadata-v1";
 
+/// ATLAS PATCH marker: provider errors are classified as transient or permanent
+/// and only the transient ones are retried, with backoff. Unpatched, a rate
+/// limit ends the turn and a bad key is retried three times before it does.
+pub const ATLAS_RETRY_PATCH: &str = "retry-classified-v1";
+
+/// ATLAS PATCH marker: the delegate's provider factory is fallible, so a
+/// rebuild error becomes a per-task delegate error rendered in the tool card
+/// rather than a panic that aborts the whole parent turn through the actor's
+/// supervisor.
+pub const ATLAS_DELEGATE_PATCH: &str = "delegate-fallible-factory";
+
 /// Sentinel content of the tool_result synthesized for a tool_use orphaned by
 /// cancellation — keeps provider history valid for the next turn (every
 /// tool_use must have a matching tool_result).

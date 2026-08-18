@@ -7,7 +7,7 @@
 //! |------|------------------------------------|---------------------------------|
 //! | 0    | OS sandbox + containment + approvals | macOS with `/usr/bin/sandbox-exec` |
 //! | 1    | Containment + approvals            | sandbox unavailable             |
-//! | 2    | Approvals only                     | containment disabled by setting  |
+//! | 2    | Approvals only                     | not yet reachable — no setting selects it |
 //! | 3    | Today's behaviour                  | never selected automatically     |
 //!
 //! Linux and Windows land on tier 1. Linux would need a separate sandbox
@@ -25,16 +25,21 @@ use std::path::{Path, PathBuf};
 mod seatbelt;
 
 /// A configured OS sandbox for one workspace.
+///
+/// Only constructible on a host that actually has one — [`detect`] is the only
+/// constructor and it returns `None` everywhere else. That is deliberate:
+/// a `Sandbox` whose `wrap` silently handed back unsandboxed argv would be a
+/// security control that reports success while doing nothing.
 #[derive(Debug, Clone)]
 pub struct Sandbox {
     kind: Kind,
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     root: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     /// macOS `sandbox-exec`, driven by a generated Seatbelt profile.
+    #[cfg(target_os = "macos")]
     Seatbelt,
 }
 
@@ -80,8 +85,6 @@ impl Sandbox {
         match self.kind {
             #[cfg(target_os = "macos")]
             Kind::Seatbelt => seatbelt::wrap(&self.root, argv),
-            #[cfg(not(target_os = "macos"))]
-            Kind::Seatbelt => argv,
         }
     }
 
@@ -119,6 +122,12 @@ pub const SENSITIVE_HOME_SUBPATHS: &[&str] = &[
     ".npmrc",
     ".pypirc",
     ".cargo/credentials.toml",
+    // Atlas's own store. `byok-keys.json` under the app's config directory is
+    // the user's provider keys in plaintext; an agent able to read it could
+    // exfiltrate the credential that pays for it.
+    "Library/Application Support/com.atlas.app",
+    "Library/Application Support/atlas",
+    ".config/atlas",
     "Library/Application Support/Google/Chrome",
     "Library/Application Support/Firefox",
     "Library/Application Support/com.apple.TCC",

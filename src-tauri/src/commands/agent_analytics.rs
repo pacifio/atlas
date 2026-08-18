@@ -416,6 +416,9 @@ mod tests {
             arguments: args,
             result: None,
             locations: Vec::new(),
+            // These fixtures predate structured diffs; the analytics under test
+            // derive their counts from `arguments`, which is the fallback path.
+            diff: None,
         }
     }
 

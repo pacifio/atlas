@@ -272,8 +272,12 @@ The strongest enforcement the host provides, selected at runtime from one binary
 |---|---|---|
 | 0 | OS sandbox + containment + approvals | macOS with `/usr/bin/sandbox-exec` |
 | 1 | Containment + approvals | sandbox unavailable (Linux, Windows) |
-| 2 | Approvals only | containment disabled by explicit setting |
+| 2 | Approvals only | not yet reachable — no setting selects it |
 | 3 | Today's behaviour | never selected automatically; the floor |
+
+Tiers 2 and 3 are constructible and tested but nothing selects them: the containment
+toggle they exist for is not a setting a user can reach yet. In practice every host is
+at tier 0 or tier 1.
 
 The macOS profile composes Seatbelt policy data vendored from Codex (Apache-2.0, see
 `tools/sandbox/ATTRIBUTION.md`) with workspace-scoped write rules and a deny list covering

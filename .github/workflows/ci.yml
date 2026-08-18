@@ -86,6 +86,31 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+  sandbox:
+    # `crates` runs on ubuntu, where `tests/sandbox_tier0.rs` compiles to
+    # nothing (`#![cfg(target_os = "macos")]`). That suite is the only thing
+    # that establishes the sandbox actually confines anything — it runs real
+    # commands under `sandbox-exec` and checks what they can reach — so without
+    # a macOS runner the security-critical half of the tool layer is untested
+    # in CI while looking green.
+    #
+    # Scoped to the one crate and the two suites that need a Mac, so this stays
+    # a short job rather than a second copy of the matrix.
+    name: sandbox (macOS tier 0)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/atlas-cersei
+      - name: Tier 0 sandbox behaviour
+        working-directory: crates/atlas-cersei
+        run: cargo test --test sandbox_tier0 -- --nocapture
+      - name: Tool gate
+        working-directory: crates/atlas-cersei
+        run: cargo test --test tool_gate
+
   crates:
     # Every crate is a standalone package with its own Cargo.lock, so each gets
     # its own job and its own cache. Adding a crate here is a one-line change,

@@ -14,8 +14,7 @@
 //! 3. **Check freshness** for a write-class call: refuse if the file was never
 //!    read this session, or changed since it was.
 //! 4. **Execute**, with `working_dir` normalised to the canonical root.
-//! 5. **Detect a sandbox denial** and turn it into a correctable message.
-//! 6. **Record** the read (or refresh the record after a write), and emit one
+//! 5. **Record** the read (or refresh the record after a write), and emit one
 //!    telemetry line.
 //!
 //! Classification, the approval cache, and the prompt itself sit in
@@ -23,6 +22,11 @@
 //! the runner dispatches anything. That split is deliberate: the runner already
 //! hands the tool *input* to the permission policy, so a per-command verdict
 //! needs no vendored-runner patch.
+//!
+//! Sandbox wrapping and denial escalation are **not** here, and cannot be: the
+//! guard does not spawn the process, so it has nothing to wrap. They live in
+//! the tools that own a subprocess — the shell and the persistent terminal —
+//! each of which takes the same policy.
 
 use std::path::Path;
 use std::sync::Arc;

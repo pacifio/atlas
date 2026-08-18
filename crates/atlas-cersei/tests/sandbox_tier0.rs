@@ -43,7 +43,7 @@ impl Drop for Workspace {
 
 /// Run `command` confined, and return (exit code, stdout+stderr).
 fn confined(ws: &Workspace, command: &str) -> (Option<i32>, String) {
-    let policy = ToolPolicy::new(ws.path());
+    let policy = ToolPolicy::new(ws.path(), "sandbox-tier0");
     assert_eq!(
         policy.tier(),
         EnforcementTier::Sandboxed,
@@ -94,6 +94,30 @@ fn ordinary_reads_outside_the_workspace_still_work() {
     let (code, out) = confined(&ws, "ls /usr/bin/env && echo TOOLCHAIN-OK");
     assert_eq!(code, Some(0), "{out}");
     assert!(out.contains("TOOLCHAIN-OK"), "{out}");
+}
+
+#[test]
+fn the_network_still_works() {
+    // The base policy opens with `(deny default)`, and the vendored network
+    // policy grants only the *supporting* rights — DNS config, the security
+    // server, loopback sockets — because Codex injects the outbound rule from
+    // its proxy layer, which Atlas deliberately did not vendor. Without an
+    // explicit allow, every socket is blocked: `npm install`, `cargo fetch`,
+    // `pip install` and `git push` all fail, for every macOS user, since tier 0
+    // is the default. This test is the one that catches that.
+    let ws = Workspace::new();
+    let (code, out) = confined(
+        &ws,
+        "curl -sS --max-time 20 -o /dev/null -w '%{http_code}' https://example.com",
+    );
+    if out.contains("Could not resolve host") && std::env::var("CI").is_err() {
+        // Offline developer machine — the assertion below would fail for a
+        // reason that has nothing to do with the sandbox.
+        eprintln!("skipping: no network");
+        return;
+    }
+    assert_eq!(code, Some(0), "the sandbox blocked the network: {out}");
+    assert!(out.contains("200"), "{out}");
 }
 
 #[test]
