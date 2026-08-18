@@ -44,6 +44,7 @@ import { useTranscriptScroll } from "../lib/use-transcript-scroll";
 import { useChatStore } from "../stores/chat-store";
 import { saveThreadToKb, drawDiagram } from "../lib/turn-actions";
 import { cn } from "@/lib/utils";
+import { isScrollHot } from "@/lib/scroll-hot";
 import { GradualBlur } from "@/components/gradual-blur";
 import { LoadingState } from "./loading-state";
 import {
@@ -156,6 +157,18 @@ interface Saved {
   atEnd: boolean;
 }
 const savedScroll = new Map<string, Saved>();
+/** Bound the cache: entries for closed tabs / dead sessions have no eviction
+ *  hook here, so cap it FIFO — re-inserting on unmount refreshes recency
+ *  (Map iteration order), keeping live tabs safe from eviction. */
+const SAVED_SCROLL_CAP = 100;
+function saveScroll(cacheKey: string, saved: Saved): void {
+  savedScroll.delete(cacheKey);
+  savedScroll.set(cacheKey, saved);
+  if (savedScroll.size > SAVED_SCROLL_CAP) {
+    const oldest = savedScroll.keys().next().value;
+    if (oldest !== undefined) savedScroll.delete(oldest);
+  }
+}
 
 /**
  * Shown while a turn is live but has produced nothing to render yet: the ACP
@@ -408,6 +421,17 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     const step = () => {
       idle = null;
       timer = null;
+      // Mid-gesture: back off. The rIC `timeout: 400` below silently broke
+      // this effect's founding promise ("requestIdleCallback yields to
+      // scrolling by construction") — it FORCES the step to run during a
+      // long fling, and mounting IDLE_CHUNK rows stalls the main thread
+      // 100-300ms while WKWebView's compositor keeps scrolling on its own
+      // thread into unpainted territory. That is the black-viewport blanking,
+      // no streaming required. Resume a beat after the gesture goes quiet.
+      if (isScrollHot()) {
+        timer = window.setTimeout(step, 180);
+        return;
+      }
       // A scroll-triggered grow is already in flight — let it land first, or
       // the two overwrite each other's anchor.
       if (growPending.current) return;
@@ -566,7 +590,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     return () => {
       const el = scrollRef.current;
       if (!el) return;
-      savedScroll.set(cacheKey, {
+      saveScroll(cacheKey, {
         startIndex,
         scrollTop: el.scrollTop,
         atEnd: atEndRef.current,
@@ -747,7 +771,10 @@ function RowView({
         <UserRowView
           row={row}
           priority={priority}
-          justSent={row.id === justSentMessageId}
+          // Row ids are prefixed (`u:<messageId>`); the store records the raw
+          // message id. The unprefixed compare never matched — the entrance
+          // animation was silently dead until this fix.
+          justSent={row.id === `u:${justSentMessageId}`}
           onToggleExpand={onToggleExpand}
         />
       );

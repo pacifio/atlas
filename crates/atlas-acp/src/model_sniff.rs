@@ -50,6 +50,13 @@ impl ModelSniffer {
 
     /// Feed one raw line written TO the agent (stdin).
     pub fn observe_outgoing(&self, line: &str) {
+        // Substring pre-filter before the full parse: this hook sees EVERY
+        // stdin line for the life of the agent, and only two lifecycle methods
+        // ever matter. (The method name appears verbatim in the frame, so the
+        // filter can't miss; a rare false positive just pays the old parse.)
+        if !line.contains("session/new") && !line.contains("session/load") {
+            return;
+        }
         let Ok(msg) = serde_json::from_str::<Value>(line) else {
             return;
         };
@@ -77,6 +84,12 @@ impl ModelSniffer {
     /// Feed one raw line read FROM the agent (stdout). Captures the legacy
     /// `models` blob when the line answers a session/new or session/load we saw.
     pub fn observe_incoming(&self, line: &str) {
+        // ~Always empty outside an in-flight session/new|load — skipping the
+        // full-DOM parse here removes a duplicate parse of every streaming
+        // frame (the ACP client parses the same line again for dispatch).
+        if self.pending.is_empty() {
+            return;
+        }
         let Ok(msg) = serde_json::from_str::<Value>(line) else {
             return;
         };

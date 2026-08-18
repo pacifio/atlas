@@ -287,6 +287,47 @@ fn a_transcript_that_grows_during_import_ends_up_complete_without_duplicates() {
 }
 
 #[test]
+fn a_grown_transcript_resumes_mid_file_instead_of_reparsing_from_byte_zero() {
+    // The 30s watch tick used to re-parse an actively-growing multi-MB JSONL
+    // from byte 0 every pass. Each clean pass now commits a resume offset; the
+    // growth tests above prove the resumed rows match a full re-parse, and
+    // this pins that the offset is actually stored and advances with growth.
+    let dir = tempfile::tempdir().unwrap();
+    let transcripts = dir.path().join("transcripts");
+    let source = TranscriptSource::new(&transcripts);
+    let mut store = store_in(dir.path());
+
+    transcript(&transcripts, "sess-resume", &a_conversation()[..2]);
+    let path = transcripts.join("sess-resume.jsonl");
+    let first_size = std::fs::metadata(&path).unwrap().len();
+    import_all(&mut store, WORKSPACE, &source, WorkspaceMode::Local).unwrap();
+
+    // Resume state lives in a SIDECAR, not sessions.db — it's a cache, and
+    // caches must never raise the schema-gated store's version floor.
+    let key = path.to_string_lossy().to_string();
+    let sidecar = dir.path().join(".atlas").join("import-resume.json");
+    let read_offset = |key: &str| -> u64 {
+        let map: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&sidecar).unwrap()).unwrap();
+        map[key]["offset"].as_u64().unwrap()
+    };
+    let offset = read_offset(&key);
+    assert_eq!(
+        offset, first_size,
+        "the committed offset covers the whole newline-terminated file"
+    );
+
+    transcript(&transcripts, "sess-resume", &a_conversation());
+    import_all(&mut store, WORKSPACE, &source, WorkspaceMode::Local).unwrap();
+    let grown: u64 = read_offset(&key);
+    assert_eq!(grown, std::fs::metadata(&path).unwrap().len());
+    assert!(grown > offset, "the offset advances with the file");
+
+    let session = store.sessions_for_workspace(WORKSPACE).unwrap()[0].id.clone();
+    assert_eq!(store.messages_for_session(&session).unwrap().len(), 4);
+}
+
+#[test]
 fn a_transcript_appearing_after_the_first_pass_is_picked_up() {
     // The terminal-gap case: a Session that did not exist when capture was
     // enabled.

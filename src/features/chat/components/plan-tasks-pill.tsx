@@ -52,8 +52,12 @@ function ArcRing({ frac, size = 14 }: { frac: number; size?: number }) {
   );
 }
 
-/** Per-row status glyph: check / spinning arc / faint circle. */
-function StepIcon({ status }: { status: string }) {
+/** Per-row status glyph: check / spinning arc / faint circle. `active` gates
+ *  the in-progress spin: the panel stays MOUNTED while closed (height 0), and
+ *  an `animation: … infinite` keeps running under `height: 0` — a continuous
+ *  compositor tax for the entire streaming turn, live during exactly the
+ *  scroll-while-streaming window where transcript blanking shows. */
+function StepIcon({ status, active }: { status: string; active: boolean }) {
   if (status === "completed") {
     return (
       <svg width={16} height={16} viewBox="0 0 16 16" className="shrink-0" aria-hidden>
@@ -75,7 +79,7 @@ function StepIcon({ status }: { status: string }) {
         width={16}
         height={16}
         viewBox="0 0 16 16"
-        className="atlas-arc-spin shrink-0 text-[var(--text-primary)]"
+        className={cn("shrink-0 text-[var(--text-primary)]", active && "atlas-arc-spin")}
         aria-hidden
       >
         <circle
@@ -137,6 +141,9 @@ export const PlanTasksPill = memo(function PlanTasksPill({ tabId }: { tabId: str
   }, [open]);
 
   useEffect(() => {
+    // Only while open: a closed panel's height is pinned at 0, so observing
+    // its content just re-measures under every plan-update delta for nothing.
+    if (!open) return;
     const el = contentRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => setPanelHeight(el.offsetHeight));
@@ -180,7 +187,7 @@ export const PlanTasksPill = memo(function PlanTasksPill({ tabId }: { tabId: str
                 key={step.id}
                 className="flex min-h-8 items-center gap-2.5 rounded-lg px-1.5 py-1"
               >
-                <StepIcon status={step.status} />
+                <StepIcon status={step.status} active={open} />
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-[11.5px] leading-5",

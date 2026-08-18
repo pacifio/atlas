@@ -135,6 +135,31 @@ function newOpId(): string {
  * watcher after any mutation, including our own `emit_synthetic_change`) drives
  * a live refresh of the things that change frequently.
  */
+/** How many mounted views currently read `diff` (the whole-working-tree
+ *  fallback diff). `loadDiff` is a no-op at zero so background fs/git events
+ *  don't spawn git + ship multi-MB strings for data nothing renders. */
+let diffConsumers = 0;
+
+/** Mount-scoped: call from an effect in any view that reads `diff`; returns
+ *  the release fn for cleanup. Fetches on retain so the view never sees the
+ *  stale/empty diff the gate left behind, and drops the retained string when
+ *  the last consumer leaves. */
+export function retainGitDiff(): () => void {
+  diffConsumers += 1;
+  void useGitStore.getState().actions.loadDiff();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    diffConsumers -= 1;
+    if (diffConsumers === 0) {
+      useGitStore.setState((s) => {
+        s.diff = "";
+      });
+    }
+  };
+}
+
 let gitStatusFreshListenerInit = false;
 function ensureGitStatusFreshListener(): void {
   if (gitStatusFreshListenerInit) return;
@@ -426,6 +451,13 @@ export const useGitStore = createSelectors(
             }
           },
           loadDiff: async () => {
+            // Subscriber-gated: the whole-working-tree diff has exactly one
+            // consumer (the changes view's no-selection fallback), yet this
+            // used to run on EVERY fs burst and git event — a git spawn plus
+            // a potentially multi-MB string over IPC into the store, for data
+            // nothing rendered. `retainGitDiff` re-fetches on mount, so
+            // skipped loads are recovered the moment the view opens.
+            if (diffConsumers === 0) return;
             const p = repo();
             if (!p) return;
             try {

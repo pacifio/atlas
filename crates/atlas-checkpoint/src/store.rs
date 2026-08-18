@@ -1646,6 +1646,12 @@ impl Store {
         Ok(())
     }
 
+    /// The `.atlas` directory this store lives in — home for import sidecars
+    /// (cache files that must NOT live in the schema-gated database).
+    pub(crate) fn atlas_root(&self) -> &Path {
+        &self.root
+    }
+
     // ── Checkpoints and the commit cursor ───────────────────────────────────
 
     /// Create a Checkpoint, or leave the existing one alone.

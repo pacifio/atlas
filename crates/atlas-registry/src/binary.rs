@@ -77,6 +77,12 @@ async fn download_and_extract(
     let mut file = std::fs::File::create(&part)?;
     let mut hasher = Sha256::new();
     let mut received: u64 = 0;
+    // Throttle progress to 256 KB steps (plus the final byte count below).
+    // The callback becomes a Tauri emit → JSON serialize → webview event →
+    // React render; unthrottled it fired per ~16 KB network chunk — ~2,500
+    // grid re-renders for a 40 MB binary.
+    const PROGRESS_STEP: u64 = 256 * 1024;
+    let mut last_reported: u64 = 0;
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| RegistryError::Download(e.to_string()))?;
@@ -84,7 +90,15 @@ async fn download_and_extract(
         file.write_all(&chunk)?;
         received += chunk.len() as u64;
         if let Some(progress) = progress {
-            progress(received, total);
+            if received - last_reported >= PROGRESS_STEP {
+                last_reported = received;
+                progress(received, total);
+            }
+        }
+    }
+    if let Some(progress) = progress {
+        if received > last_reported {
+            progress(received, total); // final tick — the bar must land on 100%
         }
     }
     file.flush()?;

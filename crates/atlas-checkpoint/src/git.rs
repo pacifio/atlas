@@ -534,8 +534,88 @@ pub fn blob_at(repo: &Path, sha: &str, path: &str) -> Option<Vec<u8>> {
 /// and costs nothing — such a path is new in whatever commit first carries it,
 /// so the strict arm is where the link rule would send it anyway.
 pub fn tracked_in_head(repo: &Path, path: &str) -> bool {
+    // Set-backed: the write sampler asks this once per touched path,
+    // synchronously on the delta emit thread, and the old per-path
+    // `git cat-file -e` was a ~5-20ms process spawn each — a multi-file edit
+    // turn paid N spawns before any subsequent delta could emit. One
+    // `ls-tree -r HEAD` per (HEAD, index) epoch answers every path with a
+    // hash lookup instead.
+    match head_tracked_set(repo) {
+        Some(set) => set.contains(path),
+        // Unstampable layout (gitfile worktree, missing .git) — old behavior.
+        None => tracked_in_head_probe(repo, path),
+    }
+}
+
+/// The original single-path probe, kept as the fallback for repos the set
+/// cache cannot safely stamp.
+fn tracked_in_head_probe(repo: &Path, path: &str) -> bool {
     run_status(repo, &["cat-file", "-e", &format!("HEAD:{path}")])
         .is_ok_and(|status| status.success)
+}
+
+struct HeadTracked {
+    head_mtime: std::time::SystemTime,
+    index_mtime: std::time::SystemTime,
+    paths: std::sync::Arc<std::collections::HashSet<String>>,
+}
+
+/// Per-repo cache of every path tracked in `HEAD`, invalidated when
+/// `.git/HEAD` or `.git/index` changes mtime — a commit rewrites the index, a
+/// branch switch rewrites both, so both epochs that can change the answer
+/// bump a stamp. Staleness inside one mtime granule errs toward "untracked",
+/// which is the conservative arm of the link rule (see `tracked_in_head`'s
+/// docs). `None` when the repo layout can't be stamped (`.git` is a gitfile,
+/// no index yet) — callers fall back to the per-path probe.
+fn head_tracked_set(repo: &Path) -> Option<std::sync::Arc<std::collections::HashSet<String>>> {
+    use std::collections::{HashMap, HashSet};
+    use std::sync::{Arc, LazyLock, Mutex};
+
+    static CACHE: LazyLock<Mutex<HashMap<std::path::PathBuf, HeadTracked>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    let git_dir = repo.join(".git");
+    if !git_dir.is_dir() {
+        return None; // gitfile worktree or not a repo — probe per path
+    }
+    let mtime = |p: std::path::PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let head_mtime = mtime(git_dir.join("HEAD"))?;
+    let index_mtime = mtime(git_dir.join("index"))?;
+
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(entry) = cache.get(repo) {
+        if entry.head_mtime == head_mtime && entry.index_mtime == index_mtime {
+            return Some(entry.paths.clone());
+        }
+    }
+    // `-z`: raw NUL-separated paths (default output quotes special chars,
+    // which would break membership tests against the sampler's plain paths).
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["ls-tree", "-r", "-z", "--name-only", "HEAD"])
+        .output();
+    let paths: HashSet<String> = match output {
+        Ok(o) if o.status.success() => o
+            .stdout
+            .split(|b| *b == 0)
+            .filter(|s| !s.is_empty())
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect(),
+        // No commits yet / git failed: an empty set is the honest answer
+        // (nothing is tracked in HEAD) and stays conservative.
+        _ => HashSet::new(),
+    };
+    let paths = Arc::new(paths);
+    cache.insert(
+        repo.to_path_buf(),
+        HeadTracked {
+            head_mtime,
+            index_mtime,
+            paths: paths.clone(),
+        },
+    );
+    Some(paths)
 }
 
 /// The content of a path as it would appear in the **worktree** — the committed

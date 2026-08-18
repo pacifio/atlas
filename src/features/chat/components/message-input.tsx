@@ -743,7 +743,7 @@ export function MessageInput({
     let cancelled = false;
     void (async () => {
       try {
-        const snap = await agents.snapshot({ agent_id, session_id });
+        const snap = await agents.snapshotMeta({ agent_id, session_id });
         if (!cancelled && snap.available_modes.length > 0) {
           setAcpModes(
             tabId,
@@ -938,26 +938,47 @@ export function MessageInput({
   }, [agentType, availableCommands]);
   const queue = useChatStore((s) => s.queues[tabId] ?? EMPTY_QUEUE);
 
-  // The composer's plain-text content is mirrored into local state so the
-  // submit button can react to emptiness without round-tripping through
-  // CodeMirror on every keystroke. CodeMirror owns the document; this is a
-  // shallow shadow for the submit button.
+  // CodeMirror owns the document; React only needs the empty↔non-empty EDGE
+  // (for the submit button's tri-state). The old shape mirrored every doc
+  // change into `useState` — re-rendering this whole component, footer menus
+  // included, per keystroke — and ran an immer store write per keystroke via a
+  // draft-sync effect (fanning out to every chat-store selector in the app).
+  // Now the text lives in a ref, `hasText` flips only on the edge, and the
+  // per-tab draft mirror is a 300ms trailing debounce + a flush on unmount
+  // (tab switches unmount this component, so nothing is lost; the live-insert
+  // paths go through `atlas:chat-insert`, not the draft).
   //
-  // Initial seed reads the per-tab draft from chat-store so switching tabs
-  // (which unmounts this component) doesn't drop what the user was typing.
-  // `useState`'s lazy initializer runs once per mount with the tabId that
-  // was current at mount time — that's exactly what we want.
-  const [value, setValue] = useState(() => useChatStore.getState().drafts[tabId] ?? "");
+  // Initial seed reads the per-tab draft from chat-store. `useState`'s lazy
+  // initializer runs once per mount with the mount-time tabId — exactly right.
+  const [initialDraft] = useState(() => useChatStore.getState().drafts[tabId] ?? "");
+  const valueRef = useRef(initialDraft);
+  const [hasText, setHasText] = useState(() => initialDraft.trim().length > 0);
   const inputRef = useRef<ChatInputHandle>(null);
 
-  // Mirror every doc change into the per-tab draft slot. Using an
-  // effect (rather than wrapping each setValue callsite) means every
-  // path that updates the composer — typing, slash insertion, queue
-  // recall — keeps the store in sync without having to remember.
   const { setDraft } = useChatStore.use.actions();
+  const draftTimer = useRef<number | null>(null);
+  // Every path that updates the composer — typing, slash insertion, queue
+  // recall — routes through this (it is the ChatInput onChange), so the ref,
+  // the edge state and the draft mirror can't drift apart.
+  const setValue = useCallback(
+    (text: string) => {
+      valueRef.current = text;
+      const next = text.trim().length > 0;
+      setHasText((prev) => (prev === next ? prev : next));
+      if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
+      draftTimer.current = window.setTimeout(() => {
+        draftTimer.current = null;
+        setDraft(tabId, valueRef.current);
+      }, 300);
+    },
+    [tabId, setDraft],
+  );
   useEffect(() => {
-    setDraft(tabId, value);
-  }, [value, tabId, setDraft]);
+    return () => {
+      if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
+      setDraft(tabId, valueRef.current);
+    };
+  }, [tabId, setDraft]);
 
   // The CM chunk started downloading at module-eval time (see the top of this
   // file). Mirror the resolution into component state so React re-renders
@@ -1113,7 +1134,7 @@ export function MessageInput({
     const [agent_id, session_id] = acpBoundKey.split("::");
     let cancelled = false;
     agents
-      .snapshot({ agent_id, session_id })
+      .snapshotMeta({ agent_id, session_id })
       .then((snap) => {
         if (!cancelled) setImageSupported(!!snap.prompt_image_supported);
       })
@@ -1624,7 +1645,7 @@ export function MessageInput({
     // A GitHub repo is still syncing into `.atlas/repos` — block the send so the
     // prompt can't reference a half-cloned repo.
     if (githubSyncing !== null) return;
-    const text = inputRef.current?.getValue() ?? value;
+    const text = inputRef.current?.getValue() ?? valueRef.current;
     const trimmed = text.trim();
     if (!trimmed) {
       // Empty + running → act as a stop button.
@@ -1646,11 +1667,10 @@ export function MessageInput({
     }
     inputRef.current?.clear();
     setValue("");
-    // The value→draft sync effect will collapse the empty value into a
-    // `delete s.drafts[tabId]` on the next commit, so no explicit
-    // clearDraft call is needed.
+    // The debounced draft mirror will collapse the empty value into a
+    // `delete s.drafts[tabId]`, so no explicit clearDraft call is needed.
   }, [
-    value,
+    setValue,
     running,
     onSend,
     onStop,
@@ -1662,14 +1682,13 @@ export function MessageInput({
   ]);
   submitRef.current = submit;
 
-  const trimmed = value.trim();
   // Tri-state button:
   //   running + empty   → STOP
   //   running + text    → QUEUE
   //   not running + any → SEND
   type Mode = "send" | "queue" | "stop";
-  const mode: Mode = running ? (trimmed ? "queue" : "stop") : "send";
-  const buttonEnabled = disabled ? false : mode === "stop" ? true : trimmed.length > 0;
+  const mode: Mode = running ? (hasText ? "queue" : "stop") : "send";
+  const buttonEnabled = disabled ? false : mode === "stop" ? true : hasText;
 
   // A fixed, generic placeholder ("Ask Claude Code / Codex what to do…") — the
   // composer no longer mirrors the setup phase here (the setup pill above the
@@ -1821,7 +1840,7 @@ export function MessageInput({
               {LazyChatInput ? (
                 <LazyChatInput
                   ref={inputRef}
-                  initialValue={value}
+                  initialValue={valueRef.current}
                   placeholder={effectivePlaceholder}
                   onChange={setValue}
                   onSubmit={submit}

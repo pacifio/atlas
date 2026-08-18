@@ -755,17 +755,25 @@ fn extract_wikilinks(s: &str) -> Vec<String> {
 
 /// `/Users/adib/Desktop/atlas` → `-Users-adib-Desktop-atlas` (Claude's
 /// per-project dir naming: every `/` becomes `-`).
-fn encode_project_dir(project_path: &str) -> String {
+pub(crate) fn encode_project_dir(project_path: &str) -> String {
     project_path.replace('/', "-")
+}
+
+/// The per-project Claude memory dir (`~/.claude/projects/<encoded>/memory`) —
+/// the bulk of the memory corpus, and therefore a directory the indexer's FS
+/// watcher must cover (the project cwd alone never sees these writes).
+pub(crate) fn claude_memory_dir(project_path: &str) -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".claude")
+        .join("projects")
+        .join(encode_project_dir(project_path))
+        .join("memory")
 }
 
 fn read_claude(project_path: &str) -> ClaudeMemory {
     let home = dirs::home_dir().unwrap_or_default();
-    let mem_dir = home
-        .join(".claude")
-        .join("projects")
-        .join(encode_project_dir(project_path))
-        .join("memory");
+    let mem_dir = claude_memory_dir(project_path);
 
     let index = std::fs::read_to_string(mem_dir.join("MEMORY.md")).ok();
 

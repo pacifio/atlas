@@ -42,6 +42,8 @@ import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { jumpToSession } from "@/features/chat/lib/tab-workspace";
 import { refreshCachedAcpModels } from "@/features/chat/lib/warm-acp-models";
+import { pruneContextUsageCache } from "@/features/chat/lib/context-usage-cache";
+import { isScrollHot } from "@/lib/scroll-hot";
 import { hydrateAgentRegistry } from "@/features/agents/stores/agent-registry-store";
 import { AgentLoginDialogHost } from "@/features/chat/components/agent-login-dialog";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
@@ -434,6 +436,7 @@ export function App() {
     // mis-ordered fragments.)
     const pendingDeltas: AgentDelta[] = [];
     const toolDeltaPos = new Map<string, number>(); // dedup key → index in pendingDeltas
+    const outputChunkPos = new Map<string, number>(); // live-output coalesce key → index
     let rafId: number | null = null;
     /** Timer drain that survives RAF being paused — see `schedule` below. */
     let backstopId: ReturnType<typeof setTimeout> | null = null;
@@ -506,6 +509,11 @@ export function App() {
       }
     }, KEEP_WARM_MS);
 
+    // Housekeeping, well off the startup critical path: sweep stale
+    // per-session context-usage gauges out of localStorage (they had no
+    // other removal path and grew one key per session forever).
+    const pruneTimer = window.setTimeout(() => pruneContextUsageCache(), 15_000);
+
     let permissionState: "unknown" | "granted" | "denied" = "unknown";
     // Establish notification permission EAGERLY at startup. The old lazy path
     // only asked the OS the first time a notification fired while unfocused —
@@ -577,7 +585,14 @@ export function App() {
       }
     };
 
-    const flush = () => {
+    /** Longest a batch may be held for an active scroll gesture. Bounded so a
+     *  continuous fling can never starve the stream — worst case the reader
+     *  sees updates land ~2-3× per second instead of per frame while flicking. */
+    const SCROLL_HOLD_MAX_MS = 400;
+    /** When the oldest un-flushed delta was buffered (null = buffer empty). */
+    let oldestBufferedAt: number | null = null;
+
+    const flush = (force = false) => {
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
         rafId = null;
@@ -586,10 +601,29 @@ export function App() {
         clearTimeout(backstopId);
         backstopId = null;
       }
-      if (pendingDeltas.length === 0) return;
+      if (pendingDeltas.length === 0) {
+        oldestBufferedAt = null;
+        return;
+      }
+      // Mid-fling, hold the batch: applying it re-renders ChatPanel →
+      // Transcript → a reconcile of every mounted row, and when that lands in
+      // a momentum-scroll frame WKWebView misses tile deadlines — the
+      // viewport blanks. Deltas keep buffering; they land the moment the
+      // gesture goes quiet or the hold cap expires.
+      if (
+        !force &&
+        isScrollHot() &&
+        oldestBufferedAt !== null &&
+        performance.now() - oldestBufferedAt < SCROLL_HOLD_MAX_MS
+      ) {
+        backstopId = setTimeout(flush, 100);
+        return;
+      }
+      oldestBufferedAt = null;
       const deltas = pendingDeltas.slice();
       pendingDeltas.length = 0;
       toolDeltaPos.clear();
+      outputChunkPos.clear();
       try {
         useChatStore.getState().actions.applyAgentBatch({ texts: [], thoughts: [], deltas });
       } catch (e) {
@@ -639,7 +673,8 @@ export function App() {
     // cancelled timer per frame and changes nothing about normal streaming.
     const BACKSTOP_MS = 250;
     const schedule = () => {
-      if (rafId === null) rafId = requestAnimationFrame(flush);
+      if (oldestBufferedAt === null) oldestBufferedAt = performance.now();
+      if (rafId === null) rafId = requestAnimationFrame(() => flush());
       if (backstopId === null) backstopId = setTimeout(flush, BACKSTOP_MS);
     };
 
@@ -675,6 +710,43 @@ export function App() {
         }
         toolDeltaPos.set(key, pendingDeltas.length);
       }
+      pendingDeltas.push(env);
+    };
+
+    // Coalesce incremental live tool output. Priority order matters for
+    // correctness, not just batching:
+    // 1. A full `tool_call_upserted` snapshot for this tool is already
+    //    buffered — fold the delta into ITS `result`. A separate chunk entry
+    //    would double-apply: a later snapshot replaces that buffer slot with
+    //    a result that already contains every earlier chunk, and the stray
+    //    chunk entry would then append the same bytes again.
+    // 2. This tool's previous buffered entry is a chunk — concatenate.
+    // 3. Fresh chunk entry. (Chunks buffered BEFORE a tool's first snapshot
+    //    of the frame stay safe: they apply first and the later snapshot
+    //    replaces the result wholesale.)
+    const bufferOutputChunk = (env: Extract<AgentDelta, { kind: "tool_call_output_chunk" }>) => {
+      const key = `${env.session_id}::${env.tool_call_id}`;
+      const upsertAt = toolDeltaPos.get(key);
+      if (upsertAt !== undefined) {
+        const entry = pendingDeltas[upsertAt];
+        if (entry?.kind === "tool_call_upserted") {
+          pendingDeltas[upsertAt] = {
+            ...entry,
+            tool_call: {
+              ...entry.tool_call,
+              result: (entry.tool_call.result ?? "") + env.delta,
+            },
+          };
+          return;
+        }
+      }
+      const chunkAt = outputChunkPos.get(key);
+      const prev = chunkAt !== undefined ? pendingDeltas[chunkAt] : undefined;
+      if (prev?.kind === "tool_call_output_chunk" && chunkAt !== undefined) {
+        pendingDeltas[chunkAt] = { ...prev, delta: prev.delta + env.delta };
+        return;
+      }
+      outputChunkPos.set(key, pendingDeltas.length);
       pendingDeltas.push(env);
     };
 
@@ -804,6 +876,10 @@ export function App() {
           bufferChunk(env);
           schedule();
           return;
+        case "tool_call_output_chunk":
+          bufferOutputChunk(env);
+          schedule();
+          return;
         case "permission_request": {
           // Permission requests block the agent waiting for the user
           // — apply synchronously so the modal opens on the very next
@@ -852,7 +928,8 @@ export function App() {
           // Flush whatever's buffered before tearing the agent down
           // so we don't lose a final chunk to the post-disconnect
           // discard. `flush` cancels both pending drains itself.
-          flush();
+          // Forced: teardown correctness outranks the scroll-hold.
+          flush(true);
           actions.clearPermissionsForAgent(env.agent_id);
           // Reset the spawn cache for the plugin that actually died — the old
           // resetDefaultAgent() only ever cleared claude-code-ts, so a crashed
@@ -965,6 +1042,7 @@ export function App() {
       window.removeEventListener("keydown", onUserActivity);
       window.removeEventListener("wheel", onUserActivity);
       window.clearInterval(keepWarm);
+      window.clearTimeout(pruneTimer);
       indexTimers.forEach((t) => clearTimeout(t));
       unlisten?.();
     };

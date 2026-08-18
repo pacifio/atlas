@@ -33,6 +33,7 @@ import { KnowledgeInspector } from "./knowledge-inspector";
 import { PageProperties } from "./page-properties";
 import { IconPicker } from "./icon-picker";
 import { CoverPicker, gradientCss } from "./cover-picker";
+import { coverCacheKey, getCachedCoverUrl, putCachedCoverUrl } from "../lib/cover-url-cache";
 import { Copy, ExternalLink, GitBranch, PanelLeft, PanelRight } from "lucide-react";
 
 const RECENTS_MAX = 5;
@@ -812,15 +813,29 @@ function PageHeaderWithIcon({
   // Fetch the image as a base64 `data:` URL instead — it embeds the bytes
   // directly, so the cover renders identically in dev and bundled builds
   // without depending on the asset protocol or its scope globs.
-  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  //
+  // Cached per cover ref (see cover-url-cache) so page switches between
+  // covered pages don't re-read + re-encode + re-ship the image over IPC —
+  // that was a visible loading flash plus a main-thread parse hitch per
+  // navigation. Upload evicts (the ref is entry-id-stable, not per-upload).
+  const cacheKey = cover ? coverCacheKey(projectPath, cover) : null;
+  const [coverUrl, setCoverUrl] = useState<string | null>(() =>
+    cacheKey ? getCachedCoverUrl(cacheKey) : null,
+  );
   useEffect(() => {
-    if (!cover || isGradientCover) {
+    if (!cover || !cacheKey || isGradientCover) {
       setCoverUrl(null);
+      return;
+    }
+    const cached = getCachedCoverUrl(cacheKey);
+    if (cached) {
+      setCoverUrl(cached);
       return;
     }
     let alive = true;
     void invoke<string>("knowledge_cover_data_url", { projectPath, cover })
       .then((url) => {
+        putCachedCoverUrl(cacheKey, url);
         if (alive) setCoverUrl(url);
       })
       .catch(() => {
@@ -829,7 +844,7 @@ function PageHeaderWithIcon({
     return () => {
       alive = false;
     };
-  }, [cover, isGradientCover, projectPath]);
+  }, [cover, cacheKey, isGradientCover, projectPath]);
 
   return (
     <div style={{ marginBottom: 14 }}>

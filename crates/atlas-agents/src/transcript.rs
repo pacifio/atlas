@@ -61,6 +61,18 @@ fn replay_claude_jsonl(cwd: &str, session_id: &str) -> Result<Vec<Message>> {
         if v.get("isSidechain").and_then(|x| x.as_bool()) == Some(true) {
             continue;
         }
+        // Compaction artifacts. Claude Code stamps the giant "This session is
+        // being continued…" summary `isCompactSummary` (and marks it
+        // `isVisibleInTranscriptOnly`) precisely so hosts don't render it as
+        // conversation — replaying it produced a multi-KB fake user message in
+        // every resumed compacted thread. `isMeta` lines are the harness
+        // talking to itself (same rule the capture importer applies).
+        if v.get("isCompactSummary").and_then(|x| x.as_bool()) == Some(true)
+            || v.get("isVisibleInTranscriptOnly").and_then(|x| x.as_bool()) == Some(true)
+            || v.get("isMeta").and_then(|x| x.as_bool()) == Some(true)
+        {
+            continue;
+        }
         let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
         let timestamp = parse_timestamp(v.get("timestamp").and_then(|t| t.as_str()));
         match kind {

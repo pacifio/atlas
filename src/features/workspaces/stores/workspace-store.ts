@@ -204,7 +204,12 @@ function teardownHot(id: string): void {
   // The picker's no-IPC fast path must stop vouching for an index that is
   // about to be torn down.
   const path = useWorkspaceStore.getState().workspaces.find((w) => w.id === id)?.path;
-  if (path) markFileIndexClosedFor(path);
+  if (path) {
+    markFileIndexClosedFor(path);
+    // Memory registry is keyed by cwd, not workspaceId — releases the engine,
+    // its recursive FS watcher and the debounce task for this project.
+    void invoke("memory_indexer_close_project", { cwd: path }).catch(() => {});
+  }
   void invoke("fileindex_close_project", { workspaceId: id }).catch(() => {});
   void invoke("git_watch_stop", { workspaceId: id }).catch(() => {});
   void invoke("recent_files_close_project", { workspaceId: id }).catch(() => {});

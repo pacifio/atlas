@@ -60,6 +60,12 @@ export const agents = {
 
   snapshot: (key: SessionKey) => invoke<SessionSnapshot>("agents_snapshot", { key }),
 
+  /** `snapshot` without the transcript (`messages` arrives empty). The full
+   *  snapshot serializes every message across IPC — multi-MB on long sessions —
+   *  so every caller that only reads modes/models/commands metadata uses this.
+   *  Keep `snapshot` for resume/backfill, which genuinely need messages. */
+  snapshotMeta: (key: SessionKey) => invoke<SessionSnapshot>("agents_snapshot_meta", { key }),
+
   send: (key: SessionKey, text: string, attachments?: ImageAttachment[]) =>
     invoke<void>("agents_send", {
       key,

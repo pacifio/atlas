@@ -504,10 +504,16 @@ impl SharedMemoryStore {
         events
     }
 
-    /// Full event log, newest-first — backs the Memory panel's events table.
+    /// Newest events (capped) — backs the Memory panel's events table. The log
+    /// is append-only and written by every agent turn, so returning it whole
+    /// was an unbounded JSON payload across IPC plus an unbounded DOM table on
+    /// long-lived projects (the same failure shape as the old codebase-corpus
+    /// Memory-tab slowdown). 500 mirrors the Timeline's BOARD_LIMIT.
     pub fn list_events(&self, project_path: &str) -> Vec<MemoryEvent> {
+        const EVENTS_LIMIT: usize = 500;
         let mut events = read_events(project_path);
         events.reverse(); // newest-first
+        events.truncate(EVENTS_LIMIT);
         events
     }
 

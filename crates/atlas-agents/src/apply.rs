@@ -21,10 +21,30 @@ use parking_lot::Mutex;
 use crate::events::{Emitter, SessionDelta, SessionDeltaEnvelope};
 use crate::session::{
     MessageMode, MessageRole, PlanEntry, SessionState, SessionStatus, ToolCall, ToolCallStatus,
-    extract_image_block, extract_text_block, format_tool_content, map_tool_status,
-    new_assistant_text,
-    new_assistant_thinking, new_assistant_tool, new_user_message, normalise_tool_input,
+    format_tool_content, map_tool_status, new_assistant_text, new_assistant_thinking,
+    new_assistant_tool, new_user_message, normalise_tool_input,
 };
+
+/// Value-form content readers. The dispatch below already decodes the whole
+/// `SessionUpdate` to a `serde_json::Value`; the old path additionally cloned
+/// the `content` subtree, decoded it into a typed `ContentBlock`, and the
+/// extractor then re-serialized THAT back to a Value — three serde passes per
+/// streamed token, on the actor task. Read the fields directly instead.
+fn text_of_content(v: &serde_json::Value) -> Option<&str> {
+    if v.get("type").and_then(|t| t.as_str()) != Some("text") {
+        return None;
+    }
+    v.get("text").and_then(|t| t.as_str())
+}
+
+fn image_of_content(v: &serde_json::Value) -> Option<(&str, &str)> {
+    if v.get("type").and_then(|t| t.as_str()) != Some("image") {
+        return None;
+    }
+    let mime = v.get("mimeType").and_then(|m| m.as_str())?;
+    let data = v.get("data").and_then(|d| d.as_str())?;
+    Some((mime, data))
+}
 
 /// Apply one inbound [`AcpEvent`] to an already-resolved session. Handles every
 /// per-session variant; `AgentDisconnected` (agent-wide) must be handled by the
@@ -152,16 +172,16 @@ fn apply_session_update(
     };
     match kind {
         "agent_message_chunk" => {
+            // Read straight off the Value the dispatch already built. The old
+            // shape decoded a typed ContentBlock from a clone of this subtree
+            // and the extractor then re-serialized it back to a Value — three
+            // serde passes per streamed token, on the actor task.
             let Some(content) = v.get("content") else {
                 return;
             };
-            let Ok(block) = serde_json::from_value::<acp_schema::ContentBlock>(content.clone())
-            else {
-                return;
-            };
-            if let Some(text) = extract_text_block(&block) {
-                append_text_chunk(emitter, state, text);
-            } else if let Some((mime, data)) = extract_image_block(&block) {
+            if let Some(text) = text_of_content(content) {
+                append_text_chunk(emitter, state, text.to_string());
+            } else if let Some((mime, data)) = image_of_content(content) {
                 // Agent-sent images fold into the existing markdown pipeline
                 // as a data-URI image — no new delta variant or frontend path.
                 append_text_chunk(
@@ -186,21 +206,17 @@ fn apply_session_update(
             let Some(content) = v.get("content") else {
                 return;
             };
-            let Ok(block) = serde_json::from_value::<acp_schema::ContentBlock>(content.clone())
-            else {
-                return;
-            };
-            let Some(text) = extract_text_block(&block) else {
+            let Some(text) = text_of_content(content) else {
                 return;
             };
             let mut st = state.lock();
             match st.messages.last_mut() {
                 Some(last) if last.role == MessageRole::User && last.mode == MessageMode::Text => {
-                    last.content.push_str(&text);
+                    last.content.push_str(text);
                     st.touch();
                 }
                 _ => {
-                    let msg = new_user_message(text);
+                    let msg = new_user_message(text.to_string());
                     let cloned = msg.clone();
                     st.messages.push(msg);
                     let agent_id = st.agent_id;
@@ -235,12 +251,8 @@ fn apply_session_update(
             let Some(content) = v.get("content") else {
                 return;
             };
-            let Ok(block) = serde_json::from_value::<acp_schema::ContentBlock>(content.clone())
-            else {
-                return;
-            };
-            if let Some(text) = extract_text_block(&block) {
-                append_thinking_chunk(emitter, state, text);
+            if let Some(text) = text_of_content(content) {
+                append_thinking_chunk(emitter, state, text.to_string());
             }
         }
         "tool_call" | "tool_call_update" => {
@@ -470,9 +482,23 @@ fn apply_tool_call(
     // Upsert by toolCallId across existing messages.
     for msg in st.messages.iter_mut().rev() {
         if let Some(tc) = msg.tool_calls.iter_mut().find(|t| t.id == tool_call_id) {
-            tc.status = map_tool_status(status_raw, tc.status);
+            // Track whether this update changes anything BEYOND appending live
+            // output. Pure streaming chunks (the common case for a chatty
+            // command — repeated "in_progress" statuses included) go out as an
+            // incremental `ToolCallOutputChunk`; anything material still emits
+            // the full snapshot.
+            let mut changed_beyond_chunk = false;
+            let new_status = map_tool_status(status_raw, tc.status);
+            if new_status != tc.status {
+                changed_beyond_chunk = true;
+            }
+            tc.status = new_status;
             if let Some(input) = raw_input_val {
-                tc.arguments = normalise_tool_input(Some(input));
+                let args = normalise_tool_input(Some(input));
+                if args != tc.arguments {
+                    changed_beyond_chunk = true;
+                }
+                tc.arguments = args;
             }
             if let Some(t) = title.clone() {
                 // Only the display title is refreshed. `tool_name` keeps its
@@ -480,9 +506,15 @@ fn apply_tool_call(
                 // tool name ("Read", "Bash"), and overwriting it with a later
                 // title threw that away — leaving no field anywhere carrying the
                 // name, which is what session capture needs to group by.
+                if tc.title.as_deref() != Some(t.as_str()) {
+                    changed_beyond_chunk = true;
+                }
                 tc.title = Some(t);
             }
             if let Some(k) = kind.clone() {
+                if tc.kind.as_deref() != Some(k.as_str()) {
+                    changed_beyond_chunk = true;
+                }
                 tc.kind = Some(k);
             }
             // Locations arrive late. Many agents (Claude Code especially) attach
@@ -494,6 +526,9 @@ fn apply_tool_call(
             // carrying only a status must not erase paths we already have.
             if let Some(locations) = v.get("locations").and_then(|l| l.as_array()) {
                 if !locations.is_empty() {
+                    if tc.locations != *locations {
+                        changed_beyond_chunk = true;
+                    }
                     tc.locations = locations.clone();
                 }
             }
@@ -504,21 +539,39 @@ fn apply_tool_call(
                 }
             }
             if let Some(result) = formatted.clone() {
+                // The final tool_result replaces the accumulated live output
+                // wholesale — always a full snapshot.
+                changed_beyond_chunk = true;
                 tc.result = Some(result);
             }
-            let updated = tc.clone();
+            // Pure live-output chunk → incremental delta; the state above stays
+            // authoritative (snapshots/resume still see the full result). Only
+            // clone the (growing) tool call when a full snapshot must ship.
+            let pure_chunk = !changed_beyond_chunk && live_output.is_some();
+            let updated = if pure_chunk { None } else { Some(tc.clone()) };
             let msg_id = msg.id.clone();
             let agent_id = st.agent_id;
             let sid = st.session_id.clone();
+            let delta = match (updated, live_output) {
+                (None, Some(chunk)) => SessionDelta::ToolCallOutputChunk {
+                    message_id: msg_id,
+                    tool_call_id: tool_call_id.to_string(),
+                    delta: chunk,
+                },
+                (Some(tool_call), _) => SessionDelta::ToolCallUpserted {
+                    message_id: msg_id,
+                    tool_call,
+                },
+                // Unreachable by construction (updated is None only when
+                // live_output is Some), but keep a sane fallback.
+                (None, None) => return,
+            };
             st.touch();
             drop(st);
             emitter.emit(SessionDeltaEnvelope {
                 agent_id,
                 session_id: sid,
-                delta: SessionDelta::ToolCallUpserted {
-                    message_id: msg_id,
-                    tool_call: updated,
-                },
+                delta,
             });
             return;
         }
@@ -674,6 +727,98 @@ mod tests {
         );
 
         assert_eq!(only_tool_call(&state).locations.len(), 1);
+    }
+
+    #[test]
+    fn pure_live_output_streams_as_incremental_chunks_not_full_snapshots() {
+        // The quadratic-IPC defect this pins: every `_meta.terminal_output`
+        // chunk used to clone + emit the ENTIRE accumulated result as a full
+        // `ToolCallUpserted` — N chunks totalling B bytes cost ~N*B/2 over the
+        // bridge. Pure chunks (repeated same-status updates included) must go
+        // out as `ToolCallOutputChunk`; material changes still snapshot.
+        struct RecordingSink(parking_lot::Mutex<Vec<SessionDeltaEnvelope>>);
+        impl DeltaSink for RecordingSink {
+            fn emit(&self, envelope: SessionDeltaEnvelope) {
+                self.0.lock().push(envelope);
+            }
+        }
+        let sink = Arc::new(RecordingSink(parking_lot::Mutex::new(Vec::new())));
+        let emitter = Emitter::new(sink.clone());
+        let state = Mutex::new(SessionState::new(
+            AgentId(uuid::Uuid::nil()),
+            "sess-1".into(),
+            "/tmp/project".into(),
+            "claude-code".into(),
+        ));
+
+        apply_session_update(
+            &emitter,
+            &state,
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tc-1",
+                "title": "Bash",
+                "kind": "execute",
+                "status": "in_progress",
+            }))
+            .unwrap(),
+        );
+        for chunk in ["line one\n", "line two\n"] {
+            apply_session_update(
+                &emitter,
+                &state,
+                serde_json::from_value(serde_json::json!({
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "tc-1",
+                    "status": "in_progress", // unchanged — must not force a snapshot
+                    "_meta": { "terminal_output": { "data": chunk } },
+                }))
+                .unwrap(),
+            );
+        }
+
+        // State accumulated both chunks regardless of wire shape.
+        assert_eq!(
+            only_tool_call(&state).result.as_deref(),
+            Some("line one\nline two\n")
+        );
+        {
+            let events = sink.0.lock();
+            let chunk_deltas: Vec<&str> = events
+                .iter()
+                .filter_map(|e| match &e.delta {
+                    SessionDelta::ToolCallOutputChunk { delta, .. } => Some(delta.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(chunk_deltas, vec!["line one\n", "line two\n"]);
+            // Exactly one full snapshot so far: the create.
+            let snapshots = events
+                .iter()
+                .filter(|e| matches!(e.delta, SessionDelta::ToolCallUpserted { .. }))
+                .count();
+            assert_eq!(snapshots, 1, "chunk updates must not re-ship snapshots");
+        }
+
+        // A material change (completion) snapshots, carrying the full result.
+        apply_session_update(
+            &emitter,
+            &state,
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tc-1",
+                "status": "completed",
+            }))
+            .unwrap(),
+        );
+        let events = sink.0.lock();
+        match &events.last().expect("completion emitted").delta {
+            SessionDelta::ToolCallUpserted { tool_call, .. } => {
+                assert_eq!(tool_call.status, ToolCallStatus::Completed);
+                assert_eq!(tool_call.result.as_deref(), Some("line one\nline two\n"));
+            }
+            other => panic!("completion must be a full snapshot, got {other:?}"),
+        }
     }
 
     #[test]

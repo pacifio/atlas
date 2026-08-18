@@ -572,6 +572,11 @@ impl CaptureState {
                 pending.remove(&call_id);
             }
         }
+        // The binding registry itself — without this, one SessionBinding per
+        // session ever seen survived for the process lifetime (and the map is
+        // scanned under its mutex on every delta). Re-sighting the same session
+        // later is safe: note_prompt's seed path re-creates the entry.
+        lock_ok(&self.sessions).remove(session_id);
         // And the worker's cached store id for the session.
         self.submit(Job::EndSession {
             native_session_id: binding.native_session_id.clone(),

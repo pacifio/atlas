@@ -306,6 +306,53 @@ function isEmptyMessage(m: ChatMessage): boolean {
   );
 }
 
+/**
+ * Per-message derived-text caches, keyed by the message OBJECT. `projectRows`
+ * runs once per applied streaming batch, and these strip/split/regex passes
+ * over full message bodies made its per-frame cost scale with total transcript
+ * bytes, not tail size (every assistant body paid a `toLowerCase` copy inside
+ * `stripNextSteps`, every user prompt a whitespace regex — per frame, forever).
+ * Immer keeps settled messages identity-stable across batches, so a WeakMap
+ * hit costs one lookup; only the streaming tail (fresh identity each frame)
+ * recomputes, and dead entries fall out with their messages via GC.
+ */
+interface UserDerived {
+  text: string;
+  contextBlocks: number;
+  preview: string;
+}
+const userDerivedCache = new WeakMap<ChatMessage, UserDerived>();
+const proseCache = new WeakMap<ChatMessage, string>();
+
+function derivedUser(m: ChatMessage): UserDerived {
+  const hit = userDerivedCache.get(m);
+  if (hit) return hit;
+  const split =
+    m.atlasContext !== undefined
+      ? {
+          prose: m.atlasProse ?? m.content,
+          context: m.atlasContext,
+          blockCount: m.atlasContextBlockCount ?? 0,
+        }
+      : splitAtlasContext(m.content);
+  const text = stripNextSteps(split.prose).trim();
+  const v: UserDerived = {
+    text,
+    contextBlocks: split.context ? split.blockCount : 0,
+    preview: text.replace(/\s+/g, " ").slice(0, 80),
+  };
+  userDerivedCache.set(m, v);
+  return v;
+}
+
+function derivedProse(m: ChatMessage): string {
+  const hit = proseCache.get(m);
+  if (hit !== undefined) return hit;
+  const v = stripNextSteps(m.content ?? "").trim();
+  proseCache.set(m, v);
+  return v;
+}
+
 export interface ProjectOptions {
   /** Ids of user bubbles / thinking blocks the reader has expanded. */
   expanded: ReadonlySet<string>;
@@ -348,15 +395,8 @@ export function projectRows(
 
     // ── User turn: exactly one row. ────────────────────────────────────────
     if (m.role === "user") {
-      const split =
-        m.atlasContext !== undefined
-          ? {
-              prose: m.atlasProse ?? m.content,
-              context: m.atlasContext,
-              blockCount: m.atlasContextBlockCount ?? 0,
-            }
-          : splitAtlasContext(m.content);
-      const text = stripNextSteps(split.prose).trim();
+      const derived = derivedUser(m);
+      const text = derived.text;
       const turnId = `t:${m.id}`;
       // The gap separator belongs BETWEEN turns, so it is emitted before
       // `rowStart` is captured — otherwise a turn's first row would be the
@@ -371,7 +411,7 @@ export function projectRows(
         turnId,
         firstInTurn: true,
         text,
-        contextBlocks: split.context ? split.blockCount : 0,
+        contextBlocks: derived.contextBlocks,
         expanded: opts.expanded.has(`u:${m.id}`),
         attachments: m.attachments?.length ?? 0,
         timestamp: m.timestamp,
@@ -384,7 +424,7 @@ export function projectRows(
         rowEnd: rows.length,
         messageIndex: i,
         status: "settled",
-        preview: text.replace(/\s+/g, " ").slice(0, 80),
+        preview: derived.preview,
         timestamp: m.timestamp,
         toolCount: 0,
         fileCount: 0,
@@ -439,7 +479,7 @@ export function projectRows(
         if (tc.status === "failed") sawError = true;
       }
 
-      const prose = stripNextSteps(msg.content ?? "").trim();
+      const prose = derivedProse(msg);
       if (prose) {
         rows.push({
           kind: RowKind.Prose,

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { X, MessageSquare, Search, PanelLeft, Plus } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -119,7 +119,17 @@ interface SessionSidebarProps {
   onOpened?: () => void;
 }
 
-export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: SessionSidebarProps) {
+// memo: ChatPanel re-renders once per streaming rAF flush (whole-session
+// subscription), and this 1000-line body — four useQuery hooks + the history
+// merge — re-executed with it every frame. Props are stable from ChatPanel
+// (tabId string; the dropdown variant passes its own onOpened, whose identity
+// its parent controls), so memo confines re-runs to this component's own
+// subscriptions.
+export const SessionSidebar = memo(function SessionSidebar({
+  tabId,
+  variant = "sidebar",
+  onOpened,
+}: SessionSidebarProps) {
   const asDropdown = variant === "dropdown";
   const queryClient = useQueryClient();
   const project = useProjectStore.use.currentProject();
@@ -1076,4 +1086,4 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
       )}
     </div>
   );
-}
+});

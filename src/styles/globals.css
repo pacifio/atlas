@@ -1616,6 +1616,11 @@
    to layers makes WKWebView worse, not better. */
 .atlas-row {
   contain: layout style;
+  /* DO NOT add `content-visibility: auto` here. Tried 2026-08-18 against the
+     scroll-blanking: on WKWebView, momentum scroll outruns skipped-row
+     materialization — during a fling nearly every row is in the skipped
+     state and the viewport goes FULLY black until the gesture settles.
+     Strictly worse than the blanking it was meant to fix. */
 }
 
 /* Marker rows: one line, muted, never wraps. */

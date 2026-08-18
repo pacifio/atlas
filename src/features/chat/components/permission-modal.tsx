@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { CheckCircle2, XCircle, AlertTriangle, ClipboardList } from "lucide-react";
 import { toast } from "sonner";
@@ -50,7 +50,12 @@ interface PermissionModalProps {
  * Cancelled requests (ESC / click outside) resolve as `cancelled` on the wire
  * so the agent backs off correctly.
  */
-export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) {
+// memo: ChatPanel re-renders per streaming rAF flush; tabId + the stable
+// onSendMessage wrapper never change identity, so the permission card's own
+// narrow store subscriptions decide when it actually re-renders.
+export const PermissionModal = memo(PermissionModalImpl);
+
+function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
   // Narrow subscription: only this tab's acpSessionId and the head of its
   // permission queue, so the card stays idle until a request actually arrives.
   const acpSessionId = useChatStore((s) => s.sessions[tabId]?.acpSessionId);

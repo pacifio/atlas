@@ -272,7 +272,24 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for MemoryIngestMiddleware {
         // streaming-delta hot path must never block on disk. This feeds ONLY the
         // shared event log; the semantic vector index is now (re)built by the
         // background `MemoryIndexer` (Step 4), never synchronously on a delta.
-        {
+        //
+        // Gate BEFORE the clone+spawn: `classify` only ever acts on PlanUpdated,
+        // completed ToolCallUpserted and assistant MessageAppended — every
+        // streaming TextChunk/ThinkingChunk used to pay a full envelope clone
+        // plus a blocking-pool dispatch to produce zero events, as did every
+        // delta of a session never registered for sharing (cwd unknown →
+        // `ingest` is a guaranteed no-op).
+        let ingest_relevant = match &envelope.delta {
+            SessionDelta::PlanUpdated { .. } => true,
+            SessionDelta::ToolCallUpserted { tool_call, .. } => {
+                tool_call.status == atlas_agents::ToolCallStatus::Completed
+            }
+            SessionDelta::MessageAppended { message } => {
+                message.role == atlas_agents::MessageRole::Assistant
+            }
+            _ => false,
+        };
+        if ingest_relevant && cwd.is_some() {
             let app = self.app.clone();
             let envelope = envelope.clone();
             tauri::async_runtime::spawn_blocking(move || {
@@ -604,6 +621,18 @@ pub fn agents_snapshot(
     manager.snapshot(&key).map_err(|e| e.to_string())
 }
 
+/// `agents_snapshot` minus the transcript. The full snapshot serializes every
+/// message across IPC — multi-MB on long sessions — yet five frontend call
+/// sites (mode seed, model backfill, composer self-heals, model warm) only
+/// read the ~1KB metadata. Same wire shape; `messages` arrives empty.
+#[tauri::command]
+pub fn agents_snapshot_meta(
+    key: SessionKey,
+    manager: State<'_, AgentManager>,
+) -> Result<SessionSnapshot, String> {
+    manager.snapshot_meta(&key).map_err(|e| e.to_string())
+}
+
 /// Hard cap on the whole memory-injection path (pack + handoff + summarize) so a
 /// slow disk or provider can never stall the user's first message.
 const INJECT_BUDGET_SECS: u64 = 8;
@@ -643,7 +672,10 @@ pub async fn agents_send(
     // Resolve the project cwd. Unknown session → fail with the SAME error
     // shape `manager.send` produces, without attempting a send that would
     // skip memory injection (one condition, one behavior — L5).
-    let Ok(snapshot) = manager.snapshot(&key) else {
+    // Meta only — the full snapshot deep-clones the whole transcript under the
+    // SessionState mutex the streaming actor locks per chunk, and this path
+    // reads three small fields.
+    let Ok(snapshot) = manager.snapshot_meta(&key) else {
         return Err(atlas_agents::Error::UnknownSession.to_string());
     };
     let current_model = snapshot.current_model.clone();
