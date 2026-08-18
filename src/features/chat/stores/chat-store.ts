@@ -69,8 +69,8 @@ function reconstructTurnSummaries(messages: ChatMessage[]): void {
         const kind = classifyToolFileKind(tc.kind, tc.toolName);
         if (!path || !kind) continue;
         const counts =
-          kind === "edit" ? countEditLines(tc.toolName, args) : { added: 0, removed: 0 };
-        const created = kind === "edit" ? isFileCreated(tc.toolName, args) : undefined;
+          kind === "edit" ? countEditLines(tc.toolName, args, tc.diff) : { added: 0, removed: 0 };
+        const created = kind === "edit" ? isFileCreated(tc.toolName, args, tc.diff) : undefined;
         const ex = byPath.get(path);
         if (!ex) byPath.set(path, { path, kind, ...counts, created });
         else {
@@ -247,6 +247,9 @@ function toChatToolCall(tc: AgentToolCall): ChatMessage["toolCalls"][number] {
     // reliably (the bash-history panel + bash-styled cards key off it).
     kind: tc.kind ?? null,
     arguments: (tc.arguments ?? {}) as Record<string, unknown>,
+    // The real before/after, when the tool reported one. This is what stops
+    // file-change accounting depending on guessing the tool's argument shape.
+    diff: tc.diff ?? null,
     result: tc.result,
     status:
       tc.status === "pending"
@@ -1772,8 +1775,10 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
         const kind = classifyToolFileKind(tc.kind, tc.tool_name);
         if (path && kind) {
           const { added, removed } =
-            kind === "edit" ? countEditLines(tc.tool_name, args) : { added: 0, removed: 0 };
-          const created = kind === "edit" ? isFileCreated(tc.tool_name, args) : undefined;
+            kind === "edit"
+              ? countEditLines(tc.tool_name, args, tc.diff)
+              : { added: 0, removed: 0 };
+          const created = kind === "edit" ? isFileCreated(tc.tool_name, args, tc.diff) : undefined;
           session.turnScratch.tools[tc.id] = {
             path,
             kind,

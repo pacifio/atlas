@@ -1,17 +1,30 @@
 //! `Edit` — targeted string replacement with the opencode fallback ladder.
 //!
 //! Pipeline (see `plans/atlas-cersei-edit-solution.md`):
-//!   L0  coerce args (strip fences, dealias keys, unwrap stringified JSON)
+//!   coerce args (strip fences, dealias keys, unwrap stringified JSON)
 //!   →   resolve file_path against ctx.working_dir
 //!   →   line-ending + BOM sandwich (normalize to \n for matching, restore on write)
-//!   →   per-file lock
+//!   →   per-file lock, keyed on the *canonical* path
 //!   →   [`replace`](super::replace::replace) driver (exact+LineTrimmed auto-apply,
 //!       guarded fuzzy tail, disproportionate-match guard)
-//!   →   on success: write + short diff preview
+//!   →   on success: atomic write + short diff preview + structured diff
 //!   →   on safe failure: corrective error with real nearby lines (+ Write steer
-//!       for small files = L3).
+//!       for small files).
+//!
+//! Three durability fixes live here (tool spec D2, D4, D12):
+//!
+//! * The per-file lock is keyed on the canonical path. It used to be keyed on
+//!   the raw resolved path, so `a.rs`, `./a.rs` and `/abs/a.rs` took three
+//!   different mutexes and the serialisation guarantee did not hold.
+//! * Writes go through a temporary file and a rename, so a crash mid-write can
+//!   no longer truncate a source file.
+//! * The real before/after is emitted as structured metadata, not just
+//!   formatted into a display string and dropped.
+//!
+//! The read-before-edit and staleness preconditions are *not* here: they belong
+//! to the guard, which enforces them before this tool is ever entered.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
 use async_trait::async_trait;
@@ -21,7 +34,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
-use super::{coerce, cwd, errors, replace};
+use super::{abs_path, atomic, coerce, errors, replace};
 
 const DESCRIPTION: &str = "Performs exact string replacements in files. Prefer this over \
 shell tools (sed/awk/perl) for editing — it is grounded in the real file and tolerates minor \
@@ -37,8 +50,28 @@ context, or set replace_all=true to change every occurrence (useful for renames)
 /// Per-file edit lock so concurrent edits to the same file serialize.
 static LOCKS: LazyLock<DashMap<PathBuf, Arc<Mutex<()>>>> = LazyLock::new(DashMap::new);
 
-fn file_lock(path: &PathBuf) -> Arc<Mutex<()>> {
-    LOCKS.entry(path.clone()).or_default().clone()
+/// Above this many tracked files, unheld locks are dropped. Without eviction
+/// the map grew for the life of the process.
+const LOCK_CAPACITY: usize = 512;
+
+/// The lock key for `path`.
+///
+/// Canonicalised so that every spelling of one file maps to one mutex —
+/// `a.rs`, `./a.rs` and the absolute path must not take three different locks.
+/// Falls back to the given path when the file does not exist yet (a create),
+/// which is safe because a create races nothing that already exists.
+fn lock_key(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn file_lock(path: &Path) -> Arc<Mutex<()>> {
+    let key = lock_key(path);
+    if LOCKS.len() > LOCK_CAPACITY {
+        // Only entries nobody is holding: `strong_count == 1` means the map is
+        // the sole owner, so no task is inside the critical section.
+        LOCKS.retain(|_, v| Arc::strong_count(v) > 1);
+    }
+    LOCKS.entry(key).or_default().clone()
 }
 
 const BOM: &str = "\u{feff}";
@@ -48,7 +81,7 @@ fn detect_crlf(s: &str) -> bool {
 }
 
 /// Render `abs` relative to `working_dir` for display, falling back to `abs`.
-fn display_path(working_dir: &std::path::Path, abs: &std::path::Path) -> String {
+fn display_path(working_dir: &Path, abs: &Path) -> String {
     abs.strip_prefix(working_dir)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| abs.to_string_lossy().into_owned())
@@ -82,6 +115,22 @@ fn mini_diff(old: &str, new: &str) -> String {
         out.push(format!("  … (+{} more)", added.len() - 12));
     }
     out.join("\n")
+}
+
+/// The structured half of an edit result.
+///
+/// Emitted as tool metadata so the session layer can hand the UI a real
+/// before/after instead of re-deriving one from raw tool input. The field names
+/// match the ACP `diff` content block, so the adapter is a rename-free pass
+/// through.
+pub fn diff_metadata(abs_path: &Path, old_text: &str, new_text: &str) -> Value {
+    serde_json::json!({
+        "diff": {
+            "path": abs_path.to_string_lossy(),
+            "oldText": old_text,
+            "newText": new_text,
+        }
+    })
 }
 
 #[derive(Deserialize)]
@@ -135,7 +184,7 @@ impl Tool for EditTool {
             }
         };
 
-        let path = cwd::resolve_path(&ctx.working_dir, &input.file_path);
+        let path = abs_path(&ctx.working_dir, &input.file_path);
         let rel = display_path(&ctx.working_dir, &path);
 
         let lock = file_lock(&path);
@@ -149,14 +198,13 @@ impl Tool for EditTool {
                      replace, or use Write for an intentional full-file replacement."
                 ));
             }
-            if let Some(parent) = path.parent() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    return ToolResult::error(format!("Failed to create {}: {e}", parent.display()));
-                }
-            }
-            return match tokio::fs::write(&path, &input.new_string).await {
-                Ok(()) => ToolResult::success(format!("Created {rel} ({} bytes).", input.new_string.len())),
-                Err(e) => ToolResult::error(format!("Failed to write {rel}: {e}")),
+            return match atomic::write(&path, input.new_string.as_bytes()).await {
+                Ok(()) => ToolResult::success(format!(
+                    "Created {rel} ({} bytes).",
+                    input.new_string.len()
+                ))
+                .with_metadata(diff_metadata(&path, "", &input.new_string)),
+                Err(e) => ToolResult::error(errors::write_failed(&rel, &e.to_string())),
             };
         }
 
@@ -201,6 +249,9 @@ impl Tool for EditTool {
         };
 
         let diff = mini_diff(&content_lf, &result_lf);
+        // Captured before the line endings are restored, so the structured diff
+        // is in the same normalised form the UI renders.
+        let structured = diff_metadata(&path, &content_lf, &result_lf);
 
         // Restore line endings + BOM.
         let mut to_write = if crlf {
@@ -212,9 +263,10 @@ impl Tool for EditTool {
             to_write.insert_str(0, BOM);
         }
 
-        match tokio::fs::write(&path, to_write).await {
-            Ok(()) => ToolResult::success(format!("The file {rel} has been updated.\n{diff}")),
-            Err(e) => ToolResult::error(format!("Failed to write {rel}: {e}")),
+        match atomic::write(&path, to_write.as_bytes()).await {
+            Ok(()) => ToolResult::success(format!("The file {rel} has been updated.\n{diff}"))
+                .with_metadata(structured),
+            Err(e) => ToolResult::error(errors::write_failed(&rel, &e.to_string())),
         }
     }
 }
@@ -339,5 +391,123 @@ mod tests {
         .await;
         assert!(r.is_error);
         assert!(r.content.contains("File not found"));
+    }
+
+    // ── D12: the structured diff is emitted, not just formatted ─────────────
+
+    #[tokio::test]
+    async fn a_successful_edit_carries_a_structured_diff() {
+        let tmp = TmpDir::new();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "let x = 1;\n").unwrap();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({"file_path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 2;"}),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        let meta = r.metadata.expect("structured diff must be emitted");
+        assert_eq!(meta["diff"]["oldText"], "let x = 1;\n");
+        assert_eq!(meta["diff"]["newText"], "let x = 2;\n");
+        assert!(meta["diff"]["path"].as_str().unwrap().ends_with("a.rs"));
+    }
+
+    #[tokio::test]
+    async fn a_created_file_carries_an_empty_before() {
+        let tmp = TmpDir::new();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({"file_path": "new.txt", "old_string": "", "new_string": "hello"}),
+        )
+        .await;
+        let meta = r.metadata.expect("structured diff must be emitted");
+        assert_eq!(meta["diff"]["oldText"], "");
+        assert_eq!(meta["diff"]["newText"], "hello");
+    }
+
+    #[tokio::test]
+    async fn a_failed_edit_carries_no_diff() {
+        let tmp = TmpDir::new();
+        std::fs::write(tmp.path().join("a.rs"), "x\n").unwrap();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({"file_path": "a.rs", "old_string": "nope", "new_string": "y"}),
+        )
+        .await;
+        assert!(r.is_error);
+        assert!(r.metadata.is_none(), "a rejected edit changed nothing");
+    }
+
+    // ── D2/D4: durability ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn every_spelling_of_one_file_takes_one_lock() {
+        let tmp = TmpDir::new();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "x").unwrap();
+        let a = lock_key(&tmp.path().join("a.rs"));
+        let b = lock_key(&tmp.path().join("./a.rs"));
+        let c = lock_key(Path::new(&f.to_string_lossy().into_owned()));
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+        assert!(Arc::ptr_eq(&file_lock(&f), &file_lock(&tmp.path().join("./a.rs"))));
+    }
+
+    #[tokio::test]
+    async fn concurrent_edits_to_one_file_serialise() {
+        let tmp = TmpDir::new();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "0\n").unwrap();
+        // Two edits reaching the same file by different spellings. With the old
+        // raw-path key these took different mutexes and could interleave.
+        let dir = tmp.path().to_path_buf();
+        let one = {
+            let dir = dir.clone();
+            tokio::spawn(async move {
+                EditTool
+                    .execute(
+                        serde_json::json!({"file_path": "a.rs", "old_string": "0", "new_string": "1"}),
+                        &test_ctx(dir),
+                    )
+                    .await
+            })
+        };
+        let two = {
+            let abs = f.to_string_lossy().into_owned();
+            tokio::spawn(async move {
+                EditTool
+                    .execute(
+                        serde_json::json!({"file_path": abs, "old_string": "0", "new_string": "2"}),
+                        &test_ctx(dir),
+                    )
+                    .await
+            })
+        };
+        let (a, b) = (one.await.unwrap(), two.await.unwrap());
+        // Exactly one wins; the other finds its old_string gone. Either way the
+        // file holds one complete value, never a mixture.
+        let final_text = std::fs::read_to_string(&f).unwrap();
+        assert!(final_text == "1\n" || final_text == "2\n", "{final_text:?}");
+        assert!(a.is_error != b.is_error, "exactly one edit should apply");
+    }
+
+    #[tokio::test]
+    async fn writes_leave_no_temp_files() {
+        let tmp = TmpDir::new();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "one\n").unwrap();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({"file_path": "a.rs", "old_string": "one", "new_string": "two"}),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        let stray: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".atlas-"))
+            .collect();
+        assert!(stray.is_empty(), "{stray:?}");
     }
 }

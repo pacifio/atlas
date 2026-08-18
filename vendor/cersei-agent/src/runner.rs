@@ -807,6 +807,11 @@ pub async fn run_agent_streaming(
                         (cap_tool_result(&compressed), Some(stats))
                     };
 
+                    // ATLAS PATCH (tool-result-metadata-v1): carry the
+                    // structured half of the result onto the event. Upstream
+                    // drops `ToolResult::metadata` here, so a tool that
+                    // computes a real before/after has it thrown away one
+                    // frame after computing it.
                     let _ = event_tx
                         .send(AgentEvent::ToolEnd {
                             name: tool_name.clone(),
@@ -815,6 +820,7 @@ pub async fn run_agent_streaming(
                             is_error: result.is_error,
                             duration,
                             compression,
+                            metadata: result.metadata.clone(),
                         })
                         .await;
                     agent.emit(AgentEvent::ToolEnd {
@@ -824,6 +830,7 @@ pub async fn run_agent_streaming(
                         is_error: result.is_error,
                         duration,
                         compression,
+                        metadata: result.metadata.clone(),
                     });
 
                     tool_calls.push(ToolCallRecord {
@@ -834,9 +841,34 @@ pub async fn run_agent_streaming(
                         is_error: result.is_error,
                         duration,
                     });
+                    // ATLAS PATCH (tool-result-metadata-v1): a tool that
+                    // produces an image says so in its metadata, and the block
+                    // carries the image alongside the text. Upstream can only
+                    // emit `Text`, so an image tool has no way to hand the
+                    // model an image at all.
+                    let content = match result
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.get("image"))
+                        .and_then(|img| {
+                            Some(cersei_types::ImageSource {
+                                source_type: "base64".to_string(),
+                                media_type: Some(img.get("media_type")?.as_str()?.to_string()),
+                                data: Some(img.get("data")?.as_str()?.to_string()),
+                                url: None,
+                            })
+                        }) {
+                        Some(source) => ToolResultContent::Blocks(vec![
+                            ContentBlock::Image { source },
+                            ContentBlock::Text {
+                                text: capped_content,
+                            },
+                        ]),
+                        None => ToolResultContent::Text(capped_content),
+                    };
                     result_blocks.push(ContentBlock::ToolResult {
                         tool_use_id: tool_id,
-                        content: ToolResultContent::Text(capped_content),
+                        content,
                         is_error: Some(result.is_error),
                     });
                 }

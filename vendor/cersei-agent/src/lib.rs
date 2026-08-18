@@ -26,6 +26,12 @@ pub use runner::apply_tool_result_budget;
 /// unpatched crates.io release, so the patch cannot silently regress.
 pub const ATLAS_CANCEL_PATCH: &str = "tool-cancel-race-v1";
 
+/// ATLAS PATCH marker (vendor/cersei-agent via `[patch.crates-io]`): the
+/// `ToolEnd` event carries `ToolResult::metadata`, which upstream discards.
+/// Referencing this constant fails to compile if a build resolves the
+/// unpatched crates.io release, so the patch cannot silently regress.
+pub const ATLAS_TOOL_METADATA_PATCH: &str = "tool-result-metadata-v1";
+
 /// Sentinel content of the tool_result synthesized for a tool_use orphaned by
 /// cancellation — keeps provider history valid for the next turn (every
 /// tool_use must have a matching tool_result).

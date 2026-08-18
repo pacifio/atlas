@@ -38,6 +38,8 @@ pub use atlas_cersei::project_sessions_dir as cersei_project_sessions_dir;
 // taking its own dependency on atlas-cersei — session capture needs the
 // distinction because only the native agent reports a real token split.
 pub use atlas_cersei::CERSEI_PLUGIN_ID;
+/// What bounds the native agent in a workspace — see `cersei_enforcement`.
+pub use atlas_cersei::Enforcement;
 pub use atlas_agentkit::{
     AgentConnection, AuthFlow, CompressionCtl, EffortControl, ModelSelector, RunningTurn,
     SessionModes, TurnId,

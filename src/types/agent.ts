@@ -1,4 +1,4 @@
-import type { SessionModeInfo } from "./agents";
+import type { SessionModeInfo, ToolCallDiff } from "./agents";
 
 /** The six agents Atlas ships. External (registry-installed) agents extend
  *  this set at runtime — their agent type IS their plugin id. */
@@ -364,6 +364,10 @@ export interface ChatMessage {
 export interface ToolCallDisplay {
   id: string;
   toolName: string;
+  /** The tool's own report of what it changed, when it made one. Preferred
+   *  over re-deriving counts from `arguments`. Absent on replay from a stored
+   *  transcript, which does not carry one. */
+  diff?: ToolCallDiff | null;
   /** ACP semantic class: "execute" | "read" | "edit" | "fetch" | … . The
    *  reliable way to recognise a bash/shell call — `toolName` is the ACP
    *  `title`, which for Bash is the command itself, not "bash". */

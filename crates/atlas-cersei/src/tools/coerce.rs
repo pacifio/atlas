@@ -1,16 +1,38 @@
-//! L0 input coercion — the cheapest, highest-value weak-model rescue, applied
-//! *before* matching. Fixes the classes that make weak BYOK models fail edits:
-//! stringified-JSON tool args, aliased field names, and code-fenced strings.
-//! See `plans/atlas-cersei-edit-solution.md` §5 (L0).
+//! Argument coercion — the cheapest, highest-value weak-model rescue, applied
+//! before anything looks at the arguments.
+//!
+//! Fixes the classes that make weak BYOK models fail tool calls: stringified
+//! JSON tool args, aliased field names, and code-fenced strings.
+//!
+//! Per tool spec D7 this now runs **once, at dispatch**, driven by each tool's
+//! declared schema plus the shared alias table below — rather than inside the
+//! handful of tools that happened to implement it. SDK-provided and
+//! MCP-discovered tools get the same treatment; previously they got none.
+//!
+//! The schema is what makes one shared alias table safe. An alias `X → Y` fires
+//! only when the target tool declares `Y` and does not declare `X`, so mapping
+//! `search → old_string` cannot corrupt a tool that has a legitimate `search`
+//! field of its own.
 
 use serde_json::{Map, Value};
 
-/// Field-name aliases weak models commonly emit for the Edit tool.
-pub const EDIT_ALIASES: &[(&str, &str)] = &[
+/// The shared alias table: field names weak models commonly emit instead of the
+/// canonical ones. Applied against a tool's declared schema, never blindly.
+pub const ALIASES: &[(&str, &str)] = &[
+    // Path
     ("filePath", "file_path"),
+    ("filepath", "file_path"),
     ("path", "file_path"),
     ("filename", "file_path"),
+    ("fileName", "file_path"),
     ("file", "file_path"),
+    ("target_file", "file_path"),
+    ("notebookPath", "notebook_path"),
+    // Directory-shaped tools name the same idea `path`.
+    ("dir", "path"),
+    ("directory", "path"),
+    ("folder", "path"),
+    // Edit
     ("oldString", "old_string"),
     ("old_str", "old_string"),
     ("oldText", "old_string"),
@@ -21,7 +43,22 @@ pub const EDIT_ALIASES: &[(&str, &str)] = &[
     ("replace", "new_string"),
     ("replacement", "new_string"),
     ("replaceAll", "replace_all"),
+    // Write
+    ("contents", "content"),
+    ("text", "content"),
+    ("body", "content"),
+    // Shell
+    ("cmd", "command"),
+    ("script", "command"),
+    ("shell_command", "command"),
+    ("timeout_ms", "timeout"),
 ];
+
+/// Field names whose value is free text a model may wrap in a code fence.
+const FENCEABLE: &[&str] = &["old_string", "new_string", "content", "patch", "input"];
+
+/// Legacy alias set kept for the `Edit`-shaped helpers below.
+pub const EDIT_ALIASES: &[(&str, &str)] = ALIASES;
 
 /// If the tool args arrived as a JSON *string* (some providers double-encode),
 /// parse it back into an object. Otherwise return `input` unchanged.
@@ -53,9 +90,9 @@ pub fn dealias(mut input: Value, aliases: &[(&str, &str)]) -> Value {
     input
 }
 
-/// Strip a *fully enclosing* ``` code fence (optionally ```lang) the model wrapped
-/// around a value. Conservative: only when the entire string is fenced, so code
-/// that merely contains backticks is left intact.
+/// Strip a *fully enclosing* ``` code fence (optionally ```lang) the model
+/// wrapped around a value. Conservative: only when the entire string is fenced,
+/// so code that merely contains backticks is left intact.
 pub fn strip_code_fences(s: &str) -> String {
     let trimmed = s.trim();
     if trimmed.len() < 6 || !trimmed.starts_with("```") || !trimmed.ends_with("```") {
@@ -74,8 +111,42 @@ pub fn strip_code_fences(s: &str) -> String {
     inner.to_string()
 }
 
-/// Full L0 pre-pass for Edit-style args: unwrap stringified JSON, dealias keys,
-/// and de-fence the `old_string`/`new_string` fields if a model fenced them.
+/// The dispatch-time pass: unwrap double encoding, rename aliases the tool's
+/// schema can actually accept, and de-fence free-text fields.
+///
+/// `schema` is the tool's declared `input_schema`. When it declares no
+/// properties (an MCP tool with an opaque schema, say) only the unwrapping step
+/// applies, because there is nothing to validate an alias against.
+pub fn for_schema(input: Value, schema: &Value) -> Value {
+    let mut input = unwrap_stringified(input);
+    let Some(props) = schema.get("properties").and_then(Value::as_object) else {
+        return input;
+    };
+    if let Some(obj) = input.as_object_mut() {
+        for (alias, canonical) in ALIASES {
+            // The alias only fires when the tool actually has the canonical
+            // field and does *not* have a field of the alias's own name.
+            if !props.contains_key(*canonical) || props.contains_key(*alias) {
+                continue;
+            }
+            if obj.contains_key(*canonical) {
+                continue;
+            }
+            if let Some(v) = obj.remove(*alias) {
+                obj.insert((*canonical).to_string(), v);
+            }
+        }
+        for field in FENCEABLE {
+            if props.contains_key(*field) {
+                defence_field(obj, field);
+            }
+        }
+    }
+    input
+}
+
+/// Full pre-pass for Edit-style args, for callers that know the shape without
+/// consulting a schema.
 pub fn coerce_edit_args(input: Value) -> Value {
     let input = unwrap_stringified(input);
     let mut input = dealias(input, EDIT_ALIASES);
@@ -99,6 +170,12 @@ fn defence_field(obj: &mut Map<String, Value>, key: &str) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn schema(fields: &[&str]) -> Value {
+        let props: serde_json::Map<String, Value> =
+            fields.iter().map(|f| ((*f).to_string(), json!({}))).collect();
+        json!({ "type": "object", "properties": props })
+    }
 
     #[test]
     fn unwraps_double_encoded_args() {
@@ -156,5 +233,62 @@ mod tests {
         assert_eq!(got["file_path"], "a.rs");
         assert_eq!(got["old_string"], "old");
         assert_eq!(got["new_string"], "new");
+    }
+
+    // ── Schema-driven pass (D7) ─────────────────────────────────────────────
+
+    #[test]
+    fn schema_pass_renames_only_into_declared_fields() {
+        let s = schema(&["file_path", "old_string", "new_string"]);
+        let got = for_schema(json!({"filePath": "a.rs", "oldText": "x", "newText": "y"}), &s);
+        assert_eq!(got["file_path"], "a.rs");
+        assert_eq!(got["old_string"], "x");
+        assert_eq!(got["new_string"], "y");
+    }
+
+    #[test]
+    fn an_alias_that_is_the_tools_own_field_never_fires() {
+        // A tool that legitimately takes `search` AND `old_string` must keep
+        // both. This is what makes one shared alias table safe.
+        let s = schema(&["search", "old_string"]);
+        let got = for_schema(json!({"search": "query", "old_string": "text"}), &s);
+        assert_eq!(got["search"], "query");
+        assert_eq!(got["old_string"], "text");
+    }
+
+    #[test]
+    fn a_tool_that_declares_path_keeps_path() {
+        // `List`/`Glob` take `path` as their own field, so `path → file_path`
+        // must not fire for them.
+        let s = schema(&["path"]);
+        let got = for_schema(json!({"dir": "src"}), &s);
+        assert_eq!(got["path"], "src");
+        assert!(got.get("file_path").is_none());
+    }
+
+    #[test]
+    fn opaque_schema_still_gets_the_unwrap() {
+        // An MCP tool with no declared properties: no aliasing, but a
+        // double-encoded argument object is still recovered.
+        let got = for_schema(
+            Value::String(r#"{"anything":1}"#.to_string()),
+            &json!({"type": "object"}),
+        );
+        assert_eq!(got["anything"], 1);
+    }
+
+    #[test]
+    fn defences_only_declared_free_text_fields() {
+        let s = schema(&["content"]);
+        let got = for_schema(json!({"content": "```js\nx\n```"}), &s);
+        assert_eq!(got["content"], "x");
+    }
+
+    #[test]
+    fn shell_aliases_reach_the_command_field() {
+        let s = schema(&["command", "timeout"]);
+        let got = for_schema(json!({"cmd": "ls", "timeout_ms": 500}), &s);
+        assert_eq!(got["command"], "ls");
+        assert_eq!(got["timeout"], 500);
     }
 }

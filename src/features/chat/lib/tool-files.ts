@@ -3,6 +3,8 @@
 // accumulates per-turn files-touched for the adaptive turn card) and the
 // rendering layer agree exactly on paths + add/remove counts.
 
+import type { ToolCallDiff } from "@/types/agents";
+
 const FILE_PATH_KEYS = ["file_path", "path", "filename", "filePath"];
 
 /** First file-path-like string in a tool call's arguments, or null. */
@@ -89,16 +91,28 @@ function countPart(oldStr: string, neu: string): { added: number; removed: numbe
 
 /** True when an edit tool call CREATED the file (every edit op had empty prior
  *  content) → git-status "A". A normal edit (non-empty `old`) is "M". */
-export function isFileCreated(toolName: string, args: Record<string, unknown>): boolean {
+export function isFileCreated(
+  toolName: string,
+  args: Record<string, unknown>,
+  diff?: ToolCallDiff | null,
+): boolean {
+  if (diff) return (diff.oldText ?? "") === "";
   const parts = getEditParts(toolName, args);
   return parts.length > 0 && parts.every((p) => p.old === "");
 }
 
-/** Total added/removed line counts for an edit tool call. */
+/** Total added/removed line counts for an edit tool call.
+ *
+ *  `diff` is the tool's own report of what it changed and is used when present.
+ *  The `args` path is a fallback: it has to guess the tool's argument shape, so
+ *  it silently reads zero for any tool it does not recognise — which is what
+ *  made file-change counts read zero with nothing erroring. */
 export function countEditLines(
   toolName: string,
   args: Record<string, unknown>,
+  diff?: ToolCallDiff | null,
 ): { added: number; removed: number } {
+  if (diff) return countPart(diff.oldText ?? "", diff.newText);
   let added = 0;
   let removed = 0;
   for (const p of getEditParts(toolName, args)) {

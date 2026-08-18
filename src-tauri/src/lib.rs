@@ -567,6 +567,7 @@ pub fn run() {
             commands::cersei::cersei_list_sessions,
             commands::cersei::cersei_session_transcript,
             commands::cersei::cersei_delete_session,
+            commands::cersei::cersei_enforcement,
             commands::byok::byok_list,
             commands::byok::byok_set,
             commands::byok::byok_delete,

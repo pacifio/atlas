@@ -230,9 +230,9 @@ function markerFor(tc: ToolCallDisplay, turnId: string, first: boolean): MarkerR
     detail = bashCommandOf(args);
     opens = "output";
   } else if (fileKind === "edit" && path) {
-    verb = isFileCreated(tc.toolName, args) ? "Created" : "Edited";
+    verb = isFileCreated(tc.toolName, args, tc.diff) ? "Created" : "Edited";
     detail = shortPath(path);
-    const counts = countEditLines(tc.toolName, args);
+    const counts = countEditLines(tc.toolName, args, tc.diff);
     added = counts.added;
     removed = counts.removed;
     opens = "diff";

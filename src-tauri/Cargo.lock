@@ -484,6 +484,7 @@ dependencies = [
  "ignore",
  "libc",
  "parking_lot",
+ "portable-pty",
  "serde",
  "serde_json",
  "tokio",

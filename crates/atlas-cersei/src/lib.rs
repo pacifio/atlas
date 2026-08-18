@@ -46,10 +46,28 @@ use tokio_util::sync::CancellationToken;
 // running Bash/Edit completes (and its writes land) after Stop, and a
 // cancelled tool round leaves orphaned tool_use blocks in provider history.
 const _CERSEI_CANCEL_PATCH_GUARD: &str = cersei_agent::ATLAS_CANCEL_PATCH;
+// Same guard for the second patch: `ToolEnd` must carry `ToolResult::metadata`.
+// Without it a tool's structured half — every file edit's real before/after,
+// and the image tool's payload — is discarded one frame after being computed,
+// and the UI is left re-deriving a diff from raw tool input.
+const _CERSEI_TOOL_METADATA_PATCH_GUARD: &str = cersei_agent::ATLAS_TOOL_METADATA_PATCH;
 use uuid::Uuid;
 
 pub use store::SessionMeta;
 pub use store::{corpus_sessions, project_sessions_dir, CorpusSession};
+
+/// What bounds the agent in a given workspace, for display.
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct Enforcement {
+    /// Stable token: `sandboxed` | `contained` | `approvals-only` | `legacy`.
+    pub tier: String,
+    /// One sentence for the user, naming what is and is not protecting them.
+    pub description: String,
+    /// The OS sandbox in use, when there is one.
+    pub sandbox: Option<String>,
+    /// The canonical workspace root every file tool is bound to.
+    pub root: String,
+}
 
 /// The plugin id the native agent registers under (matches the frontend
 /// `AGENT_PLUGIN_ID.cersei`).
@@ -165,6 +183,11 @@ struct SessionEntry {
     /// clone/write (last-writer-wins silently lost the other turn's
     /// messages from context and disk).
     busy: AtomicBool,
+    /// The session's tool gate: workspace containment, the read registry, the
+    /// approval cache, command classification, and sandbox selection. One per
+    /// session, shared by the permission policy and by every guarded tool, so
+    /// "Allow for this session" and read-before-edit both span turns.
+    policy: Arc<tools::ToolPolicy>,
 }
 
 /// Clears `SessionEntry::busy` AND the turn's cancel token on every exit
@@ -223,7 +246,15 @@ impl CerseiRuntime {
     }
 
     pub fn kill(&self, agent_id: AgentId) -> Result<()> {
-        self.inner.agents.remove(&agent_id);
+        if let Some((_, agent)) = self.inner.agents.remove(&agent_id) {
+            // Session teardown: terminate any persistent terminal the agent
+            // left running, and remove the spill files output truncation wrote
+            // into the workspace. Neither cleaned itself up before.
+            for entry in agent.sessions.iter() {
+                tools::terminal::shutdown_owner(entry.key());
+                entry.value().policy.cleanup();
+            }
+        }
         Ok(())
     }
 
@@ -249,6 +280,7 @@ impl CerseiRuntime {
             cancelled: AtomicBool::new(false),
             turn_seq: AtomicU64::new(0),
             busy: AtomicBool::new(false),
+            policy: tools::ToolPolicy::new(&cwd),
         });
         agent.sessions.insert(session_id.clone(), entry);
         Ok(NewSessionInfo {
@@ -292,9 +324,28 @@ impl CerseiRuntime {
             cancelled: AtomicBool::new(false),
             turn_seq: AtomicU64::new(0),
             busy: AtomicBool::new(false),
+            policy: tools::ToolPolicy::new(&cwd),
         });
         agent.sessions.insert(sid, entry);
         Ok(Some(modes_blob("default")))
+    }
+
+    /// What is protecting the user in `cwd`, resolved the same way a session
+    /// would resolve it.
+    ///
+    /// Deliberately answerable *before* a session exists (harness spec story
+    /// 9): the tier depends only on the workspace root and the host, and a user
+    /// deciding whether to point the agent at a directory should be able to see
+    /// what will bound it first. Silent degradation is the failure the ladder
+    /// exists to prevent, so this is a first-class query rather than a log line.
+    pub fn enforcement(&self, cwd: &str) -> Enforcement {
+        let policy = tools::ToolPolicy::new(cwd);
+        Enforcement {
+            tier: policy.tier().as_str().to_string(),
+            description: policy.tier().describe().to_string(),
+            sandbox: policy.sandbox().map(|s| s.kind().to_string()),
+            root: policy.root().to_string_lossy().into_owned(),
+        }
     }
 
     /// UI-facing transcript for a stored session (for replay on resume).
@@ -556,13 +607,21 @@ impl CerseiRuntime {
         let effort = entry.effort.lock().clone();
         let compress = *entry.compress.lock();
 
+        let tool_policy = entry.policy.clone();
         let policy = UiPolicy {
             sink: sink.clone(),
             agent_id,
             session_id: session_id.clone(),
             pending: entry.clone(),
             mode,
+            policy: tool_policy.clone(),
         };
+        // Which tools the model can see. The tier comes from the BYOK
+        // evaluation matrix once that exists; until then it is the structured
+        // default, because over-provisioning tools degrades gracefully and
+        // under-provisioning does not.
+        let tier = tools::ToolTier::default();
+        let caps = tools::ModelCapabilities::for_model(&model);
 
         // Coding tools + planning (EnterPlanMode / ExitPlanMode / TodoWrite) so
         // the agent can lay out and track a plan; TodoWrite calls are surfaced
@@ -582,28 +641,42 @@ impl CerseiRuntime {
             // whole parent turn through the actor's supervisor (L3).
             Arc::new(move || provider::build_provider(&pid, &key, &m).map_err(|e| e.to_string()))
         };
-        // Sub-agents (delegate) get the same Atlas-owned coding toolset.
-        let toolset_factory: ToolsetFactory = Arc::new(crate::tools::atlas_coding);
+        // Sub-agents (delegate) get the same Atlas-owned coding toolset, gated
+        // by the same policy — a delegate must not be a way around the gate.
+        let toolset_factory: ToolsetFactory = {
+            let policy = tool_policy.clone();
+            Arc::new(move || crate::tools::atlas_coding_with(None, policy.clone(), tier, caps))
+        };
 
         let mut tools = {
             // Main turn: Bash gets the turn's cancel token so Stop kills the
             // running command's process group (delegate children keep the
-            // plain set via `atlas_coding` in the factory below).
-            let mut t = crate::tools::atlas_coding_with(Some(token.clone()));
-            t.extend(cersei::tools::planning());
-            t.push(Box::new(
+            // plain set via the factory above).
+            let mut t = crate::tools::atlas_coding_with(
+                Some(token.clone()),
+                tool_policy.clone(),
+                tier,
+                caps,
+            );
+            // Everything added here goes through the same gate. The registry
+            // must never hand back an unwrapped tool — that is the property
+            // that makes "installing an MCP server cannot create an unguarded
+            // path" true rather than aspirational.
+            let mut extras: Vec<Box<dyn cersei::tools::Tool>> = cersei::tools::planning();
+            extras.push(Box::new(
                 DelegateTool::new(provider_factory, toolset_factory).with_model(model.clone()),
             ));
             // Skills: the `Skill` tool surfaces only the skills the user toggled ON
             // for the Atlas agent (read from `.atlas/agent-skills`). Its presence
             // makes `build_system_prompt` add the skills guidance automatically.
             // Main turn only (not the delegate toolset) so sub-agents stay focused.
-            t.push(Box::new(crate::tools::skill::AtlasSkillTool));
+            extras.push(Box::new(crate::tools::skill::AtlasSkillTool));
             // Grounding: expose Atlas's indexed memory as a tool when the Tauri
             // layer has registered a retrieval backend.
             if memory::memory_search_available() {
-                t.push(Box::new(memory::SearchMemoryTool));
+                extras.push(Box::new(memory::SearchMemoryTool));
             }
+            t.extend(crate::tools::guard_all(extras, tool_policy.clone()));
             t
         };
 
@@ -612,7 +685,9 @@ impl CerseiRuntime {
         let mcp_handle = self.mcp_handle().await;
         let mcp_instructions: Vec<(String, String)> = match &mcp_handle {
             Some(h) => {
-                tools.extend(h.proxy_tools());
+                // MCP servers are third-party code discovered at runtime, so
+                // they are exactly the tools that must not bypass the gate.
+                tools.extend(crate::tools::guard_all(h.proxy_tools(), tool_policy.clone()));
                 h.server_names
                     .iter()
                     .map(|n| (n.clone(), format!("MCP server `{n}` is connected; its tools are available to you.")))
@@ -850,6 +925,10 @@ struct UiPolicy {
     session_id: SessionId,
     pending: Arc<SessionEntry>,
     mode: String,
+    /// The session's gate. This is where a *per-command* verdict comes from:
+    /// the runner hands us the tool input, so `rm -rf /` and `echo hi` no
+    /// longer get the same answer from a constant on the tool.
+    policy: Arc<tools::ToolPolicy>,
 }
 
 #[async_trait]
@@ -886,6 +965,18 @@ impl PermissionPolicy for UiPolicy {
             return CerseiDecision::Deny("This operation is not permitted.".into());
         }
 
+        // The gate: containment, per-command classification, and the approval
+        // cache. Only a `Prompt` reaches the user.
+        let cache_key = match self.policy.decide(
+            &request.tool_name,
+            request.permission_level,
+            &request.tool_input,
+        ) {
+            tools::Decision::Allow => return CerseiDecision::Allow,
+            tools::Decision::Deny { reason } => return CerseiDecision::Deny(reason),
+            tools::Decision::Prompt { cache_key, .. } => cache_key,
+        };
+
         // Prompt the UI and block this tool until the user responds.
         let request_id = Uuid::new_v4();
         let (tx, rx) = oneshot::channel();
@@ -901,7 +992,17 @@ impl PermissionPolicy for UiPolicy {
             None,
         );
         match rx.await {
-            Ok(decision) => decision,
+            Ok(decision) => {
+                // "Allow for this session" was a no-op: cersei's
+                // `AllowForSession` is advisory and nothing stored it, so the
+                // identical call prompted again immediately. Store it here.
+                // `cache_key` is `None` for a destructive command, which is
+                // what keeps those prompting every time.
+                if matches!(decision, CerseiDecision::AllowForSession) {
+                    self.policy.remember_approval(cache_key.as_deref());
+                }
+                decision
+            }
             Err(_) => CerseiDecision::Deny("cancelled".into()),
         }
     }
@@ -1024,12 +1125,16 @@ fn translate_event(
             TurnStep::Continue
         }
         E::ToolEnd {
-            id, result, is_error, ..
+            id,
+            result,
+            is_error,
+            metadata,
+            ..
         } => {
             // TodoWrite already rendered as a plan card on ToolStart; drop its
             // completion so no phantom tool card appears.
             if !todo_ids.contains(&id) {
-                emit_tool_update(sink, agent_id, session_id, &id, &result, is_error);
+                emit_tool_update(sink, agent_id, session_id, &id, &result, is_error, metadata.as_ref());
                 // Measure what RTK compression would shave off this result —
                 // exactly what cersei feeds the model (errors are sent raw).
                 if !is_error {
@@ -1174,12 +1279,35 @@ fn emit_tool_update(
     id: &str,
     result: &str,
     is_error: bool,
+    metadata: Option<&serde_json::Value>,
 ) {
+    let mut content = vec![
+        serde_json::json!({ "type": "content", "content": { "type": "text", "text": result } }),
+    ];
+    // A tool that computed a real before/after says so in its metadata. Passing
+    // it through is what lets the UI render a diff and count file changes;
+    // flattening it to text is why those counts read zero with nothing erroring.
+    if let Some(diff) = metadata.and_then(|m| m.get("diff")) {
+        if let (Some(path), Some(new_text)) = (
+            diff.get("path").and_then(|v| v.as_str()),
+            diff.get("newText").and_then(|v| v.as_str()),
+        ) {
+            let mut block = serde_json::json!({
+                "type": "diff",
+                "path": path,
+                "newText": new_text,
+            });
+            if let Some(old_text) = diff.get("oldText").and_then(|v| v.as_str()) {
+                block["oldText"] = serde_json::Value::String(old_text.to_string());
+            }
+            content.insert(0, block);
+        }
+    }
     let v = serde_json::json!({
         "sessionUpdate": "tool_call_update",
         "toolCallId": id,
         "status": if is_error { "failed" } else { "completed" },
-        "content": [ { "type": "content", "content": { "type": "text", "text": result } } ],
+        "content": content,
     });
     emit_session_update(sink, agent_id, session_id, v);
 }
@@ -1462,6 +1590,7 @@ mod tests {
                 is_error: false,
                 duration: Duration::from_secs(0),
                 compression: None,
+                metadata: None,
             },
             &s,
             AgentId::new(),
@@ -1482,6 +1611,7 @@ mod tests {
             is_error: false,
             duration: Duration::from_secs(0),
             compression: None,
+            metadata: None,
         });
         let v = update_json(&c, 0);
         assert_eq!(v["sessionUpdate"], "tool_call_update");
@@ -1498,6 +1628,7 @@ mod tests {
             is_error: true,
             duration: Duration::from_secs(0),
             compression: None,
+            metadata: None,
         });
         assert_eq!(update_json(&c, 0)["status"], "failed");
     }
@@ -1616,6 +1747,7 @@ mod tests {
                 is_error: false,
                 duration: Duration::from_secs(0),
                 compression: None,
+                metadata: None,
             },
             E::TextDelta("Done.".into()),
             E::TurnComplete {
@@ -1646,10 +1778,15 @@ mod tests {
     // ── Permission policy (the synthesized modes that mirror Claude Code) ──────
 
     fn policy(mode: &str) -> UiPolicy {
+        policy_in(mode, std::env::temp_dir())
+    }
+
+    fn policy_in(mode: &str, cwd: PathBuf) -> UiPolicy {
         let (s, _c) = sink();
+        let tool_policy = tools::ToolPolicy::contained(&cwd);
         let entry = Arc::new(SessionEntry {
             session_id: "s".into(),
-            cwd: "/tmp".into(),
+            cwd: cwd.to_string_lossy().into_owned(),
             history: Mutex::new(Vec::new()),
             provider: Mutex::new("anthropic".into()),
             model: Mutex::new("claude-opus-4-8".into()),
@@ -1662,6 +1799,7 @@ mod tests {
             cancelled: std::sync::atomic::AtomicBool::new(false),
             turn_seq: AtomicU64::new(0),
             busy: AtomicBool::new(false),
+            policy: tool_policy.clone(),
         });
         UiPolicy {
             sink: s,
@@ -1669,6 +1807,7 @@ mod tests {
             session_id: SessionId::new("s".to_string()),
             pending: entry,
             mode: mode.into(),
+            policy: tool_policy,
         }
     }
 

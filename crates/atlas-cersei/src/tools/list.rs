@@ -7,7 +7,7 @@ use ignore::WalkBuilder;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{coerce, cwd, errors};
+use super::{abs_path, coerce, errors};
 
 const LIMIT: usize = 400;
 
@@ -15,8 +15,6 @@ const DESCRIPTION: &str = "Lists the files under a directory (recursively), in-p
 honoring .gitignore and skipping hidden files. Prefer this over shell tools (ls / find) to \
 see what files exist — no external tools are required.\n\n\
 - path: optional directory (defaults to the project root).";
-
-const ALIASES: &[(&str, &str)] = &[("dir", "path"), ("directory", "path"), ("file_path", "path")];
 
 #[derive(Deserialize)]
 struct Input {
@@ -49,7 +47,7 @@ impl Tool for ListTool {
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
-        let input = coerce::dealias(coerce::unwrap_stringified(input), ALIASES);
+        let input = coerce::for_schema(input, &self.input_schema());
         let input: Input = match serde_json::from_value(input) {
             Ok(i) => i,
             Err(e) => {
@@ -62,7 +60,7 @@ impl Tool for ListTool {
         };
 
         let base = match &input.path {
-            Some(p) => cwd::resolve_path(&ctx.working_dir, p),
+            Some(p) => abs_path(&ctx.working_dir, p),
             None => ctx.working_dir.clone(),
         };
         let display = base.to_string_lossy().into_owned();
@@ -75,7 +73,7 @@ impl Tool for ListTool {
         // .ignore, skips hidden files + the .git dir, and yields files only.
         // Paths are relative to the listed directory for compact output.
         let base_for_walk = base.clone();
-        let mut files = tokio::task::spawn_blocking(move || {
+        let walked = tokio::task::spawn_blocking(move || {
             let mut out: Vec<String> = Vec::new();
             for entry in WalkBuilder::new(&base_for_walk).hidden(true).build().flatten() {
                 if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
@@ -90,8 +88,19 @@ impl Tool for ListTool {
             }
             out
         })
-        .await
-        .unwrap_or_default();
+        .await;
+        // A panicked walk used to become `Vec::new()` and report "No files
+        // found" — indistinguishable from an empty directory, and wrong in a
+        // way that sends the model looking somewhere else (tool spec D11).
+        let mut files = match walked {
+            Ok(files) => files,
+            Err(e) => {
+                return ToolResult::error(format!(
+                    "Failed to list {display}: the directory walk did not complete ({e}). This is \
+                     not the same as an empty directory — retry, or narrow to a subdirectory."
+                ))
+            }
+        };
 
         files.sort_unstable();
         if files.is_empty() {

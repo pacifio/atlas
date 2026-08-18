@@ -31,6 +31,7 @@ import { switchAgentForTab } from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
 import { ProviderModelPills } from "./provider-model-pills";
 import { loadCerseiEffort, loadCerseiCompress } from "../lib/cersei-model-pref";
+import { cerseiEnforcement, type Enforcement } from "../lib/claude-api";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
 import { modelLabel } from "../lib/model-label";
 // `ChatInput` pulls in CodeMirror (~870 KB) via `cm-mention-extension`.
@@ -313,6 +314,75 @@ function displayModeName(name: string): string {
 type ComposerGroup = "agent" | "mode" | "model";
 const GROUP_ORDER: ComposerGroup[] = ["agent", "mode", "model"];
 
+/**
+ * What is bounding the agent right now, shown under the mode list.
+ *
+ * The enforcement ladder degrades according to what the host provides: an OS
+ * sandbox where one exists, workspace containment where it does not. Degrading
+ * *silently* is the failure the ladder exists to prevent, so the tier in force
+ * is rendered next to the permission mode — the one place the user is already
+ * thinking about what the agent may do. Native agent only; the ACP-hosted
+ * agents enforce on their own side.
+ */
+function EnforcementNote({ tabId }: { tabId: string }) {
+  const isNative = useChatStore((s) => s.sessions[tabId]?.agentType === "cersei");
+  const cwd = useChatStore((s) => s.sessions[tabId]?.workingDirectory);
+  const projectPath = useProjectStore((s) => s.currentProject?.path ?? null);
+  const root = cwd || projectPath;
+  const [info, setInfo] = useState<Enforcement | null>(null);
+
+  useEffect(() => {
+    if (!isNative || !root) {
+      setInfo(null);
+      return;
+    }
+    let live = true;
+    cerseiEnforcement(root)
+      .then((e) => {
+        if (live) setInfo(e);
+      })
+      .catch(() => {
+        // A failure here must not blank the mode picker; the tier is
+        // information, not a control.
+        if (live) setInfo(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [isNative, root]);
+
+  if (!info) return null;
+  // Anything below the top of the ladder is the case the user needs to notice,
+  // so it is tinted rather than left as quiet secondary text.
+  const degraded = info.tier !== "sandboxed";
+  return (
+    <div className="mt-1 border-t border-[var(--border-default)] px-2 pb-0.5 pt-1.5">
+      <span className="flex items-center gap-1.5 text-[10px] font-medium text-[var(--text-secondary)]">
+        <span
+          className="h-1.5 w-1.5 shrink-0 rounded-full"
+          style={{ background: degraded ? "var(--warning, #d97706)" : "var(--success, #16a34a)" }}
+        />
+        {info.tier === "sandboxed"
+          ? "Sandboxed"
+          : info.tier === "contained"
+            ? "Workspace-contained"
+            : info.tier === "approvals-only"
+              ? "Approvals only"
+              : "Unrestricted"}
+      </span>
+      <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)]">
+        {info.description}
+      </span>
+      <span
+        className="mt-0.5 block truncate text-[9px] leading-snug text-[var(--text-tertiary)]"
+        title={info.root}
+      >
+        Bound to {info.root}
+      </span>
+    </div>
+  );
+}
+
 /** Colour class for the Claude permission-mode dot (mirrors the old pill). */
 function claudeModeDotClass(mode: ClaudePermissionMode): string {
   switch (mode) {
@@ -565,6 +635,7 @@ function ComposerGroupsMenu({
                     );
                   })
                 )}
+                <EnforcementNote tabId={tabId} />
               </div>
             )}
 

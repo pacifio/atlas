@@ -41,6 +41,12 @@ pub enum AgentEvent {
         /// RTK compression metrics for this tool output, when compression ran
         /// (None for error results, which are not compressed).
         compression: Option<cersei_compression::CompressionStats>,
+        /// ATLAS PATCH (tool-result-metadata-v1): the structured half of the
+        /// tool's result, carried alongside its text. Without it a tool that
+        /// computes a real before/after — every file edit — has that work
+        /// discarded at the event boundary, and the UI is left re-deriving a
+        /// diff from raw tool input. `None` for tools that produce none.
+        metadata: Option<serde_json::Value>,
     },
     ToolPermissionCheck {
         name: String,

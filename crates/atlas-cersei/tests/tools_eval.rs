@@ -7,9 +7,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use atlas_cersei::tools::cwd::CwdTool;
+use atlas_cersei::tools::{Guarded, ToolPolicy};
 use atlas_cersei::tools::{bash::BashTool, edit::EditTool, list::ListTool, read::ReadTool};
-use cersei::tools::file_write::FileWriteTool; // SDK-native Write (handed off, cwd-wrapped)
+use cersei::tools::file_write::FileWriteTool; // SDK-native Write (handed off, guarded)
 use cersei::tools::grep_tool::GrepTool; // native in-process Grep (rg-free, 0.2.5)
 use cersei::tools::permissions::AllowAll;
 use cersei::tools::{CostTracker, Extensions, Tool, ToolContext, ToolResult};
@@ -108,7 +108,7 @@ async fn scripted_read_edit_grep_bash_task() {
     }
 
     // 5. WRITE a new file, then LIST must surface it (gitignore-aware rg).
-    let write = CwdTool::wrap(Box::new(FileWriteTool));
+    let write = Guarded::wrap(Box::new(FileWriteTool), ToolPolicy::contained(dir));
     let _ = run(&*write, dir, json!({"file_path": "src/util.rs", "content": "pub fn id() {}\n"})).await;
     let r = run(&ListTool, dir, json!({})).await;
     if !r.is_error && r.content.contains("util.rs") && r.content.contains("lib.rs") {

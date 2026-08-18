@@ -318,6 +318,7 @@ fn extract_assistant_blocks(v: &serde_json::Value) -> (String, Vec<ToolCall>) {
                     arguments: input,
                     result: None,
                     locations: Vec::new(),
+                    diff: None,
                 });
             }
             _ => {}

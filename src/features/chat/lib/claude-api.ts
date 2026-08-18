@@ -56,6 +56,30 @@ export function listCerseiSessions(cwd: string): Promise<ClaudeSessionMeta[]> {
   return invoke<ClaudeSessionMeta[]>("cersei_list_sessions", { projectPath: cwd });
 }
 
+/** What bounds the native Atlas agent in a workspace. */
+export interface Enforcement {
+  /** `sandboxed` | `contained` | `approvals-only` | `legacy`. */
+  tier: string;
+  /** One sentence naming what is — and is not — protecting the user. */
+  description: string;
+  /** The OS sandbox in use, when there is one. */
+  sandbox: string | null;
+  /** The canonical workspace root every file tool is confined to. */
+  root: string;
+}
+
+/**
+ * The enforcement tier in force for `cwd`, and the root the agent is bound to.
+ *
+ * The ladder degrades according to what the host provides — an OS sandbox where
+ * one exists, workspace containment where it does not. Silent degradation is
+ * precisely the failure it exists to prevent, so this is rendered in the
+ * composer rather than logged. Answerable before a session exists.
+ */
+export function cerseiEnforcement(cwd: string): Promise<Enforcement> {
+  return invoke<Enforcement>("cersei_enforcement", { projectPath: cwd });
+}
+
 /**
  * Kilo Code sessions for `cwd`, shaped like {@link ClaudeSessionMeta}. Read
  * from Kilo's SQLite store (`~/.local/share/kilo/kilo.db`); `id` is the real

@@ -7,7 +7,7 @@
 //! BYOK catalog (`review-agents/lib/model-catalog.ts`) + `agents_set_model`
 //! with a `"provider/model"` value.
 
-use atlas_agents::{AgentManager, ReplayItem, SessionMeta};
+use atlas_agents::{AgentManager, Enforcement, ReplayItem, SessionMeta};
 use tauri::State;
 
 /// Stored native-agent sessions for `project_path`, newest first (sidebar).
@@ -47,4 +47,18 @@ pub fn cersei_session_transcript(
     manager: State<'_, AgentManager>,
 ) -> Vec<ReplayItem> {
     manager.cersei_session_transcript(&project_path, &session_id)
+}
+
+/// What bounds the native agent in `project_path`: the enforcement tier in
+/// force and the workspace root every file tool is confined to.
+///
+/// Surfaced in the composer's permission-mode picker. The ladder degrades
+/// according to what the host provides — an OS sandbox where one exists,
+/// workspace containment where it does not — and *silent* degradation is
+/// precisely the failure it exists to prevent, so the answer is rendered rather
+/// than logged. Answerable before a session exists, because the user should be
+/// able to see what will protect them before pointing the agent at a directory.
+#[tauri::command]
+pub fn cersei_enforcement(project_path: String, manager: State<'_, AgentManager>) -> Enforcement {
+    manager.cersei_enforcement(&project_path)
 }

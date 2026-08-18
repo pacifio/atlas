@@ -42,6 +42,14 @@ export type MessageRole = "user" | "assistant" | "system";
 export type MessageMode = "text" | "tool" | "thinking";
 export type ToolCallStatus = "pending" | "running" | "completed" | "failed";
 
+/** A real before/after reported by the tool that made the change. */
+export interface ToolCallDiff {
+  path: string;
+  /** Absent when the tool created the file. */
+  oldText?: string | null;
+  newText: string;
+}
+
 export interface ToolCall {
   id: string;
   tool_name: string;
@@ -51,6 +59,11 @@ export interface ToolCall {
   arguments: unknown;
   result: string | null;
   locations: unknown[];
+  /** Present when the tool reported a structured change. Preferred over
+   *  re-deriving line counts from `arguments`, which reads zero for any
+   *  argument shape `getEditParts` does not recognise. Absent on replay from a
+   *  stored transcript, which does not carry one. */
+  diff?: ToolCallDiff | null;
 }
 
 export interface PlanEntry {

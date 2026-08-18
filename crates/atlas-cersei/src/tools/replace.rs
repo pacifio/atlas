@@ -457,7 +457,65 @@ fn context_aware(content: &str, find: &str) -> Vec<String> {
     out
 }
 
-/// 9. MultiOccurrence — last resort for replace_all / ambiguity detection.
+/// Fold one typographic character to its ASCII equivalent.
+///
+/// Deliberately char-to-char: keeping a 1:1 character mapping means a match
+/// found in folded space can be mapped straight back to a byte range in the
+/// original, so the strategy still yields a **verbatim slice of `content`**.
+/// (An ellipsis would have to expand to three characters, so it is left alone.)
+fn fold_char(c: char) -> char {
+    match c {
+        // Hyphens, dashes, and the minus sign.
+        '\u{2010}'..='\u{2015}' | '\u{2212}' | '\u{FE58}' | '\u{FF0D}' => '-',
+        // Single quotes and the prime.
+        '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' | '\u{2032}' | '\u{FF07}' => '\'',
+        // Double quotes and the double prime.
+        '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' | '\u{2033}' | '\u{FF02}' => '"',
+        // Non-breaking, en/em, thin, narrow, and ideographic spaces.
+        '\u{00A0}' | '\u{2000}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}' => ' ',
+        c => c,
+    }
+}
+
+/// 9. PunctuationFolded — fold typographic punctuation on *both* sides before
+///    comparing (tool spec D9).
+///
+/// A model that emits a smart quote, an em dash, or a non-breaking space
+/// against an ASCII file previously failed every strategy: the byte comparison
+/// misses, whitespace normalisation does not touch U+00A0, and the Levenshtein
+/// tier scores it as a genuine difference. It also works in the other
+/// direction, for an ASCII patch against a file that contains typographic
+/// punctuation.
+fn punctuation_folded(content: &str, find: &str) -> Vec<String> {
+    let folded_content: Vec<char> = content.chars().map(fold_char).collect();
+    let folded_find: Vec<char> = find.chars().map(fold_char).collect();
+    if folded_find.is_empty() || folded_find.len() > folded_content.len() {
+        return Vec::new();
+    }
+    // If neither side actually changed, the exact strategies already covered
+    // this and re-scanning would only produce duplicates.
+    if folded_content.iter().copied().eq(content.chars())
+        && folded_find.iter().copied().eq(find.chars())
+    {
+        return Vec::new();
+    }
+
+    let offsets: Vec<usize> = content.char_indices().map(|(i, _)| i).collect();
+    let mut out = Vec::new();
+    for start in 0..=(folded_content.len() - folded_find.len()) {
+        if folded_content[start..start + folded_find.len()] == folded_find[..] {
+            let begin = offsets[start];
+            let end = offsets
+                .get(start + folded_find.len())
+                .copied()
+                .unwrap_or(content.len());
+            out.push(content[begin..end].to_string());
+        }
+    }
+    out
+}
+
+/// 10. MultiOccurrence — last resort for replace_all / ambiguity detection.
 fn multi_occurrence(content: &str, find: &str) -> Vec<String> {
     let mut out = Vec::new();
     if find.is_empty() {
@@ -491,6 +549,9 @@ type Strategy = fn(&str, &str) -> Vec<String>;
 const STRATEGIES: &[Strategy] = &[
     simple,
     line_trimmed,
+    // Head of the guarded tail: exact modulo typographic punctuation, so it is
+    // the most precise fallback and runs before anything Levenshtein-scored.
+    punctuation_folded,
     block_anchor,
     whitespace_normalized,
     indentation_flexible,
@@ -516,16 +577,24 @@ pub fn replace(
         return Err(ReplaceError::EmptyOldString);
     }
 
-    let mut not_found = true;
+    // Any candidate located in `content` at all.
+    let mut found_any = false;
+    // Any candidate located that was *not* rejected as oversized. Without this
+    // second flag a disproportionate candidate from an early strategy used to
+    // abort the whole ladder, so a later strategy that would have matched
+    // exactly never ran and the user saw a refusal instead of an edit.
+    let mut found_proportionate = false;
+
     for strategy in STRATEGIES {
         for search in strategy(content, old_string) {
             let Some(index) = content.find(&search) else {
                 continue;
             };
-            not_found = false;
+            found_any = true;
             if is_disproportionate_match(&search, old_string) {
-                return Err(ReplaceError::Disproportionate);
+                continue; // reject this candidate, keep trying
             }
+            found_proportionate = true;
             if replace_all {
                 return Ok(content.replace(&search, new_string));
             }
@@ -541,10 +610,12 @@ pub fn replace(
         }
     }
 
-    if not_found {
-        Err(ReplaceError::NotFound)
-    } else {
-        Err(ReplaceError::MultipleMatches)
+    match (found_any, found_proportionate) {
+        (false, _) => Err(ReplaceError::NotFound),
+        // Located, but every candidate was oversized: warn about corruption
+        // rather than about ambiguity, because that is the actionable failure.
+        (true, false) => Err(ReplaceError::Disproportionate),
+        (true, true) => Err(ReplaceError::MultipleMatches),
     }
 }
 
@@ -669,14 +740,6 @@ mod tests {
     }
 
     #[test]
-    fn disproportionate_guard_direct() {
-        let old = "fn f() {";
-        let search = "fn f() {\n a\n b\n c\n d\n e\n}";
-        assert!(is_disproportionate_match(search, old));
-        assert!(!is_disproportionate_match("fn f() {", "fn f() {"));
-    }
-
-    #[test]
     fn levenshtein_basic() {
         assert_eq!(levenshtein("kitten", "sitting"), 3);
         assert_eq!(levenshtein("", "abc"), 3);
@@ -702,5 +765,94 @@ mod tests {
         // Too little context (<50%) yields nothing — no wrong apply.
         let find_bad = "fn outer() {\n  X;\n  Y;\n  return a;\n}";
         assert!(context_aware(c, find_bad).is_empty());
+    }
+
+    // ── D9: typographic punctuation folding ─────────────────────────────────
+
+    #[test]
+    fn smart_quotes_match_an_ascii_file() {
+        // The model emitted curly quotes; the file is plain ASCII. Before this
+        // strategy every one of the other eight missed.
+        let c = "let s = \"hello\";\n";
+        let out = replace(c, "let s = \u{201C}hello\u{201D};", "let s = \"bye\";", false).unwrap();
+        assert_eq!(out, "let s = \"bye\";\n");
+    }
+
+    #[test]
+    fn ascii_matches_a_file_with_typographic_punctuation() {
+        // …and the other direction: an ASCII patch against prose that has been
+        // through a word processor.
+        let c = "// don\u{2019}t \u{2014} really\n";
+        // The em dash folds to a single hyphen, not to two.
+        let out = replace(c, "// don't - really", "// fine", false).unwrap();
+        assert_eq!(out, "// fine\n");
+    }
+
+    #[test]
+    fn non_breaking_space_is_folded() {
+        let c = "a\u{00A0}b\n";
+        assert_eq!(replace(c, "a b", "c", false).unwrap(), "c\n");
+    }
+
+    #[test]
+    fn folding_yields_a_verbatim_slice_so_the_rest_of_the_file_survives() {
+        let c = "prefix\nlet s = \u{201C}x\u{201D};\nsuffix\n";
+        let out = replace(c, "let s = \"x\";", "let s = \"y\";", false).unwrap();
+        assert_eq!(out, "prefix\nlet s = \"y\";\nsuffix\n");
+    }
+
+    #[test]
+    fn folding_does_not_defeat_ambiguity_detection() {
+        // Two identical targets must still be refused, not silently resolved to
+        // the first, now that a tenth strategy exists.
+        let c = "x = \u{201C}a\u{201D}\ny = 1\nx = \u{201C}a\u{201D}\n";
+        assert_eq!(
+            replace(c, "x = \"a\"", "x = \"b\"", false),
+            Err(ReplaceError::MultipleMatches)
+        );
+    }
+
+    #[test]
+    fn folding_is_skipped_when_neither_side_has_typography() {
+        // Pure-ASCII input must produce no candidates here, so the strategy
+        // cannot manufacture duplicates for the uniqueness check.
+        assert!(punctuation_folded("plain text", "plain").is_empty());
+    }
+
+    // ── D9: a disproportionate candidate no longer aborts the ladder ────────
+
+    #[test]
+    fn disproportionate_guard_direct() {
+        let old = "fn f() {";
+        let search = "fn f() {\na\nb\nc\nd\ne\nf\ng\n}";
+        assert!(is_disproportionate_match(search, old));
+        assert!(!is_disproportionate_match("fn f() {", "fn f() {"));
+    }
+
+    #[test]
+    fn an_oversized_early_candidate_does_not_block_a_later_exact_match() {
+        // `context_aware` yields a whole-block candidate that the size guard
+        // rejects; `simple`/`line_trimmed` would have matched the single line
+        // exactly. Previously the rejection returned immediately and the edit
+        // failed; now the ladder continues.
+        let content = "fn outer() {\n  let a = 1;\n  let b = 2;\n  return a;\n}\nother();\n";
+        let out = replace(content, "  let b = 2;", "  let b = 3;", false).unwrap();
+        assert_eq!(
+            out,
+            "fn outer() {\n  let a = 1;\n  let b = 3;\n  return a;\n}\nother();\n"
+        );
+    }
+
+    #[test]
+    fn a_genuinely_oversized_only_match_is_still_refused() {
+        // The guard must not have been weakened into uselessness: when every
+        // candidate is oversized, the edit is still refused.
+        let content = "start\nfn f() {\na\nb\nc\nd\ne\nf\ng\n}\nend\n";
+        let err = replace(content, "fn f() {\nZZZ\n}", "x", false).unwrap_err();
+        assert!(
+            matches!(err, ReplaceError::Disproportionate | ReplaceError::NotFound),
+            "{err:?}"
+        );
+        // Whatever the classification, nothing was applied.
     }
 }

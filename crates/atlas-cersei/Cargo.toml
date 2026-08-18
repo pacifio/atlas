@@ -42,6 +42,10 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 dashmap = "6"
+# PTY sessions for the persistent terminal tools (a dev server, a REPL, an
+# interactive installer). Same version atlas-terminal already uses, so the two
+# resolve to one build.
+portable-pty = "0.8"
 parking_lot = "0.12"
 tracing = "0.1"
 async-trait = "0.1"
@@ -56,6 +60,9 @@ libc = "0.2"
 # cersei_provider::utf8::ATLAS_UTF8_PATCH fails to compile if the
 # [patch.crates-io] vendor override below stops applying.
 cersei-provider = "0.2.6"
+# tests/tool_gate.rs implements a PermissionPolicy to reproduce the runner's
+# dispatch shape.
+async-trait = "0.1"
 
 [patch.crates-io]
 # ATLAS PATCH (Phase 0, plans/atlas-agent-stack-zed-parity.md): incremental

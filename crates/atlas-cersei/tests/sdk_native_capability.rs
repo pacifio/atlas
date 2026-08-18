@@ -19,7 +19,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use atlas_cersei::tools::cwd::CwdTool;
+use atlas_cersei::tools::{Guarded, ToolPolicy};
 use cersei::tools::bash::BashTool;
 use cersei::tools::file_edit::FileEditTool;
 use cersei::tools::file_read::FileReadTool;
@@ -68,16 +68,23 @@ async fn run(tool: &dyn Tool, dir: &Path, args: Value) -> ToolResult {
     tool.execute(args, &ctx(dir)).await
 }
 
-/// SDK file tools take a bare `file_path` (ignore working_dir) → wrap in CwdTool,
-/// exactly as `atlas_coding()` does for MultiEdit/NotebookEdit.
-fn read_tool() -> Box<dyn Tool> {
-    CwdTool::wrap(Box::new(FileReadTool))
+/// SDK file tools take a bare `file_path` and ignore `working_dir`. The guard
+/// rewrites every path argument to its canonical absolute form before the tool
+/// is entered, which is what the registry does for real — and is strictly
+/// stronger than the `CwdTool` decorator this replaced, because it applies to
+/// every tool rather than the three that were remembered.
+///
+/// One policy per fixture, not one per tool: the read registry is what makes
+/// read-before-edit work, and it is session-scoped. A fresh policy per call
+/// would mean every edit looked like the first thing that ever touched the file.
+fn read_tool(policy: &Arc<ToolPolicy>) -> Box<dyn Tool> {
+    Guarded::wrap(Box::new(FileReadTool), policy.clone())
 }
-fn write_tool() -> Box<dyn Tool> {
-    CwdTool::wrap(Box::new(FileWriteTool))
+fn write_tool(policy: &Arc<ToolPolicy>) -> Box<dyn Tool> {
+    Guarded::wrap(Box::new(FileWriteTool), policy.clone())
 }
-fn edit_tool() -> Box<dyn Tool> {
-    CwdTool::wrap(Box::new(FileEditTool))
+fn edit_tool(policy: &Arc<ToolPolicy>) -> Box<dyn Tool> {
+    Guarded::wrap(Box::new(FileEditTool), policy.clone())
 }
 
 // ─────────────────────────── Baseline (must pass) ───────────────────────────
@@ -86,14 +93,15 @@ fn edit_tool() -> Box<dyn Tool> {
 async fn sdk_cwd_read_write_edit_bash_baseline() {
     let fx = Fixture::new();
     let dir = fx.path();
+    let policy = ToolPolicy::contained(dir);
 
-    // WRITE (cwd-relative path via CwdTool wrap).
-    let r = run(&*write_tool(), dir, json!({"file_path": "src/lib.rs", "content": "pub fn a() -> u8 { 1 }\n"})).await;
+    // WRITE (cwd-relative path, absolutised by the guard).
+    let r = run(&*write_tool(&policy), dir, json!({"file_path": "src/lib.rs", "content": "pub fn a() -> u8 { 1 }\n"})).await;
     assert!(!r.is_error, "SDK Write (wrapped) cwd-relative failed: {}", r.content);
     assert_eq!(fx.read("src/lib.rs"), "pub fn a() -> u8 { 1 }\n");
 
     // READ (cwd-relative).
-    let r = run(&*read_tool(), dir, json!({"file_path": "src/lib.rs"})).await;
+    let r = run(&*read_tool(&policy), dir, json!({"file_path": "src/lib.rs"})).await;
     assert!(!r.is_error, "SDK Read (wrapped) cwd-relative failed: {}", r.content);
     assert!(r.content.contains("pub fn a()"), "SDK Read content missing: {}", r.content);
     eprintln!(
@@ -101,8 +109,9 @@ async fn sdk_cwd_read_write_edit_bash_baseline() {
         r.content.contains("1: ") || r.content.contains("1:\t")
     );
 
-    // EDIT exact (cwd-relative).
-    let r = run(&*edit_tool(), dir, json!({"file_path": "src/lib.rs", "old_string": "1", "new_string": "2"})).await;
+    // EDIT exact (cwd-relative). The Read above is what satisfies the guard's
+    // read-before-edit precondition — as it does in a real turn.
+    let r = run(&*edit_tool(&policy), dir, json!({"file_path": "src/lib.rs", "old_string": "1", "new_string": "2"})).await;
     assert!(!r.is_error, "SDK Edit (wrapped) exact failed: {}", r.content);
     assert!(fx.read("src/lib.rs").contains("{ 2 }"), "edit not applied: {}", fx.read("src/lib.rs"));
 
@@ -181,14 +190,18 @@ async fn sdk_edit_drift_ladder_capability_matrix() {
 
     let fx = Fixture::new();
     let dir = fx.path();
+    let policy = ToolPolicy::contained(dir);
     let mut sdk_passes = 0;
     let mut atlas_only_failed_on_sdk = 0;
     eprintln!("\n=== SDK Edit (cersei 0.2.5, 5-strategy) drift capability ===");
     for (i, c) in cases.iter().enumerate() {
         let file = format!("c{i}.txt");
         fx.write(&file, c.seed);
+        // Register the read, so what this matrix measures is the SDK
+        // replacer's drift tolerance and not the guard's precondition.
+        let _ = run(&*read_tool(&policy), dir, json!({"file_path": file.clone()})).await;
         let r = run(
-            &*edit_tool(),
+            &*edit_tool(&policy),
             dir,
             json!({"file_path": file, "old_string": c.old, "new_string": c.new}),
         )

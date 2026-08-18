@@ -464,6 +464,7 @@ fn apply_tool_call(
     let status_raw = v.get("status").and_then(|s| s.as_str());
     let content_val = v.get("content").cloned();
     let formatted = content_val.as_ref().and_then(format_tool_content);
+    let structured_diff = content_val.as_ref().and_then(crate::session::extract_tool_diff);
     // Live command output — the `_meta.terminal_output` contract shared by
     // claude-agent-acp and codex-acp, opted into at initialize (see the
     // driver's client capabilities). Updates carrying it are pure streaming:
@@ -544,6 +545,14 @@ fn apply_tool_call(
                 changed_beyond_chunk = true;
                 tc.result = Some(result);
             }
+            // Empty is "no news", not "cleared": an update carrying only a
+            // status must not erase a diff we already have. A diff arriving is
+            // a real change, so it also forces a full snapshot rather than an
+            // incremental chunk — otherwise the frontend never sees it.
+            if structured_diff.is_some() {
+                changed_beyond_chunk = true;
+                tc.diff = structured_diff.clone();
+            }
             // Pure live-output chunk → incremental delta; the state above stays
             // authoritative (snapshots/resume still see the full result). Only
             // clone the (growing) tool call when a full snapshot must ship.
@@ -598,6 +607,7 @@ fn apply_tool_call(
             .get("locations")
             .and_then(|l| l.as_array().cloned())
             .unwrap_or_default(),
+        diff: structured_diff,
     };
     let mut msg = new_assistant_tool(tool_call.clone());
     msg.model = st.current_model.clone();
@@ -696,6 +706,87 @@ mod tests {
         assert_eq!(tc.status, ToolCallStatus::Completed);
         assert_eq!(tc.locations.len(), 1, "locations from the update were dropped");
         assert_eq!(tc.locations[0]["path"], "/tmp/project/src/lib.rs");
+    }
+
+    #[test]
+    fn a_structured_diff_survives_instead_of_being_flattened_to_a_path() {
+        // The defect: a `diff` content block was reduced to its `path` string,
+        // so the real before/after never left this layer and the UI re-derived
+        // line counts from raw tool arguments — reading zero for any argument
+        // shape it did not recognise, with nothing erroring.
+        let (emitter, state) = session();
+        apply_session_update(
+            &emitter,
+            &state,
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tc-1",
+                "title": "Edit",
+                "kind": "edit",
+                "status": "in_progress",
+            }))
+            .expect("tool_call decodes"),
+        );
+        apply_session_update(
+            &emitter,
+            &state,
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tc-1",
+                "status": "completed",
+                "content": [
+                    {
+                        "type": "diff",
+                        "path": "/tmp/project/src/lib.rs",
+                        "oldText": "let x = 1;\n",
+                        "newText": "let x = 2;\n",
+                    },
+                    { "type": "content", "content": { "type": "text", "text": "updated" } },
+                ],
+            }))
+            .expect("tool_call_update decodes"),
+        );
+
+        let tc = only_tool_call(&state);
+        let diff = tc.diff.expect("the structured diff must survive");
+        assert_eq!(diff.path, "/tmp/project/src/lib.rs");
+        assert_eq!(diff.old_text.as_deref(), Some("let x = 1;\n"));
+        assert_eq!(diff.new_text, "let x = 2;\n");
+        // And the visible result is the text half only — the path must not be
+        // spliced into it.
+        assert_eq!(tc.result.as_deref(), Some("updated"));
+    }
+
+    #[test]
+    fn a_later_update_without_a_diff_does_not_erase_the_one_we_have() {
+        let (emitter, state) = session();
+        for update in [
+            serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tc-1",
+                "title": "Edit",
+                "kind": "edit",
+                "status": "in_progress",
+                "content": [{
+                    "type": "diff",
+                    "path": "/tmp/p/a.rs",
+                    "oldText": "a",
+                    "newText": "b",
+                }],
+            }),
+            serde_json::json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tc-1",
+                "status": "completed",
+            }),
+        ] {
+            apply_session_update(
+                &emitter,
+                &state,
+                serde_json::from_value(update).expect("decodes"),
+            );
+        }
+        assert!(only_tool_call(&state).diff.is_some());
     }
 
     #[test]

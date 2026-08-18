@@ -58,6 +58,46 @@ pub struct ToolCall {
     pub arguments: serde_json::Value,
     pub result: Option<String>,
     pub locations: Vec<serde_json::Value>,
+    /// The real before/after, when the tool reported one.
+    ///
+    /// This used to be thrown away: a `diff` content block was flattened to its
+    /// `path` by [`format_tool_content`], so the UI had to re-derive line counts
+    /// from raw tool arguments — which reads zero for any tool whose argument
+    /// shape it does not recognise, with nothing erroring.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub diff: Option<ToolCallDiff>,
+}
+
+/// A structured file change reported by a tool.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct ToolCallDiff {
+    pub path: String,
+    /// Absent when the tool created the file.
+    #[serde(rename = "oldText", skip_serializing_if = "Option::is_none", default)]
+    pub old_text: Option<String>,
+    #[serde(rename = "newText")]
+    pub new_text: String,
+}
+
+/// Pull a `diff` content block out of a tool call's `content` array.
+pub fn extract_tool_diff(value: &serde_json::Value) -> Option<ToolCallDiff> {
+    fn from_block(block: &serde_json::Value) -> Option<ToolCallDiff> {
+        if block.get("type").and_then(|t| t.as_str()) != Some("diff") {
+            return None;
+        }
+        Some(ToolCallDiff {
+            path: block.get("path")?.as_str()?.to_string(),
+            old_text: block
+                .get("oldText")
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_string()),
+            new_text: block.get("newText")?.as_str()?.to_string(),
+        })
+    }
+    match value {
+        serde_json::Value::Array(arr) => arr.iter().find_map(from_block),
+        other => from_block(other),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -361,11 +401,9 @@ pub fn format_tool_content(value: &serde_json::Value) -> Option<String> {
             if let Some(serde_json::Value::String(s)) = o.get("output") {
                 return Some(s.clone());
             }
-            if let Some(serde_json::Value::String(p)) = o.get("path") {
-                if o.contains_key("oldText") || o.contains_key("newText") {
-                    return Some(p.clone());
-                }
-            }
+            // A `diff` block is structured, not text. It is carried on
+            // `ToolCall::diff` instead; flattening it to a path here is what
+            // made file-change accounting read zero.
             None
         }
         _ => None,

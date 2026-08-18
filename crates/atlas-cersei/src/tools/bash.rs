@@ -1,11 +1,34 @@
 //! `Bash` — run a shell command in the project root, with a timeout, combined
-//! stdout+stderr, and output-capping temp-file spill.
+//! stdout+stderr, and bounded-memory output capture.
 //!
-//! v0 semantics (see `plans/atlas-cersei-tools-from-scratch.md` Step 7): each
-//! call starts fresh in `ctx.working_dir` — no persisted per-session cwd/env. A
-//! model must pass a relative path rather than rely on a prior `cd`.
+//! Each call starts fresh in `ctx.working_dir` — no persisted per-session
+//! cwd/env. A model must pass a relative path rather than rely on a prior `cd`.
+//! For anything that must outlive the call — a dev server, a REPL, a long build
+//! — use the persistent [`terminal`](super::terminal) tools instead.
+//!
+//! Three properties here are deliberate and were kept:
+//!
+//! * The child runs in **its own process group**, so cancelling kills
+//!   grandchildren (a `cargo build`'s `rustc` processes) rather than orphaning
+//!   them.
+//! * Output goes to a **file**, not a pipe, so a full pipe buffer can never
+//!   deadlock the poll loop.
+//! * A **non-zero exit with output is a success**, because that is normal for
+//!   grep, diff, and test runners.
+//!
+//! Two were fixed (tool spec D5, D11):
+//!
+//! * The capture file is now **drained incrementally into a bounded head/tail
+//!   ring** while the command runs. It used to be read whole into memory after
+//!   the fact and then trimmed, so a command emitting gigabytes was fully
+//!   buffered before being thrown away.
+//! * A failed read of that file used to become an empty result via
+//!   `unwrap_or_default`, which the model then read as "the command produced no
+//!   output". It is now an error.
 
+use std::io::Read;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -14,7 +37,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use super::{errors, truncate};
+use super::policy::ToolPolicy;
+use super::{coerce, errors, truncate};
 
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 const MAX_TIMEOUT_MS: u64 = 600_000;
@@ -29,7 +53,8 @@ dedicated tools:\n\
 - Edit a file → use Edit (not sed/awk/perl), or Write for a full rewrite\n\n\
 Each call starts in the project root. Pass a relative path; do NOT rely on a `cd` from a \
 previous call (working directory does not persist). timeout is in milliseconds (default \
-120000, max 600000).";
+120000, max 600000). For a process that must keep running — a dev server, a REPL, a long \
+build — use TerminalStart instead.";
 
 #[derive(Deserialize)]
 struct Input {
@@ -37,13 +62,19 @@ struct Input {
     timeout: Option<u64>,
 }
 
+struct Captured {
+    ring: truncate::HeadTail,
+    /// Path to the full output, when it was capped and therefore worth keeping.
+    spill: Option<std::path::PathBuf>,
+}
+
 enum Outcome {
-    Done { code: i32, output: String },
-    TimedOut { ms: u64, output: String },
+    Done { code: i32, output: Captured },
+    TimedOut { ms: u64, output: Captured },
     /// The turn's cancel token fired: the process group was killed, its exit
     /// awaited, and whatever output landed is returned as a REAL result — the
     /// model (and history) see a settled tool call, not a dropped future.
-    Cancelled { output: String },
+    Cancelled { output: Captured },
 }
 
 /// Kill the child's whole process group (the shell AND its descendants —
@@ -62,23 +93,39 @@ fn kill_process_group(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
-/// Run `command` under `sh -c` in `cwd`, combining stdout+stderr into a temp
-/// file (so a full pipe buffer can never deadlock the poll loop) and enforcing
-/// a wall-clock timeout. Blocking — call inside `spawn_blocking`.
-fn run_blocking(
-    command: &str,
+/// Everything the blocking runner needs, so the signature stays readable.
+struct RunSpec {
+    argv: Vec<String>,
     cwd: std::path::PathBuf,
+    /// Where a *retained* full output is kept. Inside the workspace, so the
+    /// gate permits the model to read the file the truncation notice names.
+    /// `None` runs without a retained copy (tests, direct callers).
+    spill_dir: Option<std::path::PathBuf>,
     timeout_ms: u64,
     cancel: Option<CancellationToken>,
-) -> Result<Outcome, String> {
-    let combined = std::env::temp_dir().join(format!("atlas-cersei-bash-{}.out", uuid::Uuid::new_v4()));
-    let file = std::fs::File::create(&combined).map_err(|e| format!("temp file: {e}"))?;
-    let err_handle = file.try_clone().map_err(|e| format!("temp file: {e}"))?;
+    max_output: usize,
+}
 
-    let mut cmd = std::process::Command::new("sh");
-    cmd.arg("-c")
-        .arg(command)
-        .current_dir(&cwd)
+/// Run `spec.argv` in `spec.cwd`, combining stdout+stderr into a capture file
+/// and draining it incrementally into a bounded ring. Blocking — call inside
+/// `spawn_blocking`.
+fn run_blocking(spec: RunSpec) -> Result<Outcome, String> {
+    // The live capture file is transient and goes to the system temp dir. It
+    // deliberately does *not* go into the workspace: a file appearing and
+    // vanishing there on every single shell command would churn the user's
+    // `git status` and every file watcher pointed at their project. Only the
+    // rare retained copy lands in the workspace, below.
+    let capture = std::env::temp_dir().join(format!("atlas-bash-{}.out", uuid::Uuid::new_v4()));
+    let file = std::fs::File::create(&capture).map_err(|e| format!("capture file: {e}"))?;
+    let err_handle = file.try_clone().map_err(|e| format!("capture file: {e}"))?;
+
+    let (program, args) = spec
+        .argv
+        .split_first()
+        .ok_or_else(|| "empty command line".to_string())?;
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args)
+        .current_dir(&spec.cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::from(file))
         .stderr(Stdio::from(err_handle));
@@ -91,16 +138,46 @@ fn run_blocking(
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
-    let mut child = cmd.spawn().map_err(|e| format!("Failed to launch shell: {e}"))?;
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_file(&capture);
+            return Err(format!("Failed to launch shell: {e}"));
+        }
+    };
 
-    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    // A second handle on the same file, read incrementally as the child writes.
+    // This is what keeps memory flat: the ring holds the head and the tail, and
+    // the middle is counted rather than kept.
+    let mut drain = std::fs::File::open(&capture).map_err(|e| format!("capture file: {e}"))?;
+    let mut ring = truncate::HeadTail::new(spec.max_output);
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut pump = |drain: &mut std::fs::File, ring: &mut truncate::HeadTail| -> Result<(), String> {
+        loop {
+            match drain.read(&mut buf) {
+                Ok(0) => return Ok(()),
+                Ok(n) => ring.push(&buf[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                // A read failure used to become an empty result. It is a real
+                // error: "no output" and "we could not read the output" are
+                // different facts and the model must not confuse them.
+                Err(e) => return Err(format!("Failed to read command output: {e}")),
+            }
+        }
+    };
+
+    let deadline = Instant::now() + Duration::from_millis(spec.timeout_ms);
     let mut timed_out = false;
     let mut cancelled = false;
+    // Back off from a tight poll to a relaxed one: a 10-minute build should not
+    // wake a thread 40,000 times.
+    let mut idle = Duration::from_millis(5);
     loop {
         match child.try_wait() {
             Ok(Some(_status)) => break,
             Ok(None) => {
-                if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
+                pump(&mut drain, &mut ring)?;
+                if spec.cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
                     kill_process_group(&mut child);
                     cancelled = true;
                     break;
@@ -110,20 +187,47 @@ fn run_blocking(
                     timed_out = true;
                     break;
                 }
-                std::thread::sleep(Duration::from_millis(15));
+                std::thread::sleep(idle);
+                idle = (idle * 2).min(Duration::from_millis(100));
             }
-            Err(e) => return Err(format!("Failed to wait on shell: {e}")),
+            Err(e) => {
+                kill_process_group(&mut child);
+                let _ = std::fs::remove_file(&capture);
+                return Err(format!("Failed to wait on shell: {e}"));
+            }
         }
     }
+    // Whatever the child wrote between the last pump and its exit.
+    pump(&mut drain, &mut ring)?;
 
-    let output = std::fs::read_to_string(&combined).unwrap_or_default();
-    let _ = std::fs::remove_file(&combined);
+    // Only a capped run keeps a full copy, and only then does anything touch
+    // the workspace. The copy is what makes the truncation notice actionable:
+    // it names a path inside the workspace, which is a path the gate permits
+    // the model to read.
+    let mut spill = None;
+    if ring.was_capped() {
+        if let Some(dir) = &spec.spill_dir {
+            match std::fs::create_dir_all(dir)
+                .and_then(|()| {
+                    let target = dir.join(format!("bash-{}.out", uuid::Uuid::new_v4()));
+                    std::fs::copy(&capture, &target).map(|_| target)
+                }) {
+                Ok(target) => spill = Some(target),
+                Err(e) => tracing::warn!(error = %e, "retaining full command output failed"),
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&capture);
+    let output = Captured { ring, spill };
 
     if cancelled {
         return Ok(Outcome::Cancelled { output });
     }
     if timed_out {
-        return Ok(Outcome::TimedOut { ms: timeout_ms, output });
+        return Ok(Outcome::TimedOut {
+            ms: spec.timeout_ms,
+            output,
+        });
     }
     let code = child
         .try_wait()
@@ -134,6 +238,20 @@ fn run_blocking(
     Ok(Outcome::Done { code, output })
 }
 
+impl Captured {
+    fn render(&self, label: &str) -> String {
+        let mut body = self.ring.render(label);
+        if let Some(path) = &self.spill {
+            body.push_str(&format!(
+                "\n\n[Full output ({} bytes) is in {}. Read it if you need the omitted middle.]",
+                self.ring.total(),
+                path.display()
+            ));
+        }
+        body
+    }
+}
+
 #[derive(Default)]
 pub struct BashTool {
     /// The turn's cancel token. When set, a Stop kills the running command's
@@ -141,11 +259,23 @@ pub struct BashTool {
     /// as a real (error) result. `None` = uncancellable (delegate children,
     /// tests) — the wall-clock timeout still bounds it.
     pub cancel: Option<CancellationToken>,
+    /// The session policy, which supplies the sandbox and the in-workspace
+    /// directory output spills to. `None` runs unsandboxed with a temp-dir
+    /// capture — the tier-3 floor, used by tests and by direct callers.
+    pub policy: Option<Arc<ToolPolicy>>,
 }
 
 impl BashTool {
     pub fn cancellable(token: CancellationToken) -> Self {
-        Self { cancel: Some(token) }
+        Self {
+            cancel: Some(token),
+            policy: None,
+        }
+    }
+
+    pub fn with_policy(mut self, policy: Arc<ToolPolicy>) -> Self {
+        self.policy = Some(policy);
+        self
     }
 }
 
@@ -175,6 +305,7 @@ impl Tool for BashTool {
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
+        let input = coerce::for_schema(input, &self.input_schema());
         let input: Input = match serde_json::from_value(input) {
             Ok(i) => i,
             Err(e) => {
@@ -186,16 +317,31 @@ impl Tool for BashTool {
             }
         };
         let timeout_ms = input.timeout.unwrap_or(DEFAULT_TIMEOUT_MS).min(MAX_TIMEOUT_MS);
-        let cwd = ctx.working_dir.clone();
-        let cmd = input.command.clone();
-        let cancel = self.cancel.clone();
 
-        let result =
-            tokio::task::spawn_blocking(move || run_blocking(&cmd, cwd, timeout_ms, cancel)).await;
+        // Sandbox wrapping is the *only* thing that actually bounds what a
+        // shell command can touch. Classification decides how often the user is
+        // interrupted; this decides what the command can reach.
+        let mut argv = vec!["sh".to_string(), "-c".to_string(), input.command.clone()];
+        let sandbox = self.policy.as_ref().and_then(|p| p.sandbox().cloned());
+        if let Some(sb) = &sandbox {
+            argv = sb.wrap(argv);
+        }
+
+        let spec = RunSpec {
+            argv,
+            cwd: ctx.working_dir.clone(),
+            spill_dir: self.policy.as_ref().map(|p| p.spill_dir()),
+            timeout_ms,
+            cancel: self.cancel.clone(),
+            max_output: truncate::MAX_OUTPUT_BYTES,
+
+        };
+
+        let result = tokio::task::spawn_blocking(move || run_blocking(spec)).await;
 
         match result {
             Ok(Ok(Outcome::Done { code, output })) => {
-                let body = truncate::truncate_output(output, truncate::MAX_OUTPUT_BYTES, "Bash output");
+                let body = output.render("Bash output");
                 if code == 0 {
                     if body.trim().is_empty() {
                         ToolResult::success("(command completed with no output)")
@@ -212,21 +358,29 @@ impl Tool for BashTool {
                     // diff, test, find on an unreadable entry). Surface it as a
                     // non-error result — the output (and any error text) is visible
                     // and the model decides — rather than flagging a failed call.
-                    ToolResult::success(format!("{body}\n\n(Command exited with code {code}.)"))
+                    let hint = sandbox
+                        .as_ref()
+                        .filter(|sb| sb.looks_like_denial(&body))
+                        .map(|_| {
+                            "\n\n[This looks like the sandbox refusing an operation outside the \
+                             workspace. If the command genuinely needs to reach outside it, say \
+                             so and the user can approve it explicitly.]"
+                                .to_string()
+                        })
+                        .unwrap_or_default();
+                    ToolResult::success(format!("{body}\n\n(Command exited with code {code}.){hint}"))
                 }
             }
-            Ok(Ok(Outcome::Cancelled { output })) => {
-                let body = truncate::truncate_output(output, truncate::MAX_OUTPUT_BYTES, "Bash output");
-                ToolResult::error(format!(
-                    "Command cancelled by user (process group killed). Partial output:\n{body}"
-                ))
-            }
-            Ok(Ok(Outcome::TimedOut { ms, output })) => {
-                let body = truncate::truncate_output(output, truncate::MAX_OUTPUT_BYTES, "Bash output");
-                ToolResult::error(format!(
-                    "Command timed out after {ms}ms (process killed). Partial output:\n{body}"
-                ))
-            }
+            Ok(Ok(Outcome::Cancelled { output })) => ToolResult::error(format!(
+                "Command cancelled by user (process group killed). Partial output:\n{}",
+                output.render("Bash output")
+            )),
+            Ok(Ok(Outcome::TimedOut { ms, output })) => ToolResult::error(format!(
+                "Command timed out after {ms}ms (process killed). Partial output:\n{}\n\n\
+                 If this command genuinely needs longer, start it with TerminalStart instead, \
+                 which survives the call.",
+                output.render("Bash output")
+            )),
             Ok(Err(e)) => ToolResult::error(e),
             Err(e) => ToolResult::error(format!("Bash task panicked: {e}")),
         }
@@ -286,6 +440,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stdout_and_stderr_stay_interleaved() {
+        let tmp = TmpDir::new();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({"command": "echo one; echo two 1>&2; echo three"}),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        let one = r.content.find("one").unwrap();
+        let two = r.content.find("two").unwrap();
+        let three = r.content.find("three").unwrap();
+        assert!(one < two && two < three, "chronological order must survive: {}", r.content);
+    }
+
+    #[tokio::test]
     async fn cancel_kills_process_group_and_settles_with_partial_output() {
         let tmp = TmpDir::new();
         let token = CancellationToken::new();
@@ -330,12 +499,104 @@ mod tests {
         assert!(r.content.contains("timed out"));
     }
 
+    // ── D5/D6: bounded memory, honest truncation ────────────────────────────
+
     #[tokio::test]
-    async fn large_output_truncated() {
+    async fn large_output_keeps_the_tail() {
         let tmp = TmpDir::new();
-        // ~50k 'a' characters.
-        let r = run(tmp.path(), serde_json::json!({"command": "yes a | head -c 50000"})).await;
+        // 50k of noise followed by the thing that actually matters. Head-only
+        // truncation threw exactly this away.
+        let r = run(
+            tmp.path(),
+            serde_json::json!({"command": "yes a | head -c 50000; echo THE-REAL-ERROR"}),
+        )
+        .await;
         assert!(!r.is_error, "{}", r.content);
-        assert!(r.content.contains("truncated"));
+        assert!(r.content.contains("omitted from the middle"), "{}", r.content);
+        assert!(
+            r.content.contains("THE-REAL-ERROR"),
+            "the failing end of the output must survive truncation"
+        );
+    }
+
+    #[tokio::test]
+    async fn truncated_output_reports_the_true_size() {
+        let tmp = TmpDir::new();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({"command": "yes a | head -c 100000"}),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert!(
+            r.content.contains("of 100000 bytes omitted") || r.content.contains("of 100001 bytes omitted"),
+            "the notice must state the pre-cap size: {}",
+            &r.content[..r.content.len().min(400)]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_full_output_spills_where_the_model_may_read_it() {
+        let tmp = TmpDir::new();
+        let policy = ToolPolicy::contained(tmp.path());
+        let tool = BashTool::default().with_policy(policy.clone());
+        let r = tool
+            .execute(
+                serde_json::json!({"command": "yes a | head -c 60000"}),
+                &test_ctx(tmp.path().to_path_buf()),
+            )
+            .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert!(r.content.contains("Full output"), "{}", r.content);
+        let spill = policy.spill_dir();
+        let files: Vec<_> = std::fs::read_dir(&spill).unwrap().filter_map(Result::ok).collect();
+        assert_eq!(files.len(), 1, "one retained copy");
+        // It is inside the workspace, so the gate lets the model read the file
+        // the truncation notice named.
+        assert!(policy.contain(&files[0].path().to_string_lossy()).is_ok());
+        assert_eq!(std::fs::metadata(files[0].path()).unwrap().len(), 60_000);
+        policy.cleanup();
+        assert!(!spill.exists(), "session teardown removes spills");
+    }
+
+    #[tokio::test]
+    async fn output_under_the_cap_leaves_no_file_behind() {
+        let tmp = TmpDir::new();
+        let policy = ToolPolicy::contained(tmp.path());
+        let tool = BashTool::default().with_policy(policy.clone());
+        let r = tool
+            .execute(
+                serde_json::json!({"command": "echo small"}),
+                &test_ctx(tmp.path().to_path_buf()),
+            )
+            .await;
+        assert!(!r.is_error, "{}", r.content);
+        let files: Vec<_> = std::fs::read_dir(policy.spill_dir())
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert!(
+            files.is_empty(),
+            "an uncapped command must leave nothing in the workspace — otherwise every \
+             shell call churns the user's git status and file watchers: {files:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_gigabyte_of_output_does_not_exhaust_memory() {
+        let tmp = TmpDir::new();
+        // 256 MB through the ring. If this were buffered whole the test host
+        // would feel it; with the ring, resident output is ~30 KB.
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "command": "yes 0123456789abcdef | head -c 268435456",
+                "timeout": 120000
+            }),
+        )
+        .await;
+        assert!(!r.is_error, "{}", &r.content[..r.content.len().min(300)]);
+        assert!(r.content.len() < 100_000, "returned {} bytes", r.content.len());
+        assert!(r.content.contains("of 268435456 bytes omitted"), "{}", &r.content[..400]);
     }
 }

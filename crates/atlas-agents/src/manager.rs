@@ -406,6 +406,15 @@ impl AgentManager {
         self.inner.cersei.replay_session(cwd, session_id)
     }
 
+    /// What bounds the native agent in `cwd` — the enforcement tier in force,
+    /// and the workspace root every file tool is confined to.
+    ///
+    /// Answerable before a session exists, so the user can see what will
+    /// protect them before pointing the agent at a directory.
+    pub fn cersei_enforcement(&self, cwd: &str) -> atlas_cersei::Enforcement {
+        self.inner.cersei.enforcement(cwd)
+    }
+
     /// Delete a stored native-agent session's transcript (sidebar delete).
     pub fn cersei_delete_session(
         &self,
@@ -820,6 +829,7 @@ fn cersei_replay_to_messages(items: Vec<atlas_cersei::ReplayItem>) -> Vec<Messag
                 arguments: input,
                 result,
                 locations: Vec::new(),
+                diff: None,
             }),
         })
         .collect()

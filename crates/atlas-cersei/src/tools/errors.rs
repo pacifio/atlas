@@ -105,6 +105,34 @@ pub fn edit_disproportionate(rel_path: &str) -> String {
     )
 }
 
+/// The read-before-edit precondition failed: the file was never read this
+/// session. Emitted by the guard *before* the write is attempted, so this
+/// message and the file on disk always agree.
+pub fn must_read_first(rel_path: &str) -> String {
+    format!(
+        "Read {rel_path} before modifying it. Nothing has read this file in this session, so \
+         the exact current contents are unknown — call Read first, then re-issue the edit \
+         against what it returns."
+    )
+}
+
+/// The file changed on disk since the model last read it. Refusing is the point:
+/// the alternative is silently overwriting whatever the user just did in their
+/// editor.
+pub fn file_changed(rel_path: &str) -> String {
+    format!(
+        "{rel_path} has changed since it was last read, so the edit was not applied. Someone \
+         else — most likely the user's editor — modified it. Read it again and re-issue the \
+         edit against the current contents."
+    )
+}
+
+/// A write failed and the original file is intact, because writes go through a
+/// temporary file and a rename.
+pub fn write_failed(rel_path: &str, err: &str) -> String {
+    format!("Failed to write {rel_path}: {err}. The original file is unchanged.")
+}
+
 /// Read miss with sibling suggestions.
 pub fn read_did_you_mean(file_path: &str, siblings: &[String]) -> String {
     if siblings.is_empty() {
@@ -158,6 +186,27 @@ mod tests {
         assert!(msg.contains("Invalid input for Read"));
         // The concrete example (with the required field name) must be present.
         assert!(msg.contains(r#"{"file_path": "src/main.rs"}"#));
+    }
+
+    #[test]
+    fn precondition_messages_say_what_to_do_next() {
+        let unread = must_read_first("src/lib.rs");
+        assert!(unread.contains("src/lib.rs"));
+        assert!(unread.contains("Read"), "must name the recovery action");
+
+        let stale = file_changed("src/lib.rs");
+        assert!(stale.contains("changed"));
+        assert!(
+            stale.contains("was not applied"),
+            "the model must know the write did not land"
+        );
+    }
+
+    #[test]
+    fn write_failure_says_the_original_survived() {
+        let msg = write_failed("a.rs", "disk full");
+        assert!(msg.contains("disk full"));
+        assert!(msg.contains("unchanged"));
     }
 
     #[test]
