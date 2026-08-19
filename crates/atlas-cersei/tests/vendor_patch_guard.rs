@@ -105,3 +105,16 @@ fn vendored_model_profile_patch_is_resolved() {
 fn vendored_compact_patch_is_resolved() {
     assert_eq!(cersei_agent::ATLAS_COMPACT_PATCH, "compact-turn-boundary-v1");
 }
+
+/// The summarizer reads each message's wire text (tool_use inputs and
+/// tool_result payloads included) rather than `get_all_text()`. Without it
+/// the living summary is written from assistant prose alone — every build
+/// error, file read and command result stripped out — and the model then
+/// continues on that summary for the rest of the session.
+#[test]
+fn vendored_compact_evidence_patch_is_resolved() {
+    assert_eq!(
+        cersei_agent::ATLAS_COMPACT_EVIDENCE_PATCH,
+        "compact-tool-evidence-v1"
+    );
+}

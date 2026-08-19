@@ -86,6 +86,17 @@ pub const ATLAS_MODEL_PROFILE_PATCH: &str = "model-profile-v1";
 /// CompactStart/CompactEnd events are unchanged.
 pub const ATLAS_COMPACT_PATCH: &str = "compact-turn-boundary-v1";
 
+/// ATLAS PATCH (compact-tool-evidence-v1): the summarizer request is built
+/// from each message's *wire* text — tool_use inputs and tool_result
+/// payloads included — instead of `get_all_text()`, which returns Text
+/// blocks only. Without it the living summary's "Progress" and "Errors and
+/// fixes" sections are written from the assistant's prose alone, with every
+/// build error, file read and command result stripped out; the model then
+/// continues on that summary for the rest of the session. Each message's
+/// contribution is head/tail-clamped so one huge result cannot consume the
+/// summarizer's own window and fail the call into the snip fallback.
+pub const ATLAS_COMPACT_EVIDENCE_PATCH: &str = "compact-tool-evidence-v1";
+
 /// ATLAS PATCH (doom-loop-input-hash-v1): tool name of the synthetic
 /// permission request the runner raises when the doom-loop detector fires a
 /// second time. Not a real tool: permission policies special-case it (Atlas

@@ -457,6 +457,47 @@ pub fn get_compact_prompt(custom_instructions: Option<&str>) -> String {
     prompt
 }
 
+/// ATLAS PATCH (compact-tool-evidence-v1): the most one message may
+/// contribute to the summarizer's input.
+///
+/// Head and tail both, for the same reason the shell tool caps that way: a
+/// build log's beginning says what ran and its end says what failed, and the
+/// end is the half a head-only cut throws away.
+const SUMMARY_PER_MESSAGE_BUDGET: usize = 4_000;
+
+fn clamp_for_summary(text: &str) -> String {
+    if text.len() <= SUMMARY_PER_MESSAGE_BUDGET {
+        return text.to_string();
+    }
+    let half = SUMMARY_PER_MESSAGE_BUDGET / 2;
+    let head_end = floor_char_boundary(text, half);
+    let tail_start = ceil_char_boundary(text, text.len() - half);
+    format!(
+        "{}\n…[{} bytes omitted]…\n{}",
+        &text[..head_end],
+        tail_start - head_end,
+        &text[tail_start..]
+    )
+}
+
+/// Largest index `<= at` that lands on a UTF-8 char boundary.
+fn floor_char_boundary(s: &str, at: usize) -> usize {
+    let mut i = at.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Smallest index `>= at` that lands on a UTF-8 char boundary.
+fn ceil_char_boundary(s: &str, at: usize) -> usize {
+    let mut i = at.min(s.len());
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
 /// ATLAS PATCH (compact-turn-boundary-v1): the request
 /// `compact_conversation` sends, factored out so the shape —
 /// previous-summary carryover included — is testable without a provider.
@@ -483,7 +524,16 @@ pub fn build_compact_request(
                 Role::Assistant => "Assistant",
                 Role::System => "System",
             };
-            format!("{}: {}", role, m.get_all_text())
+            // ATLAS PATCH (compact-tool-evidence-v1): the wire text, not
+            // `get_all_text()`. The latter returns Text blocks only, so the
+            // summarizer was handed the assistant's prose with every tool_use
+            // input and tool_result payload stripped out — in a coding session
+            // that is nearly everything that happened. "Progress" and "Errors
+            // and fixes" were being written from no evidence, and the model
+            // then continued on that summary for the rest of the session.
+            // Bounded per message so one huge result cannot consume the
+            // summarizer's own window and fail the call into the snip fallback.
+            format!("{}: {}", role, clamp_for_summary(&message_wire_text(m)))
         })
         .collect::<Vec<_>>()
         .join("\n\n");
@@ -931,6 +981,60 @@ mod tests {
         // Without one, no update preamble.
         let req = build_compact_request(&[Message::user("hi")], "m", None);
         assert!(!req.messages[0].get_all_text().contains("Current summary to update"));
+    }
+
+    #[test]
+    fn the_summarizer_sees_tool_evidence_not_just_prose() {
+        use serde_json::json;
+        // `get_all_text()` returns Text blocks only, so the summarizer was
+        // handed the assistant's prose with every tool_use input and
+        // tool_result payload removed — in a coding session that is nearly
+        // everything that happened. The living summary's "Progress" and
+        // "Errors and fixes" sections were being written from no evidence,
+        // and the model then continued on that summary. This module already
+        // has `message_wire_text` for exactly this reason; the request
+        // builder just never used it.
+        let history = vec![
+            Message::user("fix the build"),
+            Message::assistant_blocks(vec![ContentBlock::ToolUse {
+                id: "t1".into(),
+                name: "Bash".into(),
+                input: json!({"command": "cargo build"}),
+            }]),
+            Message::user_blocks(vec![ContentBlock::ToolResult {
+                tool_use_id: "t1".into(),
+                content: ToolResultContent::Text(
+                    "error[E0308]: mismatched types in widget.rs".into(),
+                ),
+                is_error: Some(true),
+            }]),
+        ];
+        let body = build_compact_request(&history, "m", None).messages[0].get_all_text();
+        assert!(
+            body.contains("E0308") && body.contains("widget.rs"),
+            "the failure the turn was about is missing from the summarizer input: {body}"
+        );
+        assert!(body.contains("cargo build"), "the command that ran is missing: {body}");
+    }
+
+    #[test]
+    fn one_huge_tool_result_cannot_blow_the_summarizer_window() {
+        // The summarizer request has its own budget; a single multi-megabyte
+        // result must not consume it (or the provider rejects the call and
+        // compaction silently degrades to snip).
+        let huge = "x".repeat(400_000);
+        let history = vec![Message::user_blocks(vec![ContentBlock::ToolResult {
+            tool_use_id: "t1".into(),
+            content: ToolResultContent::Text(huge),
+            is_error: None,
+        }])];
+        let body = build_compact_request(&history, "m", None).messages[0].get_all_text();
+        assert!(
+            body.len() < 40_000,
+            "per-message contribution is unbounded: {} bytes",
+            body.len()
+        );
+        assert!(body.contains('x'), "the result should still be represented");
     }
 
     #[test]
