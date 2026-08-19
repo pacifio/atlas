@@ -43,18 +43,12 @@ use super::{coerce, errors, truncate};
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 const MAX_TIMEOUT_MS: u64 = 600_000;
 
-const DESCRIPTION: &str = "Executes a shell command and returns its combined output. Use this \
-for terminal operations like git, npm, cargo, docker — NOT for file operations, which have \
-dedicated tools:\n\
-- Read a file → use Read (not cat/head/tail)\n\
-- Search contents → use Grep (not cat | grep)\n\
-- Find files by name → use Glob (not find / ls)\n\
-- List a directory → use List (not ls)\n\
-- Edit a file → use Edit (not sed/awk/perl), or Write for a full rewrite\n\n\
-Each call starts in the project root. Pass a relative path; do NOT rely on a `cd` from a \
-previous call (working directory does not persist). timeout is in milliseconds (default \
-120000, max 600000). For a process that must keep running — a dev server, a REPL, a long \
-build — use TerminalStart instead.";
+const DESCRIPTION: &str = "Runs a shell command and returns its combined output. For git, npm, \
+cargo, docker — not for files: Read a file, Grep its contents, Glob by name, List a directory, \
+Edit or Write to change one. Those return grounded, bounded output; cat/sed/find here costs far \
+more context for the same answer.\n\
+- Every call starts in the project root; a `cd` does not carry to the next call.\n\
+- For something that must keep running — a dev server, a REPL, a slow build — use TerminalStart.";
 
 #[derive(Deserialize)]
 struct Input {

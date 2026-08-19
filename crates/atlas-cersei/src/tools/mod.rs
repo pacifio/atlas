@@ -66,7 +66,7 @@ pub(crate) fn abs_path(working_dir: &Path, file_path: &str) -> PathBuf {
 ///
 /// Atlas-owned `Read / Edit / List / Bash` are kept because each is PROVEN more
 /// capable than the SDK equivalent (`tests/sdk_native_capability.rs`). `Grep` +
-/// `Glob` + `Write` + `MultiEdit` + `NotebookEdit` + `ApplyPatch` are the SDK's.
+/// `Glob` + `Write` + `NotebookEdit` are the SDK's.
 /// None of them needs a cwd wrapper any more: the guard rewrites every path
 /// argument to its canonical absolute form before the tool is entered, which is
 /// strictly stronger than what the old `CwdTool` decorator did and applies to
@@ -102,9 +102,6 @@ pub fn atlas_coding_with(
         policy: Some(policy.clone()),
     }));
     tools.push(Box::new(terminal::TerminalWriteTool));
-    // `ApplyPatch` already joins working_dir, and the guard now contains the
-    // paths inside its patch body as well.
-    tools.push(Box::new(t::apply_patch::ApplyPatchTool));
     tools.push(Box::new(t::web_fetch::WebFetchTool));
     tools.push(Box::new(t::web_search::WebSearchTool));
 
@@ -118,7 +115,6 @@ pub fn atlas_coding_with(
         tools.push(Box::new(read::ReadTool));
         tools.push(Box::new(edit::EditTool));
         tools.push(Box::new(t::file_write::FileWriteTool));
-        tools.push(Box::new(t::multi_edit::MultiEditTool));
         // Native cersei `Grep` + `Glob` (in-process since SDK 0.2.5 — ripgrep's
         // `ignore`/`grep` library crates, no external `rg` binary). This is the
         // fix for the recurring "model shells out to ripgrep and fails on stock
@@ -147,6 +143,13 @@ pub fn atlas_coding_with(
         if std::env::var_os(EXA_API_KEY).is_some_and(|k| !k.is_empty()) {
             tools.push(Box::new(t::exa_search::ExaSearchTool));
         }
+    } else {
+        // Shell-first has no structured editor, so the patch tool is the only
+        // way to change a file without composing shell redirection by hand —
+        // which is exactly the arrangement Codex ships. In the structured tier
+        // `Edit` and `Write` cover the same ground with better errors, and a
+        // third edit format is one more choice for a weak model to get wrong.
+        tools.push(Box::new(t::apply_patch::ApplyPatchTool));
     }
 
     // ── Platform-gated ──────────────────────────────────────────────────────
@@ -315,6 +318,133 @@ mod tests {
         }
         assert!(checked >= 4, "only {checked} path-taking tools were exercised");
         assert_eq!(std::fs::read_to_string(outside.path().join("secret.txt")).unwrap(), "shh");
+    }
+
+    /// Each tool's name, description and schema, as they go on the wire,
+    /// largest first.
+    fn wire_bytes(tools: &[Box<dyn Tool>]) -> Vec<(String, usize)> {
+        let mut sizes: Vec<(String, usize)> = tools
+            .iter()
+            .map(|t| {
+                let payload = serde_json::json!({
+                    "name": t.name(),
+                    "description": t.description(),
+                    "input_schema": t.input_schema(),
+                });
+                let n = serde_json::to_string(&payload).map(|s| s.len()).unwrap_or(0);
+                (t.name().to_string(), n)
+            })
+            .collect();
+        sizes.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        sizes
+    }
+
+    #[test]
+    fn the_tool_list_stays_within_its_context_budget() {
+        // The tool list is re-sent on **every request of every turn**, so its
+        // size is multiplied by the number of tool calls: a sixteen-call turn
+        // pays for it sixteen times. It reached 12,213 B across 17 tools
+        // without anyone noticing, which is part of how a one-line edit came to
+        // cost 71k tokens of context; it is 8,593 B across 14 now.
+        //
+        // This is a budget, not a measurement. It fails when the list grows, so
+        // the cost of a new tool is argued for in review instead of appearing
+        // silently in everyone's context window.
+        const STRUCTURED_MAX_BYTES: usize = 8_800;
+        const SHELL_FIRST_MAX_BYTES: usize = 3_900;
+
+        let tmp = TmpDir::new();
+        let policy = ToolPolicy::contained(tmp.path());
+        let caps = ModelCapabilities { accepts_images: true };
+
+        for (label, tier, budget) in [
+            ("structured", ToolTier::Structured, STRUCTURED_MAX_BYTES),
+            ("shell-first", ToolTier::ShellFirst, SHELL_FIRST_MAX_BYTES),
+        ] {
+            let tools = atlas_coding_with(None, policy.clone(), tier, caps);
+            let sizes = wire_bytes(&tools);
+            let bytes: usize = sizes.iter().map(|(_, n)| n).sum();
+            let worst: Vec<String> = sizes
+                .iter()
+                .take(5)
+                .map(|(name, n)| format!("{name} {n}B"))
+                .collect();
+            assert!(
+                bytes <= budget,
+                "the {label} tool list is {bytes} B (~{} tok) across {} tools, over its {budget} B \
+                 budget. Every tool call in every turn pays this. Largest: {}. Shorten a \
+                 description, merge an overlapping tool, or defer one — and only raise the budget \
+                 with a reason.",
+                bytes / 4,
+                tools.len(),
+                worst.join(", "),
+            );
+        }
+    }
+
+    #[test]
+    fn one_way_to_change_a_file_in_the_structured_tier() {
+        // `Edit`, `MultiEdit`, `ApplyPatch` and `Write` were four overlapping
+        // ways to do the same thing, costing 715 tok of schema in every request
+        // and giving a weak model four chances to pick the wrong one.
+        // `MultiEdit` is now `Edit`'s `edits` array; the patch tool is gone from
+        // the tier where `Edit` and `Write` already cover its ground.
+        let tmp = TmpDir::new();
+        let policy = ToolPolicy::contained(tmp.path());
+        let structured = names(&atlas_coding_with(
+            None,
+            policy.clone(),
+            ToolTier::Structured,
+            ModelCapabilities::default(),
+        ));
+        for gone in ["MultiEdit", "ApplyPatch"] {
+            assert!(!structured.contains(&gone.to_string()), "{gone} is back: {structured:?}");
+        }
+        for kept in ["Edit", "Write"] {
+            assert!(structured.contains(&kept.to_string()), "{kept} is missing: {structured:?}");
+        }
+
+        // Shell-first has no structured editor, so the patch tool is the one
+        // way to change a file there without hand-composing redirection.
+        let shell_first = names(&atlas_coding_with(
+            None,
+            policy,
+            ToolTier::ShellFirst,
+            ModelCapabilities::default(),
+        ));
+        assert!(shell_first.contains(&"ApplyPatch".to_string()), "{shell_first:?}");
+    }
+
+    #[tokio::test]
+    async fn edit_accepts_the_batch_shape_multi_edit_used_to_own() {
+        // Dropping a tool must not drop the capability: a model that batches
+        // several replacements into one call still gets one call.
+        let tmp = TmpDir::new();
+        std::fs::write(tmp.path().join("a.rs"), "one\ntwo\n").unwrap();
+        let policy = ToolPolicy::contained(tmp.path());
+        let tools = atlas_coding_with(
+            None,
+            policy.clone(),
+            ToolTier::Structured,
+            ModelCapabilities::default(),
+        );
+        let edit = tools.iter().find(|t| t.name() == "Edit").expect("Edit is registered");
+        policy.record_read(&policy.resolve("a.rs"));
+
+        let r = edit
+            .execute(
+                serde_json::json!({
+                    "file_path": "a.rs",
+                    "edits": [
+                        {"old_string": "one", "new_string": "1"},
+                        {"old_string": "two", "new_string": "2"}
+                    ]
+                }),
+                &test_ctx(tmp.path().to_path_buf()),
+            )
+            .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert_eq!(std::fs::read_to_string(tmp.path().join("a.rs")).unwrap(), "1\n2\n");
     }
 
     #[test]

@@ -326,14 +326,13 @@ fn render(command: &str, id: &str, text: &str, exit: Option<&str>, dropped: u64)
 
 // ─── TerminalStart ──────────────────────────────────────────────────────────
 
-const START_DESCRIPTION: &str = "Starts a command in a persistent terminal session that \
-survives this tool call. Use it for anything that must keep running or that needs input: a dev \
-server, a REPL, a watcher, an interactive installer, or a build too slow for Bash's timeout.\n\n\
-- A pseudo-terminal is always allocated, so programs that check for a TTY behave normally.\n\
-- If the command is still running when `timeout` elapses, a session_id is returned along with \
-the output so far. Pass that session_id to TerminalWrite to send input or read more output.\n\
-- If it finishes first, its full output and exit status are returned and no session is kept.\n\
-- Prefer Bash for a command that simply runs and finishes.";
+const START_DESCRIPTION: &str = "Runs a command in a terminal session that outlives this call: \
+a dev server, a REPL, a watcher, an interactive installer, or a build too slow for Bash. A TTY \
+is always allocated.\n\
+- Still running at `timeout` → returns a session_id and the output so far; pass it to \
+TerminalWrite.\n\
+- Finished first → returns its full output and exit status, and keeps no session.\n\
+- Use Bash for a command that just runs and finishes.";
 
 #[derive(Deserialize)]
 struct StartInput {
@@ -432,13 +431,12 @@ impl Tool for TerminalStartTool {
 
 // ─── TerminalWrite ──────────────────────────────────────────────────────────
 
-const WRITE_DESCRIPTION: &str = "Sends input to a running terminal session and returns \
-whatever it has produced since the last call.\n\n\
-- session_id comes from TerminalStart.\n\
-- input is sent as-is; append \\n to submit a line, which is usually what you want.\n\
-- Leave input empty to poll: nothing is sent and any new output is returned. This is how you \
-watch a build or wait for a server to become ready.\n\
-- Output is delivered once. A second call returns only what is new.";
+const WRITE_DESCRIPTION: &str = "Sends input to a running terminal session and returns what it \
+produced since the last call.\n\
+- Append \\n to submit a line.\n\
+- Empty input polls: nothing is sent, new output is returned. This is how you watch a build or \
+wait for a server.\n\
+- Output is delivered once; the next call returns only what is new.";
 
 #[derive(Deserialize)]
 struct WriteInput {

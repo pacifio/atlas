@@ -38,6 +38,20 @@ describe("countEditLines", () => {
     });
   });
 
+  it("reads a batched Edit's arguments when no diff was reported", () => {
+    // Cersei's Edit absorbed the old MultiEdit tool, so `edits[]` now arrives
+    // under the name `Edit`. A replayed transcript carries no diff, so the
+    // argument fallback has to recognise the array whatever the tool is called.
+    expect(
+      countEditLines("Edit", {
+        edits: [
+          { old_string: "a\n", new_string: "A\n" },
+          { old_string: "b\n", new_string: "B\n" },
+        ],
+      }),
+    ).toEqual({ added: 2, removed: 2 });
+  });
+
   it("reports nothing for a tool whose arguments it cannot read and that reported no diff", () => {
     expect(countEditLines("SomeMcpTool", { patch: "@@ -1 +1 @@" })).toEqual({
       added: 0,

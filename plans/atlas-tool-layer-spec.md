@@ -8,11 +8,13 @@ vendored-patch guards in `tests/vendor_patch_guard.rs`.
 **Known gaps, stated rather than quietly closed:**
 
 1. **D4 covers `Edit` only.** "This covers the edit tool, the whole-file write tool, the
-   multi-edit tool, and the patch tool." `Write`, `MultiEdit`, `ApplyPatch` and
-   `NotebookEdit` are SDK-owned and write in place. Making them atomic means vendoring
+   multi-edit tool, and the patch tool." `Write` and `NotebookEdit` are SDK-owned and write
+   in place, as does `ApplyPatch` in the shell-first tier. Making them atomic means vendoring
    `cersei-tools`, which is a dependency commitment of the kind ADR-0001 weighs
-   explicitly — not something to take on inside this change. Story 2 therefore holds for
-   `Edit` and not for the other four.
+   explicitly — not something to take on inside this change. The multi-edit half of this gap
+   is *closed*: batched edits are now `Edit`'s `edits` array and go through the same atomic
+   write as a single one. Story 2 holds for every batched or single string replacement, and
+   not for whole-file writes, notebooks, or patches.
 2. **D13's deferred tier does not exist.** There is no searchable catalogue, so notebook
    edit and code search sit in the structured tier rather than behind one. Story 45 is
    unmet. They are *registered*: dropping them would remove a capability users have today,
@@ -373,9 +375,33 @@ because a long visible list degrades tool selection and that harms weaker models
 
 - **Shell-first** — shell, persistent terminal, patch apply, image view, web fetch, web search,
   skill, plan, memory search, MCP tools.
-- **Structured** — the above plus read, edit, list, grep, glob, write, multi-edit.
+- **Structured** — the above *minus patch apply*, plus read, edit, list, grep, glob, write.
 - **Deferred** — notebook edit, code search, third-party search.
 - **Platform-gated** — the Windows shell tool.
+
+**One way to change a file (as built).** `Edit`, `MultiEdit`, `ApplyPatch` and `Write` were four
+overlapping ways to do the same thing: 715 tokens of schema in every request, and four chances for a
+weak model to choose wrong. `MultiEdit`'s schema was `Edit`'s with an array around it, so it folded
+into `Edit` as an optional `edits` field — applied in order, written only if every one succeeds, and
+now inheriting the ten-strategy replacer, the atomic write and the structured diff that the SDK's
+version had none of. `ApplyPatch` is registered only in the shell-first tier, where it is the one way
+to change a file without hand-composing shell redirection; in the structured tier `Edit` and `Write`
+cover its ground with better errors. This mirrors Codex, whose entire file-mutation surface is a
+single `apply_patch` covering create, update, delete and move for ~171 tokens.
+
+Dropping it from the structured tier also closed a containment hole. The guard extracted patch paths
+using the *Codex* dialect (`*** Add File:`) while the registered tool parses **unified diff**, so it
+found no paths at all — which reads to the rest of the gate as "this call touches nothing": no
+containment, no freshness check, and one shared approval key for every patch. A unified diff could
+write anywhere on disk. `patch_paths` now understands both dialects, which is what protects any
+future or MCP-provided patch tool; `a_patch_cannot_write_outside_the_workspace` is the regression
+test, and it fails against the previous commit.
+
+**A context budget, enforced by a test (as built).** The tool list is re-sent on every request of
+every turn, so its size is multiplied by the number of tool calls a turn makes. It reached 12,213
+bytes across 17 tools with nobody watching. It is 8,593 across 14 now, and
+`the_tool_list_stays_within_its_context_budget` fails when it grows — so the cost of a new tool is
+argued for in review rather than appearing silently in every user's context window.
 
 **Registration gating (as built).** The deferred tier does not exist yet, so its three tools sit in
 the structured tier — but a tool that *cannot run* is registered nowhere. The tool list is re-sent on

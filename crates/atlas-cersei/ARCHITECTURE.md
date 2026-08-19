@@ -215,9 +215,24 @@ The crown jewel is `Edit`'s **10-strategy replacer** (`replace.rs`): a slightly-
 `old_string` (indentation / whitespace / line-ending / escape / typographic-punctuation
 drift) still lands on the right span, with a guarded fuzzy tail (unique + not-oversized)
 and a destructive-match guard so a wrong edit is never silently applied; on a genuine miss
-it returns a corrective error showing the real nearby lines. Retained SDK tools (not
-reimplemented): `WebFetch / WebSearch / ApplyPatch`, plus `NotebookEdit`, `MultiEdit`,
-`Grep`, `Glob` and `FileWrite`. `PowerShell` is registered on Windows only.
+it returns a corrective error showing the real nearby lines. `Edit` also takes an `edits`
+array, applied in order and written only if every one succeeds — which is what the separate
+`MultiEdit` tool used to be, for an identical schema and an identical operation.
+
+Retained SDK tools (not reimplemented): `WebFetch / WebSearch`, plus `NotebookEdit`, `Grep`,
+`Glob` and `FileWrite`. `PowerShell` is registered on Windows only.
+
+**One way to change a file.** `Edit`, `MultiEdit`, `ApplyPatch` and `Write` were four
+overlapping ways to do the same thing — 715 tokens of schema in every request, and four
+chances for a weak model to pick the wrong one. `MultiEdit` folded into `Edit`, and the patch
+tool is registered only in the shell-first tier, where it is the one way to change a file
+without hand-composing shell redirection. That is the arrangement Codex ships: a single
+`apply_patch` covering create, update, delete and move.
+
+**A budget, enforced by a test.** The tool list is re-sent on *every request of every turn*,
+so its size is multiplied by the number of tool calls a turn makes. It reached 12,213 bytes
+across 17 tools without anyone noticing; it is 8,593 across 14 now, and
+`the_tool_list_stays_within_its_context_budget` fails if it grows again.
 
 `atlas_coding_with()` (`tools/mod.rs`) is an explicit, hand-built vector, so any tool can
 be swapped for an SDK fallback by flipping one line. Which tools are *visible* is the

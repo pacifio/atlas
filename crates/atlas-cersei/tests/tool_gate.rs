@@ -102,12 +102,16 @@ struct Session {
 
 impl Session {
     fn new(dir: &Path, answer: PermissionDecision) -> Self {
+        Self::with_tier(dir, answer, ToolTier::Structured)
+    }
+
+    fn with_tier(dir: &Path, answer: PermissionDecision, tier: ToolTier) -> Self {
         let policy = ToolPolicy::contained(dir);
         let gate = Gate::new(policy.clone(), answer);
         let tools = atlas_coding_with(
             None,
             policy.clone(),
-            ToolTier::Structured,
+            tier,
             ModelCapabilities { accepts_images: true },
         );
         let ctx = ToolContext {
@@ -397,6 +401,29 @@ async fn no_registered_tool_can_reach_outside_the_workspace() {
     }
     assert!(exercised >= 4, "only {exercised} path-taking tools exist?");
     assert_eq!(outside.read("secret"), "keys");
+}
+
+#[tokio::test]
+async fn a_patch_cannot_write_outside_the_workspace() {
+    // `no_registered_tool_can_reach_outside_the_workspace` only exercises tools
+    // that declare `file_path`. ApplyPatch declares only `patch`, so the one
+    // tool whose write target hides inside free text was never covered — and
+    // the guard extracted paths using the *Codex* patch dialect
+    // (`*** Add File:`) while the registered tool parses unified diff.
+    let fx = Fixture::new();
+    let name = format!("escape-{}.txt", uuid::Uuid::new_v4());
+    let escaped = fx.path().parent().unwrap().join(&name);
+    // The patch tool lives in the shell-first tier, where it is the only way to
+    // change a file without hand-composing shell redirection.
+    let s = Session::with_tier(fx.path(), PermissionDecision::Allow, ToolTier::ShellFirst);
+
+    let patch = format!("--- a/{name}\n+++ b/../{name}\n@@ -0,0 +1 @@\n+pwned\n");
+    let r = s.call("ApplyPatch", json!({ "patch": patch })).await;
+
+    let landed = escaped.exists();
+    let _ = std::fs::remove_file(&escaped);
+    assert!(!landed, "a patch wrote to {} — outside the workspace", escaped.display());
+    assert!(r.is_error, "the escape must be refused, got: {}", r.content);
 }
 
 #[tokio::test]

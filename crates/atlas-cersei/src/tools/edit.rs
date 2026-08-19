@@ -36,16 +36,13 @@ use tokio::sync::Mutex;
 
 use super::{abs_path, atomic, coerce, errors, replace};
 
-const DESCRIPTION: &str = "Performs exact string replacements in files. Prefer this over \
-shell tools (sed/awk/perl) for editing — it is grounded in the real file and tolerates minor \
-indentation/whitespace drift.\n\n\
-Usage:\n\
-- Read the file first; copy the text to replace EXACTLY as it appears AFTER the `N: ` line-number \
-prefix in Read output. Never include any part of the `N: ` prefix in old_string or new_string.\n\
-- old_string must be unique in the file, or the edit is rejected as ambiguous — add surrounding \
-context, or set replace_all=true to change every occurrence (useful for renames).\n\
-- new_string must differ from old_string. To replace a whole file, use Write instead.\n\
-- If old_string is empty and the file does not exist, the file is created with new_string.";
+const DESCRIPTION: &str = "Exact string replacement in a file. Prefer this over shell tools \
+(sed/awk/perl) — it is grounded in the real file and tolerates whitespace drift.\n\
+- Read the file first. Copy the text AFTER the `N: ` prefix; never include the prefix itself.\n\
+- old_string must be unique, or the edit is rejected: add context, or set replace_all.\n\
+- Use `edits` to make several replacements to one file in ONE call. They apply in order and \
+nothing is written unless every one succeeds. Prefer this over repeated Edit calls.\n\
+- Empty old_string creates the file. For a whole-file rewrite use Write.";
 
 /// Per-file edit lock so concurrent edits to the same file serialize.
 static LOCKS: LazyLock<DashMap<PathBuf, Arc<Mutex<()>>>> = LazyLock::new(DashMap::new);
@@ -133,13 +130,49 @@ pub fn diff_metadata(target: &Path, old_text: &str, new_text: &str) -> Value {
     })
 }
 
+/// One replacement. The flat `old_string`/`new_string` form and one entry of
+/// `edits` are the same thing, so the executor only ever sees a list.
 #[derive(Deserialize)]
-struct Input {
-    file_path: String,
+struct EditOp {
     old_string: String,
     new_string: String,
     #[serde(default)]
     replace_all: bool,
+}
+
+#[derive(Deserialize)]
+struct Input {
+    file_path: String,
+    old_string: Option<String>,
+    new_string: Option<String>,
+    #[serde(default)]
+    replace_all: bool,
+    /// Several replacements to the same file in one call. This absorbs what was
+    /// a separate `MultiEdit` tool: an identical schema for an identical
+    /// operation, costing a second entry in every tool list the model is sent
+    /// and a choice it had to get right.
+    edits: Option<Vec<EditOp>>,
+}
+
+impl Input {
+    /// Normalise both accepted shapes to a list, or say what was missing.
+    fn ops(self) -> Result<(String, Vec<EditOp>), String> {
+        match (self.edits, self.old_string, self.new_string) {
+            (Some(edits), _, _) if !edits.is_empty() => Ok((self.file_path, edits)),
+            (_, Some(old_string), Some(new_string)) => Ok((
+                self.file_path,
+                vec![EditOp {
+                    old_string,
+                    new_string,
+                    replace_all: self.replace_all,
+                }],
+            )),
+            _ => Err(
+                "Edit needs either old_string and new_string, or a non-empty edits array."
+                    .to_string(),
+            ),
+        }
+    }
 }
 
 pub struct EditTool;
@@ -164,10 +197,23 @@ impl Tool for EditTool {
             "properties": {
                 "file_path": { "type": "string", "description": "Path to the file (absolute, or relative to the project root)" },
                 "old_string": { "type": "string", "description": "The exact text to replace" },
-                "new_string": { "type": "string", "description": "The replacement text (must differ from old_string)" },
-                "replace_all": { "type": "boolean", "description": "Replace all occurrences (default false)", "default": false }
+                "new_string": { "type": "string", "description": "The replacement text" },
+                "replace_all": { "type": "boolean", "description": "Replace all occurrences (default false)", "default": false },
+                "edits": {
+                    "type": "array",
+                    "description": "Several replacements to this file, applied in order. Use instead of old_string/new_string.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old_string": { "type": "string" },
+                            "new_string": { "type": "string" },
+                            "replace_all": { "type": "boolean", "default": false }
+                        },
+                        "required": ["old_string", "new_string"]
+                    }
+                }
             },
-            "required": ["file_path", "old_string", "new_string"]
+            "required": ["file_path"]
         })
     }
 
@@ -183,27 +229,29 @@ impl Tool for EditTool {
                 ))
             }
         };
+        let (file_path, ops) = match input.ops() {
+            Ok(v) => v,
+            Err(e) => return ToolResult::error(e),
+        };
 
-        let path = abs_path(&ctx.working_dir, &input.file_path);
+        let path = abs_path(&ctx.working_dir, &file_path);
         let rel = display_path(&ctx.working_dir, &path);
 
         let lock = file_lock(&path);
         let _guard = lock.lock().await;
 
         // Create-on-empty-old-string (only when the file does not yet exist).
-        if input.old_string.is_empty() {
+        if ops.len() == 1 && ops[0].old_string.is_empty() {
+            let created = &ops[0].new_string;
             if path.exists() {
                 return ToolResult::error(format!(
                     "old_string is empty but {rel} already exists. Provide the exact text to \
                      replace, or use Write for an intentional full-file replacement."
                 ));
             }
-            return match atomic::write(&path, input.new_string.as_bytes()).await {
-                Ok(()) => ToolResult::success(format!(
-                    "Created {rel} ({} bytes).",
-                    input.new_string.len()
-                ))
-                .with_metadata(diff_metadata(&path, "", &input.new_string)),
+            return match atomic::write(&path, created.as_bytes()).await {
+                Ok(()) => ToolResult::success(format!("Created {rel} ({} bytes).", created.len()))
+                    .with_metadata(diff_metadata(&path, "", created)),
                 Err(e) => ToolResult::error(errors::write_failed(&rel, &e.to_string())),
             };
         }
@@ -221,32 +269,41 @@ impl Tool for EditTool {
         let content = raw.strip_prefix(BOM).unwrap_or(&raw);
         let crlf = detect_crlf(content);
         let content_lf = content.replace("\r\n", "\n");
-        let old_lf = input.old_string.replace("\r\n", "\n");
-        let new_lf = input.new_string.replace("\r\n", "\n");
 
-        let result_lf = match replace::replace(&content_lf, &old_lf, &new_lf, input.replace_all) {
-            Ok(s) => s,
-            Err(replace::ReplaceError::Identical) => {
-                return ToolResult::error(
-                    "No changes to apply: old_string and new_string are identical.".to_string(),
-                );
-            }
-            Err(replace::ReplaceError::EmptyOldString) => {
-                return ToolResult::error(
-                    "old_string is empty. Provide the exact text to replace, or use Write."
-                        .to_string(),
-                );
-            }
-            Err(replace::ReplaceError::NotFound) => {
-                return ToolResult::error(errors::edit_not_found(&rel, &old_lf, &content_lf));
-            }
-            Err(replace::ReplaceError::MultipleMatches) => {
-                return ToolResult::error(errors::edit_ambiguous(&rel));
-            }
-            Err(replace::ReplaceError::Disproportionate) => {
-                return ToolResult::error(errors::edit_disproportionate(&rel));
-            }
-        };
+        // Applied in sequence, each against the result of the last, and written
+        // only if every one succeeds. A batch that fails halfway must leave the
+        // file exactly as it was, or the model is reasoning about a state
+        // nothing described to it.
+        let mut result_lf = content_lf.clone();
+        for (i, op) in ops.iter().enumerate() {
+            let old_lf = op.old_string.replace("\r\n", "\n");
+            let new_lf = op.new_string.replace("\r\n", "\n");
+            result_lf = match replace::replace(&result_lf, &old_lf, &new_lf, op.replace_all) {
+                Ok(s) => s,
+                Err(e) => {
+                    let why = match e {
+                        replace::ReplaceError::Identical => {
+                            "No changes to apply: old_string and new_string are identical."
+                                .to_string()
+                        }
+                        replace::ReplaceError::EmptyOldString => {
+                            "old_string is empty. Provide the exact text to replace, or use Write."
+                                .to_string()
+                        }
+                        // Against the content as it stands *after* the earlier
+                        // edits — which is what the model has to match next.
+                        replace::ReplaceError::NotFound => {
+                            errors::edit_not_found(&rel, &old_lf, &result_lf)
+                        }
+                        replace::ReplaceError::MultipleMatches => errors::edit_ambiguous(&rel),
+                        replace::ReplaceError::Disproportionate => {
+                            errors::edit_disproportionate(&rel)
+                        }
+                    };
+                    return ToolResult::error(errors::in_batch(i, ops.len(), &why));
+                }
+            };
+        }
 
         let diff = mini_diff(&content_lf, &result_lf);
         // Captured before the line endings are restored, so the structured diff
@@ -278,6 +335,152 @@ mod tests {
 
     async fn run(dir: &std::path::Path, args: Value) -> ToolResult {
         EditTool.execute(args, &test_ctx(dir.to_path_buf())).await
+    }
+
+    // ── Batched edits (what used to be a separate MultiEdit tool) ───────────
+
+    #[tokio::test]
+    async fn several_edits_land_in_one_call() {
+        let tmp = TmpDir::new();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "let a = 1;\nlet b = 2;\nlet c = 3;\n").unwrap();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "file_path": "a.rs",
+                "edits": [
+                    {"old_string": "let a = 1;", "new_string": "let a = 10;"},
+                    {"old_string": "let c = 3;", "new_string": "let c = 30;"}
+                ]
+            }),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "let a = 10;\nlet b = 2;\nlet c = 30;\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn edits_apply_in_order_against_the_previous_result() {
+        // The second edit matches text the first one created, so a parallel
+        // application would fail where a sequential one succeeds.
+        let tmp = TmpDir::new();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "one\n").unwrap();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "file_path": "a.rs",
+                "edits": [
+                    {"old_string": "one", "new_string": "two"},
+                    {"old_string": "two", "new_string": "three"}
+                ]
+            }),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "three\n");
+    }
+
+    #[tokio::test]
+    async fn a_batch_that_fails_halfway_writes_nothing() {
+        // All-or-nothing is the whole reason to batch: a partially applied set
+        // leaves the model reasoning about a state nothing described to it.
+        let tmp = TmpDir::new();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "keep me\n").unwrap();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "file_path": "a.rs",
+                "edits": [
+                    {"old_string": "keep me", "new_string": "changed"},
+                    {"old_string": "not in the file", "new_string": "x"}
+                ]
+            }),
+        )
+        .await;
+        assert!(r.is_error, "{}", r.content);
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "keep me\n",
+            "a failed batch must not leave a partial write"
+        );
+        assert!(r.content.contains("Edit 2 of 2"), "must locate the failure: {}", r.content);
+        assert!(r.content.contains("unchanged"), "{}", r.content);
+    }
+
+    #[tokio::test]
+    async fn a_lone_failure_is_not_dressed_up_as_a_batch() {
+        let tmp = TmpDir::new();
+        std::fs::write(tmp.path().join("a.rs"), "x\n").unwrap();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({"file_path": "a.rs", "old_string": "nope", "new_string": "y"}),
+        )
+        .await;
+        assert!(r.is_error);
+        assert!(!r.content.contains("of 1"), "{}", r.content);
+    }
+
+    #[tokio::test]
+    async fn replace_all_works_inside_a_batch() {
+        let tmp = TmpDir::new();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "x x x\ny\n").unwrap();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "file_path": "a.rs",
+                "edits": [
+                    {"old_string": "x", "new_string": "z", "replace_all": true},
+                    {"old_string": "y", "new_string": "w"}
+                ]
+            }),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "z z z\nw\n");
+    }
+
+    #[tokio::test]
+    async fn a_batch_reports_one_diff_covering_every_edit() {
+        // The UI counts changed lines from this, so a batch that reported only
+        // its last edit would undercount.
+        let tmp = TmpDir::new();
+        std::fs::write(tmp.path().join("a.rs"), "a\nb\n").unwrap();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "file_path": "a.rs",
+                "edits": [
+                    {"old_string": "a", "new_string": "A"},
+                    {"old_string": "b", "new_string": "B"}
+                ]
+            }),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        let diff = &r.metadata.as_ref().expect("a diff was reported")["diff"];
+        assert_eq!(diff["oldText"], "a\nb\n");
+        assert_eq!(diff["newText"], "A\nB\n");
+    }
+
+    #[tokio::test]
+    async fn neither_shape_is_a_correctable_error() {
+        let tmp = TmpDir::new();
+        std::fs::write(tmp.path().join("a.rs"), "x\n").unwrap();
+        for args in [
+            serde_json::json!({"file_path": "a.rs"}),
+            serde_json::json!({"file_path": "a.rs", "edits": []}),
+            serde_json::json!({"file_path": "a.rs", "old_string": "x"}),
+        ] {
+            let r = run(tmp.path(), args.clone()).await;
+            assert!(r.is_error, "{args} should not have been accepted");
+            assert!(r.content.contains("edits"), "must name the alternative: {}", r.content);
+        }
     }
 
     #[tokio::test]

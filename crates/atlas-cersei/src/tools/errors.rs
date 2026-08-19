@@ -144,6 +144,21 @@ pub fn already_read(rel_path: &str) -> String {
     )
 }
 
+/// Locate a failure inside a batch of edits, and say that nothing landed.
+///
+/// Without the position the model cannot tell which of its replacements was
+/// wrong, and without "nothing was written" it has to guess whether the file is
+/// now half-edited.
+pub fn in_batch(index: usize, total: usize, why: &str) -> String {
+    if total <= 1 {
+        return why.to_string();
+    }
+    format!(
+        "Edit {} of {total} failed, so none of them were applied and the file is unchanged.\n\n{why}",
+        index + 1
+    )
+}
+
 /// A write failed and the original file is intact, because writes go through a
 /// temporary file and a rename.
 pub fn write_failed(rel_path: &str, err: &str) -> String {

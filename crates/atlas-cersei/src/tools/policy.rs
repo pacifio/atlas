@@ -693,23 +693,54 @@ pub fn candidate_paths(tool_name: &str, input: &Value) -> Vec<String> {
     out
 }
 
-/// Pull the file paths out of an apply-patch body.
+/// Pull the file paths out of a patch body.
+///
+/// Two dialects, because a patch is the one place a write target hides inside
+/// free text and getting the dialect wrong means finding *no* paths — which
+/// reads to the rest of the gate as "this call touches nothing":
+///
+/// - **Unified diff** (`--- a/x` / `+++ b/x`), which is what `diff -u`,
+///   `git diff` and the SDK's patch tool produce.
+/// - **The Codex dialect** (`*** Add File:`), which models trained on Codex
+///   emit and which an MCP patch tool may well accept.
 fn patch_paths(patch: &str) -> Vec<String> {
-    patch
-        .lines()
-        .filter_map(|line| {
-            let rest = line.trim().strip_prefix("*** ")?;
-            for verb in ["Add File:", "Update File:", "Delete File:", "Move to:"] {
-                if let Some(p) = rest.strip_prefix(verb) {
-                    let p = p.trim();
-                    if !p.is_empty() {
-                        return Some(p.to_string());
-                    }
+    patch.lines().filter_map(patch_path_in_line).collect()
+}
+
+fn patch_path_in_line(line: &str) -> Option<String> {
+    let line = line.trim_end_matches(['\r', '\n']);
+    if let Some(rest) = line.trim().strip_prefix("*** ") {
+        for verb in ["Add File:", "Update File:", "Delete File:", "Move to:"] {
+            if let Some(p) = rest.strip_prefix(verb) {
+                let p = p.trim();
+                if !p.is_empty() {
+                    return Some(p.to_string());
                 }
             }
-            None
-        })
-        .collect()
+        }
+        return None;
+    }
+    // Unified diff. Both sides are collected: the `+++` side is the write
+    // target, and containing the `---` side too costs nothing for a real patch
+    // (it names the same file) while refusing a hand-built one that reads from
+    // outside the workspace.
+    let rest = line
+        .strip_prefix("+++ ")
+        .or_else(|| line.strip_prefix("--- "))?;
+    // `diff -u` appends a tab and a timestamp.
+    let rest = rest.split('\t').next().unwrap_or(rest).trim();
+    // `/dev/null` is how a unified diff spells "this file does not exist yet";
+    // it is not a path anyone writes to.
+    if rest.is_empty() || rest == "/dev/null" {
+        return None;
+    }
+    // Strip git's `a/` and `b/` prefixes, exactly as the tool that applies the
+    // patch does — otherwise containment would check a path the tool never uses.
+    let rest = rest
+        .strip_prefix("a/")
+        .or_else(|| rest.strip_prefix("b/"))
+        .unwrap_or(rest);
+    (!rest.is_empty()).then(|| rest.to_string())
 }
 
 #[cfg(test)]
@@ -990,6 +1021,39 @@ mod tests {
         let p = policy(tmp.path());
         let patch = "*** Begin Patch\n*** Add File: ../../../etc/evil\n+x\n*** End Patch";
         let d = p.decide("ApplyPatch", PermissionLevel::Write, &json!({"input": patch}));
+        assert!(matches!(d, Decision::Deny { .. }), "{d:?}");
+    }
+
+    #[test]
+    fn both_patch_dialects_yield_their_write_targets() {
+        // Finding no paths reads to the rest of the gate as "this call touches
+        // nothing" — no containment, no freshness, and one shared cache key.
+        let unified = "--- a/src/old.rs\n+++ b/src/new.rs\n@@ -1 +1 @@\n-a\n+b\n";
+        assert_eq!(patch_paths(unified), vec!["src/old.rs", "src/new.rs"]);
+
+        let codex = "*** Begin Patch\n*** Add File: src/x.rs\n+x\n*** End Patch";
+        assert_eq!(patch_paths(codex), vec!["src/x.rs"]);
+    }
+
+    #[test]
+    fn a_creation_marker_is_not_mistaken_for_a_path() {
+        // `/dev/null` is how a unified diff spells "no file here yet".
+        let created = "--- /dev/null\n+++ b/src/new.rs\n@@ -0,0 +1 @@\n+x\n";
+        assert_eq!(patch_paths(created), vec!["src/new.rs"]);
+    }
+
+    #[test]
+    fn a_diff_timestamp_is_not_part_of_the_path() {
+        let stamped = "--- a/src/x.rs\t2026-08-19 09:00:00.000000000 +0600\n+++ b/src/x.rs\t2026-08-19 09:00:01.000000000 +0600\n";
+        assert_eq!(patch_paths(stamped), vec!["src/x.rs", "src/x.rs"]);
+    }
+
+    #[test]
+    fn a_patch_escaping_the_workspace_is_denied() {
+        let tmp = TmpDir::new();
+        let p = policy(tmp.path());
+        let patch = "--- /dev/null\n+++ b/../../../etc/evil\n@@ -0,0 +1 @@\n+x\n";
+        let d = p.decide("ApplyPatch", PermissionLevel::Write, &json!({"patch": patch}));
         assert!(matches!(d, Decision::Deny { .. }), "{d:?}");
     }
 

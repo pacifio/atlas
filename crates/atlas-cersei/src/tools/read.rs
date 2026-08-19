@@ -24,14 +24,12 @@ const MAX_BYTES: usize = 50 * 1024;
 const MAX_LINE_LEN: usize = 2000;
 const SAMPLE_BYTES: usize = 4096;
 
-const DESCRIPTION: &str = "Reads a file from the filesystem. Prefer this over shell tools \
-(cat/head/tail) — it returns line-numbered, paginated, grounded output.\n\n\
-Usage:\n\
-- file_path is absolute or relative to the project root.\n\
-- Returns up to 2000 lines; each line is prefixed with `N: `. The `N: ` is NOT part of the \
-file — never copy it into an Edit's old_string.\n\
-- Use offset (1-indexed line to start from) and limit to page through large files.\n\
-- Call in parallel when reading several files. Use Grep to search within large files.";
+const DESCRIPTION: &str = "Reads a file, line-numbered and paginated. Prefer this over \
+cat/head/tail.\n\
+- Each line is prefixed `N: `. That prefix is NOT part of the file — never copy it into an Edit.\n\
+- Returns up to 2000 lines; use offset/limit to page through more.\n\
+- Ask for several files in ONE message: they run in parallel. To find something inside a large \
+file use Grep instead of reading the whole thing.";
 
 #[derive(Deserialize)]
 struct Input {
