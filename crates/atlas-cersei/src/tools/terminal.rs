@@ -42,6 +42,8 @@ const MAX_YIELD_MS: u64 = 60_000;
 /// How long a poll waits for *new* output before returning empty.
 const DEFAULT_POLL_MS: u64 = 2_000;
 const MAX_POLL_MS: u64 = 60_000;
+/// How long a write may block before the session is declared unresponsive.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Soft cap on live sessions. Above it, eviction runs.
 const SESSION_SOFT_CAP: usize = 8;
@@ -61,9 +63,16 @@ struct Session {
     /// The cersei session that owns it, so teardown can sweep.
     owner: String,
     command: String,
-    writer: Box<dyn Write + Send>,
+    /// Behind its own lock so a write happens with the global [`STORE`] lock
+    /// *released* — a PTY whose child stopped reading blocks the writer on a
+    /// full kernel buffer, and blocking there while holding `STORE` deadlocked
+    /// every other terminal call in the process.
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     pending: Arc<Mutex<Screen>>,
+    /// Set by the reader thread when the PTY master reaches EOF — every byte
+    /// the process ever wrote is now in `pending`.
+    eof: Arc<std::sync::atomic::AtomicBool>,
     last_used: Instant,
     /// Set while a call is inside this session, so eviction cannot pull the
     /// session out from under an in-flight interaction.
@@ -89,6 +98,20 @@ impl Session {
     }
 
     fn kill(&mut self) {
+        // The whole process group, mirroring `bash.rs`: a PTY child is its
+        // session leader, so `sh -c "npm run dev"` and every worker it spawned
+        // share its pgid. `child.kill()` alone HUPs the direct child and
+        // orphans anything that called setpgid or ignores SIGHUP — and an
+        // orphan holding the slave open means the reader thread never sees EOF
+        // and leaks. SIGKILL to the group first also makes the fallback's
+        // reap immediate instead of a graceful-shutdown sleep loop run while
+        // callers hold the store lock.
+        #[cfg(unix)]
+        if let Some(pid) = self.child.process_id() {
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -195,8 +218,10 @@ fn spawn(
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let pending = Arc::new(Mutex::new(Screen::new()));
+    let eof = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let sink = pending.clone();
+    let eof_flag = eof.clone();
     std::thread::spawn(move || {
         let mut buf = vec![0u8; 64 * 1024];
         loop {
@@ -206,6 +231,7 @@ fn spawn(
                 Err(_) => break,
             }
         }
+        eof_flag.store(true, std::sync::atomic::Ordering::SeqCst);
     });
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -215,9 +241,10 @@ fn spawn(
         Session {
             owner: owner.to_string(),
             command: command.to_string(),
-            writer,
+            writer: Arc::new(Mutex::new(writer)),
             child,
             pending,
+            eof,
             last_used: Instant::now(),
             busy: true,
             exit: None,
@@ -227,10 +254,19 @@ fn spawn(
     Ok(id)
 }
 
-/// Wait until the session produces output, exits, or `deadline` passes.
+/// How long after the process exits to wait for the reader thread to drain the
+/// last PTY bytes, when EOF has not been seen yet. Exit can be observed before
+/// the final output crosses the PTY, and taking the buffer at that instant
+/// discarded the tail — for a failing build, the error summary.
+const DRAIN_GRACE: Duration = Duration::from_millis(300);
+
+/// Wait until the session produces output, exits (and drains), or `deadline`
+/// passes.
 async fn wait_for(id: &str, deadline: Duration) -> (String, Option<String>, u64) {
     let start = Instant::now();
     let mut idle = Duration::from_millis(10);
+    let mut exit_seen: Option<Instant> = None;
+    let mut last_seen: Option<(usize, u64, usize, usize)> = None;
     loop {
         {
             let mut store = STORE.lock();
@@ -238,8 +274,29 @@ async fn wait_for(id: &str, deadline: Duration) -> (String, Option<String>, u64)
                 return (String::new(), Some("session gone".to_string()), 0);
             };
             let exit = session.finished();
-            let ready = !session.pending.lock().is_empty();
-            if exit.is_some() || ready || start.elapsed() >= deadline {
+            if exit.is_some() && exit_seen.is_none() {
+                exit_seen = Some(Instant::now());
+            }
+            let drained = session.eof.load(std::sync::atomic::Ordering::SeqCst)
+                || exit_seen.is_some_and(|t| t.elapsed() >= DRAIN_GRACE);
+            let (ready, print) = {
+                let screen = session.pending.lock();
+                (!screen.is_empty(), screen.fingerprint())
+            };
+            // "Settled" means output is present AND nothing new arrived since
+            // the previous look — returning at the first byte handed back a
+            // PTY's echo of the input while the actual response was milliseconds
+            // behind it.
+            let stable = ready && last_seen == Some(print);
+            last_seen = Some(print);
+            let settle = match &exit {
+                // Exited: hold on (briefly) until the reader reports EOF, so
+                // the final bytes are returned with the exit status instead of
+                // being discarded with the session.
+                Some(_) => drained,
+                None => stable || start.elapsed() >= deadline,
+            };
+            if settle {
                 let (text, dropped) = session.pending.lock().take();
                 session.last_used = Instant::now();
                 return (text, exit, dropped);
@@ -470,7 +527,12 @@ impl Tool for TerminalWriteTool {
             }
         };
 
-        let command = {
+        // The store lock is held only long enough to fetch handles. The write
+        // itself happens off it, in a blocking task with a timeout: a PTY
+        // whose child is not reading blocks the writer on a full kernel
+        // buffer, and blocking there while holding `STORE` deadlocked every
+        // other terminal call in the process.
+        let (command, writer) = {
             let mut store = STORE.lock();
             let Some(session) = store.get_mut(&input.session_id) else {
                 return ToolResult::error(format!(
@@ -480,18 +542,35 @@ impl Tool for TerminalWriteTool {
                 ));
             };
             session.busy = true;
-            if !input.input.is_empty() {
-                if let Err(e) = session
-                    .writer
-                    .write_all(input.input.as_bytes())
-                    .and_then(|()| session.writer.flush())
-                {
-                    session.busy = false;
+            (session.command.clone(), session.writer.clone())
+        };
+        if !input.input.is_empty() {
+            let bytes = input.input.clone().into_bytes();
+            let write = tokio::task::spawn_blocking(move || {
+                let mut w = writer.lock();
+                w.write_all(&bytes).and_then(|()| w.flush())
+            });
+            match tokio::time::timeout(WRITE_TIMEOUT, write).await {
+                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Err(e))) => {
+                    release(&input.session_id);
                     return ToolResult::error(format!("Failed to write to the session: {e}"));
                 }
+                Ok(Err(e)) => {
+                    release(&input.session_id);
+                    return ToolResult::error(format!("Failed to write to the session: {e}"));
+                }
+                Err(_) => {
+                    release(&input.session_id);
+                    return ToolResult::error(format!(
+                        "The session did not accept input within {}s — its process is not \
+                         reading (a full buffer, or a program not waiting for input). Poll it \
+                         with an empty input, or terminate it with TerminalKill.",
+                        WRITE_TIMEOUT.as_secs()
+                    ));
+                }
             }
-            session.command.clone()
-        };
+        }
 
         let poll_ms = input.timeout.unwrap_or(DEFAULT_POLL_MS).min(MAX_POLL_MS);
         let (text, exit, dropped) = wait_for(&input.session_id, Duration::from_millis(poll_ms)).await;
@@ -503,6 +582,75 @@ impl Tool for TerminalWriteTool {
             }
         }
         ToolResult::success(body)
+    }
+}
+
+// ─── TerminalKill ───────────────────────────────────────────────────────────
+
+const KILL_DESCRIPTION: &str = "Terminates a terminal session started by TerminalStart, killing \
+its whole process tree. Use when a session is done, stuck, or no longer needed.";
+
+#[derive(Deserialize)]
+struct KillInput {
+    session_id: String,
+}
+
+pub struct TerminalKillTool;
+
+#[async_trait]
+impl Tool for TerminalKillTool {
+    fn name(&self) -> &str {
+        "TerminalKill"
+    }
+    fn description(&self) -> &str {
+        KILL_DESCRIPTION
+    }
+    // Bounded to sessions the agent itself started, so ending one needs no
+    // interruption — without this tool a runaway process the model launched
+    // had no off switch short of session teardown or eviction pressure.
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::None
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Shell
+    }
+    fn input_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "session_id": { "type": "string", "description": "Session id returned by TerminalStart" }
+            },
+            "required": ["session_id"]
+        })
+    }
+
+    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
+        let input = coerce::for_schema(input, &self.input_schema());
+        let input: KillInput = match serde_json::from_value(input) {
+            Ok(i) => i,
+            Err(e) => {
+                return ToolResult::error(errors::decode_failure(
+                    "TerminalKill",
+                    &e.to_string(),
+                    r#"{"session_id": "<from TerminalStart>"}"#,
+                ))
+            }
+        };
+        let session = STORE.lock().remove(&input.session_id);
+        match session {
+            Some(mut s) => {
+                let command = s.command.clone();
+                s.kill();
+                ToolResult::success(format!(
+                    "Terminated session {} ({command}).",
+                    input.session_id
+                ))
+            }
+            None => ToolResult::success(format!(
+                "No session '{}' — it already finished or was never started. Nothing to do.",
+                input.session_id
+            )),
+        }
     }
 }
 
@@ -667,6 +815,57 @@ mod tests {
             !STORE.lock().contains_key(&id),
             "teardown by the policy's session name must terminate the terminal"
         );
+    }
+
+    #[tokio::test]
+    async fn kill_terminates_a_live_session_and_its_tree() {
+        let tmp = TmpDir::new();
+        let ctx = test_ctx(tmp.path().to_path_buf());
+        let r = TerminalStartTool::default()
+            .execute(json!({"command": "sleep 60", "timeout": 300}), &ctx)
+            .await;
+        assert!(!r.is_error, "{}", r.content);
+        let id = session_id_from(&r.content);
+        assert!(STORE.lock().contains_key(&id));
+
+        let k = TerminalKillTool
+            .execute(json!({"session_id": id}), &ctx)
+            .await;
+        assert!(!k.is_error, "{}", k.content);
+        assert!(k.content.contains("Terminated"), "{}", k.content);
+        assert!(!STORE.lock().contains_key(&id), "the session must be gone");
+
+        // Killing again is a no-op with a plain answer, not an error the
+        // model has to reason its way out of.
+        let again = TerminalKillTool
+            .execute(json!({"session_id": id}), &ctx)
+            .await;
+        assert!(!again.is_error, "{}", again.content);
+        assert!(again.content.contains("Nothing to do"), "{}", again.content);
+    }
+
+    #[tokio::test]
+    async fn the_final_output_of_a_finishing_command_is_not_dropped() {
+        // Exit can be observed before the last bytes cross the PTY; taking the
+        // buffer at that instant discarded the tail — for a failing build, the
+        // error summary. wait_for now drains to EOF (or a short grace) first.
+        let tmp = TmpDir::new();
+        let ctx = test_ctx(tmp.path().to_path_buf());
+        for _ in 0..5 {
+            let r = TerminalStartTool::default()
+                .execute(
+                    json!({"command": "echo FIRST; echo THE-LAST-LINE", "timeout": 5000}),
+                    &ctx,
+                )
+                .await;
+            assert!(!r.is_error, "{}", r.content);
+            assert!(r.content.contains("exited with code 0"), "{}", r.content);
+            assert!(
+                r.content.contains("THE-LAST-LINE"),
+                "the tail was discarded with the session: {}",
+                r.content
+            );
+        }
     }
 
     #[tokio::test]

@@ -43,6 +43,8 @@ enum Mode {
     Csi,
     /// Inside `ESC]…` — ends at BEL or `ESC\`.
     Osc,
+    /// Saw `ESC (` (or `)`, `*`, `+`, `#`) — one final byte follows.
+    Charset,
 }
 
 /// Rendered output a session has produced but not yet handed to the model.
@@ -89,9 +91,16 @@ impl Screen {
                 Mode::Escape => match b {
                     b'[' => self.mode = Mode::Csi,
                     b']' => self.mode = Mode::Osc,
-                    // A two-byte escape (`ESC =`, `ESC >`, charset selects).
+                    // Charset selects and line-size sequences are THREE bytes
+                    // (`ESC ( B`); consuming only the intermediate leaked the
+                    // final byte into the transcript as a literal `B`.
+                    b'(' | b')' | b'*' | b'+' | b'#' => self.mode = Mode::Charset,
+                    // A two-byte escape (`ESC =`, `ESC >`).
                     _ => self.mode = Mode::Text,
                 },
+                // The final byte of a three-byte escape; part of the sequence,
+                // never text.
+                Mode::Charset => self.mode = Mode::Text,
                 Mode::Csi => {
                     if (0x40..=0x7e).contains(&b) {
                         self.csi(b);
@@ -108,10 +117,18 @@ impl Screen {
                 }
                 Mode::Osc => {
                     // A window title tells the model nothing; drop it whole.
-                    // Ends at BEL or the ESC of a string terminator — or, if
-                    // neither ever arrives, at a length no real one reaches.
-                    let terminated = b == 0x07 || b == 0x1b;
-                    if terminated || self.seq.len() >= MAX_ESCAPE * 8 {
+                    // Ends at BEL or the ESC of a string terminator (ESC \) —
+                    // routed back through Escape mode so the `\` is consumed as
+                    // the terminator's second byte rather than leaking into the
+                    // transcript — or, if neither ever arrives, at a length no
+                    // real one reaches.
+                    if b == 0x07 {
+                        self.seq.clear();
+                        self.mode = Mode::Text;
+                    } else if b == 0x1b {
+                        self.seq.clear();
+                        self.mode = Mode::Escape;
+                    } else if self.seq.len() >= MAX_ESCAPE * 8 {
                         self.seq.clear();
                         self.mode = Mode::Text;
                     } else {
@@ -222,6 +239,13 @@ impl Screen {
         self.lines.is_empty() && self.cur.is_empty()
     }
 
+    /// A cheap change detector: two equal fingerprints mean no byte arrived
+    /// between them. Lets a poller distinguish "output has settled" from "the
+    /// first byte just landed" without draining anything.
+    pub fn fingerprint(&self) -> (usize, u64, usize, usize) {
+        (self.retained, self.dropped, self.cur.len(), self.col)
+    }
+
     /// Take the lines completed so far, leaving the line in progress alone.
     ///
     /// This is what lets a caller drain every chunk it reads without breaking
@@ -275,6 +299,22 @@ mod tests {
     #[test]
     fn plain_output_is_untouched() {
         assert_eq!(render(&[b"hello\nworld\n"]), "hello\nworld\n");
+    }
+
+    #[test]
+    fn three_byte_escapes_leak_nothing() {
+        // `ESC ( B` selects a charset — `tput init` and TUI setup emit these.
+        // Consuming only the intermediate leaked a literal `B` into the
+        // transcript.
+        assert_eq!(render(&[b"\x1b(Bhello\n"]), "hello\n");
+        assert_eq!(render(&[b"\x1b)0\x1b#8ok\n"]), "ok\n");
+    }
+
+    #[test]
+    fn an_osc_string_terminator_leaves_no_stray_backslash() {
+        // OSC may end with ST (`ESC \`) instead of BEL; the `\` is part of the
+        // terminator, not text.
+        assert_eq!(render(&[b"\x1b]0;title\x1b\\after\n"]), "after\n");
     }
 
     #[test]

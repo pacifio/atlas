@@ -46,6 +46,13 @@ pub use tiers::{ModelCapabilities, ToolTier};
 /// Where `ExaSearch` looks for its key. Named here because whether the tool is
 /// registered has to be decided by the same condition the tool itself checks.
 const EXA_API_KEY: &str = "EXA_API_KEY";
+/// Where the SDK's `WebSearch` looks for its Brave key — same rule: a tool
+/// that cannot run is registered nowhere.
+const SEARCH_API_KEY: &str = "CERSEI_SEARCH_API_KEY";
+
+fn env_key_set(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|k| !k.is_empty())
+}
 
 /// Absolutise a (possibly relative) path against the session working directory.
 ///
@@ -104,8 +111,14 @@ pub fn atlas_coding_with(
         policy: Some(policy.clone()),
     }));
     tools.push(Box::new(terminal::TerminalWriteTool));
+    tools.push(Box::new(terminal::TerminalKillTool));
     tools.push(Box::new(t::web_fetch::WebFetchTool));
-    tools.push(Box::new(t::web_search::WebSearchTool));
+    // `WebSearch` errors at call time without a Brave key, which nothing in
+    // Atlas sets — the same defect `ExaSearch` had, fixed by the same rule:
+    // present only when it can actually work.
+    if env_key_set(SEARCH_API_KEY) {
+        tools.push(Box::new(t::web_search::WebSearchTool));
+    }
 
     // Absent rather than failing at call time when the model cannot see.
     if caps.accepts_images {
@@ -146,7 +159,7 @@ pub fn atlas_coding_with(
         // that schema is re-sent on every request of every turn, so registering
         // it unconditionally charges every user for a tool most of them cannot
         // run. Present only when it can actually work.
-        if std::env::var_os(EXA_API_KEY).is_some_and(|k| !k.is_empty()) {
+        if env_key_set(EXA_API_KEY) {
             tools.push(Box::new(t::exa_search::ExaSearchTool));
         }
     } else {
@@ -244,7 +257,7 @@ mod tests {
                 "shell-first must not carry {tool}"
             );
         }
-        for tool in ["Bash", "TerminalStart", "TerminalWrite"] {
+        for tool in ["Bash", "TerminalStart", "TerminalWrite", "TerminalKill"] {
             assert!(shell_first.contains(&tool.to_string()), "shell-first is missing {tool}");
             assert!(structured.contains(&tool.to_string()));
         }
@@ -390,13 +403,14 @@ mod tests {
             ("shell-first", ToolTier::ShellFirst, SHELL_FIRST_MAX_BYTES),
         ] {
             let tools = atlas_coding_with(None, policy.clone(), tier, caps);
-            // `ExaSearch` is registered only when its key is set, so measuring
-            // it would make this pass or fail depending on the developer's
-            // environment. It is also opt-in cost: a user who sets a key has
-            // chosen to pay for it. The budget guards what *every* user pays.
+            // Key-gated tools (`ExaSearch`, `WebSearch`) are registered only
+            // when their env key is set, so measuring them would make this
+            // pass or fail depending on the developer's environment. They are
+            // also opt-in cost: a user who sets a key has chosen to pay. The
+            // budget guards what *every* user pays.
             let sizes: Vec<(String, usize)> = wire_bytes(&tools)
                 .into_iter()
-                .filter(|(name, _)| name != "ExaSearch")
+                .filter(|(name, _)| name != "ExaSearch" && name != "WebSearch")
                 .collect();
             let bytes: usize = sizes.iter().map(|(_, n)| n).sum();
             let worst: Vec<String> = sizes
@@ -501,6 +515,14 @@ mod tests {
             all.contains(&"ExaSearch".to_string()),
             usable,
             "ExaSearch presence must track EXA_API_KEY, got {all:?}"
+        );
+        // The SDK's WebSearch has the same shape: a Brave key it reads from
+        // the environment and errors without, which nothing in Atlas sets.
+        let searchable = std::env::var(SEARCH_API_KEY).is_ok_and(|k| !k.is_empty());
+        assert_eq!(
+            all.contains(&"WebSearch".to_string()),
+            searchable,
+            "WebSearch presence must track {SEARCH_API_KEY}, got {all:?}"
         );
         // CodeSearch is BM25-only — no key, no index, no network — so it is
         // always available and must not be gated alongside it.

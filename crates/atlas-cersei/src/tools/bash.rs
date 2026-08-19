@@ -259,9 +259,17 @@ impl Captured {
     fn render(&self, label: &str) -> String {
         let mut body = self.ring.render(label);
         if let Some(path) = &self.spill {
+            // The spill is a copy of the RAW capture; the ring's total counts
+            // rendered bytes. Stating the ring's number for the raw file — and
+            // calling it plainly "full output" — sent the model to Read a file
+            // of a different size than promised, full of the escape sequences
+            // the renderer exists to remove.
+            let raw = std::fs::metadata(path)
+                .map(|m| m.len())
+                .unwrap_or_else(|_| self.ring.total());
             body.push_str(&format!(
-                "\n\n[Full output ({} bytes) is in {}. Read it if you need the omitted middle.]",
-                self.ring.total(),
+                "\n\n[The complete raw output ({raw} bytes, unrendered — may contain terminal \
+                 escape sequences) is in {}. Read it if you need the omitted middle.]",
                 path.display()
             ));
         }
@@ -626,7 +634,9 @@ mod tests {
             )
             .await;
         assert!(!r.is_error, "{}", r.content);
-        assert!(r.content.contains("Full output"), "{}", r.content);
+        assert!(r.content.contains("complete raw output"), "{}", r.content);
+        // The stated size is the spill file's own, not the rendered count.
+        assert!(r.content.contains("(60000 bytes"), "{}", r.content);
         let spill = policy.spill_dir();
         let files: Vec<_> = std::fs::read_dir(&spill).unwrap().filter_map(Result::ok).collect();
         assert_eq!(files.len(), 1, "one retained copy");
