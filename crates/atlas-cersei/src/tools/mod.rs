@@ -39,6 +39,58 @@ use std::sync::Arc;
 
 use cersei::tools::Tool;
 
+/// An SDK tool with an Atlas-owned description; behaviour untouched.
+///
+/// The description is part of the prompt, and a false one is a contradictory
+/// instruction — the exact oscillation-inducing failure the prompt rewrite
+/// removed from the base sections, shipped back in through a tool. The SDK's
+/// CodeSearch called itself "semantic" and "your DEFAULT tool … use it before
+/// Grep" (it is BM25, and Atlas's Grep guidance says otherwise); its
+/// ApplyPatch claims delete support it does not have.
+struct Redescribed {
+    inner: Box<dyn Tool>,
+    description: &'static str,
+}
+
+#[async_trait::async_trait]
+impl Tool for Redescribed {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn description(&self) -> &str {
+        self.description
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        self.inner.input_schema()
+    }
+    fn permission_level(&self) -> cersei::tools::PermissionLevel {
+        self.inner.permission_level()
+    }
+    fn category(&self) -> cersei::tools::ToolCategory {
+        self.inner.category()
+    }
+    async fn execute(
+        &self,
+        input: serde_json::Value,
+        ctx: &cersei::tools::ToolContext,
+    ) -> cersei::tools::ToolResult {
+        self.inner.execute(input, ctx).await
+    }
+}
+
+/// What `CodeSearch` actually is: BM25 ranking, no index, no network. The
+/// SDK's text told the model it was semantic and to prefer it over Grep.
+const CODE_SEARCH_DESCRIPTION: &str = "Keyword search (BM25) over the working tree. Returns \
+ranked snippets with file paths and line numbers. Useful when you do not know the exact text — \
+for an exact string or symbol, Grep is more precise.";
+
+/// The SDK applier splices unified diffs and has no delete path; its own text
+/// promised deletion. Kept accurate here so a shell-first model does not chase
+/// a capability that is not there.
+const APPLY_PATCH_DESCRIPTION: &str = "Apply a unified diff (as produced by `diff -u` or `git \
+diff`) to one or more files. Supports creating new files. Cannot delete a file — use the shell \
+for that.";
+
 pub use guard::{guard_all, Guarded};
 pub use policy::{Decision, EnforcementTier, Freshness, ToolPolicy};
 pub use tiers::{ModelCapabilities, ToolTier};
@@ -152,8 +204,12 @@ pub fn atlas_coding_with(
         // `CodeSearch` is BM25 over the working tree — no index, no key, no
         // network — and returns ranked snippets with line numbers, so it often
         // answers a question that would otherwise cost a whole-file `Read`. It
-        // earns its place in the list.
-        tools.push(Box::new(t::code_search::CodeSearchTool::new()));
+        // earns its place in the list. Redescribed: the SDK text calls it
+        // semantic and the default over Grep, both false here.
+        tools.push(Box::new(Redescribed {
+            inner: Box::new(t::code_search::CodeSearchTool::new()),
+            description: CODE_SEARCH_DESCRIPTION,
+        }));
         // `ExaSearch` reads its key from the environment and errors at call
         // time without one. It carries the largest schema in the registry and
         // that schema is re-sent on every request of every turn, so registering
@@ -168,7 +224,12 @@ pub fn atlas_coding_with(
         // which is exactly the arrangement Codex ships. In the structured tier
         // `Edit` and `Write` cover the same ground with better errors, and a
         // third edit format is one more choice for a weak model to get wrong.
-        tools.push(Box::new(t::apply_patch::ApplyPatchTool));
+        // Redescribed: the SDK text promises file deletion the applier does
+        // not implement.
+        tools.push(Box::new(Redescribed {
+            inner: Box::new(t::apply_patch::ApplyPatchTool),
+            description: APPLY_PATCH_DESCRIPTION,
+        }));
     }
 
     // ── Platform-gated ──────────────────────────────────────────────────────
@@ -527,6 +588,38 @@ mod tests {
         // CodeSearch is BM25-only — no key, no index, no network — so it is
         // always available and must not be gated alongside it.
         assert!(all.contains(&"CodeSearch".to_string()), "{all:?}");
+    }
+
+    #[test]
+    fn no_registered_description_contradicts_the_harness() {
+        // A description is prompt text. The SDK's CodeSearch called itself
+        // "semantic" and the default over Grep (it is BM25, and Atlas's Grep
+        // guidance says the opposite); its ApplyPatch promised file deletion
+        // the applier does not implement. A model handed contradictory
+        // instructions does not pick the better one — it oscillates.
+        let tmp = TmpDir::new();
+        let policy = ToolPolicy::contained(tmp.path());
+        for tier in [ToolTier::Structured, ToolTier::ShellFirst] {
+            let tools =
+                atlas_coding_with(None, policy.clone(), tier, ModelCapabilities::default());
+            for tool in &tools {
+                let d = tool.description();
+                match tool.name() {
+                    "CodeSearch" => {
+                        assert!(!d.contains("Semantic") && !d.contains("semantic"), "{d}");
+                        assert!(!d.contains("DEFAULT"), "{d}");
+                        assert!(d.contains("BM25"), "the honest description is gone: {d}");
+                    }
+                    "ApplyPatch" => {
+                        assert!(
+                            !d.contains("deleting files"),
+                            "ApplyPatch claims a delete path it does not have: {d}"
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
     #[test]
