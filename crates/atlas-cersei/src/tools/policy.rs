@@ -423,6 +423,17 @@ impl ToolPolicy {
         }
     }
 
+    /// Forget every answered read. Called when the conversation stops
+    /// containing the answers — a compaction summarised them away, or a
+    /// cancelled round replaced its results with synthesized stubs — because
+    /// the suppression message asserts "its contents are already in this
+    /// conversation" and must never assert it falsely. The cost of forgetting
+    /// is one re-read per file; the cost of not forgetting is a model told not
+    /// to fetch what it can no longer see.
+    pub fn forget_served(&self) {
+        self.served.clear();
+    }
+
     // ── Approvals + classification (D8) ─────────────────────────────────────
 
     /// The full pre-execution decision, called from the session's

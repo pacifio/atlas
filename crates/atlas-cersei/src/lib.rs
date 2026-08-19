@@ -582,6 +582,12 @@ impl CerseiRuntime {
                 token.cancel();
             }
         }
+        // A cancelled round's tool results are replaced by synthesized
+        // "cancelled" stubs in provider history, so a Read that completed
+        // inside it was recorded as answered while its content never reached
+        // the conversation. Conservative reset: the next identical read runs
+        // for real instead of being told its answer is somewhere it is not.
+        entry.policy.forget_served();
         let keys: Vec<Uuid> = entry.pending.iter().map(|e| *e.key()).collect();
         for k in keys {
             if let Some((_, tx)) = entry.pending.remove(&k) {
@@ -851,6 +857,14 @@ impl CerseiRuntime {
         });
         let mut turn_error: Option<String> = None;
         while let Some(ev) = stream.next().await {
+            // Compaction summarises old tool results out of the conversation.
+            // The repeat-read stub's promise — "its contents are already in
+            // this conversation" — stops being true for anything answered
+            // before the compaction, so those records must not keep
+            // suppressing reads the model can no longer see the answers to.
+            if matches!(ev, cersei::events::AgentEvent::CompactEnd { .. }) {
+                tool_policy.forget_served();
+            }
             match translate_event(ev, &sink, agent_id, &session_id, &mut todo_ids, &mut acct) {
                 TurnStep::Continue => {}
                 TurnStep::SetStop(s) => {

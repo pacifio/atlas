@@ -128,20 +128,21 @@ impl Tool for Guarded {
         let mut read_signature: Option<(String, std::path::PathBuf)> = None;
         if name == "Read" {
             if let Some(path) = canonical.first() {
-                let sig = signature_for(&name, path, &input);
-                if self.policy.already_served(&sig, path) {
-                    return finish(
-                        &self.policy,
-                        &name,
-                        "repeat",
-                        started,
-                        ToolResult::success(errors::already_read(&display(
-                            path,
-                            self.policy.root(),
-                        ))),
-                    );
+                if let Some(sig) = signature_for(&name, path, &input) {
+                    if self.policy.already_served(&sig, path) {
+                        return finish(
+                            &self.policy,
+                            &name,
+                            "repeat",
+                            started,
+                            ToolResult::success(errors::already_read(&display(
+                                path,
+                                self.policy.root(),
+                            ))),
+                        );
+                    }
+                    read_signature = Some((sig, path.clone()));
                 }
-                read_signature = Some((sig, path.clone()));
             }
         }
 
@@ -264,20 +265,26 @@ fn rewrite_paths(input: &mut Value, policy: &ToolPolicy) {
 /// the file is unchanged — which is what makes suppressing the second one safe,
 /// and what keeps `offset`/`limit` pagination working: page 2 of a file is a
 /// different signature from page 1.
-fn signature_for(name: &str, path: &Path, input: &Value) -> String {
-    let range = |field: &str| {
-        input
-            .get(field)
-            .and_then(Value::as_u64)
-            .map(|n| n.to_string())
-            .unwrap_or_default()
+///
+/// Returns `None` — never suppress — when a range field is present but not a
+/// clean unsigned integer. Weak models routinely send `"offset": "1000"` or
+/// `1000.0`; collapsing those to the no-range signature made a *paginating*
+/// read look identical to the full read it followed, and the model was told
+/// "already in this conversation" about a page it never received. Skipping
+/// suppression instead lets the tool return its own corrective decode error.
+fn signature_for(name: &str, path: &Path, input: &Value) -> Option<String> {
+    let range = |field: &str| -> Option<String> {
+        match input.get(field) {
+            None | Some(Value::Null) => Some(String::new()),
+            Some(v) => v.as_u64().map(|n| n.to_string()),
+        }
     };
-    format!(
+    Some(format!(
         "{name}\u{1}{}\u{1}{}\u{1}{}",
         path.display(),
-        range("offset"),
-        range("limit")
-    )
+        range("offset")?,
+        range("limit")?
+    ))
 }
 
 /// Render `path` relative to the workspace root for a user-facing message.
@@ -717,6 +724,61 @@ mod tests {
         let repeat = read_via(g.as_ref(), &ctx, "big.rs", Some(1000)).await;
         assert_eq!(spy.calls(), 3);
         assert!(repeat.content.contains("has not changed"));
+    }
+
+    #[tokio::test]
+    async fn a_stringly_typed_offset_is_never_mistaken_for_the_full_read() {
+        // Weak models send `"offset": "1000"`. `as_u64` returns None for it,
+        // and the old signature collapsed that to the no-range form — so a
+        // paginating read was told "already in this conversation" about a page
+        // it never received. Unparseable ranges skip suppression entirely.
+        let tmp = TmpDir::new();
+        std::fs::write(tmp.path().join("a.rs"), "x".repeat(4096)).unwrap();
+        let policy = ToolPolicy::contained(tmp.path());
+        let spy = Spy::new("Read", PermissionLevel::ReadOnly);
+        let g = wrap(&spy, policy);
+        let ctx = test_ctx(tmp.path().to_path_buf());
+
+        let _ = g.execute(json!({"file_path": "a.rs"}), &ctx).await;
+        assert_eq!(spy.calls(), 1);
+        let second = g
+            .execute(json!({"file_path": "a.rs", "offset": "1000"}), &ctx)
+            .await;
+        assert_eq!(
+            spy.calls(),
+            2,
+            "a string offset must reach the tool, not the stub: {}",
+            second.content
+        );
+        assert!(!second.content.contains("has not changed"), "{}", second.content);
+
+        // A float offset is the same class of input.
+        let third = g
+            .execute(json!({"file_path": "a.rs", "offset": 1000.5}), &ctx)
+            .await;
+        assert_eq!(spy.calls(), 3, "{}", third.content);
+    }
+
+    #[tokio::test]
+    async fn forgetting_served_reads_makes_the_next_read_run_for_real() {
+        // Compaction and cancel both remove answers from the conversation; the
+        // runtime calls `forget_served` at those points so the stub's claim —
+        // "its contents are already in this conversation" — stays true.
+        let tmp = TmpDir::new();
+        std::fs::write(tmp.path().join("a.rs"), "fn main() {}").unwrap();
+        let policy = ToolPolicy::contained(tmp.path());
+        let spy = Spy::new("Read", PermissionLevel::ReadOnly);
+        let g = wrap(&spy, policy.clone());
+        let ctx = test_ctx(tmp.path().to_path_buf());
+
+        let _ = g.execute(json!({"file_path": "a.rs"}), &ctx).await;
+        let repeat = g.execute(json!({"file_path": "a.rs"}), &ctx).await;
+        assert_eq!(spy.calls(), 1, "precondition: the repeat was suppressed");
+        assert!(repeat.content.contains("has not changed"));
+
+        policy.forget_served();
+        let after = g.execute(json!({"file_path": "a.rs"}), &ctx).await;
+        assert_eq!(spy.calls(), 2, "after forgetting, the read must run: {}", after.content);
     }
 
     #[tokio::test]
