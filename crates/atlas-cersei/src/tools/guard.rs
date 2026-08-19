@@ -82,7 +82,12 @@ impl Guarded {
             }
         }
         let check = match self.policy.check_config() {
-            Some(cfg) => crate::tools::probe::run_check(cfg, self.policy.root()).await,
+            // Sandbox-wrapped like agent Bash: the config lives inside the
+            // workspace, so an unconfined check would let a permitted
+            // workspace write escape the sandbox entirely.
+            Some(cfg) => {
+                crate::tools::probe::run_check(cfg, self.policy.root(), self.policy.sandbox()).await
+            }
             None => None,
         };
         let report = crate::tools::probe::render_report(&parse, check.as_deref());

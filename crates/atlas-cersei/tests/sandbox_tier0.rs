@@ -175,6 +175,42 @@ fn writing_outside_the_workspace_is_refused() {
 }
 
 #[test]
+fn the_project_check_command_runs_inside_the_sandbox() {
+    // `.atlas/check.json` lives *inside the workspace*, which is the one place
+    // the sandbox lets the agent write. Running it unconfined therefore turned
+    // a permitted workspace write into unsandboxed execution — a sandbox
+    // bypassable by the thing it permits — and made merely opening an untrusted
+    // repository a code-execution event on the first edit.
+    let ws = Workspace::new();
+    let home = std::env::var("HOME").expect("HOME");
+    let target = Path::new(&home).join(".atlas-check-escape-probe");
+    let _ = std::fs::remove_file(&target);
+
+    std::fs::create_dir_all(ws.path().join(".atlas")).unwrap();
+    let config = atlas_cersei::tools::probe::CheckConfig {
+        command: format!("touch '{}' && echo ESCAPED; exit 1", target.display()),
+        timeout_secs: Some(10),
+    };
+
+    let policy = ToolPolicy::new(ws.path(), "check-sandbox");
+    assert_eq!(policy.tier(), EnforcementTier::Sandboxed);
+    let report = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(atlas_cersei::tools::probe::run_check(
+            &config,
+            ws.path(),
+            policy.sandbox(),
+        ));
+
+    let escaped = target.exists();
+    let _ = std::fs::remove_file(&target);
+    assert!(
+        !escaped,
+        "the project check command wrote outside the workspace: {report:?}"
+    );
+}
+
+#[test]
 fn a_workspace_path_with_shell_metacharacters_does_not_break_the_profile() {
     // Paths are `-D` parameters precisely so a name like this cannot close a
     // policy expression and rewrite the rest of the profile.

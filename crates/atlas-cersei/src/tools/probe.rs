@@ -10,9 +10,18 @@
 //! 2. **Check command** — an optional project-configured command from
 //!    `.atlas/check.json` (`{"command": "...", "timeout_secs": N}`), run in
 //!    the workspace root with a hard timeout. Exit 0 → silence; non-zero →
-//!    an output tail. The command is the project author's own (it lives in
-//!    their repo), so it runs unsandboxed like their shell would — unlike
-//!    agent-authored Bash, which stays sandbox-wrapped.
+//!    an output tail. It is **sandbox-wrapped exactly like agent-authored
+//!    Bash**. The earlier reasoning — "it's the project author's own command,
+//!    so it runs unsandboxed like their shell would" — does not survive
+//!    contact with where the file lives: `.atlas/check.json` sits *inside the
+//!    workspace*, which is the one place the sandbox lets the agent write. An
+//!    unconfined check therefore turned a permitted workspace write into
+//!    unsandboxed execution (a sandbox bypassable by the thing it permits),
+//!    and made merely opening an untrusted repository a code-execution event
+//!    on the first edit — with no approval prompt anywhere. Confining it costs
+//!    nothing real: `cargo check`, `tsc` and `eslint` all run fine inside,
+//!    since the workspace and the temp dirs are writable and the network is
+//!    not mediated.
 //!
 //! Findings are appended to the tool result as a bounded text block — the
 //! same channel the SDK's retry guidance already uses. The dedup ledger
@@ -137,40 +146,71 @@ pub fn load_check_config(root: &Path) -> Option<CheckConfig> {
 /// Run the project check command. `None` = nothing to report (clean exit,
 /// timeout, or spawn failure — a broken check setup must not fail edits).
 /// `Some(text)` = a bounded failure tail.
-pub async fn run_check(config: &CheckConfig, root: &Path) -> Option<String> {
-    use cersei::tools::tool_primitives::process::{exec, ExecOptions};
-    let opts = ExecOptions {
-        cwd: Some(root.to_path_buf()),
-        timeout: Some(std::time::Duration::from_secs(config.timeout_secs())),
-        ..Default::default()
+///
+/// `sandbox` is the policy's sandbox, and the command runs inside it whenever
+/// the host provides one. This is not defence in depth over some other control:
+/// it is the *only* control on this path, because a check command is never
+/// classified and never prompts.
+pub async fn run_check(
+    config: &CheckConfig,
+    root: &Path,
+    sandbox: Option<&super::sandbox::Sandbox>,
+) -> Option<String> {
+    let argv = check_argv(&config.command, sandbox);
+    let mut cmd = tokio::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..])
+        .current_dir(root)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let child = cmd.spawn().ok()?;
+    let timeout = std::time::Duration::from_secs(config.timeout_secs());
+    let out = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(Ok(out)) => out,
+        // A broken check setup must never fail the edit it was reporting on.
+        Ok(Err(_)) => return None,
+        Err(_) => {
+            return Some(format!(
+                "check command timed out after {}s (`{}`)",
+                config.timeout_secs(),
+                config.command
+            ))
+        }
     };
-    let out = exec(&config.command, opts).await.ok()?;
-    if out.timed_out {
-        return Some(format!(
-            "check command timed out after {}s (`{}`)",
-            config.timeout_secs(),
-            config.command
-        ));
-    }
-    if out.exit_code == 0 {
+    let exit_code = out.status.code().unwrap_or(-1);
+    if exit_code == 0 {
         return None;
     }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
     let mut combined = String::new();
-    combined.push_str(out.stdout.trim_end());
-    if !out.stderr.trim().is_empty() {
+    combined.push_str(stdout.trim_end());
+    if !stderr.trim().is_empty() {
         if !combined.is_empty() {
             combined.push('\n');
         }
-        combined.push_str(out.stderr.trim_end());
+        combined.push_str(stderr.trim_end());
     }
     let tail: Vec<&str> = combined.lines().rev().take(10).collect();
     let tail: Vec<&str> = tail.into_iter().rev().collect();
     Some(format!(
         "check command failed (exit {}): `{}`\n{}",
-        out.exit_code,
+        exit_code,
         config.command,
         tail.join("\n")
     ))
+}
+
+/// The argv for a check command — `sh -c <command>`, sandbox-wrapped when the
+/// host has a sandbox. Split out so the wrapping is assertable without spawning
+/// anything.
+fn check_argv(command: &str, sandbox: Option<&super::sandbox::Sandbox>) -> Vec<String> {
+    let argv = vec!["sh".to_string(), "-c".to_string(), command.to_string()];
+    match sandbox {
+        Some(sb) => sb.wrap(argv),
+        None => argv,
+    }
 }
 
 /// Compose the appended block from per-file parse findings and an optional
@@ -292,13 +332,13 @@ mod tests {
     async fn the_check_command_is_silent_on_success_and_tailed_on_failure() {
         let tmp = Scratch::new();
         let ok = CheckConfig { command: "true".into(), timeout_secs: Some(5) };
-        assert_eq!(run_check(&ok, tmp.path()).await, None);
+        assert_eq!(run_check(&ok, tmp.path(), None).await, None);
 
         let bad = CheckConfig {
             command: "echo broken-thing >&2; exit 1".into(),
             timeout_secs: Some(5),
         };
-        let report = run_check(&bad, tmp.path()).await.unwrap();
+        let report = run_check(&bad, tmp.path(), None).await.unwrap();
         assert!(report.contains("broken-thing"), "{report}");
         assert!(report.contains("exit"), "{report}");
     }
@@ -308,7 +348,7 @@ mod tests {
         let tmp = Scratch::new();
         let hung = CheckConfig { command: "sleep 30".into(), timeout_secs: Some(1) };
         let started = std::time::Instant::now();
-        let report = run_check(&hung, tmp.path()).await.unwrap();
+        let report = run_check(&hung, tmp.path(), None).await.unwrap();
         assert!(report.contains("timed out"), "{report}");
         assert!(started.elapsed() < std::time::Duration::from_secs(10));
     }
