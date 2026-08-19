@@ -554,7 +554,10 @@ export function projectRows(
         firstInTurn: false,
         summary: summarise(run),
         count: run.length,
-        modified: new Set(run.filter((r) => r.opens === "diff").map((r) => r.detail)).size,
+        // Keyed on the FULL path — `detail` is shortened for display, and two
+        // files that still collide after shortening would undercount here.
+        modified: new Set(run.filter((r) => r.opens === "diff").map((r) => r.path ?? r.detail))
+          .size,
         added: run.reduce((n, r) => n + r.added, 0),
         duration: span > 1000 ? fmtDuration(span) : null,
         open,

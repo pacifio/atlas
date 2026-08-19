@@ -329,7 +329,7 @@ function EnforcementNote({ tabId }: { tabId: string }) {
   const cwd = useChatStore((s) => s.sessions[tabId]?.workingDirectory);
   const projectPath = useProjectStore((s) => s.currentProject?.path ?? null);
   const root = cwd || projectPath;
-  const [info, setInfo] = useState<Enforcement | null>(null);
+  const [info, setInfo] = useState<Enforcement | "unknown" | null>(null);
 
   useEffect(() => {
     if (!isNative || !root) {
@@ -337,14 +337,19 @@ function EnforcementNote({ tabId }: { tabId: string }) {
       return;
     }
     let live = true;
+    // Cleared on refetch so a workspace switch cannot leave the previous
+    // root's tier on screen while the new answer is in flight.
+    setInfo(null);
     cerseiEnforcement(root)
       .then((e) => {
         if (live) setInfo(e);
       })
       .catch(() => {
-        // A failure here must not blank the mode picker; the tier is
-        // information, not a control.
-        if (live) setInfo(null);
+        // A security indicator must never default to reassurance for a value
+        // it could not confirm — and rendering nothing here is ambiguous with
+        // the (normal) absence for non-native agents. An errored probe shows
+        // as unknown, warn-tinted.
+        if (live) setInfo("unknown");
       });
     return () => {
       live = false;
@@ -352,6 +357,19 @@ function EnforcementNote({ tabId }: { tabId: string }) {
   }, [isNative, root]);
 
   if (!info) return null;
+  if (info === "unknown") {
+    return (
+      <div className="mt-1 border-t border-[var(--border-default)] px-2 pb-0.5 pt-1.5">
+        <span className="flex items-center gap-1.5 text-[10px] font-medium text-[var(--status-warning)]">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--status-warning)]" />
+          Enforcement unknown
+        </span>
+        <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)]">
+          Could not determine what bounds the agent in this workspace.
+        </span>
+      </div>
+    );
+  }
   // Anything below the top of the ladder is the case the user needs to notice,
   // so it is tinted rather than left as quiet secondary text. `unknown` is
   // treated as degraded on purpose: a security indicator must never default to

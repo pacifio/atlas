@@ -157,6 +157,26 @@ describe("run grouping", () => {
     expect(groups.map((g) => g.open)).toEqual([false, false, true]);
   });
 
+  it("counts modified files by full path, not the shortened label", () => {
+    // Deep paths that still collide after shortening ("src/features/…/x.ts")
+    // undercounted when the set was keyed on the display label.
+    const msgs: ChatMessage[] = [
+      msg({ id: "u1", role: "user", content: "go" }),
+      msg({
+        id: "a1",
+        role: "assistant",
+        mode: "tool",
+        toolCalls: [
+          tool("Edit", "edit", { file_path: "src/features/chat/lib/x.ts" }),
+          tool("Edit", "edit", { file_path: "src/features/settings/lib/x.ts" }),
+        ],
+      }),
+    ];
+    const { rows } = projectRows(msgs, { ...opts, streaming: false });
+    const group = rows.find((r) => r.kind === RowKind.MarkerGroup);
+    expect(group?.modified).toBe(2);
+  });
+
   it("names a fourth kind's count rather than a fourth clause", () => {
     const many = Array.from({ length: 11 }, (_, k) =>
       k < 4

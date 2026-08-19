@@ -151,6 +151,9 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
   const title = current.toolCall.title ?? current.toolCall.kind ?? "Tool call";
   const planMarkdown = extractPlanMarkdown(current.toolCall);
   const questions = extractQuestions(current.toolCall);
+  // The gate's classification verdict ("Recursive or forced delete.") rides
+  // the tool call as a text content block — the why behind the interruption.
+  const reason = planMarkdown || questions ? null : extractReasonText(current.toolCall);
   const queueNote = queueLength > 1 ? `${queueLength - 1} more pending after this` : null;
 
   // Numbered option list — shared by both layouts.
@@ -259,6 +262,7 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
             <div className="text-[13px] font-medium leading-snug text-text-primary">
               The agent wants to run <span className="font-mono text-text-primary">{title}</span>?
             </div>
+            {reason && <div className="mt-0.5 text-[11px] text-text-secondary">{reason}</div>}
             {queueNote && <div className="mt-0.5 text-[11px] text-text-secondary">{queueNote}</div>}
           </div>
         </div>
@@ -342,6 +346,20 @@ function PermissionOption({
       )}
     </button>
   );
+}
+
+/** First plain-text content block on the tool call — the gate's stated reason
+ *  for interrupting, when it sent one. */
+function extractReasonText(tc: PendingPermission["toolCall"]): string | null {
+  const content = (tc as Record<string, unknown>).content;
+  if (!Array.isArray(content)) return null;
+  for (const block of content) {
+    const b = block as { type?: string; content?: { type?: string; text?: string } };
+    if (b?.type === "content" && b.content?.type === "text" && b.content.text) {
+      return b.content.text;
+    }
+  }
+  return null;
 }
 
 function ToolCallPreview({ tc }: { tc: PendingPermission["toolCall"] }) {
