@@ -277,12 +277,17 @@ fn whitespace_normalized(content: &str, find: &str) -> Vec<String> {
 }
 
 /// Strip the common minimum indentation from every non-empty line.
+///
+/// Counted and cut in **characters**, not bytes: indentation can be NBSP or
+/// U+3000 (multi-byte whitespace is a known weak-model quirk), and a byte
+/// offset computed from one line's indent landed mid-character on another's —
+/// a panic, from the strategy ladder that exists to rescue exactly that input.
 fn remove_indentation(text: &str) -> String {
     let lines: Vec<&str> = text.split('\n').collect();
     let min_indent = lines
         .iter()
         .filter(|l| !l.trim().is_empty())
-        .map(|l| l.len() - l.trim_start().len())
+        .map(|l| l.chars().take_while(|c| c.is_whitespace()).count())
         .min();
     match min_indent {
         None => text.to_string(),
@@ -292,7 +297,12 @@ fn remove_indentation(text: &str) -> String {
                 if l.trim().is_empty() {
                     l.to_string()
                 } else {
-                    l[min..].to_string()
+                    let cut = l
+                        .char_indices()
+                        .nth(min)
+                        .map(|(i, _)| i)
+                        .unwrap_or(l.len());
+                    l[cut..].to_string()
                 }
             })
             .collect::<Vec<_>>()
@@ -635,6 +645,22 @@ mod tests {
     #[test]
     fn identical_rejected() {
         assert_eq!(replace("x", "a", "a", false), Err(ReplaceError::Identical));
+    }
+
+    #[test]
+    fn multibyte_whitespace_indentation_does_not_panic() {
+        // U+3000 (3 bytes) indents one line while another has two ASCII
+        // spaces: the old byte-offset cut landed mid-character and panicked —
+        // in the strategy ladder that exists to rescue weak-model quirks like
+        // NBSP indentation, with no catch_unwind above it.
+        let normalized = remove_indentation("\u{3000}\u{3000}a\n  b");
+        assert!(normalized.contains('a') && normalized.contains('b'));
+
+        // And through the public entry point, where the ladder reaches
+        // IndentationFlexible on the way to NotFound.
+        let content = "\u{a0}\u{a0}let x = 1;\n  let y = 2;\n";
+        let r = replace(content, "    let z = 9;", "    let z = 10;", false);
+        assert_eq!(r, Err(ReplaceError::NotFound), "no panic, a plain miss");
     }
 
     #[test]

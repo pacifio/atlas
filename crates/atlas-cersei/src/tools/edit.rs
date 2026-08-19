@@ -322,8 +322,36 @@ impl Tool for EditTool {
         let mut result_lf: std::borrow::Cow<'_, str> = std::borrow::Cow::Borrowed(&content_lf);
         for (i, op) in ops.iter().enumerate() {
             let old_lf = op.old_string.replace("\r\n", "\n");
-            let new_lf = op.new_string.replace("\r\n", "\n");
-            result_lf = match replace::replace(&result_lf, &old_lf, &new_lf, op.replace_all) {
+            let mut new_lf = op.new_string.replace("\r\n", "\n");
+            // The fence rescue lives here, next to the matcher, raw-first —
+            // NOT in coerce at dispatch, where unconditional stripping
+            // corrupted legitimate edits to fenced markdown. Two quirk shapes:
+            //
+            // * new_string alone arrives ```-wrapped. Stripped only when
+            //   nothing in play legitimately contains a fence — the moment the
+            //   file or old_string has one, the fences are taken verbatim.
+            if !old_lf.contains("```") && !result_lf.contains("```") {
+                let stripped = coerce::strip_code_fences(&new_lf);
+                if stripped != new_lf {
+                    new_lf = stripped;
+                }
+            }
+            // * both sides arrive ```-wrapped. The verbatim text is tried
+            //   first; only a NotFound falls back to the de-fenced pair, so an
+            //   edit whose payload really is a fenced block still matches.
+            let attempt = match replace::replace(&result_lf, &old_lf, &new_lf, op.replace_all) {
+                Err(replace::ReplaceError::NotFound) => {
+                    let stripped_old = coerce::strip_code_fences(&old_lf);
+                    if stripped_old != old_lf {
+                        let stripped_new = coerce::strip_code_fences(&new_lf);
+                        replace::replace(&result_lf, &stripped_old, &stripped_new, op.replace_all)
+                    } else {
+                        Err(replace::ReplaceError::NotFound)
+                    }
+                }
+                other => other,
+            };
+            result_lf = match attempt {
                 Ok(s) => std::borrow::Cow::Owned(s),
                 Err(e) => {
                     let why = match e {
@@ -690,6 +718,94 @@ mod tests {
         .await;
         assert!(!r.is_error, "{}", r.content);
         assert_eq!(std::fs::read_to_string(tmp.path().join("sub/new.txt")).unwrap(), "hello");
+    }
+
+    // ── Fence handling: verbatim first, rescue second ───────────────────────
+
+    #[tokio::test]
+    async fn an_edit_whose_payload_is_a_fenced_block_matches_verbatim() {
+        // Replacing a whole fenced block in markdown with plain text — the
+        // case dispatch-time stripping corrupted: the de-fenced old matched
+        // only the inner line, so the replacement landed inside the fences and
+        // left them behind as debris.
+        let tmp = TmpDir::new();
+        let f = tmp.path().join("README.md");
+        std::fs::write(&f, "Intro\n\n```rust\nfn old() {}\n```\n\nOutro\n").unwrap();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "file_path": "README.md",
+                "old_string": "```rust\nfn old() {}\n```",
+                "new_string": "See the source instead."
+            }),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "Intro\n\nSee the source instead.\n\nOutro\n",
+            "the fenced block is payload: it must be matched verbatim and fully replaced"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_model_that_wrapped_both_sides_in_fences_is_still_rescued() {
+        // The quirk the old dispatch stripping existed for: a rust file with
+        // no fences anywhere, and the model ```-wrapped its old and new text.
+        let tmp = TmpDir::new();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "fn a() {}\n").unwrap();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "file_path": "a.rs",
+                "old_string": "```rust\nfn a() {}\n```",
+                "new_string": "```rust\nfn b() {}\n```"
+            }),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "fn b() {}\n");
+    }
+
+    #[tokio::test]
+    async fn a_fenced_new_string_alone_is_unwrapped_only_outside_fenced_files() {
+        // new_string alone arrives wrapped; old matches raw. In a file with no
+        // fences this is the quirk — strip. In a file that has fences, the
+        // wrapping is taken verbatim, because there is no way to distinguish
+        // quirk from intent and corrupting markdown silently is the worse
+        // failure.
+        let tmp = TmpDir::new();
+        let plain = tmp.path().join("a.rs");
+        std::fs::write(&plain, "fn a() {}\n").unwrap();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "file_path": "a.rs",
+                "old_string": "fn a() {}",
+                "new_string": "```rust\nfn b() {}\n```"
+            }),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert_eq!(std::fs::read_to_string(&plain).unwrap(), "fn b() {}\n");
+
+        let md = tmp.path().join("doc.md");
+        std::fs::write(&md, "Text\n\n```sh\nls\n```\n\nAdd here:\n").unwrap();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "file_path": "doc.md",
+                "old_string": "Add here:",
+                "new_string": "```sh\npwd\n```"
+            }),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert!(
+            std::fs::read_to_string(&md).unwrap().contains("```sh\npwd\n```"),
+            "in a file that already has fences, the replacement is verbatim"
+        );
     }
 
     #[tokio::test]

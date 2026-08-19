@@ -161,7 +161,10 @@ impl Tool for ReadTool {
         }
 
         let offset = input.offset.unwrap_or(1).max(1);
-        let limit = input.limit.unwrap_or(DEFAULT_LIMIT);
+        // `limit: 0` would produce a "Showing lines 1-0" footer that reads as
+        // an instruction to page from nowhere; a floor of one keeps the reply
+        // coherent for a model that sent a nonsense limit.
+        let limit = input.limit.unwrap_or(DEFAULT_LIMIT).max(1);
         match paginate(&path, offset, limit).await {
             Ok(page) => ToolResult::success(format!("{display}\n{}{}", page.body, page.footer(offset))),
             Err(PageError::Io(e)) => ToolResult::error(format!("Failed to read {display}: {e}")),

@@ -71,7 +71,14 @@ pub const ALIASES: &[(&str, &str)] = &[
 ];
 
 /// Field names whose value is free text a model may wrap in a code fence.
-const FENCEABLE: &[&str] = &["old_string", "new_string", "content", "patch", "input"];
+///
+/// `old_string`/`new_string` are deliberately absent: stripping them at
+/// dispatch corrupted legitimate edits to markdown whose payload *is* a fenced
+/// block — a spurious not-found in the symmetric case, silently de-fenced
+/// written content in the asymmetric one. The edit tool owns that rescue now
+/// (`edit.rs`), raw-first: the verbatim text is tried before any de-fenced
+/// variant, so verbatim means verbatim.
+const FENCEABLE: &[&str] = &["content", "patch", "input"];
 
 /// If the tool args arrived as a JSON *string* (some providers double-encode),
 /// parse it back into an object. Otherwise return `input` unchanged.
@@ -210,7 +217,10 @@ mod tests {
         );
         let got = for_schema(raw, &s);
         assert_eq!(got["file_path"], "a.rs");
-        assert_eq!(got["old_string"], "old");
+        // Fences on old_string/new_string survive dispatch untouched: the edit
+        // tool owns the rescue, raw-first, so an edit to a markdown file whose
+        // payload IS a fenced block matches verbatim.
+        assert_eq!(got["old_string"], "```\nold\n```");
         assert_eq!(got["new_string"], "new");
     }
 
