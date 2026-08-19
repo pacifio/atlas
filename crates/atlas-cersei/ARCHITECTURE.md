@@ -181,6 +181,33 @@ cumulative token counters reset every turn. The runtime therefore keeps its **ow
 running total (`CompressAccount` + `SessionEntry.usage`) so "tokens processed"
 survives a reload.
 
+### 5a. What the loop does mid-turn (Phase 0 additions)
+
+- **Steering.** A send that arrives while a turn is running is a
+  course-correction, not an error. The session actor calls `steer_turn`, which
+  routes the text into the live agent's steering queue (a `Weak<Agent>` on
+  `SessionEntry`); the vendored runner injects it before its next model call,
+  after the in-flight tool batch settles — so no message ever lands between a
+  permission prompt and its approval. Backends that can't steer (ACP agents)
+  fall back to the actor's supersede path, and the composer only offers
+  steering for native sessions.
+- **Doom loops.** The runner's detector keys on (tool, input-hash) and
+  requires failures; the first trigger nudges, a repeat escalates to a
+  permission ask (`DOOM_LOOP_ASK`, rendered "Agent stuck in a loop") that
+  `UiPolicy` always prompts for outside bypass mode.
+- **MaxTokens.** A length-stopped message carrying tool_use blocks gets paired
+  error tool_results — the calls are never executed and the model is told to
+  re-issue them, keeping provider history valid.
+- **Compaction.** Before auto-compaction summarizes, the agent awaits the
+  pre-compact hook (`register_memory_flush` seam → the Tauri layer's memory
+  extraction), and `CompactStart`/`CompactEnd` now actually fire — the
+  read-registry reset listens for the latter.
+- **Telemetry.** `send_prompt` ends every turn with one structured
+  `atlas::harness` line (edit calls/ladder strategy/not-found, doom triggers,
+  steers, retries, compactions, permission asks, tokens, wall clock). Shape of
+  usage only; the M0 eval harness consumes the same schema, and a whitelisting
+  bridge in src-tauri forwards the counters to PostHog as `harness_turn`.
+
 ---
 
 ## 6. The tools — what Atlas can actually do
