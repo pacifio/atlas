@@ -15,6 +15,56 @@ use std::process::Command;
 
 use cersei_agent::system_prompt::GitSnapshot;
 
+/// The parts of the system prompt that change per turn, rendered by Atlas.
+///
+/// Atlas assembles its own system prompt (see `ATLAS_PROMPT`), so these are
+/// emitted here rather than by `build_system_prompt`. Same tags and same shape
+/// as the SDK used, because models are sensitive to prompt structure and there
+/// is nothing to gain from a different one — what changed is who decides the
+/// *content*, not how it is framed.
+pub fn dynamic_sections(
+    cwd: &str,
+    git: Option<&GitSnapshot>,
+    docs: &str,
+    mcp: &[(String, String)],
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("\n\n<working_directory>{cwd}</working_directory>"));
+
+    if let Some(g) = git {
+        out.push_str(&format!("\n\n<git_status>\nBranch: {}", g.branch));
+        if let Some(user) = &g.user {
+            out.push_str(&format!("\nUser: {user}"));
+        }
+        if !g.status_lines.is_empty() {
+            out.push_str("\nStatus:");
+            for line in &g.status_lines {
+                out.push_str(&format!("\n  {line}"));
+            }
+        }
+        if !g.recent_commits.is_empty() {
+            out.push_str("\nRecent commits:");
+            for commit in &g.recent_commits {
+                out.push_str(&format!("\n  {commit}"));
+            }
+        }
+        out.push_str("\n</git_status>");
+    }
+
+    if !docs.is_empty() {
+        out.push_str(&format!("\n\n<memory>\n{docs}\n</memory>"));
+    }
+
+    if !mcp.is_empty() {
+        out.push_str("\n\n<mcp_instructions>");
+        for (name, instructions) in mcp {
+            out.push_str(&format!("\n## {name}\n{instructions}"));
+        }
+        out.push_str("\n</mcp_instructions>");
+    }
+    out
+}
+
 /// Run `git` in `cwd` and return trimmed stdout, or `None` on any failure / non-zero exit.
 fn git(cwd: &str, args: &[&str]) -> Option<String> {
     let out = Command::new("git").args(args).current_dir(cwd).output().ok()?;

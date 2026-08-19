@@ -123,10 +123,10 @@ This is the heart of the crate. When you hit send:
    2. Build the provider           (provider.rs::build_provider)
    3. Assemble the TOOLSET  ───────────────┐  (see §6)
    4. Build the SYSTEM PROMPT:              │
-   │     ATLAS_GUIDANCE (behavior)          │
+   │     ATLAS_PROMPT (all of it)           │
    │   + git snapshot  (context.rs)         │
    │   + cwd + AGENTS.md/CLAUDE.md          │
-   │   + the tool list + MCP notes          │
+   │   + MCP notes                          │
    5. cersei::Agent::builder()              │
    │     .provider / .tools / .working_dir  │
    │     .with_messages(history)   ← resume context
@@ -508,16 +508,43 @@ Sessions are stored as JSON at:
 
 ## 10. System prompt — grounding the agent in *your* repo (`context.rs`)
 
-Each turn, `build_system_prompt` is fed:
-- **`ATLAS_GUIDANCE`** — the behavioral spec (explore before acting, parallel tool
-  calls, when to use TodoWrite/delegate/search_memory, "do, don't just explain", be
-  concise). It's worth reading at the top of `lib.rs` — it's the agent's personality.
+**Atlas owns its prompt outright**, as Claude Code and Codex own theirs.
+`build_system_prompt` is not called. Each turn the prompt is:
+- **`ATLAS_PROMPT`** — the whole behavioural spec, at the top of `lib.rs`. It is the
+  agent's personality and worth reading.
 - **git snapshot** — branch, last 10 commits, up to 40 dirty files, user name.
 - **project docs** — `AGENTS.md` and `CLAUDE.md` (each capped at 8 KB).
-- **the live tool list** + per-server MCP notes.
+- **cwd** + per-server MCP notes.
 
-So the agent isn't running off a static prompt — every turn it's re-grounded in the
-actual repo state.
+The last four are rendered by `context::dynamic_sections`, so the agent is re-grounded
+in the actual repo state every turn rather than running off a static prompt.
+
+**Why Atlas stopped appending to the SDK's base sections.** They described a different
+product and contradicted this one. They advertised an **LSP tool three times** that Atlas
+does not register, a Bash *"background mode"* that does not exist (that is
+`TerminalStart`), skills loaded from `.claude/commands/*.md` when Atlas reads
+`.atlas/agent-skills`, and memory *"injected into your context automatically"* when Atlas
+exposes it as a tool. They also contradicted Atlas head-on, and came **first**:
+
+| | base said | Atlas said |
+|---|---|---|
+| stopping | *"Never stop at surface-level answers"*, *"be thorough and structured, use tables, lists, and sections"* | *"The moment you can answer, answer and stop"*, *"a one-line question gets a one-line answer"* |
+| todos | *"Use VERY frequently"*, *"ALWAYS use the TodoWrite tool"* | *"Skip it for simple one- or two-step tasks"* |
+| shell | *"prefer using Bash (with grep, find)"* | *"use the dedicated file tools, not the shell"* |
+
+The base even disagreed with itself on the last one — *"Tool usage policy"* said prefer
+Bash with `grep`/`find` while *"Tool use guidelines"* two paragraphs later said prefer
+`Grep` over `grep` and `Glob` over `find`. A weak model handed contradictory instructions
+does not pick the better one; it oscillates, which is what made the agent feel
+unpredictable. And `build_system_prompt` emitted `__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__` as a
+literal line — an internal cache marker nothing in the SDK strips, sent to the model in
+the middle of its instructions.
+
+**The rule that keeps it from drifting again:** the prompt states *policy, not an
+inventory*. Tool schemas already travel with every request, so the prompt never claims a
+specific tool exists — it says the tool list is the authority. The
+prompt went from 11,465 B (~2,866 tok) to 6,450 B (~1,612 tok), charged on every request
+of every turn, and `the_prompt_stays_within_its_context_budget` fails if it creeps back.
 
 ---
 
