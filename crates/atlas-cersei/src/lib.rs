@@ -293,6 +293,10 @@ struct SessionEntry {
     /// shortcuts and gate auto-verdicts don't count). Reset by `send_prompt`,
     /// read into the `atlas::harness` turn line.
     permission_asks: AtomicU64,
+    /// Per-session cap on model rounds within one prompt, `None` = the
+    /// default (50). Set by the eval harness so repo tasks stop at a
+    /// budgeted depth instead of the interactive default.
+    max_turns: Mutex<Option<u32>>,
 }
 
 /// Clears `SessionEntry::busy` AND the turn's cancel token on every exit
@@ -388,6 +392,7 @@ impl CerseiRuntime {
             policy: tools::ToolPolicy::new(&cwd, &session_id),
             live_agent: Mutex::new(std::sync::Weak::new()),
             permission_asks: AtomicU64::new(0),
+            max_turns: Mutex::new(None),
         });
         agent.sessions.insert(session_id.clone(), entry);
         Ok(NewSessionInfo {
@@ -434,6 +439,7 @@ impl CerseiRuntime {
             policy: tools::ToolPolicy::new(&cwd, &sid),
             live_agent: Mutex::new(std::sync::Weak::new()),
             permission_asks: AtomicU64::new(0),
+            max_turns: Mutex::new(None),
         });
         agent.sessions.insert(sid, entry);
         Ok(Some(modes_blob("default")))
@@ -533,6 +539,14 @@ impl CerseiRuntime {
         } else {
             Some(effort)
         };
+        Ok(())
+    }
+
+    /// Cap the number of model rounds one prompt may run (`None` restores the
+    /// default of 50). Used by the eval harness to bound repo tasks.
+    pub fn set_max_turns(&self, agent_id: AgentId, session_id: &str, cap: Option<u32>) -> Result<()> {
+        let entry = self.session(agent_id, session_id)?;
+        *entry.max_turns.lock() = cap;
         Ok(())
     }
 
@@ -897,7 +911,7 @@ impl CerseiRuntime {
             // ownership, TodoWrite's todo list — belonged to an identity that
             // existed for exactly one turn and matched nothing at teardown.
             .session_id(sid.clone())
-            .max_turns(50)
+            .max_turns(entry.max_turns.lock().unwrap_or(50))
             .auto_compact(true)
             // RTK tool-output compression — Minimal when on (safe token savings),
             // Off when the user disabled it.
@@ -2300,6 +2314,7 @@ mod tests {
             policy: tool_policy.clone(),
             live_agent: Mutex::new(std::sync::Weak::new()),
             permission_asks: AtomicU64::new(0),
+            max_turns: Mutex::new(None),
         });
         UiPolicy {
             sink: s,
