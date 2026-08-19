@@ -55,6 +55,23 @@ export interface TranscriptScroll {
   onBeforeGrow?: () => void;
 }
 
+/**
+ * Mark [`markScrollHot`] from real scroll gestures on `el`. Returns a cleanup.
+ *
+ * Separate from the hook so the distinction it exists to make — a reader's
+ * gesture is hot, the transcript's own auto-follow is not — can be tested
+ * against a real element.
+ */
+export function bindUserScrollGestures(el: HTMLElement): () => void {
+  const hot = () => markScrollHot();
+  el.addEventListener("wheel", hot, { passive: true });
+  el.addEventListener("touchmove", hot, { passive: true });
+  return () => {
+    el.removeEventListener("wheel", hot);
+    el.removeEventListener("touchmove", hot);
+  };
+}
+
 export function useTranscriptScroll({
   scrollRef,
   contentRef,
@@ -143,13 +160,31 @@ export function useTranscriptScroll({
   }, [scrollRef, measure]);
 
   const onScroll = useCallback(() => {
-    // Tell the agent-delta flush the reader is mid-gesture — it holds the
-    // batch briefly so the streaming re-render doesn't land inside a scroll
-    // frame (see scroll-hot.ts; that collision is what blanks tiles).
-    markScrollHot();
     if (frame.current !== null) return;
     frame.current = requestAnimationFrame(sample);
   }, [sample]);
+
+  // Mark the reader mid-gesture from real input, NOT from the `scroll` event.
+  //
+  // A scroll event is a consequence and cannot say what caused it, and the
+  // transcript scrolls *itself* on every streaming chunk to stay at the live
+  // edge. Marking hot there made the stream throttle itself with nobody
+  // touching the trackpad: chunk → auto-scroll → "hot" → the delta flush holds
+  // the batch → ~200 ms later it forces through → auto-scroll → hot again.
+  // Text landed in lumps a few times a second instead of every frame, which is
+  // exactly the "chunk, pause, chunk" the streaming was reported as.
+  //
+  // `wheel` and `touchmove` are the fling gestures that actually collide with
+  // WKWebView's tile deadlines, and they fire only for a real reader — macOS
+  // keeps sending `wheel` through trackpad momentum, so a fling stays marked
+  // for its whole deceleration. A scrollbar drag or a keyboard page is not
+  // covered and does not need to be: neither produces the sustained repaint
+  // storm this exists to keep clear of.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    return bindUserScrollGestures(el);
+  }, [scrollRef]);
 
   // Content height changes invalidate every cached number, and they happen for
   // reasons that have nothing to do with scrolling: the window grew, a thinking
