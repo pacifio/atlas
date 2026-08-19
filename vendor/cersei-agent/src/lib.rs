@@ -67,6 +67,15 @@ pub const ATLAS_MAX_TOKENS_GUARD_PATCH: &str = "max-tokens-guard-v1";
 /// defined but never emitted.
 pub const ATLAS_PRE_COMPACT_PATCH: &str = "pre-compact-hook-v1";
 
+/// ATLAS PATCH (M2, model profile): per-model adaptation knobs the crates.io
+/// release lacks — a `context_window` override (the built-in substring table
+/// defaults unknown models to 200k, so small models die by overflow instead
+/// of compacting), the builder's `compact_threshold` actually honored by the
+/// runner (it was stored and never read), and a `reasoning_effort` option
+/// forwarded to providers that express thinking as an effort level rather
+/// than a token budget (OpenAI o-series / gpt-5).
+pub const ATLAS_MODEL_PROFILE_PATCH: &str = "model-profile-v1";
+
 /// ATLAS PATCH (doom-loop-input-hash-v1): tool name of the synthetic
 /// permission request the runner raises when the doom-loop detector fires a
 /// second time. Not a real tool: permission policies special-case it (Atlas
@@ -150,6 +159,8 @@ pub struct Agent {
     max_tokens: u32,
     temperature: Option<f32>,
     thinking_budget: Option<u32>,
+    reasoning_effort: Option<String>,
+    context_window: Option<u64>,
     working_dir: PathBuf,
     permission_policy: Arc<dyn PermissionPolicy>,
     memory: Option<Arc<dyn Memory>>,
@@ -315,6 +326,8 @@ pub struct AgentBuilder {
     max_tokens: u32,
     temperature: Option<f32>,
     thinking_budget: Option<u32>,
+    reasoning_effort: Option<String>,
+    context_window: Option<u64>,
     seed_usage: Option<Usage>,
     working_dir: Option<PathBuf>,
     permission_policy: Option<Arc<dyn PermissionPolicy>>,
@@ -350,6 +363,8 @@ impl Default for AgentBuilder {
             max_tokens: 16384,
             temperature: None,
             thinking_budget: None,
+            reasoning_effort: None,
+            context_window: None,
             seed_usage: None,
             working_dir: None,
             permission_policy: None,
@@ -431,6 +446,22 @@ impl AgentBuilder {
 
     pub fn thinking_budget(mut self, tokens: u32) -> Self {
         self.thinking_budget = Some(tokens);
+        self
+    }
+
+    /// ATLAS PATCH (model-profile-v1): thinking expressed as an effort level
+    /// ("low" | "medium" | "high") for providers that take one instead of a
+    /// token budget (OpenAI o-series / gpt-5).
+    pub fn reasoning_effort(mut self, level: impl Into<String>) -> Self {
+        self.reasoning_effort = Some(level.into());
+        self
+    }
+
+    /// ATLAS PATCH (model-profile-v1): override the model's context window
+    /// for compaction decisions. Without it unknown models fall into the
+    /// substring table's 200k default and overflow instead of compacting.
+    pub fn context_window(mut self, tokens: u64) -> Self {
+        self.context_window = Some(tokens);
         self
     }
 
@@ -579,6 +610,8 @@ impl AgentBuilder {
             max_tokens: self.max_tokens,
             temperature: self.temperature,
             thinking_budget: self.thinking_budget,
+            reasoning_effort: self.reasoning_effort,
+            context_window: self.context_window,
             working_dir,
             permission_policy: self.permission_policy.unwrap_or_else(|| Arc::new(AllowAll)),
             memory: self.memory,
@@ -646,6 +679,26 @@ mod tests {
             let (_tx, rx) = tokio::sync::mpsc::channel(1);
             Ok(CompletionStream::new(rx))
         }
+    }
+
+    #[test]
+    fn model_profile_knobs_reach_the_agent() {
+        // ATLAS PATCH (model-profile-v1): the two new builder knobs and the
+        // previously-dead compact_threshold land on the built agent.
+        let agent = Agent::builder()
+            .provider(StubProvider)
+            .context_window(32_768)
+            .reasoning_effort("high")
+            .compact_threshold(0.75)
+            .build()
+            .unwrap();
+        assert_eq!(agent.context_window, Some(32_768));
+        assert_eq!(agent.reasoning_effort.as_deref(), Some("high"));
+        assert!((agent.compact_threshold - 0.75).abs() < f64::EPSILON);
+
+        let default_agent = Agent::builder().provider(StubProvider).build().unwrap();
+        assert_eq!(default_agent.context_window, None);
+        assert_eq!(default_agent.reasoning_effort, None);
     }
 
     #[test]

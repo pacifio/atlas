@@ -14,6 +14,7 @@
 
 mod context;
 mod mcp;
+pub mod profile;
 pub mod tools;
 mod memory;
 mod provider;
@@ -64,6 +65,7 @@ const _CERSEI_DOOM_LOOP_PATCH_GUARD: &str = cersei_agent::ATLAS_DOOM_LOOP_PATCH;
 const _CERSEI_MAX_TOKENS_PATCH_GUARD: &str = cersei_agent::ATLAS_MAX_TOKENS_GUARD_PATCH;
 const _CERSEI_PRE_COMPACT_PATCH_GUARD: &str = cersei_agent::ATLAS_PRE_COMPACT_PATCH;
 const _CERSEI_RETRY_AFTER_PATCH_GUARD: &str = cersei::provider::ATLAS_RETRY_AFTER_PATCH;
+const _CERSEI_MODEL_PROFILE_PATCH_GUARD: &str = cersei_agent::ATLAS_MODEL_PROFILE_PATCH;
 use uuid::Uuid;
 
 pub use store::SessionMeta;
@@ -780,6 +782,10 @@ impl CerseiRuntime {
             ))
         })?;
         let provider = provider::build_provider(&provider_id, &api_key, &model).map_err(AcpError::other)?;
+        // M2 — every adaptation decision below (tools, prompt, thinking,
+        // context window) reads this one resolved profile. Stateless per
+        // turn, so a `set_model` mid-session takes effect on the next send.
+        let model_profile = profile::ModelProfile::resolve(&provider_id, &model);
 
         let history = entry.history.lock().clone();
         let mode = entry.mode.lock().clone();
@@ -795,12 +801,14 @@ impl CerseiRuntime {
             mode,
             policy: tool_policy.clone(),
         };
-        // Which tools the model can see. The tier comes from the BYOK
-        // evaluation matrix once that exists; until then it is the structured
-        // default, because over-provisioning tools degrades gracefully and
-        // under-provisioning does not.
-        let tier = tools::ToolTier::default();
-        let caps = tools::ModelCapabilities::for_model(&model);
+        // Which tools the model can see — the profile decides. Known
+        // families keep the structured surface; the unknown-model floor and
+        // the local-daemon tier degrade to shell-first, where a small model
+        // stops being asked to drive tools it can't schema-match.
+        let tier = model_profile.tool_tier;
+        let caps = tools::ModelCapabilities {
+            accepts_images: model_profile.accepts_images,
+        };
 
         // Coding tools + planning (EnterPlanMode / ExitPlanMode / TodoWrite) so
         // the agent can lay out and track a plan; TodoWrite calls are surfaced
@@ -892,8 +900,15 @@ impl CerseiRuntime {
         // sections, which replace mode would otherwise discard.
         let docs = context::project_docs(&entry.cwd);
         let git = context::git_snapshot(&entry.cwd);
+        // The profile picks the base prompt: small profiles get the terse
+        // variant (a long prompt actively hurts there); everyone keeps the
+        // same per-turn dynamic sections.
+        let base_prompt = match model_profile.prompt_variant {
+            profile::PromptVariant::Full => ATLAS_PROMPT,
+            profile::PromptVariant::Terse => profile::ATLAS_PROMPT_TERSE,
+        };
         let system_prompt = format!(
-            "{ATLAS_PROMPT}{}",
+            "{base_prompt}{}",
             context::dynamic_sections(&entry.cwd, git.as_ref(), &docs, &mcp_instructions)
         );
 
@@ -913,6 +928,10 @@ impl CerseiRuntime {
             .session_id(sid.clone())
             .max_turns(entry.max_turns.lock().unwrap_or(50))
             .auto_compact(true)
+            // M2 — the profile's window drives compaction instead of the
+            // SDK's substring table (whose unknown-model default of 200k
+            // made small models overflow instead of compacting).
+            .context_window(model_profile.context_window)
             // RTK tool-output compression — Minimal when on (safe token savings),
             // Off when the user disabled it.
             .compression_level(if compress {
@@ -920,13 +939,25 @@ impl CerseiRuntime {
             } else {
                 cersei_compression::CompressionLevel::Off
             });
-        // Reasoning effort → thinking budget. Only Anthropic exposes a usable
-        // per-request thinking budget today; other providers ignore it, so we
-        // only apply it there to avoid surprising behavior.
-        if provider_id == "anthropic" {
-            if let Some(level) = &effort {
-                let budget = cersei_agent::effort::EffortLevel::from_str(level).thinking_budget_tokens();
-                builder = builder.thinking_budget(budget);
+        // Reasoning effort, routed per the profile's thinking style: a token
+        // budget for Anthropic and Gemini (both read `thinking_budget`), an
+        // effort level for OpenAI's o-series/gpt-5, nothing for models with
+        // no usable thinking control.
+        if let Some(level) = &effort {
+            let level = cersei_agent::effort::EffortLevel::from_str(level);
+            match model_profile.thinking {
+                profile::ThinkingSupport::Budget => {
+                    builder = builder.thinking_budget(level.thinking_budget_tokens());
+                }
+                profile::ThinkingSupport::Effort => {
+                    builder = builder.reasoning_effort(match level {
+                        cersei_agent::effort::EffortLevel::Low => "low",
+                        cersei_agent::effort::EffortLevel::Medium => "medium",
+                        cersei_agent::effort::EffortLevel::High
+                        | cersei_agent::effort::EffortLevel::Max => "high",
+                    });
+                }
+                profile::ThinkingSupport::None => {}
             }
         }
         // C1 — pre-compaction memory flush. The hook's payload (the SDK's

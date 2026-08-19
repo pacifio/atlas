@@ -85,3 +85,13 @@ fn vendored_retry_after_patch_is_resolved() {
     // cersei-provider dependency).
     assert_eq!(cersei_provider::ATLAS_RETRY_AFTER_PATCH, "retry-after-v1");
 }
+
+/// M2 ModelProfile's SDK-side knobs: a `context_window` override for
+/// compaction (the substring table's unknown-model default of 200k made
+/// small models overflow instead of compacting), the builder's
+/// `compact_threshold` actually honored, and `reasoning_effort` forwarded
+/// to effort-style thinking providers.
+#[test]
+fn vendored_model_profile_patch_is_resolved() {
+    assert_eq!(cersei_agent::ATLAS_MODEL_PROFILE_PATCH, "model-profile-v1");
+}

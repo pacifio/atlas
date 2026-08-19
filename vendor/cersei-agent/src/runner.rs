@@ -282,6 +282,12 @@ pub async fn run_agent_streaming(
         if let Some(budget) = agent.thinking_budget {
             options.set("thinking_budget", budget);
         }
+        // ATLAS PATCH (model-profile-v1): providers that express thinking as
+        // an effort level (OpenAI o-series / gpt-5) read this option; the
+        // budget-based ones ignore it.
+        if let Some(effort) = &agent.reasoning_effort {
+            options.set("reasoning_effort", effort.clone());
+        }
 
         // Todo nudge: on turns > 2, remind model about incomplete todos
         let system_with_nudge = if turn > 2 {
@@ -1008,7 +1014,12 @@ pub async fn run_agent_streaming(
         if agent.auto_compact {
             let model_name = agent.model.as_deref().unwrap_or("claude-sonnet-4-6");
             let tokens_used = compact::estimate_messages_tokens(&agent.messages.lock());
-            let context_window = compact::context_window_for_model(model_name);
+            // ATLAS PATCH (model-profile-v1): an explicit window from the
+            // host beats the substring table (whose unknown-model default of
+            // 200k makes small models overflow instead of compacting).
+            let context_window = agent
+                .context_window
+                .unwrap_or_else(|| compact::context_window_for_model(model_name));
             let pct = if context_window > 0 {
                 tokens_used as f64 / context_window as f64
             } else {
@@ -1035,8 +1046,12 @@ pub async fn run_agent_streaming(
                 });
             }
 
-            // Auto-compact at 90%: try LLM summarization, fall back to snip
-            if compact::should_compact(tokens_used, context_window) {
+            // Auto-compact at the configured threshold: try LLM
+            // summarization, fall back to snip.
+            // ATLAS PATCH (model-profile-v1): honor the builder's
+            // compact_threshold — it was stored and never read, so the knob
+            // silently did nothing.
+            if compact::should_compact_at(tokens_used, context_window, agent.compact_threshold) {
                 let msgs_snapshot = agent.messages.lock().clone();
                 let model_name_owned = model_name.to_string();
 

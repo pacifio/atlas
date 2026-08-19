@@ -208,6 +208,30 @@ survives a reload.
   usage only; the M0 eval harness consumes the same schema, and a whitelisting
   bridge in src-tauri forwards the counters to PostHog as `harness_turn`.
 
+### 5b. ModelProfile (M2) — one struct decides the adaptation
+
+Every turn resolves `profile::ModelProfile::resolve(provider, model)` before
+anything else is assembled, and four decisions read it:
+
+- **Tools** — `tool_tier` picks Structured (full file tools) or ShellFirst
+  (patch-only, 4.1k wire budget); `accepts_images` gates `ImageView`.
+- **Prompt** — `prompt_variant` picks the full 13-section `ATLAS_PROMPT` or
+  the terse variant (`profile::ATLAS_PROMPT_TERSE`, budget-tested ≤2.6k) for
+  small profiles, where a long prompt actively hurts.
+- **Context window** — `context_window` flows into the builder
+  (`model-profile-v1` patch) so compaction triggers on the model's real
+  window instead of the SDK table's 200k unknown-model default.
+- **Thinking** — the user's effort level routes per `thinking`: a token
+  budget for Anthropic/Gemini, a `reasoning_effort` string for OpenAI's
+  o-series/gpt-5, nothing for models with no usable control.
+
+Resolution is registry-exact-id first (real windows from the vendored
+provider registry), then an ordered family table, then a conservative floor:
+32k window, no parallel calls, shell-first tools, terse prompt. The `ollama`
+provider always gets the floor's shape — the small-local tier. Static +
+explicit only; observed adjustment (demoting a tier off edit-failure
+counters) waits for eval data.
+
 ---
 
 ## 6. The tools — what Atlas can actually do

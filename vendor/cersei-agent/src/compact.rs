@@ -133,10 +133,23 @@ pub fn calculate_token_warning_state(tokens_used: u64, context_limit: u64) -> To
 
 /// Check if compaction should trigger.
 pub fn should_compact(tokens_used: u64, context_limit: u64) -> bool {
+    should_compact_at(tokens_used, context_limit, AUTOCOMPACT_TRIGGER_FRACTION)
+}
+
+/// ATLAS PATCH (model-profile-v1): `should_compact` with a caller-supplied
+/// trigger fraction, so the builder's `compact_threshold` knob actually
+/// steers the decision. A non-finite or non-positive threshold falls back
+/// to the default fraction rather than disabling compaction silently.
+pub fn should_compact_at(tokens_used: u64, context_limit: u64, threshold: f64) -> bool {
     if context_limit == 0 {
         return false;
     }
-    (tokens_used as f64 / context_limit as f64) >= AUTOCOMPACT_TRIGGER_FRACTION
+    let threshold = if threshold.is_finite() && threshold > 0.0 {
+        threshold
+    } else {
+        AUTOCOMPACT_TRIGGER_FRACTION
+    };
+    (tokens_used as f64 / context_limit as f64) >= threshold
 }
 
 /// Check if auto-compact should run (considering state/circuit breaker).
@@ -428,6 +441,20 @@ pub async fn auto_compact_if_needed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_compact_at_honors_the_threshold_and_falls_back_on_nonsense() {
+        // ATLAS PATCH (model-profile-v1)
+        assert!(should_compact_at(75, 100, 0.75));
+        assert!(!should_compact_at(74, 100, 0.75));
+        // Non-finite / non-positive thresholds fall back to the default
+        // fraction instead of disabling compaction.
+        assert!(should_compact_at(90, 100, 0.0));
+        assert!(should_compact_at(90, 100, f64::NAN));
+        assert!(!should_compact_at(89, 100, -1.0));
+        // A zero window never compacts.
+        assert!(!should_compact_at(90, 0, 0.5));
+    }
 
     fn make_messages(n: usize) -> Vec<Message> {
         (0..n)

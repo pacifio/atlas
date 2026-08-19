@@ -36,9 +36,11 @@ impl ToolTier {
     }
 }
 
-/// What the selected model can accept. Deliberately a handful of flags rather
-/// than a per-model matrix: a large capability table is how the previous
-/// attempt produced dead code.
+/// What the selected model can accept. Deliberately a handful of flags —
+/// the fuller per-family adaptation (context window, thinking style, tool
+/// tier, prompt variant) lives in `crate::profile::ModelProfile`, and every
+/// field there is consumed on the send path; this struct stays the narrow
+/// vision-gating view the tool registry needs.
 ///
 /// The default is conservative — nothing. A model wrongly given `ImageView`
 /// fails its whole turn when the provider rejects the request; a model wrongly
