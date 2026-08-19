@@ -29,7 +29,8 @@ cat/head/tail.\n\
 - Each line is prefixed `N: `. That prefix is NOT part of the file — never copy it into an Edit.\n\
 - Returns up to 2000 lines; use offset/limit to page through more.\n\
 - Ask for several files in ONE message: they run in parallel. To find something inside a large \
-file use Grep instead of reading the whole thing.";
+file use Grep instead of reading the whole thing.\n\
+- Re-reading an unchanged file returns a short note, not the contents: they are already above.";
 
 #[derive(Deserialize)]
 struct Input {

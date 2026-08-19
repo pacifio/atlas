@@ -48,7 +48,10 @@ cargo, docker — not for files: Read a file, Grep its contents, Glob by name, L
 Edit or Write to change one. Those return grounded, bounded output; cat/sed/find here costs far \
 more context for the same answer.\n\
 - Every call starts in the project root; a `cd` does not carry to the next call.\n\
-- For something that must keep running — a dev server, a REPL, a slow build — use TerminalStart.";
+- For something that must keep running — a dev server, a REPL, a slow build — use TerminalStart.\n\
+- Returns stdout and stderr interleaved, then the exit status; a non-zero exit is reported, not \
+a failure. Long output keeps its head and tail, says how much was dropped, and names a file \
+holding all of it.";
 
 #[derive(Deserialize)]
 struct Input {

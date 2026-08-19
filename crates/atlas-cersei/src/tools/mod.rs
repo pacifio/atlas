@@ -355,8 +355,20 @@ mod tests {
         // This is a budget, not a measurement. It fails when the list grows, so
         // the cost of a new tool is argued for in review instead of appearing
         // silently in everyone's context window.
-        const STRUCTURED_MAX_BYTES: usize = 8_800;
-        const SHELL_FIRST_MAX_BYTES: usize = 3_900;
+        //
+        // Raised once, deliberately, from 8,800: each description now documents
+        // what its tool *returns*, and `Edit` shows its two accepted argument
+        // shapes as worked examples. A JSON Schema says what is structurally
+        // valid, not which combination is meant — and `Edit` accepting either a
+        // flat replacement or an `edits` array is exactly that ambiguity, one
+        // the model demonstrably gets wrong often enough to need explicit
+        // refusals for over-specified input. Anthropic's tool-use guidance puts
+        // worked examples and documented return shapes as the two highest-value
+        // additions to a tool definition; this is ~240 tokens per request for
+        // them.
+        const STRUCTURED_MAX_BYTES: usize = 9_300;
+        // Same raise, same reason: `Bash` documents its return shape here too.
+        const SHELL_FIRST_MAX_BYTES: usize = 4_100;
 
         let tmp = TmpDir::new();
         let policy = ToolPolicy::contained(tmp.path());

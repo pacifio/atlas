@@ -542,9 +542,35 @@ the middle of its instructions.
 
 **The rule that keeps it from drifting again:** the prompt states *policy, not an
 inventory*. Tool schemas already travel with every request, so the prompt never claims a
-specific tool exists — it says the tool list is the authority. The
-prompt went from 11,465 B (~2,866 tok) to 6,450 B (~1,612 tok), charged on every request
-of every turn, and `the_prompt_stays_within_its_context_budget` fails if it creeps back.
+specific tool exists — it says the tool list is the authority.
+
+**Written to Anthropic's prompting guidance.** Each kind of instruction sits in its own XML
+section, so "how to format a reply" cannot be mistaken for "when to ask before acting".
+Rules carry their motivation wherever the reason is not self-evident, because a model that
+knows *why* generalises the rule to cases the text did not cover. Framing is positive —
+what to do rather than what to avoid — everywhere except the safety prohibitions, where the
+prohibition is the point.
+
+It is **prose, not bullets, on purpose**: prompt style carries into output style, and the
+complaint that started this work was a one-line question answered with a bulleted
+architecture essay. `the_prompt_is_sectioned_and_asks_for_prose` fails if a bullet
+reappears. Two budget tests keep the cost visible —
+`the_prompt_stays_within_its_context_budget` and, for the tool list,
+`the_tool_list_stays_within_its_context_budget`. Both were raised once, deliberately, with
+the reason recorded at the constant.
+
+**Tool descriptions document what they return**, and `Edit` shows its two accepted argument
+shapes as worked examples — a JSON Schema says what is structurally *valid*, never which
+combination is *meant*, and `Edit` taking either a flat replacement or an `edits` array is
+exactly that ambiguity. The examples live in the description text rather than a schema
+`examples` keyword on purpose: Atlas is BYOK, and a restricted function-calling schema
+(Gemini's, for one) may reject an unknown keyword and break tool calls outright, where a
+description is always just a string.
+
+Not applied from that guidance: `defer_loading` (Tool Search) and `allowed_callers`
+(Programmatic Tool Calling) are Claude API beta fields with no equivalent in the SDK's tool
+trait, and the advice to dial back assertive language assumes a model that over-triggers —
+the opposite of the weak BYOK models this harness exists to carry.
 
 ---
 

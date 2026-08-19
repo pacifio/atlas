@@ -42,7 +42,11 @@ const DESCRIPTION: &str = "Exact string replacement in a file. Prefer this over 
 - old_string must be unique, or the edit is rejected: add context, or set replace_all.\n\
 - Use `edits` to make several replacements to one file in ONE call. They apply in order and \
 nothing is written unless every one succeeds. Prefer this over repeated Edit calls.\n\
-- Empty old_string creates the file. For a whole-file rewrite use Write.";
+- Empty old_string creates the file. For a whole-file rewrite use Write.\n\
+- ONE of these two shapes, never both:\n\
+  {\"file_path\": \"a.rs\", \"old_string\": \"fn a()\", \"new_string\": \"fn b()\"}\n\
+  {\"file_path\": \"a.rs\", \"edits\": [{\"old_string\": \"a\", \"new_string\": \"b\"}]}\n\
+- Returns a diff of what changed. On failure nothing is written.";
 
 /// Per-file edit lock so concurrent edits to the same file serialize.
 static LOCKS: LazyLock<DashMap<PathBuf, Arc<Mutex<()>>>> = LazyLock::new(DashMap::new);
