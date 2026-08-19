@@ -360,7 +360,17 @@ impl Tool for TerminalStartTool {
         let yield_ms = input.timeout.unwrap_or(DEFAULT_YIELD_MS).min(MAX_YIELD_MS);
 
         let sandbox = self.policy.as_ref().and_then(|p| p.sandbox());
-        let id = match spawn(&ctx.session_id, &input.command, &ctx.working_dir, sandbox) {
+        // Ownership keys teardown: `shutdown_owner` is called with the Atlas
+        // session id the policy was built for. `ToolContext::session_id` is a
+        // fallback for direct callers (tests) — in production it only matches
+        // because the runtime also sets it on the agent builder, and relying on
+        // that alone is how teardown silently swept nothing.
+        let owner = self
+            .policy
+            .as_ref()
+            .map(|p| p.session().to_string())
+            .unwrap_or_else(|| ctx.session_id.clone());
+        let id = match spawn(&owner, &input.command, &ctx.working_dir, sandbox) {
             Ok(id) => id,
             Err(e) => return ToolResult::error(format!("Failed to start a terminal session: {e}")),
         };
@@ -625,6 +635,38 @@ mod tests {
         assert!(!w.is_error, "{}", w.content);
         assert!(w.content.contains("GOT:abc"), "{}", w.content);
         shutdown_owner("input-test");
+    }
+
+    #[tokio::test]
+    async fn teardown_sweeps_by_the_policy_session_not_the_runner_context() {
+        // In production `ToolContext::session_id` is whatever the runner set —
+        // historically a fresh UUID per turn, which `shutdown_owner(<atlas
+        // session id>)` could never match, so killing an agent never terminated
+        // its terminals. Ownership now comes from the policy, which carries the
+        // same session name teardown sweeps by. The ctx deliberately gets a
+        // DIFFERENT id here: the sweep must work anyway.
+        let tmp = TmpDir::new();
+        let policy = crate::tools::ToolPolicy::contained_for(tmp.path(), "atlas-session-7");
+        let mut ctx = test_ctx(tmp.path().to_path_buf());
+        ctx.session_id = "runner-minted-uuid".into();
+        let r = TerminalStartTool {
+            policy: Some(policy),
+        }
+        .execute(json!({"command": "sleep 30", "timeout": 300}), &ctx)
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        let id = session_id_from(&r.content);
+        assert!(STORE.lock().contains_key(&id), "session should be live");
+
+        // Sweeping by the runner's id must NOT match…
+        shutdown_owner("runner-minted-uuid");
+        assert!(STORE.lock().contains_key(&id), "wrong owner key swept the session");
+        // …and sweeping by the Atlas session id must.
+        shutdown_owner("atlas-session-7");
+        assert!(
+            !STORE.lock().contains_key(&id),
+            "teardown by the policy's session name must terminate the terminal"
+        );
     }
 
     #[tokio::test]

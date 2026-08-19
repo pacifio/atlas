@@ -282,6 +282,14 @@ impl ToolPolicy {
         &self.root
     }
 
+    /// The session name this policy was built for. This is the identity
+    /// teardown sweeps by, so anything that registers per-session state (a
+    /// persistent terminal's owner) must key on it rather than on
+    /// `ToolContext::session_id`, which the runner may have minted itself.
+    pub fn session(&self) -> &str {
+        &self.session
+    }
+
     pub fn tier(&self) -> EnforcementTier {
         self.tier
     }

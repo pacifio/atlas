@@ -809,6 +809,11 @@ impl CerseiRuntime {
             .cancel_token(token)
             .system_prompt(system_prompt)
             .model(model.clone())
+            // Without this the runner mints a fresh UUID per turn as
+            // `ToolContext.session_id`, so anything keyed on it — terminal
+            // ownership, TodoWrite's todo list — belonged to an identity that
+            // existed for exactly one turn and matched nothing at teardown.
+            .session_id(sid.clone())
             .max_turns(50)
             .auto_compact(true)
             // RTK tool-output compression — Minimal when on (safe token savings),
