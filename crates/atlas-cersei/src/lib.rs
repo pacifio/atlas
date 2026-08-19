@@ -308,6 +308,40 @@ struct SessionEntry {
     max_turns: Mutex<Option<u32>>,
 }
 
+impl SessionEntry {
+    /// Resolve every dialog this session still has outstanding, returning
+    /// their ids so the caller can emit `PermissionResolved` for each.
+    ///
+    /// One function for both maps on purpose. They are two channels carrying
+    /// the same thing — a modal the user is looking at, with a turn behind it
+    /// waiting on a `oneshot` — and draining only `pending` left an
+    /// `AskUserQuestion` dialog alive after the turn that raised it had gone:
+    /// no resolution event, a click that fed a dropped receiver, and a leaked
+    /// map entry for the life of the session. A third channel added later
+    /// belongs here too, not at each call site.
+    fn resolve_outstanding(&self, reason: &str) -> Vec<Uuid> {
+        let mut swept = Vec::new();
+        let keys: Vec<Uuid> = self.pending.iter().map(|e| *e.key()).collect();
+        for k in keys {
+            if let Some((_, tx)) = self.pending.remove(&k) {
+                let _ = tx.send(CerseiDecision::Deny(reason.into()));
+                swept.push(k);
+            }
+        }
+        let ask_keys: Vec<Uuid> = self.pending_asks.iter().map(|e| *e.key()).collect();
+        for k in ask_keys {
+            if let Some((_, tx)) = self.pending_asks.remove(&k) {
+                // `None` is the tool's documented "dialog dismissed" answer,
+                // which tells the model to proceed on its best judgment —
+                // the right reading of a turn that ended under it.
+                let _ = tx.send(None);
+                swept.push(k);
+            }
+        }
+        swept
+    }
+}
+
 /// Clears `SessionEntry::busy` AND the turn's cancel token on every exit
 /// path of `send_prompt` (success, error, panic-unwind through the actor's
 /// supervisor). The token must not outlive the turn: a later `cancel_turn`
@@ -648,12 +682,9 @@ impl CerseiRuntime {
         // the conversation. Conservative reset: the next identical read runs
         // for real instead of being told its answer is somewhere it is not.
         entry.policy.forget_served();
-        let keys: Vec<Uuid> = entry.pending.iter().map(|e| *e.key()).collect();
-        for k in keys {
-            if let Some((_, tx)) = entry.pending.remove(&k) {
-                let _ = tx.send(CerseiDecision::Deny("cancelled".into()));
-            }
-        }
+        // Both channels: an AskUserQuestion dialog open at Stop is exactly as
+        // stranded as a permission prompt would be.
+        let _ = entry.resolve_outstanding("cancelled");
         Ok(())
     }
 
@@ -666,15 +697,7 @@ impl CerseiRuntime {
         let Ok(entry) = self.session(agent_id, session_id) else {
             return Vec::new();
         };
-        let keys: Vec<Uuid> = entry.pending.iter().map(|e| *e.key()).collect();
-        let mut swept = Vec::new();
-        for k in keys {
-            if let Some((_, tx)) = entry.pending.remove(&k) {
-                let _ = tx.send(CerseiDecision::Deny("cancelled".into()));
-                swept.push(k);
-            }
-        }
-        swept
+        entry.resolve_outstanding("cancelled")
     }
 
     /// Route a user message into the running turn's steering queue: it is
@@ -2800,6 +2823,40 @@ mod tests {
         r.tool_name = cersei_agent::DOOM_LOOP_ASK.into();
         assert!(matches!(p.check(&r).await, CerseiDecision::Allow));
         assert_eq!(p.pending.permission_asks.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn sweeping_resolves_asks_as_well_as_permissions() {
+        // `sweep_permissions` exists so "a permission outstanding at turn end
+        // must not leave a live modal whose click strands the session" (H6/M3).
+        // The M5 AskUserQuestion channel is a second map of exactly such
+        // outstanding dialogs, and nothing but `respond_permission` ever
+        // drained it. On Stop or turn end the question modal survived the turn
+        // it belonged to, no PermissionResolved was ever emitted for it,
+        // answering it fed a dropped receiver, and the entry leaked for the
+        // life of the session.
+        let p = policy("default");
+        let entry = p.pending.clone();
+
+        let (perm_tx, perm_rx) = tokio::sync::oneshot::channel();
+        let perm_id = Uuid::new_v4();
+        entry.pending.insert(perm_id, perm_tx);
+
+        let (ask_tx, ask_rx) = tokio::sync::oneshot::channel();
+        let ask_id = Uuid::new_v4();
+        entry.pending_asks.insert(ask_id, ask_tx);
+
+        let swept = entry.resolve_outstanding("cancelled");
+
+        assert!(swept.contains(&perm_id), "the permission must be swept");
+        assert!(
+            swept.contains(&ask_id),
+            "the ask must be swept too, or its modal is stranded"
+        );
+        assert!(entry.pending.is_empty() && entry.pending_asks.is_empty(), "both maps must be drained");
+        // Both waiters are released rather than left hanging on a dropped sender.
+        assert!(matches!(perm_rx.await, Ok(CerseiDecision::Deny(_))));
+        assert_eq!(ask_rx.await.unwrap(), None, "a swept ask answers None");
     }
 
     #[tokio::test]
