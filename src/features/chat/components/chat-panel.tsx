@@ -1290,6 +1290,7 @@ const ChatComposer = memo(function ChatComposer({
           onSend={onSend}
           onStop={onStop}
           running={running}
+          steerWhileRunning={agentType === "cersei"}
           stopping={stopping}
           disabled={disabled}
           placeholder="Ask Atlas what to do…"

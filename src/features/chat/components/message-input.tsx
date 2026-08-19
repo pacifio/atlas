@@ -133,6 +133,13 @@ interface MessageInputProps {
   stopping?: boolean;
   /** True while the agent is producing a response. */
   running?: boolean;
+  /**
+   * When true, a send while running steers the live turn (the backend injects
+   * the message before the agent's next model call) instead of queueing it
+   * client-side. Native (cersei) sessions only — ACP agents can't steer, and
+   * sending would cancel their running turn.
+   */
+  steerWhileRunning?: boolean;
   /** Hard-disable the composer (e.g. Claude Code isn't installed/authed). */
   disabled?: boolean;
   placeholder?: string;
@@ -803,6 +810,7 @@ export function MessageInput({
   onSend,
   onStop,
   running = false,
+  steerWhileRunning = false,
   stopping = false,
   disabled = false,
   placeholder = "Message Atlas... (@ to mention, / for commands)",
@@ -1752,7 +1760,13 @@ export function MessageInput({
       return;
     }
     const mentions = inputRef.current?.getMentions() ?? [];
-    if (running) {
+    if (running && steerWhileRunning) {
+      // Steer the live turn: the send flows through the normal path and the
+      // backend injects it before the agent's next model call. Staged images
+      // stay in the composer strip and ride the next direct send (attachments
+      // stage for the NEXT prompt, not the running one).
+      onSend(trimmed, mentions, undefined);
+    } else if (running) {
       // Queued messages don't carry mentions yet — the queue holds raw
       // strings and the agent will see whatever shortform text was in the
       // composer. Mentions are dropped here intentionally; promoting the
@@ -1771,6 +1785,7 @@ export function MessageInput({
   }, [
     setValue,
     running,
+    steerWhileRunning,
     onSend,
     onStop,
     enqueueMessage,
@@ -1782,18 +1797,23 @@ export function MessageInput({
   submitRef.current = submit;
 
   // Tri-state button:
-  //   running + empty   → STOP
-  //   running + text    → QUEUE
-  //   not running + any → SEND
+  //   running + empty          → STOP
+  //   running + text (steer)   → SEND (steers the live turn)
+  //   running + text (no steer)→ QUEUE
+  //   not running + any        → SEND
   type Mode = "send" | "queue" | "stop";
-  const mode: Mode = running ? (hasText ? "queue" : "stop") : "send";
+  const mode: Mode = running ? (hasText ? (steerWhileRunning ? "send" : "queue") : "stop") : "send";
   const buttonEnabled = disabled ? false : mode === "stop" ? true : hasText;
 
   // A fixed, generic placeholder ("Ask Claude Code / Codex what to do…") — the
   // composer no longer mirrors the setup phase here (the setup pill above the
-  // input already communicates install/auth state). Only the queue hint
+  // input already communicates install/auth state). Only the queue/steer hint
   // overrides it.
-  const effectivePlaceholder = running ? "Type to queue the next message…" : placeholder;
+  const effectivePlaceholder = running
+    ? steerWhileRunning
+      ? "Type to steer the running turn…"
+      : "Type to queue the next message…"
+    : placeholder;
 
   return (
     <div className="px-4 pb-4 pt-2 bg-transparent">
