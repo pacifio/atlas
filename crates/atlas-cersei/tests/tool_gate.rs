@@ -323,6 +323,63 @@ async fn a_shell_read_satisfies_the_precondition_too() {
 }
 
 #[tokio::test]
+async fn a_grep_does_not_satisfy_read_before_edit() {
+    // Grep returns a *window* — a few context lines — not the file. Letting it
+    // satisfy the precondition reopens the staleness hole the registry exists
+    // to close: the model greps, sees three lines, edits against content it
+    // never saw, and the refusal that would have forced a real read never
+    // fires. `grep.rs` states this invariant in its module doc; the guard's
+    // generic "any read-class call registers its path argument" branch broke
+    // it, because Grep declares `path`.
+    let fx = Fixture::new();
+    let s = Session::new(fx.path(), PermissionDecision::Allow);
+
+    let g = s
+        .call(
+            "Grep",
+            json!({"pattern": "fn a", "output_mode": "content", "path": "src/lib.rs"}),
+        )
+        .await;
+    assert!(!g.is_error, "{}", g.content);
+
+    let r = s
+        .call(
+            "Edit",
+            json!({"file_path": "src/lib.rs", "old_string": "1", "new_string": "9"}),
+        )
+        .await;
+    assert!(
+        r.is_error,
+        "a Grep window must not vouch for the whole file: {}",
+        r.content
+    );
+    assert_eq!(
+        fx.read("src/lib.rs"),
+        "pub fn a() -> u8 { 1 }\n",
+        "the edit must not have landed"
+    );
+}
+
+#[tokio::test]
+async fn a_directory_listing_does_not_satisfy_read_before_edit() {
+    // Same reasoning as Grep: List names files, it does not show their
+    // contents.
+    let fx = Fixture::new();
+    let s = Session::new(fx.path(), PermissionDecision::Allow);
+
+    let l = s.call("List", json!({"path": "src"})).await;
+    assert!(!l.is_error, "{}", l.content);
+
+    let r = s
+        .call(
+            "Edit",
+            json!({"file_path": "src/lib.rs", "old_string": "1", "new_string": "9"}),
+        )
+        .await;
+    assert!(r.is_error, "a listing must not satisfy the precondition: {}", r.content);
+}
+
+#[tokio::test]
 async fn a_shell_command_that_writes_does_not_count_as_having_read() {
     // The registration is gated on a provably read-only classification, so a
     // command that could have changed the file cannot also vouch for it.

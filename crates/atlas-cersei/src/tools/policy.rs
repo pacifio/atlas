@@ -782,6 +782,30 @@ pub fn is_shell_tool(tool_name: &str) -> bool {
     )
 }
 
+/// Whether a successful read-class call puts the **whole file** into the
+/// conversation, and may therefore satisfy read-before-edit.
+///
+/// The distinction is the point. `Grep` returns a few context lines and `List`
+/// returns names; treating either as "the model has seen this file" reopens the
+/// staleness hole the read registry exists to close — the model edits against
+/// content it never saw, and the refusal that would have forced a real read
+/// never fires. `grep.rs` has always stated this invariant in its module doc;
+/// the guard's generic "any read-class call registers its path argument" branch
+/// quietly broke it, because `Grep` declares `path`.
+///
+/// Unknown tools (SDK-provided, MCP-discovered) answer `false`. The failure
+/// mode of that direction is one extra `Read` call; the other direction costs
+/// the user's work.
+pub fn records_whole_file_reads(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        // The file, or an explicit range of it.
+        "Read" | "read" | "read_file" | "ReadFile"
+        // The image itself is what lands in the conversation.
+            | "ImageView"
+    )
+}
+
 /// The command text for a shell-class tool, or `None` for everything else.
 ///
 /// `TerminalWrite` is included deliberately. Its `input` is typed into a live

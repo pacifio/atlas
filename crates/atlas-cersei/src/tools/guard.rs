@@ -261,9 +261,11 @@ impl Tool for Guarded {
                     // wrote, so a follow-up edit in the same turn must not be
                     // refused as stale.
                     self.policy.record_read(path);
-                } else if path.is_file() {
-                    // A read of any kind registers the path. This is what makes
-                    // read-before-edit work in the shell-first tier too.
+                } else if path.is_file() && policy::records_whole_file_reads(&name) {
+                    // Only a call that put the *whole file* in the conversation
+                    // may vouch for it. `Grep` returns a window and `List`
+                    // returns names — registering either would let an edit
+                    // proceed against content the model never saw.
                     self.policy.record_read(path);
                 }
             }
