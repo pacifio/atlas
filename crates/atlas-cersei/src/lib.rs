@@ -76,7 +76,7 @@ pub struct Enforcement {
 /// `AGENT_PLUGIN_ID.cersei`).
 pub const CERSEI_PLUGIN_ID: &str = "cersei";
 /// Display name shown in the agent picker / marks.
-pub const CERSEI_DISPLAY_NAME: &str = "Atlas";
+pub const CERSEI_DISPLAY_NAME: &str = "Atlas Agent";
 
 /// Atlas-specific behavioral guidance, injected as `custom_system_prompt` into
 /// `build_system_prompt` (which also emits Cersei's base capabilities + the
