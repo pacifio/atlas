@@ -118,3 +118,15 @@ fn vendored_compact_evidence_patch_is_resolved() {
         "compact-tool-evidence-v1"
     );
 }
+
+/// An oversized first message is compactable, and the pre-compact hook and
+/// CompactStart/End fire only when a cut exists. Without it a big pasted
+/// first prompt turns compaction into a per-round no-op loop that still
+/// fires its side effects, and the session dies by overflow.
+#[test]
+fn vendored_compact_head_patch_is_resolved() {
+    assert_eq!(
+        cersei_agent::ATLAS_COMPACT_HEAD_PATCH,
+        "compact-oversized-head-v1"
+    );
+}

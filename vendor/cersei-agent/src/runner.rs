@@ -1055,29 +1055,20 @@ pub async fn run_agent_streaming(
                 let msgs_snapshot = agent.messages.lock().clone();
                 let model_name_owned = model_name.to_string();
 
-                // ATLAS PATCH (pre-compact-hook-v1): everything the summary
-                // is about to lose gets one chance to persist (contract C1 —
-                // the memory flush registers here). Runs on the full
-                // snapshot, before any split point is chosen.
-                if let Some(hook) = &agent.pre_compact {
-                    hook(msgs_snapshot.clone()).await;
-                }
-                // ATLAS PATCH (pre-compact-hook-v1): CompactStart/CompactEnd
-                // existed in the event enum but were never emitted, so
-                // listeners keyed on them (Atlas resets its read-registry on
-                // CompactEnd) never fired.
-                let start_ev = AgentEvent::CompactStart {
-                    reason: crate::events::CompactReason::ThresholdExceeded,
-                    messages_before: msgs_snapshot.len(),
-                };
-                let _ = event_tx.send(start_ev.clone()).await;
-                agent.emit(start_ev);
-
                 // ATLAS PATCH (compact-turn-boundary-v1): the split is
                 // chosen once, at a turn boundary, from a token-based tail
                 // budget — never a raw message count that can orphan a
                 // tool_result. Summarizer and snip fallback share the same
                 // index, so the fallback is exactly as safe as the primary.
+                //
+                // ATLAS PATCH (compact-oversized-head-v1): chosen BEFORE the
+                // hook and the events. A history with no safe cut re-enters
+                // this block every model round, and firing the pre-compact
+                // hook there enqueued a memory-extraction job each round while
+                // CompactStart/CompactEnd wiped Atlas's repeat-read
+                // suppression — per round, for the rest of the session,
+                // freeing nothing. Nothing that announces or persists a
+                // compaction may run until there is a compaction to announce.
                 let tail_budget = compact::tail_token_budget(context_window);
                 let split_idx = compact::split_at_turn_boundary(&msgs_snapshot, tail_budget);
                 let (messages_after, tokens_freed) = if split_idx == 0 {
@@ -1086,6 +1077,24 @@ pub async fn run_agent_streaming(
                     tracing::info!("compact skipped: no safe turn boundary");
                     (msgs_snapshot.len(), 0)
                 } else {
+                    // ATLAS PATCH (pre-compact-hook-v1): everything the
+                    // summary is about to lose gets one chance to persist
+                    // (contract C1 — the memory flush registers here). Runs on
+                    // the full snapshot, before the summary replaces it.
+                    if let Some(hook) = &agent.pre_compact {
+                        hook(msgs_snapshot.clone()).await;
+                    }
+                    // ATLAS PATCH (pre-compact-hook-v1): CompactStart/CompactEnd
+                    // existed in the event enum but were never emitted, so
+                    // listeners keyed on them (Atlas resets its read-registry
+                    // on CompactEnd) never fired.
+                    let start_ev = AgentEvent::CompactStart {
+                        reason: crate::events::CompactReason::ThresholdExceeded,
+                        messages_before: msgs_snapshot.len(),
+                    };
+                    let _ = event_tx.send(start_ev.clone()).await;
+                    agent.emit(start_ev);
+
                     match compact::compact_conversation(
                         agent.provider.as_ref(),
                         &msgs_snapshot,
@@ -1125,12 +1134,19 @@ pub async fn run_agent_streaming(
                         }
                     }
                 };
-                let end_ev = AgentEvent::CompactEnd {
-                    messages_after,
-                    tokens_freed,
-                };
-                let _ = event_tx.send(end_ev.clone()).await;
-                agent.emit(end_ev);
+                // Paired with CompactStart: a skipped compaction announced
+                // neither, so a listener never sees an End without a Start.
+                // Atlas resets its read registry on CompactEnd, and firing it
+                // for a compaction that did not happen threw away repeat-read
+                // suppression every model round.
+                if split_idx > 0 {
+                    let end_ev = AgentEvent::CompactEnd {
+                        messages_after,
+                        tokens_freed,
+                    };
+                    let _ = event_tx.send(end_ev.clone()).await;
+                    agent.emit(end_ev);
+                }
             }
         }
     }

@@ -306,7 +306,26 @@ pub fn split_at_turn_boundary(messages: &[Message], tail_token_budget: u64) -> u
             return cut;
         }
     }
-    0
+
+    // ATLAS PATCH (compact-oversized-head-v1): the walk can exhaust for two
+    // very different reasons, and returning 0 for both was wrong for one of
+    // them.
+    //
+    // If the whole history fits the tail budget there is genuinely nothing to
+    // do. But if the bulk sits in `messages[0]` — a large pasted first prompt
+    // on a small-window model — the tail never reaches the budget even though
+    // cutting at 1 would free exactly the oversized head. Answering "nothing
+    // safe to compact" there made the caller re-run the entire compaction
+    // block every model round for the rest of the session (pre-compact hook,
+    // CompactStart/CompactEnd, "compact skipped") while freeing nothing, until
+    // the session died by context overflow.
+    let head_tokens = estimate_tokens(&message_wire_text(&messages[0]));
+    if head_tokens + tail_tokens <= tail_token_budget {
+        return 0; // It all fits. Leave it alone.
+    }
+    // Compact as much of the head as a pair-safe cut allows: the earliest safe
+    // boundary at or after 1.
+    (1..messages.len()).find(|&i| !unsafe_after[i]).unwrap_or(0)
 }
 
 /// The recent-tail token budget for a context window: a quarter of the
@@ -981,6 +1000,46 @@ mod tests {
         // Without one, no update preamble.
         let req = build_compact_request(&[Message::user("hi")], "m", None);
         assert!(!req.messages[0].get_all_text().contains("Current summary to update"));
+    }
+
+    #[test]
+    fn an_oversized_head_still_finds_a_cut() {
+        // The reverse walk only ever returns a cut once the *tail* reaches the
+        // budget. When the bulk sits in `messages[0]` — a large pasted first
+        // prompt on a small-window model — the tail never gets there and the
+        // function returned 0, i.e. "nothing safe to compact", even though
+        // cutting at 1 would free exactly the oversized head.
+        //
+        // The caller then re-ran the whole compaction block every model round
+        // for the rest of the session: pre-compact hook (enqueuing a memory
+        // extraction job each time), CompactStart/CompactEnd (so Atlas's
+        // read-registry reset wiped repeat-read suppression every round), and
+        // "compact skipped" — while freeing nothing, until the session died by
+        // context overflow. Which is the failure compaction exists to prevent.
+        let messages = vec![
+            Message::user(&"x".repeat(200_000)),
+            Message::assistant("ok"),
+            Message::user("go on"),
+        ];
+        let split = split_at_turn_boundary(&messages, tail_token_budget(32_768));
+        assert!(
+            split > 0,
+            "an oversized head must be compactable, got {split}"
+        );
+        assert!(split < messages.len(), "the cut must leave a tail");
+    }
+
+    #[test]
+    fn a_history_that_fits_is_still_left_alone() {
+        // The other half of the same branch: exhausting the walk because
+        // everything fits must still mean "do not compact", or every small
+        // session pays for a pointless summarizer call.
+        let messages = vec![
+            Message::user("hi"),
+            Message::assistant("hello"),
+            Message::user("bye"),
+        ];
+        assert_eq!(split_at_turn_boundary(&messages, tail_token_budget(200_000)), 0);
     }
 
     #[test]

@@ -97,6 +97,17 @@ pub const ATLAS_COMPACT_PATCH: &str = "compact-turn-boundary-v1";
 /// summarizer's own window and fail the call into the snip fallback.
 pub const ATLAS_COMPACT_EVIDENCE_PATCH: &str = "compact-tool-evidence-v1";
 
+/// ATLAS PATCH (compact-oversized-head-v1): a history whose bulk sits in
+/// its FIRST message still finds a pair-safe cut, and the pre-compact hook
+/// plus `CompactStart`/`CompactEnd` fire only once a cut actually exists.
+/// Without it a large pasted first prompt on a small-window model made the
+/// tail-budget walk exhaust and return "nothing to compact" — so the runner
+/// re-entered the compaction block every model round for the rest of the
+/// session, enqueuing a memory-extraction job and wiping Atlas's
+/// repeat-read suppression each time, while freeing nothing, until the
+/// session died by context overflow.
+pub const ATLAS_COMPACT_HEAD_PATCH: &str = "compact-oversized-head-v1";
+
 /// ATLAS PATCH (doom-loop-input-hash-v1): tool name of the synthetic
 /// permission request the runner raises when the doom-loop detector fires a
 /// second time. Not a real tool: permission policies special-case it (Atlas
