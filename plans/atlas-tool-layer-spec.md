@@ -241,6 +241,19 @@ tool reads a file. A write-class tool consults that record before executing:
   works in the shell-first tier as well — a shell read that names a path registers it. That closes
   the gap left open in the harness spec, which assumed the precondition without saying how it worked
   when reads go through the shell.
+
+  **The shell half was not built until later, and a test hid that.** `candidate_paths` looked only at
+  declared path fields, so no shell command ever registered anything; the test asserting otherwise
+  called `record_read` directly and proved only that the registry works. It surfaced when containing
+  patch paths made the precondition reachable in the shell-first tier for the first time — and
+  nothing in that tier could satisfy it, so its only structured editor was refused forever. Shell
+  reads now register through `classify::read_paths`, which yields the file-like arguments of a
+  command *only* when the whole command tokenises and classifies read-only. A write can therefore
+  never vouch for its own freshness, and an unparseable command registers nothing: the failure mode
+  is an unrecorded read costing one extra call, never a write wrongly believed to be fresh. The
+  residual imprecision — a non-numeric flag value reaching the list — is asserted in
+  `classify.rs` rather than hidden, and costs nothing because the guard registers only paths that
+  resolve to a real file inside the workspace.
 - **Record present and stale** → the file changed since the model read it. The edit is refused with
   the reason, so the model re-reads rather than clobbering the user's concurrent change.
 - **Record present and fresh** → proceed.
@@ -393,15 +406,29 @@ Dropping it from the structured tier also closed a containment hole. The guard e
 using the *Codex* dialect (`*** Add File:`) while the registered tool parses **unified diff**, so it
 found no paths at all — which reads to the rest of the gate as "this call touches nothing": no
 containment, no freshness check, and one shared approval key for every patch. A unified diff could
-write anywhere on disk. `patch_paths` now understands both dialects, which is what protects any
-future or MCP-provided patch tool; `a_patch_cannot_write_outside_the_workspace` is the regression
-test, and it fails against the previous commit.
+write anywhere on disk. `patch_paths` now understands both dialects, and takes the unified-diff write target from the `+++`
+side with only `b/` stripped — exactly what the applier does, so containment checks the path the tool
+will actually write to. `a_patch_cannot_write_outside_the_workspace` is the regression test, and it
+fails against the previous commit.
+
+The reach of this is bounded and worth stating: patch bodies are parsed for tools *named* like a
+patch tool, so an MCP patch tool under some other name still contributes no paths, and a git patch
+that names its files only in a `diff --git`/`rename from` header yields none either. Story 9 is
+partial. Two things about the SDK's applier are worth recording while they are true: it never
+compares the context lines it is given — it splices by line number — so a stale patch corrupts
+silently rather than failing, which is why read-before-edit is load-bearing for it; and its
+description tells the model it "supports … deleting files" when it contains no delete path at all.
 
 **A context budget, enforced by a test (as built).** The tool list is re-sent on every request of
-every turn, so its size is multiplied by the number of tool calls a turn makes. It reached 12,213
-bytes across 17 tools with nobody watching. It is 8,593 across 14 now, and
-`the_tool_list_stays_within_its_context_budget` fails when it grows — so the cost of a new tool is
-argued for in review rather than appearing silently in every user's context window.
+every turn, so its size is multiplied by the number of tool calls a turn makes. Measured on one
+basis throughout — the env-gated third-party search tool excluded, since its cost is opt-in — it
+reached 10,626 bytes across 16 tools with nobody watching, and folding the overlapping edit tools
+together took it to 8,593 across 14. Counting the branch as a whole, including the search-tool
+gating above, a request that carried 12,213 bytes across 17 tools now carries 8,593 across 14.
+
+`the_tool_list_stays_within_its_context_budget` fails when the list grows, and names the largest
+tools when it does — so the cost of a new tool is argued for in review rather than appearing
+silently in every user's context window.
 
 **Registration gating (as built).** The deferred tier does not exist yet, so its three tools sit in
 the structured tier — but a tool that *cannot run* is registered nowhere. The tool list is re-sent on

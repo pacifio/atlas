@@ -14,11 +14,11 @@
 /// How many tools the model is shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToolTier {
-    /// Shell, terminal, patch-apply, and the non-file tools. The model composes
-    /// its own file operations.
+    /// Shell, terminal, and the non-file tools. The model composes its own file
+    /// operations, with patch-apply as the one structured editor.
     ShellFirst,
-    /// The above plus explicit Read / Edit / List / Grep / Glob / Write /
-    /// MultiEdit. The default, and the safe choice for anything unmeasured.
+    /// The above minus patch-apply, plus explicit Read / Edit / List / Grep /
+    /// Glob / Write. The default, and the safe choice for anything unmeasured.
     #[default]
     Structured,
 }

@@ -149,7 +149,7 @@ pub fn already_read(rel_path: &str) -> String {
 /// Without the position the model cannot tell which of its replacements was
 /// wrong, and without "nothing was written" it has to guess whether the file is
 /// now half-edited.
-pub fn in_batch(index: usize, total: usize, why: &str) -> String {
+pub fn batch_failure(index: usize, total: usize, why: &str) -> String {
     if total <= 1 {
         return why.to_string();
     }

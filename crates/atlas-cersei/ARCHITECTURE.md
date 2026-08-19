@@ -230,9 +230,11 @@ without hand-composing shell redirection. That is the arrangement Codex ships: a
 `apply_patch` covering create, update, delete and move.
 
 **A budget, enforced by a test.** The tool list is re-sent on *every request of every turn*,
-so its size is multiplied by the number of tool calls a turn makes. It reached 12,213 bytes
-across 17 tools without anyone noticing; it is 8,593 across 14 now, and
-`the_tool_list_stays_within_its_context_budget` fails if it grows again.
+so its size is multiplied by the number of tool calls a turn makes. On one basis throughout — the
+env-gated third-party search tool excluded, since its cost is opt-in — it reached 10,626 bytes
+across 16 tools without anyone noticing, and folding the edit tools together took it to 8,593
+across 14. `the_tool_list_stays_within_its_context_budget` fails if it grows again, and names the
+largest tools when it does.
 
 `atlas_coding_with()` (`tools/mod.rs`) is an explicit, hand-built vector, so any tool can
 be swapped for an SDK fallback by flipping one line. Which tools are *visible* is the
@@ -273,7 +275,11 @@ On every call, in this order:
    user changed it in their editor and applying the edit would silently overwrite them.
 5. **Execute**, with `working_dir` set to the canonical root.
 6. **Record** the read (or refresh the record after a write) and emit one telemetry line:
-   tool name, tier, outcome, latency. No arguments, no paths, no content.
+   tool name, tier, outcome, latency. No arguments, no paths, no content. A *provably read-only*
+   shell command also registers the files it named (`classify::read_paths`), which is what makes
+   read-before-edit reachable in the shell-first tier, where there is no `Read` tool to register
+   anything. It runs after execution and outside containment on purpose: reading a file outside the
+   workspace stays allowed, it simply registers nothing.
 
 Classification, the approval cache, and the prompt itself sit in `ToolPolicy::decide`,
 which `UiPolicy` calls *before* the runner dispatches. That split is deliberate: the

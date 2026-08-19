@@ -19,6 +19,8 @@ opencode's edit strategies are themselves derived from:
 
 `PunctuationFolded` — a tenth strategy folding typographic quotes, dashes and
 exotic spaces before comparing — is Atlas's own and has no upstream equivalent.
+So are `errors::already_read` and `errors::batch_failure`: opencode has neither a
+repeat-read stub nor a batched edit to locate a failure within.
 
 The Rust port is original code; only the algorithms, strategy ordering, and
 error-message wording were adapted. The 2026 destructive-match guard and the

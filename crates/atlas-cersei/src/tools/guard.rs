@@ -38,8 +38,8 @@ use async_trait::async_trait;
 use cersei::tools::{PermissionLevel, Tool, ToolCategory, ToolContext, ToolResult};
 use serde_json::Value;
 
-use super::policy::{candidate_paths, Freshness, ToolPolicy, PATH_FIELDS};
-use super::{coerce, errors};
+use super::policy::{self, candidate_paths, Freshness, ToolPolicy, PATH_FIELDS};
+use super::{classify, coerce, errors};
 
 /// Wrap every tool in `tools` with the shared policy.
 pub fn guard_all(tools: Vec<Box<dyn Tool>>, policy: Arc<ToolPolicy>) -> Vec<Box<dyn Tool>> {
@@ -181,6 +181,13 @@ impl Tool for Guarded {
         //    just proved safe.
         let mut inner_ctx = ctx.clone();
         inner_ctx.working_dir = self.policy.root().to_path_buf();
+        // Kept because `execute` consumes the input and the shell-read
+        // registration below needs the command back.
+        let raw_input = if policy::is_shell_tool(&name) {
+            input.clone()
+        } else {
+            Value::Null
+        };
         let result = self.inner.execute(input, &inner_ctx).await;
 
         // 6/7. Record and report.
@@ -189,6 +196,24 @@ impl Tool for Guarded {
             // conversation, so repeating it must not be short-circuited.
             if let Some((sig, path)) = read_signature {
                 self.policy.record_served(sig, &path);
+            }
+            // A provably read-only shell command registers the files it named.
+            // This is the mechanism that makes read-before-edit work in the
+            // shell-first tier, which has no `Read` tool to register anything —
+            // without it that tier's only structured editor is refused forever.
+            // It runs after execution and outside containment on purpose:
+            // reading a file outside the workspace stays allowed, it simply
+            // registers nothing.
+            if policy::is_shell_tool(&name) {
+                if let Some(command) = policy::shell_command(&name, &raw_input) {
+                    for named in classify::read_paths(command) {
+                        if let Ok(inside) = self.policy.contain(&named) {
+                            if inside.is_file() {
+                                self.policy.record_read(&inside);
+                            }
+                        }
+                    }
+                }
             }
             for path in &canonical {
                 if self.is_write_class() {

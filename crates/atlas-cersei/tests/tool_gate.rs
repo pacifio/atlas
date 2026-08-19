@@ -291,20 +291,55 @@ async fn read_then_edit_works() {
 #[tokio::test]
 async fn a_shell_read_satisfies_the_precondition_too() {
     // The shell-first tier has no Read tool. Because the guard sees every call,
-    // a shell command that names a path registers it — so read-before-edit
-    // works in both tiers with one mechanism.
+    // a provably read-only shell command registers the files it named — so
+    // read-before-edit works in both tiers with one mechanism.
+    //
+    // This test used to call `policy.record_read()` directly and assert on the
+    // result, which proved only that the registry works. The mechanism it
+    // claimed to cover did not exist.
     let fx = Fixture::new();
     let s = Session::new(fx.path(), PermissionDecision::Allow);
-    let policy = s.policy.clone();
-    policy.record_read(&policy.resolve("src/lib.rs"));
+
+    let unread = s
+        .call(
+            "Edit",
+            json!({"file_path": "src/lib.rs", "old_string": "1", "new_string": "3"}),
+        )
+        .await;
+    assert!(unread.is_error, "the precondition must start unsatisfied");
+
+    let cat = s.call("Bash", json!({"command": "cat src/lib.rs"})).await;
+    assert!(!cat.is_error, "{}", cat.content);
+
     let r = s
         .call(
             "Edit",
             json!({"file_path": "src/lib.rs", "old_string": "1", "new_string": "3"}),
         )
         .await;
-    assert!(!r.is_error, "{}", r.content);
+    assert!(!r.is_error, "a shell read did not satisfy the precondition: {}", r.content);
     assert_eq!(fx.read("src/lib.rs"), "pub fn a() -> u8 { 3 }\n");
+}
+
+#[tokio::test]
+async fn a_shell_command_that_writes_does_not_count_as_having_read() {
+    // The registration is gated on a provably read-only classification, so a
+    // command that could have changed the file cannot also vouch for it.
+    let fx = Fixture::new();
+    let s = Session::new(fx.path(), PermissionDecision::Allow);
+    let wrote = s
+        .call("Bash", json!({"command": "echo x >> src/lib.rs"}))
+        .await;
+    assert!(!wrote.is_error, "{}", wrote.content);
+
+    let r = s
+        .call(
+            "Edit",
+            json!({"file_path": "src/lib.rs", "old_string": "1", "new_string": "3"}),
+        )
+        .await;
+    assert!(r.is_error, "a write must not satisfy read-before-edit");
+    assert!(r.content.contains("Read"), "{}", r.content);
 }
 
 #[tokio::test]
@@ -401,6 +436,23 @@ async fn no_registered_tool_can_reach_outside_the_workspace() {
     }
     assert!(exercised >= 4, "only {exercised} path-taking tools exist?");
     assert_eq!(outside.read("secret"), "keys");
+}
+
+#[tokio::test]
+async fn shell_first_can_still_update_an_existing_file() {
+    // The shell-first tier has no Read and no Edit, so the patch tool is its
+    // only structured editor. Containing patch paths made the guard's
+    // read-before-edit precondition reachable for the first time — and nothing
+    // in that tier can satisfy it.
+    let fx = Fixture::new();
+    let s = Session::with_tier(fx.path(), PermissionDecision::Allow, ToolTier::ShellFirst);
+    let cat = s.call("Bash", json!({"command": "cat src/lib.rs"})).await;
+    assert!(!cat.is_error, "{}", cat.content);
+
+    let patch = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn a() -> u8 { 1 }\n+pub fn a() -> u8 { 2 }\n";
+    let r = s.call("ApplyPatch", json!({ "patch": patch })).await;
+    assert!(!r.is_error, "shell-first lost its only editor: {}", r.content);
+    assert!(fx.read("src/lib.rs").contains("{ 2 }"), "{}", fx.read("src/lib.rs"));
 }
 
 #[tokio::test]

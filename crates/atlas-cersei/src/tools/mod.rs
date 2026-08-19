@@ -331,7 +331,9 @@ mod tests {
                     "description": t.description(),
                     "input_schema": t.input_schema(),
                 });
-                let n = serde_json::to_string(&payload).map(|s| s.len()).unwrap_or(0);
+                let n = serde_json::to_string(&payload)
+                    .expect("a tool spec must serialise")
+                    .len();
                 (t.name().to_string(), n)
             })
             .collect();
@@ -343,9 +345,11 @@ mod tests {
     fn the_tool_list_stays_within_its_context_budget() {
         // The tool list is re-sent on **every request of every turn**, so its
         // size is multiplied by the number of tool calls: a sixteen-call turn
-        // pays for it sixteen times. It reached 12,213 B across 17 tools
-        // without anyone noticing, which is part of how a one-line edit came to
-        // cost 71k tokens of context; it is 8,593 B across 14 now.
+        // pays for it sixteen times. Measured with the env-gated tool excluded
+        // throughout: it reached 10,626 B across 16 tools without anyone
+        // noticing, which is part of how a one-line edit came to cost 71k
+        // tokens of context; folding the overlapping edit tools together took
+        // it to 8,593 B across 14.
         //
         // This is a budget, not a measurement. It fails when the list grows, so
         // the cost of a new tool is argued for in review instead of appearing
@@ -362,7 +366,14 @@ mod tests {
             ("shell-first", ToolTier::ShellFirst, SHELL_FIRST_MAX_BYTES),
         ] {
             let tools = atlas_coding_with(None, policy.clone(), tier, caps);
-            let sizes = wire_bytes(&tools);
+            // `ExaSearch` is registered only when its key is set, so measuring
+            // it would make this pass or fail depending on the developer's
+            // environment. It is also opt-in cost: a user who sets a key has
+            // chosen to pay for it. The budget guards what *every* user pays.
+            let sizes: Vec<(String, usize)> = wire_bytes(&tools)
+                .into_iter()
+                .filter(|(name, _)| name != "ExaSearch")
+                .collect();
             let bytes: usize = sizes.iter().map(|(_, n)| n).sum();
             let worst: Vec<String> = sizes
                 .iter()

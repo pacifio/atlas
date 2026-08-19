@@ -422,6 +422,49 @@ fn is_pipe_to_shell(segments: &[Vec<&str>]) -> bool {
 /// The three outcomes map to how often the user is interrupted, and nothing
 /// else. `Destructive` is not a block — it is a prompt the approval cache
 /// cannot suppress.
+/// The file-like arguments of a command that is **provably read-only**.
+///
+/// This is what makes the read registry work in the shell-first tier, where
+/// there is no `Read` tool to register anything: a `cat`/`sed -n`/`head` of a
+/// file is a read, and the file it names should satisfy read-before-edit
+/// exactly as `Read` would. Without it that tier's only structured editor is
+/// permanently refused, because nothing in it can ever satisfy the
+/// precondition.
+///
+/// Deliberately conservative. It yields nothing unless the whole command
+/// tokenises *and* classifies [`Risk::Safe`], so an unparseable command, a
+/// redirect, or anything that writes registers nothing — the failure mode is a
+/// read that goes unrecorded, never a write that is wrongly believed to be
+/// fresh.
+pub fn read_paths(command: &str) -> Vec<String> {
+    if classify(command).risk != Risk::Safe {
+        return Vec::new();
+    }
+    let Some(tokens) = tokenize(command) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut at_command_word = true;
+    for token in tokens {
+        match token {
+            Token::Sep => at_command_word = true,
+            Token::Word { text, .. } => {
+                if at_command_word {
+                    // The program name, not something it read.
+                    at_command_word = false;
+                } else if !text.starts_with('-') && text.parse::<u64>().is_err() {
+                    // A bare number is the value of the flag before it — `head
+                    // -n 20`, `grep -C 3` — not a file. Over-registering is the
+                    // dangerous direction: it would let an edit proceed against
+                    // a file nothing had actually read.
+                    out.push(text);
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn classify(command: &str) -> Verdict {
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -469,6 +512,51 @@ pub fn classify(command: &str) -> Verdict {
 
 #[cfg(test)]
 mod tests {
+
+    // ── read_paths: what a shell read registers ─────────────────────────────
+
+    #[test]
+    fn a_read_only_command_yields_the_files_it_named() {
+        assert_eq!(read_paths("cat src/lib.rs"), vec!["src/lib.rs"]);
+        assert_eq!(read_paths("head -n 20 a.rs b.rs"), vec!["a.rs", "b.rs"]);
+        // Known imprecision: a non-numeric flag value still comes through. It
+        // costs nothing — the guard registers only paths that resolve to a real
+        // file inside the workspace — but this is the limit of parsing a shell
+        // command without a shell grammar, and it is asserted rather than
+        // hidden.
+        assert_eq!(
+            read_paths("sed -n '1,50p' src/main.rs"),
+            vec!["1,50p", "src/main.rs"]
+        );
+    }
+
+    #[test]
+    fn a_command_that_could_write_registers_nothing() {
+        // Registering here would let a write vouch for its own freshness.
+        for command in [
+            "echo x >> src/lib.rs",
+            "rm src/lib.rs",
+            "sed -i s/a/b/ src/lib.rs",
+            "cp a.rs b.rs",
+        ] {
+            assert!(read_paths(command).is_empty(), "{command} registered something");
+        }
+    }
+
+    #[test]
+    fn an_unparseable_command_registers_nothing() {
+        // Failing closed: an unrecorded read only costs an extra Read call,
+        // where a wrongly recorded one costs the user's work.
+        for command in ["cat $FILE", "cat *.rs", "cat a.rs | tee b.rs"] {
+            assert!(read_paths(command).is_empty(), "{command} registered something");
+        }
+    }
+
+    #[test]
+    fn the_program_name_is_not_a_file_it_read() {
+        let paths = read_paths("cat a.rs && head b.rs");
+        assert_eq!(paths, vec!["a.rs", "b.rs"], "a command word leaked in");
+    }
     use super::*;
 
     fn risk(cmd: &str) -> Risk {

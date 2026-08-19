@@ -145,8 +145,11 @@ struct Input {
     file_path: String,
     old_string: Option<String>,
     new_string: Option<String>,
-    #[serde(default)]
-    replace_all: bool,
+    /// `Option` rather than a defaulted `bool` so that "the model set this" is
+    /// distinguishable from "the model left it alone" — which is what lets the
+    /// top-level flag be *refused* alongside `edits` instead of silently
+    /// ignored.
+    replace_all: Option<bool>,
     /// Several replacements to the same file in one call. This absorbs what was
     /// a separate `MultiEdit` tool: an identical schema for an identical
     /// operation, costing a second entry in every tool list the model is sent
@@ -155,22 +158,57 @@ struct Input {
 }
 
 impl Input {
-    /// Normalise both accepted shapes to a list, or say what was missing.
+    /// Normalise both accepted shapes to a list.
+    ///
+    /// Anything ambiguous is **refused, never resolved**. Silently preferring
+    /// one shape drops a replacement the model asked for, and it would only
+    /// find out by reading the file back — which is exactly the class of
+    /// failure the read-before-edit precondition exists to prevent.
     fn ops(self) -> Result<(String, Vec<EditOp>), String> {
-        match (self.edits, self.old_string, self.new_string) {
-            (Some(edits), _, _) if !edits.is_empty() => Ok((self.file_path, edits)),
-            (_, Some(old_string), Some(new_string)) => Ok((
-                self.file_path,
-                vec![EditOp {
-                    old_string,
-                    new_string,
-                    replace_all: self.replace_all,
-                }],
-            )),
-            _ => Err(
-                "Edit needs either old_string and new_string, or a non-empty edits array."
-                    .to_string(),
-            ),
+        let flat = self.old_string.is_some() || self.new_string.is_some();
+        let top_level_replace_all = self.replace_all;
+        match self.edits {
+            Some(edits) if !edits.is_empty() => {
+                if flat {
+                    return Err("Edit takes either old_string/new_string or edits, not both. \
+                                Move the replacement into the edits array."
+                        .to_string());
+                }
+                if top_level_replace_all.is_some() {
+                    return Err("replace_all belongs to one replacement. Set it inside the edits \
+                                entry it applies to, not at the top level."
+                        .to_string());
+                }
+                // A lone edit with an empty old_string is the create form and is
+                // handled below. Inside a batch it cannot be: the file has to
+                // exist for the later edits to match against.
+                if edits.len() > 1 {
+                    if let Some(i) = edits.iter().position(|e| e.old_string.is_empty()) {
+                        return Err(format!(
+                            "Edit {} of {} has an empty old_string, which means `create this \
+                             file` and cannot be combined with other edits. Create the file in \
+                             its own call, then edit it.",
+                            i + 1,
+                            edits.len()
+                        ));
+                    }
+                }
+                Ok((self.file_path, edits))
+            }
+            _ => match (self.old_string, self.new_string) {
+                (Some(old_string), Some(new_string)) => Ok((
+                    self.file_path,
+                    vec![EditOp {
+                        old_string,
+                        new_string,
+                        replace_all: top_level_replace_all.unwrap_or(false),
+                    }],
+                )),
+                _ => Err(
+                    "Edit needs either old_string and new_string, or a non-empty edits array."
+                        .to_string(),
+                ),
+            },
         }
     }
 }
@@ -274,12 +312,15 @@ impl Tool for EditTool {
         // only if every one succeeds. A batch that fails halfway must leave the
         // file exactly as it was, or the model is reasoning about a state
         // nothing described to it.
-        let mut result_lf = content_lf.clone();
+        // `Cow` rather than a clone: the common single-edit call borrows the
+        // content it already read instead of copying the whole file to have
+        // something to hand the loop.
+        let mut result_lf: std::borrow::Cow<'_, str> = std::borrow::Cow::Borrowed(&content_lf);
         for (i, op) in ops.iter().enumerate() {
             let old_lf = op.old_string.replace("\r\n", "\n");
             let new_lf = op.new_string.replace("\r\n", "\n");
             result_lf = match replace::replace(&result_lf, &old_lf, &new_lf, op.replace_all) {
-                Ok(s) => s,
+                Ok(s) => std::borrow::Cow::Owned(s),
                 Err(e) => {
                     let why = match e {
                         replace::ReplaceError::Identical => {
@@ -300,7 +341,7 @@ impl Tool for EditTool {
                             errors::edit_disproportionate(&rel)
                         }
                     };
-                    return ToolResult::error(errors::in_batch(i, ops.len(), &why));
+                    return ToolResult::error(errors::batch_failure(i, ops.len(), &why));
                 }
             };
         }
@@ -314,7 +355,7 @@ impl Tool for EditTool {
         let mut to_write = if crlf {
             result_lf.replace('\n', "\r\n")
         } else {
-            result_lf
+            result_lf.into_owned()
         };
         if had_bom {
             to_write.insert_str(0, BOM);
@@ -410,6 +451,83 @@ mod tests {
         );
         assert!(r.content.contains("Edit 2 of 2"), "must locate the failure: {}", r.content);
         assert!(r.content.contains("unchanged"), "{}", r.content);
+    }
+
+    #[tokio::test]
+    async fn over_specified_input_is_refused_rather_than_silently_resolved() {
+        // Preferring one shape would drop a replacement the model asked for,
+        // and it would only find out by reading the file back.
+        let tmp = TmpDir::new();
+        std::fs::write(tmp.path().join("a.rs"), "x\n").unwrap();
+
+        let both = run(
+            tmp.path(),
+            serde_json::json!({
+                "file_path": "a.rs",
+                "old_string": "x",
+                "new_string": "y",
+                "edits": [{"old_string": "x", "new_string": "z"}]
+            }),
+        )
+        .await;
+        assert!(both.is_error, "{}", both.content);
+        assert!(both.content.contains("not both"), "{}", both.content);
+        assert_eq!(std::fs::read_to_string(tmp.path().join("a.rs")).unwrap(), "x\n");
+
+        let stray_flag = run(
+            tmp.path(),
+            serde_json::json!({
+                "file_path": "a.rs",
+                "replace_all": true,
+                "edits": [{"old_string": "x", "new_string": "z"}]
+            }),
+        )
+        .await;
+        assert!(stray_flag.is_error, "{}", stray_flag.content);
+        assert!(stray_flag.content.contains("replace_all"), "{}", stray_flag.content);
+    }
+
+    #[tokio::test]
+    async fn creating_a_file_inside_a_batch_is_a_correctable_error() {
+        // An empty old_string means "create this file", which cannot be
+        // combined with edits that have to match against its contents. The
+        // description promises creation with no caveat, so the refusal has to
+        // explain itself rather than surface as "File not found".
+        let tmp = TmpDir::new();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "file_path": "new.rs",
+                "edits": [
+                    {"old_string": "", "new_string": "fn a() {}\n"},
+                    {"old_string": "a", "new_string": "b"}
+                ]
+            }),
+        )
+        .await;
+        assert!(r.is_error, "{}", r.content);
+        assert!(r.content.contains("empty old_string"), "{}", r.content);
+        assert!(!tmp.path().join("new.rs").exists(), "nothing should have been created");
+    }
+
+    #[tokio::test]
+    async fn a_lone_edits_entry_still_creates_a_file() {
+        // One entry is the same thing as the flat form, so it keeps the create
+        // behaviour the description promises.
+        let tmp = TmpDir::new();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "file_path": "new.rs",
+                "edits": [{"old_string": "", "new_string": "fn a() {}\n"}]
+            }),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("new.rs")).unwrap(),
+            "fn a() {}\n"
+        );
     }
 
     #[tokio::test]

@@ -627,7 +627,7 @@ fn path_probe_schema(tool_name: &str) -> Value {
     serde_json::json!({ "type": "object", "properties": Value::Object(props) })
 }
 
-fn is_shell_tool(tool_name: &str) -> bool {
+pub fn is_shell_tool(tool_name: &str) -> bool {
     matches!(
         tool_name,
         "Bash"
@@ -660,7 +660,7 @@ pub fn shell_command<'a>(tool_name: &str, input: &'a Value) -> Option<&'a str> {
 
 /// Every filesystem path this tool call names, as written by the model.
 ///
-/// Covers the declared path fields, the nested `edits` array `MultiEdit` uses,
+/// Covers the declared path fields, the nested `edits` array a batched `Edit` uses,
 /// and the `*** Add/Update/Delete File:` headers inside an apply-patch body —
 /// the last of which is the only place a write target hides inside free text.
 pub fn candidate_paths(tool_name: &str, input: &Value) -> Vec<String> {
@@ -720,13 +720,13 @@ fn patch_path_in_line(line: &str) -> Option<String> {
         }
         return None;
     }
-    // Unified diff. Both sides are collected: the `+++` side is the write
-    // target, and containing the `---` side too costs nothing for a real patch
-    // (it names the same file) while refusing a hand-built one that reads from
-    // outside the workspace.
-    let rest = line
-        .strip_prefix("+++ ")
-        .or_else(|| line.strip_prefix("--- "))?;
+    // Unified diff. Only the `+++` side, and only `b/` stripped — because that
+    // is exactly what the applier does to pick its target. Guessing differently
+    // means containing a path the tool never writes to while missing the one it
+    // does; collecting the `---` side as well would add nothing (a real patch
+    // names the same file on both) and would refuse a legitimate diff taken
+    // against a system header.
+    let rest = line.strip_prefix("+++ ")?;
     // `diff -u` appends a tab and a timestamp.
     let rest = rest.split('\t').next().unwrap_or(rest).trim();
     // `/dev/null` is how a unified diff spells "this file does not exist yet";
@@ -734,12 +734,7 @@ fn patch_path_in_line(line: &str) -> Option<String> {
     if rest.is_empty() || rest == "/dev/null" {
         return None;
     }
-    // Strip git's `a/` and `b/` prefixes, exactly as the tool that applies the
-    // patch does — otherwise containment would check a path the tool never uses.
-    let rest = rest
-        .strip_prefix("a/")
-        .or_else(|| rest.strip_prefix("b/"))
-        .unwrap_or(rest);
+    let rest = rest.strip_prefix("b/").unwrap_or(rest);
     (!rest.is_empty()).then(|| rest.to_string())
 }
 
@@ -1028,8 +1023,10 @@ mod tests {
     fn both_patch_dialects_yield_their_write_targets() {
         // Finding no paths reads to the rest of the gate as "this call touches
         // nothing" — no containment, no freshness, and one shared cache key.
+        // Only the write target: that is the single path the applier derives
+        // from a unified diff, so it is the only one worth containing.
         let unified = "--- a/src/old.rs\n+++ b/src/new.rs\n@@ -1 +1 @@\n-a\n+b\n";
-        assert_eq!(patch_paths(unified), vec!["src/old.rs", "src/new.rs"]);
+        assert_eq!(patch_paths(unified), vec!["src/new.rs"]);
 
         let codex = "*** Begin Patch\n*** Add File: src/x.rs\n+x\n*** End Patch";
         assert_eq!(patch_paths(codex), vec!["src/x.rs"]);
@@ -1045,7 +1042,7 @@ mod tests {
     #[test]
     fn a_diff_timestamp_is_not_part_of_the_path() {
         let stamped = "--- a/src/x.rs\t2026-08-19 09:00:00.000000000 +0600\n+++ b/src/x.rs\t2026-08-19 09:00:01.000000000 +0600\n";
-        assert_eq!(patch_paths(stamped), vec!["src/x.rs", "src/x.rs"]);
+        assert_eq!(patch_paths(stamped), vec!["src/x.rs"]);
     }
 
     #[test]
