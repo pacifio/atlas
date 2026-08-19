@@ -96,8 +96,18 @@ const FAMILIES: &[Family] = &[
         thinking: ThinkingSupport::Effort,
         vision: true,
     },
-    // o3 / o4 are segment-anchored below (an `o3` substring would swallow
-    // ids like "llama-o3-tuned"), handled in `resolve`.
+    // The o-series: reasoning like gpt-5, but a 200k window, not gpt-5's
+    // 400k. It borrowed the gpt-5 row for its thinking style and silently
+    // took the window with it, which made long sessions compact far too late
+    // and die at the provider instead. Segment-anchored in `family_for` (an
+    // `o3` substring would swallow ids like "llama-o3-tuned").
+    Family {
+        needles: &["__o-series__"],
+        context_window: 200_000,
+        parallel_tools: true,
+        thinking: ThinkingSupport::Effort,
+        vision: true,
+    },
     Family {
         needles: &["gpt-4o", "gpt-4.1", "gpt-4-turbo"],
         context_window: 128_000,
@@ -249,7 +259,7 @@ fn family_for(normalized: &str) -> Option<&'static Family> {
         || normalized.starts_with("o3-")
         || normalized.starts_with("o4-")
     {
-        return FAMILIES.iter().find(|f| f.needles.contains(&"gpt-5"));
+        return FAMILIES.iter().find(|f| f.needles.contains(&"__o-series__"));
     }
     FAMILIES
         .iter()
@@ -333,6 +343,37 @@ mod tests {
         let p = ModelProfile::resolve("together", "Qwen/Qwen3-Coder-480B-A35B-Instruct");
         assert_eq!(p.tool_tier, ToolTier::Structured);
         assert_eq!(p.context_window, 131_072);
+    }
+
+    #[test]
+    fn the_o_series_window_is_not_the_gpt_5_window() {
+        // o3/o4 were routed to the gpt-5 family row to borrow its Effort
+        // thinking, and inherited its 400k context window with it. The
+        // vendored registry says o3 is 200,000 — and the exact-id override
+        // only fires for the three ids listed there under provider "openai",
+        // so o3-mini, o4*, and anything reached through a gateway id kept the
+        // 400k figure.
+        //
+        // `context_window` drives compaction. At 400k with a 0.90 threshold
+        // the first compaction is attempted around 360k — long past where the
+        // real window ends — so a long session dies on a provider
+        // context-length 400 (which retry.rs classifies fatal) instead of
+        // compacting. Which is the failure ModelProfile exists to remove.
+        for model in ["o3-mini", "o4", "o4-mini", "o3-deep-research"] {
+            let p = ModelProfile::resolve("openai", model);
+            assert_eq!(
+                p.context_window, 200_000,
+                "{model} must not inherit the gpt-5 window"
+            );
+            assert_eq!(p.thinking, ThinkingSupport::Effort, "{model} still reasons");
+        }
+        // Through a gateway provider id, where the registry override cannot help.
+        assert_eq!(
+            ModelProfile::resolve("openrouter", "o4-mini").context_window,
+            200_000
+        );
+        // gpt-5 itself keeps its own window.
+        assert_eq!(ModelProfile::resolve("openai", "gpt-5").context_window, 400_000);
     }
 
     #[test]
