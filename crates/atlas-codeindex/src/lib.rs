@@ -1,11 +1,24 @@
-//! `atlas-codeindex` — turn a live codebase into fresh, embeddable documents.
+//! `atlas-codeindex` — turn a live codebase into retrieval units.
 //!
-//! Deterministic half of the Memory-Chat codebase indexer: walk the project
-//! (gitignore-respecting), parse each supported source file with Cersei's
-//! tree-sitter `code_intel`, and emit one [`CodebaseDoc`] per file carrying its
-//! language, imports, top-level symbols, and a content hash for incremental
-//! rebuilds. The LLM-summary (Tier 2) and embedding steps live in the app's
-//! command layer; this crate stays pure (no I/O beyond reading source files).
+//! Deterministic half of the codebase indexer, three layers:
+//!
+//! - **Scan** (this file): walk the project (gitignore-respecting), parse each
+//!   supported source file with Cersei's tree-sitter `code_intel`, and emit one
+//!   [`CodebaseDoc`] per file carrying its language, imports, top-level
+//!   symbols, and a content hash for incremental rebuilds.
+//! - **[`chunk`]**: AST-boundary chunking — the retrieval unit is a
+//!   content-addressed header + actual-source body with exact byte/line ranges,
+//!   not a list of symbol names.
+//! - **[`lexical`]**: an SQLite FTS5 (BM25) index over those chunks — ranked
+//!   code search that needs zero model download, git-anchored for freshness.
+//!
+//! The LLM-summary (Tier 2) and embedding steps live in the app's command
+//! layer; this crate does no network and no model I/O.
+
+// AST-boundary chunking: the retrieval unit (header + body + exact ranges).
+pub mod chunk;
+// Lexical tier: SQLite FTS5 (BM25) over chunks — works with zero model download.
+pub mod lexical;
 
 use std::path::{Path, PathBuf};
 
@@ -81,6 +94,20 @@ fn language_label(language: Language) -> &'static str {
 
 fn symbol_label(kind: SymbolKind) -> &'static str {
     kind.label()
+}
+
+/// SHA-256 of a file's source — the same fingerprint `scan` stamps on
+/// [`ScannedFile::hash`], shared with the lexical store's incremental diff.
+pub fn file_content_hash(source: &str) -> String {
+    content_hash(source)
+}
+
+/// Imports of one file (for chunk headers), via the same tree-sitter
+/// `code_intel` pass the scan uses. Empty when the file doesn't parse.
+pub fn imports_of(path: &Path, source: &str) -> Vec<String> {
+    code_intel::analyze_file(path, source)
+        .map(|intel| intel.imports)
+        .unwrap_or_default()
 }
 
 fn content_hash(source: &str) -> String {

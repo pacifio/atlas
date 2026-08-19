@@ -18,6 +18,20 @@ cersei = { version = "0.2.6", default-features = false }
 ignore = "0.4"
 # Content fingerprints for incremental rebuilds.
 sha2 = "0.10"
+# Chunk content addresses (`CodeChunk.hash`); the retrieval doc pins blake3 for
+# chunk hashing — fast enough to re-hash every chunk on every incremental pass.
+blake3 = "1"
+# AST-boundary chunking. `code_intel` (above) has no end positions, so it cannot
+# express chunk boundaries; these are the same grammar versions atlas-cersei
+# already builds, so no new grammar toolchain.
+tree-sitter = "0.26"
+tree-sitter-go = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-rust = "0.23"
+tree-sitter-typescript = "0.23"
+# Lexical tier: SQLite FTS5 (BM25) over chunks. `bundled` compiles FTS5 in —
+# same version + feature as atlas-checkpoint, so no new native toolchain.
+rusqlite = { version = "0.32", features = ["bundled"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
