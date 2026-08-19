@@ -107,8 +107,25 @@ pub fn scan(root: &Path, mtime_ms_of: impl Fn(&Path) -> i64) -> Vec<ScannedFile>
         .follow_links(false)
         .build();
 
+    // Every skip is counted by reason and logged once at the end. A scan that
+    // drops files without saying so makes a truncated index indistinguishable
+    // from "project has no source" — you cannot trust an eval on a pipeline
+    // that loses inputs silently.
+    let mut walk_errors: u64 = 0;
+    let mut skipped_too_large: u64 = 0;
+    let mut skipped_read: u64 = 0;
+    let mut skipped_parse: u64 = 0;
+    let mut skipped_empty: u64 = 0;
+
     let mut out: Vec<ScannedFile> = Vec::new();
-    for entry in walker.flatten() {
+    for entry in walker {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => {
+                walk_errors += 1;
+                continue;
+            }
+        };
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
@@ -120,6 +137,7 @@ pub fn scan(root: &Path, mtime_ms_of: impl Fn(&Path) -> i64) -> Vec<ScannedFile>
             continue;
         }
         if entry.metadata().map(|m| m.len() > MAX_SOURCE_BYTES).unwrap_or(true) {
+            skipped_too_large += 1;
             continue;
         }
         let Ok(rel) = path.strip_prefix(root) else {
@@ -127,12 +145,15 @@ pub fn scan(root: &Path, mtime_ms_of: impl Fn(&Path) -> i64) -> Vec<ScannedFile>
         };
         let rel = rel.to_string_lossy().into_owned();
         let Ok(source) = std::fs::read_to_string(path) else {
+            skipped_read += 1;
             continue;
         };
         let Some(intel) = code_intel::analyze_file(path, &source) else {
+            skipped_parse += 1;
             continue;
         };
         if intel.symbols.is_empty() && intel.imports.is_empty() {
+            skipped_empty += 1;
             continue; // grammar produced nothing useful
         }
         out.push(ScannedFile {
@@ -152,6 +173,18 @@ pub fn scan(root: &Path, mtime_ms_of: impl Fn(&Path) -> i64) -> Vec<ScannedFile>
             hash: content_hash(&source),
             mtime_ms: mtime_ms_of(path),
         });
+    }
+    if walk_errors + skipped_too_large + skipped_read + skipped_parse + skipped_empty > 0 {
+        tracing::info!(
+            target: "atlas::codeindex",
+            scanned = out.len() as u64,
+            walk_errors,
+            skipped_too_large,
+            skipped_read,
+            skipped_parse,
+            skipped_empty,
+            "scan_skips"
+        );
     }
     out
 }
@@ -220,16 +253,119 @@ pub struct CodebaseIndex {
 }
 
 pub fn load_index(project_path: &str) -> CodebaseIndex {
-    std::fs::read(docs_path(project_path))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    // Missing file = never indexed = the default, silently. A file that EXISTS
+    // but doesn't parse is a different animal — that's a truncated or corrupt
+    // write, and swallowing it made it indistinguishable from "never indexed".
+    // Callers still get the default (nothing to render), but the defect is on
+    // the record instead of invisible.
+    let path = docs_path(project_path);
+    let Ok(bytes) = std::fs::read(&path) else {
+        return CodebaseIndex::default();
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(index) => index,
+        Err(e) => {
+            tracing::warn!(
+                target: "atlas::codeindex",
+                "corrupt codebase index at {} ({e}); treating as unindexed",
+                path.display()
+            );
+            CodebaseIndex::default()
+        }
+    }
 }
 
 pub fn save_index(project_path: &str, index: &CodebaseIndex) -> Result<()> {
     let dir = index_dir(project_path);
     std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
     let bytes = serde_json::to_vec(index).context("serialize codebase index")?;
-    std::fs::write(docs_path(project_path), bytes).context("write docs.json")?;
+    // Atomic temp + rename: a crash mid-write must leave the previous index
+    // intact, never a truncated docs.json that load_index reads as corrupt.
+    let target = docs_path(project_path);
+    let tmp = dir.join(format!("docs.json.tmp.{}", std::process::id()));
+    std::fs::write(&tmp, bytes).with_context(|| format!("write {}", tmp.display()))?;
+    if let Err(e) = std::fs::rename(&tmp, &target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e)
+            .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()));
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_project(tag: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("atlas-codeindex-test-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn save_then_load_round_trips() {
+        let project = tmp_project("roundtrip");
+        let index = CodebaseIndex {
+            built_at_ms: 42,
+            docs: vec![CodebaseDoc {
+                rel: "a.rs".into(),
+                abs_path: "/p/a.rs".into(),
+                language: "rust".into(),
+                imports: Vec::new(),
+                symbols: Vec::new(),
+                hash: "h".into(),
+                mtime_ms: 1,
+                summary: String::new(),
+                text: "File a.rs (rust).".into(),
+                import_rank: 0,
+            }],
+        };
+        save_index(&project, &index).unwrap();
+        let loaded = load_index(&project);
+        assert_eq!(loaded.built_at_ms, 42);
+        assert_eq!(loaded.docs.len(), 1);
+        assert_eq!(loaded.docs[0].rel, "a.rs");
+        // The atomic write leaves no temp file behind.
+        let leftovers: Vec<_> = std::fs::read_dir(index_dir(&project))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
+            .collect();
+        assert!(leftovers.is_empty(), "temp file left behind: {leftovers:?}");
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn missing_index_loads_default() {
+        let project = tmp_project("missing");
+        let loaded = load_index(&project);
+        assert_eq!(loaded.built_at_ms, 0);
+        assert!(loaded.docs.is_empty());
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn corrupt_index_loads_default_instead_of_panicking() {
+        let project = tmp_project("corrupt");
+        std::fs::create_dir_all(index_dir(&project)).unwrap();
+        // A truncated write: valid prefix of real JSON, invalid document.
+        std::fs::write(docs_path(&project), b"{\"builtAtMs\": 42, \"docs\": [{\"id\"").unwrap();
+        let loaded = load_index(&project);
+        assert_eq!(loaded.built_at_ms, 0, "corrupt index must read as unindexed");
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn scan_counts_but_still_returns_files() {
+        let project = tmp_project("scan");
+        let root = Path::new(&project);
+        std::fs::write(root.join("a.rs"), "pub fn alpha() {}\n").unwrap();
+        std::fs::write(root.join("noise.txt"), "not source\n").unwrap();
+        let files = scan(root, |_| 0);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].rel, "a.rs");
+        assert!(files[0].symbols.iter().any(|s| s.name == "alpha"));
+        let _ = std::fs::remove_dir_all(&project);
+    }
 }

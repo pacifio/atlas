@@ -45,12 +45,29 @@ pub struct CodebaseIndexStatus {
 }
 
 #[tauri::command]
-pub async fn codebase_index_status(project_path: String) -> Result<CodebaseIndexStatus, String> {
+pub async fn codebase_index_status(
+    app: AppHandle,
+    project_path: String,
+) -> Result<CodebaseIndexStatus, String> {
+    let started = std::time::Instant::now();
     let pp = project_path.trim_end_matches('/').to_string();
     let idx = tokio::task::spawn_blocking(move || atlas_codeindex::load_index(&pp))
         .await
         .map_err(|e| e.to_string())?;
-    Ok(status_of(&idx))
+    let status = status_of(&idx);
+    // Availability probe, not a query: n_results stays 0 by definition;
+    // corpus_size is the signal (0 = the index the features assume is absent).
+    crate::telemetry::retrieval::record(
+        &app,
+        "codebase_status",
+        status.file_count as u64,
+        0,
+        None,
+        started.elapsed().as_millis() as u64,
+        "ui",
+        None,
+    );
+    Ok(status)
 }
 
 #[derive(Deserialize)]
@@ -152,7 +169,13 @@ pub async fn codebase_index_build(
     };
     let save_pp = pp.clone();
     let save_index = index.clone();
-    let _ = tokio::task::spawn_blocking(move || atlas_codeindex::save_index(&save_pp, &save_index)).await;
+    // Propagated, not discarded: a build whose write failed must report
+    // failure, or a truncated index is indistinguishable from "indexed" and
+    // "done" is a lie.
+    tokio::task::spawn_blocking(move || atlas_codeindex::save_index(&save_pp, &save_index))
+        .await
+        .map_err(|e| format!("save index join: {e}"))?
+        .map_err(|e| format!("save index: {e}"))?;
 
     // 6. Re-embed the unified corpus (codebase docs are now in collect_corpus).
     emit(&app, "embedding", 0, 0);

@@ -346,8 +346,15 @@ pub async fn memory_chat_send(
         }
     };
 
+    let retrieve_started = std::time::Instant::now();
     let vmap = load_doc_vectors(&pp);
+    let corpus_size = vmap.len() as u64;
     if vmap.is_empty() {
+        crate::telemetry::retrieval::record(
+            &app, "memory_chat", 0, 0, None,
+            retrieve_started.elapsed().as_millis() as u64,
+            "ui", Some("empty_index"),
+        );
         emit(&app, &stream_id, ChatEvent::Error {
             message: "No memory index yet — build it in Memory ▸ Graph first.".into(),
         });
@@ -376,6 +383,11 @@ pub async fn memory_chat_send(
 
     // Shared, load-once MiniLM (same instance the indexer / graph / retrieve use).
     let Some(provider) = registry.provider(&app).await else {
+        crate::telemetry::retrieval::record(
+            &app, "memory_chat", corpus_size, 0, None,
+            retrieve_started.elapsed().as_millis() as u64,
+            "ui", Some("no_provider"),
+        );
         emit(&app, &stream_id, ChatEvent::Error {
             message: "Download the embedding model first (Memory ▸ Graph).".into(),
         });
@@ -411,6 +423,13 @@ pub async fn memory_chat_send(
         }
         let store = BruteForce::new(vectors);
         let hits = store.search(&qv, TOP_K);
+        crate::telemetry::retrieval::record(
+            &app_bg, "memory_chat", corpus_size,
+            hits.len() as u64,
+            hits.first().map(|(_, s)| *s),
+            retrieve_started.elapsed().as_millis() as u64,
+            "ui", None,
+        );
 
         // 3. Assemble retrieved context + source list.
         let mut sources: Vec<SourceRef> = Vec::new();
@@ -504,6 +523,7 @@ pub async fn memory_chat_retrieve(
     if query.trim().is_empty() {
         return Err("empty query".into());
     }
+    let retrieve_started = std::time::Instant::now();
 
     // Shared, load-once MiniLM (also gates on the model being downloaded).
     let embedder = registry
@@ -512,7 +532,13 @@ pub async fn memory_chat_retrieve(
         .ok_or("Download the embedding model first (Memory ▸ Graph).")?
         .embedder();
     let vmap = load_doc_vectors(&pp);
+    let corpus_size = vmap.len() as u64;
     if vmap.is_empty() {
+        crate::telemetry::retrieval::record(
+            &app, "memory_chat", 0, 0, None,
+            retrieve_started.elapsed().as_millis() as u64,
+            "ui", Some("empty_index"),
+        );
         return Err("No memory index yet — build it in Memory ▸ Graph first.".into());
     }
 
@@ -532,6 +558,7 @@ pub async fn memory_chat_retrieve(
     let git_ctx = git_context(&pp);
 
     let q = query.clone();
+    let app_bg = app.clone();
     let (context, sources) = tokio::task::spawn_blocking(
         move || -> Result<(String, Vec<SourceRef>), String> {
             let qv = embedder
@@ -545,6 +572,13 @@ pub async fn memory_chat_retrieve(
             }
             let store = BruteForce::new(vectors);
             let hits = store.search(&qv, TOP_K);
+            crate::telemetry::retrieval::record(
+                &app_bg, "memory_chat", corpus_size,
+                hits.len() as u64,
+                hits.first().map(|(_, s)| *s),
+                retrieve_started.elapsed().as_millis() as u64,
+                "ui", None,
+            );
             let mut sources: Vec<SourceRef> = Vec::new();
             let mut context = String::new();
             for (i, score) in &hits {

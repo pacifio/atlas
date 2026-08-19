@@ -21,6 +21,9 @@ sha2 = "0.10"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Counted scan skips + corrupt-index warnings (`atlas::codeindex` target) —
+# a build that drops files must say so.
+tracing = "0.1"
 
 [patch.crates-io]
 # ATLAS PATCH (Phase 0, plans/atlas-agent-stack-zed-parity.md): incremental

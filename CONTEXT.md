@@ -89,6 +89,60 @@ A tool set with explicit Read, Edit, List, and Grep tools. Suits models that
 cannot reliably drive a shell. Which model gets which tier is decided by
 measurement, not assumption.
 
+## Retrieval vocabulary
+
+The retrieval stack (codeindex · embed · memory) has its own collisions — a
+row missing from any one of three stores becomes invisible when the words
+blur. The bare word **"index" is banned** here: always qualify it.
+
+**Document**:
+One retrievable unit of text with a stable id — a whole-file summary
+(`CodebaseDoc`), a memory note (`MemoryDoc`), or an extracted fact. A document
+is what retrieval returns. Five shapes exist (`CodebaseDoc` / `CorpusDoc` /
+`MemoryDoc` / `DocText` / `RetrievedDoc`); when the shape matters, use the
+type name.
+_Avoid_: bare "doc" where the shape matters.
+
+**Chunk**:
+A sub-document span embedded on its own (header + body + hash). Atlas does not
+chunk yet; when it does, "chunk" means this and is never a synonym for
+document.
+
+**Corpus**:
+The gathered set of documents a query runs against, resolved at query time.
+Say which corpus: the code corpus, the memory corpus. The `source`/`corpus`
+tag field on a doc is a *tag*, not the corpus.
+
+**Vector index**:
+An embedding store answering nearest-neighbor queries. Atlas has two, and they
+are different things: the **engine store** (HNSW at
+`.atlas/memory/hnsw.usearch`, behind `MemoryEngine::retrieve` — the agent
+pull/push paths) and the **flat store** (`.atlas/memory-index/index.json`,
+brute-force scanned by the Memory UIs).
+_Avoid_: bare "index", "the memory index" without saying which.
+
+**Lexical index**:
+A keyword/BM25 store (FTS5, planned). None ships today; ripgrep is the floor.
+
+**Manifest**:
+The engine store's id→key map (`.atlas/memory/manifest.json`). Identity, never
+content.
+
+**Docstore**:
+The engine store's id→text map (`.atlas/memory/docstore.json`). Content, never
+vectors.
+
+**Codebase index**:
+The structural scan output at `.atlas/codebase-index/docs.json`
+(`atlas_codeindex::CodebaseIndex`). An input corpus for embedding — not itself
+a vector index.
+
+The invariant the vocabulary protects: `Manifest` maps `id→key`, the vector
+store maps `key→vector`, `Docstore` maps `id→text`; a row missing from any one
+makes a document silently unretrievable. That is why every store write is
+atomic (temp + rename), every scan skip is counted, and every retrieval path
+emits one `atlas::retrieval` line.
+
 ## Adoption vocabulary
 
 Three distinct commitments, often collapsed under "fork". Say which one is meant.

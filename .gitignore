@@ -42,3 +42,6 @@ graphify-out/
 plans/
 scripts/release-macos.sh
 .firecrawl/
+
+# npm cache folders some sandboxed npm invocations drop in-tree
+.npm-cache/

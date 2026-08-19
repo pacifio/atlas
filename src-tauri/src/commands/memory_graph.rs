@@ -135,7 +135,15 @@ fn save_index(project_path: &str, index: &StoredIndex) -> Result<(), String> {
     let dir = index_dir(project_path);
     std::fs::create_dir_all(&dir).map_err(|e| format!("create index dir: {e}"))?;
     let json = serde_json::to_string(index).map_err(|e| e.to_string())?;
-    std::fs::write(index_path(project_path), json).map_err(|e| format!("write index: {e}"))
+    // Atomic temp + rename: a crash mid-write must leave the previous index
+    // intact, never a truncated index.json that load_index reads as empty.
+    let tmp = dir.join(format!("index.json.tmp.{}", std::process::id()));
+    std::fs::write(&tmp, json).map_err(|e| format!("write index temp: {e}"))?;
+    if let Err(e) = std::fs::rename(&tmp, index_path(project_path)) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("rename index: {e}"));
+    }
+    Ok(())
 }
 
 fn hash_text(s: &str) -> String {
@@ -291,7 +299,9 @@ fn build_graph_blocking(
             })
             .collect(),
     };
-    let _ = save_index(&project_path, &stored);
+    // Propagated, not discarded: a failed write must fail the build, or a
+    // truncated index is indistinguishable from "indexed".
+    save_index(&project_path, &stored)?;
 
     // ── Edges ──────────────────────────────────────────────────────────────
     let id_of: Vec<&str> = docs.iter().map(|d| d.id.as_str()).collect();
@@ -417,8 +427,15 @@ pub async fn memory_index_query(
     if q.is_empty() {
         return Ok(vec![]);
     }
+    let retrieve_started = std::time::Instant::now();
     let index = load_index(&project_path);
+    let corpus_size = index.docs.len() as u64;
     if index.docs.is_empty() {
+        crate::telemetry::retrieval::record(
+            &app, "memory_index_query", 0, 0, None,
+            retrieve_started.elapsed().as_millis() as u64,
+            "ui", Some("empty_index"),
+        );
         return Ok(vec![]);
     }
     let k = top_k.unwrap_or(10);
@@ -431,13 +448,21 @@ pub async fn memory_index_query(
         .ok_or("model-not-downloaded")?
         .embedder();
 
+    let app_bg = app.clone();
     tokio::task::spawn_blocking(move || -> Result<Vec<QueryHit>, String> {
         let qv = embedder.embed_one(&q).map_err(|e| format!("embed query: {e}"))?;
         let ids: Vec<String> = index.docs.iter().map(|d| d.id.clone()).collect();
         let vectors: Vec<Vec<f32>> = index.docs.into_iter().map(|d| d.vector).collect();
         let store = BruteForce::new(vectors);
-        Ok(store
-            .search(&qv, k)
+        let hits = store.search(&qv, k);
+        crate::telemetry::retrieval::record(
+            &app_bg, "memory_index_query", corpus_size,
+            hits.len() as u64,
+            hits.first().map(|(_, s)| *s),
+            retrieve_started.elapsed().as_millis() as u64,
+            "ui", None,
+        );
+        Ok(hits
             .into_iter()
             .map(|(i, score)| QueryHit {
                 id: ids[i].clone(),

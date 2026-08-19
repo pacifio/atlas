@@ -34,7 +34,9 @@
 //!   3. compile-time `option_env!("ATLAS_POSTHOG_KEY")` — official release builds.
 //!   4. none → the client is permanently **inert** (no network, every call a no-op).
 
+pub mod bridge;
 pub mod device;
+pub mod retrieval;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

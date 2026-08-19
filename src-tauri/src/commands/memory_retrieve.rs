@@ -50,22 +50,49 @@ pub struct RetrievedDoc {
 /// but kept in the signature so the two call sites compile byte-for-byte unchanged.
 /// Empty on any failure (no model, no engine, timeout) — callers treat empty as
 /// "skip". Still time-bounded so it can never stall a turn.
+///
+/// `invoked_by` is telemetry-only: `"push"` (agents_send site C) or `"tool"`
+/// (the Cersei `search_memory` closure).
 pub async fn retrieve(
     app: &AppHandle,
     _chat_state: &MemoryChatState,
     project_path: &str,
     query: &str,
     top_k: usize,
+    invoked_by: &'static str,
 ) -> Vec<RetrievedDoc> {
+    let started = std::time::Instant::now();
     match tokio::time::timeout(
         Duration::from_secs(RETRIEVE_TIMEOUT_SECS),
         retrieve_engine(app, project_path, query, top_k),
     )
     .await
     {
-        Ok(docs) => docs,
+        Ok((docs, corpus_size, skipped)) => {
+            crate::telemetry::retrieval::record(
+                app,
+                "memory_retrieve",
+                corpus_size,
+                docs.len() as u64,
+                None, // the engine path drops similarity scores before this layer
+                started.elapsed().as_millis() as u64,
+                invoked_by,
+                skipped,
+            );
+            docs
+        }
         Err(_) => {
             tracing::warn!(target: "atlas::shared_memory", "index retrieval exceeded {RETRIEVE_TIMEOUT_SECS}s; skipping");
+            crate::telemetry::retrieval::record(
+                app,
+                "memory_retrieve",
+                0,
+                0,
+                None,
+                started.elapsed().as_millis() as u64,
+                invoked_by,
+                Some("timeout"),
+            );
             Vec::new()
         }
     }
@@ -75,34 +102,40 @@ pub async fn retrieve(
 /// registry, take the **read lock**, embed+fuse via [`MemoryEngine::retrieve`]
 /// using the registry's **shared** provider, and map `atlas_memory::RetrievedDoc`
 /// onto the local [`RetrievedDoc`] (which keeps `id` for site-C session dedup).
+/// Returns `(docs, corpus_size, skipped)` — the extra two are telemetry: how
+/// many docs the store held at query time, and which early-return guard fired
+/// (a skip is a data point, not a zero-result).
 async fn retrieve_engine(
     app: &AppHandle,
     project_path: &str,
     query: &str,
     top_k: usize,
-) -> Vec<RetrievedDoc> {
+) -> (Vec<RetrievedDoc>, u64, Option<&'static str>) {
     if query.trim().len() < 4 || top_k == 0 {
-        return Vec::new();
+        return (Vec::new(), 0, Some("query_too_short"));
     }
     let registry = app.state::<Arc<MemoryRegistry>>();
     // Shared on-device provider (loaded once, reused by the indexer). Absent until
     // the MiniLM model is downloaded → nothing to retrieve, skip silently.
     let Some(provider) = registry.provider(app).await else {
-        return Vec::new();
+        return (Vec::new(), 0, Some("no_provider"));
     };
     let engine = registry.engine_for(project_path);
     let guard = engine.read().await;
+    let corpus_size = guard.store().len() as u64;
     let docs = guard.retrieve(query, top_k, &provider).await;
     drop(guard);
 
-    docs.into_iter()
+    let docs = docs
+        .into_iter()
         .map(|d| RetrievedDoc {
             id: d.id,
             title: d.title,
             source: d.source,
             text: d.text,
         })
-        .collect()
+        .collect();
+    (docs, corpus_size, None)
 }
 
 

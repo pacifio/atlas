@@ -134,6 +134,9 @@ pub fn run() {
             let (telemetry, flush_rx) =
                 telemetry::TelemetryClient::new(&app.handle(), device_id, telemetry_enabled);
             app.manage(telemetry.clone());
+            // Let the `atlas::harness` tracing bridge (installed with the
+            // subscriber at process start) forward its counter lines.
+            telemetry::bridge::install_client(telemetry.clone());
             if let Some(rx) = flush_rx {
                 let tclient = telemetry.clone();
                 tauri::async_runtime::spawn(async move {

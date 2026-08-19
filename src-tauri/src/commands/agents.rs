@@ -408,7 +408,7 @@ pub fn install_manager(app: &AppHandle) {
         let app = app_for_search.clone();
         Box::pin(async move {
             let state = app.state::<crate::commands::memory_chat::MemoryChatState>();
-            crate::commands::memory_retrieve::retrieve(&app, state.inner(), &cwd, &query, k)
+            crate::commands::memory_retrieve::retrieve(&app, state.inner(), &cwd, &query, k, "tool")
                 .await
                 .into_iter()
                 .map(|d| atlas_agents::MemDoc {
@@ -417,6 +417,31 @@ pub fn install_manager(app: &AppHandle) {
                     text: d.text,
                 })
                 .collect()
+        })
+    }));
+
+    // C1 — pre-compaction memory flush. The native agent awaits this before
+    // auto-compaction summarizes a long session, so the middle of the session
+    // (where the important reasoning lives, and exactly what lossy
+    // summarization hits hardest) gets one chance to persist. The flush
+    // enqueues the same gated extraction job the session-end path uses: the
+    // actor's transcript snapshot is not compacted, so the job reads the full
+    // history even after the SDK summarizes its own copy. Consent-gated by
+    // the same sharing switch as every other memory write.
+    let app_for_flush = app.clone();
+    atlas_agents::register_memory_flush(std::sync::Arc::new(move |cwd, agent, session| {
+        let app = app_for_flush.clone();
+        Box::pin(async move {
+            let sharing = app.state::<crate::commands::memory_sharing::MemorySharingState>();
+            if !sharing.is_enabled(&cwd) {
+                return;
+            }
+            let registry = app.state::<Arc<MemoryRegistry>>();
+            let _ = registry.enqueue(super::memory_indexer::Job::ExtractSession {
+                cwd,
+                agent,
+                session,
+            });
         })
     }));
 }
@@ -748,7 +773,7 @@ pub async fn agents_send(
     const INDEX_TOP_K: usize = 3;
     let chat_state = app.state::<MemoryChatState>();
     let mut index_docs =
-        memory_retrieve::retrieve(&app, chat_state.inner(), &cwd, &text, INDEX_TOP_K).await;
+        memory_retrieve::retrieve(&app, chat_state.inner(), &cwd, &text, INDEX_TOP_K, "push").await;
     index_docs.retain(|d| sharing.note_index_doc(&key, &d.id));
     let index_block = memory_retrieve::compose_index_block(&index_docs);
 
