@@ -1,4 +1,4 @@
-Bug report — native agent session actor drops late assistant output.
+Bug report — Atlas Agent session actor drops late assistant output.
 
 In `crates/atlas-agents/src/actor.rs`, the session actor stamps every
 incoming event with the turn epoch that produced it and drops events whose

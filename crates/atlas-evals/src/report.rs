@@ -1,6 +1,6 @@
 //! Aggregation and the `report` command's tables. Per-model (and
 //! per-model-per-bucket) rows, with deltas against a pinned baseline sweep —
-//! the numbers the roadmap's §4.6 gate table reads.
+//! the numbers the harness plan's gate table reads.
 
 use std::collections::BTreeMap;
 
@@ -17,6 +17,7 @@ pub struct Aggregate {
     pub errors: u64,
     pub edit_calls: u64,
     pub edit_not_found: u64,
+    pub edit_fallbacks: u64,
     pub doom_loop_triggers: u64,
     pub compaction_events: u64,
     pub permission_asks: u64,
@@ -35,6 +36,7 @@ impl Aggregate {
         self.errors += u64::from(r.error.is_some());
         self.edit_calls += r.edit_calls();
         self.edit_not_found += r.edit_not_found();
+        self.edit_fallbacks += r.edit_fallbacks();
         self.doom_loop_triggers += r.doom_loop_triggers();
         self.compaction_events += r.compaction_events();
         self.permission_asks += r.permission_asks();
@@ -56,6 +58,20 @@ impl Aggregate {
     /// The M6 gate's number: failed Edit resolutions over Edit calls.
     pub fn edit_fail_rate(&self) -> f64 {
         ratio(self.edit_not_found, self.edit_calls)
+    }
+
+    /// How often an edit needed a fallback ladder strategy — the other half
+    /// of the M6 gate reading (an exact-match miss that still landed).
+    pub fn edit_fallback_rate(&self) -> f64 {
+        ratio(self.edit_fallbacks, self.edit_calls)
+    }
+
+    pub fn mean_wall_secs(&self) -> f64 {
+        if self.n == 0 {
+            0.0
+        } else {
+            self.wall_clock_ms as f64 / self.n as f64 / 1000.0
+        }
     }
 }
 
@@ -92,18 +108,23 @@ pub fn render(records: &[RunRecord], baseline: Option<&[RunRecord]>) -> String {
     let mut out = String::new();
 
     out.push_str(&format!(
-        "{:<32} {:>4} {:>6} {:>6} {:>9} {:>6} {:>10} {:>10} {:>8}\n",
-        "model", "n", "pass%", "ghost%", "editfail%", "doom", "tokens_in", "tokens_out", "cost$"
+        "{:<32} {:>4} {:>6} {:>6} {:>9} {:>7} {:>5} {:>8} {:>4} {:>6} {:>10} {:>10} {:>8}\n",
+        "model", "n", "pass%", "ghost%", "editfail%", "editfb%", "doom", "compact", "err", "wall_s", "tokens_in",
+        "tokens_out", "cost$"
     ));
     for (model, agg) in &by_model {
         out.push_str(&format!(
-            "{:<32} {:>4} {:>6.1} {:>6.1} {:>9.1} {:>6} {:>10} {:>10} {:>8.2}",
+            "{:<32} {:>4} {:>6.1} {:>6.1} {:>9.1} {:>7.1} {:>5} {:>8} {:>4} {:>6.1} {:>10} {:>10} {:>8.2}",
             model,
             agg.n,
             agg.pass_rate() * 100.0,
             agg.ghost_rate() * 100.0,
             agg.edit_fail_rate() * 100.0,
+            agg.edit_fallback_rate() * 100.0,
             agg.doom_loop_triggers,
+            agg.compaction_events,
+            agg.errors,
+            agg.mean_wall_secs(),
             agg.tokens_in,
             agg.tokens_out,
             agg.cost,
@@ -163,6 +184,16 @@ mod tests {
         // 4 runs × (1 not-found / 4 calls) from the stub turn.
         assert_eq!(m.edit_fail_rate(), 0.25);
         assert_eq!(by_bucket[&("m".to_string(), "edit".to_string())].n, 2);
+    }
+
+    #[test]
+    fn fallback_edits_count_one_per_entry_in_the_strategy_list() {
+        let mut r = rec("m", Bucket::Edit, true, false);
+        r.turns[0].edit_strategy_used = "line_trimmed,block_anchor".into();
+        let (by_model, _) = aggregate(&[r]);
+        assert_eq!(by_model["m"].edit_fallbacks, 2);
+        // 2 fallback ops over the stub's 4 edit calls.
+        assert_eq!(by_model["m"].edit_fallback_rate(), 0.5);
     }
 
     #[test]

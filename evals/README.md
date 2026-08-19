@@ -1,10 +1,9 @@
 # Atlas evals — the M0 harness
 
-The eval harness from `plans/cersei-harness-roadmap.md` §4.3: it runs the
-native Cersei agent headlessly against a task suite and reports the numbers
-the roadmap's gates read (pass rate, ghost-run rate, edit-failure rate,
-tokens, cost). Code lives in `crates/atlas-evals`; this directory holds the
-data.
+The M0 eval harness: it runs the Atlas Agent headlessly against a task
+suite and reports the numbers the harness plan's gates read (pass rate,
+ghost-run rate, edit-failure rate, tokens, cost). Code lives in
+`crates/atlas-evals`; this directory holds the data.
 
 ## Layout
 
@@ -25,7 +24,9 @@ data.
 - **edit** — omp-style micro-bench: a pinned rev of this repo is mutated by
   `mutate.patch`; the prompt spells out the exact restoration; verification
   is `git diff --exit-code` (byte-exact). Measures the edit layer in
-  isolation — cheap, run freely.
+  isolation — cheap, run freely. (Still open: the plan also wants 1-2
+  pinned OSS repos for a public, shareable subset — today's tasks are
+  atlas-only.)
 - **history** — real fix commits from this repo, reverted: the workspace is
   the fix's parent rev, the prompt is a bug report, and verification
   injects the fix commit's tests (`verify.patch`) and runs them.
@@ -45,11 +46,16 @@ cargo run -- harvest
 Models are provider-qualified (`provider/model`, providers per
 `atlas-cersei/src/provider.rs`). Keys come from the app's `byok-keys.json`
 (the runner reuses what Atlas already has), overridden by `*_API_KEY` env
-vars. Sessions run in bypass permission mode inside the normal sandbox
-tier, one detached git worktree (or fixture copy) per run, with a hard
-timeout, a per-run cost cap (`--max-cost-per-run`, default $2) and a
-sweep-level cap (`--max-cost-sweep`, default $25) that stops scheduling
-when crossed.
+vars. The small-local canary needs no key: `ollama/qwen3-coder` (or any
+`ollama/<model>`) talks to the local daemon on `127.0.0.1:11434`.
+
+Sessions run in bypass permission mode inside the normal sandbox tier, one
+detached git worktree (or fixture copy) per run, with a hard timeout, a
+per-run cost cap (`--max-cost-per-run`, default $2) and a sweep-level cap
+(`--max-cost-sweep`, default $25). Caps are enforced by cancelling the
+in-flight turn (a turn that ignores cancellation for 60s is aborted
+outright); the sweep cap is checked before scheduling each run, so a sweep
+can overshoot it by at most one run's cost.
 
 Sweep sizes (roadmap decision 2): the `smoke` suite is the cheap
 run-freely tier; the full sweep (≈50 tasks × 3 models × 3 runs) is

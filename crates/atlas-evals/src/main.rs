@@ -199,7 +199,10 @@ fn cmd_run(flags: &BTreeMap<String, String>) -> Result<(), String> {
         return Err("no tasks selected".into());
     }
 
-    let keys = collect_keys();
+    let mut keys = collect_keys();
+    // The local ollama daemon is keyless — give it a placeholder entry so
+    // `ollama/<model>` works as the small-local canary with no setup.
+    runner::ensure_keyless_entries(&mut keys);
     runner::check_model_keys(&models, &keys)?;
 
     let sweep_id = format!(
@@ -228,11 +231,15 @@ fn cmd_run(flags: &BTreeMap<String, String>) -> Result<(), String> {
     let capture = HarnessCapture::new();
     tracing_subscriber::registry()
         .with(capture.clone())
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_writer(std::io::stderr)
-                .with_filter_from_env(),
-        )
+        .with({
+            use tracing_subscriber::Layer;
+            // Default: warnings only — a sweep's stderr is for run
+            // outcomes, not per-event tracing. RUST_LOG opts into more.
+            tracing_subscriber::fmt::layer().with_writer(std::io::stderr).with_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+            )
+        })
         .init();
 
     let rt = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
@@ -333,31 +340,6 @@ fn cmd_harvest(flags: &BTreeMap<String, String>) -> Result<(), String> {
     println!("  {}", summary.baseline_path.display());
     println!("  {}", summary.candidates_path.display());
     Ok(())
-}
-
-trait FmtLayerExt<S>: Sized {
-    fn with_filter_from_env(self) -> tracing_subscriber::filter::Filtered<
-        Self,
-        tracing_subscriber::EnvFilter,
-        S,
-    >;
-}
-
-impl<S, L> FmtLayerExt<S> for L
-where
-    L: tracing_subscriber::Layer<S>,
-    S: tracing::Subscriber,
-{
-    fn with_filter_from_env(
-        self,
-    ) -> tracing_subscriber::filter::Filtered<Self, tracing_subscriber::EnvFilter, S> {
-        // Default: warnings only — a sweep's stderr is for run outcomes, not
-        // per-event tracing. RUST_LOG opts into more.
-        self.with_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-    }
 }
 
 #[cfg(test)]

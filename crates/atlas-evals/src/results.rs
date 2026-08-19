@@ -26,7 +26,7 @@ pub struct RunRecord {
     /// Infrastructure or provider error, if the run never finished cleanly.
     pub error: Option<String>,
     pub pass: bool,
-    /// The roadmap's "ghost run": the agent finished normally, but the
+    /// A "ghost run": the agent finished normally, but the
     /// verifier says the task is not done.
     pub ghost: bool,
     pub verify_exit: Option<i32>,
@@ -54,6 +54,17 @@ impl RunRecord {
 
     pub fn edit_not_found(&self) -> u64 {
         self.turns.iter().map(|t| t.edit_not_found).sum()
+    }
+
+    /// Edit operations that only landed via a fallback ladder strategy
+    /// (`edit_strategy_used` is a comma-joined list, one entry per
+    /// non-exact-match operation).
+    pub fn edit_fallbacks(&self) -> u64 {
+        self.turns
+            .iter()
+            .filter(|t| !t.edit_strategy_used.is_empty())
+            .map(|t| t.edit_strategy_used.split(',').count() as u64)
+            .sum()
     }
 
     pub fn doom_loop_triggers(&self) -> u64 {

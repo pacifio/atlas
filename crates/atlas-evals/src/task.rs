@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-/// The three suite buckets from the roadmap (§4.3): edit micro-bench,
+/// The three suite buckets of the harness plan: edit micro-bench,
 /// history-derived repo tasks, multi-step feature tasks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -75,7 +75,8 @@ struct TaskFile {
     verify: VerifySpec,
     /// Seconds before the run is cancelled (`cancel_turn`).
     timeout_secs: u64,
-    /// Cap on model rounds within the prompt (roadmap: repo tasks ≤ 30).
+    /// Cap on model rounds within the prompt (the harness plan budgets
+    /// repo tasks at 30).
     max_turns: Option<u32>,
 }
 

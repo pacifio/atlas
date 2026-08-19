@@ -1,17 +1,15 @@
-//! M0 — the eval harness (`plans/cersei-harness-roadmap.md` §4.3, sequenced
-//! by `plans/atlas-master-plan.md` Phase 1).
+//! M0 — the eval harness.
 //!
-//! Runs the native Cersei agent headlessly against a task suite and turns
-//! every subsequent harness milestone from an argument into a measurement.
+//! Runs the Atlas Agent headlessly against a task suite and turns every
+//! subsequent harness milestone from an argument into a measurement.
 //! Three parts:
 //!
 //! - **Runner** — drives [`atlas_cersei::CerseiRuntime`] *in-process*, one
 //!   git worktree per run, bypass-mode permissions inside the normal sandbox
-//!   tier. The roadmap said "over ACP", but no ACP server exists for the
-//!   native agent — `atlas-cersei` is an in-process runtime with an
-//!   ACP-shaped API. Driving it directly is the same code path the app
-//!   ships, with zero new protocol code (deviation recorded in
-//!   `plans/atlas-master-plan.md` §6).
+//!   tier. The harness plan originally said "over ACP", but no ACP server
+//!   exists for the Atlas Agent — `atlas-cersei` is an in-process runtime
+//!   with an ACP-shaped API. Driving it directly is the same code path the
+//!   app ships, with zero new protocol code.
 //! - **Metrics** — consumed from the `atlas::harness` tracing line the
 //!   product already emits (decision 6: one telemetry schema, shared by
 //!   product and evals), captured by a [`tracing_subscriber`] layer.

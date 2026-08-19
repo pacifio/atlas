@@ -1,8 +1,8 @@
-//! The sweep runner. Drives the native agent in-process — the exact code
+//! The sweep runner. Drives the Atlas Agent in-process — the exact code
 //! path the app ships — one isolated workspace and one scratch config dir
 //! per run, bypass-mode permissions inside the normal sandbox tier.
 //!
-//! Budget rules (roadmap decision 2): a hard per-run ceiling (timeout +
+//! Budget rules: a hard per-run ceiling (timeout +
 //! cost, enforced by a watchdog that calls `cancel_turn`) and a sweep-level
 //! dollar cap that stops scheduling new runs rather than pretending to
 //! know the right number.
@@ -48,23 +48,26 @@ pub struct SweepSummary {
     pub stopped_early: Option<String>,
 }
 
+/// Cumulative provider-reported usage for one run's session.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UsageTotals {
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+    pub cost: f64,
+}
+
 /// Collects the sink-side signals of a run: cumulative usage/cost and any
 /// permission request (which bypass mode should make impossible — one
 /// arriving anyway means the run would hang, so the watchdog cancels).
 #[derive(Default)]
 pub struct CollectingSink {
-    usage: Mutex<(u64, u64, f64)>,
+    usage: Mutex<UsageTotals>,
     permission_requests: AtomicU64,
 }
 
 impl CollectingSink {
-    pub fn cost(&self) -> f64 {
-        self.usage.lock().expect("sink lock").2
-    }
-
-    pub fn tokens(&self) -> (u64, u64) {
-        let g = self.usage.lock().expect("sink lock");
-        (g.0, g.1)
+    pub fn usage(&self) -> UsageTotals {
+        *self.usage.lock().expect("sink lock")
     }
 
     pub fn permission_requests(&self) -> u64 {
@@ -76,7 +79,11 @@ impl EventSink for CollectingSink {
     fn emit(&self, _agent_id: AgentId, event: AcpEvent, _turn: Option<u64>) {
         match event {
             AcpEvent::Usage { input_tokens, output_tokens, cost, .. } => {
-                *self.usage.lock().expect("sink lock") = (input_tokens, output_tokens, cost);
+                *self.usage.lock().expect("sink lock") = UsageTotals {
+                    tokens_in: input_tokens,
+                    tokens_out: output_tokens,
+                    cost,
+                };
             }
             AcpEvent::PermissionRequest { .. } => {
                 self.permission_requests.fetch_add(1, Ordering::Relaxed);
@@ -93,16 +100,29 @@ pub fn provider_of(model: &str) -> Option<&str> {
     model.split_once('/').map(|(p, _)| p)
 }
 
+/// Providers that authenticate with nothing — the local ollama daemon. The
+/// scratch key file still needs an entry (the runtime reads a key for every
+/// provider), so [`ensure_keyless_entries`] writes a placeholder.
+pub const KEYLESS_PROVIDERS: &[&str] = &["ollama"];
+
 /// Check every requested model has a key before any run starts.
 pub fn check_model_keys(models: &[String], keys: &BTreeMap<String, String>) -> Result<(), String> {
     for model in models {
         let provider = provider_of(model)
             .ok_or_else(|| format!("model '{model}' must be provider-qualified (provider/model)"))?;
-        if !keys.contains_key(provider) {
+        if !keys.contains_key(provider) && !KEYLESS_PROVIDERS.contains(&provider) {
             return Err(format!("no API key for provider '{provider}' (model '{model}')"));
         }
     }
     Ok(())
+}
+
+/// Give every keyless provider a placeholder entry so the runtime's
+/// per-turn key lookup succeeds (the daemon ignores the value).
+pub fn ensure_keyless_entries(keys: &mut BTreeMap<String, String>) {
+    for provider in KEYLESS_PROVIDERS {
+        keys.entry(provider.to_string()).or_insert_with(|| provider.to_string());
+    }
 }
 
 /// Write the scratch config dir's `byok-keys.json` in the shape
@@ -208,9 +228,9 @@ async fn run_one(
     match outcome {
         Ok(driven) => {
             record.stop = Some(driven.stop);
-            record.tokens_in = driven.tokens_in;
-            record.tokens_out = driven.tokens_out;
-            record.cost = driven.cost;
+            record.tokens_in = driven.usage.tokens_in;
+            record.tokens_out = driven.usage.tokens_out;
+            record.cost = driven.usage.cost;
             if let Some(reason) = driven.cancelled_because {
                 record.error = Some(reason);
             }
@@ -236,9 +256,7 @@ async fn run_one(
 
 struct Driven {
     stop: String,
-    tokens_in: u64,
-    tokens_out: u64,
-    cost: f64,
+    usage: UsageTotals,
     cancelled_because: Option<String>,
 }
 
@@ -281,9 +299,12 @@ async fn drive_agent(
     while !handle.is_finished() {
         if Instant::now() > deadline {
             cancelled_because = Some(format!("timeout after {}s", task.timeout_secs));
-        } else if sink.cost() > cfg.max_cost_per_run {
-            cancelled_because =
-                Some(format!("cost {:.2} exceeded per-run cap {:.2}", sink.cost(), cfg.max_cost_per_run));
+        } else if sink.usage().cost > cfg.max_cost_per_run {
+            cancelled_because = Some(format!(
+                "cost {:.2} exceeded per-run cap {:.2}",
+                sink.usage().cost,
+                cfg.max_cost_per_run
+            ));
         } else if sink.permission_requests() > 0 {
             // Bypass mode should never ask; an ask with no UI attached would
             // hang the run forever.
@@ -296,19 +317,33 @@ async fn drive_agent(
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
 
-    let sent = handle.await.map_err(|e| format!("runner task panicked: {e}"))?;
-    let (tokens_in, tokens_out) = sink.tokens();
-    let cost = sink.cost();
+    // A cancelled turn should unwind promptly, but the stop must be
+    // unconditional: a provider stream that ignores cancellation gets the
+    // task aborted outright rather than hanging the whole sweep.
+    let mut handle = handle;
+    let sent = if cancelled_because.is_some() {
+        match tokio::time::timeout(Duration::from_secs(60), &mut handle).await {
+            Ok(joined) => joined.map_err(|e| format!("runner task panicked: {e}"))?,
+            Err(_elapsed) => {
+                handle.abort();
+                if let Some(r) = &mut cancelled_because {
+                    r.push_str("; turn ignored cancellation and was aborted");
+                }
+                Err(atlas_acp::AcpError::other("aborted"))
+            }
+        }
+    } else {
+        handle.await.map_err(|e| format!("runner task panicked: {e}"))?
+    };
+    let usage = sink.usage();
     match sent {
-        Ok(stop) => Ok(Driven { stop, tokens_in, tokens_out, cost, cancelled_because }),
+        Ok(stop) => Ok(Driven { stop, usage, cancelled_because }),
         // A cancelled turn surfaces as an error from send_prompt when the
         // provider call was mid-flight; keep the watchdog's reason.
         Err(e) => match cancelled_because {
             Some(reason) => Ok(Driven {
                 stop: "cancelled".into(),
-                tokens_in,
-                tokens_out,
-                cost,
+                usage,
                 cancelled_because: Some(reason),
             }),
             None => Err(format!("send_prompt: {e}")),
@@ -357,8 +392,9 @@ mod tests {
             AcpEvent::Usage { session_id: sid, input_tokens: 30, output_tokens: 9, cost: 0.05 },
             None,
         );
-        assert_eq!(sink.tokens(), (30, 9));
-        assert_eq!(sink.cost(), 0.05);
+        let usage = sink.usage();
+        assert_eq!((usage.tokens_in, usage.tokens_out), (30, 9));
+        assert_eq!(usage.cost, 0.05);
         assert_eq!(sink.permission_requests(), 0);
     }
 }

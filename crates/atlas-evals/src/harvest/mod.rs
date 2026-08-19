@@ -1,5 +1,5 @@
 //! Contract C4 — the one shared session-log parser. Mines Claude Code
-//! JSONL (`~/.claude/projects/`) and the native Cersei session store
+//! JSONL (`~/.claude/projects/`) and the Atlas Agent session store
 //! (`<config>/cersei-sessions/`) into two local JSONL outputs:
 //!
 //! - `harness-baseline.jsonl` — one line per session: tool mix, edit
@@ -104,55 +104,52 @@ pub struct HarvestSummary {
     pub candidates_path: PathBuf,
 }
 
-/// Enumerate Claude Code session files under `root` (`~/.claude/projects`).
-/// Temp-workspace project dirs (`/var/folders/...` cwds) are indexer noise
-/// and are skipped.
-pub fn claude_session_files(root: &Path) -> Vec<PathBuf> {
+/// Both stores are a two-level layout: `<root>/<group>/<session file>`.
+/// Walk it with per-store predicates for which groups and files count.
+fn session_files(
+    root: &Path,
+    keep_group: impl Fn(&str) -> bool,
+    keep_file: impl Fn(&Path) -> bool,
+) -> Vec<PathBuf> {
     let mut files = Vec::new();
-    let Ok(projects) = std::fs::read_dir(root) else {
+    let Ok(groups) = std::fs::read_dir(root) else {
         return files;
     };
-    for project in projects.filter_map(|e| e.ok()) {
-        let name = project.file_name().to_string_lossy().into_owned();
-        if name.contains("-var-folders-") {
+    for group in groups.filter_map(|e| e.ok()) {
+        if !keep_group(&group.file_name().to_string_lossy()) {
             continue;
         }
-        let Ok(sessions) = std::fs::read_dir(project.path()) else {
+        let Ok(sessions) = std::fs::read_dir(group.path()) else {
             continue;
         };
-        for f in sessions.filter_map(|e| e.ok()) {
-            let p = f.path();
-            if p.extension().is_some_and(|e| e == "jsonl") {
-                files.push(p);
-            }
-        }
+        files.extend(sessions.filter_map(|e| e.ok()).map(|f| f.path()).filter(|p| keep_file(p)));
     }
     files.sort();
     files
 }
 
-/// Enumerate Cersei session documents under `root`
+/// Enumerate Claude Code session files under `root` (`~/.claude/projects`).
+/// Temp-workspace project dirs (`/var/folders/...` cwds) are indexer noise
+/// and are skipped.
+pub fn claude_session_files(root: &Path) -> Vec<PathBuf> {
+    session_files(
+        root,
+        |group| !group.contains("-var-folders-"),
+        |p| p.extension().is_some_and(|e| e == "jsonl"),
+    )
+}
+
+/// Enumerate Atlas Agent session documents under `root`
 /// (`<config>/cersei-sessions`). Corruption backups are skipped.
 pub fn cersei_session_files(root: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    let Ok(hash_dirs) = std::fs::read_dir(root) else {
-        return files;
-    };
-    for dir in hash_dirs.filter_map(|e| e.ok()) {
-        let Ok(sessions) = std::fs::read_dir(dir.path()) else {
-            continue;
-        };
-        for f in sessions.filter_map(|e| e.ok()) {
-            let p = f.path();
-            if p.extension().is_some_and(|e| e == "json")
+    session_files(
+        root,
+        |_| true,
+        |p| {
+            p.extension().is_some_and(|e| e == "json")
                 && !p.file_name().is_some_and(|n| n.to_string_lossy().contains(".corrupt-"))
-            {
-                files.push(p);
-            }
-        }
-    }
-    files.sort();
-    files
+        },
+    )
 }
 
 /// Run the full harvest into `out_dir`.

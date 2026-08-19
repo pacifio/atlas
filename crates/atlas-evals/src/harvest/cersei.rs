@@ -1,4 +1,4 @@
-//! Native Cersei session parsing — one JSON document per session under
+//! Atlas Agent session parsing — one JSON document per session under
 //! `<config>/cersei-sessions/<cwd-hash>/<session_id>.json`, written by
 //! `atlas-cersei/src/store.rs` (`StoredSession`). Messages are
 //! Anthropic-shaped blocks; usage and cost are session-cumulative at the
