@@ -30,6 +30,9 @@ pub fn openai_base_url(provider: &str) -> Option<&'static str> {
         "cerebras" => "https://api.cerebras.ai/v1",
         "perplexity" => "https://api.perplexity.ai",
         "openrouter" => "https://openrouter.ai/api/v1",
+        // Local ollama daemon — keyless; the small-local eval canary
+        // (roadmap decision 1) and anyone running models locally.
+        "ollama" => "http://127.0.0.1:11434/v1",
         _ => return None,
     })
 }
@@ -96,6 +99,7 @@ pub fn default_model_for(provider: &str) -> Option<&'static str> {
         "openrouter" => "anthropic/claude-sonnet-4.6",
         "perplexity" => "sonar-reasoning-pro",
         "cohere" => "command-a-03-2025",
+        "ollama" => "qwen3-coder",
         _ => return None,
     })
 }
@@ -157,4 +161,6 @@ pub const PROVIDER_PRIORITY: &[&str] = &[
     "openrouter",
     "perplexity",
     "cohere",
+    // Last: a configured cloud key should always outrank the local daemon.
+    "ollama",
 ];
