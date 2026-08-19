@@ -169,6 +169,7 @@ pub struct Agent {
     max_tokens: u32,
     temperature: Option<f32>,
     thinking_budget: Option<u32>,
+    // ATLAS PATCH (model-profile-v1): per-model adaptation knobs.
     reasoning_effort: Option<String>,
     context_window: Option<u64>,
     working_dir: PathBuf,
@@ -336,6 +337,7 @@ pub struct AgentBuilder {
     max_tokens: u32,
     temperature: Option<f32>,
     thinking_budget: Option<u32>,
+    // ATLAS PATCH (model-profile-v1): per-model adaptation knobs.
     reasoning_effort: Option<String>,
     context_window: Option<u64>,
     seed_usage: Option<Usage>,

@@ -8,7 +8,8 @@
 //!   providers reject; the reasoning itself is still useful context.
 //! - **Tool-call ids** have per-provider grammars (Anthropic: ≤64 chars of
 //!   `[A-Za-z0-9_-]`); a foreign id fails validation.
-//! - **Orphans** — a `tool_use` with no result (crash, cancel mid-round) or
+//! - **Orphans** — a `tool_use` with no result (a crash or cancel mid
+//!   model round) or
 //!   a `tool_result` whose call was compacted away — are invalid-history
 //!   API errors.
 //!

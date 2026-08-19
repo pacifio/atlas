@@ -42,6 +42,13 @@ One user prompt and everything that follows until the engine stops emitting tool
 calls. A session is a sequence of turns.
 _Avoid_: round, iteration, exchange.
 
+**Model round**:
+The sub-turn unit inside the engine loop: one assistant response plus the tool
+results it triggered. A turn is a sequence of model rounds; compaction splits
+between them ("turn-boundary" in the patch name means these boundaries), and
+`max_turns` in the vendored SDK counts them — the SDK's word, kept only at that
+seam. Use "model round" in Atlas prose; never bare "round".
+
 **Containment**:
 Advisory restriction of a tool's file paths to the workspace root, enforced in
 Atlas before a tool runs. Distinct from **Sandbox**, which is OS-level enforcement

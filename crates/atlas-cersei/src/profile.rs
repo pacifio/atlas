@@ -55,10 +55,13 @@ pub enum PromptVariant {
 }
 
 /// The resolved profile. See the module doc for sources and precedence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ModelProfile {
     pub accepts_images: bool,
     pub context_window: u64,
+    /// The compaction trigger fraction — smaller profiles compact earlier
+    /// (the strictness ladder's "earlier compaction" rung).
+    pub compact_threshold: f64,
     pub parallel_tools: bool,
     pub thinking: ThinkingSupport,
     pub tool_tier: ToolTier,
@@ -173,6 +176,7 @@ const FAMILIES: &[Family] = &[
 const CONSERVATIVE: ModelProfile = ModelProfile {
     accepts_images: false,
     context_window: 32_768,
+    compact_threshold: 0.85,
     parallel_tools: false,
     thinking: ThinkingSupport::None,
     tool_tier: ToolTier::ShellFirst,
@@ -200,13 +204,7 @@ impl ModelProfile {
         };
 
         let context_window = registry_window(provider, model).unwrap_or(family.context_window);
-        // Hashline trial set: the families oh-my-pi measured wins on
-        // (Grok Code Fast, Gemini Flash class). Its own exclusion table
-        // demotes kimi/deepseek-class back to replace — respected here.
-        // Static and evidence-borrowed until our own sweep reads the gate.
-        let edit_mode = if normalized.contains("grok")
-            || (normalized.contains("gemini") && normalized.contains("flash"))
-        {
+        let edit_mode = if hashline_trial(&normalized) {
             EditMode::Hashline
         } else {
             EditMode::Replace
@@ -217,6 +215,7 @@ impl ModelProfile {
             accepts_images: family.vision
                 || crate::tools::ModelCapabilities::for_model(model).accepts_images,
             context_window,
+            compact_threshold: 0.90,
             parallel_tools: family.parallel_tools,
             thinking: family.thinking,
             tool_tier: ToolTier::Structured,
@@ -224,6 +223,16 @@ impl ModelProfile {
             prompt_variant: PromptVariant::Full,
         }
     }
+}
+
+/// The hashline trial set (M6): the model classes oh-my-pi measured wins
+/// on — Grok Code Fast and the Gemini Flash tier. Its own exclusion table
+/// demotes kimi/deepseek-class back to replace, respected by omission.
+/// Finer than the family table on purpose (gemini-pro keeps the ladder
+/// while gemini-flash trials hashline); the eventual sweep re-reads this.
+fn hashline_trial(normalized: &str) -> bool {
+    normalized.contains("grok")
+        || (normalized.contains("gemini") && normalized.contains("flash"))
 }
 
 fn normalize(model: &str) -> String {
@@ -336,6 +345,14 @@ mod tests {
         assert_eq!(
             ModelProfile::resolve("x", "llama-o3-tuned").thinking,
             ThinkingSupport::None
+        );
+    }
+
+    #[test]
+    fn small_profiles_compact_earlier_than_families() {
+        assert!(
+            ModelProfile::resolve("together", "unknown-model").compact_threshold
+                < ModelProfile::resolve("anthropic", "claude-sonnet-4-6").compact_threshold
         );
     }
 

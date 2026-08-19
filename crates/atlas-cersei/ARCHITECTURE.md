@@ -261,13 +261,16 @@ command is the real-diagnostics channel.
 
 ### 5d. Compaction (M4 rewrite, `compact-turn-boundary-v1`)
 
-Auto-compaction now works in rounds, not raw message counts:
+Auto-compaction now works in model rounds (CONTEXT.md: one assistant
+response plus its tool results), not raw message counts:
 
-- **The split is a turn boundary.** The history is grouped into rounds
-  (assistant response + its tool results); the cut keeps the smallest
-  suffix of whole rounds that fills the tail budget, so a `tool_use` can
-  never be separated from its `tool_result` — the old `len − 10` split
-  could, and the orphan is an invalid-history API error on Anthropic.
+- **The split is pair-safe.** The cut keeps the smallest suffix that fills
+  the tail budget, widened to the nearest boundary where every earlier
+  `tool_use` is already answered — so a call can never be separated from
+  its result (the old `len − 10` split could, and the orphan is an
+  invalid-history API error on Anthropic). Inside one giant agentic model
+  round, the boundary between completed call/result pairs still counts, so
+  a long tool loop stays compactable instead of overflowing.
 - **The tail is a token budget** — window/4 clamped to 2k–15k tokens — so
   ten huge tool results and ten one-liners stop counting as the same tail.
 - **The summary is a living document.** A structured template (Goal /

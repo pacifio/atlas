@@ -263,22 +263,47 @@ pub fn group_messages_for_compact(messages: &[Message]) -> Vec<MessageGroup> {
 /// Returns 0 when there is nothing safe to compact (one round, or the whole
 /// history fits the budget) — callers skip compaction on 0.
 pub fn split_at_turn_boundary(messages: &[Message], tail_token_budget: u64) -> usize {
-    let groups = group_messages_for_compact(messages);
-    if groups.len() <= 1 {
+    if messages.len() < 2 {
         return 0;
     }
-    let mut tokens: u64 = 0;
-    let mut kept_msgs: usize = 0;
-    for (i, group) in groups.iter().enumerate().rev() {
-        tokens += group.token_estimate as u64;
-        kept_msgs += group.messages.len();
-        if tokens >= tail_token_budget {
-            // This group completes the tail. Everything before it compacts;
-            // if that is nothing, there is nothing to do.
-            return messages.len() - kept_msgs;
+    // A boundary `i` is safe when no tool_use before it pairs with a
+    // tool_result at or after it. Round starts are always safe; so is any
+    // cut between one completed (call, result) pair and the next inside a
+    // long agentic round — which is what saves a single giant round from
+    // "no safe boundary, skip compaction, die by overflow".
+    let mut unsafe_after: Vec<bool> = vec![false; messages.len() + 1];
+    let mut use_pos: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (i, msg) in messages.iter().enumerate() {
+        for block in msg.content_blocks() {
+            match &block {
+                ContentBlock::ToolUse { id, .. } => {
+                    use_pos.insert(id.clone(), i);
+                }
+                ContentBlock::ToolResult { tool_use_id, .. } => {
+                    if let Some(&u) = use_pos.get(tool_use_id) {
+                        // Splitting anywhere in (u, i] separates the pair.
+                        for slot in unsafe_after.iter_mut().take(i + 1).skip(u + 1) {
+                            *slot = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
-        if i == 0 {
-            return 0;
+    }
+
+    // Walk from the end accumulating tail tokens; the first index (scanning
+    // toward the head) whose tail meets the budget is the wanted cut,
+    // widened to the nearest safe boundary at or before it.
+    let mut tail_tokens: u64 = 0;
+    for i in (1..messages.len()).rev() {
+        tail_tokens += estimate_tokens(&message_wire_text(&messages[i]));
+        if tail_tokens >= tail_token_budget {
+            let mut cut = i;
+            while cut > 0 && unsafe_after[cut] {
+                cut -= 1;
+            }
+            return cut;
         }
     }
     0
@@ -432,7 +457,8 @@ pub fn get_compact_prompt(custom_instructions: Option<&str>) -> String {
     prompt
 }
 
-/// The request `compact_conversation` sends, factored out so the shape —
+/// ATLAS PATCH (compact-turn-boundary-v1): the request
+/// `compact_conversation` sends, factored out so the shape —
 /// previous-summary carryover included — is testable without a provider.
 pub fn build_compact_request(
     old_messages: &[Message],
@@ -790,7 +816,6 @@ mod tests {
         }
         let split = split_at_turn_boundary(&messages, 1_500);
         assert!(split > 0, "a cut must exist");
-        assert_eq!(split % 4, 0, "cut lands on a round start, got {split}");
         // No tool_use before the cut may pair with a tool_result after it.
         let ids_before: Vec<String> = messages[..split]
             .iter()
@@ -807,6 +832,45 @@ mod tests {
                         !ids_before.contains(&tool_use_id),
                         "orphaned tool_result {tool_use_id}"
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_giant_single_turn_still_finds_a_pair_safe_cut() {
+        // One continuous agentic turn — no plain assistant message ever ends
+        // a round. The old group-based split returned 0 here and compaction
+        // skipped forever; pair-safe boundaries keep it splittable.
+        use serde_json::json;
+        let mut messages = vec![Message::user("go")];
+        for i in 0..5 {
+            messages.push(Message::assistant_blocks(vec![ContentBlock::ToolUse {
+                id: format!("t{i}"),
+                name: "Bash".into(),
+                input: json!({"command": "x"}),
+            }]));
+            messages.push(Message::user_blocks(vec![ContentBlock::ToolResult {
+                tool_use_id: format!("t{i}"),
+                content: ToolResultContent::Text("y".repeat(8_000)),
+                is_error: Some(false),
+            }]));
+        }
+        let split = split_at_turn_boundary(&messages, 2_000);
+        assert!(split > 0, "a giant turn must still split");
+        // And the cut is pair-safe: no tool_use before it answers after it.
+        let ids_before: Vec<String> = messages[..split]
+            .iter()
+            .flat_map(|m| m.content_blocks())
+            .filter_map(|b| match b {
+                ContentBlock::ToolUse { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .collect();
+        for m in &messages[split..] {
+            for b in m.content_blocks() {
+                if let ContentBlock::ToolResult { tool_use_id, .. } = b {
+                    assert!(!ids_before.contains(&tool_use_id), "orphan at cut {split}");
                 }
             }
         }

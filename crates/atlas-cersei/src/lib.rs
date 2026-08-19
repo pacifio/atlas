@@ -953,10 +953,20 @@ impl CerseiRuntime {
             profile::PromptVariant::Full => ATLAS_PROMPT,
             profile::PromptVariant::Terse => profile::ATLAS_PROMPT_TERSE,
         };
-        let system_prompt = format!(
+        let mut system_prompt = format!(
             "{base_prompt}{}",
             context::dynamic_sections(&entry.cwd, git.as_ref(), &docs, &mcp_instructions)
         );
+        // A profile that can't schedule parallel calls reliably gets the
+        // discipline stated outright — the full prompt otherwise encourages
+        // batching.
+        if !model_profile.parallel_tools {
+            system_prompt.push_str(
+                "\n<tool_call_discipline>\nCall one tool at a time and read its result \
+                 before deciding the next call. Do not batch tool calls in one response.\n\
+                 </tool_call_discipline>",
+            );
+        }
 
         let mut builder = cersei::Agent::builder()
             .provider_boxed(provider)
@@ -976,8 +986,10 @@ impl CerseiRuntime {
             .auto_compact(true)
             // M2 — the profile's window drives compaction instead of the
             // SDK's substring table (whose unknown-model default of 200k
-            // made small models overflow instead of compacting).
+            // made small models overflow instead of compacting), and small
+            // profiles compact earlier.
             .context_window(model_profile.context_window)
+            .compact_threshold(model_profile.compact_threshold)
             // RTK tool-output compression — Minimal when on (safe token savings),
             // Off when the user disabled it.
             .compression_level(if compress {
