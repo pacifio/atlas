@@ -113,6 +113,49 @@ pub struct RetrievedDoc {
     pub text: String,
 }
 
+/// One candidate from a retrieval list this crate does not own (today: the
+/// lexical FTS5 tier in `atlas-codeindex`, handed across by the Tauri layer so
+/// the two crates never link). `bonus` is the caller-computed IDF + recency
+/// tie-break for this doc–query pair; the engine clamps it so a bonus can
+/// reorder near-ties but never outvote a rank.
+#[derive(Debug, Clone)]
+pub struct ExternalHit {
+    /// Fusion id. Use the same id the dense corpus uses for the same content
+    /// (`code:<rel>#<hash12>`) so a doc found by both lists accumulates rank
+    /// contributions instead of appearing twice.
+    pub id: String,
+    pub title: String,
+    pub source: String,
+    pub text: String,
+    pub bonus: f32,
+}
+
+/// Query-time namespace filter — the corpus tag is one store filtered per
+/// query, not four indexes. Splitting code and memory into separate RRF lists
+/// is also the per-class budget: rank-based fusion means fifty preference
+/// facts are never outvoted by thousands of code chunks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetrievalClass {
+    /// Everything: code + memory + graph + global.
+    All,
+    /// Code chunks and codebase summaries only (`search_code`).
+    Code,
+    /// Memory classes only — facts, notes, sessions (`search_memory`).
+    Memory,
+}
+
+/// A fused result with its score decomposition — what makes "why did this
+/// rank third?" answerable. `score = rrf + bonus`.
+#[derive(Debug, Clone)]
+pub struct ScoredDoc {
+    pub doc: RetrievedDoc,
+    pub score: f32,
+    /// Accumulated reciprocal-rank contributions across every list.
+    pub rrf: f32,
+    /// Clamped external bonus (IDF + recency tie-break).
+    pub bonus: f32,
+}
+
 /// Per-project memory engine. One instance per project root, shared behind an
 /// `Arc<RwLock<_>>` by the retrieve closure (read) and the indexer (write).
 /// Holds the HNSW store + manifest (graph memory added in later steps).

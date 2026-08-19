@@ -1,0 +1,14 @@
+{"query": "where is the cosine similarity floor applied before rank fusion", "expected": ["crates/atlas-memory/src/retrieve.rs"], "note": "conceptual; COSINE_FLOOR lives beside the RRF fuse"}
+{"query": "AST boundary chunking of source files into retrieval units", "expected": ["crates/atlas-codeindex/src/chunk.rs"], "note": "self-referential but the vocabulary differs from the code"}
+{"query": "BM25 full text search over code chunks with sqlite", "expected": ["crates/atlas-codeindex/src/lexical.rs"], "note": "FTS5 store"}
+{"query": "how does a model get its context window and edit strategy", "expected": ["crates/atlas-cersei/src/profile.rs"], "note": "ModelProfile resolution"}
+{"query": "rewrite conversation history when switching to a different provider", "expected": ["crates/atlas-cersei/src/handoff.rs"], "note": "thinking blocks, tool id grammar, orphans"}
+{"query": "line tag based edits for weak models that misquote text", "expected": ["crates/atlas-cersei/src/tools/hashline.rs"], "note": "hashline edit mode"}
+{"query": "detect syntax errors right after the agent edits a file", "expected": ["crates/atlas-cersei/src/tools/probe.rs", "crates/atlas-cersei/src/tools/guard.rs"], "note": "parse probe + ground-truth hook"}
+{"query": "flush memory before compaction summarizes a long session", "expected": ["src-tauri/src/commands/agents.rs", "crates/atlas-cersei/src/memory.rs"], "note": "pre-compact flush seam"}
+{"query": "record one telemetry line per retrieval call", "expected": ["src-tauri/src/telemetry/retrieval.rs"], "note": "atlas::retrieval target"}
+{"query": "mean pooling with attention mask over bert embeddings", "expected": ["crates/atlas-embed/src/lib.rs"], "note": "forward_raw"}
+{"query": "compose the relevant project memory block injected into agent prompts", "expected": ["src-tauri/src/commands/memory_retrieve.rs"], "note": "site C push block"}
+{"query": "walk the project respecting gitignore and hash every source file", "expected": ["crates/atlas-codeindex/src/lib.rs"], "note": "scan"}
+{"query": "doom loop detection when a tool fails repeatedly", "expected": ["crates/atlas-cersei/src/tools/policy.rs", "crates/atlas-cersei/src/tools/guard.rs"], "note": "tool gate escalation"}
+{"query": "kernel sandbox profile that blocks writes outside the project", "expected": ["crates/atlas-cersei/src/tools/sandbox/seatbelt.rs"], "note": "Seatbelt tier"}

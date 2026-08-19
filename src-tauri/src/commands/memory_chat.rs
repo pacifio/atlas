@@ -18,13 +18,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use atlas_embed::chat::{build_qwen_prompt, QuantizedChatModel};
-use atlas_embed::{BruteForce, VectorStore};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 use super::agent_memory::collect_corpus;
-use super::memory_graph::{load_doc_vectors, model_dir, MODEL_FILES};
+use super::memory_graph::{model_dir, MODEL_FILES};
 use super::memory_indexer::MemoryRegistry;
 
 // The local generative model is now user-selectable (Qwen3-family GGUF) via the
@@ -240,6 +239,56 @@ struct SourceRef {
     file_path: Option<String>,
 }
 
+/// Context block + source list from fused results. Memory docs resolve their
+/// display metadata through the corpus map; code-chunk and graph hits carry
+/// their own (a chunk's `file_path` is derived from its `code:<rel>#…` id so
+/// the UI can open the file).
+fn sources_from_scored(
+    project_path: &str,
+    scored: &[atlas_memory::ScoredDoc],
+    texts: &HashMap<String, DocMeta>,
+    git_ctx: &str,
+) -> (String, Vec<SourceRef>) {
+    let mut sources: Vec<SourceRef> = Vec::new();
+    let mut context = String::new();
+    for s in scored {
+        let id = &s.doc.id;
+        let (title, source, file_path, text) = if let Some(d) = texts.get(id) {
+            (d.title.clone(), d.source.clone(), d.file_path.clone(), d.text.clone())
+        } else if let Some(rest) = id.strip_prefix("code:") {
+            let rel = rest.rsplit_once('#').map_or(rest, |(rel, _)| rel);
+            let abs = std::path::Path::new(project_path).join(rel);
+            (
+                s.doc.title.clone(),
+                s.doc.source.clone(),
+                Some(abs.to_string_lossy().into_owned()),
+                s.doc.text.clone(),
+            )
+        } else {
+            (s.doc.title.clone(), s.doc.source.clone(), None, s.doc.text.clone())
+        };
+        let mut snippet = text.trim().to_string();
+        if snippet.len() > PER_DOC_CHARS {
+            let mut cut = PER_DOC_CHARS;
+            while !snippet.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            snippet.truncate(cut);
+            snippet.push('…');
+        }
+        context.push_str(&format!("## {title} (source: {source})\n{snippet}\n\n"));
+        sources.push(SourceRef {
+            id: id.clone(),
+            title,
+            source,
+            score: s.score,
+            file_path,
+        });
+    }
+    context.push_str(git_ctx);
+    (context, sources)
+}
+
 #[derive(Serialize, Clone)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum ChatEvent {
@@ -314,7 +363,7 @@ pub async fn memory_chat_send(
     project_path: String,
     messages: Vec<WireMsg>,
     state: State<'_, MemoryChatState>,
-    registry: State<'_, Arc<MemoryRegistry>>,
+    _registry: State<'_, Arc<MemoryRegistry>>,
 ) -> Result<(), String> {
     let pp = project_path.trim_end_matches('/').to_string();
 
@@ -347,21 +396,9 @@ pub async fn memory_chat_send(
     };
 
     let retrieve_started = std::time::Instant::now();
-    let vmap = load_doc_vectors(&pp);
-    let corpus_size = vmap.len() as u64;
-    if vmap.is_empty() {
-        crate::telemetry::retrieval::record(
-            &app, "memory_chat", 0, 0, None,
-            retrieve_started.elapsed().as_millis() as u64,
-            "ui", Some("empty_index"),
-        );
-        emit(&app, &stream_id, ChatEvent::Error {
-            message: "No memory index yet — build it in Memory ▸ Graph first.".into(),
-        });
-        return Ok(());
-    }
 
-    // Corpus (async) holds the document texts keyed by id.
+    // Corpus (async) holds the document texts keyed by id (display metadata for
+    // memory docs; code-chunk hits synthesize their own).
     let corpus = collect_corpus(&pp).await;
     let mut texts: HashMap<String, DocMeta> = HashMap::new();
     for d in &corpus {
@@ -381,19 +418,30 @@ pub async fn memory_chat_send(
     let cancel = Arc::new(AtomicBool::new(false));
     state.cancels.lock().insert(stream_id.clone(), cancel.clone());
 
-    // Shared, load-once MiniLM (same instance the indexer / graph / retrieve use).
-    let Some(provider) = registry.provider(&app).await else {
-        crate::telemetry::retrieval::record(
-            &app, "memory_chat", corpus_size, 0, None,
-            retrieve_started.elapsed().as_millis() as u64,
-            "ui", Some("no_provider"),
-        );
+    // The one fused retrieval path — dense + lexical + graph, same as the
+    // agents. The UI wraps the primitives, it does not run beside them.
+    let (scored, corpus_size, skipped, _meta) = super::memory_retrieve::retrieve_scored(
+        &app,
+        &pp,
+        &query,
+        TOP_K,
+        atlas_memory::RetrievalClass::All,
+    )
+    .await;
+    crate::telemetry::retrieval::record(
+        &app, "memory_chat", corpus_size,
+        scored.len() as u64,
+        scored.first().map(|s| s.score),
+        retrieve_started.elapsed().as_millis() as u64,
+        "ui", skipped,
+    );
+    if corpus_size == 0 {
         emit(&app, &stream_id, ChatEvent::Error {
-            message: "Download the embedding model first (Memory ▸ Graph).".into(),
+            message: "No memory index yet — build it in Memory ▸ Graph first.".into(),
         });
         return Ok(());
-    };
-    let embedder = provider.embedder();
+    }
+    let (context, sources) = sources_from_scored(&pp, &scored, &texts, &git_ctx);
 
     let chat_arc = state.chat.clone();
     let turns: Vec<(String, String)> = messages
@@ -405,54 +453,6 @@ pub async fn memory_chat_send(
     let app_bg = app.clone();
     let sid = stream_id.clone();
     let _ = tokio::task::spawn_blocking(move || {
-        // 1. Embed the query on the shared MiniLM.
-        let qv = match embedder.embed_one(&query) {
-            Ok(v) => v,
-            Err(e) => {
-                emit(&app_bg, &sid, ChatEvent::Error { message: format!("embed query: {e}") });
-                return;
-            }
-        };
-
-        // 2. Cosine-search the index.
-        let mut ids: Vec<String> = Vec::with_capacity(vmap.len());
-        let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(vmap.len());
-        for (id, v) in vmap {
-            ids.push(id);
-            vectors.push(v);
-        }
-        let store = BruteForce::new(vectors);
-        let hits = store.search(&qv, TOP_K);
-        crate::telemetry::retrieval::record(
-            &app_bg, "memory_chat", corpus_size,
-            hits.len() as u64,
-            hits.first().map(|(_, s)| *s),
-            retrieve_started.elapsed().as_millis() as u64,
-            "ui", None,
-        );
-
-        // 3. Assemble retrieved context + source list.
-        let mut sources: Vec<SourceRef> = Vec::new();
-        let mut context = String::new();
-        for (i, score) in &hits {
-            let id = &ids[*i];
-            if let Some(d) = texts.get(id) {
-                let mut snippet = d.text.trim().to_string();
-                if snippet.len() > PER_DOC_CHARS {
-                    snippet.truncate(PER_DOC_CHARS);
-                    snippet.push('…');
-                }
-                context.push_str(&format!("## {} (source: {})\n{snippet}\n\n", d.title, d.source));
-                sources.push(SourceRef {
-                    id: id.clone(),
-                    title: d.title.clone(),
-                    source: d.source.clone(),
-                    score: *score,
-                    file_path: d.file_path.clone(),
-                });
-            }
-        }
-        context.push_str(&git_ctx);
         emit(&app_bg, &sid, ChatEvent::Sources { sources });
 
         // 4. Build the chat prompt and stream the answer.
@@ -525,22 +525,12 @@ pub async fn memory_chat_retrieve(
     }
     let retrieve_started = std::time::Instant::now();
 
-    // Shared, load-once MiniLM (also gates on the model being downloaded).
-    let embedder = registry
+    // The provider gate stays for UX (the tab is built around the model), but
+    // retrieval itself runs through the one fused path below.
+    registry
         .provider(&app)
         .await
-        .ok_or("Download the embedding model first (Memory ▸ Graph).")?
-        .embedder();
-    let vmap = load_doc_vectors(&pp);
-    let corpus_size = vmap.len() as u64;
-    if vmap.is_empty() {
-        crate::telemetry::retrieval::record(
-            &app, "memory_chat", 0, 0, None,
-            retrieve_started.elapsed().as_millis() as u64,
-            "ui", Some("empty_index"),
-        );
-        return Err("No memory index yet — build it in Memory ▸ Graph first.".into());
-    }
+        .ok_or("Download the embedding model first (Memory ▸ Graph).")?;
 
     let corpus = collect_corpus(&pp).await;
     let mut texts: HashMap<String, DocMeta> = HashMap::new();
@@ -557,54 +547,25 @@ pub async fn memory_chat_retrieve(
     }
     let git_ctx = git_context(&pp);
 
-    let q = query.clone();
-    let app_bg = app.clone();
-    let (context, sources) = tokio::task::spawn_blocking(
-        move || -> Result<(String, Vec<SourceRef>), String> {
-            let qv = embedder
-                .embed_one(&q)
-                .map_err(|e| format!("embed query: {e}"))?;
-            let mut ids: Vec<String> = Vec::with_capacity(vmap.len());
-            let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(vmap.len());
-            for (id, v) in vmap {
-                ids.push(id);
-                vectors.push(v);
-            }
-            let store = BruteForce::new(vectors);
-            let hits = store.search(&qv, TOP_K);
-            crate::telemetry::retrieval::record(
-                &app_bg, "memory_chat", corpus_size,
-                hits.len() as u64,
-                hits.first().map(|(_, s)| *s),
-                retrieve_started.elapsed().as_millis() as u64,
-                "ui", None,
-            );
-            let mut sources: Vec<SourceRef> = Vec::new();
-            let mut context = String::new();
-            for (i, score) in &hits {
-                let id = &ids[*i];
-                if let Some(d) = texts.get(id) {
-                    let mut snippet = d.text.trim().to_string();
-                    if snippet.len() > PER_DOC_CHARS {
-                        snippet.truncate(PER_DOC_CHARS);
-                        snippet.push('…');
-                    }
-                    context.push_str(&format!("## {} (source: {})\n{snippet}\n\n", d.title, d.source));
-                    sources.push(SourceRef {
-                        id: id.clone(),
-                        title: d.title.clone(),
-                        source: d.source.clone(),
-                        score: *score,
-                        file_path: d.file_path.clone(),
-                    });
-                }
-            }
-            context.push_str(&git_ctx);
-            Ok((context, sources))
-        },
+    let (scored, corpus_size, skipped, _meta) = super::memory_retrieve::retrieve_scored(
+        &app,
+        &pp,
+        &query,
+        TOP_K,
+        atlas_memory::RetrievalClass::All,
     )
-    .await
-    .map_err(|e| format!("retrieve join: {e}"))??;
+    .await;
+    crate::telemetry::retrieval::record(
+        &app, "memory_chat", corpus_size,
+        scored.len() as u64,
+        scored.first().map(|s| s.score),
+        retrieve_started.elapsed().as_millis() as u64,
+        "ui", skipped,
+    );
+    if corpus_size == 0 {
+        return Err("No memory index yet — build it in Memory ▸ Graph first.".into());
+    }
+    let (context, sources) = sources_from_scored(&pp, &scored, &texts, &git_ctx);
 
     let prompt = format!(
         "{SYSTEM_PREAMBLE}\n\n--- PROJECT MEMORY CONTEXT ---\n{context}\n\n--- QUESTION ---\n{query}"

@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use atlas_embed::{BruteForce, Embedder, VectorStore};
+use atlas_embed::{BruteForce, Embedder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, State};
@@ -411,14 +411,17 @@ pub struct QueryHit {
     score: f32,
 }
 
-/// Embed `query` and rank the project's indexed memory docs against it.
+/// Rank the project's indexed memory docs against `query` — through the one
+/// fused retrieval path (the graph UI wraps the same primitives the agents
+/// use; nothing queries a second store). Memory class: graph nodes are memory
+/// docs, so code chunks are excluded from the highlight set.
 #[tauri::command]
 pub async fn memory_index_query(
     app: AppHandle,
     project_path: String,
     query: String,
     top_k: Option<usize>,
-    registry: State<'_, Arc<MemoryRegistry>>,
+    _registry: State<'_, Arc<MemoryRegistry>>,
 ) -> Result<Vec<QueryHit>, String> {
     let dir = model_dir(&app)?;
     if !MODEL_FILES.iter().all(|f| dir.join(f).exists()) {
@@ -429,50 +432,33 @@ pub async fn memory_index_query(
         return Ok(vec![]);
     }
     let retrieve_started = std::time::Instant::now();
-    let index = load_index(&project_path);
-    let corpus_size = index.docs.len() as u64;
-    if index.docs.is_empty() {
-        crate::telemetry::retrieval::record(
-            &app, "memory_index_query", 0, 0, None,
-            retrieve_started.elapsed().as_millis() as u64,
-            "ui", Some("empty_index"),
-        );
-        return Ok(vec![]);
-    }
     let k = top_k.unwrap_or(10);
 
-    // Shared, load-once MiniLM — no per-query model reload (this is the interactive
-    // search hot path).
-    let embedder = registry
-        .provider(&app)
-        .await
-        .ok_or("model-not-downloaded")?
-        .embedder();
-
-    let app_bg = app.clone();
-    tokio::task::spawn_blocking(move || -> Result<Vec<QueryHit>, String> {
-        let qv = embedder.embed_one(&q).map_err(|e| format!("embed query: {e}"))?;
-        let ids: Vec<String> = index.docs.iter().map(|d| d.id.clone()).collect();
-        let vectors: Vec<Vec<f32>> = index.docs.into_iter().map(|d| d.vector).collect();
-        let store = BruteForce::new(vectors);
-        let hits = store.search(&qv, k);
-        crate::telemetry::retrieval::record(
-            &app_bg, "memory_index_query", corpus_size,
-            hits.len() as u64,
-            hits.first().map(|(_, s)| *s),
-            retrieve_started.elapsed().as_millis() as u64,
-            "ui", None,
-        );
-        Ok(hits
-            .into_iter()
-            .map(|(i, score)| QueryHit {
-                id: ids[i].clone(),
-                score,
-            })
-            .collect())
-    })
-    .await
-    .map_err(|e| format!("query task: {e}"))?
+    let (scored, corpus_size, skipped, _meta) = super::memory_retrieve::retrieve_scored(
+        &app,
+        &project_path,
+        &q,
+        k,
+        atlas_memory::RetrievalClass::Memory,
+    )
+    .await;
+    crate::telemetry::retrieval::record(
+        &app,
+        "memory_index_query",
+        corpus_size,
+        scored.len() as u64,
+        scored.first().map(|s| s.score),
+        retrieve_started.elapsed().as_millis() as u64,
+        "ui",
+        skipped,
+    );
+    Ok(scored
+        .into_iter()
+        .map(|s| QueryHit {
+            id: s.doc.id,
+            score: s.score,
+        })
+        .collect())
 }
 
 // ── Graph layout persistence (mirrors knowledge_graph_layout.rs) ────────────

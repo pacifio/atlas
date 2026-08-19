@@ -19,6 +19,7 @@ USAGE:
                       [--max-cost-per-run $] [--max-cost-sweep $]
   atlas-evals report  --sweep ID [--baseline ID] [--runs-dir DIR]
   atlas-evals harvest [--claude DIR] [--cersei DIR] [--out DIR]
+  atlas-evals retrieval [--project DIR] [--labels FILE] [--k N]
 
 Models are provider-qualified (e.g. anthropic/claude-sonnet-4-5). Keys come
 from the app's byok-keys.json, overridden by *_API_KEY env vars.
@@ -39,6 +40,7 @@ fn main() {
         "run" => cmd_run(&flags),
         "report" => cmd_report(&flags),
         "harvest" => cmd_harvest(&flags),
+        "retrieval" => cmd_retrieval(&flags),
         _ => {
             eprintln!("{USAGE}");
             std::process::exit(2);
@@ -92,6 +94,30 @@ fn cmd_list(flags: &BTreeMap<String, String>) -> Result<(), String> {
         println!("{:<10} {:<40} timeout {:>5}s  turns {:?}", t.bucket, t.id, t.timeout_secs, t.max_turns);
     }
     println!("{} tasks", tasks.len());
+    Ok(())
+}
+
+/// Zero-download retrieval eval: lexical tier vs file-level labels.
+fn cmd_retrieval(flags: &BTreeMap<String, String>) -> Result<(), String> {
+    let repo = repo_root(flags)?;
+    let project = flags
+        .get("project")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo.clone());
+    let labels_path = flags
+        .get("labels")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo.join("evals/retrieval/labels.jsonl"));
+    let k: usize = flags
+        .get("k")
+        .map(|v| v.parse().map_err(|_| format!("bad --k: {v}")))
+        .transpose()?
+        .unwrap_or(5);
+    let labels =
+        atlas_evals::retrieval_eval::load_labels(&labels_path).map_err(|e| e.to_string())?;
+    let report =
+        atlas_evals::retrieval_eval::run(&project, &labels, k).map_err(|e| e.to_string())?;
+    print!("{}", atlas_evals::retrieval_eval::render(&report));
     Ok(())
 }
 

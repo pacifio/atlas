@@ -22,7 +22,8 @@ mod provider;
 mod store;
 
 pub use memory::{
-    MemDoc, MemoryFlushFn, MemorySearchFn, register_memory_flush, register_memory_search,
+    CodeDoc, CodeSearchFn, CodeSearchOutcome, MemDoc, MemoryFlushFn, MemorySearchFn,
+    register_code_search, register_memory_flush, register_memory_search,
 };
 
 use std::path::PathBuf;
@@ -914,6 +915,12 @@ impl CerseiRuntime {
             // layer has registered a retrieval backend.
             if memory::memory_search_available() {
                 extras.push(Box::new(memory::SearchMemoryTool));
+            }
+            // The fused code index rides the same seam pattern; without a
+            // registered backend the SDK's working-tree BM25 `code_search`
+            // stays the only ranked search (the ladder's zero-index rung).
+            if memory::code_search_available() {
+                extras.push(Box::new(memory::SearchCodeTool));
             }
             t.extend(crate::tools::guard_all(extras, tool_policy.clone()));
             t

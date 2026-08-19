@@ -75,6 +75,128 @@ pub async fn memory_flush(cwd: String, agent: String, session: String) {
     }
 }
 
+/// One ranked hit from the fused code index — a **manifest row**, not content.
+/// The agent reads the evidence file (or the cited range) for the bodies it
+/// actually needs; retrieval never floods the context with full chunks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeDoc {
+    /// Project-relative path.
+    pub rel: String,
+    /// 1-based inclusive line range of the chunk.
+    pub start_line: u32,
+    pub end_line: u32,
+    /// "fn" | "struct" | "class" | … ("" when unknown).
+    pub kind: String,
+    /// Primary symbol ("" for merged chunks).
+    pub symbol: String,
+    /// Fused score (higher is better).
+    pub score: f32,
+    /// One-line context header (path · language · enclosing · imports).
+    pub summary: String,
+}
+
+/// What one code search returned: manifest rows plus the path of the evidence
+/// bundle holding the full chunk bodies.
+#[derive(Debug, Clone, Default)]
+pub struct CodeSearchOutcome {
+    pub hits: Vec<CodeDoc>,
+    pub evidence_path: Option<String>,
+}
+
+/// `(cwd, query, limit) -> ranked manifest`. Async because retrieval may embed
+/// the query and refresh the dirty-file overlay.
+pub type CodeSearchFn = Arc<
+    dyn Fn(String, String, usize) -> Pin<Box<dyn Future<Output = CodeSearchOutcome> + Send>>
+        + Send
+        + Sync,
+>;
+
+static CODE_SEARCH: OnceLock<CodeSearchFn> = OnceLock::new();
+
+/// Register the code-search backend. Called once by the Tauri layer at
+/// startup; until then the `search_code` tool is not offered and the SDK's
+/// working-tree BM25 `code_search` remains the only ranked search — the
+/// zero-index rung of the degradation ladder.
+pub fn register_code_search(f: CodeSearchFn) {
+    let _ = CODE_SEARCH.set(f);
+}
+
+/// Whether a code-search backend has been registered (gates adding the tool).
+pub fn code_search_available() -> bool {
+    CODE_SEARCH.get().is_some()
+}
+
+/// Tool the model calls to search the project's persistent code index:
+/// chunk-level, dense + lexical fused, freshness-guarded, with exact line
+/// citations.
+pub struct SearchCodeTool;
+
+#[async_trait]
+impl Tool for SearchCodeTool {
+    fn name(&self) -> &str {
+        "search_code"
+    }
+    fn description(&self) -> &str {
+        "Search the project's code index (semantic + keyword, fused) and return \
+         a ranked manifest of code locations with exact file:line citations. \
+         Works for conceptual questions (\"where do we handle payment retries\") \
+         as well as identifiers. Each hit cites path, lines, and symbol; read \
+         the evidence file or the cited range for the bodies you need. For an \
+         exact string match, Grep is more precise."
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::ReadOnly
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "What to find (natural language or identifiers)." },
+                "limit": { "type": "integer", "description": "Max hits to return (default 8)." }
+            },
+            "required": ["query"]
+        })
+    }
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
+        let query = input.get("query").and_then(|q| q.as_str()).unwrap_or("").trim().to_string();
+        if query.is_empty() {
+            return ToolResult::error("`query` is required.");
+        }
+        let limit = input.get("limit").and_then(|l| l.as_u64()).unwrap_or(8).clamp(1, 20) as usize;
+        let Some(search) = CODE_SEARCH.get() else {
+            return ToolResult::error(
+                "The code index is unavailable — use Grep or code_search instead.",
+            );
+        };
+        let cwd = ctx.working_dir.to_string_lossy().into_owned();
+        let outcome = search(cwd, query, limit).await;
+        if outcome.hits.is_empty() {
+            return ToolResult::success(
+                "No matches in the code index. Try Grep for exact strings, or \
+                 code_search for keyword search over the working tree.",
+            );
+        }
+        let mut out = String::new();
+        for d in &outcome.hits {
+            let label = match (d.kind.as_str(), d.symbol.as_str()) {
+                ("", "") | ("misc", "") => String::new(),
+                (kind, "") => format!(" · {kind}"),
+                (kind, symbol) => format!(" · {kind} {symbol}"),
+            };
+            out.push_str(&format!(
+                "{}:{}-{}{} · score {:.4}\n  {}\n",
+                d.rel, d.start_line, d.end_line, label, d.score, d.summary
+            ));
+        }
+        if let Some(path) = &outcome.evidence_path {
+            out.push_str(&format!(
+                "\nFull chunk bodies: {path} — Read it (or the cited ranges) for what you need."
+            ));
+        }
+        ToolResult::success(out.trim().to_string())
+    }
+}
+
 /// Tool the model calls to recall indexed project memory.
 pub struct SearchMemoryTool;
 

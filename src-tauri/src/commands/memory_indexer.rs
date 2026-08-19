@@ -432,8 +432,46 @@ async fn index_one(
     let Some(engine) = registry.open_engine(cwd) else {
         return Ok(());
     };
-    let corpus = collect_corpus(cwd).await;
-    let docs: Vec<CorpusDoc> = corpus.iter().map(to_corpus_doc).collect();
+    // Chunk-level code docs from the lexical store — the ACTUAL SOURCE is what
+    // gets embedded (header + body), not a list of symbol names. Their ids
+    // (`code:<rel>#<hash12>`) are the same ids the lexical tier hands to
+    // fusion, so a chunk found by both lists accumulates instead of splitting.
+    let cwd_owned = cwd.to_string();
+    let chunk_docs: Vec<CorpusDoc> = tokio::task::spawn_blocking(move || {
+        let store = atlas_codeindex::lexical::LexicalStore::open(&cwd_owned).ok()?;
+        let chunks = store.all_chunks().ok()?;
+        Some(
+            chunks
+                .iter()
+                .map(|c| CorpusDoc {
+                    id: atlas_codeindex::lexical::chunk_doc_id(&c.rel, &c.hash),
+                    text: atlas_codeindex::lexical::embed_text(c),
+                    content_hash: c.hash.clone(),
+                    corpus: "code".to_string(),
+                })
+                .collect::<Vec<_>>(),
+        )
+    })
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_default();
+
+    let mut corpus = collect_corpus(cwd).await;
+    if !chunk_docs.is_empty() {
+        // Chunks supersede the names-only structural file docs; file-level docs
+        // with a real LLM summary stay (the distilled representation).
+        let structural_only: std::collections::HashSet<String> =
+            atlas_codeindex::load_index(cwd)
+                .docs
+                .iter()
+                .filter(|d| d.summary.trim().is_empty())
+                .map(|d| format!("codebase:{}", d.rel))
+                .collect();
+        corpus.retain(|d| d.source != "codebase" || !structural_only.contains(&d.id));
+    }
+    let mut docs: Vec<CorpusDoc> = corpus.iter().map(to_corpus_doc).collect();
+    docs.extend(chunk_docs);
 
     let mut guard = engine.write().await;
     // If the selected embedding model changed since this project was last indexed

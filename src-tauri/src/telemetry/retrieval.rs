@@ -12,8 +12,9 @@ use super::TelemetryClient;
 
 /// Record one retrieval invocation.
 ///
-/// `path` is one of the four fixed retrieval paths (`memory_retrieve` |
-/// `memory_chat` | `memory_index_query` | `codebase_status`); `invoked_by` is
+/// `path` is one of the five fixed retrieval paths (`memory_retrieve` |
+/// `memory_chat` | `memory_index_query` | `codebase_status` | `search_code`);
+/// `invoked_by` is
 /// `push` | `tool` | `ui`. `skipped` names an early-return guard when the
 /// call never reached a query — a skip is a data point, not a zero-result
 /// (no silent drops).

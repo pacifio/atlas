@@ -590,6 +590,25 @@ never depends on `atlas-cersei`) owns a per-project `MemoryEngine`:
 The legacy brute-force `memory_retrieve` path and the `memory_compile` distill are
 **retained as documented rollback fallbacks** pending live runtime validation.
 
+### 6e½. `search_code` — the fused code index (`memory.rs`)
+
+The same seam pattern, one tool over: `CodeSearchFn(cwd, query, limit) ->
+CodeSearchOutcome`, injected via `register_code_search` (wired in
+`commands/agents.rs`). What backs it is the one retrieval path in the app layer:
+AST **chunks** (`atlas_codeindex::chunk`, header + actual source body + exact
+byte/line ranges, blake3-addressed) indexed twice — an **FTS5/BM25 lexical
+store** (`atlas_codeindex::lexical`, zero model download, git-anchored with a
+dirty-file overlay refreshed at query time) and the dense HNSW corpus (the same
+chunks, embedded) — RRF-fused by `MemoryEngine::retrieve_fused` with clamped
+IDF/recency tie-breaks, Jaccard-deduped, per-file-capped.
+
+The tool returns a **manifest, not content**: `rel:start-end · kind symbol ·
+score` rows plus the path of an evidence bundle holding the full chunk bodies —
+the agent reads only what it decides it needs. Degradation ladder: no
+registered backend → the tool isn't added and the SDK's working-tree BM25
+`code_search` remains; no model downloaded → lexical-only answers; no built
+index → empty results point the model at Grep.
+
 ### 6f. MCP tools (`mcp.rs`)
 Cersei 0.1.9 collects MCP server configs but never connects them, so this crate drives
 `cersei::mcp` itself: it reads `<config_dir>/mcp-servers.json`, connects the servers

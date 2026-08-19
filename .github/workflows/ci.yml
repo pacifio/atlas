@@ -135,6 +135,7 @@ jobs:
           - crate: atlas-checkpoint
             clippy: true
           - crate: atlas-codeindex
+            clippy: true
           - crate: atlas-embed
           - crate: atlas-evals
             clippy: true

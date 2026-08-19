@@ -111,9 +111,10 @@ type name.
 _Avoid_: bare "doc" where the shape matters.
 
 **Chunk**:
-A sub-document span embedded on its own (header + body + hash). Atlas does not
-chunk yet; when it does, "chunk" means this and is never a synonym for
-document.
+A sub-document span retrieved on its own (`atlas_codeindex::chunk::CodeChunk`):
+a synthesized context header + the actual source body, exact byte/line ranges,
+blake3 content address. The unit of both the lexical index and the dense code
+corpus (fusion id `code:<rel>#<hash12>`). Never a synonym for document.
 
 **Corpus**:
 The gathered set of documents a query runs against, resolved at query time.
@@ -121,15 +122,19 @@ Say which corpus: the code corpus, the memory corpus. The `source`/`corpus`
 tag field on a doc is a *tag*, not the corpus.
 
 **Vector index**:
-An embedding store answering nearest-neighbor queries. Atlas has two, and they
-are different things: the **engine store** (HNSW at
-`.atlas/memory/hnsw.usearch`, behind `MemoryEngine::retrieve` — the agent
-pull/push paths) and the **flat store** (`.atlas/memory-index/index.json`,
-brute-force scanned by the Memory UIs).
+An embedding store answering nearest-neighbor queries. The **engine store**
+(HNSW at `.atlas/memory/hnsw.usearch`, behind `MemoryEngine::retrieve_fused`)
+is the one every retrieval consumer queries — agents and Memory UIs alike. The
+**flat store** (`.atlas/memory-index/index.json`) is now a graph-build artifact
+only (edge similarity for the Memory ▸ Graph visualization); no query path
+reads it.
 _Avoid_: bare "index", "the memory index" without saying which.
 
 **Lexical index**:
-A keyword/BM25 store (FTS5, planned). None ships today; ripgrep is the floor.
+The FTS5/BM25 store over chunks at `.atlas/codebase-index/lexical.sqlite`
+(`atlas_codeindex::lexical::LexicalStore`). The zero-download retrieval rung:
+git-anchored recency, dirty-file overlay refresh at query time. Its candidates
+enter `retrieve_fused` as an external RRF list.
 
 **Manifest**:
 The engine store's id→key map (`.atlas/memory/manifest.json`). Identity, never

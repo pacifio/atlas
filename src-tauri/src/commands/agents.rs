@@ -420,6 +420,18 @@ pub fn install_manager(app: &AppHandle) {
         })
     }));
 
+    // Wire the native agent's `search_code` tool to the fused code index
+    // (lexical FTS5 + dense chunks through the one retrieval path). Returns a
+    // manifest of exact locations plus an evidence-bundle path — never full
+    // bodies into context.
+    let app_for_code = app.clone();
+    atlas_agents::register_code_search(std::sync::Arc::new(move |cwd, query, k| {
+        let app = app_for_code.clone();
+        Box::pin(async move {
+            crate::commands::memory_retrieve::retrieve_code(&app, &cwd, &query, k).await
+        })
+    }));
+
     // C1 — pre-compaction memory flush. The Atlas Agent awaits this before
     // auto-compaction summarizes a long session, so the middle of the session
     // (where the important reasoning lives, and exactly what lossy

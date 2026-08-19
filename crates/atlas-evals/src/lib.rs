@@ -27,6 +27,7 @@ pub mod capture;
 pub mod harvest;
 pub mod report;
 pub mod results;
+pub mod retrieval_eval;
 pub mod runner;
 pub mod task;
 pub mod verify;

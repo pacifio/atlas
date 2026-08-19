@@ -178,6 +178,24 @@ pub async fn codebase_index_build(
         .map_err(|e| format!("save index join: {e}"))?
         .map_err(|e| format!("save index: {e}"))?;
 
+    // 5b. Lexical tier: AST chunks into FTS5, incrementally. Propagated, not
+    // discarded — a build whose lexical tier failed must say so, or a missing
+    // tier masquerades as "indexed".
+    emit(&app, "lexical", 0, 0);
+    let lex_pp = pp.clone();
+    let lex_scanned = scanned.clone();
+    let lex_stats =
+        tokio::task::spawn_blocking(move || atlas_codeindex::lexical::build_lexical(&lex_pp, &lex_scanned))
+            .await
+            .map_err(|e| format!("lexical join: {e}"))?
+            .map_err(|e| format!("lexical build: {e}"))?;
+    tracing::info!(
+        target: "atlas::codeindex",
+        files_indexed = lex_stats.files_indexed as u64,
+        chunks = lex_stats.chunks as u64,
+        "lexical tier built"
+    );
+
     // 6. Re-embed the unified corpus (codebase docs are now in collect_corpus).
     emit(&app, "embedding", 0, 0);
     let _ = memory_index_build(app.clone(), pp.clone(), registry).await;

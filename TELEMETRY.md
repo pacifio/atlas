@@ -168,7 +168,7 @@ argument, no tool output, no project or repository, no diff.
 | Event | When | Properties |
 | --- | --- | --- |
 | `harness_turn` | An Atlas Agent turn ends (mirrors the local `atlas::harness` tracing line) | `edit_calls`, `edit_not_found`, `doom_loop_triggers`, `steered`, `retries`, `compaction_events`, `permission_asks`, `tokens_in`, `tokens_out`, `wall_clock_ms` — counters only |
-| `retrieval_invoked` | A memory/codebase retrieval path runs | `path` (one of four fixed names: `memory_retrieve` / `memory_chat` / `memory_index_query` / `codebase_status` — never a filesystem path), `invoked_by` (`push` / `tool` / `ui`), `n_results_bucket` (`0` / `1-3` / `4-10` / `11+`) |
+| `retrieval_invoked` | A memory/codebase retrieval path runs | `path` (one of five fixed names: `memory_retrieve` / `memory_chat` / `memory_index_query` / `codebase_status` / `search_code` — never a filesystem path), `invoked_by` (`push` / `tool` / `ui`), `n_results_bucket` (`0` / `1-3` / `4-10` / `11+`) |
 
 These exist to answer "does the harness thrash?" and "is retrieval ever
 invoked, and does it find anything?" — counts and buckets only. The richer

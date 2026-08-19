@@ -7,6 +7,9 @@ edition = "2021"
 atlas-acp = { path = "../atlas-acp" }
 atlas-agents = { path = "../atlas-agents" }
 atlas-cersei = { path = "../atlas-cersei" }
+# Retrieval eval: the lexical tier under measurement (zero-download rung).
+atlas-codeindex = { path = "../atlas-codeindex" }
+anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
