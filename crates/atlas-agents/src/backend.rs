@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use atlas_acp::{
-    AgentRegistry, AuthMethodWire, ImageAttachment, NewSessionInfo, PermissionDecision,
+    AgentRegistry, AuthMethodWire, ContentBlock, NewSessionInfo, PermissionDecision,
     Result as AcpResult,
 };
 use atlas_acp::{AgentId, SessionId};
@@ -26,7 +26,14 @@ use uuid::Uuid;
 /// The slice of agent-transport behaviour the manager + worker depend on.
 #[async_trait]
 pub trait AgentBackend: Send + Sync {
-    async fn new_session(&self, agent_id: AgentId, cwd: PathBuf) -> AcpResult<NewSessionInfo>;
+    /// Open a session. `additional_directories` are extra workspace roots
+    /// (P3.2); only sent to agents that advertised the capability.
+    async fn new_session(
+        &self,
+        agent_id: AgentId,
+        cwd: PathBuf,
+        additional_directories: Vec<PathBuf>,
+    ) -> AcpResult<NewSessionInfo>;
     async fn load_session(
         &self,
         agent_id: AgentId,
@@ -35,12 +42,13 @@ pub trait AgentBackend: Send + Sync {
     ) -> AcpResult<Option<serde_json::Value>>;
     /// Drive one prompt turn; returns the canonical snake_case stop-reason
     /// token ("end_turn", "max_tokens", …) per the frontend contract in
-    /// `src/types/acp.ts`.
+    /// `src/types/acp.ts`. `content` carries the whole turn (P0.2) — text plus
+    /// any images the composer attached.
     async fn send_prompt(
         &self,
         agent_id: AgentId,
         session_id: SessionId,
-        text: String,
+        content: Vec<ContentBlock>,
     ) -> AcpResult<String>;
     async fn set_session_mode(
         &self,
@@ -67,17 +75,27 @@ pub trait AgentBackend: Send + Sync {
     fn set_compress(&self, _agent_id: AgentId, _session_id: &SessionId, _on: bool) -> AcpResult<()> {
         Ok(())
     }
-    /// Stage image attachments to ride on the session's next prompt.
-    /// Default: no-op (the native agent has no multimodal input path yet;
-    /// its frontend gate — `prompt_image_supported() == false` — means
-    /// images degrade to path mentions before ever reaching here).
-    fn stage_attachments(
+    /// Set ANY agent-advertised config option by id (P2.2).
+    ///
+    /// The typed `set_effort` / `set_compress` above are native-agent concepts
+    /// that happen to have no ACP equivalent, which is why they default to
+    /// no-ops. ACP instead lets an agent advertise arbitrary options
+    /// (select / boolean / groups) and this is how they get set — previously
+    /// only `config_id = "model"` was ever sent, so every other knob an agent
+    /// offered was unreachable from Atlas.
+    ///
+    /// Default: unsupported rather than a silent `Ok`, so a caller learns the
+    /// transport cannot do it instead of watching a control do nothing.
+    async fn set_config_option(
         &self,
         _agent_id: AgentId,
         _session_id: SessionId,
-        _attachments: Vec<ImageAttachment>,
+        _config_id: String,
+        _value: serde_json::Value,
     ) -> AcpResult<()> {
-        Ok(())
+        Err(atlas_acp::AcpError::Protocol(
+            "this agent does not support config options".to_string(),
+        ))
     }
     /// Whether the agent advertised `promptCapabilities.image` at
     /// initialize. Default: false (native agent, unknown agents).
@@ -101,8 +119,37 @@ pub trait AgentBackend: Send + Sync {
     }
     fn register_session(&self, agent_id: AgentId, session_id: SessionId) -> AcpResult<()>;
     fn drop_session(&self, agent_id: AgentId, session_id: &SessionId) -> AcpResult<()>;
+
+    /// Tell the AGENT the session is over (P2.3, ACP `session/close`).
+    /// Separate from `drop_session`, which only clears Atlas-side state.
+    /// Default: no-op — the native agent has no remote session to close.
+    async fn close_session(&self, _agent_id: AgentId, _session_id: SessionId) -> AcpResult<()> {
+        Ok(())
+    }
+
+    /// Answer an elicitation (P3.3). Default: no-op — the native agent never
+    /// raises one, so there is nothing waiting on an answer.
+    fn respond_elicitation(
+        &self,
+        _agent_id: AgentId,
+        _request_id: Uuid,
+        _action: &str,
+        _content: Option<serde_json::Value>,
+    ) -> AcpResult<()> {
+        Ok(())
+    }
+
     fn auth_methods(&self, agent_id: AgentId) -> AcpResult<Vec<AuthMethodWire>>;
     async fn authenticate(&self, agent_id: AgentId, method_id: String) -> AcpResult<()>;
+
+    /// Sign the agent out (A2). Default: unsupported — the native agent has no
+    /// stored agent credentials to drop (it reads BYOK keys at spawn), so a
+    /// no-op would be a lie; callers gate on `AgentCaps.logout` anyway.
+    async fn logout(&self, _agent_id: AgentId) -> AcpResult<()> {
+        Err(atlas_acp::AcpError::Protocol(
+            "this agent does not support logout".to_string(),
+        ))
+    }
     fn kill(&self, agent_id: AgentId) -> AcpResult<()>;
 }
 
@@ -121,8 +168,13 @@ pub struct AcpBackend(pub AgentRegistry);
 
 #[async_trait]
 impl AgentBackend for AcpBackend {
-    async fn new_session(&self, agent_id: AgentId, cwd: PathBuf) -> AcpResult<NewSessionInfo> {
-        self.0.new_session(agent_id, cwd).await
+    async fn new_session(
+        &self,
+        agent_id: AgentId,
+        cwd: PathBuf,
+        additional_directories: Vec<PathBuf>,
+    ) -> AcpResult<NewSessionInfo> {
+        self.0.new_session(agent_id, cwd, additional_directories).await
     }
     async fn load_session(
         &self,
@@ -132,14 +184,6 @@ impl AgentBackend for AcpBackend {
     ) -> AcpResult<Option<serde_json::Value>> {
         self.0.load_session(agent_id, session_id, cwd).await
     }
-    fn stage_attachments(
-        &self,
-        agent_id: AgentId,
-        session_id: SessionId,
-        attachments: Vec<ImageAttachment>,
-    ) -> AcpResult<()> {
-        self.0.stage_attachments(agent_id, session_id, attachments)
-    }
     fn prompt_image_supported(&self, agent_id: AgentId) -> bool {
         self.0.prompt_image_supported(agent_id)
     }
@@ -147,9 +191,9 @@ impl AgentBackend for AcpBackend {
         &self,
         agent_id: AgentId,
         session_id: SessionId,
-        text: String,
+        content: Vec<ContentBlock>,
     ) -> AcpResult<String> {
-        let reason = self.0.send_prompt(agent_id, session_id, text).await?;
+        let reason = self.0.send_prompt(agent_id, session_id, content).await?;
         // Serialize via serde to get the canonical snake_case wire tokens
         // ("end_turn", "max_tokens", …) the frontend contract expects;
         // Debug-lowercasing produced "endturn" which the UI never matched.
@@ -228,11 +272,37 @@ impl AgentBackend for AcpBackend {
     fn drop_session(&self, agent_id: AgentId, session_id: &SessionId) -> AcpResult<()> {
         self.0.drop_session(agent_id, session_id)
     }
+    async fn close_session(&self, agent_id: AgentId, session_id: SessionId) -> AcpResult<()> {
+        self.0.close_session(agent_id, session_id).await
+    }
+    async fn set_config_option(
+        &self,
+        agent_id: AgentId,
+        session_id: SessionId,
+        config_id: String,
+        value: serde_json::Value,
+    ) -> AcpResult<()> {
+        self.0
+            .set_config_option_json(agent_id, session_id, &config_id, value)
+            .await
+    }
+    fn respond_elicitation(
+        &self,
+        agent_id: AgentId,
+        request_id: Uuid,
+        action: &str,
+        content: Option<serde_json::Value>,
+    ) -> AcpResult<()> {
+        self.0.respond_elicitation(agent_id, request_id, action, content)
+    }
     fn auth_methods(&self, agent_id: AgentId) -> AcpResult<Vec<AuthMethodWire>> {
         self.0.auth_methods(agent_id)
     }
     async fn authenticate(&self, agent_id: AgentId, method_id: String) -> AcpResult<()> {
         self.0.authenticate(agent_id, method_id).await
+    }
+    async fn logout(&self, agent_id: AgentId) -> AcpResult<()> {
+        self.0.logout(agent_id).await
     }
     fn kill(&self, agent_id: AgentId) -> AcpResult<()> {
         self.0.kill(agent_id)
@@ -247,7 +317,13 @@ pub struct CerseiBackend(pub CerseiRuntime);
 
 #[async_trait]
 impl AgentBackend for CerseiBackend {
-    async fn new_session(&self, agent_id: AgentId, cwd: PathBuf) -> AcpResult<NewSessionInfo> {
+    async fn new_session(
+        &self,
+        agent_id: AgentId,
+        cwd: PathBuf,
+        // The native agent has a single root by construction.
+        _additional_directories: Vec<PathBuf>,
+    ) -> AcpResult<NewSessionInfo> {
         self.0.new_session(agent_id, cwd)
     }
     async fn load_session(
@@ -262,8 +338,13 @@ impl AgentBackend for CerseiBackend {
         &self,
         agent_id: AgentId,
         session_id: SessionId,
-        text: String,
+        content: Vec<ContentBlock>,
     ) -> AcpResult<String> {
+        // The native agent has a text-only prompt API, so the turn's blocks
+        // collapse here. Nothing is lost in practice: it reports
+        // `prompt_image_supported() == false`, so the composer degrades images
+        // to path mentions before they ever reach this seam.
+        let text = atlas_acp::prompt::flatten_text(&content);
         self.0.send_prompt(agent_id, session_id, text).await
     }
     async fn set_session_mode(

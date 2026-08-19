@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1::SessionId;
-use atlas_acp::{AcpEvent, AgentId, PermissionDecision};
+use atlas_acp::{AcpEvent, AgentId, ContentBlock, PermissionDecision};
 use parking_lot::Mutex;
 use uuid::Uuid;
 
@@ -32,8 +32,8 @@ impl SessionHandle {
             .map_err(|_| Error::WorkerGone)
     }
 
-    pub fn send_prompt(&self, text: String) -> Result<()> {
-        self.control(Control::Send(text))
+    pub fn send_prompt(&self, content: Vec<ContentBlock>) -> Result<()> {
+        self.control(Control::Send(content))
     }
 
     pub fn set_mode(&self, mode_id: String) -> Result<()> {

@@ -32,7 +32,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use atlas_acp::{AcpError, AcpEvent, AgentId, PermissionDecision, Result as AcpResult, SessionId};
+use atlas_acp::{
+    AcpError, AcpEvent, AgentId, ContentBlock, PermissionDecision, Result as AcpResult, SessionId,
+};
 use atlas_agentkit::{AgentConnection, TurnId};
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
@@ -61,7 +63,7 @@ const CANCEL_GRACE: Duration = Duration::from_secs(5);
 /// on `prompt` (it spawns the turn and returns to the `select!`), so there is no
 /// deadlock forcing them to bypass the queue.
 pub enum Control {
-    Send(String),
+    Send(Vec<ContentBlock>),
     Cancel,
     RespondPermission {
         request_id: Uuid,
@@ -170,7 +172,7 @@ pub struct SessionActor {
     /// (the Zed pattern): the incoming Send cancels the running turn and
     /// queues here; `finalize` drains one per terminal, so two prompts are
     /// never in flight for one session.
-    queued_sends: std::collections::VecDeque<String>,
+    queued_sends: std::collections::VecDeque<Vec<ContentBlock>>,
 }
 
 impl SessionActor {
@@ -239,7 +241,7 @@ impl SessionActor {
 
     async fn handle_control(&mut self, ctrl: Control) {
         match ctrl {
-            Control::Send(text) => {
+            Control::Send(content) => {
                 if self.running.is_some() {
                     // Supersede = cancel-then-send (Zed §2.1): never two live
                     // turns on one session. Cancel the running turn and queue
@@ -248,7 +250,7 @@ impl SessionActor {
                     // raced the new turn's (native: last-writer-wins data loss).
                     // The CANCEL_GRACE deadline below bounds the wait, so a
                     // wedged adapter can't hold the queued send hostage.
-                    self.queued_sends.push_back(text);
+                    self.queued_sends.push_back(content);
                     if let Err(e) = self.conn.cancel(self.session_id.clone()) {
                         tracing::warn!(
                             target: "atlas_agents::actor",
@@ -257,7 +259,7 @@ impl SessionActor {
                     }
                     self.arm_cancel_deadline();
                 } else {
-                    self.start_turn(text);
+                    self.start_turn(content);
                 }
             }
             Control::Cancel => {
@@ -401,7 +403,7 @@ impl SessionActor {
         }
     }
 
-    fn start_turn(&mut self, text: String) {
+    fn start_turn(&mut self, content: Vec<ContentBlock>) {
         self.turn_id = self.turn_id.next();
         let turn = self.turn_id;
         self.running = Some(turn);
@@ -412,9 +414,13 @@ impl SessionActor {
         // Append the user message for replay parity but do NOT emit
         // MessageAppended — the frontend already added it optimistically. Only
         // the Running status flip is emitted (matches the legacy worker).
+        // The transcript is text, so the turn's blocks are flattened for it;
+        // images carry no text projection and simply don't appear (the frontend
+        // renders its own optimistic attachment previews).
         let turn_seq = {
             let mut st = self.state.lock();
-            st.messages.push(new_user_message(text.clone()));
+            st.messages
+                .push(new_user_message(atlas_acp::prompt::flatten_text(&content)));
             st.turn_seq = st.turn_seq.wrapping_add(1);
             st.status = SessionStatus::Running;
             st.touch();
@@ -448,7 +454,7 @@ impl SessionActor {
         let tx = self.stream_tx.clone();
         let done_tx = tx.clone();
         let handle = tokio::spawn(async move {
-            let result = conn.prompt(session, text).await;
+            let result = conn.prompt(session, content).await;
             let _ = done_tx.send(ActorMsg::TurnDone { turn, result });
         });
         // Supervisor: if the prompt task unwinds (panic) or is aborted before it
@@ -688,8 +694,8 @@ impl SessionActor {
 
         // A send that arrived while this turn was live (supersede) starts now,
         // strictly after the old turn's terminal — never two in flight.
-        if let Some(text) = self.queued_sends.pop_front() {
-            self.start_turn(text);
+        if let Some(content) = self.queued_sends.pop_front() {
+            self.start_turn(content);
         }
     }
 
@@ -750,6 +756,12 @@ mod tests {
     use std::time::Duration;
     use tokio::sync::oneshot;
 
+    /// A plain-text turn — what every test here sends. The seam takes ACP
+    /// content blocks (P0.2); these cases exercise turn ordering, not content.
+    fn blocks(text: &str) -> Vec<ContentBlock> {
+        atlas_acp::prompt::from_text(text)
+    }
+
     #[derive(Default)]
     struct CollectingSink(Mutex<Vec<SessionDeltaEnvelope>>);
     impl DeltaSink for CollectingSink {
@@ -802,7 +814,7 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl AgentConnection for GatedConn {
-        async fn prompt(&self, _s: SessionId, _t: String) -> AcpResult<String> {
+        async fn prompt(&self, _s: SessionId, _c: Vec<ContentBlock>) -> AcpResult<String> {
             self.prompts.fetch_add(1, Ordering::SeqCst);
             let rx = self.gates.lock().pop_front().expect("one gate per prompt");
             Ok(rx.await.unwrap_or_else(|_| "end_turn".into()))
@@ -962,7 +974,7 @@ mod tests {
     #[tokio::test]
     async fn turn_finishes_after_all_streamed_text() {
         let (handle, sink, gate_tx, _agent) = setup();
-        handle.control_tx.send(Control::Send("hi".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("hi"))).unwrap();
         settle().await;
         // Stream two text chunks WHILE the (gated) prompt is still running.
         handle.stream_tx.send(acp(text_chunk_event("Hel"))).unwrap();
@@ -1002,7 +1014,7 @@ mod tests {
         // Direct guard coverage: a TurnDone carrying a foreign TurnId (e.g. a
         // superseded turn's completion) must not finalize the live turn.
         let (handle, sink, gate_tx, _agent) = setup();
-        handle.control_tx.send(Control::Send("one".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("one"))).unwrap();
         settle().await;
         handle
             .stream_tx
@@ -1029,7 +1041,7 @@ mod tests {
         // terminal, and only then dispatches. (Was: two live turns interleaving
         // and, on native, last-writer-wins history loss.)
         let (handle, sink, mut gates, conn) = setup_gated(2);
-        handle.control_tx.send(Control::Send("one".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("one"))).unwrap();
         settle().await;
         // A tool is in flight when the user sends again.
         handle
@@ -1037,7 +1049,7 @@ mod tests {
             .send(acp_stamped(tool_call_event("t1", "in_progress", false), 1))
             .unwrap();
         settle().await;
-        handle.control_tx.send(Control::Send("two".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("two"))).unwrap();
         settle().await;
         // No second prompt yet; the running turn was asked to cancel instead.
         assert_eq!(conn.prompts.load(Ordering::SeqCst), 1, "second prompt must queue");
@@ -1075,7 +1087,7 @@ mod tests {
         // prompt future resolves. Its assistant output still belongs in the
         // session transcript even though the actor is already idle.
         let (handle, sink, mut gates, _conn) = setup_gated(1);
-        handle.control_tx.send(Control::Send("hi".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("hi"))).unwrap();
         settle().await;
         // In-turn stamped event applies (epoch 1 is live).
         handle
@@ -1106,13 +1118,13 @@ mod tests {
         // The H5 race: Stop, immediately send again, then a straggler from the
         // CANCELLED turn arrives. It must not land in the new turn's transcript.
         let (handle, sink, mut gates, conn) = setup_gated(2);
-        handle.control_tx.send(Control::Send("one".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("one"))).unwrap();
         settle().await;
         // Stop, then immediately re-send: the send queues behind the cancel
         // (running turn hasn't emitted its terminal yet).
         handle.control_tx.send(Control::Cancel).unwrap();
         settle().await;
-        handle.control_tx.send(Control::Send("two".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("two"))).unwrap();
         settle().await;
         assert_eq!(conn.prompts.load(Ordering::SeqCst), 1);
         // Turn 1 winds down as cancelled → turn 2 (epoch 2) starts.
@@ -1148,7 +1160,7 @@ mod tests {
     #[tokio::test]
     async fn turn_defers_idle_until_tool_calls_terminal() {
         let (handle, sink, gate_tx, _agent) = setup();
-        handle.control_tx.send(Control::Send("hi".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("hi"))).unwrap();
         settle().await;
         // A tool call is in flight during the turn.
         handle
@@ -1179,7 +1191,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn pending_finalize_backstop_sweeps_and_finalizes() {
         let (handle, sink, gate_tx, _agent) = setup();
-        handle.control_tx.send(Control::Send("hi".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("hi"))).unwrap();
         settle().await;
         handle
             .stream_tx
@@ -1207,7 +1219,7 @@ mod tests {
     #[tokio::test]
     async fn late_tool_event_after_idle_does_not_spin() {
         let (handle, sink, gate_tx, _agent) = setup();
-        handle.control_tx.send(Control::Send("hi".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("hi"))).unwrap();
         settle().await;
         // Turn completes cleanly with no tools in flight.
         gate_tx.send("end_turn".into()).unwrap();
@@ -1243,7 +1255,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_with_modal_open_resolves_permission_and_ignores_stale_click() {
         let (handle, sink, mut gates, conn) = setup_gated(1);
-        handle.control_tx.send(Control::Send("hi".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("hi"))).unwrap();
         settle().await;
         // A permission request arrives (modal up, status Waiting) and is
         // pending on the backend.
@@ -1312,7 +1324,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn wedged_cancel_force_finalizes_at_grace_deadline() {
         let (handle, sink, gates, _conn) = setup_gated(1);
-        handle.control_tx.send(Control::Send("hi".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("hi"))).unwrap();
         settle().await;
         // Stop — but the adapter ignores the cancel (gate never fires).
         handle.control_tx.send(Control::Cancel).unwrap();
@@ -1348,7 +1360,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn double_stop_is_idempotent() {
         let (handle, sink, mut gates, conn) = setup_gated(1);
-        handle.control_tx.send(Control::Send("hi".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("hi"))).unwrap();
         settle().await;
         handle.control_tx.send(Control::Cancel).unwrap();
         handle.control_tx.send(Control::Cancel).unwrap();
@@ -1380,7 +1392,7 @@ mod tests {
         });
         conn.modes.lock().replace(modes.clone());
 
-        handle.control_tx.send(Control::Send("hi".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("hi"))).unwrap();
         settle().await;
         handle.control_tx.send(Control::SetMode("plan".into())).unwrap();
         settle().await;
@@ -1444,7 +1456,7 @@ mod tests {
         // AgentDisconnected delta even though the handle is dropped right
         // after (teardown drain).
         let (handle, sink, _gates, _conn) = setup_gated(1);
-        handle.control_tx.send(Control::Send("hi".into())).unwrap();
+        handle.control_tx.send(Control::Send(blocks("hi"))).unwrap();
         settle().await;
         handle
             .stream_tx

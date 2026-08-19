@@ -317,6 +317,8 @@ fn extract_assistant_blocks(v: &serde_json::Value) -> (String, Vec<ToolCall>) {
                     status: ToolCallStatus::Completed,
                     arguments: input,
                     result: None,
+                    raw_output: None,
+                    content_blocks: Vec::new(),
                     locations: Vec::new(),
                 });
             }

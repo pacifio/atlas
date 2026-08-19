@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use atlas_acp::{
-    AcpEvent, AgentId, AgentInfo, AgentRegistry, AuthMethodWire, EventSink, ImageAttachment,
+    AcpEvent, AgentId, AgentInfo, AgentRegistry, AuthMethodWire, ContentBlock, EventSink,
     NewSessionInfo, PermissionDecision, SessionId,
 };
 use dashmap::DashMap;
@@ -93,10 +93,14 @@ impl AgentManager {
     ) -> Self {
         Self {
             inner: Arc::new(ManagerInner {
+                // Same `config_dir` the native runtime gets: P1.1 makes the ACP
+                // registry read `mcp-servers.json` from it so the user's MCP
+                // servers reach ACP agents too, not just the native one.
                 acp: match spec_source {
                     Some(source) => AgentRegistry::with_spec_source(source),
                     None => AgentRegistry::new(),
-                },
+                }
+                .with_config_dir(config_dir.clone()),
                 cersei: atlas_cersei::CerseiRuntime::new(config_dir),
                 sessions: DashMap::new(),
                 pending_notifications: DashMap::new(),
@@ -162,6 +166,175 @@ impl AgentManager {
         Ok(self.backend_for(agent_id)?.auth_methods(agent_id)?)
     }
 
+    /// The agent's own stored sessions for `cwd` (P2.3), or `None` when it
+    /// never advertised `sessionCapabilities.list`.
+    ///
+    /// Deliberately does NOT spawn: the sidebar renders on every project open,
+    /// and starting every installed agent just to ask about history would turn
+    /// a cheap disk scan into N subprocess launches. An agent that is not
+    /// running simply falls back to whatever reader Atlas already has.
+    pub async fn agent_sessions(
+        &self,
+        plugin_id: &str,
+        cwd: &str,
+    ) -> Result<Option<Vec<atlas_acp::AgentSessionInfo>>> {
+        let Some(agent_id) = self.live_agent_for_plugin(plugin_id) else {
+            return Ok(None);
+        };
+        Ok(self
+            .inner
+            .acp
+            .list_sessions(agent_id, std::path::PathBuf::from(cwd))
+            .await?)
+    }
+
+    /// Ask the agent to forget a stored session (P2.3). `false` when it has no
+    /// `session/delete` capability — the caller then deletes Atlas-side only.
+    pub async fn delete_agent_session(&self, plugin_id: &str, session_id: &str) -> Result<bool> {
+        let Some(agent_id) = self.live_agent_for_plugin(plugin_id) else {
+            return Ok(false);
+        };
+        Ok(self
+            .inner
+            .acp
+            .delete_session(agent_id, SessionId::new(session_id.to_string()))
+            .await?)
+    }
+
+    /// Whether a live agent for `plugin_id` said it can replay a stored
+    /// session (P2.3). This is what the hardcoded per-plugin `TranscriptKind`
+    /// table was standing in for — that table has to be hand-edited for every
+    /// new agent, whereas this is what the agent itself reported.
+    pub fn plugin_supports_load_session(&self, plugin_id: &str) -> bool {
+        self.live_agent_for_plugin(plugin_id)
+            .is_some_and(|id| self.inner.acp.supports_load_session(id))
+    }
+
+    /// Whether a live agent for `plugin_id` can list its own sessions (P2.3).
+    pub fn plugin_supports_session_list(&self, plugin_id: &str) -> bool {
+        self.live_agent_for_plugin(plugin_id)
+            .and_then(|id| self.inner.acp.agent_caps(id))
+            .is_some_and(|c| c.session_list)
+    }
+
+    /// Whether a live agent for `plugin_id` can fork a session (P3.4).
+    pub fn plugin_supports_fork(&self, plugin_id: &str) -> bool {
+        self.live_agent_for_plugin(plugin_id)
+            .and_then(|id| self.inner.acp.agent_caps(id))
+            .is_some_and(|c| c.session_fork)
+    }
+
+    /// Any spawned agent for this plugin id.
+    fn live_agent_for_plugin(&self, plugin_id: &str) -> Option<AgentId> {
+        self.inner
+            .agent_plugins
+            .iter()
+            .find(|e| e.value() == plugin_id)
+            .map(|e| *e.key())
+    }
+
+    /// Set any agent-advertised config option by id (P2.2).
+    pub async fn set_config_option(
+        &self,
+        key: &SessionKey,
+        config_id: String,
+        value: serde_json::Value,
+    ) -> Result<()> {
+        let backend = self.backend_for(key.agent_id)?;
+        Ok(backend
+            .set_config_option(
+                key.agent_id,
+                SessionId::new(key.session_id.clone()),
+                config_id,
+                value,
+            )
+            .await?)
+    }
+
+    /// Answer an elicitation the agent raised (P3.3).
+    pub fn respond_elicitation(
+        &self,
+        agent_id: AgentId,
+        request_id: uuid::Uuid,
+        action: &str,
+        content: Option<serde_json::Value>,
+    ) -> Result<()> {
+        Ok(self
+            .backend_for(agent_id)?
+            .respond_elicitation(agent_id, request_id, action, content)?)
+    }
+
+    /// Branch a session from its current state (P3.4). `None` when the agent
+    /// has no `session/fork` capability.
+    pub async fn fork_session(&self, key: &SessionKey) -> Result<Option<String>> {
+        let handle = self.handle_for(key)?;
+        let cwd = handle.state.lock().cwd.clone();
+        let forked = self
+            .inner
+            .acp
+            .fork_session(
+                key.agent_id,
+                SessionId::new(key.session_id.clone()),
+                std::path::PathBuf::from(&cwd),
+                Vec::new(),
+            )
+            .await?;
+        Ok(forked.map(|info| info.session_id.0.to_string()))
+    }
+
+    /// Sign the agent out (A2). Errors when the transport has no logout.
+    pub async fn logout(&self, agent_id: AgentId) -> Result<()> {
+        Ok(self.backend_for(agent_id)?.logout(agent_id).await?)
+    }
+
+    /// Whether this agent advertised `auth.logout` at initialize.
+    pub fn supports_logout(&self, agent_id: AgentId) -> bool {
+        self.inner
+            .acp
+            .agent_caps(agent_id)
+            .is_some_and(|c| c.logout)
+    }
+
+    /// Same question keyed by plugin id, for the catalog. False before the
+    /// agent has ever been spawned — capabilities only exist after
+    /// `initialize`.
+    pub fn plugin_supports_logout(&self, plugin_id: &str) -> bool {
+        self.inner
+            .agent_plugins
+            .iter()
+            .any(|e| e.value() == plugin_id && self.supports_logout(*e.key()))
+    }
+
+    /// The auth-method kinds any live agent for `plugin_id` advertised (R6).
+    ///
+    /// Empty when the agent has never been spawned — auth methods only exist
+    /// after `initialize`, so the catalog falls back to its static
+    /// `login`/builtin data until then. Deduped and stable-ordered so the value
+    /// does not churn between catalog reads and cause needless re-renders.
+    pub fn auth_kinds_for_plugin(&self, plugin_id: &str) -> Vec<String> {
+        let mut kinds: Vec<String> = Vec::new();
+        for entry in self.inner.agent_plugins.iter() {
+            if entry.value() != plugin_id {
+                continue;
+            }
+            let Ok(methods) = self.auth_methods(*entry.key()) else {
+                continue;
+            };
+            for m in methods {
+                let kind = match m.kind {
+                    atlas_acp::AuthMethodKind::Agent => "agent",
+                    atlas_acp::AuthMethodKind::EnvVar => "env_var",
+                    atlas_acp::AuthMethodKind::Terminal => "terminal",
+                };
+                if !kinds.iter().any(|k| k == kind) {
+                    kinds.push(kind.to_string());
+                }
+            }
+        }
+        kinds.sort();
+        kinds
+    }
+
     /// Run the agent's ACP `authenticate` flow for `method_id` (e.g. Codex's
     /// "chatgpt" browser OAuth). Used by agents whose auth methods don't ship a
     /// terminal command (so the terminal-subprocess path doesn't apply).
@@ -191,10 +364,18 @@ impl AgentManager {
     }
 
     /// Open a fresh session and spawn a worker for it.
-    pub async fn new_session(&self, agent_id: AgentId, cwd: PathBuf) -> Result<SessionInit> {
+    pub async fn new_session(
+        &self,
+        agent_id: AgentId,
+        cwd: PathBuf,
+        additional_directories: Vec<PathBuf>,
+    ) -> Result<SessionInit> {
         let cwd_str = cwd.to_string_lossy().into_owned();
         let plugin_id = self.plugin_id_for(agent_id)?;
-        let resp: NewSessionInfo = self.backend_for(agent_id)?.new_session(agent_id, cwd).await?;
+        let resp: NewSessionInfo = self
+            .backend_for(agent_id)?
+            .new_session(agent_id, cwd, additional_directories)
+            .await?;
         let session_id_str = serde_json::to_value(&resp.session_id)
             .ok()
             .and_then(|v| v.as_str().map(|s| s.to_string()))
@@ -441,25 +622,11 @@ impl AgentManager {
         Ok(snap)
     }
 
-    pub fn send(&self, key: &SessionKey, text: String) -> Result<()> {
-        self.handle_for(key)?.send_prompt(text)
-    }
-
-    /// Stage image attachments to ride on this session's next prompt.
-    /// ACP agents only — the native agent's backend no-ops (its capability
-    /// reads false, so the frontend degrades images to path mentions first).
-    pub fn stage_attachments(
-        &self,
-        key: &SessionKey,
-        attachments: Vec<ImageAttachment>,
-    ) -> Result<()> {
-        let backend = self.backend_for(key.agent_id)?;
-        backend.stage_attachments(
-            key.agent_id,
-            SessionId::new(key.session_id.clone()),
-            attachments,
-        )?;
-        Ok(())
+    /// Queue one turn's content on the session's actor. Build `content` with
+    /// `atlas_acp::prompt::{from_text, compose}` — images ride with the turn
+    /// rather than through the staging side-channel this replaced (P0.2).
+    pub fn send(&self, key: &SessionKey, content: Vec<ContentBlock>) -> Result<()> {
+        self.handle_for(key)?.send_prompt(content)
     }
 
     /// Cancel an in-flight turn. The actor services this on its control channel
@@ -509,6 +676,16 @@ impl AgentManager {
         }
         if let Ok(backend) = self.backend_for(key.agent_id) {
             let _ = backend.drop_session(key.agent_id, &handle.acp_session_id);
+            // Tell the agent too (P2.3). Detached and best-effort on purpose:
+            // closing a tab must be instant, and `drop_session` is sync while
+            // `session/close` is an RPC that can take as long as the adapter
+            // wants. The capability gate lives in the registry, so an agent
+            // without `sessionCapabilities.close` costs nothing here.
+            let agent_id = key.agent_id;
+            let session_id = handle.acp_session_id.clone();
+            tokio::spawn(async move {
+                let _ = backend.close_session(agent_id, session_id).await;
+            });
         }
         Ok(())
     }
@@ -733,6 +910,22 @@ impl AgentManager {
             | AcpEvent::Compaction { session_id, .. }
             | AcpEvent::CompressionSaved { session_id, .. }
             | AcpEvent::Retry { session_id, .. } => session_id.clone(),
+            // Session-scoped only when the agent said so: an elicitation with
+            // `scope: request` belongs to no session, and routing it to an
+            // arbitrary one would put the dialog on the wrong tab. Without a
+            // session there is no actor FIFO to order it against, so it is
+            // dropped rather than misrouted — the agent's own `cancel`
+            // fallback then unblocks it.
+            AcpEvent::Elicitation { session_id, .. } => match session_id {
+                Some(id) => id.clone(),
+                None => {
+                    tracing::debug!(
+                        target: "atlas_agents::manager",
+                        "dropping request-scoped elicitation — no session to route it to"
+                    );
+                    return;
+                }
+            },
         };
 
         // Per-session: push the event onto the target actor's FIFO, where it is
@@ -819,6 +1012,8 @@ fn cersei_replay_to_messages(items: Vec<atlas_cersei::ReplayItem>) -> Vec<Messag
                 },
                 arguments: input,
                 result,
+                raw_output: None,
+                content_blocks: Vec::new(),
                 locations: Vec::new(),
             }),
         })

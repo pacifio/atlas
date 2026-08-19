@@ -1061,7 +1061,12 @@ fn translate_event(
                     session_id: session_id.clone(),
                     input_tokens,
                     output_tokens,
-                    cost: cumulative_cost,
+                    cost: Some(cumulative_cost),
+                    // The native agent reports no cache split; `None` leaves
+                    // whatever an ACP end-of-turn response contributed intact
+                    // rather than zeroing it.
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
                 },
                 None,
             );
@@ -1538,7 +1543,7 @@ mod tests {
             } => {
                 assert_eq!(*input_tokens, 1200);
                 assert_eq!(*output_tokens, 340);
-                assert!((*cost - 0.05).abs() < f64::EPSILON);
+                assert!((cost.expect("native agent reports cost") - 0.05).abs() < f64::EPSILON);
             }
             other => panic!("expected Usage, got {other:?}"),
         }

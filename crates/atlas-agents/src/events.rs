@@ -85,6 +85,32 @@ pub enum SessionDelta {
     UsageUpdated {
         usage: Usage,
     },
+    /// The agent is asking the user something mid-turn (P3.3). Answered with
+    /// `agents_respond_elicitation`.
+    ElicitationRequested {
+        request_id: uuid::Uuid,
+        mode: String,
+        message: String,
+        requested_schema: Option<serde_json::Value>,
+        url: Option<String>,
+    },
+    /// The agent named its own session (P3.1, `session_info_update`).
+    /// Atlas titles a thread from the first 40 chars of the prompt; an agent
+    /// that summarises it properly should win.
+    TitleUpdated {
+        title: String,
+    },
+    /// The agent's own config options changed (P2.2) — e.g. a thinking toggle
+    /// flipped inside the agent, or `/model` run in its own TUI. Raw JSON,
+    /// same shape the snapshot carries.
+    ///
+    /// Before this, `config_option_update` was stored on `SessionState` and
+    /// never emitted, so the UI only learned about a change if something
+    /// happened to refetch a snapshot — a knob toggled agent-side stayed
+    /// visually wrong indefinitely.
+    ConfigOptionsUpdated {
+        config_options: Vec<serde_json::Value>,
+    },
     /// Cumulative context-window usage from an ACP `usage_update` notification:
     /// `used`/`size` tokens (of the model's window) + optional cost. ACP agents
     /// (Claude Code / Codex) can't give a per-turn input/output split like the

@@ -58,6 +58,103 @@ pub struct ToolCall {
     pub arguments: serde_json::Value,
     pub result: Option<String>,
     pub locations: Vec<serde_json::Value>,
+    /// The tool's own structured result (`rawOutput`), verbatim (P3.1).
+    ///
+    /// `src/types/acp.ts` has declared this field since before it was captured,
+    /// so the frontend was reading `undefined` from every tool call. `result`
+    /// is the human-readable flattening; this is what a tool actually returned,
+    /// which is what a caller inspecting a failed structured call needs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_output: Option<serde_json::Value>,
+    /// Content blocks that need STRUCTURE, not a flattened string (P1.4).
+    ///
+    /// `result` keeps carrying everything text-shaped, exactly as before — this
+    /// is additive. A `ToolCallContent::Diff` was previously reduced to its bare
+    /// `path` by [`format_tool_content`], throwing away the before/after text
+    /// the agent had already computed; that is the content the transcript needs
+    /// to show a proposed edit that is not on disk yet (plan mode, preview),
+    /// where a git-backed diff has nothing to compare against.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content_blocks: Vec<ToolContentBlock>,
+}
+
+/// A tool-content block the UI renders structurally rather than as text.
+///
+/// Deliberately NOT a mirror of the whole ACP `ToolCallContent` enum: text and
+/// anything text-shaped keeps flowing through `result`, so only the variants
+/// with a genuine non-text rendering appear here.
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ToolContentBlock {
+    /// An edit the agent is proposing or has made. `old_text` is absent for a
+    /// newly created file.
+    #[serde(rename_all = "camelCase")]
+    Diff {
+        path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        old_text: Option<String>,
+        new_text: String,
+    },
+    /// A terminal the agent created through `terminal/*` (P1.2). Carries only
+    /// the id — the live output is streamed separately.
+    #[serde(rename_all = "camelCase")]
+    Terminal { terminal_id: String },
+}
+
+/// Pull the structural blocks out of a tool call's `content` array.
+///
+/// Unknown block types are ignored rather than erroring: `ToolCallContent` is
+/// `#[non_exhaustive]` and an agent on a newer schema must not break the whole
+/// tool call by sending a variant this build has never heard of.
+pub fn extract_content_blocks(value: &serde_json::Value) -> Vec<ToolContentBlock> {
+    let mut out = Vec::new();
+    collect_content_blocks(value, &mut out);
+    out
+}
+
+fn collect_content_blocks(value: &serde_json::Value, out: &mut Vec<ToolContentBlock>) {
+    match value {
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                collect_content_blocks(item, out);
+            }
+        }
+        serde_json::Value::Object(o) => {
+            match o.get("type").and_then(|t| t.as_str()) {
+                Some("diff") => {
+                    // `newText` is required by the schema; a diff without it is
+                    // malformed and there is nothing meaningful to render.
+                    if let (Some(path), Some(new_text)) = (
+                        o.get("path").and_then(|p| p.as_str()),
+                        o.get("newText").and_then(|t| t.as_str()),
+                    ) {
+                        out.push(ToolContentBlock::Diff {
+                            path: path.to_string(),
+                            old_text: o
+                                .get("oldText")
+                                .and_then(|t| t.as_str())
+                                .map(str::to_owned),
+                            new_text: new_text.to_string(),
+                        });
+                    }
+                }
+                Some("terminal") => {
+                    if let Some(id) = o.get("terminalId").and_then(|t| t.as_str()) {
+                        out.push(ToolContentBlock::Terminal {
+                            terminal_id: id.to_string(),
+                        });
+                    }
+                }
+                // `{"type":"content","content":{...}}` wraps the real block.
+                _ => {
+                    if let Some(inner) = o.get("content") {
+                        collect_content_blocks(inner, out);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -145,6 +242,16 @@ pub struct SessionSnapshot {
 pub struct SessionState {
     pub agent_id: AgentId,
     pub session_id: String,
+    /// Last `ContentChunk.messageId` seen, so a CHANGE can split the bubble
+    /// (P3.1). Repeats are the same message still streaming.
+    pub last_message_id: Option<String>,
+    /// Set when a message-id change asked for a new bubble; consumed by the
+    /// next chunk. See `start_new_assistant_message`.
+    pub split_pending: bool,
+    /// Title the AGENT gave this session (`session_info_update`, P3.1).
+    /// `None` = the agent never named it and Atlas's prompt-derived title
+    /// stands.
+    pub title: Option<String>,
     pub cwd: String,
     pub plugin_id: String,
     pub status: SessionStatus,
@@ -178,6 +285,9 @@ impl SessionState {
         Self {
             agent_id,
             session_id,
+            title: None,
+            last_message_id: None,
+            split_pending: false,
             cwd,
             plugin_id,
             status: SessionStatus::Idle,
@@ -394,4 +504,122 @@ pub fn extract_image_block(content: &acp_schema::ContentBlock) -> Option<(String
     let mime = v.get("mimeType").and_then(|m| m.as_str())?.to_string();
     let data = v.get("data").and_then(|d| d.as_str())?.to_string();
     Some((mime, data))
+}
+
+#[cfg(test)]
+mod content_block_tests {
+    use super::*;
+
+    fn diff_block() -> serde_json::Value {
+        serde_json::json!([{
+            "type": "diff",
+            "path": "/repo/src/main.rs",
+            "oldText": "fn main() {}",
+            "newText": "fn main() { println!(\"hi\"); }"
+        }])
+    }
+
+    /// The regression P1.4 fixes: `format_tool_content` reduced a diff to its
+    /// bare path, discarding before/after text the agent had already computed.
+    /// A proposed edit not yet on disk has no git state to diff against, so
+    /// that text was the only way to show it.
+    #[test]
+    fn a_diff_block_keeps_its_before_and_after_text() {
+        let blocks = extract_content_blocks(&diff_block());
+        assert_eq!(
+            blocks,
+            vec![ToolContentBlock::Diff {
+                path: "/repo/src/main.rs".into(),
+                old_text: Some("fn main() {}".into()),
+                new_text: "fn main() { println!(\"hi\"); }".into(),
+            }]
+        );
+    }
+
+    /// Structural extraction is ADDITIVE — `result` must keep the exact string
+    /// it produced before P1.4, or every existing reader changes behaviour.
+    #[test]
+    fn extraction_does_not_disturb_the_flattened_result() {
+        assert_eq!(
+            format_tool_content(&diff_block()).as_deref(),
+            Some("/repo/src/main.rs"),
+        );
+    }
+
+    #[test]
+    fn a_created_file_has_no_old_text() {
+        let blocks = extract_content_blocks(&serde_json::json!([{
+            "type": "diff", "path": "/repo/new.rs", "newText": "fn new() {}"
+        }]));
+        assert_eq!(
+            blocks,
+            vec![ToolContentBlock::Diff {
+                path: "/repo/new.rs".into(),
+                old_text: None,
+                new_text: "fn new() {}".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_terminal_block_carries_its_id() {
+        let blocks = extract_content_blocks(&serde_json::json!([
+            { "type": "terminal", "terminalId": "term_abc" }
+        ]));
+        assert_eq!(
+            blocks,
+            vec![ToolContentBlock::Terminal { terminal_id: "term_abc".into() }]
+        );
+    }
+
+    #[test]
+    fn text_blocks_produce_no_structural_blocks() {
+        let blocks = extract_content_blocks(&serde_json::json!([
+            { "type": "content", "content": { "type": "text", "text": "hello" } }
+        ]));
+        assert!(blocks.is_empty(), "text belongs in `result`, not here");
+    }
+
+    /// `ToolCallContent` is `#[non_exhaustive]`; an agent on a newer schema must
+    /// not break the whole tool call by sending a variant we've never seen.
+    #[test]
+    fn an_unknown_block_type_is_ignored_rather_than_failing_the_tool_call() {
+        let blocks = extract_content_blocks(&serde_json::json!([
+            { "type": "some_future_thing", "payload": 1 },
+            { "type": "terminal", "terminalId": "term_x" }
+        ]));
+        assert_eq!(blocks.len(), 1, "the known block still comes through");
+    }
+
+    /// A diff missing `newText` is malformed — there is nothing to render, and
+    /// emitting a half-block would show an empty diff card.
+    #[test]
+    fn a_malformed_diff_is_skipped() {
+        let blocks = extract_content_blocks(&serde_json::json!([
+            { "type": "diff", "path": "/repo/x.rs" }
+        ]));
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn multiple_blocks_are_all_carried_in_order() {
+        let blocks = extract_content_blocks(&serde_json::json!([
+            { "type": "diff", "path": "/a", "newText": "a" },
+            { "type": "terminal", "terminalId": "t1" },
+            { "type": "diff", "path": "/b", "newText": "b" }
+        ]));
+        assert_eq!(blocks.len(), 3);
+        assert!(matches!(blocks[1], ToolContentBlock::Terminal { .. }));
+    }
+
+    /// The wire shape the TS side destructures. If this drifts, the diff card
+    /// silently renders nothing.
+    #[test]
+    fn blocks_serialize_to_the_shape_the_frontend_expects() {
+        let json = serde_json::to_value(&extract_content_blocks(&diff_block())).unwrap();
+        let first = &json[0];
+        assert_eq!(first["type"], "diff");
+        assert_eq!(first["path"], "/repo/src/main.rs");
+        assert!(first["oldText"].is_string() && first["newText"].is_string());
+    }
 }

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use atlas_acp::{AuthMethodWire, PermissionDecision, Result, SessionId};
+use atlas_acp::{AuthMethodWire, ContentBlock, PermissionDecision, Result, SessionId};
 use uuid::Uuid;
 
 /// One live agent connection — a native Cersei runtime handle, or one ACP
@@ -18,7 +18,12 @@ use uuid::Uuid;
 #[async_trait]
 pub trait AgentConnection: Send + Sync {
     /// Drive one prompt turn to completion; returns the stop-reason token.
-    async fn prompt(&self, session: SessionId, text: String) -> Result<String>;
+    ///
+    /// `content` is the turn's ACP content blocks (P0.2), not a bare string: a
+    /// turn is text plus whatever else the composer attached (images today,
+    /// `ResourceLink` @-mentions with P2.1). Transports that cannot represent a
+    /// block flatten or drop it — see `atlas_acp::prompt::flatten_text`.
+    async fn prompt(&self, session: SessionId, content: Vec<ContentBlock>) -> Result<String>;
 
     /// Re-arm the session lifecycle guard before a new turn (clears a prior
     /// cancel so this turn's events flow). Returns the new turn epoch — the
@@ -98,7 +103,7 @@ mod tests {
     struct Bare;
     #[async_trait]
     impl AgentConnection for Bare {
-        async fn prompt(&self, _s: SessionId, _t: String) -> Result<String> {
+        async fn prompt(&self, _s: SessionId, _c: Vec<ContentBlock>) -> Result<String> {
             Ok("end_turn".into())
         }
         fn mark_turn_started(&self, _s: &SessionId) -> Result<u64> {
@@ -125,7 +130,7 @@ mod tests {
     struct WithModel(Arc<AtomicU64>);
     #[async_trait]
     impl AgentConnection for WithModel {
-        async fn prompt(&self, _s: SessionId, _t: String) -> Result<String> {
+        async fn prompt(&self, _s: SessionId, _c: Vec<ContentBlock>) -> Result<String> {
             Ok("end_turn".into())
         }
         fn mark_turn_started(&self, _s: &SessionId) -> Result<u64> {
@@ -150,7 +155,12 @@ mod tests {
         assert!(c.effort_control().is_none());
         assert!(c.compression().is_none());
         assert!(c.auth().is_none());
-        assert_eq!(c.prompt(SessionId::new("s"), "hi".into()).await.unwrap(), "end_turn");
+        assert_eq!(
+            c.prompt(SessionId::new("s"), atlas_acp::prompt::from_text("hi"))
+                .await
+                .unwrap(),
+            "end_turn"
+        );
     }
 
     #[tokio::test]

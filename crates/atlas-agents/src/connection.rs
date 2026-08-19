@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use atlas_acp::{AgentId, AuthMethodWire, PermissionDecision, Result, SessionId};
+use atlas_acp::{AgentId, AuthMethodWire, ContentBlock, PermissionDecision, Result, SessionId};
 use atlas_agentkit::{
     AgentConnection, AuthFlow, CompressionCtl, EffortControl, ModelSelector, SessionModes,
 };
@@ -45,8 +45,10 @@ impl BackendConnection {
 
 #[async_trait]
 impl AgentConnection for BackendConnection {
-    async fn prompt(&self, session: SessionId, text: String) -> Result<String> {
-        self.backend.send_prompt(self.agent_id, session, text).await
+    async fn prompt(&self, session: SessionId, content: Vec<ContentBlock>) -> Result<String> {
+        self.backend
+            .send_prompt(self.agent_id, session, content)
+            .await
     }
 
     fn mark_turn_started(&self, session: &SessionId) -> Result<u64> {

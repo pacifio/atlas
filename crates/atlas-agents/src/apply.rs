@@ -21,7 +21,8 @@ use parking_lot::Mutex;
 use crate::events::{Emitter, SessionDelta, SessionDeltaEnvelope};
 use crate::session::{
     MessageMode, MessageRole, PlanEntry, SessionState, SessionStatus, ToolCall, ToolCallStatus,
-    format_tool_content, map_tool_status, new_assistant_text, new_assistant_thinking,
+    extract_content_blocks, format_tool_content, map_tool_status, new_assistant_text,
+    new_assistant_thinking,
     new_assistant_tool, new_user_message, normalise_tool_input,
 };
 
@@ -116,11 +117,25 @@ pub fn apply_event(emitter: &Emitter, state: &Mutex<SessionState>, agent_id: Age
             input_tokens,
             output_tokens,
             cost,
+            cache_read_tokens,
+            cache_write_tokens,
         } => {
             let mut st = state.lock();
             st.usage.input_tokens = input_tokens;
             st.usage.output_tokens = output_tokens;
-            st.usage.cost = cost;
+            if let Some(cost) = cost {
+                st.usage.cost = cost;
+            }
+            // Only overwrite when the producer actually reported a split —
+            // the native agent's usage events carry none, and zeroing the
+            // running totals on every one of those would erase what an ACP
+            // end-of-turn response had just contributed.
+            if let Some(read) = cache_read_tokens {
+                st.usage.cache_read_tokens = read;
+            }
+            if let Some(write) = cache_write_tokens {
+                st.usage.cache_creation_tokens = write;
+            }
             let usage = st.usage.clone();
             let sid = st.session_id.clone();
             drop(st);
@@ -128,6 +143,30 @@ pub fn apply_event(emitter: &Emitter, state: &Mutex<SessionState>, agent_id: Age
                 agent_id,
                 session_id: sid,
                 delta: SessionDelta::UsageUpdated { usage },
+            });
+        }
+        AcpEvent::Elicitation {
+            session_id: _,
+            request_id,
+            mode,
+            message,
+            requested_schema,
+            url,
+        } => {
+            let st = state.lock();
+            let agent_id = st.agent_id;
+            let sid = st.session_id.clone();
+            drop(st);
+            emitter.emit(SessionDeltaEnvelope {
+                agent_id,
+                session_id: sid,
+                delta: SessionDelta::ElicitationRequested {
+                    request_id,
+                    mode,
+                    message,
+                    requested_schema,
+                    url,
+                },
             });
         }
         AcpEvent::Compaction {
@@ -179,6 +218,20 @@ fn apply_session_update(
             let Some(content) = v.get("content") else {
                 return;
             };
+            // P3.1: `ContentChunk.messageId` marks a NEW logical message. The
+            // agent emits it when it starts a fresh bubble mid-turn (after a
+            // tool call, or between two distinct answers); without honouring it
+            // every chunk coalesced into one wall of text. Only a CHANGE
+            // matters — the same id repeating is the same message streaming.
+            if let Some(id) = v.get("messageId").and_then(|m| m.as_str()) {
+                let mut st = state.lock();
+                let changed = st.last_message_id.as_deref() != Some(id);
+                st.last_message_id = Some(id.to_string());
+                drop(st);
+                if changed {
+                    start_new_assistant_message(emitter, state);
+                }
+            }
             if let Some(text) = text_of_content(content) {
                 append_text_chunk(emitter, state, text.to_string());
             } else if let Some((mime, data)) = image_of_content(content) {
@@ -206,8 +259,21 @@ fn apply_session_update(
             let Some(content) = v.get("content") else {
                 return;
             };
-            let Some(text) = text_of_content(content) else {
-                return;
+            // P3.1: a replayed user turn can carry images too (P0.2 made Atlas
+            // SEND them, so its own history contains them). Text-only handling
+            // dropped them silently, so a resumed thread lost every screenshot
+            // the user had pasted. Folded into the same markdown data-URI the
+            // agent-side path uses — no new delta variant, no frontend change.
+            let owned;
+            let text = match text_of_content(content) {
+                Some(t) => t,
+                None => match image_of_content(content) {
+                    Some((mime, data)) => {
+                        owned = format!("\n\n![image](data:{mime};base64,{data})\n\n");
+                        &owned
+                    }
+                    None => return,
+                },
             };
             let mut st = state.lock();
             match st.messages.last_mut() {
@@ -231,6 +297,39 @@ fn apply_session_update(
                 }
             }
         }
+        "session_info_update" => {
+            // P3.1: the agent names its own session (Codex and Kilo both do
+            // once they have seen the first turn). Atlas titled every thread
+            // from the first 40 characters of the user's prompt, so a session
+            // the agent had already summarised well kept a truncated stub.
+            //
+            // `MaybeUndefined` on the wire: absent means "unchanged", explicit
+            // null means "cleared". Only a present, non-empty string is taken —
+            // clearing a title the user can see would be a worse outcome than
+            // leaving a stale one.
+            let Some(title) = v.get("title").and_then(|t| t.as_str()).map(str::trim) else {
+                return;
+            };
+            if title.is_empty() {
+                return;
+            }
+            let mut st = state.lock();
+            if st.title.as_deref() == Some(title) {
+                return;
+            }
+            st.title = Some(title.to_string());
+            let agent_id = st.agent_id;
+            let sid = st.session_id.clone();
+            st.touch();
+            drop(st);
+            emitter.emit(SessionDeltaEnvelope {
+                agent_id,
+                session_id: sid,
+                delta: SessionDelta::TitleUpdated {
+                    title: title.to_string(),
+                },
+            });
+        }
         "config_option_update" => {
             // Config-option state pushed by the agent (e.g. claude-agent-acp
             // after `/model`, thinking toggles). Stored raw for the snapshot;
@@ -244,8 +343,18 @@ fn apply_session_update(
                 return;
             };
             let mut st = state.lock();
-            st.config_options = options;
+            st.config_options = options.clone();
+            let agent_id = st.agent_id;
+            let sid = st.session_id.clone();
             st.touch();
+            drop(st);
+            emitter.emit(SessionDeltaEnvelope {
+                agent_id,
+                session_id: sid,
+                delta: SessionDelta::ConfigOptionsUpdated {
+                    config_options: options,
+                },
+            });
         }
         "agent_thought_chunk" => {
             let Some(content) = v.get("content") else {
@@ -369,11 +478,39 @@ fn apply_session_update(
     }
 }
 
+/// Force the next chunk to open a fresh assistant bubble (P3.1).
+///
+/// Implemented by clearing the coalescing target rather than by appending an
+/// empty message: `append_text_chunk` merges into the trailing assistant text
+/// message, so an empty placeholder would just be merged into and defeat the
+/// split. Pushing the marker means the very next chunk takes the `_ =>` branch
+/// and creates its own message.
+fn start_new_assistant_message(_emitter: &Emitter, state: &Mutex<SessionState>) {
+    let mut st = state.lock();
+    // A trailing EMPTY assistant message means a split was already requested
+    // and nothing has arrived yet — don't stack two.
+    if let Some(last) = st.messages.last() {
+        if last.role == MessageRole::Assistant
+            && last.mode == MessageMode::Text
+            && last.content.is_empty()
+            && last.tool_calls.is_empty()
+        {
+            return;
+        }
+    }
+    st.split_pending = true;
+    st.touch();
+}
+
 fn append_text_chunk(emitter: &Emitter, state: &Mutex<SessionState>, text: String) {
     let mut st = state.lock();
+    // A pending split (P3.1) makes this chunk open its own bubble even though
+    // the trailing message would otherwise have accepted it.
+    let split = std::mem::take(&mut st.split_pending);
     let (delta, agent_id, sid) = match st.messages.last_mut() {
         Some(last)
-            if last.role == MessageRole::Assistant
+            if !split
+                && last.role == MessageRole::Assistant
                 && last.mode == MessageMode::Text
                 && last.tool_calls.is_empty() =>
         {
@@ -464,6 +601,14 @@ fn apply_tool_call(
     let status_raw = v.get("status").and_then(|s| s.as_str());
     let content_val = v.get("content").cloned();
     let formatted = content_val.as_ref().and_then(format_tool_content);
+    // Structural blocks (P1.4) ride ALONGSIDE the flattened `result`, not
+    // instead of it: `result` keeps its exact previous contents so nothing that
+    // reads it today changes behaviour.
+    let blocks = content_val.as_ref().map(extract_content_blocks);
+    // P3.1: the tool's own structured result. Declared in `src/types/acp.ts`
+    // long before anything captured it, so the frontend read `undefined` from
+    // every tool call.
+    let raw_output = v.get("rawOutput").cloned();
     // Live command output — the `_meta.terminal_output` contract shared by
     // claude-agent-acp and codex-acp, opted into at initialize (see the
     // driver's client capabilities). Updates carrying it are pure streaming:
@@ -594,6 +739,8 @@ fn apply_tool_call(
         status: map_tool_status(status_raw, ToolCallStatus::Running),
         arguments: normalise_tool_input(raw_input_val),
         result: formatted,
+        raw_output,
+        content_blocks: blocks.unwrap_or_default(),
         locations: v
             .get("locations")
             .and_then(|l| l.as_array().cloned())
@@ -969,5 +1116,171 @@ mod tests {
             true,
         );
         assert_eq!(only_tool_call(&state).locations.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod p31_rendering_tests {
+    use super::*;
+    use crate::events::DeltaSink;
+    use std::sync::Arc;
+
+    struct NullSink;
+    impl DeltaSink for NullSink {
+        fn emit(&self, _envelope: SessionDeltaEnvelope) {}
+    }
+
+    fn session() -> (Emitter, Mutex<SessionState>) {
+        let emitter = Emitter::new(Arc::new(NullSink));
+        let state = Mutex::new(SessionState::new(
+            AgentId(uuid::Uuid::nil()),
+            "sess-1".into(),
+            "/tmp/project".into(),
+            "claude-code".into(),
+        ));
+        (emitter, state)
+    }
+
+    /// Build a typed `SessionUpdate` from wire JSON, the same way the driver
+    /// hands one to `apply_session_update`.
+    fn update(v: serde_json::Value) -> acp_schema::SessionUpdate {
+        serde_json::from_value(v).expect("valid SessionUpdate")
+    }
+
+    fn chunk(text: &str, message_id: Option<&str>) -> acp_schema::SessionUpdate {
+        let mut v = serde_json::json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": text },
+        });
+        if let Some(id) = message_id {
+            v["messageId"] = serde_json::json!(id);
+        }
+        update(v)
+    }
+
+    fn assistant_texts(state: &Mutex<SessionState>) -> Vec<String> {
+        state
+            .lock()
+            .messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Assistant)
+            .map(|m| m.content.clone())
+            .collect()
+    }
+
+    /// Chunks with no message id keep the old behaviour — one bubble.
+    #[test]
+    fn chunks_without_a_message_id_still_coalesce() {
+        let (emitter, state) = session();
+        apply_session_update(&emitter, &state, chunk("Hello ", None));
+        apply_session_update(&emitter, &state, chunk("world", None));
+        assert_eq!(assistant_texts(&state), vec!["Hello world"]);
+    }
+
+    /// The same id repeating is one message still streaming, not a new bubble.
+    #[test]
+    fn repeating_the_same_message_id_does_not_split() {
+        let (emitter, state) = session();
+        apply_session_update(&emitter, &state, chunk("Hello ", Some("m1")));
+        apply_session_update(&emitter, &state, chunk("world", Some("m1")));
+        assert_eq!(assistant_texts(&state), vec!["Hello world"]);
+    }
+
+    /// The defect P3.1 fixes: an agent starting a fresh bubble mid-turn had
+    /// every chunk merged into one wall of text.
+    #[test]
+    fn a_changed_message_id_starts_a_new_bubble() {
+        let (emitter, state) = session();
+        apply_session_update(&emitter, &state, chunk("First answer", Some("m1")));
+        apply_session_update(&emitter, &state, chunk("Second answer", Some("m2")));
+        assert_eq!(assistant_texts(&state), vec!["First answer", "Second answer"]);
+    }
+
+    #[test]
+    fn a_third_message_id_splits_again() {
+        let (emitter, state) = session();
+        for (t, id) in [("a", "m1"), ("b", "m2"), ("c", "m3")] {
+            apply_session_update(&emitter, &state, chunk(t, Some(id)));
+        }
+        assert_eq!(assistant_texts(&state), vec!["a", "b", "c"]);
+    }
+
+    /// An agent that names its session should beat Atlas's prompt-derived title.
+    #[test]
+    fn session_info_update_sets_the_title() {
+        let (emitter, state) = session();
+        apply_session_update(
+            &emitter,
+            &state,
+            update(serde_json::json!({
+                "sessionUpdate": "session_info_update",
+                "title": "Refactor the auth loop",
+            })),
+        );
+        assert_eq!(state.lock().title.as_deref(), Some("Refactor the auth loop"));
+    }
+
+    /// Absent means "unchanged" and empty means "nothing useful" — clearing a
+    /// title the user can see is worse than leaving a stale one.
+    #[test]
+    fn an_absent_or_empty_title_leaves_the_existing_one_alone() {
+        let (emitter, state) = session();
+        state.lock().title = Some("Existing".into());
+        for body in [
+            serde_json::json!({ "sessionUpdate": "session_info_update", "updatedAt": "now" }),
+            serde_json::json!({ "sessionUpdate": "session_info_update", "title": "" }),
+            serde_json::json!({ "sessionUpdate": "session_info_update", "title": "   " }),
+            serde_json::json!({ "sessionUpdate": "session_info_update", "title": null }),
+        ] {
+            apply_session_update(&emitter, &state, update(body));
+            assert_eq!(state.lock().title.as_deref(), Some("Existing"));
+        }
+    }
+
+    /// P0.2 made Atlas SEND user images, so its own history contains them;
+    /// text-only replay dropped every pasted screenshot on resume.
+    #[test]
+    fn a_replayed_user_image_chunk_is_not_dropped() {
+        let (emitter, state) = session();
+        apply_session_update(
+            &emitter,
+            &state,
+            update(serde_json::json!({
+                "sessionUpdate": "user_message_chunk",
+                "content": { "type": "image", "mimeType": "image/png", "data": "AAAA" },
+            })),
+        );
+        let st = state.lock();
+        let user = st
+            .messages
+            .iter()
+            .find(|m| m.role == MessageRole::User)
+            .expect("user message created");
+        assert!(user.content.contains("data:image/png;base64,AAAA"), "{}", user.content);
+    }
+
+    /// `src/types/acp.ts` declared `rawOutput` long before anything captured
+    /// it, so the frontend read `undefined` from every tool call.
+    #[test]
+    fn raw_output_is_captured_on_a_tool_call() {
+        let (emitter, state) = session();
+        apply_session_update(
+            &emitter,
+            &state,
+            update(serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tc-1",
+                "title": "Read",
+                "rawOutput": { "lines": 42, "truncated": false },
+            })),
+        );
+        let st = state.lock();
+        let tc = st
+            .messages
+            .iter()
+            .flat_map(|m| m.tool_calls.iter())
+            .find(|t| t.id == "tc-1")
+            .expect("tool call present");
+        assert_eq!(tc.raw_output.as_ref().and_then(|v| v.get("lines")), Some(&serde_json::json!(42)));
     }
 }
