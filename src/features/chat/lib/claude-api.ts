@@ -92,6 +92,36 @@ export function listAtlasTranscripts(cwd: string): Promise<AtlasTranscriptMeta[]
   return invoke<AtlasTranscriptMeta[]>("agent_transcripts_list", { cwd });
 }
 
+/** One session an AGENT reports it has stored (P2.3, ACP `session/list`). */
+export interface AgentSessionInfo {
+  sessionId: string;
+  cwd: string;
+  title: string | null;
+  updatedAt: string | null;
+}
+
+/** Sessions the agent itself knows about, or `null` when it is not running or
+ *  never advertised `sessionCapabilities.list`.
+ *
+ *  This is the listing that scales: every other source in the sidebar is a
+ *  bespoke reader for one agent's storage format (Claude JSONL, Codex SQLite,
+ *  Kilo SQLite, Cersei JSON), so an ACP agent Atlas has never heard of gets no
+ *  history at all. Asking the agent works for any of them. */
+export function listAgentSessions(
+  pluginId: string,
+  cwd: string,
+): Promise<AgentSessionInfo[] | null> {
+  return invoke<AgentSessionInfo[] | null>("agents_agent_sessions", { pluginId, cwd });
+}
+
+/** Ask the agent to forget one of its own sessions (P2.3, ACP
+ *  `session/delete`). Resolves `false` when the agent is not running or has no
+ *  such capability, so the caller can fall through rather than reporting a
+ *  failure the user cannot act on. */
+export function deleteAgentSession(pluginId: string, sessionId: string): Promise<boolean> {
+  return invoke<boolean>("agents_delete_agent_session", { pluginId, sessionId });
+}
+
 /** Delete one Atlas-recorded transcript. Idempotent. */
 export function atlasTranscriptDelete(cwd: string, sessionId: string): Promise<void> {
   return invoke<void>("agent_transcripts_delete", { cwd, sessionId });

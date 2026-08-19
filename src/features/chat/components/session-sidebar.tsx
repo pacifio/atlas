@@ -27,6 +27,8 @@ import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useChatStore } from "../stores/chat-store";
 import { bumpLoadToken, isLoadStale } from "../lib/load-tokens";
 import {
+  deleteAgentSession,
+  listAgentSessions,
   listClaudeSessions,
   listCodexSessions,
   listCerseiSessions,
@@ -364,6 +366,29 @@ export const SessionSidebar = memo(function SessionSidebar({
     placeholderData: keepPreviousData,
   });
 
+  // The agent bound to this tab — `session/list` is per-agent, so an unbound
+  // tab simply asks nobody.
+  const activePluginId = useChatStore((st) => {
+    const at = st.sessions[tabId]?.agentType;
+    return at && at !== "custom" ? pluginIdForAgent(at) : "";
+  });
+
+  // P2.3: ask the BOUND agent for its own sessions. Unlike the four readers
+  // above this is not tied to one agent's storage format, so any ACP agent that
+  // advertises `sessionCapabilities.list` gets history for free. Returns null
+  // when the agent is not running or lacks the capability, which is the normal
+  // case and simply contributes nothing.
+  const acpQueryKey = ["acp-sessions", cwd, activePluginId] as const;
+  const { data: acpList } = useQuery({
+    queryKey: acpQueryKey,
+    queryFn: () => listAgentSessions(activePluginId, cwd),
+    enabled: cwd.length > 0 && activePluginId.length > 0,
+    staleTime: 30_000,
+    refetchInterval: 4000,
+    refetchIntervalInBackground: false,
+    placeholderData: keepPreviousData,
+  });
+
   /** Ids Atlas itself recorded — the delete handler routes on this rather than
    *  sniffing the file path, since these rows carry a `filePath` that only
    *  Atlas's own delete command will accept. */
@@ -396,11 +421,14 @@ export const SessionSidebar = memo(function SessionSidebar({
     const codexKey = ["codex-sessions", cwd] as const;
     const cerseiKey = ["cersei-sessions", cwd] as const;
     const kiloKey = ["kilo-sessions", cwd] as const;
+    const acpKey = ["acp-sessions", cwd] as const;
     const invalidate = () => {
       queryClient.invalidateQueries({ queryKey: key });
       queryClient.invalidateQueries({ queryKey: codexKey });
       queryClient.invalidateQueries({ queryKey: cerseiKey });
       queryClient.invalidateQueries({ queryKey: kiloKey });
+      // Prefix match — the acp key carries the plugin id as a third segment.
+      queryClient.invalidateQueries({ queryKey: acpKey });
     };
     const unlistenPromise = listen<{ cwd: string }>("atlas:sessions-changed", (e) => {
       if (e.payload.cwd !== cwd) return;
@@ -452,6 +480,25 @@ export const SessionSidebar = memo(function SessionSidebar({
     // when there's no live session to infer the agent from. Claude is inserted
     // first; a Codex id never collides with a Claude JSONL id.
     const diskById = new Map<string, { meta: ClaudeSessionMeta; agent: SidebarAgent }>();
+    // Agent-reported sessions go in FIRST so a bespoke reader still wins on
+    // overlap: those carry a real `file_path`, message counts and a text
+    // preview, none of which `session/list` provides. This fills the gap for
+    // agents Atlas has no reader for, rather than replacing the readers.
+    for (const d of acpList ?? []) {
+      diskById.set(d.sessionId, {
+        meta: {
+          id: d.sessionId,
+          // No on-disk file — the agent owns this transcript. Delete routes
+          // through `session/delete` for these rows.
+          file_path: "",
+          started_at: null,
+          last_modified: d.updatedAt,
+          message_count: 0,
+          preview: d.title ?? "",
+        },
+        agent: activePluginId,
+      });
+    }
     for (const d of agentList) diskById.set(d.id, { meta: d, agent: "claude" });
     for (const d of codexList) diskById.set(d.id, { meta: d, agent: "codex" });
     for (const d of cerseiList) diskById.set(d.id, { meta: d, agent: "cersei" });
@@ -563,7 +610,16 @@ export const SessionSidebar = memo(function SessionSidebar({
     return agents
       .filter((a) => a.messageCount > 0)
       .sort((a, b) => (b.lastUpdated ?? "").localeCompare(a.lastUpdated ?? ""));
-  }, [agentList, codexList, cerseiList, kiloList, atlasList, tabSummaries]);
+  }, [
+    acpList,
+    activePluginId,
+    agentList,
+    codexList,
+    cerseiList,
+    kiloList,
+    atlasList,
+    tabSummaries,
+  ]);
 
   // Self-heal the workspace panel's persisted "Chats" list for THIS project.
   // That list (`atlas-recent-chats`) is recorded on agent activity and never
@@ -878,6 +934,12 @@ export const SessionSidebar = memo(function SessionSidebar({
         await atlasTranscriptDelete(cwd, item.id);
       } else if (item.filePath) {
         await deleteClaudeSession(item.filePath);
+      } else if (await deleteAgentSession(activePluginId, item.id)) {
+        // P2.3: a row the AGENT reported (`session/list`) has no file for
+        // Atlas to unlink — only the agent can forget it. Tried last, and only
+        // for rows every disk-backed branch above declined, so this can never
+        // pre-empt a reader that owns the storage. Returns false when the agent
+        // has no `session/delete`, which falls through to the no-op below.
       } else {
         return;
       }

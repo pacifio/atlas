@@ -15,7 +15,11 @@ import {
   pluginIdForAgent,
   CLAUDE_PERMISSION_MODES,
 } from "@/types/agent";
-import { agentMeta, isAgentDisabled } from "@/features/agents/lib/agent-meta";
+import {
+  agentMeta,
+  catalogEntry as agentCatalogEntry,
+  isAgentDisabled,
+} from "@/features/agents/lib/agent-meta";
 import { bindFailureAction, errInfo, promptSignIn } from "../lib/agent-signin";
 import { toast } from "sonner";
 
@@ -44,7 +48,7 @@ import { useDefaultAgentType } from "../hooks/use-default-agent";
 import { MessageInput } from "./message-input";
 import { SessionSidebar } from "./session-sidebar";
 import { ChatHeader } from "./chat-header";
-import { openNewAgentChat } from "../lib/open-agent-session";
+import { openAgentSession, openNewAgentChat } from "../lib/open-agent-session";
 import { workspacePathForTab } from "../lib/tab-workspace";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchTextDiff } from "@/features/git/lib/git-diff-api";
@@ -55,10 +59,10 @@ import { OPEN_TURN_DIFF_EVENT, toRepoRelative, type TurnDiffRequest } from "../l
  *  this much so the first row clears the bar. Must match `ChatHeader`'s bar. */
 const HEADER_INSET = 46;
 import { PermissionModal } from "./permission-modal";
+import { ElicitationModal } from "./elicitation-modal";
 import { ClaudeSetupBanner } from "@/features/claude-setup/components/claude-setup-banner";
 import { NodeSetupBanner } from "@/features/node-setup/components/node-setup-banner";
 import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
-import { ClaudeLoginDialog } from "@/features/claude-setup/components/claude-login-dialog";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 
 // Both panels are modal-style and never visible on first paint. Lazy so
@@ -182,6 +186,21 @@ function collectTurnEdits(
     // The turn is the consecutive assistant run beginning at that message.
     for (let i = start; i < messages.length && messages[i].role === "assistant"; i++) {
       for (const tc of messages[i].toolCalls) {
+        // P1.4: an ACP agent may report its edit as a `diff` content block
+        // instead of as recognisable Write/Edit arguments. Those carry the
+        // before/after text outright, so they fold in the same way — and this
+        // is the ONLY record of an edit that is not on disk yet (plan mode,
+        // preview), where a git-backed diff has nothing to compare against.
+        for (const block of tc.contentBlocks ?? []) {
+          if (block.type !== "diff") continue;
+          const path = toRepoRelative(block.path, repoPath);
+          if (!sources[path]) {
+            sources[path] = { old: "", new: "" };
+            order.push(path);
+          }
+          sources[path].old += block.oldText ?? "";
+          sources[path].new += block.newText;
+        }
         const args = tc.arguments ?? {};
         const parts = getEditParts(tc.toolName, args);
         if (parts.length === 0) continue;
@@ -214,8 +233,47 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   // unchanged sub-paths, so `s.sessions[tabId]` only changes when this tab
   // mutates.
   const session = useChatStore((s) => s.sessions[tabId]);
-  const { createSession, addMessage, updateSessionStatus, setSessionTitle } =
+  const { createSession, addMessage, updateSessionStatus, setSessionTitle, clearElicitation } =
     useChatStore.use.actions();
+  // Narrow subscription — an unanswered `elicitation/create` (P3.3).
+  const pendingElicitation = useChatStore((s) => s.sessions[tabId]?.pendingElicitation);
+
+  // P3.4: only offer "branch from here" when the bound agent advertised
+  // `sessionCapabilities.fork`. Gated on data, never on an agent name.
+  const canFork = useChatStore((s) => {
+    const sess = s.sessions[tabId];
+    if (!sess?.acpAgentId || !sess.acpSessionId || !sess.agentType) return false;
+    return agentCatalogEntry(sess.agentType)?.supportsFork === true;
+  });
+
+  /** Fork the bound session and open the branch in a new tab, so the thread
+   *  that got here stays intact — which is the entire point of forking. */
+  const onForkSessionStable = useCallback(() => {
+    void (async () => {
+      const sess = useChatStore.getState().sessions[tabId];
+      if (!sess?.acpAgentId || !sess.acpSessionId) return;
+      try {
+        const forked = await agents.forkSession({
+          agent_id: sess.acpAgentId,
+          session_id: sess.acpSessionId,
+        });
+        if (!forked) {
+          toast.error("This agent cannot branch a session.");
+          return;
+        }
+        // Open the branch in its own tab so the thread that got here stays
+        // intact — which is the entire point of forking.
+        await openAgentSession({
+          acpSessionId: forked,
+          title: `${sess.title ?? "Session"} (branch)`,
+          cwd: useProjectStore.getState().currentProject?.path ?? "",
+          agentType: sess.agentType,
+        });
+      } catch (err) {
+        toast.error(errInfo(err).message);
+      }
+    })();
+  }, [tabId]);
   const [roleFilter, setRoleFilter] = useState<"all" | "user" | "assistant">("all");
   const [bashPanelOpen, setBashPanelOpen] = useState(false);
   const [plansPanelOpen, setPlansPanelOpen] = useState(false);
@@ -883,12 +941,16 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
 
     updateSessionStatus(tabId, "running");
 
-    // Expand mentions into a trailing context block. composePrompt fetches
-    // file/note/paper bodies via Tauri and appends them under a fenced
-    // `## @ref` section — see `mentions.ts::composePrompt`.
+    // Expand mentions. Bodies that have no URI (notes, papers, past sessions)
+    // still append under a fenced `## @ref` section; file/folder mentions come
+    // back as structured `resourceLinks` and ride as ACP `ResourceLink` blocks
+    // instead (P2.1) — see `mentions.ts::composePrompt`.
     let wirePrompt: string;
+    let resourceLinks: { uri: string; name: string }[] = [];
     try {
-      wirePrompt = await composePrompt(actualContent, mentions);
+      const composed = await composePrompt(actualContent, mentions);
+      wirePrompt = composed.prose;
+      resourceLinks = composed.resourceLinks;
     } catch (err) {
       console.warn("composePrompt failed, sending raw text:", err);
       wirePrompt = actualContent;
@@ -910,7 +972,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
       session_id: bound.acpSessionId,
     };
     try {
-      await agents.send(key, wirePrompt, attachments);
+      await agents.send(key, wirePrompt, attachments, resourceLinks);
       logEvent({
         source: "agent",
         kind: "stream-started",
@@ -989,6 +1051,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
                 // poisoning the bind ("JSON.stringify cannot serialize cyclic
                 // structures" from agents_spawn) and killing the composer.
                 onNewSession={onNewSessionStable}
+                onForkSession={canFork ? onForkSessionStable : undefined}
               />
             </div>
           </div>
@@ -998,6 +1061,13 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           {/* Permission / question prompt — an inline card pinned above the
               composer (plan reviews still render as a centered modal). */}
           <PermissionModal tabId={tabId} onSendMessage={onPermissionSend} />
+          {pendingElicitation && (
+            <ElicitationModal
+              key={pendingElicitation.requestId}
+              pending={pendingElicitation}
+              onClose={() => clearElicitation(tabId)}
+            />
+          )}
           {/* Bottom fade lives in the transcript; the centered floating
               row (setup pill + scroll-to-bottom) lives inside
               ChatComposer below. */}
@@ -1296,7 +1366,6 @@ const ChatComposer = memo(function ChatComposer({
           placeholder="Ask Atlas what to do…"
         />
       </div>
-      {isClaude && <ClaudeLoginDialog />}
     </>
   );
 });

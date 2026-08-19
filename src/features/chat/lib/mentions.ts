@@ -605,11 +605,28 @@ function formatSessionTranscript(dump: ChatMessageDump[]): string {
   return parts.join("\n\n");
 }
 
+/** One `@`-mention that points at something on disk (P2.1). */
+export interface ResourceLinkSpec {
+  uri: string;
+  name: string;
+}
+
+/** Prose plus the structured file references the turn should carry.
+ *
+ *  `resourceLinks` used to be flattened into the prose ("File at `/x/y`. Use
+ *  your filesystem tools to read it.") — a sentence the agent had to parse a
+ *  path back out of. They now ride as ACP `ResourceLink` blocks, which every
+ *  agent is required to understand. */
+export interface ComposedPrompt {
+  prose: string;
+  resourceLinks: ResourceLinkSpec[];
+}
+
 export async function composePrompt(
   prosePlainText: string,
   mentions: MentionData[],
-): Promise<string> {
-  if (mentions.length === 0) return prosePlainText;
+): Promise<ComposedPrompt> {
+  if (mentions.length === 0) return { prose: prosePlainText, resourceLinks: [] };
   const wireMentions = await Promise.all(
     mentions.map(async (m) => {
       if (m.kind === "knowledge") {
@@ -637,13 +654,13 @@ export async function composePrompt(
     }),
   );
   try {
-    return await invoke<string>("compose_prompt", {
+    return await invoke<ComposedPrompt>("compose_prompt", {
       prose: prosePlainText,
       mentions: wireMentions,
     });
   } catch (e) {
     console.warn("compose_prompt invoke failed, sending raw prose:", e);
-    return prosePlainText;
+    return { prose: prosePlainText, resourceLinks: [] };
   }
 }
 

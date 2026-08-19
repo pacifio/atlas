@@ -12,6 +12,7 @@ import {
   Cpu,
   ChevronDown,
   Search,
+  SlidersHorizontal,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useChatStore } from "../stores/chat-store";
@@ -59,7 +60,6 @@ import type {
   SlashCommand,
 } from "./slash-command-picker";
 import { commandRequiresArgs } from "./slash-command-picker";
-import { CodexLoginDialog } from "./codex-login-dialog";
 import { PlanTasksPill } from "./plan-tasks-pill";
 import { RetryPill } from "./retry-pill";
 import { ComposerAddMenu } from "./composer-add-menu";
@@ -74,10 +74,9 @@ import type {
   PastSessionRef,
 } from "../lib/mentions";
 import { toast } from "sonner";
+import { parseConfigOptions } from "../lib/acp-config-options";
 import { useComposerFileDrop } from "../hooks/use-composer-file-drop";
 import { useProjectStore } from "@/features/project/stores/project-store";
-import { openSettingsSection } from "@/features/settings/lib/open-settings";
-import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import type { MentionTrigger } from "../lib/cm-mention-extension";
 import type { SlashTrigger } from "../lib/cm-slash-extension";
 // Value import — MUST come from the CodeMirror-free module, not from
@@ -314,8 +313,8 @@ function displayModeName(name: string): string {
   return /^[a-z][a-z0-9-]*$/.test(name) ? name.charAt(0).toUpperCase() + name.slice(1) : name;
 }
 
-type ComposerGroup = "agent" | "mode" | "model";
-const GROUP_ORDER: ComposerGroup[] = ["agent", "mode", "model"];
+type ComposerGroup = "agent" | "mode" | "model" | "options";
+const GROUP_ORDER: ComposerGroup[] = ["agent", "mode", "model", "options"];
 
 /** Colour class for the Claude permission-mode dot (mirrors the old pill). */
 function claudeModeDotClass(mode: ClaudePermissionMode): string {
@@ -358,10 +357,16 @@ function ComposerGroupsMenu({
   const permissionMode = useChatStore((s) => s.sessions[tabId]?.claudePermissionMode ?? "default");
   const currentMode = useChatStore((s) => s.sessions[tabId]?.acpCurrentMode);
   const availableModes = useChatStore((s) => s.sessions[tabId]?.acpAvailableModes);
+  // P2.2: knobs the agent advertises beyond mode/model — a thinking select, a
+  // web-search toggle. Kept current by the `config_options_updated` delta, so a
+  // change made inside the agent shows here without a refetch.
+  const rawConfigOptions = useChatStore((s) => s.sessions[tabId]?.acpConfigOptions);
+  const configOptions = useMemo(() => parseConfigOptions(rawConfigOptions), [rawConfigOptions]);
   const modesPending = useChatStore((s) => s.sessions[tabId]?.acpModesPending ?? false);
   const currentModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel);
   const availableModels = useChatStore((s) => s.sessions[tabId]?.acpAvailableModels);
-  const { setAcpMode, setAcpModel, setClaudePermissionMode } = useChatStore.use.actions();
+  const { setAcpMode, setAcpModel, setClaudePermissionMode, setAcpConfigOption } =
+    useChatStore.use.actions();
   const acquiring = useAgentAcquire(pluginIdForAgent(agentType));
   const switchableAgents = useSwitchableAgents();
 
@@ -572,6 +577,77 @@ function ComposerGroupsMenu({
               </div>
             )}
 
+            {openGroup === "options" && (
+              <div className="p-1">
+                {configOptions.map((opt) => (
+                  <div key={opt.id}>
+                    {opt.kind === "boolean" ? (
+                      <button
+                        onClick={() => {
+                          void setAcpConfigOption(tabId, opt.id, !opt.value);
+                          close();
+                        }}
+                        className={cn(
+                          "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
+                          "hover:bg-[var(--bg-hover)]",
+                        )}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
+                            {opt.name}
+                            {opt.value && (
+                              <Check size={11} className="text-[var(--accent-primary)]" />
+                            )}
+                          </span>
+                          {opt.description && (
+                            <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)]">
+                              {opt.description}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    ) : (
+                      <>
+                        <div className="px-2 pt-1.5 pb-0.5 text-[9px] font-medium uppercase tracking-wider text-[var(--text-tertiary)]">
+                          {opt.name}
+                        </div>
+                        {opt.choices.map((c) => {
+                          const active = c.id === opt.currentValue;
+                          return (
+                            <button
+                              key={c.id}
+                              onClick={() => {
+                                void setAcpConfigOption(tabId, opt.id, c.id);
+                                close();
+                              }}
+                              className={cn(
+                                "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
+                                active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
+                              )}
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
+                                  {c.name}
+                                  {active && (
+                                    <Check size={11} className="text-[var(--accent-primary)]" />
+                                  )}
+                                </span>
+                                {c.description && (
+                                  <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)]">
+                                    {c.description}
+                                  </span>
+                                )}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {openGroup === "model" && (
               <>
                 <div className="flex h-8 items-center gap-1.5 border-b border-[var(--border-subtle)] px-2.5">
@@ -684,6 +760,18 @@ function ComposerGroupsMenu({
             </span>
           </button>
         )
+      )}
+
+      {configOptions.length > 0 && (
+        <button
+          onClick={() => toggle("options")}
+          className={pillCls(openGroup === "options")}
+          title="Agent options — knobs this agent advertises"
+        >
+          <SlidersHorizontal size={11} className="shrink-0 text-[var(--text-tertiary)]" />
+          <span className={labelCls(openGroup === "options")}>Options</span>
+          <ChevronDown size={10} className="ml-0.5 shrink-0 text-[var(--text-tertiary)]" />
+        </button>
       )}
 
       {showModel && (
@@ -876,70 +964,30 @@ export function MessageInput({
         };
       })
       .filter((c) => c.name && c.name !== "login");
-    // `/login` is Atlas-handled, not advertised by either adapter: it opens
-    // the host sign-in dialog for the bound agent. OpenCode / Cursor / Kilo
-    // auth is terminal-only — no host dialog, so no synthetic `/login`;
-    // the composer's auth pill covers them.
-    const login: SlashCommand | null =
-      agentType === "codex"
-        ? {
-            name: "login",
-            signature: "/login",
-            description: "Sign in to Codex (ChatGPT or API key).",
-            handler: "codex-login" as const,
-          }
-        : agentType === "claude-code"
-          ? {
-              name: "login",
-              signature: "/login",
-              description: "Sign in to your Anthropic account.",
-              handler: "atlas-login" as const,
-            }
-          : canSignIn(agentType)
-            ? {
-                // Auto-managed built-ins (Cursor / OpenCode / Kilo): route
-                // through the shared sign-in dialog — their CLI lives in
-                // Atlas's app-data dir, so there is no terminal command to
-                // point the user at.
-                name: "login",
-                signature: "/login",
-                description: `Sign in to ${agentMeta(agentType).label}.`,
-                handler: "agent-login" as const,
-              }
-            : null;
-    // Host-handled guard rows, merged in alongside whatever the agent
-    // advertises. `/skills` opens Settings for any supported agent.
-    // `/clear`/`/logout` are dimmed for Claude Code specifically — the ACP
-    // adapter blocklists both from `available_commands_update`, so without
-    // these rows selecting the typed name would silently do nothing; with
-    // them the picker explains why and points at the TUI instead.
-    const guards: SlashCommand[] = [
-      {
-        name: "skills",
-        signature: "/skills",
-        description: "Open Skills settings.",
-        handler: "open-settings",
-      },
-      ...(agentType === "claude-code"
-        ? [
-            {
-              name: "clear",
-              signature: "/clear",
-              description: "Not available in Atlas — use the Claude Code TUI.",
-              handler: "unavailable" as const,
-            },
-            {
-              name: "logout",
-              signature: "/logout",
-              description: "Not available in Atlas — use the Claude Code TUI.",
-              handler: "unavailable" as const,
-            },
-          ]
-        : []),
-    ];
-    const guardNames = new Set(guards.map((g) => g.name));
-    const deduped = fromAgent.filter((c) => !guardNames.has(c.name));
-    return [...(login ? [login] : []), ...guards, ...deduped];
+    // `/login` is the ONE command Atlas synthesizes (S1). Everything else the
+    // picker shows is passthrough from the agent's own `availableCommands` —
+    // "we render what ACP gives, nothing else".
+    //
+    // Removed here, deliberately:
+    //  - the per-agent `codex-login` / `atlas-login` handlers: every agent now
+    //    routes through the same `AgentOAuthModal`, so the fork had no purpose
+    //    beyond picking which of three dialogs to open;
+    //  - the synthetic `/skills` row: Settings is not an agent command, and
+    //    listing it here implied the agent understood it;
+    //  - the dimmed `/clear` + `/logout` guard rows for Claude: the adapter
+    //    blocklists them from `available_commands_update`, so showing rows that
+    //    explain why an unadvertised command does nothing is Atlas inventing
+    //    protocol surface. If an agent advertises them, they appear as
+    //    passthrough like anything else.
+    const login: SlashCommand | null = canSignIn(agentType)
+      ? {
+          name: "login",
+          signature: "/login",
+          description: `Sign in to ${agentMeta(agentType).label}.`,
+          handler: "agent-login" as const,
+        }
+      : null;
+    return [...(login ? [login] : []), ...fromAgent];
   }, [agentType, availableCommands]);
   const queue = useChatStore((s) => s.queues[tabId] ?? EMPTY_QUEUE);
 
@@ -1043,7 +1091,6 @@ export function MessageInput({
 
   // ── Slash-command picker orchestration ────────────────────────────────
   const [slashTrigger, setSlashTrigger] = useState<SlashTrigger | null>(null);
-  const [codexLoginOpen, setCodexLoginOpen] = useState(false);
   // Close a picker left open across an agent switch — the new agent's
   // catalogue (or lack of one, for cersei) must not inherit the open state.
   useEffect(() => {
@@ -1052,15 +1099,16 @@ export function MessageInput({
   const slashPickerRef = useRef<SlashCommandPickerHandle>(null);
   const slashTriggerRef = useRef<SlashTrigger | null>(null);
   slashTriggerRef.current = slashTrigger;
-  const { openLoginDialog } = useClaudeSetupStore.use.actions();
 
-  // An auth-classified turn failure routes to the sign-in flow (P15) instead
-  // of dying as a generic banner. Claude sessions open the login dialog; the
-  // Codex sign-in pill is handled in ChatComposer (it owns that probe state);
-  // the auto-managed built-ins open the shared sign-in dialog (same modal
-  // treatment as Claude/Codex — see AgentLoginDialogHost); without it their
-  // `Authentication required` error was a dead end the user could not act on
-  // (their CLI isn't on PATH to log in by hand).
+  /** The agent's own words from the last auth failure, so a later `/login`
+   *  can pass them along — the modal uses `reason` to tell "wants a provider
+   *  key" from "not signed in". */
+  const lastAuthReasonRef = useRef<string | null>(null);
+
+  // An auth-classified turn failure routes to the sign-in flow (P15) instead of
+  // dying as a generic banner. Every agent lands on the SAME modal now (S2):
+  // Claude no longer forks to its setup dialog and Codex no longer to a pill,
+  // because `AgentOAuthModal` renders whatever methods the agent advertises.
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string; reason?: string }>)
@@ -1069,15 +1117,12 @@ export function MessageInput({
       if (!at) return;
       const sess = useChatStore.getState().sessions[tabId];
       if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;
-      if (at === "claude-code") {
-        openLoginDialog();
-        return;
-      }
+      lastAuthReasonRef.current = detail.reason ?? null;
       if (canSignIn(at)) promptSignIn(at, { reason: detail.reason });
     };
     window.addEventListener("atlas:auth-required", handler);
     return () => window.removeEventListener("atlas:auth-required", handler);
-  }, [tabId, openLoginDialog]);
+  }, [tabId]);
 
   const handleMentionSelect = useCallback((mention: MentionData) => {
     const t = triggerRef.current;
@@ -1379,37 +1424,13 @@ export function MessageInput({
       const view = inputRef.current?.view();
       if (!t || !view) return;
 
-      if (
-        cmd.handler === "atlas-login" ||
-        cmd.handler === "codex-login" ||
-        cmd.handler === "agent-login"
-      ) {
-        // `/login` doesn't pass through to the agent — open Atlas's own sign-in
-        // dialog (Claude's setup dialog, the Codex auth modal, or the shared
-        // agent sign-in modal for the managed built-ins).
+      if (cmd.handler === "agent-login") {
+        // The one Atlas-handled command (S1): every agent opens the same
+        // `AgentOAuthModal`. `reason` is passed so the modal can tell an
+        // "agent wants a provider key" failure from a plain "not signed in".
         clearSlashRange(view, t.from, t.to);
         setSlashTrigger(null);
-        if (cmd.handler === "codex-login") setCodexLoginOpen(true);
-        else if (cmd.handler === "agent-login") promptSignIn(agentType);
-        else openLoginDialog();
-        inputRef.current?.focus();
-        return;
-      }
-
-      if (cmd.handler === "open-settings") {
-        clearSlashRange(view, t.from, t.to);
-        setSlashTrigger(null);
-        openSettingsSection("skills");
-        inputRef.current?.focus();
-        return;
-      }
-
-      if (cmd.handler === "unavailable") {
-        // Host-handled guard row — the agent doesn't support this command
-        // (or the ACP adapter blocklists it from advertisement). Nothing to
-        // run; just close the picker and drop the typed token.
-        clearSlashRange(view, t.from, t.to);
-        setSlashTrigger(null);
+        promptSignIn(agentType, { reason: lastAuthReasonRef.current ?? undefined });
         inputRef.current?.focus();
         return;
       }
@@ -1466,7 +1487,7 @@ export function MessageInput({
       // submit path — trim/mentions/queueing behave exactly like a typed Enter.
       submitRef.current();
     },
-    [openLoginDialog, disabled, agentType],
+    [disabled, agentType],
   );
 
   // Forward Up/Down/Enter/Esc/Backspace/Tab from CodeMirror to whichever
@@ -2000,7 +2021,6 @@ export function MessageInput({
           }
         />
       )}
-      <CodexLoginDialog open={codexLoginOpen} onOpenChange={setCodexLoginOpen} />
     </div>
   );
 }

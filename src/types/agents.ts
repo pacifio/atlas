@@ -1,3 +1,5 @@
+import type { ToolContentBlock } from "@/types/agent";
+
 // Wire shapes for the `atlas-agents` Rust surface. These mirror
 // `crates/atlas-agents/src/{session,events,plugin,manager}.rs` — keep in sync
 // when the Rust types change.
@@ -51,6 +53,8 @@ export interface ToolCall {
   arguments: unknown;
   result: string | null;
   locations: unknown[];
+  /** Structural content blocks (P1.4). Omitted by Rust when empty. */
+  content_blocks?: ToolContentBlock[];
 }
 
 export interface PlanEntry {
@@ -197,6 +201,34 @@ export type AgentDelta =
       agent_id: AgentId;
       session_id: AcpSessionId;
       usage: Usage;
+    }
+  | {
+      /** The agent is asking the user something mid-turn (P3.3). */
+      kind: "elicitation_requested";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      request_id: string;
+      mode: "form" | "url";
+      message: string;
+      requested_schema?: unknown;
+      url?: string | null;
+    }
+  | {
+      /** The agent named its own session (P3.1). Beats Atlas's
+       *  first-40-characters-of-the-prompt title. */
+      kind: "title_updated";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      title: string;
+    }
+  | {
+      /** The agent's own config options changed (P2.2) — a knob toggled inside
+       *  the agent rather than through Atlas. Raw JSON, same shape the snapshot
+       *  carries. */
+      kind: "config_options_updated";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      config_options: unknown[];
     }
   | {
       kind: "context_usage";

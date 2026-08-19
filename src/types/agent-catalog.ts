@@ -37,6 +37,16 @@ export interface AgentLoginSpec {
 export interface AgentCatalogEntry {
   /** Plugin/spec id — what every agent command takes. */
   id: string;
+  /** Auth-method kinds the agent advertised at `initialize` (R6). **Empty
+   *  before it has ever been spawned** — auth methods only exist after the
+   *  handshake — so empty means "unknown", not "cannot sign in". */
+  authKinds?: ("agent" | "env_var" | "terminal")[];
+  /** Whether the agent advertised ACP `auth.logout` (A2). Same pre-spawn
+   *  caveat as `authKinds` — false until the handshake has happened. */
+  supportsLogout?: boolean;
+  /** Whether the agent advertised `sessionCapabilities.fork` (P3.4). Same
+   *  pre-spawn caveat as `authKinds`. */
+  supportsFork?: boolean;
   /** Display alias UI state carries ("claude-code" for "claude-code-ts"). */
   agentType: string;
   name: string;

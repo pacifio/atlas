@@ -248,6 +248,9 @@ function toChatToolCall(tc: AgentToolCall): ChatMessage["toolCalls"][number] {
     kind: tc.kind ?? null,
     arguments: (tc.arguments ?? {}) as Record<string, unknown>,
     result: tc.result,
+    // Only present when the agent reported a diff/terminal block; the Rust
+    // side omits the field entirely when empty.
+    contentBlocks: tc.content_blocks,
     status:
       tc.status === "pending"
         ? "pending"
@@ -342,6 +345,15 @@ interface ChatActions {
     /** Pick a generic ACP session mode and push it to the bound agent.
      *  The Codex equivalent of `setClaudePermissionMode`. */
     setAcpMode: (sessionId: string, modeId: string) => void;
+    /** Set an agent-advertised config option (P2.2). Optimistic locally; the
+     *  agent's own `config_option_update` is the authority and overwrites it. */
+    /** Clear the answered/dismissed elicitation (P3.3). */
+    clearElicitation: (sessionId: string) => void;
+    setAcpConfigOption: (
+      sessionId: string,
+      configId: string,
+      value: boolean | string,
+    ) => Promise<void>;
     /** Toggle the non-Claude mode-picker loading state. Set false once the
      *  session boot resolves (modes confirmed, or bind failed) so the composer's
      *  picker never hangs on its loading spinner. */
@@ -598,6 +610,28 @@ function findToolCall(
     if (tc) return { msg: m, tc };
   }
   return null;
+}
+
+/** Human-readable end-of-turn notice for a stop reason, or null when the
+ *  outcome speaks for itself (P2.4).
+ *
+ *  Exported for tests. The strings say what HAPPENED and what to do, because
+ *  the raw ACP token (`max_turn_requests`) means nothing to a user. */
+export function stopReasonNotice(stopReason: string): string | null {
+  switch (stopReason) {
+    case "max_tokens":
+      return "(the reply was cut off — the model hit its output token limit)";
+    case "max_turn_requests":
+      return "(the agent stopped — it hit the maximum number of model requests for one turn)";
+    case "refusal":
+      return "(the agent declined to continue this request)";
+    // `end_turn` is a normal finish; `cancelled` already renders its own UI.
+    // Anything unknown is left alone rather than guessed at — inventing a
+    // description for a stop reason a future adapter added would be worse than
+    // saying nothing.
+    default:
+      return null;
+  }
 }
 
 export const useChatStore = createSelectors(
@@ -990,6 +1024,27 @@ export const useChatStore = createSelectors(
           const at = get().sessions[sessionId]?.agentType;
           if (at && at !== "claude-code") saveLastModePref(at, modeId);
           pushAcpModeToAgent(get(), sessionId);
+        },
+        clearElicitation: (sessionId) =>
+          set((s) => {
+            const session = s.sessions[sessionId];
+            if (session) session.pendingElicitation = undefined;
+          }),
+        setAcpConfigOption: async (sessionId, configId, value) => {
+          const session = get().sessions[sessionId];
+          if (!session?.acpAgentId || !session.acpSessionId) return;
+          try {
+            await agents.setConfigOption(
+              { agent_id: session.acpAgentId, session_id: session.acpSessionId },
+              configId,
+              value,
+            );
+            // No optimistic local write: the agent answers with a
+            // `config_option_update` carrying the authoritative state, and
+            // guessing here would flicker the control when it disagrees.
+          } catch (e) {
+            console.warn("setConfigOption failed:", e);
+          }
         },
         setAcpAvailableCommands: (sessionId, commands) => {
           set((s) => {
@@ -1551,6 +1606,15 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
             ? "(no response — the agent ended its turn without output)"
             : `(no response — stop_reason: ${env.stop_reason})`;
         session.messages.push(makeAssistantTextMessage(label));
+      } else if (responded) {
+        // P2.4: an abnormal stop reason has to surface even when output DID
+        // arrive — that is precisely when it is invisible otherwise. A
+        // `max_tokens` reply is truncated mid-thought and reads like a finished
+        // one; a `refusal` reads like the agent simply chose to say that. Only
+        // `end_turn` and `cancelled` are self-explanatory, so only they stay
+        // silent (cancelled already has its own UI).
+        const notice = stopReasonNotice(env.stop_reason);
+        if (notice) session.messages.push(makeAssistantTextMessage(notice));
       }
       // Resolve any tool calls still in pending/running state on EVERY
       // terminal, not just cancel. After Stop the driver gate drops further
@@ -1872,6 +1936,33 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
     }
     case "usage_updated": {
       session.usage = env.usage;
+      return;
+    }
+    case "elicitation_requested": {
+      // One at a time per session — an agent that asks twice before the first
+      // is answered replaces it, which matches how the permission modal
+      // behaves and avoids stacking dialogs the user cannot see behind.
+      session.pendingElicitation = {
+        agentId: env.agent_id,
+        requestId: env.request_id,
+        mode: env.mode,
+        message: env.message,
+        requestedSchema: env.requested_schema,
+        url: env.url,
+      };
+      return;
+    }
+    case "title_updated": {
+      // The agent summarised this session better than the first 40 characters
+      // of the prompt Atlas titled it with (Codex and Kilo both do, once they
+      // have seen a turn).
+      session.title = env.title;
+      return;
+    }
+    case "config_options_updated": {
+      // Keeps the mode/model pickers honest when the change came from inside
+      // the agent (its own `/model`, a thinking toggle) rather than from Atlas.
+      session.acpConfigOptions = env.config_options;
       return;
     }
     case "context_usage": {

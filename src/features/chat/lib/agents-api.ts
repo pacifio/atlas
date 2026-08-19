@@ -22,19 +22,66 @@ import type {
 /** Mirror of `atlas_acp::AuthMethodWire` — auth methods the ACP adapter
  *  advertised in its `initialize` response. The dialog renders one row
  *  per entry and calls `runAuthMethod(method.id)` on selection. */
+/** How the client satisfies one auth method. Mirrors Rust `AuthMethodKind`. */
+export type AuthMethodKind = "agent" | "env_var" | "terminal";
+
+export interface AuthEnvVar {
+  name: string;
+  label: string | null;
+  secret: boolean;
+  optional: boolean;
+}
+
 export interface AuthMethodWire {
   id: string;
   name: string;
   description: string | null;
+  /** Absent `type` on the wire means `agent` — Rust already normalised that. */
+  kind: AuthMethodKind;
+  /** `env_var` methods: variables the user must export. */
+  envVars?: AuthEnvVar[];
+  /** Where to obtain the credential (`env_var` methods). */
+  link: string | null;
+  /** Typed `terminal.args` — relative to the agent's own binary, so NOT
+   *  runnable on their own; `terminalCommand` is what can actually be exec'd. */
+  args?: string[];
   terminalCommand: string | null;
   terminalArgs: string[] | null;
   terminalLabel: string | null;
+  /** Codex's proprietary `_meta["api-key"].provider` hint — the only api-key
+   *  signal any adapter ships today, so it drives the same env checklist a
+   *  typed `env_var` method would. */
+  apiKeyProvider: string | null;
+}
+
+/** One env var an auth method wants, and whether the system already has it.
+ *  Never carries the value. */
+export interface AuthEnvStatus {
+  methodId: string;
+  name: string;
+  label: string | null;
+  optional: boolean;
+  satisfied: boolean;
+  source: "process-env" | "shell-env" | null;
 }
 
 export interface AuthRunDone {
   success: boolean;
   exitCode: number | null;
   message: string | null;
+  /** Which run this belongs to. Two agents signing in at once previously
+   *  cross-talked, because every listener resolved on ANY `:done`. */
+  agentId: string;
+  runId: string;
+}
+
+export interface AuthRunProgress {
+  agentId: string;
+  runId: string;
+  stream: "stdout" | "stderr";
+  line: string;
+  /** First `https://` URL on the line, when the CLI printed one. */
+  url: string | null;
 }
 
 export const agents = {
@@ -52,8 +99,15 @@ export const agents = {
   spawn: (pluginId: string) => invoke<AgentInfo>("agents_spawn", { pluginId }),
   kill: (agentId: AgentId) => invoke<void>("agents_kill", { agentId }),
 
-  newSession: (agentId: AgentId, cwd: string) =>
-    invoke<SessionInit>("agents_new_session", { agentId, cwd }),
+  /** `additionalDirectories` are extra workspace roots (P3.2). Fixed for the
+   *  session's life, so they must be passed here rather than inferred later;
+   *  only reach agents that advertised the capability. */
+  newSession: (agentId: AgentId, cwd: string, additionalDirectories?: string[]) =>
+    invoke<SessionInit>("agents_new_session", {
+      agentId,
+      cwd,
+      additionalDirectories: additionalDirectories?.length ? additionalDirectories : null,
+    }),
   loadSession: (agentId: AgentId, sessionId: AcpSessionId, cwd: string) =>
     invoke<SessionKey>("agents_load_session", { agentId, sessionId, cwd }),
 
@@ -76,13 +130,33 @@ export const agents = {
    *  Keep `snapshot` for resume/backfill, which genuinely need messages. */
   snapshotMeta: (key: SessionKey) => invoke<SessionSnapshot>("agents_snapshot_meta", { key }),
 
-  send: (key: SessionKey, text: string, attachments?: ImageAttachment[]) =>
+  send: (
+    key: SessionKey,
+    text: string,
+    attachments?: ImageAttachment[],
+    /** `@`-mentioned files, sent as ACP `ResourceLink` blocks (P2.1). */
+    resourceLinks?: { uri: string; name: string }[],
+  ) =>
     invoke<void>("agents_send", {
       key,
       text,
       attachments: attachments?.length ? attachments : null,
+      resourceLinks: resourceLinks?.length ? resourceLinks : null,
     }),
   cancel: (key: SessionKey) => invoke<void>("agents_cancel", { key }),
+  /** Answer an elicitation the agent raised (P3.3). */
+  respondElicitation: (
+    agentId: AgentId,
+    requestId: string,
+    action: "accept" | "decline" | "cancel",
+    content?: Record<string, unknown>,
+  ) => invoke<void>("agents_respond_elicitation", { agentId, requestId, action, content }),
+  /** Branch a session from its current state (P3.4). Null when unsupported. */
+  forkSession: (key: SessionKey) => invoke<string | null>("agents_fork_session", { key }),
+  /** Set any agent-advertised config option (P2.2). `value` is a bool for
+   *  boolean options, or the option-value id for select options. */
+  setConfigOption: (key: SessionKey, configId: string, value: boolean | string) =>
+    invoke<void>("agents_set_config_option", { key, configId, value }),
   /** Tear down a session's backend state (actor + driver guard) on tab close
    *  or project switch. Idempotent; fire-and-forget from UI paths. */
   dropSession: (agentId: AgentId, sessionId: AcpSessionId) =>
@@ -110,19 +184,47 @@ export const agents = {
 
   listAuthMethods: (agentId: AgentId) =>
     invoke<AuthMethodWire[]>("agents_list_auth_methods", { agentId }),
+  /** Spawns the login subprocess and resolves with its `runId` — completion
+   *  arrives later on `atlas:auth-run:done` carrying the same id. */
   runAuthMethod: (agentId: AgentId, methodId: string) =>
-    invoke<void>("agents_run_auth_method", { agentId, methodId }),
+    invoke<string>("agents_run_auth_method", { agentId, methodId }),
+  /** Which env vars this agent's auth methods need, and which are already
+   *  satisfied by the system environment. Values are never returned. */
+  authEnvStatus: (agentId: AgentId) =>
+    invoke<AuthEnvStatus[]>("agents_auth_env_status", { agentId }),
   /** Run an agent's ACP `authenticate` flow (Codex "chatgpt" browser OAuth).
    *  Resolves once sign-in completes. */
   authenticate: (agentId: AgentId, methodId: string) =>
     invoke<void>("agents_authenticate", { agentId, methodId }),
+  /** ACP `logout` — the agent drops its OWN credentials. Only offered when it
+   *  advertised `auth.logout`; Atlas stores nothing to clear itself. */
+  logout: (agentId: AgentId) => invoke<void>("agents_logout", { agentId }),
 };
 
 /** Whether Codex has stored credentials (`~/.codex/auth.json`). */
 export const codexStatus = (): Promise<boolean> => invoke<boolean>("codex_status");
 
-export const listenAuthRunDone = (handler: (p: AuthRunDone) => void): Promise<UnlistenFn> =>
-  listen<AuthRunDone>("atlas:auth-run:done", (e) => handler(e.payload));
+/** `runId` scopes the subscription; omit it only for diagnostics. */
+export const listenAuthRunDone = (
+  handler: (p: AuthRunDone) => void,
+  runId?: string,
+): Promise<UnlistenFn> =>
+  listen<AuthRunDone>("atlas:auth-run:done", (e) => {
+    if (runId && e.payload.runId !== runId) return;
+    handler(e.payload);
+  });
+
+/** Live output from a login CLI. The URL it prints is the fallback when the
+ *  automatic browser hand-off silently fails — without it, that is
+ *  indistinguishable from the flow simply hanging. */
+export const listenAuthRunProgress = (
+  handler: (p: AuthRunProgress) => void,
+  runId?: string,
+): Promise<UnlistenFn> =>
+  listen<AuthRunProgress>("atlas:auth-run:progress", (e) => {
+    if (runId && e.payload.runId !== runId) return;
+    handler(e.payload);
+  });
 
 /**
  * Subscribe to the single multiplexed delta stream. Every delta carries

@@ -244,6 +244,19 @@ export interface ChatSession {
    *  native Cersei agent this is the bare model id; the provider lives in
    *  `cerseiProvider` and the two are pushed to the backend as `provider/model`. */
   acpCurrentModel?: string;
+  /** Raw ACP `configOptions` for this session (P2.2). Kept current by the
+   *  `config_options_updated` delta so a knob toggled INSIDE the agent is
+   *  reflected without waiting for a snapshot refetch. */
+  acpConfigOptions?: unknown[];
+  /** An unanswered `elicitation/create` from the agent (P3.3). */
+  pendingElicitation?: {
+    agentId: string;
+    requestId: string;
+    mode: "form" | "url";
+    message: string;
+    requestedSchema?: unknown;
+    url?: string | null;
+  };
   /** Models the ACP agent advertised (Claude Code / Codex) — drives the
    *  composer's model picker. Seeded from the snapshot's `available_models`;
    *  empty for agents (or the native one) that don't expose ACP model lists. */
@@ -372,6 +385,17 @@ export interface ChatMessage {
   model?: string;
 }
 
+/**
+ * A tool-content block that renders structurally rather than as result text
+ * (P1.4). Mirrors `atlas_agents::session::ToolContentBlock` — the Rust test
+ * `blocks_serialize_to_the_shape_the_frontend_expects` pins this wire shape.
+ */
+export type ToolContentBlock =
+  /** An edit the agent proposed or made. `oldText` is absent for a new file. */
+  | { type: "diff"; path: string; oldText?: string; newText: string }
+  /** A terminal the agent created via ACP `terminal/*`. */
+  | { type: "terminal"; terminalId: string };
+
 export interface ToolCallDisplay {
   id: string;
   toolName: string;
@@ -383,6 +407,12 @@ export interface ToolCallDisplay {
   result: string | null;
   status: "pending" | "running" | "completed" | "failed";
   duration: number | null;
+  /**
+   * Structural content the agent attached to this call. Absent for almost every
+   * call — only ACP agents that report edits as `ToolCallContent::Diff` (rather
+   * than as recognisable Write/Edit arguments) populate it.
+   */
+  contentBlocks?: ToolContentBlock[];
 }
 
 export interface FileChange {
