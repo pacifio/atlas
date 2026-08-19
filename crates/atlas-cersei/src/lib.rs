@@ -1403,6 +1403,22 @@ impl PermissionPolicy for UiPolicy {
             }
             return self.prompt_user(request, &request.description, None).await;
         }
+        // Leaving the sandbox is never a mode shortcut. Bypass relaxes
+        // *approvals*; it does not disable containment, and "stop asking me"
+        // must not silently mean "you may run unconfined". `looks_like_denial`
+        // matches EPERM text by substring, so without this an ordinary
+        // permission failure in a command's output could auto-escalate the
+        // re-run — downgrading tier 0 to tier 1 with no prompt and nothing the
+        // user sees. The eval harness runs in bypass, so it would have been
+        // silently measuring unsandboxed behaviour too.
+        if request
+            .tool_input
+            .get(tools::policy::ESCALATION_MARKER)
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+        {
+            return self.prompt_user(request, &request.description, None).await;
+        }
         // Mode shortcuts that don't need a prompt. Normalize first — the mode id
         // can arrive from another agent's vocabulary (Claude's
         // "bypassPermissions", Codex's "danger-full-access", etc.) if a mode
@@ -2784,6 +2800,54 @@ mod tests {
         r.tool_name = cersei_agent::DOOM_LOOP_ASK.into();
         assert!(matches!(p.check(&r).await, CerseiDecision::Allow));
         assert_eq!(p.pending.permission_asks.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn bypass_does_not_silently_leave_the_sandbox() {
+        // Bypass relaxes *approvals*; it does not disable containment. The
+        // escalation re-ask is the one request that asks to run a command
+        // unconfined, so it must still reach the user — otherwise a single
+        // EPERM string in a command's output (which `looks_like_denial` matches
+        // on substrings, false positives included) silently downgrades tier 0
+        // to tier 1 for exactly the users who clicked "stop asking", with no
+        // prompt, no event, and no log they see. The eval harness runs in
+        // bypass too, so it would have been measuring unsandboxed behaviour.
+        let p = Arc::new(policy("bypass"));
+        let mut r = req(PermissionLevel::Dangerous);
+        r.tool_name = "Bash".into();
+        r.tool_input = serde_json::json!({
+            tools::policy::ESCALATION_MARKER: true,
+            "command": "ls /etc",
+        });
+        let p2 = Arc::clone(&p);
+        let task = tokio::spawn(async move { p2.check(&r).await });
+        for _ in 0..200 {
+            if !p.pending.pending.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let key = *p
+            .pending
+            .pending
+            .iter()
+            .next()
+            .expect("escalation must prompt even in bypass")
+            .key();
+        let (_, tx) = p.pending.pending.remove(&key).unwrap();
+        let _ = tx.send(CerseiDecision::Deny("no".into()));
+        assert!(matches!(task.await.unwrap(), CerseiDecision::Deny(_)));
+    }
+
+    #[tokio::test]
+    async fn bypass_still_skips_ordinary_prompts() {
+        // The guard above must not turn bypass back into ask mode for anything
+        // that is not an escalation.
+        let p = policy("bypass");
+        let mut r = req(PermissionLevel::Dangerous);
+        r.tool_name = "Bash".into();
+        r.tool_input = serde_json::json!({"command": "rm -rf build"});
+        assert!(matches!(p.check(&r).await, CerseiDecision::Allow));
     }
 
     #[test]
