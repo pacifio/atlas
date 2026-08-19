@@ -300,10 +300,14 @@ impl Provider for OpenAi {
                 Ok(response) => {
                     if !response.status().is_success() {
                         let status = response.status().as_u16();
+                        // ATLAS PATCH (retry-after-v1): see cersei-provider
+                        // `retry_after_suffix` — header must be read before
+                        // `.text()` consumes the response.
+                        let retry_after = crate::retry_after_suffix(&response);
                         let body = response.text().await.unwrap_or_default();
                         let _ = tx
                             .send(StreamEvent::Error {
-                                message: format!("HTTP {}: {}", status, body),
+                                message: format!("HTTP {}{}: {}", status, retry_after, body),
                             })
                             .await;
                         return;

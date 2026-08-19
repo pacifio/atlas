@@ -57,6 +57,22 @@ pub enum AgentEvent {
     // Permission interaction
     PermissionRequired(PermissionRequest),
 
+    /// ATLAS PATCH (steering-queue-v1): a user message that arrived while the
+    /// turn was running was injected into the conversation at a tool-batch
+    /// boundary (before the next model call) instead of being rejected.
+    Steered {
+        text: String,
+    },
+
+    /// ATLAS PATCH (doom-loop-input-hash-v1): the doom-loop detector fired on
+    /// repeated byte-identical failing tool calls. `escalated: false` is the
+    /// first trigger (a corrective nudge was injected); `escalated: true` is a
+    /// repeat after the nudge, which raises a permission ask so the user
+    /// decides whether the run continues.
+    DoomLoop {
+        escalated: bool,
+    },
+
     // Turn lifecycle
     TurnStart {
         turn: u32,

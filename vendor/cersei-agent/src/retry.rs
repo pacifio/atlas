@@ -2,7 +2,8 @@
 //! backoff schedule for the runner's model-call attempt loop.
 //!
 //! Mirrors Zed's native-agent retry table (`retry_strategy_for`):
-//! - HTTP 429 / rate limit          → exponential 5s·2^(n-1), max 4 attempts
+//! - HTTP 429 / rate limit          → server's `retry-after` when stated,
+//!   else exponential 5s·2^(n-1); max 4 attempts
 //! - 529/503/overloaded             → fixed `retry_after` (or 5s), max 4
 //! - other 5xx / stream/read errors → fixed 5s, max 3
 //! - auth (401/403/…) and fatal (400/413/too-large/…) → never retried
@@ -72,9 +73,18 @@ pub fn schedule_for(message: &str) -> Option<RetrySchedule> {
     }
 
     if m.contains("http 429") || m.contains("rate limit") || m.contains("rate_limit") {
-        return Some(RetrySchedule {
-            max_attempts: 4,
-            backoff: Backoff::Exponential { base_secs: 5 },
+        // Honor a server-stated retry-after over the exponential guess — the
+        // provider folds the Retry-After header into the error string as
+        // "(retry-after: Ns)" (see cersei-provider `retry_after_suffix`).
+        return Some(match retry_after_secs(&m) {
+            Some(secs) => RetrySchedule {
+                max_attempts: 4,
+                backoff: Backoff::Fixed { secs },
+            },
+            None => RetrySchedule {
+                max_attempts: 4,
+                backoff: Backoff::Exponential { base_secs: 5 },
+            },
         });
     }
 
@@ -183,6 +193,20 @@ mod tests {
         assert_eq!(s.delay(1), Duration::from_secs(5));
         assert_eq!(s.delay(2), Duration::from_secs(10));
         assert_eq!(s.delay(3), Duration::from_secs(20));
+    }
+
+    #[test]
+    fn rate_limit_honors_retry_after_header() {
+        // The provider folds the Retry-After header in as "(retry-after: Ns)".
+        let s = schedule_for("HTTP 429 (retry-after: 17s): rate_limit_error").unwrap();
+        assert_eq!(s.delay(1), Duration::from_secs(17));
+        assert_eq!(s.delay(3), Duration::from_secs(17), "fixed, not exponential");
+        // A body-side retry_after works the same way.
+        let s = schedule_for("HTTP 429: {\"retry_after\": 8}").unwrap();
+        assert_eq!(s.delay(1), Duration::from_secs(8));
+        // An absurd server ask is clamped, not obeyed.
+        let s = schedule_for("HTTP 429 (retry-after: 3600s): slow down").unwrap();
+        assert_eq!(s.delay(1), Duration::from_secs(60));
     }
 
     #[test]

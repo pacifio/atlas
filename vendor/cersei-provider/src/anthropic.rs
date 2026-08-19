@@ -205,10 +205,14 @@ pub(crate) fn spawn_sse(client: reqwest::Client, request: reqwest::Request) -> C
             Ok(response) => {
                 if !response.status().is_success() {
                     let status = response.status().as_u16();
+                    // ATLAS PATCH (retry-after-v1): fold the Retry-After
+                    // header into the error string before `.text()` consumes
+                    // the response — the retry classifier reads it from here.
+                    let retry_after = crate::retry_after_suffix(&response);
                     let body = response.text().await.unwrap_or_default();
                     let _ = tx
                         .send(StreamEvent::Error {
-                            message: format!("HTTP {}: {}", status, body),
+                            message: format!("HTTP {}{}: {}", status, retry_after, body),
                         })
                         .await;
                     return;

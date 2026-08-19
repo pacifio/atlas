@@ -157,7 +157,7 @@ pub async fn run_agent_streaming(
     agent: &Agent,
     prompt: &str,
     event_tx: mpsc::Sender<AgentEvent>,
-    _control_rx: mpsc::Receiver<AgentControl>,
+    mut control_rx: mpsc::Receiver<AgentControl>,
 ) -> Result<AgentOutput> {
     // Load session history (skip if messages were pre-populated via with_messages)
     if agent.messages.lock().is_empty() {
@@ -210,6 +210,10 @@ pub async fn run_agent_streaming(
     let mut benchmark_retries: u32 = 0;
     const BENCHMARK_MAX_RETRIES: u32 = 4;
     let mut doom_loop_warned = false;
+    // ATLAS PATCH (doom-loop-input-hash-v1): after the user allows a run to
+    // continue past an escalation, suppress re-detection until this many
+    // tool calls have accumulated (a fresh 6-call window).
+    let mut doom_suppress_until: usize = 0;
     let mut completion_verified = false;
 
     // Runtime guards
@@ -241,6 +245,18 @@ pub async fn run_agent_streaming(
         // Check cancellation
         if agent.cancel_token.is_cancelled() {
             return Err(CerseiError::Cancelled);
+        }
+
+        // ── Steering injection (ATLAS PATCH steering-queue-v1) ──
+        // The tool-batch boundary: the previous round's results are settled
+        // and the next model call hasn't been built. User messages queued
+        // mid-run land here, so no message falls between a permission prompt
+        // and its approval.
+        for text in drain_steering(agent, &mut control_rx) {
+            agent.messages.lock().push(Message::user(&text));
+            let ev = AgentEvent::Steered { text };
+            let _ = event_tx.send(ev.clone()).await;
+            agent.emit(ev);
         }
 
         let _ = event_tx.send(AgentEvent::TurnStart { turn }).await;
@@ -615,6 +631,21 @@ pub async fn run_agent_streaming(
                     ));
                     continue; // Don't break — force another round
                 }
+
+                // ── Steering drain-on-finish (ATLAS PATCH steering-queue-v1) ──
+                // A course-correction that arrived while the final round
+                // streamed is the next thing to do, not a lost message: inject
+                // it and keep the loop alive instead of finishing around it.
+                let steered = drain_steering(agent, &mut control_rx);
+                if !steered.is_empty() {
+                    for text in steered {
+                        agent.messages.lock().push(Message::user(&text));
+                        let ev = AgentEvent::Steered { text };
+                        let _ = event_tx.send(ev.clone()).await;
+                        agent.emit(ev);
+                    }
+                    continue;
+                }
                 break;
             }
             StopReason::ToolUse => {
@@ -879,41 +910,21 @@ pub async fn run_agent_streaming(
                     .lock()
                     .push(Message::user_blocks(result_blocks));
 
-                // ── Doom loop detection ──
-                // Detects two patterns:
-                // 1. 3+ consecutive identical tool calls that all error
-                // 2. Repeating 2-call pattern [A,B][A,B][A,B] (alternating failures)
-                if !doom_loop_warned && tool_calls.len() >= 6 {
-                    let names: Vec<&str> = tool_calls
-                        .iter()
-                        .rev()
-                        .take(6)
-                        .map(|tc| tc.name.as_str())
-                        .collect();
-                    let errors: Vec<bool> = tool_calls
-                        .iter()
-                        .rev()
-                        .take(6)
-                        .map(|tc| tc.is_error)
-                        .collect();
-
-                    // Pattern 1: 3+ identical consecutive failing calls
-                    let is_3_identical = names.len() >= 3
-                        && names[0] == names[1]
-                        && names[1] == names[2]
-                        && errors[0]
-                        && errors[1]
-                        && errors[2];
-
-                    // Pattern 2: [A,B][A,B][A,B] alternating pattern
-                    let is_2_pattern = names.len() >= 6
-                        && names[0] == names[2]
-                        && names[2] == names[4]
-                        && names[1] == names[3]
-                        && names[3] == names[5];
-
-                    if is_3_identical || is_2_pattern {
+                // ── Doom loop detection (ATLAS PATCH doom-loop-input-hash-v1) ──
+                // Keys on (tool, input) and requires failures — a healthy
+                // Read/Edit alternation over the same file no longer trips it.
+                // First trigger nudges; a repeat after the nudge escalates to
+                // a permission ask so the user decides whether the run
+                // continues (OpenCode's move), instead of letting the model
+                // thrash to the turn cap.
+                if tool_calls.len() >= doom_suppress_until.max(3)
+                    && doom_loop_pattern(&tool_calls)
+                {
+                    if !doom_loop_warned {
                         doom_loop_warned = true;
+                        let ev = AgentEvent::DoomLoop { escalated: false };
+                        let _ = event_tx.send(ev.clone()).await;
+                        agent.emit(ev);
                         agent.messages.lock().push(Message::user(
                             "[system] You are stuck in a repetitive loop. Your recent tool calls \
                              are repeating the same pattern. STOP and reconsider:\n\
@@ -927,6 +938,44 @@ pub async fn run_agent_streaming(
                                 "Doom loop detected — forcing new approach".into(),
                             ))
                             .await;
+                    } else {
+                        let ev = AgentEvent::DoomLoop { escalated: true };
+                        let _ = event_tx.send(ev.clone()).await;
+                        agent.emit(ev);
+                        let recent: Vec<String> = tool_calls
+                            .iter()
+                            .rev()
+                            .take(6)
+                            .map(|tc| tc.name.clone())
+                            .collect();
+                        let ask = PermissionRequest {
+                            tool_name: crate::DOOM_LOOP_ASK.to_string(),
+                            tool_input: serde_json::json!({ "recent_tools": recent }),
+                            permission_level: cersei_tools::PermissionLevel::Dangerous,
+                            description: "The agent keeps repeating the same failing tool \
+                                          calls after being told to change approach. Continue \
+                                          anyway?"
+                                .to_string(),
+                            id: uuid::Uuid::new_v4().to_string(),
+                        };
+                        match agent.permission_policy.check(&ask).await {
+                            PermissionDecision::Allow
+                            | PermissionDecision::AllowOnce
+                            | PermissionDecision::AllowForSession => {
+                                // The user chose to let it run — give the
+                                // model a fresh window before re-evaluating.
+                                doom_loop_warned = false;
+                                doom_suppress_until = tool_calls.len() + 6;
+                            }
+                            PermissionDecision::Deny(_) => {
+                                agent.messages.lock().push(Message::user(
+                                    "[system] Run stopped by the user after repeated failing \
+                                     tool calls.",
+                                ));
+                                last_stop_reason = StopReason::EndTurn;
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -935,10 +984,50 @@ pub async fn run_agent_streaming(
                 if max_tokens_retries > MAX_TOKENS_RETRY_LIMIT {
                     break; // Give up after 3 retries
                 }
-                agent
-                    .messages
-                    .lock()
-                    .push(Message::user("Continue from exactly where you stopped."));
+                // ── Truncation guard (ATLAS PATCH max-tokens-guard-v1) ──
+                // A length-stopped message can carry tool_use blocks whose
+                // JSON was salvage-parsed from a truncated stream — it
+                // validates but lies (Pi fails these closed for the same
+                // reason). They are never executed (only ToolUse stops run
+                // tools), but the assistant message holding them is already
+                // in history: without paired tool_results the next model
+                // call is invalid provider history. Fail each closed and
+                // have the model re-issue the calls in full.
+                let truncated_ids: Vec<String> = response
+                    .message
+                    .content_blocks()
+                    .into_iter()
+                    .filter_map(|b| {
+                        if let ContentBlock::ToolUse { id, .. } = b {
+                            Some(id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if truncated_ids.is_empty() {
+                    agent
+                        .messages
+                        .lock()
+                        .push(Message::user("Continue from exactly where you stopped."));
+                } else {
+                    let mut blocks: Vec<ContentBlock> = truncated_ids
+                        .into_iter()
+                        .map(|id| ContentBlock::ToolResult {
+                            tool_use_id: id,
+                            content: ToolResultContent::Text(
+                                crate::MAX_TOKENS_TOOL_MESSAGE.to_string(),
+                            ),
+                            is_error: Some(true),
+                        })
+                        .collect();
+                    blocks.push(ContentBlock::Text {
+                        text: "Your response was cut off by the output-token limit. \
+                               Re-issue the last tool call(s) in full."
+                            .to_string(),
+                    });
+                    agent.messages.lock().push(Message::user_blocks(blocks));
+                }
             }
             _ => break,
         }
@@ -979,8 +1068,26 @@ pub async fn run_agent_streaming(
                 let msgs_snapshot = agent.messages.lock().clone();
                 let model_name_owned = model_name.to_string();
 
+                // ATLAS PATCH (pre-compact-hook-v1): everything the summary
+                // is about to lose gets one chance to persist (contract C1 —
+                // the memory flush registers here). Runs on the full
+                // snapshot, before any split point is chosen.
+                if let Some(hook) = &agent.pre_compact {
+                    hook(msgs_snapshot.clone()).await;
+                }
+                // ATLAS PATCH (pre-compact-hook-v1): CompactStart/CompactEnd
+                // existed in the event enum but were never emitted, so
+                // listeners keyed on them (Atlas resets its read-registry on
+                // CompactEnd) never fired.
+                let start_ev = AgentEvent::CompactStart {
+                    reason: crate::events::CompactReason::ThresholdExceeded,
+                    messages_before: msgs_snapshot.len(),
+                };
+                let _ = event_tx.send(start_ev.clone()).await;
+                agent.emit(start_ev);
+
                 // Try LLM-based summarization first
-                match compact::compact_conversation(
+                let (messages_after, tokens_freed) = match compact::compact_conversation(
                     agent.provider.as_ref(),
                     &msgs_snapshot,
                     &model_name_owned,
@@ -1001,6 +1108,7 @@ pub async fn run_agent_streaming(
                             msgs.len(),
                             result.tokens_freed_estimate
                         );
+                        (msgs.len(), result.tokens_freed_estimate)
                     }
                     _ => {
                         // Fallback: snip-compact (truncation)
@@ -1015,8 +1123,15 @@ pub async fn run_agent_streaming(
                             "Snip compact (fallback): {before} → {} messages, freed ~{freed} tokens",
                             msgs.len()
                         );
+                        (msgs.len(), freed)
                     }
-                }
+                };
+                let end_ev = AgentEvent::CompactEnd {
+                    messages_after,
+                    tokens_freed,
+                };
+                let _ = event_tx.send(end_ev.clone()).await;
+                agent.emit(end_ev);
             }
         }
     }
@@ -1059,6 +1174,62 @@ pub async fn run_agent_streaming(
     }
 
     Ok(output)
+}
+
+// ─── Steering (ATLAS PATCH steering-queue-v1) ───────────────────────────────
+
+/// Drain pending control messages into the agent's steering queue, then take
+/// every queued steer. Called at the top of each loop iteration (the
+/// tool-batch boundary) and once more before finishing on EndTurn.
+fn drain_steering(agent: &Agent, control_rx: &mut mpsc::Receiver<AgentControl>) -> Vec<String> {
+    while let Ok(ctrl) = control_rx.try_recv() {
+        match ctrl {
+            AgentControl::InjectMessage(m) => agent.steering.lock().push_back(m),
+            AgentControl::Cancel => agent.cancel_token.cancel(),
+            // Permission responses travel through the policy's own channel.
+            AgentControl::PermissionResponse { .. } => {}
+        }
+    }
+    agent.take_steered()
+}
+
+// ─── Doom loop detection (ATLAS PATCH doom-loop-input-hash-v1) ──────────────
+
+/// Identity of a tool call for thrash detection: the tool name plus a hash of
+/// its exact input. Names alone false-positive on healthy Read/Edit
+/// alternation over the same file; byte-identical inputs are the signature of
+/// a genuine loop.
+fn doom_key(tc: &ToolCallRecord) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    tc.name.hash(&mut h);
+    tc.input.to_string().hash(&mut h);
+    h.finish()
+}
+
+/// Two thrash shapes over the most recent calls, both requiring failures:
+/// 1. three consecutive identical (tool, input) calls, all errors;
+/// 2. the same two identical calls alternating three times ([A,B]×3) with at
+///    least two errors in the window.
+fn doom_loop_pattern(tool_calls: &[ToolCallRecord]) -> bool {
+    let recent: Vec<&ToolCallRecord> = tool_calls.iter().rev().take(6).collect();
+    let keys: Vec<u64> = recent.iter().map(|tc| doom_key(tc)).collect();
+    let errors: Vec<bool> = recent.iter().map(|tc| tc.is_error).collect();
+
+    let three_identical = keys.len() >= 3
+        && keys[0] == keys[1]
+        && keys[1] == keys[2]
+        && errors[..3].iter().all(|e| *e);
+
+    let alternating = keys.len() >= 6
+        && keys[0] == keys[2]
+        && keys[2] == keys[4]
+        && keys[1] == keys[3]
+        && keys[3] == keys[5]
+        && keys[0] != keys[1]
+        && errors.iter().filter(|e| **e).count() >= 2;
+
+    three_identical || alternating
 }
 
 // ─── Benchmark self-verification helpers ────────────────────────────────────
@@ -1151,5 +1322,88 @@ fn benchmark_check_tests(tool_calls: &[ToolCallRecord]) -> BenchmarkVerification
         BenchmarkVerification::TestsFailed(last_test_output)
     } else {
         BenchmarkVerification::TestsPassed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn call(name: &str, input: serde_json::Value, is_error: bool) -> ToolCallRecord {
+        ToolCallRecord {
+            name: name.to_string(),
+            id: "t".to_string(),
+            input,
+            result: String::new(),
+            is_error,
+            duration: std::time::Duration::ZERO,
+        }
+    }
+
+    #[test]
+    fn healthy_read_edit_alternation_is_not_a_doom_loop() {
+        // The old detector keyed on names alone and fired on exactly this:
+        // Read/Edit over the same file with DIFFERENT inputs, no errors.
+        let calls: Vec<ToolCallRecord> = (0..3)
+            .flat_map(|i| {
+                vec![
+                    call("Read", json!({"file_path": format!("src/a{i}.rs")}), false),
+                    call("Edit", json!({"file_path": format!("src/a{i}.rs"), "old_string": i.to_string()}), false),
+                ]
+            })
+            .collect();
+        assert!(!doom_loop_pattern(&calls));
+    }
+
+    #[test]
+    fn three_identical_failing_calls_trip() {
+        let calls: Vec<ToolCallRecord> = (0..3)
+            .map(|_| call("Bash", json!({"command": "make build"}), true))
+            .collect();
+        assert!(doom_loop_pattern(&calls));
+    }
+
+    #[test]
+    fn three_identical_succeeding_calls_do_not_trip() {
+        let calls: Vec<ToolCallRecord> = (0..3)
+            .map(|_| call("Read", json!({"file_path": "a.rs"}), false))
+            .collect();
+        assert!(!doom_loop_pattern(&calls));
+    }
+
+    #[test]
+    fn identical_alternation_with_failures_trips() {
+        let calls: Vec<ToolCallRecord> = (0..3)
+            .flat_map(|_| {
+                vec![
+                    call("Read", json!({"file_path": "a.rs"}), false),
+                    call("Edit", json!({"file_path": "a.rs", "old_string": "x"}), true),
+                ]
+            })
+            .collect();
+        assert!(doom_loop_pattern(&calls));
+    }
+
+    #[test]
+    fn identical_alternation_without_failures_does_not_trip() {
+        let calls: Vec<ToolCallRecord> = (0..3)
+            .flat_map(|_| {
+                vec![
+                    call("Read", json!({"file_path": "a.rs"}), false),
+                    call("Grep", json!({"pattern": "x"}), false),
+                ]
+            })
+            .collect();
+        assert!(!doom_loop_pattern(&calls));
+    }
+
+    #[test]
+    fn same_tool_different_inputs_failing_does_not_trip() {
+        // Legitimately iterating through variants of a failing command.
+        let calls: Vec<ToolCallRecord> = (0..3)
+            .map(|i| call("Bash", json!({"command": format!("test {i}")}), true))
+            .collect();
+        assert!(!doom_loop_pattern(&calls));
     }
 }

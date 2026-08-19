@@ -18,6 +18,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
+/// ATLAS PATCH marker (vendor/cersei-provider via `[patch.crates-io]`): the
+/// SSE error strings carry the `Retry-After` header as "(retry-after: Ns)"
+/// so the agent's retry classifier can honor it. Referencing this constant
+/// fails to compile against the unpatched crates.io release.
+pub const ATLAS_RETRY_AFTER_PATCH: &str = "retry-after-v1";
+
 // Re-exports
 pub use anthropic::Anthropic;
 pub use anthropic_vertex::AnthropicVertex;
@@ -25,6 +31,24 @@ pub use gemini::Gemini;
 pub use openai::OpenAi;
 pub use router::from_model_string;
 pub use stream::StreamAccumulator;
+
+/// ATLAS PATCH (retry-after-v1): the `Retry-After` header of a non-success
+/// response, rendered as a `" (retry-after: Ns)"` suffix for the SSE tasks'
+/// `HTTP {status}: {body}` error strings. Headers don't survive the
+/// `StreamEvent::Error` boundary any other way — `cersei-agent`'s retry
+/// classifier parses this token back out to pace its backoff to the server's
+/// answer instead of a guess. Empty when the header is absent or not integer
+/// seconds (the HTTP-date form is rare from LLM providers and not worth a
+/// date parser here).
+pub(crate) fn retry_after_suffix(response: &reqwest::Response) -> String {
+    response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(|secs| format!(" (retry-after: {secs}s)"))
+        .unwrap_or_default()
+}
 
 // ─── Provider trait ──────────────────────────────────────────────────────────
 

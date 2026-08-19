@@ -43,10 +43,54 @@ pub const ATLAS_RETRY_PATCH: &str = "retry-classified-v1";
 /// supervisor.
 pub const ATLAS_DELEGATE_PATCH: &str = "delegate-fallible-factory";
 
+/// ATLAS PATCH marker: mid-turn steering. `Agent::steer` (and
+/// `AgentControl::InjectMessage`) queue a user message that the runner injects
+/// at the next tool-batch boundary instead of rejecting the send. Referencing
+/// this constant fails to compile against the unpatched crates.io release.
+pub const ATLAS_STEERING_PATCH: &str = "steering-queue-v1";
+
+/// ATLAS PATCH marker: the doom-loop detector keys on (tool, input-hash) and
+/// requires failures — a healthy Read/Edit alternation no longer trips it —
+/// and a second trigger after the nudge escalates to a permission ask instead
+/// of letting the model thrash to the turn cap.
+pub const ATLAS_DOOM_LOOP_PATCH: &str = "doom-loop-input-hash-v1";
+
+/// ATLAS PATCH marker: a MaxTokens stop that carries tool_use blocks fails
+/// them closed (paired error tool_results) instead of leaving unpaired
+/// tool_use in history — salvage-parsed JSON from a truncated stream
+/// validates but lies, and an unpaired tool_use is an API error next turn.
+pub const ATLAS_MAX_TOKENS_GUARD_PATCH: &str = "max-tokens-guard-v1";
+
+/// ATLAS PATCH marker: auto-compaction fires a pre-compact hook with the full
+/// message snapshot before summarization (contract C1 — the memory flush
+/// runs here), and emits `CompactStart`/`CompactEnd` events, which upstream
+/// defined but never emitted.
+pub const ATLAS_PRE_COMPACT_PATCH: &str = "pre-compact-hook-v1";
+
+/// Tool name of the synthetic permission request the runner raises when the
+/// doom-loop detector fires a second time. Not a real tool: permission
+/// policies special-case it (Atlas always prompts unless in bypass mode).
+pub const DOOM_LOOP_ASK: &str = "__doom_loop__";
+
 /// Sentinel content of the tool_result synthesized for a tool_use orphaned by
 /// cancellation — keeps provider history valid for the next turn (every
 /// tool_use must have a matching tool_result).
 pub const TOOL_CANCELLED_MESSAGE: &str = "Tool cancelled by user.";
+
+/// ATLAS PATCH (max-tokens-guard-v1): sentinel content of the tool_result
+/// synthesized for a tool_use carried by a MaxTokens-stopped message. The
+/// call was never executed; its salvage-parsed arguments may be incomplete.
+pub const MAX_TOKENS_TOOL_MESSAGE: &str =
+    "Response hit the output-token limit mid-call; this tool call was NOT \
+     executed (its arguments may be incomplete). Re-issue the complete call.";
+
+/// ATLAS PATCH (pre-compact-hook-v1): async callback invoked with a snapshot
+/// of the full conversation right before auto-compaction summarizes it. The
+/// hook must not assume any particular split point — it sees everything, and
+/// what it wants to survive summarization it must persist itself.
+pub type PreCompactHook = std::sync::Arc<
+    dyn Fn(Vec<Message>) -> futures::future::BoxFuture<'static, ()> + Send + Sync,
+>;
 
 use cersei_hooks::Hook;
 use cersei_mcp::McpServerConfig;
@@ -128,6 +172,14 @@ pub struct Agent {
     messages: Arc<parking_lot::Mutex<Vec<Message>>>,
     cumulative_usage: Arc<parking_lot::Mutex<Usage>>,
     cancel_token: tokio_util::sync::CancellationToken,
+    /// ATLAS PATCH (steering-queue-v1): user messages queued while a turn is
+    /// running. The runner drains this at every tool-batch boundary (and once
+    /// more before finishing on EndTurn) and injects each as a user message.
+    pub(crate) steering: parking_lot::Mutex<std::collections::VecDeque<String>>,
+    /// ATLAS PATCH (pre-compact-hook-v1): awaited with the full message
+    /// snapshot right before auto-compaction summarizes it (contract C1 —
+    /// the pre-compaction memory flush registers here).
+    pub(crate) pre_compact: Option<PreCompactHook>,
     /// Type-map injected into every `ToolContext` this agent builds. Used by
     /// orchestration layers (e.g. cersei-agentrl) to hand tools a dynamic tool
     /// registry, a sandbox handle, a Mailbox/KvStore, etc. at runtime.
@@ -187,6 +239,21 @@ impl Agent {
     /// Cancel a running agent.
     pub fn cancel(&self) {
         self.cancel_token.cancel();
+    }
+
+    /// ATLAS PATCH (steering-queue-v1): queue a user course-correction for a
+    /// running turn. The runner injects it before the next model call, after
+    /// the in-flight tool batch settles — no message lands between a
+    /// permission prompt and its approval.
+    pub fn steer(&self, text: impl Into<String>) {
+        self.steering.lock().push_back(text.into());
+    }
+
+    /// ATLAS PATCH (steering-queue-v1): drain steered messages the run never
+    /// got to inject (it ended first). Callers recover these into history so
+    /// a send routed to `steer` in the closing race window is not lost.
+    pub fn take_steered(&self) -> Vec<String> {
+        self.steering.lock().drain(..).collect()
     }
 
     /// Get the current tool-output compression level.
@@ -267,6 +334,7 @@ pub struct AgentBuilder {
     initial_messages: Option<Vec<Message>>,
     benchmark_mode: bool,
     extensions: cersei_tools::Extensions,
+    pre_compact: Option<PreCompactHook>,
 }
 
 impl Default for AgentBuilder {
@@ -301,6 +369,7 @@ impl Default for AgentBuilder {
             initial_messages: None,
             benchmark_mode: false,
             extensions: cersei_tools::Extensions::default(),
+            pre_compact: None,
         }
     }
 }
@@ -476,6 +545,15 @@ impl AgentBuilder {
         self
     }
 
+    /// ATLAS PATCH (pre-compact-hook-v1): async hook awaited with the full
+    /// message snapshot right before auto-compaction summarizes it. What the
+    /// hook wants to survive summarization it must persist itself; it must
+    /// not assume any particular split point.
+    pub fn on_pre_compact(mut self, hook: PreCompactHook) -> Self {
+        self.pre_compact = Some(hook);
+        self
+    }
+
     pub fn build(self) -> cersei_types::Result<Agent> {
         let provider = self
             .provider
@@ -530,6 +608,8 @@ impl AgentBuilder {
             cancel_token: self
                 .cancel_token
                 .unwrap_or_else(tokio_util::sync::CancellationToken::new),
+            steering: parking_lot::Mutex::new(std::collections::VecDeque::new()),
+            pre_compact: self.pre_compact,
             extensions: self.extensions,
         })
     }
