@@ -306,9 +306,31 @@ struct SessionEntry {
     /// default (50). Set by the eval harness so repo tasks stop at a
     /// budgeted depth instead of the interactive default.
     max_turns: Mutex<Option<u32>>,
+    /// The provider whose dialect `history` is currently written in.
+    ///
+    /// Not the same thing as `provider`, and that difference is the point: a
+    /// `set_model` mid-turn changes `provider` immediately, while the running
+    /// turn goes on to overwrite `history` with messages in the dialect it
+    /// actually ran under. Comparing the two on the way *out* is what makes
+    /// the repair survive that race — and what keeps a same-provider turn from
+    /// paying the cross-provider tax (thinking blocks converted to text) it
+    /// does not owe.
+    history_provider: Mutex<String>,
 }
 
 impl SessionEntry {
+    /// Record the provider that produced the messages now in `history`.
+    /// Called wherever `history` is replaced.
+    fn note_history_provider(&self, provider: &str) {
+        *self.history_provider.lock() = provider.to_string();
+    }
+
+    /// Whether `history` is written in a different provider's dialect than
+    /// the one the next turn will replay it to.
+    fn history_needs_transform(&self) -> bool {
+        *self.history_provider.lock() != *self.provider.lock()
+    }
+
     /// Resolve every dialog this session still has outstanding, returning
     /// their ids so the caller can emit `PermissionResolved` for each.
     ///
@@ -437,6 +459,7 @@ impl CerseiRuntime {
             live_agent: Mutex::new(std::sync::Weak::new()),
             permission_asks: AtomicU64::new(0),
             max_turns: Mutex::new(None),
+            history_provider: Mutex::new(String::new()),
         });
         agent.sessions.insert(session_id.clone(), entry);
         Ok(NewSessionInfo {
@@ -467,11 +490,17 @@ impl CerseiRuntime {
         };
         // M5 — a restored history may carry crash orphans (a tool_use whose
         // turn died before the result landed); repair before first replay.
-        let history = handoff::transform_history(history, &provider);
+        // Same-provider, so this is the orphan/id repair only: converting this
+        // session's own thinking blocks to text would destroy signatures the
+        // provider that wrote them can still verify, inflate the context, and
+        // teach the model to imitate the "[prior reasoning]" shape in its
+        // visible output — a cross-provider tax on a plain reload.
+        let history = handoff::repair_history(history);
         let entry = Arc::new(SessionEntry {
             session_id: sid.clone(),
             cwd: cwd_str,
             history: Mutex::new(history),
+            history_provider: Mutex::new(provider.clone()),
             provider: Mutex::new(provider),
             model: Mutex::new(model),
             mode: Mutex::new("default".into()),
@@ -841,7 +870,20 @@ impl CerseiRuntime {
         // turn, so a `set_model` mid-session takes effect on the next send.
         let model_profile = profile::ModelProfile::resolve(&provider_id, &model);
 
-        let history = entry.history.lock().clone();
+        // M5 — repair on the way *out*, against the provider this turn will
+        // actually replay to. Doing it only in `set_model` lost the repair
+        // whenever a turn was still running: that turn's end-of-turn write
+        // put the old dialect back, and nothing looked again.
+        let history = {
+            let mut history = entry.history.lock();
+            if entry.history_needs_transform() {
+                let repaired =
+                    handoff::transform_history(std::mem::take(&mut *history), &provider_id);
+                *history = repaired;
+            }
+            history.clone()
+        };
+        entry.note_history_provider(&provider_id);
         let mode = entry.mode.lock().clone();
         let effort = entry.effort.lock().clone();
         let compress = *entry.compress.lock();
@@ -1269,6 +1311,9 @@ impl CerseiRuntime {
             }
         }
         *entry.history.lock() = msgs.clone();
+        // These messages are in `provider_id`'s dialect, whatever `set_model`
+        // may have changed `entry.provider` to while the turn was running.
+        entry.note_history_provider(&provider_id);
         let now = chrono::Utc::now().to_rfc3339();
         store::save(
             &self.inner.config_dir,
@@ -2703,6 +2748,7 @@ mod tests {
             live_agent: Mutex::new(std::sync::Weak::new()),
             permission_asks: AtomicU64::new(0),
             max_turns: Mutex::new(None),
+            history_provider: Mutex::new(String::new()),
         });
         UiPolicy {
             sink: s,
@@ -2823,6 +2869,44 @@ mod tests {
         r.tool_name = cersei_agent::DOOM_LOOP_ASK.into();
         assert!(matches!(p.check(&r).await, CerseiDecision::Allow));
         assert_eq!(p.pending.permission_asks.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_turn_finishing_after_a_provider_switch_still_repairs_its_history() {
+        // `set_model` repaired `entry.history` immediately, with no busy
+        // guard. A turn already running cloned the history at its start and
+        // unconditionally overwrote `entry.history` at its end with the OLD
+        // provider's dialect — thinking blocks with foreign signatures, tool
+        // ids in the wrong grammar — undoing the repair. The next send then
+        // built a request for the new provider from unrepaired messages: the
+        // invalid-history 400 `handoff.rs` exists to prevent, and it stayed
+        // broken until the app was restarted, because `transform_history` runs
+        // only on load_session and on the switch itself.
+        //
+        // The fix is to record which provider actually produced the messages
+        // on disk, and repair on the way out when that no longer matches.
+        let p = policy("default");
+        let entry = p.pending.clone();
+        *entry.provider.lock() = "anthropic".into();
+        *entry.history_provider.lock() = "anthropic".into();
+
+        // A turn ends, writing messages in the provider it ran under.
+        entry.note_history_provider("anthropic");
+        assert!(
+            !entry.history_needs_transform(),
+            "same provider in and out — nothing to repair, and thinking must survive"
+        );
+
+        // The user switches provider while that turn was still running, so the
+        // turn's own end-of-turn write lands afterwards in the old dialect.
+        *entry.provider.lock() = "openai".into();
+        entry.note_history_provider("anthropic");
+
+        assert!(
+            entry.history_needs_transform(),
+            "a history written in another provider's dialect must be repaired \
+             before it is replayed"
+        );
     }
 
     #[tokio::test]

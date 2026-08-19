@@ -21,8 +21,29 @@
 use cersei::types::{ContentBlock, Message, MessageContent, ToolResultContent};
 
 /// Repair `messages` for replay to `provider`. See the module doc.
+///
+/// This is the **cross-provider** form: it also converts thinking blocks to
+/// text, because their signatures only their original provider can verify.
+/// For a history staying with the provider that wrote it, use
+/// [`repair_history`] — the conversion is irreversible, and paying it on a
+/// plain reload destroys signatures that were still good, inflates the
+/// context, and teaches the model to imitate the `[prior reasoning]` shape in
+/// its own visible output.
 pub fn transform_history(messages: Vec<Message>, provider: &str) -> Vec<Message> {
     let _ = provider; // one grammar today — the strictest (Anthropic's).
+    transform_inner(messages, true)
+}
+
+/// Repair `messages` for replay to the **same** provider that produced them:
+/// tool-id normalization and orphan repair, with thinking blocks left intact.
+///
+/// A restored history can carry crash orphans whatever the provider, so this
+/// half runs on every load; the thinking conversion is what must not.
+pub fn repair_history(messages: Vec<Message>) -> Vec<Message> {
+    transform_inner(messages, false)
+}
+
+fn transform_inner(messages: Vec<Message>, cross_provider: bool) -> Vec<Message> {
     let mut out: Vec<Message> = Vec::new();
 
     // Pass 1: thinking → text, id normalization, and collect the id sets.
@@ -39,15 +60,22 @@ pub fn transform_history(messages: Vec<Message>, provider: &str) -> Vec<Message>
                         // The reasoning stays as context; the signature —
                         // which only its original provider can verify —
                         // does not survive the conversion.
-                        ContentBlock::Thinking { thinking, .. } => {
-                            if !thinking.trim().is_empty() {
+                        ContentBlock::Thinking { thinking, signature } => {
+                            if !cross_provider {
+                                kept.push(ContentBlock::Thinking { thinking, signature });
+                            } else if !thinking.trim().is_empty() {
                                 kept.push(ContentBlock::Text {
                                     text: format!("[prior reasoning]\n{thinking}"),
                                 });
                             }
                         }
-                        // Encrypted reasoning is unreadable off-provider.
-                        ContentBlock::RedactedThinking { .. } => {}
+                        // Encrypted reasoning is unreadable off-provider, but
+                        // perfectly readable to the provider that wrote it.
+                        ContentBlock::RedactedThinking { data } => {
+                            if !cross_provider {
+                                kept.push(ContentBlock::RedactedThinking { data });
+                            }
+                        }
                         ContentBlock::ToolUse { id, name, input } => {
                             let id = normalize_id(id, &mut rename, &mut counter);
                             kept.push(ContentBlock::ToolUse { id, name, input });
@@ -250,6 +278,38 @@ mod tests {
         let blocks = all_blocks(&out);
         assert_eq!(blocks.len(), 1);
         assert!(matches!(&blocks[0], ContentBlock::Text { text } if text == "still here"));
+    }
+
+    #[test]
+    fn a_same_provider_repair_keeps_thinking_intact() {
+        // `repair_history` is what a plain reload runs. Converting this
+        // session's own thinking to text there would destroy signatures the
+        // provider that wrote them can still verify — irreversibly, since the
+        // transform is idempotent but not invertible — while inflating the
+        // context and teaching the model to imitate "[prior reasoning]" in its
+        // visible output. Only an actual provider change owes that cost.
+        let msgs = vec![Message::assistant_blocks(vec![
+            ContentBlock::Thinking {
+                thinking: "step one".into(),
+                signature: "sig-abc".into(),
+            },
+            ContentBlock::Text { text: "done".into() },
+        ])];
+        let out = repair_history(msgs.clone());
+        let blocks = out[0].content_blocks();
+        assert!(
+            blocks.iter().any(|b| matches!(
+                b,
+                ContentBlock::Thinking { signature, .. } if signature == "sig-abc"
+            )),
+            "the signed thinking block must survive a same-provider repair: {blocks:#?}"
+        );
+        // And the cross-provider form still converts it.
+        let crossed = transform_history(msgs, "openai");
+        assert!(crossed[0]
+            .content_blocks()
+            .iter()
+            .any(|b| matches!(b, ContentBlock::Text { text } if text.contains("[prior reasoning]"))));
     }
 
     #[test]
