@@ -699,7 +699,18 @@ pub async fn agents_spawn(
         }
     }
     match manager.spawn(&plugin_id).await {
-        Ok(info) => Ok(info),
+        Ok(info) => {
+            // The catalog's capability fields (`authKinds`, `supportsLogout`,
+            // `supportsFork`, `supportsLoadSession`, `supportsSessionList`) are
+            // read from LIVE agents, because ACP capabilities only exist after
+            // `initialize`. Nothing else emits after a spawn, so without this
+            // the frontend keeps its pre-spawn snapshot — every one of those
+            // fields stays false forever and the UI they gate (the sign-out
+            // row, "Branch from here", catalog-first `canSignIn`) never
+            // appears, even for an agent that plainly advertises them.
+            emit_catalog_changed(&app, "spawn");
+            Ok(info)
+        }
         // Stale-CLI resilience — the one real risk of preferring the system
         // install. An `opencode` predating its `acp` subcommand exits
         // immediately, and without this the agent would be permanently
@@ -712,8 +723,14 @@ pub async fn agents_spawn(
             );
             registry.forget_discovered(&plugin_id);
             registry.ensure_builtin(&plugin_id, None).await;
+            // Announces the CHANGED LAUNCH PATH, and fires BEFORE the retry —
+            // so the catalog it triggers is still built with no live agent.
             emit_catalog_changed(&app, "discovery");
-            manager.spawn(&plugin_id).await.map_err(CmdError::from)
+            let info = manager.spawn(&plugin_id).await.map_err(CmdError::from)?;
+            // …hence a second emit once the agent is actually up, for the
+            // capability fields. Same reason as the `Ok` arm above.
+            emit_catalog_changed(&app, "spawn");
+            Ok(info)
         }
         Err(e) => Err(e.into()),
     }

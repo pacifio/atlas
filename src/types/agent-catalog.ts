@@ -92,7 +92,10 @@ export type CatalogChangeReason =
   | "install"
   | "uninstall"
   | "settings"
-  | "acquire";
+  | "acquire"
+  /** An agent finished `initialize`, so its advertised capabilities
+   *  (`authKinds`, `supportsFork`, …) are known for the first time. */
+  | "spawn";
 
 /** Coarse readiness, derived on the frontend so the backend never has to guess
  *  what the UI wants to group by. */
