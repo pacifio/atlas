@@ -304,6 +304,32 @@ Auto-compaction now works in rounds, not raw message counts:
   blocklist already names it. Free-form questions stay what they always
   were — end the turn and ask in prose.
 
+### 5f. Hashline edit mode (M6)
+
+Exact-string replacement asks a weak model to reproduce bytes it has seen;
+line-addressed editing asks it only to point. When the profile selects
+`EditMode::Hashline` (trial set: the Grok / Gemini-Flash classes where
+oh-my-pi measured wins; its exclusion table demoting kimi/deepseek back to
+replace is respected), the toolset swaps:
+
+- **Read** carries a 4-hex whole-file tag header (`[src/foo.rs#1A2B]` —
+  FNV over trailing-whitespace-normalized lines) and records the displayed
+  line ranges into the policy's ledger.
+- **Edit** (same wire name) takes `tag` + line-addressed ops (replace /
+  insert_after / delete, non-overlapping, applied bottom-up). Three guards
+  keep pointing honest: the mtime freshness guard (external changes), the
+  tag check (a misquoted tag fails closed, echoing the addressed lines
+  with fresh numbers and tag so a straight retry works), and the seen-line
+  guard (lines never displayed are rejected — with the missing lines
+  inlined, which makes them displayed, so the retry succeeds). The result
+  echoes the fresh tag and a renumbered preview, so chained edits need no
+  re-read. The ledger empties with `forget_served` — after compaction the
+  lines are no longer in the conversation, so pointing must force a
+  re-read.
+
+M3's parse probe runs after hashline edits like any other write, and the
+M0 micro-bench measures both modes with the same byte-exact verifier.
+
 ---
 
 ## 6. The tools — what Atlas can actually do

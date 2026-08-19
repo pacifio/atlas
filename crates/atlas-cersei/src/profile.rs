@@ -32,14 +32,16 @@ pub enum ThinkingSupport {
     Effort,
 }
 
-/// Which editing surface the toolset exposes. `Hashline` (line-addressed
-/// edits for weak models) joins in M6.
+/// Which editing surface the toolset exposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditMode {
     /// The 10-strategy replace ladder behind the structured Edit tool.
     Replace,
     /// The shell-first tier's single patch tool.
     ApplyPatch,
+    /// Line-addressed edits with a whole-file tag (M6) — the weak-model
+    /// play: the model points at lines instead of reproducing bytes.
+    Hashline,
 }
 
 /// Which system prompt the session gets.
@@ -198,6 +200,17 @@ impl ModelProfile {
         };
 
         let context_window = registry_window(provider, model).unwrap_or(family.context_window);
+        // Hashline trial set: the families oh-my-pi measured wins on
+        // (Grok Code Fast, Gemini Flash class). Its own exclusion table
+        // demotes kimi/deepseek-class back to replace — respected here.
+        // Static and evidence-borrowed until our own sweep reads the gate.
+        let edit_mode = if normalized.contains("grok")
+            || (normalized.contains("gemini") && normalized.contains("flash"))
+        {
+            EditMode::Hashline
+        } else {
+            EditMode::Replace
+        };
         ModelProfile {
             // The tiers.rs table knows model-specific vision ids (pixtral,
             // llava, qwen-vl, llama-3.2 vision sizes) the family rows don't.
@@ -207,7 +220,7 @@ impl ModelProfile {
             parallel_tools: family.parallel_tools,
             thinking: family.thinking,
             tool_tier: ToolTier::Structured,
-            edit_mode: EditMode::Replace,
+            edit_mode,
             prompt_variant: PromptVariant::Full,
         }
     }
@@ -323,6 +336,34 @@ mod tests {
         assert_eq!(
             ModelProfile::resolve("x", "llama-o3-tuned").thinking,
             ThinkingSupport::None
+        );
+    }
+
+    #[test]
+    fn the_hashline_trial_set_matches_omp_evidence() {
+        // Wins were measured on Grok-class and Gemini-Flash-class models;
+        // the exclusion table demotes kimi/deepseek back to replace.
+        assert_eq!(
+            ModelProfile::resolve("xai", "grok-code-fast-1").edit_mode,
+            EditMode::Hashline
+        );
+        assert_eq!(
+            ModelProfile::resolve("google", "gemini-2.5-flash").edit_mode,
+            EditMode::Hashline
+        );
+        assert_eq!(
+            ModelProfile::resolve("google", "gemini-3.1-pro-preview").edit_mode,
+            EditMode::Replace,
+            "non-flash gemini keeps the ladder"
+        );
+        assert_eq!(
+            ModelProfile::resolve("anthropic", "claude-sonnet-4-6").edit_mode,
+            EditMode::Replace
+        );
+        assert_eq!(
+            ModelProfile::resolve("groq", "kimi-k2-instruct").edit_mode,
+            EditMode::Replace,
+            "omp's exclusion table demotes kimi"
         );
     }
 

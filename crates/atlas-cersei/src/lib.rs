@@ -836,6 +836,7 @@ impl CerseiRuntime {
         // the local-daemon tier degrade to shell-first, where a small model
         // stops being asked to drive tools it can't schema-match.
         let tier = model_profile.tool_tier;
+        let edit_mode = model_profile.edit_mode;
         let caps = tools::ModelCapabilities {
             accepts_images: model_profile.accepts_images,
         };
@@ -867,7 +868,13 @@ impl CerseiRuntime {
             let policy = tool_policy.clone();
             let cancel = token.clone();
             Arc::new(move || {
-                crate::tools::atlas_coding_with(Some(cancel.clone()), policy.clone(), tier, caps)
+                crate::tools::atlas_coding_with(
+                    Some(cancel.clone()),
+                    policy.clone(),
+                    tier,
+                    caps,
+                    edit_mode,
+                )
             })
         };
 
@@ -880,6 +887,7 @@ impl CerseiRuntime {
                 tool_policy.clone(),
                 tier,
                 caps,
+                edit_mode,
             );
             // Everything added here goes through the same gate. The registry
             // must never hand back an unwrapped tool — that is the property

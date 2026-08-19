@@ -64,7 +64,7 @@ async fn scripted_read_edit_grep_bash_task() {
     let total = 5;
 
     // 1. READ the file (grounded, line-numbered).
-    let r = run(&ReadTool, dir, json!({"file_path": "src/lib.rs"})).await;
+    let r = run(&ReadTool::default(), dir, json!({"file_path": "src/lib.rs"})).await;
     if !r.is_error && r.content.contains("1: pub fn greet") {
         score += 1;
     } else {

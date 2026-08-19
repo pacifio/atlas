@@ -81,7 +81,7 @@ async fn reads_every_repo_source_file_relative() {
     let mut failures: Vec<(String, String)> = Vec::new();
     for f in &files {
         let rel = f.strip_prefix(&root).unwrap().to_string_lossy().into_owned();
-        let r = ReadTool.execute(json!({ "file_path": rel.clone() }), &context).await;
+        let r = ReadTool::default().execute(json!({ "file_path": rel.clone() }), &context).await;
         if r.is_error {
             failures.push((rel, r.content));
         }
@@ -106,7 +106,7 @@ async fn reads_every_repo_source_file_relative() {
 async fn reads_via_absolute_path() {
     let root = repo_root();
     let abs = root.join("crates/atlas-cersei/src/lib.rs");
-    let r = ReadTool
+    let r = ReadTool::default()
         .execute(json!({ "file_path": abs.to_string_lossy() }), &ctx(&root))
         .await;
     assert!(!r.is_error, "absolute read failed: {}", r.content);
@@ -122,7 +122,7 @@ async fn null_and_empty_args_give_actionable_error() {
     let root = repo_root();
     let context = ctx(&root);
     for bad in [Value::Null, json!({}), json!("src/main.rs")] {
-        let r = ReadTool.execute(bad.clone(), &context).await;
+        let r = ReadTool::default().execute(bad.clone(), &context).await;
         assert!(r.is_error, "expected error for args {bad}");
         assert!(
             r.content.contains("file_path"),

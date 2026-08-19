@@ -86,7 +86,14 @@ async fn siblings(path: &std::path::Path) -> Vec<String> {
     out
 }
 
-pub struct ReadTool;
+#[derive(Default)]
+pub struct ReadTool {
+    /// Hashline mode (M6): the read carries a whole-file tag header
+    /// (`[path#TAG]`) and records the displayed line ranges into the
+    /// policy's ledger, which the line-addressed editor's seen-line guard
+    /// consults. `None` = the plain frontier read.
+    pub hashline: Option<std::sync::Arc<super::policy::ToolPolicy>>,
+}
 
 #[async_trait]
 impl Tool for ReadTool {
@@ -166,7 +173,23 @@ impl Tool for ReadTool {
         // coherent for a model that sent a nonsense limit.
         let limit = input.limit.unwrap_or(DEFAULT_LIMIT).max(1);
         match paginate(&path, offset, limit).await {
-            Ok(page) => ToolResult::success(format!("{display}\n{}{}", page.body, page.footer(offset))),
+            Ok(page) => {
+                let mut header = display.clone();
+                if let Some(policy) = &self.hashline {
+                    // The tag hashes the whole file (a page is not an edit
+                    // authority over unseen regions — only displayed lines
+                    // enter the ledger).
+                    if let Ok(full) = std::fs::read_to_string(&path) {
+                        let tag = super::hashline::file_tag(&full);
+                        let shown = page.body.lines().count();
+                        if shown > 0 {
+                            policy.note_hashline_seen(&path, &tag, offset, offset + shown - 1);
+                        }
+                        header = format!("[{display}#{tag}]");
+                    }
+                }
+                ToolResult::success(format!("{header}\n{}{}", page.body, page.footer(offset)))
+            }
             Err(PageError::Io(e)) => ToolResult::error(format!("Failed to read {display}: {e}")),
             Err(PageError::Encoding { line }) => ToolResult::error(format!(
                 "{display} is not valid UTF-8 (first bad byte is on line {line}), so it cannot be \
@@ -336,7 +359,7 @@ mod tests {
     use crate::tools::{test_ctx, TmpDir};
 
     async fn run(dir: &std::path::Path, args: Value) -> ToolResult {
-        ReadTool.execute(args, &test_ctx(dir.to_path_buf())).await
+        ReadTool::default().execute(args, &test_ctx(dir.to_path_buf())).await
     }
 
     #[tokio::test]

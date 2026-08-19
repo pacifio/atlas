@@ -21,6 +21,7 @@ pub mod coerce;
 pub mod edit;
 pub mod errors;
 pub mod grep;
+pub mod hashline;
 pub mod guard;
 pub mod image;
 pub mod list;
@@ -147,6 +148,7 @@ pub fn atlas_coding_with(
     policy: Arc<ToolPolicy>,
     tier: ToolTier,
     caps: ModelCapabilities,
+    edit_mode: crate::profile::EditMode,
 ) -> Vec<Box<dyn Tool>> {
     use cersei::tools as t;
     let mut tools: Vec<Box<dyn Tool>> = Vec::new();
@@ -182,8 +184,19 @@ pub fn atlas_coding_with(
 
     // ── Structured tier: explicit file tools ────────────────────────────────
     if tier.includes_file_tools() {
-        tools.push(Box::new(read::ReadTool));
-        tools.push(Box::new(edit::EditTool));
+        // M6 — the profile picks the editing surface. Hashline swaps the
+        // exact-string ladder for line-addressed edits (same "Edit" name on
+        // the wire) and gives Read the tag header + displayed-lines ledger
+        // the seen-line guard needs.
+        let hashline = matches!(edit_mode, crate::profile::EditMode::Hashline);
+        tools.push(Box::new(read::ReadTool {
+            hashline: hashline.then(|| policy.clone()),
+        }));
+        if hashline {
+            tools.push(Box::new(hashline::HashlineEditTool { policy: policy.clone() }));
+        } else {
+            tools.push(Box::new(edit::EditTool));
+        }
         tools.push(Box::new(t::file_write::FileWriteTool));
         // `Grep` is Atlas-owned over the SDK's in-process search primitive
         // (ripgrep's `ignore`/`grep` crates, no external `rg` binary — so it
@@ -306,12 +319,14 @@ mod tests {
             policy.clone(),
             ToolTier::Structured,
             ModelCapabilities::default(),
+            crate::profile::EditMode::Replace,
         ));
         let shell_first = names(&atlas_coding_with(
             None,
             policy,
             ToolTier::ShellFirst,
             ModelCapabilities::default(),
+            crate::profile::EditMode::Replace,
         ));
 
         for tool in ["Read", "Edit", "List", "Grep", "Glob"] {
@@ -340,6 +355,7 @@ mod tests {
             policy.clone(),
             ToolTier::Structured,
             ModelCapabilities { accepts_images: false },
+            crate::profile::EditMode::Replace,
         ));
         assert!(!blind.contains(&"ImageView".to_string()));
 
@@ -348,6 +364,7 @@ mod tests {
             policy,
             ToolTier::Structured,
             ModelCapabilities { accepts_images: true },
+            crate::profile::EditMode::Replace,
         ));
         assert!(sighted.contains(&"ImageView".to_string()));
     }
@@ -368,6 +385,7 @@ mod tests {
             policy,
             ToolTier::Structured,
             ModelCapabilities { accepts_images: true },
+            crate::profile::EditMode::Replace,
         );
         let ctx = test_ctx(tmp.path().to_path_buf());
 
@@ -466,7 +484,7 @@ mod tests {
             ("structured", ToolTier::Structured, STRUCTURED_MAX_BYTES),
             ("shell-first", ToolTier::ShellFirst, SHELL_FIRST_MAX_BYTES),
         ] {
-            let tools = atlas_coding_with(None, policy.clone(), tier, caps);
+            let tools = atlas_coding_with(None, policy.clone(), tier, caps, crate::profile::EditMode::Replace);
             // Key-gated tools (`ExaSearch`, `WebSearch`) are registered only
             // when their env key is set, so measuring them would make this
             // pass or fail depending on the developer's environment. They are
@@ -509,6 +527,7 @@ mod tests {
             policy.clone(),
             ToolTier::Structured,
             ModelCapabilities::default(),
+            crate::profile::EditMode::Replace,
         ));
         for gone in ["MultiEdit", "ApplyPatch"] {
             assert!(!structured.contains(&gone.to_string()), "{gone} is back: {structured:?}");
@@ -524,6 +543,7 @@ mod tests {
             policy,
             ToolTier::ShellFirst,
             ModelCapabilities::default(),
+            crate::profile::EditMode::Replace,
         ));
         assert!(shell_first.contains(&"ApplyPatch".to_string()), "{shell_first:?}");
     }
@@ -540,6 +560,7 @@ mod tests {
             policy.clone(),
             ToolTier::Structured,
             ModelCapabilities::default(),
+            crate::profile::EditMode::Replace,
         );
         let edit = tools.iter().find(|t| t.name() == "Edit").expect("Edit is registered");
         policy.record_read(&policy.resolve("a.rs"));
@@ -573,6 +594,7 @@ mod tests {
             policy,
             ToolTier::Structured,
             ModelCapabilities::default(),
+            crate::profile::EditMode::Replace,
         ));
         let usable = std::env::var(EXA_API_KEY).is_ok_and(|k| !k.is_empty());
         assert_eq!(
@@ -604,7 +626,13 @@ mod tests {
         let policy = ToolPolicy::contained(tmp.path());
         for tier in [ToolTier::Structured, ToolTier::ShellFirst] {
             let tools =
-                atlas_coding_with(None, policy.clone(), tier, ModelCapabilities::default());
+                atlas_coding_with(
+                None,
+                policy.clone(),
+                tier,
+                ModelCapabilities::default(),
+                crate::profile::EditMode::Replace,
+            );
             for tool in &tools {
                 let d = tool.description();
                 match tool.name() {
@@ -634,6 +662,7 @@ mod tests {
             policy,
             ToolTier::Structured,
             ModelCapabilities::default(),
+            crate::profile::EditMode::Replace,
         ));
         #[cfg(not(windows))]
         assert!(!all.contains(&"PowerShell".to_string()), "{all:?}");

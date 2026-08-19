@@ -193,6 +193,11 @@ pub struct ToolPolicy {
     /// would look fresh against `reads` and be suppressed, hiding the model's
     /// own change from it.
     served: DashMap<String, ReadRecord>,
+    /// What each hashline read displayed (M6): per canonical path, the tag
+    /// at display time and the line ranges shown. The seen-line guard reads
+    /// it; cleared with `forget_served` — after compaction the lines are no
+    /// longer in the conversation, so pointing at them must force a re-read.
+    hashline_seen: DashMap<PathBuf, crate::tools::hashline::SeenLines>,
     /// Post-edit diagnostics already appended this session (M3), keyed by
     /// `path + findings hash`. Mirrors `served`: the block asserts facts the
     /// model can currently see, so the ledger empties whenever the
@@ -230,6 +235,7 @@ impl ToolPolicy {
             approvals: DashMap::new(),
             reads: DashMap::new(),
             served: DashMap::new(),
+            hashline_seen: DashMap::new(),
             reported_diagnostics: DashMap::new(),
             check_config: std::sync::OnceLock::new(),
             spill_ready: AtomicBool::new(false),
@@ -255,6 +261,7 @@ impl ToolPolicy {
             approvals: DashMap::new(),
             reads: DashMap::new(),
             served: DashMap::new(),
+            hashline_seen: DashMap::new(),
             reported_diagnostics: DashMap::new(),
             check_config: std::sync::OnceLock::new(),
             spill_ready: AtomicBool::new(false),
@@ -292,6 +299,7 @@ impl ToolPolicy {
             approvals: DashMap::new(),
             reads: DashMap::new(),
             served: DashMap::new(),
+            hashline_seen: DashMap::new(),
             reported_diagnostics: DashMap::new(),
             check_config: std::sync::OnceLock::new(),
             spill_ready: AtomicBool::new(false),
@@ -451,8 +459,26 @@ impl ToolPolicy {
     pub fn forget_served(&self) {
         self.served.clear();
         // The diagnostics ledger asserts the same kind of fact ("this
-        // finding is visible above") and goes stale at the same moments.
+        // finding is visible above") and goes stale at the same moments —
+        // and so does the hashline displayed-lines ledger.
         self.reported_diagnostics.clear();
+        self.hashline_seen.clear();
+    }
+
+    // ── Hashline displayed-lines ledger (M6) ────────────────────────────────
+
+    pub fn hashline_seen(&self, path: &Path) -> Option<crate::tools::hashline::SeenLines> {
+        self.hashline_seen.get(path).map(|e| e.clone())
+    }
+
+    pub fn record_hashline_seen(&self, path: &Path, seen: crate::tools::hashline::SeenLines) {
+        self.hashline_seen.insert(path.to_path_buf(), seen);
+    }
+
+    /// Merge one displayed range into the path's ledger entry.
+    pub fn note_hashline_seen(&self, path: &Path, tag: &str, start: usize, end: usize) {
+        let mut entry = self.hashline_seen.entry(path.to_path_buf()).or_default();
+        entry.note(tag, start, end);
     }
 
     // ── Post-edit diagnostics ledger (M3) ───────────────────────────────────

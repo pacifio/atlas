@@ -113,6 +113,7 @@ impl Session {
             policy.clone(),
             tier,
             ModelCapabilities { accepts_images: true },
+            atlas_cersei::profile::EditMode::Replace,
         );
         let ctx = ToolContext {
             working_dir: policy.root().to_path_buf(),
@@ -632,4 +633,173 @@ async fn reads_and_failed_edits_get_no_ground_truth_block() {
         .await;
     assert!(r.is_error, "{}", r.content);
     assert!(!r.content.contains("[ground truth after edit]"));
+}
+
+// ─── M6: hashline edit mode ─────────────────────────────────────────────────
+
+fn hashline_session(dir: &Path) -> Session {
+    let policy = ToolPolicy::contained(dir);
+    let gate = Gate::new(policy.clone(), PermissionDecision::Allow);
+    let tools = atlas_coding_with(
+        None,
+        policy.clone(),
+        ToolTier::Structured,
+        ModelCapabilities { accepts_images: true },
+        atlas_cersei::profile::EditMode::Hashline,
+    );
+    let ctx = ToolContext {
+        working_dir: policy.root().to_path_buf(),
+        session_id: format!("gate-{}", uuid::Uuid::new_v4()),
+        permissions: gate.clone(),
+        cost_tracker: Arc::new(CostTracker::new()),
+        mcp_manager: None,
+        extensions: Extensions::default(),
+    };
+    Session { policy, gate, tools, ctx }
+}
+
+fn tag_from(read_result: &str) -> String {
+    let header = read_result.lines().next().unwrap_or_default();
+    header
+        .rsplit('#')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(']')
+        .to_string()
+}
+
+/// The full hashline loop: a tagged read, a line-addressed edit validated by
+/// the tag, and a result that echoes the fresh tag so the next edit can
+/// chain without a re-read.
+#[tokio::test]
+async fn hashline_reads_tag_and_line_edits_apply_and_chain() {
+    let fx = Fixture::new();
+    std::fs::write(
+        fx.path().join("src/lib.rs"),
+        "pub fn a() -> u8 { 1 }\npub fn b() -> u8 { 2 }\npub fn c() -> u8 { 3 }\n",
+    )
+    .unwrap();
+    let s = hashline_session(fx.path());
+
+    let r = s.call("Read", json!({"file_path": "src/lib.rs"})).await;
+    assert!(!r.is_error, "{}", r.content);
+    assert!(r.content.starts_with('['), "tag header missing: {}", r.content);
+    assert!(r.content.contains("#"), "{}", r.content);
+    let tag = tag_from(&r.content);
+    assert_eq!(tag.len(), 4, "{}", r.content);
+
+    let r = s
+        .call(
+            "Edit",
+            json!({
+                "file_path": "src/lib.rs",
+                "tag": tag,
+                "edits": [{"op": "replace", "start_line": 2, "end_line": 2,
+                           "text": "pub fn b() -> u8 { 20 }"}]
+            }),
+        )
+        .await;
+    assert!(!r.is_error, "{}", r.content);
+    assert!(fx.read("src/lib.rs").contains("{ 20 }"));
+    assert!(r.content.contains('#'), "fresh tag echoed: {}", r.content);
+
+    // Chain a second edit straight from the echoed tag — no re-read.
+    let fresh = tag_from(r.content.lines().next().unwrap());
+    let r2 = s
+        .call(
+            "Edit",
+            json!({
+                "file_path": "src/lib.rs",
+                "tag": fresh,
+                "edits": [{"op": "delete", "start_line": 3, "end_line": 3}]
+            }),
+        )
+        .await;
+    assert!(!r2.is_error, "{}", r2.content);
+    assert!(!fx.read("src/lib.rs").contains("fn c"), "{}", fx.read("src/lib.rs"));
+}
+
+/// A misquoted tag fails closed and echoes the current lines + tag;
+/// retrying with what the rejection showed succeeds. (A file changed on
+/// disk is caught earlier, by the mtime freshness guard — the tag check is
+/// the layer for a model that misquotes or hallucinates the tag.)
+#[tokio::test]
+async fn a_stale_hashline_tag_fails_closed_with_recovery_context() {
+    let fx = Fixture::new();
+    let s = hashline_session(fx.path());
+    let r = s.call("Read", json!({"file_path": "src/lib.rs"})).await;
+    let real = tag_from(&r.content);
+    let wrong = if real == "0000" { "FFFF" } else { "0000" };
+
+    let r = s
+        .call(
+            "Edit",
+            json!({
+                "file_path": "src/lib.rs",
+                "tag": wrong,
+                "edits": [{"op": "replace", "start_line": 1, "end_line": 1, "text": "x"}]
+            }),
+        )
+        .await;
+    assert!(r.is_error, "{}", r.content);
+    assert!(r.content.contains("Stale tag"), "{}", r.content);
+    assert!(r.content.contains("{ 1 }"), "current content inlined: {}", r.content);
+
+    // Retry with the tag the rejection named.
+    // The fresh tag rides in the `[path#TAG]` form, after the quoted one.
+    let fresh: String = r
+        .content
+        .split("#")
+        .last()
+        .unwrap()
+        .chars()
+        .take(4)
+        .collect();
+    assert_eq!(fresh, real, "the rejection names the real tag");
+    let r2 = s
+        .call(
+            "Edit",
+            json!({
+                "file_path": "src/lib.rs",
+                "tag": fresh,
+                "edits": [{"op": "replace", "start_line": 1, "end_line": 1,
+                           "text": "pub fn a() -> u8 { 10 }"}]
+            }),
+        )
+        .await;
+    assert!(!r2.is_error, "{}", r2.content);
+    assert!(fx.read("src/lib.rs").contains("{ 10 }"));
+}
+
+/// Lines never displayed cannot be edited; the rejection inlines them so a
+/// straight retry succeeds.
+#[tokio::test]
+async fn hashline_rejects_undisplayed_lines_then_a_retry_succeeds() {
+    let fx = Fixture::new();
+    std::fs::write(
+        fx.path().join("src/lib.rs"),
+        (1..=40).map(|i| format!("// line {i}\n")).collect::<String>(),
+    )
+    .unwrap();
+    let s = hashline_session(fx.path());
+
+    // Display only lines 1-5.
+    let r = s
+        .call("Read", json!({"file_path": "src/lib.rs", "offset": 1, "limit": 5}))
+        .await;
+    let tag = tag_from(&r.content);
+
+    let edit = json!({
+        "file_path": "src/lib.rs",
+        "tag": tag,
+        "edits": [{"op": "replace", "start_line": 30, "end_line": 30, "text": "// changed"}]
+    });
+    let r = s.call("Edit", edit.clone()).await;
+    assert!(r.is_error, "{}", r.content);
+    assert!(r.content.contains("never displayed"), "{}", r.content);
+    assert!(r.content.contains("line 30"), "missing lines inlined: {}", r.content);
+
+    let r2 = s.call("Edit", edit).await;
+    assert!(!r2.is_error, "the rejection made the lines visible: {}", r2.content);
+    assert!(fx.read("src/lib.rs").contains("// changed"));
 }
