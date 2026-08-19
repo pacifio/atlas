@@ -8,8 +8,8 @@
 ## 1. The one-paragraph version
 
 Atlas ships **three** AI agents you can pick in the chat: **Claude Code**, **Codex**,
-and **Atlas**. The first two are *external programs* Atlas launches as subprocesses
-and talks to over the **ACP** wire protocol (JSON-RPC). **Atlas** (this crate, code
+and **Atlas Agent**. The first two are *external programs* Atlas launches as subprocesses
+and talks to over the **ACP** wire protocol (JSON-RPC). **Atlas Agent** (this crate, code
 name *Cersei*) is different: it runs **inside the Atlas process itself**. There is no
 subprocess and no socket. It drives the **Cersei agent SDK** directly, and then
 **translates** the SDK's event stream into the *exact same* `AcpEvent` shapes the real
@@ -206,10 +206,12 @@ nothing in `send_prompt` may push an unwrapped tool.
 The basic file/search/shell kit is **Atlas-owned** (a from-scratch reimplementation
 modeled on opencode, MIT — see `src/tools/` + `tools/ATTRIBUTION.md`), so it works
 reliably across every BYOK model rather than only strong ones:
-**Read / Write / Edit / Grep / Glob / List / Bash**, plus the two that were missing:
-**TerminalStart / TerminalWrite** (a persistent PTY session, for a dev server, a REPL, an
-interactive installer, or a build too slow for Bash's timeout) and **ImageView** (gated on
-the model's declared input modalities, so it is absent rather than failing mid-turn).
+**Read / Write / Edit / Grep / Glob / List / Bash**, plus the ones that were missing:
+**TerminalStart / TerminalWrite / TerminalKill** (a persistent PTY session, for a dev
+server, a REPL, an interactive installer, or a build too slow for Bash's timeout — and the
+off switch for a runaway one, bounded to sessions this agent started) and **ImageView**
+(gated on the model's declared input modalities, so it is absent rather than failing
+mid-turn).
 
 The crown jewel is `Edit`'s **10-strategy replacer** (`replace.rs`): a slightly-off
 `old_string` (indentation / whitespace / line-ending / escape / typographic-punctuation
@@ -219,8 +221,11 @@ it returns a corrective error showing the real nearby lines. `Edit` also takes a
 array, applied in order and written only if every one succeeds — which is what the separate
 `MultiEdit` tool used to be, for an identical schema and an identical operation.
 
-Retained SDK tools (not reimplemented): `WebFetch / WebSearch`, plus `NotebookEdit`, `Glob`
-and `FileWrite`. `PowerShell` is registered on Windows only.
+Retained SDK tools (not reimplemented): `WebFetch`, plus `NotebookEdit`, `Glob` and
+`FileWrite`. `WebSearch` and `ExaSearch` are registered only when their env keys are set —
+a tool that cannot run is registered nowhere. `CodeSearch` and `ApplyPatch` keep the SDK
+implementation behind Atlas-owned descriptions (the shipped texts claimed semantic search
+and file deletion, neither true). `PowerShell` is registered on Windows only.
 
 **One way to change a file.** `Edit`, `MultiEdit`, `ApplyPatch` and `Write` were four
 overlapping ways to do the same thing — 715 tokens of schema in every request, and four

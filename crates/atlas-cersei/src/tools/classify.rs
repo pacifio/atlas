@@ -322,10 +322,14 @@ fn is_safe_segment(segment: &[&str]) -> bool {
         // no-flag-can-write list. Registering their target as "read" is the
         // worse half: it would let an edit vouch for a file nothing read.
         "sort" => !args.iter().any(|a| a.starts_with("-o") || a.starts_with("--output")),
-        "uniq" => args.iter().filter(|a| !a.starts_with('-')).count() <= 1,
+        // A bare `-` is the stdin operand, not a flag: `uniq - out.txt` is the
+        // writing two-operand form.
+        "uniq" => args.iter().filter(|a| !a.starts_with('-') || **a == "-").count() <= 1,
+        // `-s` sets the clock and takes an attached value (`date -s12:00`), so
+        // the prefix is what must be refused, not the bare flag.
         "date" => args
             .iter()
-            .all(|a| (a.starts_with('+') || a.starts_with('-')) && *a != "-s" && !a.starts_with("--set")),
+            .all(|a| (a.starts_with('+') || a.starts_with('-')) && !a.starts_with("-s") && !a.starts_with("--set")),
         "git" => match args.split_first() {
             Some((sub, rest)) => {
                 GIT_READ_ONLY.contains(sub)
@@ -662,10 +666,12 @@ mod tests {
 
         assert_eq!(risk("uniq data.txt"), Risk::Safe);
         assert_eq!(risk("uniq in.txt out.txt"), Risk::Normal);
+        assert_eq!(risk("uniq - out.txt"), Risk::Normal, "`-` is the stdin operand, not a flag");
 
         assert_eq!(risk("date"), Risk::Safe);
         assert_eq!(risk("date -u +%s"), Risk::Safe);
         assert_eq!(risk("date -s 12:00"), Risk::Normal);
+        assert_eq!(risk("date -s12:00"), Risk::Normal, "the attached-value form sets the clock too");
         assert_eq!(risk("date 0810120026"), Risk::Normal);
 
         // And none of the writing forms registers a read.

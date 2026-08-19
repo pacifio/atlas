@@ -550,25 +550,20 @@ impl Tool for TerminalWriteTool {
                 let mut w = writer.lock();
                 w.write_all(&bytes).and_then(|()| w.flush())
             });
-            match tokio::time::timeout(WRITE_TIMEOUT, write).await {
-                Ok(Ok(Ok(()))) => {}
-                Ok(Ok(Err(e))) => {
-                    release(&input.session_id);
-                    return ToolResult::error(format!("Failed to write to the session: {e}"));
-                }
-                Ok(Err(e)) => {
-                    release(&input.session_id);
-                    return ToolResult::error(format!("Failed to write to the session: {e}"));
-                }
-                Err(_) => {
-                    release(&input.session_id);
-                    return ToolResult::error(format!(
-                        "The session did not accept input within {}s — its process is not \
-                         reading (a full buffer, or a program not waiting for input). Poll it \
-                         with an empty input, or terminate it with TerminalKill.",
-                        WRITE_TIMEOUT.as_secs()
-                    ));
-                }
+            let failure: Option<String> = match tokio::time::timeout(WRITE_TIMEOUT, write).await {
+                Ok(Ok(Ok(()))) => None,
+                Ok(Ok(Err(e))) => Some(format!("Failed to write to the session: {e}")),
+                Ok(Err(e)) => Some(format!("Failed to write to the session: {e}")),
+                Err(_) => Some(format!(
+                    "The session did not accept input within {}s — its process is not \
+                     reading (a full buffer, or a program not waiting for input). Poll it \
+                     with an empty input, or terminate it with TerminalKill.",
+                    WRITE_TIMEOUT.as_secs()
+                )),
+            };
+            if let Some(message) = failure {
+                release(&input.session_id);
+                return ToolResult::error(message);
             }
         }
 
@@ -595,7 +590,13 @@ struct KillInput {
     session_id: String,
 }
 
-pub struct TerminalKillTool;
+#[derive(Default)]
+pub struct TerminalKillTool {
+    /// Supplies the owner identity, so this tool can only end sessions its own
+    /// agent started. `None` (tests, direct callers) falls back to
+    /// `ctx.session_id`, mirroring `TerminalStart`.
+    pub policy: Option<Arc<ToolPolicy>>,
+}
 
 #[async_trait]
 impl Tool for TerminalKillTool {
@@ -605,9 +606,9 @@ impl Tool for TerminalKillTool {
     fn description(&self) -> &str {
         KILL_DESCRIPTION
     }
-    // Bounded to sessions the agent itself started, so ending one needs no
-    // interruption — without this tool a runaway process the model launched
-    // had no off switch short of session teardown or eviction pressure.
+    // No prompt — but only because the ownership check below bounds it to
+    // sessions this agent started. Promptless plus unbounded would have been a
+    // cross-session kill by id.
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::None
     }
@@ -624,7 +625,7 @@ impl Tool for TerminalKillTool {
         })
     }
 
-    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
         let input = coerce::for_schema(input, &self.input_schema());
         let input: KillInput = match serde_json::from_value(input) {
             Ok(i) => i,
@@ -636,7 +637,25 @@ impl Tool for TerminalKillTool {
                 ))
             }
         };
-        let session = STORE.lock().remove(&input.session_id);
+        let caller = self
+            .policy
+            .as_ref()
+            .map(|p| p.session().to_string())
+            .unwrap_or_else(|| ctx.session_id.clone());
+        let session = {
+            let mut store = STORE.lock();
+            match store.get(&input.session_id) {
+                Some(s) if s.owner != caller => {
+                    return ToolResult::error(format!(
+                        "Session '{}' belongs to a different agent session and cannot be \
+                         terminated from this one.",
+                        input.session_id
+                    ));
+                }
+                Some(_) => store.remove(&input.session_id),
+                None => None,
+            }
+        };
         match session {
             Some(mut s) => {
                 let command = s.command.clone();
@@ -828,7 +847,18 @@ mod tests {
         let id = session_id_from(&r.content);
         assert!(STORE.lock().contains_key(&id));
 
-        let k = TerminalKillTool
+        // A different agent session must not be able to end it — TerminalKill
+        // is promptless precisely because it is bounded to its own sessions.
+        let foreign = crate::tools::ToolPolicy::contained_for(tmp.path(), "someone-else");
+        let refused = TerminalKillTool {
+            policy: Some(foreign),
+        }
+        .execute(json!({"session_id": id.clone()}), &ctx)
+        .await;
+        assert!(refused.is_error, "{}", refused.content);
+        assert!(STORE.lock().contains_key(&id), "a foreign kill must not land");
+
+        let k = TerminalKillTool::default()
             .execute(json!({"session_id": id}), &ctx)
             .await;
         assert!(!k.is_error, "{}", k.content);
@@ -837,7 +867,7 @@ mod tests {
 
         // Killing again is a no-op with a plain answer, not an error the
         // model has to reason its way out of.
-        let again = TerminalKillTool
+        let again = TerminalKillTool::default()
             .execute(json!({"session_id": id}), &ctx)
             .await;
         assert!(!again.is_error, "{}", again.content);

@@ -163,7 +163,9 @@ pub fn atlas_coding_with(
         policy: Some(policy.clone()),
     }));
     tools.push(Box::new(terminal::TerminalWriteTool));
-    tools.push(Box::new(terminal::TerminalKillTool));
+    tools.push(Box::new(terminal::TerminalKillTool {
+        policy: Some(policy.clone()),
+    }));
     tools.push(Box::new(t::web_fetch::WebFetchTool));
     // `WebSearch` errors at call time without a Brave key, which nothing in
     // Atlas sets — the same defect `ExaSearch` had, fixed by the same rule:

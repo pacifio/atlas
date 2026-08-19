@@ -784,11 +784,18 @@ pub fn candidate_paths(tool_name: &str, input: &Value) -> Vec<String> {
     // anchored inside the root by the join.
     if tool_name.eq_ignore_ascii_case("glob") {
         if let Some(pattern) = obj.get("pattern").and_then(Value::as_str) {
-            if pattern.starts_with('/') || pattern.split('/').any(|seg| seg == "..") {
+            let traverses = pattern.split('/').any(|seg| seg == "..");
+            if pattern.starts_with('/') || traverses {
                 let cut = pattern.find(['*', '?', '[', '{']).unwrap_or(pattern.len());
                 let prefix = &pattern[..cut];
                 if !prefix.is_empty() {
                     out.push(prefix.to_string());
+                } else if traverses {
+                    // A wildcard before the first `..` (`{a,b}/../../etc/*`)
+                    // leaves nothing checkable — fail closed rather than let
+                    // an unverifiable traversal through the one gap the
+                    // prefix rule cannot see.
+                    out.push("..".to_string());
                 }
             }
         }
@@ -1326,7 +1333,15 @@ mod tests {
         // green.
         let tmp = TmpDir::new();
         let p = policy(tmp.path());
-        for pattern in ["/etc/*", "../*", "src/../../*"] {
+        for pattern in [
+            "/etc/*",
+            "../*",
+            "src/../../*",
+            // A wildcard before the first `..` leaves no checkable prefix —
+            // that must fail closed, not fall through the prefix rule.
+            "{a,b}/../../etc/*",
+            "*/../../etc/passwd",
+        ] {
             let d = p.decide("Glob", PermissionLevel::ReadOnly, &json!({"pattern": pattern}));
             assert!(matches!(d, Decision::Deny { .. }), "{pattern} -> {d:?}");
         }
