@@ -231,10 +231,12 @@ without hand-composing shell redirection. That is the arrangement Codex ships: a
 
 **A budget, enforced by a test.** The tool list is re-sent on *every request of every turn*,
 so its size is multiplied by the number of tool calls a turn makes. On one basis throughout — the
-env-gated third-party search tool excluded, since its cost is opt-in — it reached 10,626 bytes
-across 16 tools without anyone noticing, and folding the edit tools together took it to 8,593
-across 14. The Atlas `Grep` added 503 bytes (~126 tokens per request) over the SDK tool it
-replaced, which is what the numbers above buy. `the_tool_list_stays_within_its_context_budget` fails if it grows again, and names the
+env-gated search tools excluded, since their cost is opt-in — it once reached 10,626 bytes
+across 16 tools without anyone noticing; folding the edit tools together took it to 8,593, and
+later additions (the Atlas `Grep` at +503 bytes for context lines and a cheap default,
+`TerminalKill`) were each argued against the budget. The enforced ceilings live in the test —
+9,900 bytes structured, 4,100 shell-first — and
+`the_tool_list_stays_within_its_context_budget` fails if the list outgrows them, naming the
 largest tools when it does.
 
 `atlas_coding_with()` (`tools/mod.rs`) is an explicit, hand-built vector, so any tool can
@@ -602,8 +604,9 @@ the opposite of the weak BYOK models this harness exists to carry.
   can reuse Atlas's whole agent pipeline.
 - **`lib.rs` is 90% of it.** `CerseiRuntime` (state + turn loop) + `translate_event`
   (the costume) + `UiPolicy` (permissions).
-- **Tools = `coding()` + `planning()` + `delegate` + `search_memory` + MCP**, with file
-  tools cwd-wrapped.
+- **Tools = `atlas_coding_with()` + `planning()` + `delegate` + `search_memory` + MCP**,
+  every one of them wrapped in `Guarded` (containment, coercion, freshness) by the
+  registry — the old per-tool cwd wrapper is gone.
 - **BYOK, Anthropic-native + OpenAI-compatible for the rest.**
 - **Per-turn rebuild** means the runtime owns cumulative usage and persistence itself.
 - **The adapter is the fragile part** — and it's the part with unit tests.

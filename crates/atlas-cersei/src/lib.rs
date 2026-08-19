@@ -1671,9 +1671,14 @@ mod tests {
             "<using_tools>",
             "<use_parallel_tool_calls>",
             "<default_to_action>",
+            "<planning>",
+            "<delegating>",
+            "<skills_and_memory>",
+            "<changing_code>",
             "<acting_with_care>",
             "<security>",
             "<response_style>",
+            "<context_management>",
         ] {
             assert!(ATLAS_PROMPT.contains(section), "lost the {section} section");
             let close = section.replace('<', "</");

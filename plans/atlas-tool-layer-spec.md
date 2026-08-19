@@ -358,10 +358,11 @@ sending anything. Sessions are held in a bounded store with a soft cap; the most
 protected from eviction; already-exited processes are evicted before live ones; a session holding an
 active interaction is never evicted. Output uses a streaming head-and-tail ring. Timeouts are
 per-call, not per-session — a process outlives the call that started it and ends on its own exit,
-eviction, or session teardown. Terminal allocation defaults **on**, unlike Codex, where the default
-is off and consequently writes to the session are rejected; interactivity is the reason this tool
-exists. The terminal library is already a dependency of another crate and is not currently exposed
-to the agent.
+eviction, an explicit `TerminalKill` (added post-review: a runaway process the model started needs
+an off switch that is not eviction pressure), or session teardown. Terminal allocation defaults
+**on**, unlike Codex, where the default is off and consequently writes to the session are rejected;
+interactivity is the reason this tool exists. The terminal library is already a dependency of
+another crate and is not currently exposed to the agent.
 
 **Image view.** Gated on the model's declared input modalities, so it is absent from the tool list
 rather than failing at call time. Validation is a full decode — the cheapest way to keep non-images
@@ -417,14 +418,18 @@ that names its files only in a `diff --git`/`rename from` header yields none eit
 partial. Two things about the SDK's applier are worth recording while they are true: it never
 compares the context lines it is given — it splices by line number — so a stale patch corrupts
 silently rather than failing, which is why read-before-edit is load-bearing for it; and its
-description tells the model it "supports … deleting files" when it contains no delete path at all.
+shipped description told the model it "supports … deleting files" when it contains no delete path
+at all. The registry now overrides that description (and CodeSearch's "semantic … DEFAULT" one)
+with accurate text — `no_registered_description_contradicts_the_harness` pins it — because a tool
+description is prompt text and a false one is a contradictory instruction.
 
 **A context budget, enforced by a test (as built).** The tool list is re-sent on every request of
 every turn, so its size is multiplied by the number of tool calls a turn makes. Measured on one
-basis throughout — the env-gated third-party search tool excluded, since its cost is opt-in — it
-reached 10,626 bytes across 16 tools with nobody watching, and folding the overlapping edit tools
-together took it to 8,593 across 14. Counting the branch as a whole, including the search-tool
-gating above, a request that carried 12,213 bytes across 17 tools now carries 8,593 across 14.
+basis throughout — the env-gated search tools excluded, since their cost is opt-in — it
+reached 10,626 bytes across 16 tools with nobody watching; folding the overlapping edit tools
+together took it to 8,593 across 14, and later additions (Atlas `Grep`, `TerminalKill`) were
+argued against the enforced ceilings, which live in the test: 9,900 bytes structured, 4,100
+shell-first. The historical figures are point-in-time measurements; the budgets are the contract.
 
 `the_tool_list_stays_within_its_context_budget` fails when the list grows, and names the largest
 tools when it does — so the cost of a new tool is argued for in review rather than appearing

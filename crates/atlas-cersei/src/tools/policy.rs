@@ -18,9 +18,13 @@
 //!
 //! * [`ToolPolicy::decide`] is called from the session's `PermissionPolicy`,
 //!   which the agent runner consults *before* dispatching a tool. It runs
-//!   coerce → contain → classify → cache and returns whether to prompt.
-//! * [`super::guard::Guarded`] wraps every registered tool and runs
-//!   coerce → contain → freshness → sandbox-wrap → execute → record.
+//!   coerce → contain → freshness → classify → cache and returns whether to
+//!   prompt — freshness included, so a write the guard would refuse is denied
+//!   before the user is interrupted about it.
+//! * [`super::guard::Guarded`] wraps every registered tool and re-runs
+//!   coerce → contain → freshness → sandbox-wrap → execute → record, so the
+//!   preconditions hold even on a path that bypassed the prompt (a permissive
+//!   mode, a direct call).
 //!
 //! Splitting it this way means no vendored runner patch is needed to get a
 //! *per-command* permission verdict: the runner already hands the tool input to
