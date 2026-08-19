@@ -487,3 +487,149 @@ async fn the_enforcement_tier_is_reportable_to_the_user() {
     assert!(!s.policy.tier().as_str().is_empty());
     assert!(s.policy.tier().describe().len() > 20);
 }
+
+// ─── M3: ground truth after edit ────────────────────────────────────────────
+
+/// An edit that breaks the file's syntax gets a parse-probe block appended
+/// to its (successful) result; an identical follow-up finding is not
+/// repeated while it's still visible; and clean edits stay silent.
+#[tokio::test]
+async fn a_syntax_breaking_edit_reports_ground_truth_once() {
+    let fx = Fixture::new();
+    let s = Session::new(fx.path(), PermissionDecision::Allow);
+
+    // Read first (read-before-edit), then break the syntax.
+    s.call("Read", json!({"file_path": "src/lib.rs"})).await;
+    let r = s
+        .call(
+            "Edit",
+            json!({
+                "file_path": "src/lib.rs",
+                "edits": [{"old_string": "pub fn a() -> u8 { 1 }", "new_string": "pub fn a( -> u8 { 1 }"}]
+            }),
+        )
+        .await;
+    assert!(!r.is_error, "{}", r.content);
+    assert!(
+        r.content.contains("[ground truth after edit]"),
+        "no probe block: {}",
+        r.content
+    );
+    assert!(r.content.contains("[syntax] src/lib.rs:"), "{}", r.content);
+
+    // A second edit that leaves the same (identical) findings appends
+    // nothing new — the block is already visible in fresh messages.
+    s.call("Read", json!({"file_path": "src/lib.rs"})).await;
+    let r2 = s
+        .call(
+            "Edit",
+            json!({
+                "file_path": "src/lib.rs",
+                "edits": [{"old_string": "{ 1 }", "new_string": "{ 2 }"}]
+            }),
+        )
+        .await;
+    assert!(!r2.is_error, "{}", r2.content);
+    assert!(
+        !r2.content.contains("[ground truth after edit]"),
+        "identical findings repeated: {}",
+        r2.content
+    );
+
+    // Fixing the file goes back to silence.
+    let r3 = s
+        .call(
+            "Edit",
+            json!({
+                "file_path": "src/lib.rs",
+                "edits": [{"old_string": "pub fn a( -> u8 { 2 }", "new_string": "pub fn a() -> u8 { 2 }"}]
+            }),
+        )
+        .await;
+    assert!(!r3.is_error, "{}", r3.content);
+    assert!(
+        !r3.content.contains("[ground truth after edit]"),
+        "clean edit still reported: {}",
+        r3.content
+    );
+}
+
+/// The project's `.atlas/check.json` command runs after a successful edit
+/// and its failure tail is appended; the same failure is not repeated.
+#[tokio::test]
+async fn the_project_check_command_reports_failures_after_edits() {
+    let fx = Fixture::new();
+    std::fs::create_dir_all(fx.path().join(".atlas")).unwrap();
+    std::fs::write(
+        fx.path().join(".atlas/check.json"),
+        r#"{"command": "echo the-check-failed >&2; exit 1", "timeout_secs": 5}"#,
+    )
+    .unwrap();
+    let s = Session::new(fx.path(), PermissionDecision::Allow);
+
+    s.call("Read", json!({"file_path": "src/lib.rs"})).await;
+    let r = s
+        .call(
+            "Edit",
+            json!({
+                "file_path": "src/lib.rs",
+                "edits": [{"old_string": "{ 1 }", "new_string": "{ 3 }"}]
+            }),
+        )
+        .await;
+    assert!(!r.is_error, "{}", r.content);
+    assert!(r.content.contains("[check] "), "{}", r.content);
+    assert!(r.content.contains("the-check-failed"), "{}", r.content);
+
+    // Identical findings → no repeat.
+    let r2 = s
+        .call(
+            "Edit",
+            json!({
+                "file_path": "src/lib.rs",
+                "edits": [{"old_string": "{ 3 }", "new_string": "{ 4 }"}]
+            }),
+        )
+        .await;
+    assert!(!r2.content.contains("the-check-failed"), "{}", r2.content);
+
+    // After the ledger empties (compaction/cancel path), the still-failing
+    // check is reported again — the suppression only holds while the block
+    // is visible.
+    s.policy.forget_served();
+    let r3 = s
+        .call(
+            "Edit",
+            json!({
+                "file_path": "src/lib.rs",
+                "edits": [{"old_string": "{ 4 }", "new_string": "{ 5 }"}]
+            }),
+        )
+        .await;
+    assert!(r3.content.contains("the-check-failed"), "{}", r3.content);
+}
+
+/// A read-class tool never triggers the probe, and a failed edit doesn't
+/// either — ground truth is only appended to successful writes.
+#[tokio::test]
+async fn reads_and_failed_edits_get_no_ground_truth_block() {
+    let fx = Fixture::new();
+    let s = Session::new(fx.path(), PermissionDecision::Allow);
+
+    let r = s.call("Read", json!({"file_path": "src/lib.rs"})).await;
+    assert!(!r.content.contains("[ground truth after edit]"));
+
+    // A failed edit (old_string not present) gets no probe — the file
+    // didn't change, so there is no new ground truth to report.
+    let r = s
+        .call(
+            "Edit",
+            json!({
+                "file_path": "src/lib.rs",
+                "edits": [{"old_string": "no such text anywhere", "new_string": "pub fn b("}]
+            }),
+        )
+        .await;
+    assert!(r.is_error, "{}", r.content);
+    assert!(!r.content.contains("[ground truth after edit]"));
+}

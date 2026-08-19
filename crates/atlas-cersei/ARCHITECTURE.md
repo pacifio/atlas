@@ -232,6 +232,33 @@ provider always gets the floor's shape — the small-local tier. Static +
 explicit only; observed adjustment (demoting a tier off edit-failure
 counters) waits for eval data.
 
+### 5c. Ground truth after edit (M3 stage 1)
+
+Every successful write-class call (Edit, the SDK's Write, NotebookEdit,
+ApplyPatch — applied in `Guarded`, so one seam covers them all) gets two
+cheap checks, appended to the tool result as a bounded `[ground truth after
+edit]` block (≤20 lines):
+
+- **Parse probe** (`tools/probe.rs`) — tree-sitter parses each edited file
+  (rust/ts/tsx/js/python/go/bash, the grammars already in the dependency
+  tree) and reports `ERROR`/`MISSING` nodes with line numbers.
+- **Check command** — `.atlas/check.json` (`{"command", "timeout_secs"}`),
+  the project's own fast check (`cargo check`, `tsc --noEmit`), run in the
+  workspace root with a capped timeout. Clean exit or timeout → silence; a
+  failure appends a 10-line tail. The command is project-authored config,
+  so it runs unsandboxed like the author's own shell.
+
+A ledger on `ToolPolicy` (mirroring the repeat-read `served` map, emptied
+by the same `forget_served` moments — compaction, cancel) keeps identical
+findings from repeating while they're still visible in fresh messages.
+
+Stage 2 (real LSP diagnostics) is deferred, with the reason recorded: the
+`cersei-lsp` crate in the dependency tree exposes no `didChange` path and
+dedupes `didOpen` per file, so any file edited after its first open would
+return stale, wrong-line diagnostics — worse than silence. It becomes
+buildable when that client is vendored or replaced; until then the check
+command is the real-diagnostics channel.
+
 ---
 
 ## 6. The tools — what Atlas can actually do

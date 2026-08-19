@@ -67,6 +67,40 @@ impl Guarded {
             PermissionLevel::Write | PermissionLevel::Dangerous
         )
     }
+
+    /// M3 — the post-edit parse probe + project check command, deduped
+    /// against the policy's ledger. `None` = nothing to append (all clean,
+    /// or an identical block is already visible in fresh messages).
+    async fn ground_truth(&self, canonical: &[std::path::PathBuf]) -> Option<String> {
+        let mut parse: Vec<(String, Vec<crate::tools::probe::ParseFinding>)> = Vec::new();
+        for path in canonical {
+            if let Some(findings) = crate::tools::probe::parse_probe(path) {
+                if !findings.is_empty() {
+                    let rel = path.strip_prefix(self.policy.root()).unwrap_or(path);
+                    parse.push((rel.display().to_string(), findings));
+                }
+            }
+        }
+        let check = match self.policy.check_config() {
+            Some(cfg) => crate::tools::probe::run_check(cfg, self.policy.root()).await,
+            None => None,
+        };
+        let report = crate::tools::probe::render_report(&parse, check.as_deref());
+        if report.is_empty() {
+            return None;
+        }
+        let signature = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            report.hash(&mut h);
+            format!("diag\u{1}{:016x}", h.finish())
+        };
+        if self.policy.already_reported(&signature) {
+            return None;
+        }
+        self.policy.record_reported(signature);
+        Some(report)
+    }
 }
 
 #[async_trait]
@@ -227,6 +261,18 @@ impl Tool for Guarded {
                     // read-before-edit work in the shell-first tier too.
                     self.policy.record_read(path);
                 }
+            }
+        }
+        // M3 — ground truth after edit. A successful write-class call gets a
+        // parse probe on each edited file plus the project's check command
+        // (if configured), appended as a bounded block. Covers Edit and the
+        // SDK's own Write through this one seam. The ledger on the policy
+        // keeps identical findings from repeating while they're still
+        // visible in fresh messages.
+        let mut result = result;
+        if self.is_write_class() && !result.is_error {
+            if let Some(report) = self.ground_truth(&canonical).await {
+                result.content.push_str(&report);
             }
         }
         let outcome = if result.is_error { "error" } else { "ok" };

@@ -49,6 +49,16 @@ portable-pty = "0.8"
 parking_lot = "0.12"
 tracing = "0.1"
 async-trait = "0.1"
+# M3 — the post-edit parse probe. All six are already in the lockfile
+# transitively (cersei-tools' code_intel uses the same set), so these direct
+# deps unify to the existing builds; code_intel itself can't report syntax
+# errors, which is the whole point of the probe.
+tree-sitter = "0.26"
+tree-sitter-bash = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-rust = "0.23"
+tree-sitter-typescript = "0.23"
 
 [target.'cfg(unix)'.dependencies]
 # Process-group kill for the cancellable Bash tool (SIGKILL to -pgid so a

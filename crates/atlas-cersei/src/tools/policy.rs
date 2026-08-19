@@ -193,6 +193,14 @@ pub struct ToolPolicy {
     /// would look fresh against `reads` and be suppressed, hiding the model's
     /// own change from it.
     served: DashMap<String, ReadRecord>,
+    /// Post-edit diagnostics already appended this session (M3), keyed by
+    /// `path + findings hash`. Mirrors `served`: the block asserts facts the
+    /// model can currently see, so the ledger empties whenever the
+    /// conversation stops containing them.
+    reported_diagnostics: DashMap<String, ()>,
+    /// The project's `.atlas/check.json`, read once per session (absent =
+    /// `None`). Same lazy-once shape as `spill_ready`.
+    check_config: std::sync::OnceLock<Option<crate::tools::probe::CheckConfig>>,
     /// Set once the session's spill directory has been created, so the common
     /// path does not stat it on every truncation.
     spill_ready: AtomicBool,
@@ -222,6 +230,8 @@ impl ToolPolicy {
             approvals: DashMap::new(),
             reads: DashMap::new(),
             served: DashMap::new(),
+            reported_diagnostics: DashMap::new(),
+            check_config: std::sync::OnceLock::new(),
             spill_ready: AtomicBool::new(false),
         })
     }
@@ -245,6 +255,8 @@ impl ToolPolicy {
             approvals: DashMap::new(),
             reads: DashMap::new(),
             served: DashMap::new(),
+            reported_diagnostics: DashMap::new(),
+            check_config: std::sync::OnceLock::new(),
             spill_ready: AtomicBool::new(false),
         })
     }
@@ -280,6 +292,8 @@ impl ToolPolicy {
             approvals: DashMap::new(),
             reads: DashMap::new(),
             served: DashMap::new(),
+            reported_diagnostics: DashMap::new(),
+            check_config: std::sync::OnceLock::new(),
             spill_ready: AtomicBool::new(false),
         })
     }
@@ -436,6 +450,30 @@ impl ToolPolicy {
     /// to fetch what it can no longer see.
     pub fn forget_served(&self) {
         self.served.clear();
+        // The diagnostics ledger asserts the same kind of fact ("this
+        // finding is visible above") and goes stale at the same moments.
+        self.reported_diagnostics.clear();
+    }
+
+    // ── Post-edit diagnostics ledger (M3) ───────────────────────────────────
+
+    /// Whether an identical diagnostics block was already appended and is
+    /// still visible in fresh messages.
+    pub fn already_reported(&self, signature: &str) -> bool {
+        self.reported_diagnostics.contains_key(signature)
+    }
+
+    /// Remember an appended diagnostics block.
+    pub fn record_reported(&self, signature: String) {
+        self.reported_diagnostics.insert(signature, ());
+    }
+
+    /// The project's check command, if configured. Read once per session —
+    /// edits to `.atlas/check.json` apply on the next session.
+    pub fn check_config(&self) -> Option<&crate::tools::probe::CheckConfig> {
+        self.check_config
+            .get_or_init(|| crate::tools::probe::load_check_config(&self.root))
+            .as_ref()
     }
 
     // ── Approvals + classification (D8) ─────────────────────────────────────

@@ -25,6 +25,7 @@ pub mod guard;
 pub mod image;
 pub mod list;
 pub mod policy;
+pub mod probe;
 pub mod read;
 pub mod screen;
 pub mod replace;
