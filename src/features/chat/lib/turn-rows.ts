@@ -99,6 +99,10 @@ export interface MarkerRow extends RowBase {
 
 export interface MarkerGroupRow extends RowBase {
   kind: typeof RowKind.MarkerGroup;
+  /** What this run did, in words: "Ran 3 shell commands, read 2 files". The
+   *  reader should not have to open a block to know whether it is worth
+   *  opening. */
+  summary: string;
   /** How many tool calls the block stands for. */
   count: number;
   /** Distinct files edited by those calls. */
@@ -206,6 +210,51 @@ export function shortPath(p: string): string {
   const parts = p.split("/").filter(Boolean);
   if (parts.length <= 3) return parts.join("/");
   return [...parts.slice(0, 2), "…", parts[parts.length - 1]].join("/");
+}
+
+/**
+ * What a run of tool calls did, in words.
+ *
+ * A count alone ("7 calls") tells the reader nothing about whether the block is
+ * worth opening. Naming the work — "Ran 3 shell commands, read 2 files" — is
+ * what lets a turn be followed without expanding anything, which is the whole
+ * point of folding it.
+ */
+function summarise(markers: MarkerRow[]): string {
+  // Grouped by the verb the marker already carries, so this stays in step with
+  // whatever `markerFor` decided to call the call.
+  const nouns: Record<string, [string, string]> = {
+    Ran: ["shell command", "shell commands"],
+    Read: ["file", "files"],
+    Edited: ["file", "files"],
+    Created: ["file", "files"],
+    Searched: ["pattern", "patterns"],
+  };
+  const counts = new Map<string, number>();
+  for (const m of markers) counts.set(m.verb, (counts.get(m.verb) ?? 0) + 1);
+
+  const parts = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([verb, n]) => {
+      const noun = nouns[verb];
+      if (!noun) return `${verb} ${n}×`;
+      return `${verb} ${n} ${n === 1 ? noun[0] : noun[1]}`;
+    });
+
+  // Three named kinds, then a tail count — a summary that needs a scrollbar is
+  // not a summary, but hiding a kind behind "+1 more" is worse than naming it.
+  const NAMED = 3;
+  if (parts.length <= NAMED) return sentence(parts.join(", "));
+  const rest = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(NAMED)
+    .reduce((n, [, c]) => n + c, 0);
+  return sentence(`${parts.slice(0, NAMED).join(", ")} +${rest} more`);
+}
+
+/** Lower-case every clause after the first: "Ran 2 shell commands, read 1 file". */
+function sentence(s: string): string {
+  return s.replace(/, ([A-Z])/g, (_, c: string) => `, ${c.toLowerCase()}`);
 }
 
 /**
@@ -367,8 +416,9 @@ export interface ProjectOptions {
   expanded: ReadonlySet<string>;
   /** The trailing assistant message is live. */
   streaming: boolean;
-  /** Turns whose tool-call block the reader has opened. */
-  expandedTurns: ReadonlySet<string>;
+  /** Ids of tool-call blocks the reader has opened. A turn has one per run of
+   *  consecutive tool calls, so expansion is per block and not per turn. */
+  expandedGroups: ReadonlySet<string>;
 }
 
 /**
@@ -392,6 +442,17 @@ export function projectRows(
 
   const lastIdx = messages.length - 1;
   let i = 0;
+
+  // The live turn is the assistant run after the last user message. Computed
+  // once here because each run of tool calls needs to know whether it is the
+  // trailing one *while* it is being emitted, not after the turn closes.
+  let lastUserIdx = -1;
+  for (let k = lastIdx; k >= 0; k--) {
+    if (messages[k].role === "user") {
+      lastUserIdx = k;
+      break;
+    }
+  }
 
   while (i < messages.length) {
     const m = messages[i];
@@ -451,13 +512,60 @@ export function projectRows(
     maybeGapSeparator(rows, messages, i, turnId);
     const rowStart = rows.length;
 
-    const markers: MarkerRow[] = [];
-    /** Row index the folded markers are spliced back into when expanded. */
-    let markerAnchor = rows.length;
     let toolCount = 0;
     let footerMsg: ChatMessage | null = null;
     let headerShown = false;
     let sawError = false;
+
+    // ── Tool calls group by RUN, and stay where they happened ──────────────
+    //
+    // A run is a maximal stretch of tool calls with no prose or thinking
+    // between them. Every run is emitted at its own position, so narration and
+    // the action it describes stay adjacent:
+    //
+    //     "First I'll check the config."   ← prose
+    //     Read 1 file                      ← run
+    //     "That confirmed the bug."        ← prose
+    //     Edited 1 file                    ← run
+    //
+    // The previous version accumulated every marker in the turn and spliced
+    // them all at the first tool call, which rendered as the complete list of
+    // actions followed by every paragraph explaining them — in the wrong
+    // order, with no way to tell which sentence went with which call. Density
+    // was the reason, and folding a run still buys that; hoisting never did.
+    const turnIsLive = opts.streaming && turnFirstIdx > lastUserIdx;
+    let run: MarkerRow[] = [];
+    let runStartTs = 0;
+    let runEndTs = 0;
+    let runIndex = 0;
+
+    /** Emit the pending run as one folded block at the current position. */
+    const flushRun = (isLast: boolean) => {
+      if (run.length === 0) return;
+      const groupId = `mg:${turnId}:${runIndex}`;
+      // While the turn is live the trailing run is its progress report, so it
+      // stays open; runs that already finished fold, exactly as they do once
+      // the turn settles.
+      const running = isLast && turnIsLive;
+      const open = running || opts.expandedGroups.has(groupId);
+      const span = runEndTs - runStartTs;
+      rows.push({
+        kind: RowKind.MarkerGroup,
+        id: groupId,
+        turnId,
+        firstInTurn: false,
+        summary: summarise(run),
+        count: run.length,
+        modified: new Set(run.filter((r) => r.opens === "diff").map((r) => r.detail)).size,
+        added: run.reduce((n, r) => n + r.added, 0),
+        duration: span > 1000 ? fmtDuration(span) : null,
+        open,
+        running,
+      });
+      if (open) rows.push(...run);
+      run = [];
+      runIndex += 1;
+    };
 
     while (i < messages.length && messages[i].role === "assistant") {
       const msg = messages[i];
@@ -467,9 +575,9 @@ export function projectRows(
         continue;
       }
 
-      // First content row of the turn marks where markers belong.
-      if (markers.length === 0) markerAnchor = rows.length;
+      const ts = new Date(msg.timestamp).getTime();
       if (msg.thinking && msg.thinking.trim()) {
+        flushRun(false);
         rows.push({
           kind: RowKind.Thinking,
           id: `th:${msg.id}`,
@@ -483,13 +591,17 @@ export function projectRows(
 
       for (const tc of msg.toolCalls) {
         if (isInternalTool(tc)) continue;
+        if (run.length === 0) runStartTs = ts;
+        runEndTs = ts;
         toolCount += 1;
-        markers.push(markerFor(tc, turnId, false));
+        run.push(markerFor(tc, turnId, false));
         if (tc.status === "failed") sawError = true;
       }
 
       const prose = derivedProse(msg);
       if (prose) {
+        // Before the prose, so the calls this paragraph is about sit above it.
+        flushRun(false);
         rows.push({
           kind: RowKind.Prose,
           id: `p:${msg.id}`,
@@ -509,43 +621,9 @@ export function projectRows(
       i += 1;
     }
 
-    // ── Tool calls: one folded block, not N loose rows ───────────────────
-    //
-    // A tool-heavy turn produces dozens of markers between two paragraphs of
-    // prose. Left inline they dominate the thread, and — because each was
-    // individually expandable — they made scrolling pay for content nobody had
-    // asked to see. So they collapse into a single labelled block, exactly like
-    // the Session timeline's "Show tool calls". Nothing here expands in place:
-    // detail is the side panel's job.
-    //
-    // While the turn is LIVE the markers stay visible; that is the progress
-    // report. They fold the moment it settles and becomes history.
-    const turnIsLive = opts.streaming && i > lastIdx;
-    const groupOpen = turnIsLive || opts.expandedTurns.has(turnId);
-
-    const startTs = new Date(messages[turnFirstIdx].timestamp).getTime();
-    const endTs = new Date(messages[Math.max(turnFirstIdx, i - 1)].timestamp).getTime();
-    const span = endTs - startTs;
-
-    if (markers.length > 0) {
-      const modified = new Set(markers.filter((m) => m.opens === "diff").map((m) => m.detail)).size;
-      const addedTotal = markers.reduce((n, m) => n + m.added, 0);
-      const group: MarkerGroupRow = {
-        kind: RowKind.MarkerGroup,
-        id: `mg:${turnId}`,
-        turnId,
-        firstInTurn: false,
-        count: markers.length,
-        modified,
-        added: addedTotal,
-        duration: span > 1000 ? fmtDuration(span) : null,
-        open: groupOpen,
-        running: turnIsLive,
-      };
-      // The block sits where the tools ran; its members follow it when open, so
-      // expanding reveals them in the order they happened.
-      rows.splice(markerAnchor, 0, group, ...(groupOpen ? markers : []));
-    }
+    // Whatever the turn ended on. A turn that finishes with tool calls has no
+    // prose after them to trigger the flush.
+    flushRun(true);
 
     if (footerMsg?.turnSummary) {
       const files = footerMsg.turnSummary.files;

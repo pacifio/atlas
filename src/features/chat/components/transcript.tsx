@@ -221,13 +221,14 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   );
 
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
-  /** Turns whose tool-call block the reader has opened. */
-  const [expandedTurns, setExpandedTurns] = useState<ReadonlySet<string>>(() => new Set());
-  const toggleTurn = useCallback((turnId: string) => {
-    setExpandedTurns((prev) => {
+  /** Tool-call blocks the reader has opened. A turn has one per run of
+   *  consecutive calls, so this is keyed by block and not by turn. */
+  const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleGroup = useCallback((groupId: string) => {
+    setExpandedGroups((prev) => {
       const next = new Set(prev);
-      if (next.has(turnId)) next.delete(turnId);
-      else next.add(turnId);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
       return next;
     });
   }, []);
@@ -247,12 +248,12 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   const projection = useMemo(() => {
     const next = projectRows(
       messages,
-      { expanded, expandedTurns, streaming: isStreaming },
+      { expanded, expandedGroups, streaming: isStreaming },
       prevProjectionRef.current,
     );
     prevProjectionRef.current = next;
     return next;
-  }, [messages, expanded, expandedTurns, isStreaming]);
+  }, [messages, expanded, expandedGroups, isStreaming]);
   const rows: Row[] = projection.rows;
 
   // ── Is the live turn still silent? ───────────────────────────────────
@@ -681,7 +682,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
                 agentLabel={agentLabel}
                 agentIcon={agentIcon}
                 justSentMessageId={justSentMessageId}
-                onExpandTurn={toggleTurn}
+                onToggleGroup={toggleGroup}
                 // Absolute position in the thread, so the newest messages —
                 // the ones on screen after a history load — are parsed first.
                 // Index within `visible` would shift as the window grows.
@@ -750,7 +751,7 @@ function RowView({
   agentIcon,
   priority,
   onToggleExpand,
-  onExpandTurn,
+  onToggleGroup,
   onSaveKb,
   onDiagram,
 }: {
@@ -761,7 +762,7 @@ function RowView({
   agentIcon: React.ReactNode;
   priority: number;
   onToggleExpand: (id: string) => void;
-  onExpandTurn: (turnId: string) => void;
+  onToggleGroup: (groupId: string) => void;
   onSaveKb: () => void;
   onDiagram: (messageId: string) => void;
 }) {
@@ -787,7 +788,7 @@ function RowView({
     case RowKind.Marker:
       return <MarkerRowView row={row} tabId={tabId} />;
     case RowKind.MarkerGroup:
-      return <MarkerGroupRowView row={row} onExpandTurn={onExpandTurn} />;
+      return <MarkerGroupRowView row={row} onToggle={onToggleGroup} />;
     case RowKind.Separator:
       return <SeparatorRowView row={row} />;
     case RowKind.TurnFooter:

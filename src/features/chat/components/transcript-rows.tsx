@@ -332,21 +332,20 @@ export const MarkerRowView = memo(function MarkerRowView({
  */
 export const MarkerGroupRowView = memo(function MarkerGroupRowView({
   row,
-  onExpandTurn,
+  onToggle,
 }: {
   row: MarkerGroupRow;
-  onExpandTurn: (turnId: string) => void;
+  onToggle: (groupId: string) => void;
 }) {
   return (
     <Column className="py-3">
       <div className="flex items-baseline gap-2 text-[11px]">
-        <span className="font-medium text-[var(--text-secondary)]">Tool calls</span>
+        {/* What this run did, not that it existed: a reader following the turn
+            should not have to open a block to learn whether it matters. */}
+        <span className="font-medium text-[var(--text-secondary)]">{row.summary}</span>
         {row.duration && (
           <span className="font-mono text-[10px] text-[var(--text-tertiary)]">{row.duration}</span>
         )}
-        <span className="font-mono text-[10px] text-[var(--text-tertiary)]">
-          {row.count} {row.count === 1 ? "call" : "calls"}
-        </span>
         {row.modified > 0 && (
           <span className="font-mono text-[10px] text-[var(--text-tertiary)]">
             {row.modified} modified
@@ -361,7 +360,7 @@ export const MarkerGroupRowView = memo(function MarkerGroupRowView({
       {!row.running && (
         <button
           type="button"
-          onClick={() => onExpandTurn(row.turnId)}
+          onClick={() => onToggle(row.id)}
           className="mt-0.5 flex cursor-pointer items-center gap-1 text-[11px] text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-secondary)]"
         >
           {row.open ? "Hide tool calls" : "Show tool calls"}
