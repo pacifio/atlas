@@ -19,7 +19,7 @@
 //! **Timeouts are per call, not per session.** A process outlives the call that
 //! started it and ends on its own exit, on eviction, or at session teardown.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
@@ -32,6 +32,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::policy::ToolPolicy;
+use super::screen::Screen;
 use super::{coerce, errors};
 
 /// How long `TerminalStart` waits before deciding the process is long-running
@@ -41,11 +42,6 @@ const MAX_YIELD_MS: u64 = 60_000;
 /// How long a poll waits for *new* output before returning empty.
 const DEFAULT_POLL_MS: u64 = 2_000;
 const MAX_POLL_MS: u64 = 60_000;
-
-/// Bytes of undelivered output held per session. Beyond this the oldest is
-/// dropped and counted — a dev server left running for an hour must not grow
-/// without bound.
-const PENDING_CAP: usize = 256 * 1024;
 
 /// Soft cap on live sessions. Above it, eviction runs.
 const SESSION_SOFT_CAP: usize = 8;
@@ -60,44 +56,6 @@ const PROTECTED: usize = 3;
 /// is [`MAX_POLL_MS`].
 const BUSY_TRUST: Duration = Duration::from_secs(180);
 
-/// Output a session has produced but not yet handed to the model.
-struct Pending {
-    buf: VecDeque<u8>,
-    /// Bytes dropped from the front because the buffer was full.
-    dropped: u64,
-}
-
-impl Pending {
-    fn new() -> Self {
-        Self {
-            buf: VecDeque::new(),
-            dropped: 0,
-        }
-    }
-
-    fn push(&mut self, chunk: &[u8]) {
-        self.buf.extend(chunk);
-        while self.buf.len() > PENDING_CAP {
-            self.buf.pop_front();
-            self.dropped += 1;
-        }
-    }
-
-    /// Drain everything pending. Delivered output is removed, so a second call
-    /// returns only what is new.
-    fn take(&mut self) -> (String, u64) {
-        let bytes: Vec<u8> = self.buf.drain(..).collect();
-        let dropped = std::mem::take(&mut self.dropped);
-        // Lossy is right for terminal output: it can legitimately be binary,
-        // and unlike a file read there is no path by which it is written back
-        // into source.
-        (String::from_utf8_lossy(&bytes).into_owned(), dropped)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.buf.is_empty()
-    }
-}
 
 struct Session {
     /// The cersei session that owns it, so teardown can sweep.
@@ -105,7 +63,7 @@ struct Session {
     command: String,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
-    pending: Arc<Mutex<Pending>>,
+    pending: Arc<Mutex<Screen>>,
     last_used: Instant,
     /// Set while a call is inside this session, so eviction cannot pull the
     /// session out from under an in-flight interaction.
@@ -236,7 +194,7 @@ fn spawn(
 
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-    let pending = Arc::new(Mutex::new(Pending::new()));
+    let pending = Arc::new(Mutex::new(Screen::new()));
 
     let sink = pending.clone();
     std::thread::spawn(move || {
@@ -537,6 +495,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_progress_spinner_reaches_the_model_as_one_line() {
+        // End to end through a real PTY. `npm install` draws its spinner with
+        // exactly this: cursor to column 1, erase to end of line, one glyph —
+        // and unrendered it spent 172.8K tokens of one session's context.
+        let tmp = TmpDir::new();
+        let script = r"for i in 1 2 3 4 5 6 7 8 9 10; do printf '\033[1G\033[0K%s' $i; done; printf '\033[1G\033[0Kadded 312 packages\n'";
+        let r = TerminalStartTool::default()
+            .execute(
+                json!({"command": format!("sh -c \"{script}\""), "timeout": 5000}),
+                &test_ctx(tmp.path().to_path_buf()),
+            )
+            .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert!(r.content.contains("added 312 packages"), "{}", r.content);
+        assert!(
+            !r.content.contains('\u{1b}'),
+            "raw escape sequences reached the model: {:?}",
+            r.content
+        );
+        // The intermediate frames are gone, not merely hidden.
+        for frame in ["1", "2", "3", "4", "5", "6", "7", "8", "9"] {
+            assert!(
+                !r.content.contains(&format!("{frame}added")),
+                "a spinner frame survived: {:?}",
+                r.content
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn a_finished_command_returns_its_output_and_no_session() {
         let tmp = TmpDir::new();
         let r = TerminalStartTool::default()
@@ -673,12 +661,19 @@ mod tests {
     }
 
     #[test]
-    fn pending_output_is_bounded_and_reports_what_it_dropped() {
-        let mut p = Pending::new();
-        p.push(&vec![b'a'; PENDING_CAP + 500]);
-        let (text, dropped) = p.take();
-        assert_eq!(text.len(), PENDING_CAP);
-        assert_eq!(dropped, 500);
+    fn a_sessions_output_is_rendered_not_replayed() {
+        // A session's buffer holds what a reader would SEE. `screen.rs` owns
+        // the rendering and its bounds; this pins that the terminal tool wires
+        // it in, because handing the raw stream to the model is what spent
+        // 172.8K tokens on an npm spinner.
+        let mut p = Screen::new();
+        for frame in 0..2_000 {
+            p.push(b"\x1b[1G\x1b[0K");
+            p.push(&[b"|/-\\\\"[frame % 4]]);
+        }
+        p.push(b"\x1b[1G\x1b[0Kadded 312 packages\n");
+        let (text, _) = p.take();
+        assert_eq!(text, "added 312 packages\n");
         // And taking twice does not re-deliver.
         assert_eq!(p.take().0, "");
     }

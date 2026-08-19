@@ -25,6 +25,7 @@ pub mod image;
 pub mod list;
 pub mod policy;
 pub mod read;
+pub mod screen;
 pub mod replace;
 pub mod sandbox;
 pub mod skill;

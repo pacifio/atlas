@@ -176,3 +176,53 @@ describe("run grouping", () => {
     expect(group?.summary).toBe("Ran 4 shell commands, read 3 files, searched 2 patterns +2 more");
   });
 });
+
+describe("summary casing", () => {
+  it("keeps a tool's own name capitalised", () => {
+    // The transcript rendered "TerminalWrite 6×, terminalStart 1×" — the
+    // sentence-casing pass could not tell a verb from a tool name.
+    const msgs: ChatMessage[] = [
+      msg({ id: "u1", role: "user", content: "start the dev" }),
+      msg({
+        id: "a1",
+        role: "assistant",
+        mode: "tool",
+        toolCalls: [
+          tool("TerminalStart", "other", {}),
+          tool("TerminalWrite", "other", {}),
+          tool("TerminalWrite", "other", {}),
+        ],
+      }),
+    ];
+    const { rows } = projectRows(msgs, {
+      expanded: new Set(),
+      expandedGroups: new Set(),
+      streaming: false,
+    });
+    const group = rows.find((r) => r.kind === RowKind.MarkerGroup);
+    expect(group?.summary).toBe("TerminalWrite 2×, TerminalStart 1×");
+  });
+
+  it("still lower-cases a trailing verb clause", () => {
+    const msgs: ChatMessage[] = [
+      msg({ id: "u1", role: "user", content: "go" }),
+      msg({
+        id: "a1",
+        role: "assistant",
+        mode: "tool",
+        toolCalls: [
+          tool("sh", "execute", { command: "ls" }),
+          tool("sh", "execute", { command: "pwd" }),
+          tool("Read", "read", { file_path: "a.rs" }),
+        ],
+      }),
+    ];
+    const { rows } = projectRows(msgs, {
+      expanded: new Set(),
+      expandedGroups: new Set(),
+      streaming: false,
+    });
+    const group = rows.find((r) => r.kind === RowKind.MarkerGroup);
+    expect(group?.summary).toBe("Ran 2 shell commands, read 1 file");
+  });
+});

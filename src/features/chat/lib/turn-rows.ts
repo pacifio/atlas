@@ -235,26 +235,24 @@ function summarise(markers: MarkerRow[]): string {
 
   const parts = [...counts.entries()]
     .sort((a, b) => b[1] - a[1])
-    .map(([verb, n]) => {
+    .map(([verb, n], i) => {
       const noun = nouns[verb];
+      // An unmapped verb is the tool's own name — keep its casing, since
+      // lower-casing it produced "terminalStart 1×".
       if (!noun) return `${verb} ${n}×`;
-      return `${verb} ${n} ${n === 1 ? noun[0] : noun[1]}`;
+      const label = i === 0 ? verb : verb.toLowerCase();
+      return `${label} ${n} ${n === 1 ? noun[0] : noun[1]}`;
     });
 
   // Three named kinds, then a tail count — a summary that needs a scrollbar is
   // not a summary, but hiding a kind behind "+1 more" is worse than naming it.
   const NAMED = 3;
-  if (parts.length <= NAMED) return sentence(parts.join(", "));
+  if (parts.length <= NAMED) return parts.join(", ");
   const rest = [...counts.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(NAMED)
     .reduce((n, [, c]) => n + c, 0);
-  return sentence(`${parts.slice(0, NAMED).join(", ")} +${rest} more`);
-}
-
-/** Lower-case every clause after the first: "Ran 2 shell commands, read 1 file". */
-function sentence(s: string): string {
-  return s.replace(/, ([A-Z])/g, (_, c: string) => `, ${c.toLowerCase()}`);
+  return `${parts.slice(0, NAMED).join(", ")} +${rest} more`;
 }
 
 /**
