@@ -320,6 +320,9 @@ impl Tool for EditTool {
         // content it already read instead of copying the whole file to have
         // something to hand the loop.
         let mut result_lf: std::borrow::Cow<'_, str> = std::borrow::Cow::Borrowed(&content_lf);
+        // Which ladder rung matched each op — carried on the result metadata
+        // so telemetry can see how often edits need more than "exact".
+        let mut strategies: Vec<&'static str> = Vec::with_capacity(ops.len());
         for (i, op) in ops.iter().enumerate() {
             let old_lf = op.old_string.replace("\r\n", "\n");
             let mut new_lf = op.new_string.replace("\r\n", "\n");
@@ -339,20 +342,30 @@ impl Tool for EditTool {
             // * both sides arrive ```-wrapped. The verbatim text is tried
             //   first; only a NotFound falls back to the de-fenced pair, so an
             //   edit whose payload really is a fenced block still matches.
-            let attempt = match replace::replace(&result_lf, &old_lf, &new_lf, op.replace_all) {
-                Err(replace::ReplaceError::NotFound) => {
-                    let stripped_old = coerce::strip_code_fences(&old_lf);
-                    if stripped_old != old_lf {
-                        let stripped_new = coerce::strip_code_fences(&new_lf);
-                        replace::replace(&result_lf, &stripped_old, &stripped_new, op.replace_all)
-                    } else {
-                        Err(replace::ReplaceError::NotFound)
+            let attempt =
+                match replace::replace_with_strategy(&result_lf, &old_lf, &new_lf, op.replace_all)
+                {
+                    Err(replace::ReplaceError::NotFound) => {
+                        let stripped_old = coerce::strip_code_fences(&old_lf);
+                        if stripped_old != old_lf {
+                            let stripped_new = coerce::strip_code_fences(&new_lf);
+                            replace::replace_with_strategy(
+                                &result_lf,
+                                &stripped_old,
+                                &stripped_new,
+                                op.replace_all,
+                            )
+                        } else {
+                            Err(replace::ReplaceError::NotFound)
+                        }
                     }
-                }
-                other => other,
-            };
+                    other => other,
+                };
             result_lf = match attempt {
-                Ok(s) => std::borrow::Cow::Owned(s),
+                Ok((s, strategy)) => {
+                    strategies.push(strategy);
+                    std::borrow::Cow::Owned(s)
+                }
                 Err(e) => {
                     let why = match e {
                         replace::ReplaceError::Identical => {
@@ -381,7 +394,8 @@ impl Tool for EditTool {
         let diff = mini_diff(&content_lf, &result_lf);
         // Captured before the line endings are restored, so the structured diff
         // is in the same normalised form the UI renders.
-        let structured = diff_metadata(&path, &content_lf, &result_lf);
+        let mut structured = diff_metadata(&path, &content_lf, &result_lf);
+        structured["strategies"] = serde_json::json!(strategies);
 
         // Restore line endings + BOM.
         let mut to_write = if crlf {

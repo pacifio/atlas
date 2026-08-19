@@ -30,6 +30,14 @@ pub trait AgentConnection: Send + Sync {
     /// through the stream (stop_reason = "cancelled").
     fn cancel(&self, session: SessionId) -> Result<()>;
 
+    /// Route a user message into the running turn (mid-turn steering): the
+    /// backend injects it before its next model call, after the in-flight
+    /// tool batch settles. Default: unsupported — the actor falls back to
+    /// supersede (cancel-then-send).
+    fn steer(&self, _session: &SessionId, _text: String) -> Result<()> {
+        Err(atlas_acp::AcpError::other("steering not supported"))
+    }
+
     /// Resolve a permission request the agent raised earlier.
     fn respond_permission(&self, request_id: Uuid, decision: PermissionDecision) -> Result<()>;
 

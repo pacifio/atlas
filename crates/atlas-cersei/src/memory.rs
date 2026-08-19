@@ -45,6 +45,33 @@ pub fn memory_search_available() -> bool {
     MEMORY_SEARCH.get().is_some()
 }
 
+/// `(cwd, agent, session)` — flush anything worth keeping to memory NOW,
+/// before compaction summarizes it away (contract C1). The payload is
+/// identity only: the Tauri layer keeps its own uncompacted transcript
+/// snapshot, so the flush re-reads from there rather than carrying the
+/// SDK's message vector across the crate boundary.
+pub type MemoryFlushFn = Arc<
+    dyn Fn(String, String, String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync,
+>;
+
+static MEMORY_FLUSH: OnceLock<MemoryFlushFn> = OnceLock::new();
+
+/// Register the pre-compaction flush backend. Called once by the Tauri layer
+/// at startup, beside [`register_memory_search`]; until then compaction runs
+/// without a flush (the degradation ladder's floor is today's behavior).
+pub fn register_memory_flush(f: MemoryFlushFn) {
+    let _ = MEMORY_FLUSH.set(f);
+}
+
+/// Run the registered flush, if any. Awaited by the agent's pre-compact hook
+/// — the whole point is that it completes before summarization discards the
+/// middle of the session.
+pub async fn memory_flush(cwd: String, agent: String, session: String) {
+    if let Some(flush) = MEMORY_FLUSH.get() {
+        flush(cwd, agent, session).await;
+    }
+}
+
 /// Tool the model calls to recall indexed project memory.
 pub struct SearchMemoryTool;
 

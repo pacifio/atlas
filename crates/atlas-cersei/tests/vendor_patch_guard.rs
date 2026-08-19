@@ -42,3 +42,42 @@ fn vendored_retry_patch_is_resolved() {
 fn vendored_delegate_patch_is_resolved() {
     assert_eq!(cersei_agent::ATLAS_DELEGATE_PATCH, "delegate-fallible-factory");
 }
+
+/// A send during a live turn steers it (injected at the tool-batch boundary)
+/// instead of being rejected. Without it mid-run course-correction requires
+/// cancelling the turn.
+#[test]
+fn vendored_steering_patch_is_resolved() {
+    assert_eq!(cersei_agent::ATLAS_STEERING_PATCH, "steering-queue-v1");
+}
+
+/// The doom-loop detector keys on (tool, input-hash) and requires failures,
+/// escalating to a permission ask on a repeat. Without it healthy Read/Edit
+/// alternation trips a false nudge and genuine loops thrash to the turn cap.
+#[test]
+fn vendored_doom_loop_patch_is_resolved() {
+    assert_eq!(cersei_agent::ATLAS_DOOM_LOOP_PATCH, "doom-loop-input-hash-v1");
+}
+
+/// A MaxTokens stop that carries tool_use blocks fails them closed with paired
+/// error tool_results. Without it unpaired tool_use in history is an API error
+/// on the next model call.
+#[test]
+fn vendored_max_tokens_guard_is_resolved() {
+    assert_eq!(cersei_agent::ATLAS_MAX_TOKENS_GUARD_PATCH, "max-tokens-guard-v1");
+}
+
+/// Auto-compaction fires the pre-compact hook (contract C1 — the memory
+/// flush) and emits CompactStart/CompactEnd, which upstream defined but never
+/// emitted — Atlas's read-registry reset listens for CompactEnd.
+#[test]
+fn vendored_pre_compact_patch_is_resolved() {
+    assert_eq!(cersei_agent::ATLAS_PRE_COMPACT_PATCH, "pre-compact-hook-v1");
+}
+
+/// The provider folds the `Retry-After` header into its SSE error strings so
+/// the retry classifier can pace backoff to the server's answer.
+#[test]
+fn vendored_retry_after_patch_is_resolved() {
+    assert_eq!(cersei::provider::ATLAS_RETRY_AFTER_PATCH, "retry-after-v1");
+}

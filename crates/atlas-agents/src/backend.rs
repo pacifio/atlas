@@ -88,6 +88,17 @@ pub trait AgentBackend: Send + Sync {
     /// turn epoch (the identity stamped onto this turn's events).
     fn mark_turn_started(&self, agent_id: AgentId, session_id: &SessionId) -> AcpResult<u64>;
     fn cancel_turn(&self, agent_id: AgentId, session_id: SessionId) -> AcpResult<()>;
+    /// Route a user message into the running turn (mid-turn steering).
+    /// Default: unsupported — callers fall back to supersede. Only the native
+    /// agent steers; ACP subprocess agents own their loops.
+    fn steer_turn(
+        &self,
+        _agent_id: AgentId,
+        _session_id: &SessionId,
+        _text: String,
+    ) -> AcpResult<()> {
+        Err(atlas_acp::AcpError::other("steering not supported"))
+    }
     fn respond_permission(
         &self,
         agent_id: AgentId,
@@ -293,6 +304,9 @@ impl AgentBackend for CerseiBackend {
     }
     fn cancel_turn(&self, agent_id: AgentId, session_id: SessionId) -> AcpResult<()> {
         self.0.cancel_turn(agent_id, &session_id_str(&session_id))
+    }
+    fn steer_turn(&self, agent_id: AgentId, session_id: &SessionId, text: String) -> AcpResult<()> {
+        self.0.steer_turn(agent_id, &session_id_str(session_id), text)
     }
     fn respond_permission(
         &self,

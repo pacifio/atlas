@@ -27,8 +27,13 @@ pub mod transcript;
 
 pub use atlas_cersei::SessionMeta;
 // Memory-RAG grounding seam for the native agent — the Tauri layer registers a
-// retrieval backend; the agent gets a `search_memory` tool.
-pub use atlas_cersei::{MemDoc, MemorySearchFn, ReplayItem, register_memory_search};
+// retrieval backend; the agent gets a `search_memory` tool. The flush seam is
+// its sibling: the Tauri layer registers a pre-compaction flush; the agent
+// runs it before auto-compaction summarizes the session (contract C1).
+pub use atlas_cersei::{
+    MemDoc, MemoryFlushFn, MemorySearchFn, ReplayItem, register_memory_flush,
+    register_memory_search,
+};
 // Native-agent session transcripts for the memory corpus (Chat / Graph index).
 pub use atlas_cersei::{corpus_sessions as cersei_corpus_sessions, CorpusSession as CerseiCorpusSession};
 // On-disk cersei session dir (cwd-hashed) — used by the session file-watcher.

@@ -241,21 +241,39 @@ impl SessionActor {
         match ctrl {
             Control::Send(text) => {
                 if self.running.is_some() {
-                    // Supersede = cancel-then-send (Zed §2.1): never two live
+                    // Steer first: a send during a live turn is a
+                    // course-correction — the backend injects it before its
+                    // next model call, after the in-flight tool batch, and
+                    // the turn continues with the new guidance. Only the
+                    // native agent supports this; on Err we fall back to
+                    // supersede = cancel-then-send (Zed §2.1): never two live
                     // turns on one session. Cancel the running turn and queue
                     // this send; `finalize` (the cancelled turn's terminal)
                     // drains it. Without this, the old turn's history write
                     // raced the new turn's (native: last-writer-wins data loss).
                     // The CANCEL_GRACE deadline below bounds the wait, so a
                     // wedged adapter can't hold the queued send hostage.
-                    self.queued_sends.push_back(text);
-                    if let Err(e) = self.conn.cancel(self.session_id.clone()) {
-                        tracing::warn!(
-                            target: "atlas_agents::actor",
-                            "cancel for superseding send failed: {e}"
-                        );
+                    match self.conn.steer(&self.session_id, text.clone()) {
+                        Ok(()) => {
+                            // Mirror the user message into actor state for
+                            // replay/snapshot parity, exactly as start_turn
+                            // does — the frontend already rendered it
+                            // optimistically, so no MessageAppended.
+                            let mut st = self.state.lock();
+                            st.messages.push(new_user_message(text));
+                            st.touch();
+                        }
+                        Err(_) => {
+                            self.queued_sends.push_back(text);
+                            if let Err(e) = self.conn.cancel(self.session_id.clone()) {
+                                tracing::warn!(
+                                    target: "atlas_agents::actor",
+                                    "cancel for superseding send failed: {e}"
+                                );
+                            }
+                            self.arm_cancel_deadline();
+                        }
                     }
-                    self.arm_cancel_deadline();
                 } else {
                     self.start_turn(text);
                 }
@@ -746,7 +764,7 @@ impl SessionActor {
 mod tests {
     use super::*;
     use crate::events::DeltaSink;
-    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::time::Duration;
     use tokio::sync::oneshot;
 
@@ -771,6 +789,10 @@ mod tests {
         pending_perms: Mutex<Vec<Uuid>>,
         /// Pluggable `SessionModes` capability (None = not advertised).
         modes: Mutex<Option<Arc<TestModes>>>,
+        /// When true, `steer` succeeds and records the text (native-agent
+        /// behavior); when false, the trait default's Err drives supersede.
+        steerable: AtomicBool,
+        steers: Mutex<Vec<String>>,
     }
 
     #[derive(Clone, Copy)]
@@ -816,6 +838,14 @@ mod tests {
         }
         fn respond_permission(&self, _r: Uuid, _d: PermissionDecision) -> AcpResult<()> {
             Ok(())
+        }
+        fn steer(&self, _s: &SessionId, text: String) -> AcpResult<()> {
+            if self.steerable.load(Ordering::SeqCst) {
+                self.steers.lock().push(text);
+                Ok(())
+            } else {
+                Err(AcpError::other("steering not supported"))
+            }
         }
         fn sweep_permissions(&self, _s: &SessionId) -> Vec<Uuid> {
             std::mem::take(&mut *self.pending_perms.lock())
@@ -925,6 +955,8 @@ mod tests {
             cancels: AtomicUsize::new(0),
             pending_perms: Mutex::new(Vec::new()),
             modes: Mutex::new(None),
+            steerable: AtomicBool::new(false),
+            steers: Mutex::new(Vec::new()),
         });
         let handle = SessionActor::spawn(
             state,
@@ -957,6 +989,46 @@ mod tests {
         for _ in 0..20 {
             tokio::task::yield_now().await;
         }
+    }
+
+    #[tokio::test]
+    async fn send_while_running_steers_when_supported() {
+        let (handle, _sink, mut txs, conn) = setup_gated(1);
+        conn.steerable.store(true, Ordering::SeqCst);
+        handle.control_tx.send(Control::Send("hi".into())).unwrap();
+        settle().await;
+        handle
+            .control_tx
+            .send(Control::Send("actually, use bun".into()))
+            .unwrap();
+        settle().await;
+        // Steered into the live turn: recorded, no cancel, no second prompt.
+        assert_eq!(conn.steers.lock().as_slice(), ["actually, use bun"]);
+        assert_eq!(conn.cancels.load(Ordering::SeqCst), 0);
+        assert_eq!(conn.prompts.load(Ordering::SeqCst), 1);
+        txs.remove(0).send("end_turn".into()).unwrap();
+        settle().await;
+    }
+
+    #[tokio::test]
+    async fn send_while_running_supersedes_when_steer_unsupported() {
+        let (handle, _sink, mut txs, conn) = setup_gated(2);
+        handle.control_tx.send(Control::Send("hi".into())).unwrap();
+        settle().await;
+        handle
+            .control_tx
+            .send(Control::Send("new plan".into()))
+            .unwrap();
+        settle().await;
+        // The steer default errs → supersede: cancel the running turn, queue
+        // the send, start it after the old turn's terminal.
+        assert_eq!(conn.cancels.load(Ordering::SeqCst), 1);
+        assert!(conn.steers.lock().is_empty());
+        txs.remove(0).send("cancelled".into()).unwrap();
+        settle().await;
+        assert_eq!(conn.prompts.load(Ordering::SeqCst), 2);
+        txs.remove(0).send("end_turn".into()).unwrap();
+        settle().await;
     }
 
     #[tokio::test]

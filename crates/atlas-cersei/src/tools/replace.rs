@@ -556,19 +556,22 @@ pub fn is_disproportionate_match(search: &str, old_string: &str) -> bool {
 
 type Strategy = fn(&str, &str) -> Vec<String>;
 
-const STRATEGIES: &[Strategy] = &[
-    simple,
-    line_trimmed,
+/// The ladder, with the name each rung reports. The name rides the edit
+/// result's metadata so telemetry can see how far down the ladder real edits
+/// land ("exact" is free; anything else is the model mis-quoting the file).
+const STRATEGIES: &[(&str, Strategy)] = &[
+    ("exact", simple),
+    ("line_trimmed", line_trimmed),
     // Head of the guarded tail: exact modulo typographic punctuation, so it is
     // the most precise fallback and runs before anything Levenshtein-scored.
-    punctuation_folded,
-    block_anchor,
-    whitespace_normalized,
-    indentation_flexible,
-    escape_normalized,
-    trimmed_boundary,
-    context_aware,
-    multi_occurrence,
+    ("punctuation_folded", punctuation_folded),
+    ("block_anchor", block_anchor),
+    ("whitespace_normalized", whitespace_normalized),
+    ("indentation_flexible", indentation_flexible),
+    ("escape_normalized", escape_normalized),
+    ("trimmed_boundary", trimmed_boundary),
+    ("context_aware", context_aware),
+    ("multi_occurrence", multi_occurrence),
 ];
 
 /// The replacer driver. Tries each strategy in order; the first candidate that
@@ -580,6 +583,16 @@ pub fn replace(
     new_string: &str,
     replace_all: bool,
 ) -> Result<String, ReplaceError> {
+    replace_with_strategy(content, old_string, new_string, replace_all).map(|(s, _)| s)
+}
+
+/// [`replace`], also naming the ladder strategy that produced the match.
+pub fn replace_with_strategy(
+    content: &str,
+    old_string: &str,
+    new_string: &str,
+    replace_all: bool,
+) -> Result<(String, &'static str), ReplaceError> {
     if old_string == new_string {
         return Err(ReplaceError::Identical);
     }
@@ -595,7 +608,7 @@ pub fn replace(
     // exactly never ran and the user saw a refusal instead of an edit.
     let mut found_proportionate = false;
 
-    for strategy in STRATEGIES {
+    for (name, strategy) in STRATEGIES {
         for search in strategy(content, old_string) {
             let Some(index) = content.find(&search) else {
                 continue;
@@ -606,7 +619,7 @@ pub fn replace(
             }
             found_proportionate = true;
             if replace_all {
-                return Ok(content.replace(&search, new_string));
+                return Ok((content.replace(&search, new_string), name));
             }
             let last = content.rfind(&search).unwrap_or(index);
             if index != last {
@@ -616,7 +629,7 @@ pub fn replace(
             out.push_str(&content[..index]);
             out.push_str(new_string);
             out.push_str(&content[index + search.len()..]);
-            return Ok(out);
+            return Ok((out, name));
         }
     }
 

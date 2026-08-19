@@ -19,7 +19,9 @@ mod memory;
 mod provider;
 mod store;
 
-pub use memory::{MemDoc, MemorySearchFn, register_memory_search};
+pub use memory::{
+    MemDoc, MemoryFlushFn, MemorySearchFn, register_memory_flush, register_memory_search,
+};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -50,10 +52,18 @@ const _CERSEI_CANCEL_PATCH_GUARD: &str = cersei_agent::ATLAS_CANCEL_PATCH;
 // and the image tool's payload — is discarded one frame after being computed,
 // and the UI is left re-deriving a diff from raw tool input.
 const _CERSEI_TOOL_METADATA_PATCH_GUARD: &str = cersei_agent::ATLAS_TOOL_METADATA_PATCH;
-// The remaining two vendored patches. All four are guarded now: a patch without
+// The remaining vendored patches. Every patch is guarded: a patch without
 // one is the patch a re-vendor drops silently.
 const _CERSEI_RETRY_PATCH_GUARD: &str = cersei_agent::ATLAS_RETRY_PATCH;
 const _CERSEI_DELEGATE_PATCH_GUARD: &str = cersei_agent::ATLAS_DELEGATE_PATCH;
+// Phase 0 (master plan): steering queue, input-hash doom loop + escalation,
+// MaxTokens fail-closed guard, pre-compact hook + CompactStart/End emission,
+// and the provider-side Retry-After passthrough the retry classifier reads.
+const _CERSEI_STEERING_PATCH_GUARD: &str = cersei_agent::ATLAS_STEERING_PATCH;
+const _CERSEI_DOOM_LOOP_PATCH_GUARD: &str = cersei_agent::ATLAS_DOOM_LOOP_PATCH;
+const _CERSEI_MAX_TOKENS_GUARD: &str = cersei_agent::ATLAS_MAX_TOKENS_GUARD_PATCH;
+const _CERSEI_PRE_COMPACT_PATCH_GUARD: &str = cersei_agent::ATLAS_PRE_COMPACT_PATCH;
+const _CERSEI_RETRY_AFTER_PATCH_GUARD: &str = cersei::provider::ATLAS_RETRY_AFTER_PATCH;
 use uuid::Uuid;
 
 pub use store::SessionMeta;
@@ -275,6 +285,14 @@ struct SessionEntry {
     /// session, shared by the permission policy and by every guarded tool, so
     /// "Allow for this session" and read-before-edit both span turns.
     policy: Arc<tools::ToolPolicy>,
+    /// The in-flight turn's agent, weakly held so a finished turn's agent can
+    /// drop. A send that arrives while `busy` routes into this agent's
+    /// steering queue (course-correction) instead of being rejected.
+    live_agent: Mutex<std::sync::Weak<cersei::Agent>>,
+    /// Permission prompts actually raised to the user this turn (mode
+    /// shortcuts and gate auto-verdicts don't count). Reset by `send_prompt`,
+    /// read into the `atlas::harness` turn line.
+    permission_asks: AtomicU64,
 }
 
 /// Clears `SessionEntry::busy` AND the turn's cancel token on every exit
@@ -368,6 +386,8 @@ impl CerseiRuntime {
             turn_seq: AtomicU64::new(0),
             busy: AtomicBool::new(false),
             policy: tools::ToolPolicy::new(&cwd, &session_id),
+            live_agent: Mutex::new(std::sync::Weak::new()),
+            permission_asks: AtomicU64::new(0),
         });
         agent.sessions.insert(session_id.clone(), entry);
         Ok(NewSessionInfo {
@@ -412,6 +432,8 @@ impl CerseiRuntime {
             turn_seq: AtomicU64::new(0),
             busy: AtomicBool::new(false),
             policy: tools::ToolPolicy::new(&cwd, &sid),
+            live_agent: Mutex::new(std::sync::Weak::new()),
+            permission_asks: AtomicU64::new(0),
         });
         agent.sessions.insert(sid, entry);
         Ok(Some(modes_blob("default")))
@@ -617,6 +639,22 @@ impl CerseiRuntime {
         swept
     }
 
+    /// Route a user message into the running turn's steering queue: it is
+    /// injected before the next model call, after the in-flight tool batch
+    /// settles. Errs when no turn is live (send normally instead) — including
+    /// the closing race, where the caller falls back to a fresh send.
+    pub fn steer_turn(&self, agent_id: AgentId, session_id: &str, text: String) -> Result<()> {
+        let entry = self.session(agent_id, session_id)?;
+        let guard = entry.live_agent.lock();
+        match guard.upgrade() {
+            Some(live) => {
+                live.steer(text);
+                Ok(())
+            }
+            None => Err(AcpError::other("no running turn to steer")),
+        }
+    }
+
     /// Resolve a pending permission request raised during a turn.
     pub fn respond_permission(
         &self,
@@ -647,16 +685,27 @@ impl CerseiRuntime {
         let agent = self.agent(agent_id)?;
         let sid = session_id_str(&session_id);
         let entry = self.session(agent_id, &sid)?;
-        // Reject a second concurrent turn on this session: both would clone
-        // the same history and the last finisher's `history = msgs` + save
-        // would silently drop the other turn's messages. The actor serializes
-        // sends per session; this is the backstop for any other caller.
+        // A second concurrent turn on this session must not run: both would
+        // clone the same history and the last finisher's `history = msgs` +
+        // save would silently drop the other turn's messages. But a send
+        // during a live turn is a course-correction, not an error — route it
+        // into the running agent's steering queue (it lands before the next
+        // model call, after the in-flight tool batch settles). The error
+        // return remains for the closing race where the turn's agent is
+        // already gone; the actor then supersedes as before.
         if entry.busy.swap(true, Ordering::SeqCst) {
+            let guard = entry.live_agent.lock();
+            if let Some(live) = guard.upgrade() {
+                live.steer(text);
+                return Ok("steered".to_string());
+            }
             return Err(AcpError::other(
                 "a turn is already running for this session; cancel it or wait for it to finish",
             ));
         }
         let _busy = BusyGuard(entry.clone());
+        let turn_started = std::time::Instant::now();
+        entry.permission_asks.store(0, Ordering::SeqCst);
         // Stamp every event this turn emits with its identity (0 = no
         // mark_turn_started yet → unstamped, e.g. direct runtime callers).
         let turn = {
@@ -844,10 +893,30 @@ impl CerseiRuntime {
                 builder = builder.thinking_budget(budget);
             }
         }
+        // C1 — pre-compaction memory flush. The hook's payload (the SDK's
+        // message snapshot) is deliberately unused: the Tauri layer keeps its
+        // own uncompacted transcript, so the flush re-reads from there
+        // instead of carrying SDK types across the crate boundary. No-op
+        // until the Tauri layer registers a flush backend.
+        {
+            let cwd = entry.cwd.clone();
+            let flush_sid = sid.clone();
+            builder = builder.on_pre_compact(Arc::new(move |_msgs| {
+                let cwd = cwd.clone();
+                let sid = flush_sid.clone();
+                Box::pin(async move {
+                    memory::memory_flush(cwd, CERSEI_PLUGIN_ID.to_string(), sid).await;
+                })
+            }));
+        }
         let built = builder
             .build()
             .map_err(|e| AcpError::other(format!("build agent: {e}")))?;
         let built = Arc::new(built);
+        // Published for steering; cleared (under the same lock as the final
+        // steering drain) before this turn ends, so a steer either lands in
+        // the queue in time or fails over to the actor's supersede path.
+        *entry.live_agent.lock() = Arc::downgrade(&built);
 
         let mut stream = built.run_stream(&text);
         let mut stop = "end_turn".to_string();
@@ -862,6 +931,15 @@ impl CerseiRuntime {
             cersei_compression::CompressionLevel::Off
         });
         let mut turn_error: Option<String> = None;
+        // `atlas::harness` per-turn counters (master plan §2) — shape of
+        // usage only, accumulated off the event stream.
+        let mut edit_calls: u64 = 0;
+        let mut edit_not_found: u64 = 0;
+        let mut edit_strategies: Vec<String> = Vec::new();
+        let mut doom_loop_triggers: u64 = 0;
+        let mut steered_count: u64 = 0;
+        let mut retries: u64 = 0;
+        let mut compaction_events: u64 = 0;
         while let Some(ev) = stream.next().await {
             // Compaction summarises old tool results out of the conversation.
             // The repeat-read stub's promise — "its contents are already in
@@ -870,6 +948,40 @@ impl CerseiRuntime {
             // suppressing reads the model can no longer see the answers to.
             if matches!(ev, cersei::events::AgentEvent::CompactEnd { .. }) {
                 tool_policy.forget_served();
+            }
+            {
+                use cersei::events::AgentEvent as E;
+                match &ev {
+                    E::ToolEnd {
+                        name,
+                        is_error,
+                        result,
+                        metadata,
+                        ..
+                    } if name == "Edit" => {
+                        edit_calls += 1;
+                        if *is_error {
+                            if result.contains("Could not find old_string") {
+                                edit_not_found += 1;
+                            }
+                        } else if let Some(list) = metadata
+                            .as_ref()
+                            .and_then(|m| m.get("strategies"))
+                            .and_then(|s| s.as_array())
+                        {
+                            for s in list.iter().filter_map(|s| s.as_str()) {
+                                if s != "exact" && !edit_strategies.iter().any(|e| e == s) {
+                                    edit_strategies.push(s.to_string());
+                                }
+                            }
+                        }
+                    }
+                    E::Retry { .. } => retries += 1,
+                    E::CompactEnd { .. } => compaction_events += 1,
+                    E::DoomLoop { .. } => doom_loop_triggers += 1,
+                    E::Steered { .. } => steered_count += 1,
+                    _ => {}
+                }
             }
             match translate_event(ev, &sink, agent_id, &session_id, &mut todo_ids, &mut acct) {
                 TurnStep::Continue => {}
@@ -943,11 +1055,47 @@ impl CerseiRuntime {
             u.clone()
         };
 
+        // Close the steering window, then recover anything that slipped in
+        // after the runner's final drain: clearing the handle and draining
+        // under one lock means a concurrent steer either landed in time (and
+        // is recovered here) or failed over to the actor's supersede path —
+        // never silently dropped after an Ok("steered").
+        let leftover_steered = {
+            let mut guard = entry.live_agent.lock();
+            *guard = std::sync::Weak::new();
+            built.take_steered()
+        };
+
+        // One structured line per user turn — the `atlas::harness` telemetry
+        // discipline (master plan §2). Shape of usage only: no content, no
+        // paths. The M0 eval harness consumes this same schema.
+        tracing::info!(
+            target: "atlas::harness",
+            turn_id = turn.unwrap_or(0),
+            edit_calls,
+            edit_strategy_used = %edit_strategies.join(","),
+            edit_not_found,
+            doom_loop_triggers,
+            steered = steered_count,
+            retries,
+            compaction_events,
+            permission_asks = entry.permission_asks.load(Ordering::SeqCst),
+            tokens_in = acct.input_tokens,
+            tokens_out = acct.output_tokens,
+            wall_clock_ms = turn_started.elapsed().as_millis() as u64,
+            stop = %stop,
+            "turn"
+        );
+
         // Persist the updated conversation for resume + context continuation —
         // for FAILED turns too: the user message and any partial progress stay
         // in runtime history (next turn keeps context) and on disk (resume
         // shows the failed turn with its error marker).
-        let msgs = built.messages();
+        let mut msgs = built.messages();
+        for text in leftover_steered {
+            // Rendered by the FE as sent; answered by the next turn.
+            msgs.push(Message::user(&text));
+        }
         *entry.history.lock() = msgs.clone();
         let now = chrono::Utc::now().to_rfc3339();
         store::save(
@@ -1045,9 +1193,59 @@ struct UiPolicy {
     policy: Arc<tools::ToolPolicy>,
 }
 
+impl UiPolicy {
+    /// Prompt the UI and block this tool until the user responds. Counted as
+    /// a real ask for the `atlas::harness` turn line — mode shortcuts and
+    /// gate auto-verdicts never reach here.
+    async fn prompt_user(
+        &self,
+        request: &PermissionRequest,
+        reason: &str,
+        cache_key: Option<String>,
+    ) -> CerseiDecision {
+        self.pending.permission_asks.fetch_add(1, Ordering::SeqCst);
+        let request_id = Uuid::new_v4();
+        let (tx, rx) = oneshot::channel();
+        self.pending.pending.insert(request_id, tx);
+        self.sink.emit(
+            self.agent_id,
+            AcpEvent::PermissionRequest {
+                request_id,
+                session_id: self.session_id.clone(),
+                tool_call: permission_tool_call(request, reason),
+                options: permission_options(),
+            },
+            None,
+        );
+        match rx.await {
+            Ok(decision) => {
+                // "Allow for this session" was a no-op: cersei's
+                // `AllowForSession` is advisory and nothing stored it, so the
+                // identical call prompted again immediately. Store it here.
+                // `cache_key` is `None` for a destructive command, which is
+                // what keeps those prompting every time.
+                if matches!(decision, CerseiDecision::AllowForSession) {
+                    self.policy.remember_approval(cache_key.as_deref());
+                }
+                decision
+            }
+            Err(_) => CerseiDecision::Deny("cancelled".into()),
+        }
+    }
+}
+
 #[async_trait]
 impl PermissionPolicy for UiPolicy {
     async fn check(&self, request: &PermissionRequest) -> CerseiDecision {
+        // The runner's doom-loop escalation (M1). Not a real tool — always a
+        // prompt so the user decides whether a thrashing run continues.
+        // Except bypass, whose meaning is "don't ask me anything".
+        if request.tool_name == cersei_agent::DOOM_LOOP_ASK {
+            if matches!(mode_kind(&self.mode), ModeKind::Bypass) {
+                return CerseiDecision::Allow;
+            }
+            return self.prompt_user(request, &request.description, None).await;
+        }
         // Mode shortcuts that don't need a prompt. Normalize first — the mode id
         // can arrive from another agent's vocabulary (Claude's
         // "bypassPermissions", Codex's "danger-full-access", etc.) if a mode
@@ -1093,34 +1291,7 @@ impl PermissionPolicy for UiPolicy {
             } => (cache_key, reason),
         };
 
-        // Prompt the UI and block this tool until the user responds.
-        let request_id = Uuid::new_v4();
-        let (tx, rx) = oneshot::channel();
-        self.pending.pending.insert(request_id, tx);
-        self.sink.emit(
-            self.agent_id,
-            AcpEvent::PermissionRequest {
-                request_id,
-                session_id: self.session_id.clone(),
-                tool_call: permission_tool_call(request, &reason),
-                options: permission_options(),
-            },
-            None,
-        );
-        match rx.await {
-            Ok(decision) => {
-                // "Allow for this session" was a no-op: cersei's
-                // `AllowForSession` is advisory and nothing stored it, so the
-                // identical call prompted again immediately. Store it here.
-                // `cache_key` is `None` for a destructive command, which is
-                // what keeps those prompting every time.
-                if matches!(decision, CerseiDecision::AllowForSession) {
-                    self.policy.remember_approval(cache_key.as_deref());
-                }
-                decision
-            }
-            Err(_) => CerseiDecision::Deny("cancelled".into()),
-        }
+        self.prompt_user(request, &reason, cache_key).await
     }
 }
 
@@ -1151,9 +1322,16 @@ fn permission_tool_call(req: &PermissionRequest, reason: &str) -> acp_schema::To
     } else {
         req.description.as_str()
     };
+    // The doom-loop escalation is not a tool; its sentinel name would render
+    // as a baffling modal title.
+    let title = if req.tool_name == cersei_agent::DOOM_LOOP_ASK {
+        "Agent stuck in a loop"
+    } else {
+        req.tool_name.as_str()
+    };
     let mut v = serde_json::json!({
         "toolCallId": req.id,
-        "title": req.tool_name,
+        "title": title,
         "kind": kind,
         "status": "pending",
         "rawInput": req.tool_input,
@@ -2073,6 +2251,8 @@ mod tests {
             turn_seq: AtomicU64::new(0),
             busy: AtomicBool::new(false),
             policy: tool_policy.clone(),
+            live_agent: Mutex::new(std::sync::Weak::new()),
+            permission_asks: AtomicU64::new(0),
         });
         UiPolicy {
             sink: s,
@@ -2160,6 +2340,39 @@ mod tests {
             p.check(&req(PermissionLevel::Forbidden)).await,
             CerseiDecision::Deny(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn doom_loop_ask_prompts_and_counts() {
+        // The runner's escalation sentinel must reach the user as a prompt in
+        // ask mode — not the gate's auto-verdict for an unknown tool — and
+        // must count as a real ask for the harness turn line.
+        let p = Arc::new(policy("default"));
+        let mut r = req(PermissionLevel::Dangerous);
+        r.tool_name = cersei_agent::DOOM_LOOP_ASK.into();
+        let p2 = Arc::clone(&p);
+        let task = tokio::spawn(async move { p2.check(&r).await });
+        for _ in 0..200 {
+            if !p.pending.pending.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let key = *p.pending.pending.iter().next().expect("ask raised").key();
+        let (_, tx) = p.pending.pending.remove(&key).unwrap();
+        let _ = tx.send(CerseiDecision::AllowOnce);
+        assert!(matches!(task.await.unwrap(), CerseiDecision::AllowOnce));
+        assert_eq!(p.pending.permission_asks.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn doom_loop_ask_in_bypass_allows_without_prompt() {
+        // Bypass means "don't ask me anything" — the escalation honors it.
+        let p = policy("bypass");
+        let mut r = req(PermissionLevel::Dangerous);
+        r.tool_name = cersei_agent::DOOM_LOOP_ASK.into();
+        assert!(matches!(p.check(&r).await, CerseiDecision::Allow));
+        assert_eq!(p.pending.permission_asks.load(Ordering::SeqCst), 0);
     }
 
     #[test]

@@ -57,6 +57,10 @@ impl AgentConnection for BackendConnection {
         self.backend.cancel_turn(self.agent_id, session)
     }
 
+    fn steer(&self, session: &SessionId, text: String) -> Result<()> {
+        self.backend.steer_turn(self.agent_id, session, text)
+    }
+
     fn respond_permission(&self, request_id: Uuid, decision: PermissionDecision) -> Result<()> {
         self.backend
             .respond_permission(self.agent_id, request_id, decision)
