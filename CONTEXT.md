@@ -65,6 +65,14 @@ Because the gate sees every call, a shell command that names a path registers it
 so the precondition holds in both tool tiers.
 _Avoid_: file cache, snapshot.
 
+**Repeat read**:
+A read whose answer is already in the conversation: the same tool, path and range, of a
+file that has not changed since. The gate answers it with a stub naming the ways forward
+rather than the file, because the second copy costs the whole file in context and carries
+no information. Distinct from a *stale* read, where the file did change and the full
+contents are served.
+_Avoid_: cache hit, dedupe.
+
 **Enforcement tier**:
 Which rung of the ladder is actually in force for a session — sandbox, containment,
 approvals, or nothing. Resolved at runtime from what the host provides, and always

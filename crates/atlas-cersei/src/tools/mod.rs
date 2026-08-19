@@ -41,6 +41,10 @@ pub use guard::{guard_all, Guarded};
 pub use policy::{Decision, EnforcementTier, Freshness, ToolPolicy};
 pub use tiers::{ModelCapabilities, ToolTier};
 
+/// Where `ExaSearch` looks for its key. Named here because whether the tool is
+/// registered has to be decided by the same condition the tool itself checks.
+const EXA_API_KEY: &str = "EXA_API_KEY";
+
 /// Absolutise a (possibly relative) path against the session working directory.
 ///
 /// This is *not* containment — [`ToolPolicy::contain`] is, and the guard has
@@ -125,12 +129,24 @@ pub fn atlas_coding_with(
         // walks via the `ignore` crate directly.
         tools.push(Box::new(list::ListTool));
         tools.push(Box::new(t::notebook_edit::NotebookEditTool));
-        // D13 puts these three in a *deferred* tier — described in a searchable
+        // D13 puts these in a *deferred* tier — described in a searchable
         // catalogue rather than the default list. That machinery does not exist
-        // yet, and dropping them instead would remove a capability users have
-        // today, so they sit in the structured tier until it does.
+        // yet, and dropping a capability users have today would be worse, so
+        // they sit in the structured tier until it does.
+        //
+        // `CodeSearch` is BM25 over the working tree — no index, no key, no
+        // network — and returns ranked snippets with line numbers, so it often
+        // answers a question that would otherwise cost a whole-file `Read`. It
+        // earns its place in the list.
         tools.push(Box::new(t::code_search::CodeSearchTool::new()));
-        tools.push(Box::new(t::exa_search::ExaSearchTool));
+        // `ExaSearch` reads its key from the environment and errors at call
+        // time without one. It carries the largest schema in the registry and
+        // that schema is re-sent on every request of every turn, so registering
+        // it unconditionally charges every user for a tool most of them cannot
+        // run. Present only when it can actually work.
+        if std::env::var_os(EXA_API_KEY).is_some_and(|k| !k.is_empty()) {
+            tools.push(Box::new(t::exa_search::ExaSearchTool));
+        }
     }
 
     // ── Platform-gated ──────────────────────────────────────────────────────
@@ -299,6 +315,31 @@ mod tests {
         }
         assert!(checked >= 4, "only {checked} path-taking tools were exercised");
         assert_eq!(std::fs::read_to_string(outside.path().join("secret.txt")).unwrap(), "shh");
+    }
+
+    #[test]
+    fn exa_search_is_registered_only_when_it_can_run() {
+        // The largest schema in the registry, re-sent on every request, for a
+        // tool that errors at call time without a key. Asserted against the
+        // environment the test runs in rather than by mutating it: `set_var` is
+        // process-global and these tests run in parallel.
+        let tmp = TmpDir::new();
+        let policy = ToolPolicy::contained(tmp.path());
+        let all = names(&atlas_coding_with(
+            None,
+            policy,
+            ToolTier::Structured,
+            ModelCapabilities::default(),
+        ));
+        let usable = std::env::var(EXA_API_KEY).is_ok_and(|k| !k.is_empty());
+        assert_eq!(
+            all.contains(&"ExaSearch".to_string()),
+            usable,
+            "ExaSearch presence must track EXA_API_KEY, got {all:?}"
+        );
+        // CodeSearch is BM25-only — no key, no index, no network — so it is
+        // always available and must not be gated alongside it.
+        assert!(all.contains(&"CodeSearch".to_string()), "{all:?}");
     }
 
     #[test]

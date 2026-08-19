@@ -192,11 +192,20 @@ function isInternalTool(tc: ToolCallDisplay): boolean {
 
 // ── Marker labelling ───────────────────────────────────────────────────────
 
-/** Trim a path to something that reads in one line without the eye scanning. */
-function shortPath(p: string): string {
+/**
+ * Trim a path to something that reads in one line without the eye scanning.
+ *
+ * Keeps the leading directories and the filename and elides the middle. The
+ * segments nearest a file — `src`, `lib`, `components` — are the ones least
+ * likely to tell two files apart, so keeping the *last* two rendered both
+ * `crates/atlas-cersei/src/lib.rs` and `crates/atlas-agents/src/lib.rs` as
+ * `src/lib.rs`, and a transcript full of `Read src/lib.rs` said nothing about
+ * which file was read.
+ */
+export function shortPath(p: string): string {
   const parts = p.split("/").filter(Boolean);
-  if (parts.length <= 2) return parts.join("/");
-  return parts.slice(-2).join("/");
+  if (parts.length <= 3) return parts.join("/");
+  return [...parts.slice(0, 2), "…", parts[parts.length - 1]].join("/");
 }
 
 /**

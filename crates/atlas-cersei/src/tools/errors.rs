@@ -127,6 +127,23 @@ pub fn file_changed(rel_path: &str) -> String {
     )
 }
 
+/// An identical read of a file that has not changed since it was last read.
+///
+/// The content is already in the conversation, so returning it again tells the
+/// model nothing it does not have and costs a full copy of the file in context
+/// — on a large file that is tens of thousands of tokens per repeat. The
+/// message has to name the alternatives, or a model that wanted the file will
+/// simply reach for `cat` instead, which is strictly worse.
+pub fn already_read(rel_path: &str) -> String {
+    format!(
+        "{rel_path} has not changed since you read it earlier in this session, so its contents \
+         are already in this conversation — use them rather than reading it again. To see a \
+         different part of the file, call Read with offset/limit. To find something in it, call \
+         Grep. To modify it, call Edit now: the read-before-edit precondition is already \
+         satisfied."
+    )
+}
+
 /// A write failed and the original file is intact, because writes go through a
 /// temporary file and a rename.
 pub fn write_failed(rel_path: &str, err: &str) -> String {
@@ -200,6 +217,17 @@ mod tests {
             stale.contains("was not applied"),
             "the model must know the write did not land"
         );
+    }
+
+    #[test]
+    fn the_repeat_read_message_names_every_way_forward() {
+        // A model that is told "no" without being told "instead" falls back to
+        // a shell `cat`, which costs the same tokens and skips the registry.
+        let msg = already_read("src/lib.rs");
+        assert!(msg.contains("src/lib.rs"));
+        for way_out in ["offset/limit", "Grep", "Edit"] {
+            assert!(msg.contains(way_out), "no mention of {way_out}: {msg}");
+        }
     }
 
     #[test]

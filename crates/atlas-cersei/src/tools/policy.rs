@@ -177,6 +177,16 @@ pub struct ToolPolicy {
     approvals: DashMap<String, ()>,
     /// Read registry, keyed by canonical path.
     reads: DashMap<PathBuf, ReadRecord>,
+    /// Reads already answered this session, keyed by the guard's read
+    /// signature (tool, canonical path, range), holding the state of the file
+    /// at the moment it was answered. This is what lets an identical re-read of
+    /// an unchanged file return a stub instead of another full copy.
+    ///
+    /// It carries its own [`ReadRecord`] rather than consulting `reads`,
+    /// because a write *refreshes* the read record — so a read after an edit
+    /// would look fresh against `reads` and be suppressed, hiding the model's
+    /// own change from it.
+    served: DashMap<String, ReadRecord>,
     /// Set once the session's spill directory has been created, so the common
     /// path does not stat it on every truncation.
     spill_ready: AtomicBool,
@@ -205,6 +215,7 @@ impl ToolPolicy {
             sandbox,
             approvals: DashMap::new(),
             reads: DashMap::new(),
+            served: DashMap::new(),
             spill_ready: AtomicBool::new(false),
         })
     }
@@ -227,6 +238,7 @@ impl ToolPolicy {
             sandbox: None,
             approvals: DashMap::new(),
             reads: DashMap::new(),
+            served: DashMap::new(),
             spill_ready: AtomicBool::new(false),
         })
     }
@@ -261,6 +273,7 @@ impl ToolPolicy {
             sandbox,
             approvals: DashMap::new(),
             reads: DashMap::new(),
+            served: DashMap::new(),
             spill_ready: AtomicBool::new(false),
         })
     }
@@ -343,6 +356,17 @@ impl ToolPolicy {
         );
     }
 
+    /// The current state of `path`, or `None` if it cannot be stated. Absent
+    /// metadata means "cannot prove unchanged", which every caller treats as
+    /// changed.
+    fn current_record(path: &Path) -> Option<ReadRecord> {
+        let meta = std::fs::metadata(path).ok()?;
+        Some(ReadRecord {
+            mtime: meta.modified().ok(),
+            len: meta.len(),
+        })
+    }
+
     /// Consult the registry before a write.
     pub fn check_fresh(&self, path: &Path) -> Freshness {
         let Some(record) = self.reads.get(path) else {
@@ -363,6 +387,29 @@ impl ToolPolicy {
             Freshness::Fresh
         } else {
             Freshness::Stale
+        }
+    }
+
+    /// Whether this exact read was already answered and the file has not
+    /// changed since.
+    ///
+    /// The signature comes from the guard and names the tool, the canonical
+    /// path, and the range asked for, so paging through a large file is never
+    /// suppressed — only a call that would return byte-identical output. The
+    /// comparison against the snapshot taken when the read was answered is what
+    /// keeps this honest: a file touched since, by anyone, is served in full.
+    pub fn already_served(&self, signature: &str, path: &Path) -> bool {
+        let Some(answered) = self.served.get(signature) else {
+            return false;
+        };
+        Self::current_record(path).is_some_and(|now| now == *answered)
+    }
+
+    /// Remember that a read was answered, together with the state of the file
+    /// at that moment, so an identical repeat can be short-circuited.
+    pub fn record_served(&self, signature: String, path: &Path) {
+        if let Some(record) = Self::current_record(path) {
+            self.served.insert(signature, record);
         }
     }
 

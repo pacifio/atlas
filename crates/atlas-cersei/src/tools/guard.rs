@@ -11,10 +11,12 @@
 //! 1. **Coerce** the arguments against the tool's declared schema.
 //! 2. **Contain** every path the call names, and rewrite it to its canonical
 //!    absolute form, so the tool underneath cannot resolve it differently.
-//! 3. **Check freshness** for a write-class call: refuse if the file was never
+//! 3. **Short-circuit a repeat read** whose answer is already in the
+//!    conversation and whose file has not changed.
+//! 4. **Check freshness** for a write-class call: refuse if the file was never
 //!    read this session, or changed since it was.
-//! 4. **Execute**, with `working_dir` normalised to the canonical root.
-//! 5. **Record** the read (or refresh the record after a write), and emit one
+//! 5. **Execute**, with `working_dir` normalised to the canonical root.
+//! 6. **Record** the read (or refresh the record after a write), and emit one
 //!    telemetry line.
 //!
 //! Classification, the approval cache, and the prompt itself sit in
@@ -115,7 +117,35 @@ impl Tool for Guarded {
             rewrite_paths(&mut input, &self.policy);
         }
 
-        // 3. Freshness — before execution, so a rejection message and the file
+        // 3. A repeat read whose answer is already in the conversation. The
+        //    policy recorded what the file looked like when the same call was
+        //    last answered; if it still looks that way the output would be
+        //    byte-identical, and returning it costs another full copy of the
+        //    file for nothing. Restricted to `Read` because it is the
+        //    tool that returns whole file contents; a repeated `Grep` or `List`
+        //    costs a fraction of the same call and its result is cheap enough
+        //    that suppressing it would trade tokens for confusion.
+        let mut read_signature: Option<(String, std::path::PathBuf)> = None;
+        if name == "Read" {
+            if let Some(path) = canonical.first() {
+                let sig = signature_for(&name, path, &input);
+                if self.policy.already_served(&sig, path) {
+                    return finish(
+                        &self.policy,
+                        &name,
+                        "repeat",
+                        started,
+                        ToolResult::success(errors::already_read(&display(
+                            path,
+                            self.policy.root(),
+                        ))),
+                    );
+                }
+                read_signature = Some((sig, path.clone()));
+            }
+        }
+
+        // 4. Freshness — before execution, so a rejection message and the file
         //    on disk can never disagree.
         if self.is_write_class() {
             for path in &canonical {
@@ -146,15 +176,20 @@ impl Tool for Guarded {
             }
         }
 
-        // 4. Execute with the canonical root as the working directory, so a
+        // 5. Execute with the canonical root as the working directory, so a
         //    tool that joins a relative path lands in the same place the guard
         //    just proved safe.
         let mut inner_ctx = ctx.clone();
         inner_ctx.working_dir = self.policy.root().to_path_buf();
         let result = self.inner.execute(input, &inner_ctx).await;
 
-        // 5/6. Record and report.
+        // 6/7. Record and report.
         if !result.is_error {
+            // Recorded only on success: a read that failed put nothing in the
+            // conversation, so repeating it must not be short-circuited.
+            if let Some((sig, path)) = read_signature {
+                self.policy.record_served(sig, &path);
+            }
             for path in &canonical {
                 if self.is_write_class() {
                     // Refresh rather than forget: the model knows what it just
@@ -199,6 +234,27 @@ fn rewrite_paths(input: &mut Value, policy: &ToolPolicy) {
     }
 }
 
+/// The identity of a read: the tool, the canonical path, and the range asked
+/// for. Two calls sharing a signature return byte-identical output as long as
+/// the file is unchanged — which is what makes suppressing the second one safe,
+/// and what keeps `offset`/`limit` pagination working: page 2 of a file is a
+/// different signature from page 1.
+fn signature_for(name: &str, path: &Path, input: &Value) -> String {
+    let range = |field: &str| {
+        input
+            .get(field)
+            .and_then(Value::as_u64)
+            .map(|n| n.to_string())
+            .unwrap_or_default()
+    };
+    format!(
+        "{name}\u{1}{}\u{1}{}\u{1}{}",
+        path.display(),
+        range("offset"),
+        range("limit")
+    )
+}
+
 /// Render `path` relative to the workspace root for a user-facing message.
 fn display(path: &Path, root: &Path) -> String {
     path.strip_prefix(root)
@@ -239,6 +295,8 @@ mod tests {
         name: &'static str,
         level: PermissionLevel,
         seen: std::sync::Mutex<Option<(Value, std::path::PathBuf)>>,
+        calls: std::sync::atomic::AtomicUsize,
+        fail: bool,
     }
 
     impl Spy {
@@ -247,10 +305,27 @@ mod tests {
                 name,
                 level,
                 seen: std::sync::Mutex::new(None),
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                fail: false,
+            })
+        }
+        /// A spy whose tool always reports failure.
+        fn failing(name: &'static str, level: PermissionLevel) -> Arc<Self> {
+            Arc::new(Spy {
+                name,
+                level,
+                seen: std::sync::Mutex::new(None),
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                fail: true,
             })
         }
         fn last(&self) -> Option<(Value, std::path::PathBuf)> {
             self.seen.lock().unwrap().clone()
+        }
+        /// How many times the *inner* tool actually ran — the only way to tell
+        /// a suppressed call from an executed one.
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
         }
     }
 
@@ -265,14 +340,19 @@ mod tests {
             "spy"
         }
         fn input_schema(&self) -> Value {
-            json!({"type":"object","properties":{"file_path":{},"old_string":{},"new_string":{}}})
+            json!({"type":"object","properties":{"file_path":{},"old_string":{},"new_string":{},"offset":{},"limit":{}}})
         }
         fn permission_level(&self) -> PermissionLevel {
             self.0.level
         }
         async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
+            self.0.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             *self.0.seen.lock().unwrap() = Some((input, ctx.working_dir.clone()));
-            ToolResult::success("done")
+            if self.0.fail {
+                ToolResult::error("no such file")
+            } else {
+                ToolResult::success("done")
+            }
         }
     }
 
@@ -475,6 +555,175 @@ mod tests {
             .await;
         assert!(!r.is_error);
         assert!(spy.last().is_some());
+    }
+
+    // ── Repeat-read suppression ─────────────────────────────────────────────
+    //
+    // A one-line edit to a 2000-line file was costing tens of thousands of
+    // tokens because the same file was read six times and the registry, which
+    // knew it had not changed, said nothing. These pin the boundary: suppress
+    // only a call whose output would be byte-identical.
+
+    /// Read `path` through `g`, optionally paginated.
+    async fn read_via(
+        g: &dyn Tool,
+        ctx: &ToolContext,
+        path: &str,
+        offset: Option<u64>,
+    ) -> ToolResult {
+        let mut args = json!({ "file_path": path });
+        if let Some(o) = offset {
+            args["offset"] = json!(o);
+        }
+        g.execute(args, ctx).await
+    }
+
+    #[tokio::test]
+    async fn an_identical_repeat_read_of_an_unchanged_file_does_not_run_again() {
+        let tmp = TmpDir::new();
+        std::fs::write(tmp.path().join("a.rs"), "fn main() {}").unwrap();
+        let policy = ToolPolicy::contained(tmp.path());
+        let spy = Spy::new("Read", PermissionLevel::ReadOnly);
+        let g = wrap(&spy, policy);
+        let ctx = test_ctx(tmp.path().to_path_buf());
+
+        let first = read_via(g.as_ref(), &ctx, "a.rs", None).await;
+        assert!(!first.is_error, "{}", first.content);
+        let second = read_via(g.as_ref(), &ctx, "a.rs", None).await;
+
+        assert_eq!(spy.calls(), 1, "the second read re-ran the tool");
+        assert!(!second.is_error, "a repeat read is not a failure");
+        assert!(second.content.contains("a.rs"), "{}", second.content);
+        assert!(
+            second.content.contains("has not changed"),
+            "the model must be told why: {}",
+            second.content
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repeat_read_is_served_in_full_once_the_file_changes() {
+        // The case that makes suppression safe to ship: whoever changed the
+        // file — the user, another tool, the agent itself — the next read must
+        // see it.
+        let tmp = TmpDir::new();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "one").unwrap();
+        let policy = ToolPolicy::contained(tmp.path());
+        let spy = Spy::new("Read", PermissionLevel::ReadOnly);
+        let g = wrap(&spy, policy);
+        let ctx = test_ctx(tmp.path().to_path_buf());
+
+        let _ = read_via(g.as_ref(), &ctx, "a.rs", None).await;
+        std::fs::write(&f, "two, and a different length").unwrap();
+        let after = read_via(g.as_ref(), &ctx, "a.rs", None).await;
+
+        assert_eq!(spy.calls(), 2, "a changed file must be read again");
+        assert!(!after.content.contains("has not changed"));
+    }
+
+    #[tokio::test]
+    async fn a_read_after_an_edit_sees_the_edit() {
+        // The write path *refreshes* the read record, so a served set keyed on
+        // that record would call the file fresh and hide the agent's own edit
+        // from it. The served set therefore carries its own snapshot.
+        let tmp = TmpDir::new();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "one").unwrap();
+        let policy = ToolPolicy::contained(tmp.path());
+        let reader = Spy::new("Read", PermissionLevel::ReadOnly);
+        let ctx = test_ctx(tmp.path().to_path_buf());
+        let r = wrap(&reader, policy.clone());
+
+        let _ = read_via(r.as_ref(), &ctx, "a.rs", None).await;
+
+        struct Writer;
+        #[async_trait]
+        impl Tool for Writer {
+            fn name(&self) -> &str {
+                "Edit"
+            }
+            fn description(&self) -> &str {
+                "w"
+            }
+            fn input_schema(&self) -> Value {
+                json!({"type":"object","properties":{"file_path":{},"new_string":{}}})
+            }
+            fn permission_level(&self) -> PermissionLevel {
+                PermissionLevel::Write
+            }
+            async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
+                std::fs::write(
+                    input["file_path"].as_str().unwrap(),
+                    input["new_string"].as_str().unwrap(),
+                )
+                .unwrap();
+                ToolResult::success("wrote")
+            }
+        }
+        let w = Guarded::wrap(Box::new(Writer), policy);
+        let edit = w
+            .execute(json!({"file_path": "a.rs", "new_string": "two"}), &ctx)
+            .await;
+        assert!(!edit.is_error, "{}", edit.content);
+
+        let verify = read_via(r.as_ref(), &ctx, "a.rs", None).await;
+        assert_eq!(reader.calls(), 2, "{}", verify.content);
+        assert!(!verify.content.contains("has not changed"), "{}", verify.content);
+    }
+
+    #[tokio::test]
+    async fn paging_through_a_file_is_never_suppressed() {
+        // Page 2 is a different signature from page 1, so a large file can
+        // still be read end to end.
+        let tmp = TmpDir::new();
+        std::fs::write(tmp.path().join("big.rs"), "x".repeat(4096)).unwrap();
+        let policy = ToolPolicy::contained(tmp.path());
+        let spy = Spy::new("Read", PermissionLevel::ReadOnly);
+        let g = wrap(&spy, policy);
+        let ctx = test_ctx(tmp.path().to_path_buf());
+
+        let _ = read_via(g.as_ref(), &ctx, "big.rs", None).await;
+        let _ = read_via(g.as_ref(), &ctx, "big.rs", Some(1000)).await;
+        let _ = read_via(g.as_ref(), &ctx, "big.rs", Some(2000)).await;
+        assert_eq!(spy.calls(), 3, "pagination must not be short-circuited");
+
+        // ...but re-asking for a page already served is.
+        let repeat = read_via(g.as_ref(), &ctx, "big.rs", Some(1000)).await;
+        assert_eq!(spy.calls(), 3);
+        assert!(repeat.content.contains("has not changed"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_read_is_not_remembered_as_answered() {
+        // Nothing reached the conversation, so the retry must actually run.
+        let tmp = TmpDir::new();
+        std::fs::write(tmp.path().join("a.rs"), "x").unwrap();
+        let policy = ToolPolicy::contained(tmp.path());
+        let spy = Spy::failing("Read", PermissionLevel::ReadOnly);
+        let g = wrap(&spy, policy);
+        let ctx = test_ctx(tmp.path().to_path_buf());
+
+        let _ = read_via(g.as_ref(), &ctx, "a.rs", None).await;
+        let _ = read_via(g.as_ref(), &ctx, "a.rs", None).await;
+        assert_eq!(spy.calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn only_read_is_suppressed() {
+        // Grep and List return a fraction of a file each and are cheap to
+        // repeat; suppressing them would buy little and confuse a model that
+        // is legitimately re-checking.
+        let tmp = TmpDir::new();
+        std::fs::write(tmp.path().join("a.rs"), "x").unwrap();
+        let policy = ToolPolicy::contained(tmp.path());
+        let spy = Spy::new("List", PermissionLevel::ReadOnly);
+        let g = wrap(&spy, policy);
+        let ctx = test_ctx(tmp.path().to_path_buf());
+
+        let _ = read_via(g.as_ref(), &ctx, "a.rs", None).await;
+        let _ = read_via(g.as_ref(), &ctx, "a.rs", None).await;
+        assert_eq!(spy.calls(), 2);
     }
 
     #[tokio::test]

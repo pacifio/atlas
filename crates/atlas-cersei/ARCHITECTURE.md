@@ -244,11 +244,20 @@ On every call, in this order:
    longest existing ancestor, and reject anything outside the root. This replaces the old
    `CwdTool` decorator, which absolutised a bare `file_path` for the three tools someone
    remembered to wrap and let absolute paths through untouched.
-3. **Check freshness** for a write-class call, *before* execution. No read record → refuse
+3. **Short-circuit a repeat read.** A `Read` whose tool, canonical path and range were
+   already answered, of a file that still looks exactly as it did then, returns a short
+   stub instead of the file. The content is already in the conversation; sending it again
+   costs a second full copy — for `crates/atlas-cersei/src/lib.rs` that is ~24k tokens
+   per repeat — and tells the model nothing. Only `Read` is short-circuited: `Grep` and
+   `List` return a fraction of a file and are cheap to repeat. The answered-reads record
+   carries its **own** snapshot of the file rather than consulting the read registry,
+   because a write *refreshes* the registry — so a read taken after an edit would look
+   unchanged and the model would never see its own change.
+4. **Check freshness** for a write-class call, *before* execution. No read record → refuse
    with "read it first". A record that no longer matches the file → refuse, because the
    user changed it in their editor and applying the edit would silently overwrite them.
-4. **Execute**, with `working_dir` set to the canonical root.
-5. **Record** the read (or refresh the record after a write) and emit one telemetry line:
+5. **Execute**, with `working_dir` set to the canonical root.
+6. **Record** the read (or refresh the record after a write) and emit one telemetry line:
    tool name, tier, outcome, latency. No arguments, no paths, no content.
 
 Classification, the approval cache, and the prompt itself sit in `ToolPolicy::decide`,

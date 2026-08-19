@@ -14,9 +14,11 @@ vendored-patch guards in `tests/vendor_patch_guard.rs`.
    explicitly — not something to take on inside this change. Story 2 therefore holds for
    `Edit` and not for the other four.
 2. **D13's deferred tier does not exist.** There is no searchable catalogue, so notebook
-   edit, code search and third-party search sit in the structured tier rather than behind
-   one. Story 45 is unmet. They are *registered*: dropping them would remove a capability
-   users have today, which is worse than a slightly longer list.
+   edit and code search sit in the structured tier rather than behind one. Story 45 is
+   unmet. They are *registered*: dropping them would remove a capability users have today,
+   which is worse than a slightly longer list. Third-party search is the exception — it
+   cannot run without an API key, so it is registered only when one is set, which is a
+   narrower fix than the tier and does not substitute for it.
 3. **Tier-per-model is not decided.** It waits on the harness spec's evaluation matrix,
    so every model gets the structured tier.
 **Depends on:** ADR-0001 (vendor seatbelt), ADR-0002 (keep Cersei as the engine), CONTEXT.md
@@ -241,6 +243,19 @@ tool reads a file. A write-class tool consults that record before executing:
   the reason, so the model re-reads rather than clobbering the user's concurrent change.
 - **Record present and fresh** → proceed.
 
+**Repeat reads (as built).** The same data answers a third question the spec did not ask: a `Read`
+whose tool, canonical path and range were already answered, of a file that still matches what it
+looked like then, would return byte-identical output. It is answered with a stub naming the ways
+forward — `offset`/`limit` for a different part, `Grep` to search, `Edit` to change it — instead of
+the file. This is the largest single source of wasted context in a long turn: a 2000-line file costs
+roughly 24k tokens per read, and nothing stopped the same file being read six times.
+
+Two boundaries make it safe. The answered-reads record carries its **own** snapshot rather than
+consulting the read registry, because a write refreshes the registry — a read taken after an edit
+would otherwise look unchanged and hide the model's own change from it. And only `Read` is
+short-circuited: `Grep` and `List` return a fraction of a file each, so suppressing them would trade
+few tokens for a model confused about why its search returned nothing new.
+
 The precondition is enforced **before execution**, not after. Today the equivalent guard lives in the
 turn runner and fires after the write has landed, so the model is told the edit was rejected while the
 file on disk says otherwise.
@@ -360,7 +375,18 @@ because a long visible list degrades tool selection and that harms weaker models
   skill, plan, memory search, MCP tools.
 - **Structured** — the above plus read, edit, list, grep, glob, write, multi-edit.
 - **Deferred** — notebook edit, code search, third-party search.
-- **Platform-gated** — the Windows shell tool, which is currently always registered.
+- **Platform-gated** — the Windows shell tool.
+
+**Registration gating (as built).** The deferred tier does not exist yet, so its three tools sit in
+the structured tier — but a tool that *cannot run* is registered nowhere. The tool list is re-sent on
+every request of every turn, so a schema nobody can use is charged to the user once per model call:
+across a sixteen-call turn the third-party search tool alone was ~6k tokens for a tool that errors
+without an API key. It is now present only when its key is set, which takes the structured tier from
+~3,050 to ~2,650 tokens per request for everyone who has not set one. Code search stays
+unconditional: it is BM25 over the working tree — no index, no key, no network — and returns ranked
+snippets with line numbers, so it often answers what would otherwise cost a whole-file read. The
+Windows shell tool is `cfg`-gated rather than registered everywhere, and the image tool is absent for
+a model that cannot accept images.
 
 Tier assignment per model comes from the evaluation matrix defined in the harness spec. Until that
 exists the default is the structured tier, because over-provisioning tools degrades gracefully and
