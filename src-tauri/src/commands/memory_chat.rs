@@ -255,8 +255,7 @@ fn sources_from_scored(
         let id = &s.doc.id;
         let (title, source, file_path, text) = if let Some(d) = texts.get(id) {
             (d.title.clone(), d.source.clone(), d.file_path.clone(), d.text.clone())
-        } else if let Some(rest) = id.strip_prefix("code:") {
-            let rel = rest.rsplit_once('#').map_or(rest, |(rel, _)| rel);
+        } else if let Some((rel, _)) = atlas_codeindex::lexical::parse_chunk_doc_id(id) {
             let abs = std::path::Path::new(project_path).join(rel);
             (
                 s.doc.title.clone(),
@@ -268,12 +267,9 @@ fn sources_from_scored(
             (s.doc.title.clone(), s.doc.source.clone(), None, s.doc.text.clone())
         };
         let mut snippet = text.trim().to_string();
-        if snippet.len() > PER_DOC_CHARS {
-            let mut cut = PER_DOC_CHARS;
-            while !snippet.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            snippet.truncate(cut);
+        let over = snippet.len() > PER_DOC_CHARS;
+        super::memory_retrieve::truncate_at_char_boundary(&mut snippet, PER_DOC_CHARS);
+        if over {
             snippet.push('…');
         }
         context.push_str(&format!("## {title} (source: {source})\n{snippet}\n\n"));
@@ -420,7 +416,7 @@ pub async fn memory_chat_send(
 
     // The one fused retrieval path — dense + lexical + graph, same as the
     // agents. The UI wraps the primitives, it does not run beside them.
-    let (scored, corpus_size, skipped, _meta) = super::memory_retrieve::retrieve_scored(
+    let r = super::memory_retrieve::retrieve_scored(
         &app,
         &pp,
         &query,
@@ -428,20 +424,21 @@ pub async fn memory_chat_send(
         atlas_memory::RetrievalClass::All,
     )
     .await;
+    let skipped = r.skipped.or((r.corpus_size == 0).then_some("empty_index"));
     crate::telemetry::retrieval::record(
-        &app, "memory_chat", corpus_size,
-        scored.len() as u64,
-        scored.first().map(|s| s.score),
+        &app, "memory_chat", r.corpus_size,
+        r.docs.len() as u64,
+        r.docs.first().map(|s| s.score),
         retrieve_started.elapsed().as_millis() as u64,
         "ui", skipped,
     );
-    if corpus_size == 0 {
+    if r.corpus_size == 0 {
         emit(&app, &stream_id, ChatEvent::Error {
             message: "No memory index yet — build it in Memory ▸ Graph first.".into(),
         });
         return Ok(());
     }
-    let (context, sources) = sources_from_scored(&pp, &scored, &texts, &git_ctx);
+    let (context, sources) = sources_from_scored(&pp, &r.docs, &texts, &git_ctx);
 
     let chat_arc = state.chat.clone();
     let turns: Vec<(String, String)> = messages
@@ -547,7 +544,7 @@ pub async fn memory_chat_retrieve(
     }
     let git_ctx = git_context(&pp);
 
-    let (scored, corpus_size, skipped, _meta) = super::memory_retrieve::retrieve_scored(
+    let r = super::memory_retrieve::retrieve_scored(
         &app,
         &pp,
         &query,
@@ -555,17 +552,18 @@ pub async fn memory_chat_retrieve(
         atlas_memory::RetrievalClass::All,
     )
     .await;
+    let skipped = r.skipped.or((r.corpus_size == 0).then_some("empty_index"));
     crate::telemetry::retrieval::record(
-        &app, "memory_chat", corpus_size,
-        scored.len() as u64,
-        scored.first().map(|s| s.score),
+        &app, "memory_chat", r.corpus_size,
+        r.docs.len() as u64,
+        r.docs.first().map(|s| s.score),
         retrieve_started.elapsed().as_millis() as u64,
         "ui", skipped,
     );
-    if corpus_size == 0 {
+    if r.corpus_size == 0 {
         return Err("No memory index yet — build it in Memory ▸ Graph first.".into());
     }
-    let (context, sources) = sources_from_scored(&pp, &scored, &texts, &git_ctx);
+    let (context, sources) = sources_from_scored(&pp, &r.docs, &texts, &git_ctx);
 
     let prompt = format!(
         "{SYSTEM_PREAMBLE}\n\n--- PROJECT MEMORY CONTEXT ---\n{context}\n\n--- QUESTION ---\n{query}"

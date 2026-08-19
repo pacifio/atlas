@@ -434,7 +434,7 @@ pub async fn memory_index_query(
     let retrieve_started = std::time::Instant::now();
     let k = top_k.unwrap_or(10);
 
-    let (scored, corpus_size, skipped, _meta) = super::memory_retrieve::retrieve_scored(
+    let r = super::memory_retrieve::retrieve_scored(
         &app,
         &project_path,
         &q,
@@ -442,17 +442,20 @@ pub async fn memory_index_query(
         atlas_memory::RetrievalClass::Memory,
     )
     .await;
+    // A skip is a data point: an empty engine store records as such even
+    // though the command itself succeeds with no hits.
+    let skipped = r.skipped.or((r.corpus_size == 0).then_some("empty_index"));
     crate::telemetry::retrieval::record(
         &app,
         "memory_index_query",
-        corpus_size,
-        scored.len() as u64,
-        scored.first().map(|s| s.score),
+        r.corpus_size,
+        r.docs.len() as u64,
+        r.docs.first().map(|s| s.score),
         retrieve_started.elapsed().as_millis() as u64,
         "ui",
         skipped,
     );
-    Ok(scored
+    Ok(r.docs
         .into_iter()
         .map(|s| QueryHit {
             id: s.doc.id,

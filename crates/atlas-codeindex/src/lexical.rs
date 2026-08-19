@@ -44,6 +44,14 @@ pub fn chunk_doc_id(rel: &str, hash: &str) -> String {
     format!("code:{rel}#{short}")
 }
 
+/// Inverse of [`chunk_doc_id`]: `(rel, hash_prefix)` — the one parser for the
+/// id format (a `#` in a filename is handled by taking the LAST separator).
+pub fn parse_chunk_doc_id(id: &str) -> Option<(&str, &str)> {
+    let rest = id.strip_prefix("code:")?;
+    let (rel, hash) = rest.rsplit_once('#')?;
+    Some((rel, hash))
+}
+
 /// Embeddable text for a chunk: the context header plus the body, truncated to
 /// [`EMBED_MAX_BYTES`] on a char boundary.
 pub fn embed_text(chunk: &CodeChunk) -> String {
@@ -352,6 +360,13 @@ impl LexicalStore {
     /// store, so a query never misses just-written code. Returns how many
     /// files were re-indexed.
     pub fn refresh_files(&mut self, project_root: &Path, rels: &[String]) -> Result<usize> {
+        if rels.len() > MAX_REFRESH_FILES {
+            tracing::debug!(
+                target: "atlas::codeindex",
+                skipped = (rels.len() - MAX_REFRESH_FILES) as u64,
+                "refresh capped; files beyond the cap stay stale until the next build"
+            );
+        }
         let stored = self.file_hashes()?;
         let mut refreshed = 0usize;
         for rel in rels.iter().take(MAX_REFRESH_FILES) {
@@ -446,13 +461,17 @@ pub fn build_lexical(project_path: &str, scanned: &[ScannedFile]) -> Result<Lexi
 }
 
 /// Modified/untracked files per `git status --porcelain -z`, filtered to
-/// supported source extensions and capped — the dirty overlay's work list.
-/// Empty outside a git repo (nothing can be stale relative to git).
+/// supported source extensions and capped (the cap is logged — a file left
+/// out of the overlay is a file a query can miss). `--untracked-files=all`
+/// because a brand-new directory otherwise surfaces as one `?? dir/` entry
+/// and its files would never refresh — the exact failure the freshness
+/// contract exists to prevent. Empty outside a git repo (nothing can be
+/// stale relative to git).
 pub fn dirty_files(root: &Path, cap: usize) -> Vec<String> {
     let Ok(out) = std::process::Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["status", "--porcelain", "-z", "--untracked-files=normal"])
+        .args(["status", "--porcelain", "-z", "--untracked-files=all"])
         .output()
     else {
         return Vec::new();
@@ -461,22 +480,52 @@ pub fn dirty_files(root: &Path, cap: usize) -> Vec<String> {
         return Vec::new();
     }
     let text = String::from_utf8_lossy(&out.stdout);
-    let mut rels = Vec::new();
-    for entry in text.split('\0') {
-        if entry.len() < 4 {
-            continue; // includes rename "old path" continuation entries
-        }
-        let path = &entry[3..];
+    let mut rels: Vec<String> = Vec::new();
+    let mut truncated = false;
+    fn supported(path: &str) -> bool {
         let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("");
-        if matches!(
+        matches!(
             ext,
             "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "mts" | "cts" | "mjs" | "cjs" | "pyi"
-        ) {
-            rels.push(path.to_string());
+        )
+    }
+    let push = |path: &str, rels: &mut Vec<String>, truncated: &mut bool| {
+        if !supported(path) {
+            return;
         }
         if rels.len() >= cap {
-            break;
+            *truncated = true;
+            return;
         }
+        rels.push(path.to_string());
+    };
+    // -z format: `XY <path>\0`, with renames/copies followed by a bare
+    // `<orig path>\0` continuation entry (no status prefix — it must be
+    // consumed here, never parsed as a status entry).
+    let mut tokens = text.split('\0');
+    while let Some(entry) = tokens.next() {
+        let Some(path) = entry.get(3..) else {
+            continue;
+        };
+        if path.is_empty() {
+            continue;
+        }
+        push(path, &mut rels, &mut truncated);
+        let status = &entry[..2];
+        if status.starts_with('R') || status.starts_with('C') {
+            if let Some(orig) = tokens.next() {
+                // The old path's chunks are stale under its old name; the
+                // refresh drops them (the file no longer exists there).
+                push(orig, &mut rels, &mut truncated);
+            }
+        }
+    }
+    if truncated {
+        tracing::debug!(
+            target: "atlas::codeindex",
+            cap = cap as u64,
+            "dirty overlay truncated; files beyond the cap stay stale until the next build"
+        );
     }
     rels
 }

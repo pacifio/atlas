@@ -9,8 +9,9 @@
 //! primitives; nothing queries a second store.
 //!
 //! **Strictly best-effort**: a missing model degrades to lexical + graph (the
-//! ladder's zero-download rung), an unbuilt index is a silent empty result, and
-//! push retrieval is time-bounded so it can never stall a turn.
+//! ladder's zero-download rung), an unbuilt engine store / lexical store is a
+//! silent empty result, and every path is time-bounded (the 6s cap lives in
+//! [`retrieve_scored`], so no consumer can stall).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -33,10 +34,12 @@ const PER_DOC_CHARS: usize = 320;
 const BLOCK_MAX_CHARS: usize = 1400;
 /// Lexical snippet handed to fusion/dedup (full bodies live in the store).
 const LEX_SNIPPET_CHARS: usize = 700;
-/// IDF bonus scale for rare query identifiers (engine clamps the sum).
-const IDF_SCALE: f32 = 0.003;
-/// Recency tie-break scale (a fresh file edges out a stale near-tie).
-const RECENCY_SCALE: f32 = 0.001;
+/// IDF bonus scale for rare query identifiers — matches the engine's
+/// `MAX_IDF_BONUS` clamp, so a full-strength IDF match uses the whole
+/// allowance and anything above it is clamped at the seam.
+const IDF_SCALE: f32 = 0.0008;
+/// Recency tie-break scale — matches the engine's `MAX_RECENCY_BONUS`.
+const RECENCY_SCALE: f32 = 0.0002;
 /// Evidence bundles kept before pruning oldest.
 const EVIDENCE_KEEP: usize = 20;
 
@@ -57,9 +60,22 @@ struct LexicalBundle {
     corpus: u64,
 }
 
+/// What one [`retrieve_scored`] call produced, with telemetry inputs attached
+/// (each caller records under its own path name).
+#[derive(Default)]
+pub struct ScoredRetrieval {
+    pub docs: Vec<ScoredDoc>,
+    /// Docs across the queried stores at query time (engine + lexical).
+    pub corpus_size: u64,
+    /// Which early-return guard fired, if any — a skip is a data point.
+    pub skipped: Option<&'static str>,
+    /// Lexical metadata fusion strips (line ranges, kinds, bodies), keyed by
+    /// fusion id.
+    pub lexical_meta: HashMap<String, LexicalHit>,
+}
+
 /// Retrieve up to `top_k` docs relevant to `query` through the fused engine.
 /// Empty on any failure (no stores, timeout) — callers treat empty as "skip".
-/// Time-bounded so it can never stall a turn.
 ///
 /// `_chat_state` is unused (the engine owns its provider via the registry) but
 /// kept so the call sites compile unchanged. `invoked_by` is telemetry-only:
@@ -73,67 +89,71 @@ pub async fn retrieve(
     invoked_by: &'static str,
 ) -> Vec<RetrievedDoc> {
     let started = std::time::Instant::now();
-    match tokio::time::timeout(
-        Duration::from_secs(RETRIEVE_TIMEOUT_SECS),
-        retrieve_scored(app, project_path, query, top_k, RetrievalClass::All),
-    )
-    .await
-    {
-        Ok((docs, corpus_size, skipped, _meta)) => {
-            crate::telemetry::retrieval::record(
-                app,
-                "memory_retrieve",
-                corpus_size,
-                docs.len() as u64,
-                docs.first().map(|d| d.score),
-                started.elapsed().as_millis() as u64,
-                invoked_by,
-                skipped,
-            );
-            docs.into_iter()
-                .map(|s| RetrievedDoc {
-                    id: s.doc.id,
-                    title: s.doc.title,
-                    source: s.doc.source,
-                    text: s.doc.text,
-                })
-                .collect()
-        }
-        Err(_) => {
-            tracing::warn!(target: "atlas::shared_memory", "index retrieval exceeded {RETRIEVE_TIMEOUT_SECS}s; skipping");
-            crate::telemetry::retrieval::record(
-                app,
-                "memory_retrieve",
-                0,
-                0,
-                None,
-                started.elapsed().as_millis() as u64,
-                invoked_by,
-                Some("timeout"),
-            );
-            Vec::new()
-        }
-    }
+    let r = retrieve_scored(app, project_path, query, top_k, RetrievalClass::All).await;
+    crate::telemetry::retrieval::record(
+        app,
+        "memory_retrieve",
+        r.corpus_size,
+        r.docs.len() as u64,
+        r.docs.first().map(|d| d.score),
+        started.elapsed().as_millis() as u64,
+        invoked_by,
+        r.skipped,
+    );
+    r.docs
+        .into_iter()
+        .map(|s| RetrievedDoc {
+            id: s.doc.id,
+            title: s.doc.title,
+            source: s.doc.source,
+            text: s.doc.text,
+        })
+        .collect()
 }
 
 /// The shared engine call every consumer builds on: lexical bundle (with the
-/// dirty-overlay refresh) + dense + graph, fused by class. Returns
-/// `(results, corpus_size, skip_reason, lexical_meta)`; telemetry is the
-/// caller's job (each path records under its own name).
+/// dirty-overlay refresh) + dense + graph, fused by class. The whole call is
+/// bounded by [`RETRIEVE_TIMEOUT_SECS`], so no consumer — push, tool, or UI —
+/// can stall on retrieval. Telemetry is the caller's job.
 pub async fn retrieve_scored(
     app: &AppHandle,
     project_path: &str,
     query: &str,
     top_k: usize,
     class: RetrievalClass,
-) -> (
-    Vec<ScoredDoc>,
-    u64,
-    Option<&'static str>,
-    HashMap<String, LexicalHit>,
-) {
+) -> ScoredRetrieval {
+    match tokio::time::timeout(
+        Duration::from_secs(RETRIEVE_TIMEOUT_SECS),
+        retrieve_scored_inner(app, project_path, query, top_k, class),
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(_) => {
+            tracing::warn!(
+                target: "atlas::shared_memory",
+                "fused retrieval exceeded {RETRIEVE_TIMEOUT_SECS}s; skipping"
+            );
+            ScoredRetrieval {
+                skipped: Some("timeout"),
+                ..Default::default()
+            }
+        }
+    }
+}
+
+async fn retrieve_scored_inner(
+    app: &AppHandle,
+    project_path: &str,
+    query: &str,
+    top_k: usize,
+    class: RetrievalClass,
+) -> ScoredRetrieval {
     if query.trim().len() < 4 || top_k == 0 {
-        return (Vec::new(), 0, Some("query_too_short"), HashMap::new());
+        return ScoredRetrieval {
+            skipped: Some("query_too_short"),
+            ..Default::default()
+        };
     }
     let registry = app.state::<Arc<MemoryRegistry>>();
     // Shared on-device provider (loaded once, reused by the indexer). Absent
@@ -156,13 +176,23 @@ pub async fn retrieve_scored(
     let guard = engine.read().await;
     let corpus_size = guard.store().len() as u64 + lex.corpus;
     if provider.is_none() && lex.hits.is_empty() && corpus_size == 0 {
-        return (Vec::new(), 0, Some("no_provider"), HashMap::new());
+        // Nothing to query anywhere: no embedding model, no lexical store, no
+        // engine store.
+        return ScoredRetrieval {
+            skipped: Some("no_sources"),
+            ..Default::default()
+        };
     }
     let docs = guard
         .retrieve_fused(query, top_k, provider.as_deref(), &lex.hits, class)
         .await;
     drop(guard);
-    (docs, corpus_size, None, lex.meta)
+    ScoredRetrieval {
+        docs,
+        corpus_size,
+        skipped: None,
+        lexical_meta: lex.meta,
+    }
 }
 
 /// `search_code` backend: fused code-class retrieval returning a manifest of
@@ -174,8 +204,9 @@ pub async fn retrieve_code(
     top_k: usize,
 ) -> atlas_agents::CodeSearchOutcome {
     let started = std::time::Instant::now();
+    let r = retrieve_scored(app, project_path, query, top_k, RetrievalClass::Code).await;
     let (scored, corpus_size, skipped, meta) =
-        retrieve_scored(app, project_path, query, top_k, RetrievalClass::Code).await;
+        (r.docs, r.corpus_size, r.skipped, r.lexical_meta);
 
     // Dense-only chunk hits carry no line ranges through fusion; recover them
     // from the store first (one blocking pass), then build manifest + evidence.
@@ -183,8 +214,7 @@ pub async fn retrieve_code(
         .iter()
         .filter(|s| !meta.contains_key(&s.doc.id))
         .filter_map(|s| {
-            let rest = s.doc.id.strip_prefix("code:")?;
-            let (rel, hash) = rest.rsplit_once('#').unwrap_or((rest, ""));
+            let (rel, hash) = lexical::parse_chunk_doc_id(&s.doc.id)?;
             Some((s.doc.id.clone(), rel.to_string(), hash.to_string()))
         })
         .collect();
@@ -224,10 +254,9 @@ pub async fn retrieve_code(
                 score: s.score,
                 summary: h.header.clone(),
             });
-        } else if let Some(rest) = s.doc.id.strip_prefix("code:") {
+        } else if let Some((rel, _)) = lexical::parse_chunk_doc_id(&s.doc.id) {
             // Chunk vanished from the store between fusion and lookup; cite
             // what fusion carried rather than dropping the hit silently.
-            let (rel, _) = rest.rsplit_once('#').unwrap_or((rest, ""));
             evidence.push_str(&format!("## {}\n{}\n\n", s.doc.title, s.doc.text));
             hits.push(atlas_agents::CodeDoc {
                 rel: rel.to_string(),
@@ -328,33 +357,40 @@ fn lexical_bundle_blocking(project_path: &str, query: &str, pool: usize) -> Lexi
     let mut meta = HashMap::with_capacity(found.len());
     for h in found {
         let haystack = format!("{} {} {}", h.symbol, h.header, h.body).to_lowercase();
-        let idf_bonus = token_idf
+        let idf = token_idf
             .iter()
             .filter(|(tok, _)| haystack.contains(tok.as_str()))
             .map(|(_, w)| *w)
             .fold(0.0f32, f32::max)
             * IDF_SCALE;
         let age_days = ((now - h.recency_epoch).max(0) as f32) / 86_400.0;
-        let recency_bonus = RECENCY_SCALE / (1.0 + age_days / 30.0);
+        let recency = RECENCY_SCALE / (1.0 + age_days / 30.0);
         let id = h.doc_id();
         let mut text = format!("{}\n{}", h.header, h.body);
-        if text.len() > LEX_SNIPPET_CHARS {
-            let mut cut = LEX_SNIPPET_CHARS;
-            while !text.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            text.truncate(cut);
-        }
+        truncate_at_char_boundary(&mut text, LEX_SNIPPET_CHARS);
         hits.push(ExternalHit {
             id: id.clone(),
             title: format!("{}:{}-{}", h.rel, h.start_line, h.end_line),
             source: "code".to_string(),
             text,
-            bonus: idf_bonus + recency_bonus,
+            idf,
+            recency,
         });
         meta.insert(id, h);
     }
     LexicalBundle { hits, meta, corpus }
+}
+
+/// Truncate a `String` to at most `max` bytes without slicing mid-character.
+pub(crate) fn truncate_at_char_boundary(s: &mut String, max: usize) {
+    if s.len() <= max {
+        return;
+    }
+    let mut cut = max;
+    while !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    s.truncate(cut);
 }
 
 /// Write the evidence bundle and prune old ones. Returns the file path.
@@ -369,7 +405,14 @@ fn write_evidence(project_path: &str, evidence: &str) -> Option<String> {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let path = dir.join(format!("search-{ts}.md"));
-    std::fs::write(&path, evidence).ok()?;
+    // Atomic temp + rename: the agent Reads this file, so a torn write must
+    // never be visible.
+    let tmp = dir.join(format!("search-{ts}.md.tmp.{}", std::process::id()));
+    std::fs::write(&tmp, evidence).ok()?;
+    if std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return None;
+    }
     // Prune: keep the newest EVIDENCE_KEEP bundles.
     if let Ok(entries) = std::fs::read_dir(&dir) {
         let mut files: Vec<std::path::PathBuf> = entries

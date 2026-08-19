@@ -115,9 +115,10 @@ pub struct RetrievedDoc {
 
 /// One candidate from a retrieval list this crate does not own (today: the
 /// lexical FTS5 tier in `atlas-codeindex`, handed across by the Tauri layer so
-/// the two crates never link). `bonus` is the caller-computed IDF + recency
-/// tie-break for this doc–query pair; the engine clamps it so a bonus can
-/// reorder near-ties but never outvote a rank.
+/// the two crates never link). `idf` and `recency` are the caller-computed
+/// bonuses for this doc–query pair, kept separate so the final score stays
+/// decomposable; the engine clamps each (see the fusion module) — IDF may lift
+/// a rare-identifier match a few ranks, recency only breaks near-ties.
 #[derive(Debug, Clone)]
 pub struct ExternalHit {
     /// Fusion id. Use the same id the dense corpus uses for the same content
@@ -127,7 +128,10 @@ pub struct ExternalHit {
     pub title: String,
     pub source: String,
     pub text: String,
-    pub bonus: f32,
+    /// Rare-identifier bonus (clamped to `MAX_IDF_BONUS`).
+    pub idf: f32,
+    /// Freshness tie-break (clamped to `MAX_RECENCY_BONUS`).
+    pub recency: f32,
 }
 
 /// Query-time namespace filter — the corpus tag is one store filtered per
@@ -145,15 +149,20 @@ pub enum RetrievalClass {
 }
 
 /// A fused result with its score decomposition — what makes "why did this
-/// rank third?" answerable. `score = rrf + bonus`.
+/// rank third?" answerable. `score = rrf + idf + recency`, and `lists` names
+/// every fusion input that contributed, with its rank (`"lexical#3"`).
 #[derive(Debug, Clone)]
 pub struct ScoredDoc {
     pub doc: RetrievedDoc,
     pub score: f32,
     /// Accumulated reciprocal-rank contributions across every list.
     pub rrf: f32,
-    /// Clamped external bonus (IDF + recency tie-break).
-    pub bonus: f32,
+    /// Clamped rare-identifier bonus.
+    pub idf: f32,
+    /// Clamped freshness tie-break.
+    pub recency: f32,
+    /// Provenance: `<list>#<rank>` for each list this doc appeared in.
+    pub lists: Vec<String>,
 }
 
 /// Per-project memory engine. One instance per project root, shared behind an

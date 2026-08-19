@@ -349,15 +349,19 @@ fn windows_from_points(
         if i >= points.len() || win_end >= end {
             break;
         }
-        // Overlap: back up a few lines into the window just emitted, but always
-        // advance past its start so the loop makes progress.
+        // Overlap: back up a few lines into the window just emitted. The next
+        // start must be a real boundary (a line start, or `win_end` itself —
+        // a statement/node boundary) strictly after the previous start, so a
+        // window over few long lines can never yield an arbitrary byte offset
+        // that would slice mid-character.
         let line_idx = starts.partition_point(|&s| s < win_end);
         let back = line_idx.saturating_sub(SPLIT_OVERLAP_LINES);
-        win_start = starts
-            .get(back)
-            .copied()
-            .unwrap_or(win_end)
-            .clamp(win_start + 1, win_end);
+        let mut candidate = starts.get(back).copied().unwrap_or(win_end);
+        if candidate <= win_start {
+            let next_idx = starts.partition_point(|&s| s <= win_start);
+            candidate = starts.get(next_idx).copied().unwrap_or(win_end);
+        }
+        win_start = candidate.min(win_end);
     }
     out
 }
@@ -698,6 +702,23 @@ mod tests {
         assert_eq!(out.chunks.len(), 1);
         assert_eq!(out.chunks[0].kind, "file");
         assert_eq!(out.chunks[0].body, src);
+    }
+
+    /// Oversized statements packed onto ONE line (minified-style), with
+    /// multibyte chars: the overlap back-off has no line start to land on and
+    /// must fall through to a real boundary instead of an arbitrary byte
+    /// offset (which sliced mid-character and panicked).
+    #[test]
+    fn single_line_oversized_body_with_multibyte_chars_does_not_panic() {
+        let stmt = format!("let s = \"{}\"; ", "é".repeat(400));
+        let src = format!("pub fn packed() {{ {}}}\n", stmt.repeat(5));
+        assert!(src.len() > MAX_CHUNK_BYTES);
+        let out = chunk_source("src/packed.rs", "rs", &src, &[]);
+        assert!(!out.chunks.is_empty());
+        for c in &out.chunks {
+            assert_eq!(c.body, &src[c.start_byte as usize..c.end_byte as usize]);
+        }
+        assert_coverage(&src, &out.chunks);
     }
 
     #[test]

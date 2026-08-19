@@ -438,10 +438,10 @@ async fn index_one(
     // fusion, so a chunk found by both lists accumulates instead of splitting.
     let cwd_owned = cwd.to_string();
     let chunk_docs: Vec<CorpusDoc> = tokio::task::spawn_blocking(move || {
-        let store = atlas_codeindex::lexical::LexicalStore::open(&cwd_owned).ok()?;
-        let chunks = store.all_chunks().ok()?;
-        Some(
-            chunks
+        let load = || -> anyhow::Result<Vec<CorpusDoc>> {
+            let store = atlas_codeindex::lexical::LexicalStore::open(&cwd_owned)?;
+            Ok(store
+                .all_chunks()?
                 .iter()
                 .map(|c| CorpusDoc {
                     id: atlas_codeindex::lexical::chunk_doc_id(&c.rel, &c.hash),
@@ -449,12 +449,19 @@ async fn index_one(
                     content_hash: c.hash.clone(),
                     corpus: "code".to_string(),
                 })
-                .collect::<Vec<_>>(),
-        )
+                .collect())
+        };
+        // A failed load drops the whole chunk corpus from dense embedding —
+        // that must never happen silently.
+        load().unwrap_or_else(|e| {
+            tracing::warn!(
+                target: "atlas::memory_indexer",
+                "chunk corpus unavailable for {cwd_owned} ({e}); dense index gets no code chunks this pass"
+            );
+            Vec::new()
+        })
     })
     .await
-    .ok()
-    .flatten()
     .unwrap_or_default();
 
     let mut corpus = collect_corpus(cwd).await;

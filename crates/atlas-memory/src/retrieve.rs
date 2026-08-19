@@ -14,12 +14,14 @@
 //!    lexical + graph.
 //! 2. **Lexical (external).** The FTS5 tier's candidates, handed in by the
 //!    caller (the crates never link), fused at full weight with per-candidate
-//!    IDF/recency bonuses clamped to tie-break size.
+//!    IDF (a bounded fusion input) and recency (a strict tie-break) bonuses.
 //! 3. **Graph + global (memory classes only).** Down-weighted expansion lists,
 //!    exactly as before.
-//! 4. **RRF fuse** all lists → **Jaccard dedup** → **per-file cap** for code
+//! 4. **RRF fuse** all lists → **Jaccard dedup** → **class budget** (an `All`
+//!    query reserves final slots for memory docs) → **per-file cap** for code
 //!    chunks → take `limit`. Each result carries its score decomposition
-//!    (`rrf` + `bonus`) so ranking stays explainable.
+//!    (`rrf` + `idf` + `recency`) and per-list provenance, and every drop is
+//!    counted — ranking stays explainable.
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -54,10 +56,14 @@ const LOCAL_SPARSE_THRESHOLD: usize = 3;
 /// Jaccard token-set similarity at/above which a later snippet is treated as a
 /// near-duplicate of one already kept and dropped.
 const JACCARD_DUP_THRESHOLD: f32 = 0.8;
-/// External bonuses (IDF + recency) are clamped here: enough to reorder the
-/// mid-list and break ties, never enough to displace a top-ranked hit
-/// (a rank-0 contribution is ~0.016).
-const MAX_BONUS: f32 = 0.004;
+/// Bonus clamps, stated against the actual RRF geometry (top-of-list rank
+/// gaps: r0→r1 ≈ 2.7e-4, r0→r4 ≈ 1.0e-3, whole 20-rank span ≈ 3.9e-3):
+/// a max IDF bonus can lift a rare-identifier match past ~4 adjacent ranks at
+/// the top of a list (more mid-list, where gaps shrink) — a fusion input, as
+/// the retrieval doc specifies — while a max recency bonus (≤ 2e-4) is
+/// strictly smaller than the r0→r1 gap and can only break near-ties.
+const MAX_IDF_BONUS: f32 = 0.0008;
+const MAX_RECENCY_BONUS: f32 = 0.0002;
 /// At most this many chunks of one file survive into the final results —
 /// breadth beats five windows of the same file.
 const PER_FILE_CAP: usize = 3;
@@ -67,8 +73,9 @@ const PER_FILE_CAP: usize = 3;
 struct Ranked {
     id: String,
     doc: RetrievedDoc,
-    /// Per-candidate additive bonus (external lists only; 0 elsewhere).
-    bonus: f32,
+    /// Per-candidate additive bonuses (external lists only; 0 elsewhere).
+    idf: f32,
+    recency: f32,
 }
 
 /// Corpus tags counted as code for class filtering and the per-file cap.
@@ -76,10 +83,25 @@ fn is_code_source(source: &str) -> bool {
     matches!(source, "code" | "codebase")
 }
 
-/// `code:<rel>#<hash>` → `<rel>`, for the per-file cap.
+/// Doc ids counted as code for the class budget.
+fn is_code_id(id: &str) -> bool {
+    id.starts_with("code:") || id.starts_with("codebase:")
+}
+
+/// `code:<rel>#<hash>` → `<rel>`, for the per-file cap. (Mirrors
+/// `atlas_codeindex::lexical::parse_chunk_doc_id` — this crate must not link
+/// atlas-codeindex, so the id format is duplicated knowingly.)
 fn file_of(id: &str) -> Option<&str> {
     let rest = id.strip_prefix("code:")?;
     Some(rest.rsplit_once('#').map_or(rest, |(rel, _)| rel))
+}
+
+/// What `finish` dropped and why — silent truncation reads as full coverage.
+#[derive(Debug, Default, Clone, Copy)]
+struct Drops {
+    dup: u32,
+    file_cap: u32,
+    class_budget: u32,
 }
 
 impl MemoryEngine {
@@ -147,7 +169,8 @@ impl MemoryEngine {
                         source: h.source.clone(),
                         text: h.text.clone(),
                     },
-                    bonus: h.bonus.clamp(0.0, MAX_BONUS),
+                    idf: h.idf.clamp(0.0, MAX_IDF_BONUS),
+                    recency: h.recency.clamp(0.0, MAX_RECENCY_BONUS),
                 })
                 .collect()
         };
@@ -159,39 +182,40 @@ impl MemoryEngine {
             self.graph_candidates(query, pool)
         };
 
-        // ── 4. Fuse → dedup → per-file cap → limit ────────────────────────────
-        let mut lists: Vec<(&[Ranked], f32)> = Vec::new();
+        // ── 4. Fuse → dedup → class budget → per-file cap → limit ─────────────
+        let mut lists: Vec<(&'static str, &[Ranked], f32)> = Vec::new();
         match class {
             RetrievalClass::All => {
-                lists.push((&embed_memory, W_EMBED));
-                lists.push((&embed_code, W_EMBED));
-                lists.push((&lexical_ranked, W_LEXICAL));
-                lists.push((&graph_ranked, W_GRAPH));
+                lists.push(("dense_memory", &embed_memory, W_EMBED));
+                lists.push(("dense_code", &embed_code, W_EMBED));
+                lists.push(("lexical", &lexical_ranked, W_LEXICAL));
+                lists.push(("graph", &graph_ranked, W_GRAPH));
             }
             RetrievalClass::Code => {
-                lists.push((&embed_code, W_EMBED));
-                lists.push((&lexical_ranked, W_LEXICAL));
+                lists.push(("dense_code", &embed_code, W_EMBED));
+                lists.push(("lexical", &lexical_ranked, W_LEXICAL));
             }
             RetrievalClass::Memory => {
-                lists.push((&embed_memory, W_EMBED));
-                lists.push((&graph_ranked, W_GRAPH));
+                lists.push(("dense_memory", &embed_memory, W_EMBED));
+                lists.push(("graph", &graph_ranked, W_GRAPH));
             }
         }
-        let local = finish(rrf_fuse_weighted(&lists), limit);
+        let (local, drops) = finish(rrf_fuse_weighted(&lists), limit, class);
 
         // ── 5. Blend global cross-project memory ONLY when local is sparse ────
         // Global is a lowest-weight list so it can never outrank a local hit;
         // an empty/absent global graph is a no-op. Code-only queries never
         // consult it.
         if class == RetrievalClass::Code || local.len() >= LOCAL_SPARSE_THRESHOLD {
-            return log_ranking(query, local);
+            return log_ranking(query, local, drops);
         }
         let global_ranked = global_candidates(query, pool);
         if global_ranked.is_empty() {
-            return log_ranking(query, local);
+            return log_ranking(query, local, drops);
         }
-        lists.push((&global_ranked, W_GLOBAL));
-        log_ranking(query, finish(rrf_fuse_weighted(&lists), limit))
+        lists.push(("global", &global_ranked, W_GLOBAL));
+        let (blended, drops) = finish(rrf_fuse_weighted(&lists), limit, class);
+        log_ranking(query, blended, drops)
     }
 
     /// Embed the query and return cosine hits that clear the floor, ranked best
@@ -232,7 +256,8 @@ impl MemoryEngine {
                     text: dt.text.clone(),
                 },
                 id,
-                bonus: 0.0,
+                idf: 0.0,
+                recency: 0.0,
             });
         }
         Ok(out)
@@ -256,7 +281,8 @@ impl MemoryEngine {
                         text: body,
                     },
                     id,
-                    bonus: 0.0,
+                    idf: 0.0,
+                    recency: 0.0,
                 }
             })
             .collect()
@@ -269,94 +295,146 @@ pub(crate) fn apply_cosine_floor(hits: Vec<(u64, f32)>, floor: f32) -> Vec<(u64,
     hits.into_iter().filter(|(_, sim)| *sim >= floor).collect()
 }
 
-/// Generalised reciprocal-rank fusion over any number of `(list, weight)` pairs,
-/// applied in the given order (earlier lists win ties via first-seen order).
-/// A doc appearing in several lists accumulates every rank contribution (keyed
-/// by id); its bonus is the maximum any list assigned (a doc-level property,
-/// not a per-list one). Returns [`ScoredDoc`]s sorted by `rrf + bonus`
-/// descending.
-fn rrf_fuse_weighted(lists: &[(&[Ranked], f32)]) -> Vec<ScoredDoc> {
-    // id → (rrf, bonus, doc, first-seen order for stable tie-breaks).
-    let mut acc: HashMap<String, (f32, f32, RetrievedDoc, usize)> = HashMap::new();
+/// Generalised reciprocal-rank fusion over any number of `(label, list,
+/// weight)` triples, applied in the given order (earlier lists win ties via
+/// first-seen order). A doc appearing in several lists accumulates every rank
+/// contribution (keyed by id) and records each as `<label>#<rank>` provenance;
+/// its idf/recency bonuses are the maximum any list assigned (doc-level
+/// properties, not per-list ones). Returns [`ScoredDoc`]s sorted by
+/// `rrf + idf + recency` descending.
+fn rrf_fuse_weighted(lists: &[(&'static str, &[Ranked], f32)]) -> Vec<ScoredDoc> {
+    struct Acc {
+        rrf: f32,
+        idf: f32,
+        recency: f32,
+        doc: RetrievedDoc,
+        order: usize,
+        lists: Vec<String>,
+    }
+    let mut acc: HashMap<String, Acc> = HashMap::new();
     let mut order = 0usize;
 
-    for (list, weight) in lists {
+    for (label, list, weight) in lists {
         for (rank, r) in list.iter().enumerate() {
             let contrib = *weight / (RRF_K + rank as f32 + 1.0);
-            acc.entry(r.id.clone())
-                .and_modify(|(s, b, _, _)| {
-                    *s += contrib;
-                    *b = b.max(r.bonus);
-                })
-                .or_insert_with(|| {
-                    let o = order;
-                    order += 1;
-                    (contrib, r.bonus, r.doc.clone(), o)
-                });
+            let entry = acc.entry(r.id.clone()).or_insert_with(|| {
+                let o = order;
+                order += 1;
+                Acc {
+                    rrf: 0.0,
+                    idf: 0.0,
+                    recency: 0.0,
+                    doc: r.doc.clone(),
+                    order: o,
+                    lists: Vec::new(),
+                }
+            });
+            entry.rrf += contrib;
+            entry.idf = entry.idf.max(r.idf);
+            entry.recency = entry.recency.max(r.recency);
+            entry.lists.push(format!("{label}#{rank}"));
         }
     }
 
-    let mut fused: Vec<(f32, f32, RetrievedDoc, usize)> = acc.into_values().collect();
+    let mut fused: Vec<Acc> = acc.into_values().collect();
     // Highest fused score first; break ties by first-seen order.
     fused.sort_by(|a, b| {
-        (b.0 + b.1)
-            .partial_cmp(&(a.0 + a.1))
+        (b.rrf + b.idf + b.recency)
+            .partial_cmp(&(a.rrf + a.idf + a.recency))
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.3.cmp(&b.3))
+            .then(a.order.cmp(&b.order))
     });
     fused
         .into_iter()
-        .map(|(rrf, bonus, doc, _)| ScoredDoc {
-            score: rrf + bonus,
-            rrf,
-            bonus,
-            doc,
+        .map(|a| ScoredDoc {
+            score: a.rrf + a.idf + a.recency,
+            rrf: a.rrf,
+            idf: a.idf,
+            recency: a.recency,
+            lists: a.lists,
+            doc: a.doc,
         })
         .collect()
 }
 
-/// Jaccard dedup + per-file cap + limit, in rank order.
-fn finish(fused: Vec<ScoredDoc>, limit: usize) -> Vec<ScoredDoc> {
+/// Jaccard dedup → class budget → per-file cap → limit, in rank order, every
+/// drop counted.
+///
+/// The class budget is the second half of the per-class-budget mechanism (the
+/// first is separate rank lists): on an `All` query, a third of the final
+/// slots are reserved for memory-class docs whenever any are in the fused
+/// pool — code sits in two full-weight lists (dense + lexical), so without a
+/// reservation a chunk found by both could outscore every memory doc and fill
+/// every slot.
+fn finish(fused: Vec<ScoredDoc>, limit: usize, class: RetrievalClass) -> (Vec<ScoredDoc>, Drops) {
+    let memory_total = fused.iter().filter(|s| !is_code_id(&s.doc.id)).count();
+    let reserved = if class == RetrievalClass::All {
+        (limit / 3).min(memory_total)
+    } else {
+        0
+    };
+    let code_budget = limit - reserved;
+
+    let mut drops = Drops::default();
     let mut kept: Vec<ScoredDoc> = Vec::with_capacity(limit);
     let mut kept_tokens: Vec<HashSet<String>> = Vec::with_capacity(limit);
     let mut per_file: HashMap<String, usize> = HashMap::new();
+    let mut code_kept = 0usize;
 
     for sd in fused {
         if kept.len() >= limit {
             break;
-        }
-        if let Some(rel) = file_of(&sd.doc.id) {
-            let n = per_file.entry(rel.to_string()).or_insert(0);
-            if *n >= PER_FILE_CAP {
-                continue;
-            }
-            *n += 1;
         }
         let tokens = tokenize(&format!("{} {}", sd.doc.title, sd.doc.text));
         let is_dup = kept_tokens
             .iter()
             .any(|t| jaccard(&tokens, t) >= JACCARD_DUP_THRESHOLD);
         if is_dup {
+            drops.dup += 1;
             continue;
+        }
+        if is_code_id(&sd.doc.id) {
+            if code_kept >= code_budget {
+                drops.class_budget += 1;
+                continue;
+            }
+            if let Some(rel) = file_of(&sd.doc.id) {
+                let n = per_file.entry(rel.to_string()).or_insert(0);
+                if *n >= PER_FILE_CAP {
+                    drops.file_cap += 1;
+                    continue;
+                }
+                *n += 1;
+            }
+            code_kept += 1;
         }
         kept_tokens.push(tokens);
         kept.push(sd);
     }
-    kept
+    (kept, drops)
 }
 
 /// Explainable ranking: one local debug line per query with the decomposition
-/// of every returned result. Shape only — never query text.
-fn log_ranking(query: &str, results: Vec<ScoredDoc>) -> Vec<ScoredDoc> {
+/// and provenance of every returned result, plus what the finish pass dropped.
+/// Shape only — never query text.
+fn log_ranking(query: &str, results: Vec<ScoredDoc>, drops: Drops) -> Vec<ScoredDoc> {
     if tracing::enabled!(target: "atlas_memory::retrieve", tracing::Level::DEBUG) {
         let decomposition: Vec<String> = results
             .iter()
-            .map(|s| format!("{}: score={:.5} rrf={:.5} bonus={:.5}", s.doc.id, s.score, s.rrf, s.bonus))
+            .map(|s| {
+                format!(
+                    "{}: score={:.5} rrf={:.5} idf={:.5} recency={:.5} lists={:?}",
+                    s.doc.id, s.score, s.rrf, s.idf, s.recency, s.lists
+                )
+            })
             .collect();
         tracing::debug!(
             target: "atlas_memory::retrieve",
             query_len = query.len(),
             n = results.len(),
+            dropped_dup = drops.dup,
+            dropped_file_cap = drops.file_cap,
+            dropped_class_budget = drops.class_budget,
             ranking = ?decomposition,
             "fused ranking"
         );
@@ -408,7 +486,8 @@ fn global_candidates(query: &str, pool: usize) -> Vec<Ranked> {
                     text: body,
                 },
                 id,
-                bonus: 0.0,
+                idf: 0.0,
+                recency: 0.0,
             }
         })
         .collect()
@@ -452,12 +531,13 @@ mod tests {
         Ranked {
             id: id.into(),
             doc: doc(id, title, text),
-            bonus: 0.0,
+            idf: 0.0,
+            recency: 0.0,
         }
     }
 
     fn fuse2(embed: &[Ranked], graph: &[Ranked]) -> Vec<ScoredDoc> {
-        rrf_fuse_weighted(&[(embed, W_EMBED), (graph, W_GRAPH)])
+        rrf_fuse_weighted(&[("dense_memory", embed, W_EMBED), ("graph", graph, W_GRAPH)])
     }
 
     /// The cosine floor drops sub-0.30 hits BEFORE fusion ever sees them.
@@ -502,32 +582,39 @@ mod tests {
         assert_eq!(graph_pos, 20, "graph-only hit must sit below all 20 embedding hits");
     }
 
-    /// Near-identical snippets collapse to one via Jaccard dedup.
-    #[test]
-    fn jaccard_dedup_collapses_near_duplicates() {
-        let body = "the rust borrow checker enforces ownership and lifetimes at compile time";
-        let scored = |id: &str, title: &str, text: &str, score: f32| ScoredDoc {
+    fn scored(id: &str, title: &str, text: &str, score: f32) -> ScoredDoc {
+        ScoredDoc {
             doc: doc(id, title, text),
             score,
             rrf: score,
-            bonus: 0.0,
-        };
+            idf: 0.0,
+            recency: 0.0,
+            lists: Vec::new(),
+        }
+    }
+
+    /// Near-identical snippets collapse to one via Jaccard dedup — and the
+    /// drop is counted, never silent.
+    #[test]
+    fn jaccard_dedup_collapses_near_duplicates() {
+        let body = "the rust borrow checker enforces ownership and lifetimes at compile time";
         let fused = vec![
             scored("a", "Borrow checker", body, 0.9),
             // Same body, different id → near-duplicate, must be dropped.
             scored("b", "Borrow checker", body, 0.8),
             scored("c", "Tokio runtime", "async tasks scheduled on a work stealing pool", 0.7),
         ];
-        let kept = finish(fused, 10);
+        let (kept, drops) = finish(fused, 10, RetrievalClass::All);
         let ids: Vec<&str> = kept.iter().map(|s| s.doc.id.as_str()).collect();
         assert_eq!(ids, vec!["a", "c"], "b is a near-duplicate of a and dropped");
+        assert_eq!(drops.dup, 1);
     }
 
     /// Empty graph → fused result is exactly the embedding list (no graph noise).
     #[test]
     fn empty_graph_returns_embedding_only() {
         let embed = vec![ranked("a", "A", "alpha body text"), ranked("b", "B", "beta body text")];
-        let kept = finish(fuse2(&embed, &[]), 10);
+        let (kept, _) = finish(fuse2(&embed, &[]), 10, RetrievalClass::Memory);
         let ids: Vec<&str> = kept.iter().map(|s| s.doc.id.as_str()).collect();
         assert_eq!(ids, vec!["a", "b"]);
     }
@@ -545,71 +632,126 @@ mod tests {
     }
 
     /// A dense chunk hit and a lexical hit with the SAME fusion id accumulate
-    /// instead of appearing twice — the contract behind `chunk_doc_id`.
+    /// instead of appearing twice — the contract behind `chunk_doc_id` — and
+    /// the provenance records both lists.
     #[test]
     fn dense_and_lexical_same_id_accumulate() {
         let id = "code:src/auth.rs#abc123def456";
         let dense = vec![ranked("code:src/other.rs#111111111111", "other", "other body"), ranked(id, "auth", "auth body")];
         let lexical = vec![ranked(id, "auth", "auth body")];
-        let fused = rrf_fuse_weighted(&[(&dense, W_EMBED), (&lexical, W_LEXICAL)]);
+        let fused =
+            rrf_fuse_weighted(&[("dense_code", &dense, W_EMBED), ("lexical", &lexical, W_LEXICAL)]);
         assert_eq!(fused[0].doc.id, id, "shared id accumulates to the top");
         assert_eq!(
             fused.iter().filter(|s| s.doc.id == id).count(),
             1,
             "never duplicated"
         );
+        assert_eq!(
+            fused[0].lists,
+            vec!["dense_code#1", "lexical#0"],
+            "provenance names every contributing list with its rank"
+        );
     }
 
-    /// The external bonus is clamped: it reorders near-ties, never outvotes a
-    /// rank-0 hit.
+    /// The bonus clamps, tested against the actual rank geometry: max IDF can
+    /// lift a rank-4 hit at most level with rank-0 (never a rank-5), and max
+    /// recency alone cannot even reorder rank-1 vs rank-0 — a pure tie-break.
     #[test]
-    fn bonus_reorders_ties_but_cannot_displace_the_top() {
-        let plain = vec![ranked("top", "T", "top body")];
-        let mut boosted = ranked("boosted", "B", "boosted body");
-        boosted.bonus = 10.0; // hostile caller; must clamp at the seam
-        let lexical: Vec<Ranked> = vec![boosted]
-            .into_iter()
-            .map(|mut r| {
-                r.bonus = r.bonus.clamp(0.0, MAX_BONUS);
-                r
-            })
-            .collect();
-        let fused = rrf_fuse_weighted(&[(&plain, W_EMBED), (&lexical, W_LEXICAL)]);
-        // Same rank in equal-weight lists: bonus breaks the tie…
-        assert_eq!(fused[0].doc.id, "boosted");
-        // …but a clamped bonus can never exceed one rank step at the top.
-        assert!(fused[0].score - fused[1].score < 1.0 / RRF_K - 1.0 / (RRF_K + 1.0) + MAX_BONUS);
-        assert!(fused[0].bonus <= MAX_BONUS);
+    fn bonus_clamps_bound_how_far_a_hit_can_climb() {
+        let rank0 = 1.0 / (RRF_K + 1.0);
+        let rank1 = 1.0 / (RRF_K + 2.0);
+        let rank4 = 1.0 / (RRF_K + 5.0);
+        let rank5 = 1.0 / (RRF_K + 6.0);
+        let max_bonus = MAX_IDF_BONUS + MAX_RECENCY_BONUS;
+        assert!(
+            rank5 + max_bonus < rank0,
+            "a max bonus must never lift rank 5 above rank 0"
+        );
+        assert!(
+            rank4 + max_bonus < rank0,
+            "a max bonus must never lift rank 4 above rank 0"
+        );
+        assert!(
+            rank1 + MAX_RECENCY_BONUS < rank0,
+            "recency alone is strictly a tie-break"
+        );
+        // And the ingestion seam clamps hostile caller values.
+        let mut hostile = ranked("x", "X", "body");
+        hostile.idf = 10.0;
+        hostile.recency = 10.0;
+        let clamped = Ranked {
+            idf: hostile.idf.clamp(0.0, MAX_IDF_BONUS),
+            recency: hostile.recency.clamp(0.0, MAX_RECENCY_BONUS),
+            ..hostile
+        };
+        assert!(clamped.idf <= MAX_IDF_BONUS && clamped.recency <= MAX_RECENCY_BONUS);
     }
 
     /// No more than PER_FILE_CAP chunks of one file survive — breadth beats
-    /// five windows of the same file.
+    /// five windows of the same file — and the drops are counted.
     #[test]
     fn per_file_cap_limits_chunks_of_one_file() {
-        let mk = |i: usize| ScoredDoc {
-            doc: doc(
+        let mk = |i: usize| {
+            scored(
                 &format!("code:src/big.rs#hash{i:08}"),
                 &format!("big {i}"),
                 &format!("distinct body number {i} with unique tokens token{i}"),
-            ),
-            score: 1.0 - i as f32 * 0.01,
-            rrf: 1.0,
-            bonus: 0.0,
+                1.0 - i as f32 * 0.01,
+            )
         };
         let mut fused: Vec<ScoredDoc> = (0..6).map(mk).collect();
-        fused.push(ScoredDoc {
-            doc: doc("code:src/other.rs#zzzz", "other", "completely different content here"),
-            score: 0.5,
-            rrf: 0.5,
-            bonus: 0.0,
-        });
-        let kept = finish(fused, 10);
+        fused.push(scored(
+            "code:src/other.rs#zzzz",
+            "other",
+            "completely different content here",
+            0.5,
+        ));
+        let (kept, drops) = finish(fused, 10, RetrievalClass::Code);
         let big = kept
             .iter()
             .filter(|s| s.doc.id.starts_with("code:src/big.rs"))
             .count();
         assert_eq!(big, PER_FILE_CAP);
+        assert_eq!(drops.file_cap, 3);
         assert!(kept.iter().any(|s| s.doc.id.starts_with("code:src/other.rs")));
+    }
+
+    /// The All-class budget: code fills at most `limit - limit/3` slots while
+    /// memory candidates remain, so fifty preference facts are never outvoted
+    /// by thousands of chunks sitting in two full-weight lists.
+    #[test]
+    fn class_budget_reserves_memory_slots_on_all_queries() {
+        let mut fused: Vec<ScoredDoc> = (0..8)
+            .map(|i| {
+                scored(
+                    &format!("code:src/f{i}.rs#hash{i:08}"),
+                    &format!("chunk {i}"),
+                    &format!("code body {i} with tokens alpha{i} beta{i}"),
+                    1.0 - i as f32 * 0.01,
+                )
+            })
+            .collect();
+        // Two memory docs, ranked BELOW every chunk.
+        fused.push(scored("claude:pref.md", "Prefs", "user prefers pnpm over npm always", 0.1));
+        fused.push(scored("graph::abc", "Fact", "the api gateway lives in gateway service", 0.09));
+        let (kept, drops) = finish(fused, 6, RetrievalClass::All);
+        let memory = kept.iter().filter(|s| !is_code_id(&s.doc.id)).count();
+        assert_eq!(memory, 2, "limit/3 slots reserved for memory docs: {kept:#?}");
+        assert!(drops.class_budget >= 2, "budget drops are counted");
+        // A Code-class query has no reservation.
+        let code_only: Vec<ScoredDoc> = (0..8)
+            .map(|i| {
+                scored(
+                    &format!("code:src/f{i}.rs#hash{i:08}"),
+                    &format!("chunk {i}"),
+                    &format!("code body {i} with tokens alpha{i} beta{i}"),
+                    1.0 - i as f32 * 0.01,
+                )
+            })
+            .collect();
+        let (kept, _) = finish(code_only, 6, RetrievalClass::Code);
+        assert_eq!(kept.len(), 6);
     }
 
     #[test]
