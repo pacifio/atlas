@@ -48,7 +48,7 @@ Atlas        ─┘   in-process, drives Cersei SDK, FAKES AcpEvent ┘
 │ atlas-cersei  (THIS CRATE)                                                │
 │   lib.rs       CerseiRuntime — sessions, turn loop, event translation     │
 │   provider.rs  BYOK (provider,model,key) → cersei Provider                │
-│   tools/       Atlas-owned basic tools (Read/Write/Edit/Grep/Glob/List/Bash)│
+│   tools/       Atlas-owned basic tools (Read/Edit/Grep/List/Bash/Terminal)│
 │   mcp.rs       connect MCP servers, expose their tools                    │
 │   memory.rs    `search_memory` RAG tool (backend injected from Tauri)     │
 │   context.rs   git snapshot + AGENTS.md/CLAUDE.md → system prompt          │
@@ -219,8 +219,8 @@ it returns a corrective error showing the real nearby lines. `Edit` also takes a
 array, applied in order and written only if every one succeeds — which is what the separate
 `MultiEdit` tool used to be, for an identical schema and an identical operation.
 
-Retained SDK tools (not reimplemented): `WebFetch / WebSearch`, plus `NotebookEdit`, `Grep`,
-`Glob` and `FileWrite`. `PowerShell` is registered on Windows only.
+Retained SDK tools (not reimplemented): `WebFetch / WebSearch`, plus `NotebookEdit`, `Glob`
+and `FileWrite`. `PowerShell` is registered on Windows only.
 
 **One way to change a file.** `Edit`, `MultiEdit`, `ApplyPatch` and `Write` were four
 overlapping ways to do the same thing — 715 tokens of schema in every request, and four
@@ -233,7 +233,8 @@ without hand-composing shell redirection. That is the arrangement Codex ships: a
 so its size is multiplied by the number of tool calls a turn makes. On one basis throughout — the
 env-gated third-party search tool excluded, since its cost is opt-in — it reached 10,626 bytes
 across 16 tools without anyone noticing, and folding the edit tools together took it to 8,593
-across 14. `the_tool_list_stays_within_its_context_budget` fails if it grows again, and names the
+across 14. The Atlas `Grep` added 503 bytes (~126 tokens per request) over the SDK tool it
+replaced, which is what the numbers above buy. `the_tool_list_stays_within_its_context_budget` fails if it grows again, and names the
 largest tools when it does.
 
 `atlas_coding_with()` (`tools/mod.rs`) is an explicit, hand-built vector, so any tool can
@@ -352,10 +353,31 @@ against the real kernel rather than asserting on the profile text.
 prevent.
 
 ### 6b-ii. Search backend — in-process, no `rg` binary
-`Grep / Glob / List` are **in-process**: `Grep`/`Glob` are the SDK's (ripgrep's `ignore` +
-`grep` library crates since 0.2.5) and `List` walks via `ignore` directly. Nothing shells
-out to an `rg` binary, so the tools behave identically on a stock machine and there is
-nothing to bundle with the packaged `.app`.
+`Grep / Glob / List` are **in-process**: `Glob` is the SDK's, `Grep` is Atlas-owned over the
+SDK's search primitive, and `List` walks via `ignore` directly — all three on ripgrep's
+`ignore` + `grep` library crates. Nothing shells out to an `rg` binary, so the tools behave
+identically on a stock machine and there is nothing to bundle with the packaged `.app`.
+
+**Why `Grep` is Atlas-owned: the search backend was never the problem.** The SDK tool has one
+output shape — every match as `file:line:content`, capped at 250, with nothing saying the cap
+was hit. Three consequences, all of which reached the user as burnt context:
+
+* *The cheap question could not be asked.* "Which files mention this?" wants a path list.
+  Measured on this repo, `policy` costs 8,279 tokens as match lines and 500 as paths with
+  counts. `output_mode` now defaults to `files`, densest file first.
+* *The cap was silent, and raced.* The primitive quits the parallel walk when a shared counter
+  crosses the cap and sorts *afterwards*, so the survivors arrive neatly ordered and look
+  complete. Atlas scans to `SCAN_LIMIT` (20_000) instead — far above any cap it displays — so
+  the walk completes, the total is exact, and the same query twice gives the same answer. Every
+  cap reports the true total.
+* *A bare match line cannot be edited from.* With no surrounding lines the model cannot build
+  an `old_string`, so every location question became a whole-file `Read`. Locating an edit site
+  in `guard.rs` cost 8,329 tokens that way; with `context` lines it costs 435. Overlapping
+  windows merge, so a shared line is never paid for twice.
+
+`Grep` deliberately does **not** call `record_read`. Context lines are a window, not the file,
+and letting them satisfy read-before-edit would reopen the staleness hole §6d had to close for
+shell reads.
 
 ### 6c. Planning tools (`cersei::tools::planning()`)
 `EnterPlanMode` / `ExitPlanMode` / `TodoWrite`. **TodoWrite is special**: instead of

@@ -13,9 +13,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use atlas_cersei::tools::grep::GrepTool;
 use atlas_cersei::tools::list::ListTool;
 use atlas_cersei::tools::read::ReadTool;
-use cersei::tools::grep_tool::GrepTool; // native in-process Grep (rg-free, 0.2.5)
 use cersei::tools::permissions::AllowAll;
 use cersei::tools::{CostTracker, Extensions, Tool, ToolContext};
 use serde_json::{json, Value};
@@ -138,7 +138,7 @@ async fn null_and_empty_args_give_actionable_error() {
 }
 
 /// Discovery (List/Grep) over the real repo. Both are now fully in-process and
-/// rg-free (List via the `ignore` crate, Grep via the SDK's native 0.2.5 tool),
+/// rg-free (List via the `ignore` crate, Grep via the SDK's search primitive),
 /// so this runs on every machine with NO external ripgrep — which is the whole
 /// point of the fix. Proves they surface real files and respect `.gitignore`.
 #[tokio::test]

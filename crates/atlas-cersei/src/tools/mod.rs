@@ -20,6 +20,7 @@ pub mod classify;
 pub mod coerce;
 pub mod edit;
 pub mod errors;
+pub mod grep;
 pub mod guard;
 pub mod image;
 pub mod list;
@@ -116,11 +117,15 @@ pub fn atlas_coding_with(
         tools.push(Box::new(read::ReadTool));
         tools.push(Box::new(edit::EditTool));
         tools.push(Box::new(t::file_write::FileWriteTool));
-        // Native cersei `Grep` + `Glob` (in-process since SDK 0.2.5 — ripgrep's
-        // `ignore`/`grep` library crates, no external `rg` binary). This is the
-        // fix for the recurring "model shells out to ripgrep and fails on stock
-        // machines" issue: the tools work identically everywhere.
-        tools.push(Box::new(t::grep_tool::GrepTool));
+        // `Grep` is Atlas-owned over the SDK's in-process search primitive
+        // (ripgrep's `ignore`/`grep` crates, no external `rg` binary — so it
+        // still works identically on stock machines). Atlas owns it for the
+        // output, not the search: the SDK tool has one shape, every match as
+        // `file:line:content` capped at 250 with nothing saying the cap was
+        // hit. Measured on this repo that is 6,495 tokens where a path list
+        // answers the same question in 409, and a bare match line with no
+        // surrounding code still forces a whole-file `Read` to edit from.
+        tools.push(Box::new(grep::GrepTool));
         tools.push(Box::new(t::glob_tool::GlobTool));
         // `List` stays Atlas-owned (no SDK equivalent) but is rg-free — it
         // walks via the `ignore` crate directly.
@@ -366,7 +371,13 @@ mod tests {
         // worked examples and documented return shapes as the two highest-value
         // additions to a tool definition; this is ~240 tokens per request for
         // them.
-        const STRUCTURED_MAX_BYTES: usize = 9_300;
+        // Raised again, 9_300 -> 9_900, for the Atlas `Grep`: +503 B over the
+        // SDK tool it replaces (895 B -> 1_398 B). That buys a `files` default
+        // and context lines, which on this repo turn a 6_495-token broad search
+        // into 409 and remove the 7_727-token whole-file `Read` that a bare
+        // match line used to force. ~126 tokens per request against thousands
+        // per search; the description was cut three times before taking it.
+        const STRUCTURED_MAX_BYTES: usize = 9_900;
         // Same raise, same reason: `Bash` documents its return shape here too.
         const SHELL_FIRST_MAX_BYTES: usize = 4_100;
 

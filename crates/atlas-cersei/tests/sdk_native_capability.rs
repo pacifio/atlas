@@ -4,7 +4,7 @@
 //! an Atlas reimplementation ONLY while it's provably more capable. This test is
 //! the evidence AND the tripwire: it pins the exact gaps that justify each kept
 //! Atlas tool, and FAILS when a future SDK bump closes one — telling us to delete
-//! that Atlas tool (as we already did for Grep/Glob/Write).
+//! that Atlas tool (as we already did for Glob/Write).
 //!
 //! Decisions encoded here (cersei 0.2.5):
 //!   • Write  → HANDED OFF (SDK FileWriteTool: cwd-wrappable, creates parent dirs).
@@ -234,7 +234,7 @@ async fn sdk_edit_drift_ladder_capability_matrix() {
     // RETIREMENT TRIPWIRE: today the SDK misses BOTH Atlas-only strategies, which
     // is why we keep Atlas Edit + replace.rs. If a future cersei bump makes the
     // SDK pass these, this assert fails — that's the signal to DELETE Atlas Edit
-    // and hand Edit off to the SDK (like we did for Grep/Glob/Write).
+    // and hand Edit off to the SDK (like we did for Glob/Write).
     assert_eq!(
         atlas_only_failed_on_sdk, 2,
         "cersei's Edit now handles {} of the 2 Atlas-only strategies — re-evaluate \

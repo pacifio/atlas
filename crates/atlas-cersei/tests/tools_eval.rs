@@ -8,9 +8,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use atlas_cersei::tools::{Guarded, ToolPolicy};
-use atlas_cersei::tools::{bash::BashTool, edit::EditTool, list::ListTool, read::ReadTool};
+use atlas_cersei::tools::{
+    bash::BashTool, edit::EditTool, grep::GrepTool, list::ListTool, read::ReadTool,
+};
 use cersei::tools::file_write::FileWriteTool; // SDK-native Write (handed off, guarded)
-use cersei::tools::grep_tool::GrepTool; // native in-process Grep (rg-free, 0.2.5)
 use cersei::tools::permissions::AllowAll;
 use cersei::tools::{CostTracker, Extensions, Tool, ToolContext, ToolResult};
 use serde_json::json;
@@ -90,13 +91,25 @@ async fn scripted_read_edit_grep_bash_task() {
         eprintln!("EDIT(drifted) failed: {} | file:\n{}", r.content, edited);
     }
 
-    // 3. GREP for the changed symbol — must find it in the edited file. Uses
-    //    the SDK's native Grep (`glob` filter field; no external ripgrep).
-    let r = run(&GrepTool, dir, json!({"pattern": "Hey", "glob": "*.rs"})).await;
-    if !r.is_error && r.content.contains("Hey") && r.content.contains("lib.rs") {
+    // 3. GREP for the changed symbol, over the two calls the tool documents:
+    //    the cheap default names the file, then content mode shows the line.
+    //    Scored as one step because neither half alone lets the model edit —
+    //    the first carries no code, the second needs a `path` to stay cheap.
+    let found = run(&GrepTool, dir, json!({"pattern": "Hey", "glob": "*.rs"})).await;
+    let lines = run(
+        &GrepTool,
+        dir,
+        json!({"pattern": "Hey", "output_mode": "content", "path": "src/lib.rs"}),
+    )
+    .await;
+    if !found.is_error
+        && found.content.contains("lib.rs")
+        && !lines.is_error
+        && lines.content.contains("Hey")
+    {
         score += 1;
     } else {
-        eprintln!("GREP failed: {}", r.content);
+        eprintln!("GREP failed: {} | {}", found.content, lines.content);
     }
 
     // 4. BASH run in the project root (a real command, deterministic output).
