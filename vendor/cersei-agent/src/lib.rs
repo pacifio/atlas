@@ -76,6 +76,16 @@ pub const ATLAS_PRE_COMPACT_PATCH: &str = "pre-compact-hook-v1";
 /// than a token budget (OpenAI o-series / gpt-5).
 pub const ATLAS_MODEL_PROFILE_PATCH: &str = "model-profile-v1";
 
+/// ATLAS PATCH (M4, compaction rewrite): the raw `len − 10` compaction split
+/// could orphan a tool_result (an invalid-history API error on Anthropic)
+/// and kept a message-count tail regardless of size. Compaction now splits
+/// at turn boundaries only, keeps a token-budget tail (window/4, clamped
+/// 2k–15k), produces a structured iteratively-updated summary, and carries
+/// the write-class file-op list forward mechanically. The snip fallback
+/// cuts at the same boundary. The C1 pre-compact hook and
+/// CompactStart/CompactEnd events are unchanged.
+pub const ATLAS_COMPACT_PATCH: &str = "compact-turn-boundary-v1";
+
 /// ATLAS PATCH (doom-loop-input-hash-v1): tool name of the synthetic
 /// permission request the runner raises when the doom-loop detector fires a
 /// second time. Not a real tool: permission policies special-case it (Atlas

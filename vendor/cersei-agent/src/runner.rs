@@ -1073,44 +1073,56 @@ pub async fn run_agent_streaming(
                 let _ = event_tx.send(start_ev.clone()).await;
                 agent.emit(start_ev);
 
-                // Try LLM-based summarization first
-                let (messages_after, tokens_freed) = match compact::compact_conversation(
-                    agent.provider.as_ref(),
-                    &msgs_snapshot,
-                    &model_name_owned,
-                    compact::KEEP_RECENT_MESSAGES,
-                    None,
-                )
-                .await
-                {
-                    Ok(result) if !result.summary.is_empty() => {
-                        let mut msgs = agent.messages.lock();
-                        let before = msgs.len();
-                        let split_idx = msgs.len().saturating_sub(compact::KEEP_RECENT_MESSAGES);
-                        let recent = msgs[split_idx..].to_vec();
-                        *msgs = vec![Message::user(&result.summary)];
-                        msgs.extend(recent);
-                        tracing::info!(
-                            "LLM compact: {before} → {} messages, freed ~{} tokens",
-                            msgs.len(),
-                            result.tokens_freed_estimate
-                        );
-                        (msgs.len(), result.tokens_freed_estimate)
-                    }
-                    _ => {
-                        // Fallback: snip-compact (truncation)
-                        let mut msgs = agent.messages.lock();
-                        let before = msgs.len();
-                        let (compacted, freed) = compact::snip_compact(
-                            std::mem::take(&mut *msgs),
-                            compact::KEEP_RECENT_MESSAGES,
-                        );
-                        *msgs = compacted;
-                        tracing::info!(
-                            "Snip compact (fallback): {before} → {} messages, freed ~{freed} tokens",
-                            msgs.len()
-                        );
-                        (msgs.len(), freed)
+                // ATLAS PATCH (compact-turn-boundary-v1): the split is
+                // chosen once, at a turn boundary, from a token-based tail
+                // budget — never a raw message count that can orphan a
+                // tool_result. Summarizer and snip fallback share the same
+                // index, so the fallback is exactly as safe as the primary.
+                let tail_budget = compact::tail_token_budget(context_window);
+                let split_idx = compact::split_at_turn_boundary(&msgs_snapshot, tail_budget);
+                let (messages_after, tokens_freed) = if split_idx == 0 {
+                    // One round, or everything fits the tail budget: nothing
+                    // that can safely compact. Skip rather than force a cut.
+                    tracing::info!("compact skipped: no safe turn boundary");
+                    (msgs_snapshot.len(), 0)
+                } else {
+                    match compact::compact_conversation(
+                        agent.provider.as_ref(),
+                        &msgs_snapshot,
+                        &model_name_owned,
+                        split_idx,
+                        None,
+                    )
+                    .await
+                    {
+                        Ok(result) if !result.summary.is_empty() => {
+                            let mut msgs = agent.messages.lock();
+                            let before = msgs.len();
+                            let recent = msgs[split_idx..].to_vec();
+                            *msgs = vec![Message::user(&result.summary)];
+                            msgs.extend(recent);
+                            tracing::info!(
+                                "LLM compact: {before} → {} messages, freed ~{} tokens",
+                                msgs.len(),
+                                result.tokens_freed_estimate
+                            );
+                            (msgs.len(), result.tokens_freed_estimate)
+                        }
+                        _ => {
+                            // Fallback: snip at the SAME turn boundary.
+                            let mut msgs = agent.messages.lock();
+                            let before = msgs.len();
+                            let (compacted, freed) = compact::snip_compact_at(
+                                std::mem::take(&mut *msgs),
+                                split_idx,
+                            );
+                            *msgs = compacted;
+                            tracing::info!(
+                                "Snip compact (fallback): {before} → {} messages, freed ~{freed} tokens",
+                                msgs.len()
+                            );
+                            (msgs.len(), freed)
+                        }
                     }
                 };
                 let end_ev = AgentEvent::CompactEnd {

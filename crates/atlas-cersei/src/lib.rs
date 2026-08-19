@@ -66,6 +66,7 @@ const _CERSEI_MAX_TOKENS_PATCH_GUARD: &str = cersei_agent::ATLAS_MAX_TOKENS_GUAR
 const _CERSEI_PRE_COMPACT_PATCH_GUARD: &str = cersei_agent::ATLAS_PRE_COMPACT_PATCH;
 const _CERSEI_RETRY_AFTER_PATCH_GUARD: &str = cersei::provider::ATLAS_RETRY_AFTER_PATCH;
 const _CERSEI_MODEL_PROFILE_PATCH_GUARD: &str = cersei_agent::ATLAS_MODEL_PROFILE_PATCH;
+const _CERSEI_COMPACT_PATCH_GUARD: &str = cersei_agent::ATLAS_COMPACT_PATCH;
 use uuid::Uuid;
 
 pub use store::SessionMeta;

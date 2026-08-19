@@ -95,3 +95,13 @@ fn vendored_retry_after_patch_is_resolved() {
 fn vendored_model_profile_patch_is_resolved() {
     assert_eq!(cersei_agent::ATLAS_MODEL_PROFILE_PATCH, "model-profile-v1");
 }
+
+/// M4's compaction rewrite: turn-boundary splits (never orphan a
+/// tool_result), a token-budget tail instead of "last 10 messages", a
+/// structured iteratively-updated summary with mechanical file-op
+/// carryover, wire-true token accounting, and a snip fallback that cuts at
+/// the same boundary.
+#[test]
+fn vendored_compact_patch_is_resolved() {
+    assert_eq!(cersei_agent::ATLAS_COMPACT_PATCH, "compact-turn-boundary-v1");
+}

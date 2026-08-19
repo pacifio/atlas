@@ -86,11 +86,42 @@ pub fn estimate_tokens(text: &str) -> u64 {
     (text.len() as u64) / 4
 }
 
+/// ATLAS PATCH (compact-turn-boundary-v1): everything a message costs on
+/// the wire — text, tool_use inputs, and tool_result payloads.
+/// `get_all_text()` returns only Text blocks, so the previous accounting
+/// ignored tool results entirely — and tool output is usually the bulk of
+/// a coding session, so compaction triggered far too late (or never) on
+/// exactly the sessions that needed it.
+pub fn message_wire_text(msg: &Message) -> String {
+    match &msg.content {
+        MessageContent::Text(t) => t.clone(),
+        MessageContent::Blocks(blocks) => {
+            let mut out = String::new();
+            for b in blocks {
+                match b {
+                    ContentBlock::Text { text } => out.push_str(text),
+                    ContentBlock::ToolUse { input, name, .. } => {
+                        out.push_str(name);
+                        out.push_str(&input.to_string());
+                    }
+                    ContentBlock::ToolResult { content, .. } => {
+                        if let ToolResultContent::Text(text) = content {
+                            out.push_str(text);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            out
+        }
+    }
+}
+
 /// Estimate tokens for a list of messages.
 pub fn estimate_messages_tokens(messages: &[Message]) -> u64 {
     messages
         .iter()
-        .map(|m| estimate_tokens(&m.get_all_text()))
+        .map(|m| estimate_tokens(&message_wire_text(m)))
         .sum()
 }
 
@@ -198,7 +229,7 @@ pub fn group_messages_for_compact(messages: &[Message]) -> Vec<MessageGroup> {
         current.push(msg.clone());
         // End group at assistant messages that don't have tool use (end of a "round")
         if msg.role == Role::Assistant && !msg.has_tool_use() {
-            let token_est = current.iter().map(|m| m.get_all_text().len() / 4).sum();
+            let token_est = current.iter().map(|m| message_wire_text(m).len() / 4).sum();
             let hint = extract_topic_hint(&current);
             groups.push(MessageGroup {
                 messages: std::mem::take(&mut current),
@@ -209,7 +240,7 @@ pub fn group_messages_for_compact(messages: &[Message]) -> Vec<MessageGroup> {
     }
     // Leftover messages
     if !current.is_empty() {
-        let token_est = current.iter().map(|m| m.get_all_text().len() / 4).sum();
+        let token_est = current.iter().map(|m| message_wire_text(m).len() / 4).sum();
         let hint = extract_topic_hint(&current);
         groups.push(MessageGroup {
             messages: current,
@@ -218,6 +249,75 @@ pub fn group_messages_for_compact(messages: &[Message]) -> Vec<MessageGroup> {
         });
     }
     groups
+}
+
+// ─── Turn-boundary split (ATLAS PATCH compact-turn-boundary-v1) ──────────────
+
+/// Pick the split index for compaction: the start of the smallest suffix of
+/// whole rounds whose estimated tokens meet `tail_token_budget`. A round is
+/// the unit `group_messages_for_compact` produces (assistant response + its
+/// tool results), so the cut can never separate a `tool_use` from its
+/// `tool_result` — the raw `len - N` split could, and an orphaned
+/// tool_result head is an invalid-history API error on Anthropic.
+///
+/// Returns 0 when there is nothing safe to compact (one round, or the whole
+/// history fits the budget) — callers skip compaction on 0.
+pub fn split_at_turn_boundary(messages: &[Message], tail_token_budget: u64) -> usize {
+    let groups = group_messages_for_compact(messages);
+    if groups.len() <= 1 {
+        return 0;
+    }
+    let mut tokens: u64 = 0;
+    let mut kept_msgs: usize = 0;
+    for (i, group) in groups.iter().enumerate().rev() {
+        tokens += group.token_estimate as u64;
+        kept_msgs += group.messages.len();
+        if tokens >= tail_token_budget {
+            // This group completes the tail. Everything before it compacts;
+            // if that is nothing, there is nothing to do.
+            return messages.len() - kept_msgs;
+        }
+        if i == 0 {
+            return 0;
+        }
+    }
+    0
+}
+
+/// The recent-tail token budget for a context window: a quarter of the
+/// window, clamped to [2k, 15k] tokens. Token-based, not message-count —
+/// ten huge tool results are not the same tail as ten one-liners.
+pub fn tail_token_budget(context_window: u64) -> u64 {
+    (context_window / 4).clamp(2_000, 15_000)
+}
+
+/// File paths touched by write-class tools in `messages`, deduplicated in
+/// first-touch order and capped. Carried into the summary message
+/// mechanically — the one list the summarizer must not be trusted to
+/// reconstruct.
+pub fn file_ops(messages: &[Message]) -> Vec<String> {
+    const WRITE_TOOLS: [&str; 4] = ["Edit", "Write", "NotebookEdit", "ApplyPatch"];
+    const CAP: usize = 30;
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for msg in messages {
+        for block in msg.content_blocks() {
+            if let ContentBlock::ToolUse { name, input, .. } = &block {
+                if !WRITE_TOOLS.contains(&name.as_str()) {
+                    continue;
+                }
+                if let Some(path) = input.get("file_path").and_then(|v| v.as_str()) {
+                    if seen.insert(path.to_string()) {
+                        out.push(path.to_string());
+                        if out.len() >= CAP {
+                            return out;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 // ─── Snip compact (simple truncation) ────────────────────────────────────────
@@ -232,6 +332,18 @@ pub fn snip_compact(messages: Vec<Message>, keep_n: usize) -> (Vec<Message>, u64
     let freed = estimate_messages_tokens(removed);
     let kept = messages[messages.len() - keep_n..].to_vec();
     (kept, freed)
+}
+
+/// ATLAS PATCH (compact-turn-boundary-v1): snip at an explicit index — the
+/// fallback when summarization fails must respect the same turn boundary
+/// the summarizer would have, or the "safe" fallback is the one that
+/// orphans a tool_result.
+pub fn snip_compact_at(messages: Vec<Message>, split_idx: usize) -> (Vec<Message>, u64) {
+    if split_idx == 0 || split_idx >= messages.len() {
+        return (messages, 0);
+    }
+    let freed = estimate_messages_tokens(&messages[..split_idx]);
+    (messages[split_idx..].to_vec(), freed)
 }
 
 /// Calculate how many messages to keep given a token budget.
@@ -297,22 +409,83 @@ pub fn collapse_read_tool_results(messages: Vec<Message>) -> Vec<Message> {
 // ─── Compact prompt ──────────────────────────────────────────────────────────
 
 /// Build the compaction prompt for the LLM.
+///
+/// ATLAS PATCH (compact-turn-boundary-v1): a structured, iteratively-updated
+/// working summary (Pi's template shape) instead of freeform bullets. The
+/// fixed section skeleton is what makes iterative updating possible — the
+/// next compaction hands the previous summary back and asks for an update
+/// in place, so long sessions converge on one living document instead of a
+/// summary of a summary of a summary.
 pub fn get_compact_prompt(custom_instructions: Option<&str>) -> String {
     let mut prompt = String::from(
-        "Summarize the conversation so far. Focus on:\n\
-        1. Key decisions made and their rationale\n\
-        2. Files that were read, created, or modified (with paths)\n\
-        3. Tool results that are still relevant\n\
-        4. Outstanding tasks or next steps\n\
-        5. Any errors encountered and how they were resolved\n\n\
-        Be concise but preserve all actionable information. \
-        Use bullet points. Include file paths verbatim.",
+        "Produce a working summary of the conversation as markdown with exactly these sections:\n\
+        ## Goal\n## Constraints\n## Key decisions\n## Progress\n## Errors and fixes\n## Next steps\n\n\
+        Be concise but preserve every actionable fact. Include file paths, commands, \
+        and identifiers verbatim. If a current summary is provided above, update it in \
+        place: carry forward what is still true, fold in what changed, and drop only \
+        what is fully resolved.",
     );
     if let Some(instructions) = custom_instructions {
         prompt.push_str("\n\nAdditional context: ");
         prompt.push_str(instructions);
     }
     prompt
+}
+
+/// The request `compact_conversation` sends, factored out so the shape —
+/// previous-summary carryover included — is testable without a provider.
+pub fn build_compact_request(
+    old_messages: &[Message],
+    model: &str,
+    custom_instructions: Option<&str>,
+) -> cersei_provider::CompletionRequest {
+    // Iterative update: if the history already starts with a summary from a
+    // previous compaction, hand it back separately so the model updates it
+    // instead of re-summarizing its own summary.
+    let (prev_summary, fresh) = match old_messages.first() {
+        Some(first) if first.get_all_text().trim_start().starts_with("<context_summary>") => {
+            (Some(first.get_all_text()), &old_messages[1..])
+        }
+        _ => (None, old_messages),
+    };
+
+    let old_text: String = fresh
+        .iter()
+        .map(|m| {
+            let role = match m.role {
+                Role::User => "User",
+                Role::Assistant => "Assistant",
+                Role::System => "System",
+            };
+            format!("{}: {}", role, m.get_all_text())
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let mut body = String::new();
+    if let Some(prev) = prev_summary {
+        body.push_str("Current summary to update:\n\n");
+        body.push_str(&prev);
+        body.push_str("\n\n");
+    }
+    body.push_str("Conversation since then:\n\n");
+    body.push_str(&old_text);
+    body.push_str("\n\n");
+    body.push_str(&get_compact_prompt(custom_instructions));
+
+    cersei_provider::CompletionRequest {
+        model: model.to_string(),
+        messages: vec![Message::user(body)],
+        system: Some(
+            "You are a conversation summarizer. Be concise and preserve all actionable information."
+                .into(),
+        ),
+        tools: Vec::new(),
+        max_tokens: 4096,
+        temperature: Some(0.0),
+        stop_sequences: Vec::new(),
+        options: cersei_provider::ProviderOptions::default(),
+    }
 }
 
 /// Format raw compact output into a summary message.
@@ -334,16 +507,20 @@ pub fn format_compact_summary(raw: &str) -> String {
 /// 2. Group old messages by topic
 /// 3. Send to provider for summarization
 /// 4. Replace old messages with summary
+/// ATLAS PATCH (compact-turn-boundary-v1): takes an explicit `split_idx`
+/// (from [`split_at_turn_boundary`]) instead of a trailing message count,
+/// builds the iterative-update request, and appends the mechanical
+/// file-op list to the summary.
 pub async fn compact_conversation(
     provider: &dyn Provider,
     messages: &[Message],
     model: &str,
-    keep_recent: usize,
+    split_idx: usize,
     custom_instructions: Option<&str>,
 ) -> Result<CompactResult> {
     let messages_before = messages.len();
 
-    if messages.len() <= keep_recent {
+    if split_idx == 0 || split_idx >= messages.len() {
         return Ok(CompactResult {
             messages_before,
             messages_after: messages_before,
@@ -352,40 +529,10 @@ pub async fn compact_conversation(
         });
     }
 
-    let split_idx = messages.len() - keep_recent;
     let old_messages = &messages[..split_idx];
     let recent_messages = &messages[split_idx..];
 
-    // Build compaction request
-    let old_text: String = old_messages
-        .iter()
-        .map(|m| {
-            let role = match m.role {
-                Role::User => "User",
-                Role::Assistant => "Assistant",
-                Role::System => "System",
-            };
-            format!("{}: {}", role, m.get_all_text())
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-
-    let compact_prompt = get_compact_prompt(custom_instructions);
-    let request = cersei_provider::CompletionRequest {
-        model: model.to_string(),
-        messages: vec![
-            Message::user(format!(
-                "Here is the conversation history to summarize:\n\n{}\n\n{}",
-                old_text, compact_prompt
-            )),
-        ],
-        system: Some("You are a conversation summarizer. Be concise and preserve all actionable information.".into()),
-        tools: Vec::new(),
-        max_tokens: 4096,
-        temperature: Some(0.0),
-        stop_sequences: Vec::new(),
-        options: cersei_provider::ProviderOptions::default(),
-    };
+    let request = build_compact_request(old_messages, model, custom_instructions);
 
     // Collect streaming response into a complete message
     let stream = provider.complete(request).await?;
@@ -396,12 +543,24 @@ pub async fn compact_conversation(
     }
     let response = accumulator.into_response()?;
     let summary_text = response.message.get_all_text();
-    let formatted_summary = format_compact_summary(&summary_text);
+    let mut formatted_summary = format_compact_summary(&summary_text);
+
+    // File-op carryover: the paths the session wrote, listed mechanically —
+    // a summarizer that forgets one silently orphans the model's memory of
+    // its own change.
+    let touched = file_ops(old_messages);
+    if !touched.is_empty() {
+        formatted_summary.push_str("\n<files_touched>\n");
+        for path in &touched {
+            formatted_summary.push_str("- ");
+            formatted_summary.push_str(path);
+            formatted_summary.push('\n');
+        }
+        formatted_summary.push_str("</files_touched>");
+    }
 
     let tokens_freed = estimate_messages_tokens(old_messages);
-
-    // Build compacted messages: summary + recent
-    let messages_after = 1 + recent_messages.len(); // summary message + recent
+    let messages_after = 1 + recent_messages.len();
 
     Ok(CompactResult {
         messages_before,
@@ -424,7 +583,8 @@ pub async fn auto_compact_if_needed(
         return None;
     }
 
-    match compact_conversation(provider, messages, model, KEEP_RECENT_MESSAGES, None).await {
+    let split_idx = split_at_turn_boundary(messages, tail_token_budget(context_limit));
+    match compact_conversation(provider, messages, model, split_idx, None).await {
         Ok(result) => {
             state.on_success();
             Some(result)
@@ -565,7 +725,11 @@ mod tests {
     fn test_compact_prompt_with_instructions() {
         let prompt = get_compact_prompt(Some("Focus on API changes"));
         assert!(prompt.contains("Focus on API changes"));
-        assert!(prompt.contains("Summarize"));
+        // The structured template's fixed skeleton (what makes iterative
+        // updating possible).
+        for section in ["## Goal", "## Key decisions", "## Next steps"] {
+            assert!(prompt.contains(section), "missing {section}");
+        }
     }
 
     #[test]
@@ -589,4 +753,131 @@ mod tests {
         let idx = calculate_messages_to_keep_index(&messages, 100_000);
         assert_eq!(idx, 0); // keep all
     }
+
+    // ─── ATLAS PATCH (compact-turn-boundary-v1) tests ────────────────────
+
+    /// A realistic round shape: user prompt, assistant with tool_use, user
+    /// tool_result, assistant text (round end).
+    fn tool_round(filler: usize) -> Vec<Message> {
+        tool_round_with_id(filler, "t1")
+    }
+
+    fn tool_round_with_id(filler: usize, id: &str) -> Vec<Message> {
+        use serde_json::json;
+        let big = "x".repeat(filler);
+        vec![
+            Message::user("do the thing"),
+            Message::assistant_blocks(vec![ContentBlock::ToolUse {
+                id: id.into(),
+                name: "Edit".into(),
+                input: json!({"file_path": "src/lib.rs"}),
+            }]),
+            Message::user_blocks(vec![ContentBlock::ToolResult {
+                tool_use_id: id.into(),
+                content: ToolResultContent::Text(big),
+                is_error: Some(false),
+            }]),
+            Message::assistant("done"),
+        ]
+    }
+
+    #[test]
+    fn the_split_never_separates_a_tool_use_from_its_result() {
+        // Three rounds; a budget that forces a cut somewhere in the middle.
+        let mut messages = Vec::new();
+        for i in 0..3 {
+            messages.extend(tool_round_with_id(4_000, &format!("t{i}")));
+        }
+        let split = split_at_turn_boundary(&messages, 1_500);
+        assert!(split > 0, "a cut must exist");
+        assert_eq!(split % 4, 0, "cut lands on a round start, got {split}");
+        // No tool_use before the cut may pair with a tool_result after it.
+        let ids_before: Vec<String> = messages[..split]
+            .iter()
+            .flat_map(|m| m.content_blocks())
+            .filter_map(|b| match b {
+                ContentBlock::ToolUse { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .collect();
+        for m in &messages[split..] {
+            for b in m.content_blocks() {
+                if let ContentBlock::ToolResult { tool_use_id, .. } = b {
+                    assert!(
+                        !ids_before.contains(&tool_use_id),
+                        "orphaned tool_result {tool_use_id}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_single_round_or_a_fitting_history_never_splits() {
+        let messages = tool_round(1_000);
+        assert_eq!(split_at_turn_boundary(&messages, 2_000), 0, "one round");
+        let mut messages = Vec::new();
+        for _ in 0..3 {
+            messages.extend(tool_round(100));
+        }
+        assert_eq!(
+            split_at_turn_boundary(&messages, 1_000_000),
+            0,
+            "everything fits the tail budget"
+        );
+    }
+
+    #[test]
+    fn the_tail_budget_is_a_quarter_window_clamped() {
+        assert_eq!(tail_token_budget(8_000), 2_000);
+        assert_eq!(tail_token_budget(4_000), 2_000, "floor");
+        assert_eq!(tail_token_budget(40_000), 10_000);
+        assert_eq!(tail_token_budget(1_000_000), 15_000, "ceiling");
+    }
+
+    #[test]
+    fn file_ops_collects_write_class_paths_deduped_in_order() {
+        use serde_json::json;
+        let mk = |name: &str, path: &str| {
+            Message::assistant_blocks(vec![ContentBlock::ToolUse {
+                id: "i".into(),
+                name: name.into(),
+                input: json!({"file_path": path}),
+            }])
+        };
+        let messages = vec![
+            mk("Edit", "a.rs"),
+            mk("Read", "ignored.rs"),
+            mk("Write", "b.rs"),
+            mk("Edit", "a.rs"),
+        ];
+        assert_eq!(file_ops(&messages), vec!["a.rs".to_string(), "b.rs".to_string()]);
+    }
+
+    #[test]
+    fn a_previous_summary_is_handed_back_for_iterative_update() {
+        let prev = Message::user("<context_summary>\nold summary\n</context_summary>");
+        let fresh = Message::assistant("new work happened");
+        let req = build_compact_request(&[prev, fresh], "m", None);
+        let body = req.messages[0].get_all_text();
+        assert!(body.contains("Current summary to update:"), "{body}");
+        assert!(body.contains("old summary"));
+        assert!(body.contains("new work happened"));
+
+        // Without one, no update preamble.
+        let req = build_compact_request(&[Message::user("hi")], "m", None);
+        assert!(!req.messages[0].get_all_text().contains("Current summary to update"));
+    }
+
+    #[test]
+    fn snip_at_index_frees_the_head_and_refuses_nonsense() {
+        let messages = tool_round(100);
+        let (kept, freed) = snip_compact_at(messages.clone(), 0);
+        assert_eq!(kept.len(), 4);
+        assert_eq!(freed, 0);
+        let (kept, freed) = snip_compact_at(messages, 2);
+        assert_eq!(kept.len(), 2);
+        assert!(freed > 0);
+    }
+
 }

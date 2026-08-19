@@ -259,6 +259,31 @@ return stale, wrong-line diagnostics — worse than silence. It becomes
 buildable when that client is vendored or replaced; until then the check
 command is the real-diagnostics channel.
 
+### 5d. Compaction (M4 rewrite, `compact-turn-boundary-v1`)
+
+Auto-compaction now works in rounds, not raw message counts:
+
+- **The split is a turn boundary.** The history is grouped into rounds
+  (assistant response + its tool results); the cut keeps the smallest
+  suffix of whole rounds that fills the tail budget, so a `tool_use` can
+  never be separated from its `tool_result` — the old `len − 10` split
+  could, and the orphan is an invalid-history API error on Anthropic.
+- **The tail is a token budget** — window/4 clamped to 2k–15k tokens — so
+  ten huge tool results and ten one-liners stop counting as the same tail.
+- **The summary is a living document.** A structured template (Goal /
+  Constraints / Key decisions / Progress / Errors and fixes / Next steps);
+  the next compaction hands the previous summary back and asks for an
+  update in place, instead of summarizing its own summary.
+- **File ops carry over mechanically.** The write-class paths from the
+  compacted region are appended as a `<files_touched>` list — the one
+  thing the summarizer must not be trusted to reconstruct.
+- **Token accounting is wire-true.** Estimates now count tool_use inputs
+  and tool_result payloads; they previously counted only text blocks, so
+  tool-heavy sessions — the ones that needed compaction most — never
+  triggered it.
+- The snip fallback cuts at the same boundary, and the C1 pre-compact hook
+  and `CompactStart`/`CompactEnd` events are unchanged.
+
 ---
 
 ## 6. The tools — what Atlas can actually do
