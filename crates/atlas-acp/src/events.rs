@@ -37,7 +37,35 @@ pub enum AcpEvent {
         session_id: acp_schema::SessionId,
         input_tokens: u64,
         output_tokens: u64,
-        cost: f64,
+        /// Cumulative estimated cost in USD. `None` when the producer has no
+        /// pricing to report — ACP carries none, and sending `0.0` would RESET
+        /// a session's running cost every turn rather than leaving it alone.
+        cost: Option<f64>,
+        /// Cache tokens from an end-of-turn `PromptResponse.usage` (P2.5).
+        /// `None` for the native agent's cost-bearing usage events, which have
+        /// no cache split — additive so that path is unchanged.
+        #[serde(default)]
+        cache_read_tokens: Option<u64>,
+        #[serde(default)]
+        cache_write_tokens: Option<u64>,
+    },
+    /// The agent is asking the USER something mid-turn (P3.3,
+    /// `elicitation/create`).
+    ///
+    /// Carried as raw JSON for the same reason permissions are: the schema
+    /// types are `#[non_exhaustive]` and unstable-gated, and the UI renders a
+    /// form generated from `requestedSchema` rather than matching variants. The
+    /// host answers via `respond_elicitation`.
+    Elicitation {
+        session_id: Option<acp_schema::SessionId>,
+        request_id: uuid::Uuid,
+        /// `"form"` | `"url"`.
+        mode: String,
+        message: String,
+        /// Form mode: the JSON schema of what the agent wants.
+        requested_schema: Option<serde_json::Value>,
+        /// URL mode: where to send the user.
+        url: Option<String>,
     },
     /// Context compaction started (`active = true`) or finished (`false`).
     /// Native-agent only.

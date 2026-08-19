@@ -4,8 +4,14 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    ClientCapabilities, InitializeRequest, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SessionId, SessionNotification,
+    CreateElicitationRequest, CreateElicitationResponse, CreateTerminalRequest,
+    CreateTerminalResponse, ElicitationAction, InitializeRequest, KillTerminalRequest,
+    ReadTextFileRequest, ReadTextFileResponse, WriteTextFileRequest, WriteTextFileResponse,
+    KillTerminalResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
+    RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SessionId, SessionNotification, TerminalExitStatus,
+    TerminalOutputRequest, TerminalOutputResponse, WaitForTerminalExitRequest,
+    WaitForTerminalExitResponse,
 };
 use agent_client_protocol::{AcpAgent, Agent, ConnectionTo, LineDirection};
 use dashmap::DashMap;
@@ -14,6 +20,9 @@ use serde_json::{Map, Value};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
+use atlas_terminal::command::{CommandExit, CommandTerminal, CommandTerminals, DEFAULT_OUTPUT_BYTE_LIMIT};
+
+use crate::capabilities::AgentCaps;
 use crate::error::{AcpError, Result};
 use crate::events::{AcpEvent, EventSink};
 use crate::model_sniff::ModelSniffer;
@@ -96,6 +105,15 @@ pub struct PendingPermissionEntry {
     pub sender: oneshot::Sender<RequestPermissionOutcome>,
 }
 
+/// Elicitations awaiting a user answer (P3.3). Same shape as
+/// [`PendingPermissionEntry`] and for the same reason: the request must be
+/// answered from the Tauri layer, long after the handler returned.
+pub struct PendingElicitationEntry {
+    pub sender: oneshot::Sender<ElicitationAction>,
+}
+
+pub type PendingElicitations = DashMap<Uuid, PendingElicitationEntry>;
+
 /// Permissions awaiting a client decision.
 ///
 /// The notification handler stashes a [`oneshot::Sender`] under a fresh
@@ -104,13 +122,6 @@ pub struct PendingPermissionEntry {
 /// the right ones (per ACP spec, any pending permission for a cancelled turn
 /// MUST resolve as `Cancelled`).
 pub type PendingPermissions = DashMap<Uuid, PendingPermissionEntry>;
-
-/// Image attachments staged for the *next* prompt of each session, drained
-/// one-shot when that prompt is sent. A separate low-churn side-channel so
-/// the `text: String` prompt seam stays untouched. Safe because the frontend
-/// serialises sends per session — exactly one prompt is staged-then-fired at
-/// a time, so each turn drains its own images.
-pub type PendingAttachments = DashMap<SessionId, Vec<crate::registry::ImageAttachment>>;
 
 /// Resources owned by a single spawned ACP agent. Held inside the
 /// [`crate::registry::AgentRegistry`] under an [`AgentId`].
@@ -130,69 +141,205 @@ pub struct AgentRuntime {
     /// flow. Returned as a JSON-friendly projection so the Tauri layer
     /// can hand them straight to the frontend.
     pub auth_methods: Vec<AuthMethodWire>,
-    /// Whether the agent advertised `promptCapabilities.image` at
-    /// initialize. Gates whether staged image attachments are sent as
-    /// `ContentBlock::Image` or dropped (sending them anyway would violate
-    /// the ACP spec).
-    pub prompt_image_supported: bool,
-    /// Images staged for each session's next prompt. See [`PendingAttachments`].
-    pub pending_attachments: Arc<PendingAttachments>,
+    /// Everything the agent advertised at `initialize` — capability lookups
+    /// for the whole stack read this rather than re-deriving from the wire.
+    pub caps: AgentCaps,
+    /// Elicitations awaiting a user answer (P3.3).
+    pub pending_elicitations: Arc<PendingElicitations>,
+    /// The host's event sink. Held so registry-side RPCs can emit events of
+    /// their own — the end-of-turn usage on a `PromptResponse` (P2.5) arrives
+    /// as an RPC RESULT, not a notification, so the driver task never sees it.
+    pub sink: Arc<dyn EventSink>,
+    /// Terminals this agent created through `terminal/*` (P1.2). Shared with
+    /// the driver task's handlers; the registry releases a session's terminals
+    /// on teardown so a closed tab cannot orphan a running build.
+    pub terminals: Arc<CommandTerminals>,
     /// Legacy `models` blobs recovered off the raw wire for agents still on the
     /// pre-config-options dialect (OpenCode, Cursor). See [`ModelSniffer`].
     pub model_sniffer: Arc<ModelSniffer>,
 }
 
-/// JSON-friendly projection of `AuthMethod` for the wire. The ACP Rust
-/// schema's `AuthMethod` struct only has `id`/`name`/`description`/`meta`,
-/// but claude-agent-acp puts the actual usable spec (subprocess command +
-/// args) inside `_meta.terminal-auth`. We pull that out here so the
-/// frontend doesn't have to know the meta key layout.
+/// How the client is expected to satisfy one auth method (R2).
+///
+/// Mirrors the schema's tagged `AuthMethod` enum. A method with **no** `type`
+/// is `Agent` per the spec, and an *unrecognised* `type` degrades to `Agent`
+/// too: these variants are UNSTABLE, and "call `authenticate` and see" is the
+/// only universally safe behaviour for a shape we do not understand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthMethodKind {
+    /// The agent authenticates itself; the client just calls `authenticate`.
+    Agent,
+    /// The client sets environment variables, then calls `authenticate`.
+    EnvVar,
+    /// The client runs the agent binary with `args` in a terminal; the CLI
+    /// drives the browser flow.
+    Terminal,
+}
+
+/// One environment variable an `env_var` method wants set.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthEnvVar {
+    pub name: String,
+    pub label: Option<String>,
+    /// Schema defaults: `secret` is true, `optional` is false. Both default to
+    /// the SAFER reading when absent — treat an unlabelled var as a secret that
+    /// is required, rather than leaking it or silently skipping it.
+    pub secret: bool,
+    pub optional: bool,
+}
+
+/// JSON-friendly projection of `AuthMethod` for the wire.
+///
+/// ## What adapters actually send (captured 2026-08-19, task R1)
+///
+/// | adapter | id | `type` | carries |
+/// |---|---|---|---|
+/// | claude-agent-acp | `claude-ai-login` | `terminal` | `args` + `_meta["terminal-auth"]` |
+/// | claude-agent-acp | `console-login` | `terminal` | `args` + `_meta["terminal-auth"]` |
+/// | codex-acp | `api-key` | *absent* → agent | `_meta["api-key"].provider = "openai"` |
+/// | codex-acp | `chat-gpt` | *absent* → agent | — |
+///
+/// Two things that survey contradicts in the obvious design:
+///
+/// 1. **No adapter sends typed `env_var` yet.** Codex's API-key method is a bare
+///    `agent` method with a proprietary `_meta["api-key"]` hint. The `env_var`
+///    branch is built to spec here but is currently exercised by nobody, so
+///    [`api_key_provider`] surfaces the codex hint as the real-world equivalent.
+/// 2. **For `terminal` methods the typed `args` are NOT sufficient on their
+///    own.** They are relative to the agent's own binary (`--cli auth login
+///    --claudeai`) and the spec never says what that binary is — and Atlas
+///    launches claude via `npx -y @agentclientprotocol/claude-agent-acp`, so
+///    there is no path to reconstruct. `_meta["terminal-auth"]` carries the
+///    fully-resolved `{command, args}`. So the rule is NOT a blanket "typed data
+///    wins": the typed `type` classifies the method, while `_meta` supplies the
+///    runnable command when present. See [`Self::runnable_terminal`].
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthMethodWire {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    /// `_meta.terminal-auth.command` — typically `process.execPath` (the
-    /// adapter's Node binary). Required to actually run the auth flow.
+    /// Which branch of the flow this method drives.
+    pub kind: AuthMethodKind,
+    /// `env_var` methods: the variables the client must set.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env_vars: Vec<AuthEnvVar>,
+    /// `env_var` methods: where the user obtains the credential. This is the
+    /// "endpoint" the meeting notes were reaching for — it comes from the
+    /// protocol at runtime, not from the registry manifest.
+    pub link: Option<String>,
+    /// Typed `terminal.args`, relative to the agent's own binary.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// `_meta.terminal-auth.command` — the resolved binary to actually exec.
     pub terminal_command: Option<String>,
-    /// `_meta.terminal-auth.args` — the full argv tail to hand to the
-    /// command above (already includes `--cli auth login --claudeai`
-    /// etc., relative to the adapter binary).
+    /// `_meta.terminal-auth.args` — the full argv tail for that command.
     pub terminal_args: Option<Vec<String>>,
-    /// `_meta.terminal-auth.label` — human-readable label the adapter
-    /// suggests for any UI affordance that runs the spec.
+    /// `_meta.terminal-auth.label` — adapter-suggested UI label.
     pub terminal_label: Option<String>,
+    /// `_meta["api-key"].provider` — codex's proprietary hint that this method
+    /// is satisfied by that provider's API key. Lets the UI show the same
+    /// env-var checklist a typed `env_var` method would get.
+    pub api_key_provider: Option<String>,
 }
 
 impl AuthMethodWire {
-    /// Project an `AuthMethod` re-serialized as JSON. We go through JSON
-    /// instead of matching the enum directly because the `Terminal`
-    /// variant is gated on the `unstable_auth_methods` feature flag and
-    /// without it the wire-level `type: "terminal"` + top-level `args`
-    /// silently fall through to the `Agent` variant during deserialization.
-    /// The `_meta.terminal-auth` block survives either way and is the
-    /// canonical source of the subprocess spec — read it directly.
+    /// Project an `AuthMethod` re-serialized as JSON.
+    ///
+    /// Reads JSON rather than matching the typed enum because the `Terminal` /
+    /// `EnvVar` variants are gated behind `unstable_auth_methods`; without the
+    /// feature the wire-level `type` silently deserializes as `Agent` and the
+    /// extra fields are lost. Reading the raw object is immune to that.
     fn from_json(v: &Value) -> Option<Self> {
         let obj = v.as_object()?;
         let id = obj.get("id")?.as_str()?.to_string();
         let name = obj.get("name")?.as_str()?.to_string();
         let description = obj.get("description").and_then(|d| d.as_str()).map(String::from);
-        let (terminal_command, terminal_args, terminal_label) = obj
-            .get("_meta")
-            .and_then(|m| m.as_object())
-            .and_then(|m| extract_terminal_auth(m))
+        let kind = match obj.get("type").and_then(|t| t.as_str()) {
+            Some("env_var") => AuthMethodKind::EnvVar,
+            Some("terminal") => AuthMethodKind::Terminal,
+            // Absent = `agent` per spec. Unknown = degrade to `agent`, and say
+            // so once so an adapter shipping a new variant is discoverable
+            // rather than silently mistreated.
+            Some(other) if other != "agent" => {
+                tracing::info!(
+                    target: "atlas_acp::driver",
+                    method = %id,
+                    r#type = %other,
+                    "unknown ACP auth method type; treating as `agent`"
+                );
+                AuthMethodKind::Agent
+            }
+            _ => AuthMethodKind::Agent,
+        };
+        let env_vars = obj
+            .get("vars")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(parse_env_var).collect())
+            .unwrap_or_default();
+        let link = obj.get("link").and_then(|l| l.as_str()).map(String::from);
+        let args = obj
+            .get("args")
+            .and_then(|a| a.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let meta = obj.get("_meta").and_then(|m| m.as_object());
+        let (terminal_command, terminal_args, terminal_label) = meta
+            .and_then(extract_terminal_auth)
             .map(|t| (Some(t.command), Some(t.args), t.label))
             .unwrap_or((None, None, None));
+        let api_key_provider = meta
+            .and_then(|m| m.get("api-key"))
+            .and_then(|k| k.get("provider"))
+            .and_then(|p| p.as_str())
+            .map(String::from);
         Some(Self {
             id,
             name,
             description,
+            kind,
+            env_vars,
+            link,
+            args,
             terminal_command,
             terminal_args,
             terminal_label,
+            api_key_provider,
         })
     }
+
+    /// The command Atlas can actually exec for a terminal-style login, if any.
+    ///
+    /// Only `_meta["terminal-auth"]` yields one: typed `terminal.args` describe
+    /// arguments to a binary the protocol never names. When this is `None` for a
+    /// `Terminal` method, enrichment (R3) fills it from `builtin_login_args`.
+    #[must_use]
+    pub fn runnable_terminal(&self) -> Option<(String, Vec<String>)> {
+        let command = self.terminal_command.clone()?;
+        Some((command, self.terminal_args.clone().unwrap_or_default()))
+    }
+
+    /// Whether this method can be driven by running a subprocess.
+    #[must_use]
+    pub fn is_terminal_capable(&self) -> bool {
+        self.kind == AuthMethodKind::Terminal || self.terminal_command.is_some()
+    }
+}
+
+/// One `vars[]` entry. Skips malformed items rather than failing the method —
+/// the schema itself uses `VecSkipError` here, so a bad entry must not discard
+/// the good ones alongside it.
+fn parse_env_var(v: &Value) -> Option<AuthEnvVar> {
+    let obj = v.as_object()?;
+    let name = obj.get("name")?.as_str()?.to_string();
+    Some(AuthEnvVar {
+        name,
+        label: obj.get("label").and_then(|l| l.as_str()).map(String::from),
+        secret: obj.get("secret").and_then(|b| b.as_bool()).unwrap_or(true),
+        optional: obj.get("optional").and_then(|b| b.as_bool()).unwrap_or(false),
+    })
 }
 
 struct TerminalAuth {
@@ -213,11 +360,44 @@ fn extract_terminal_auth(meta: &Map<String, Value>) -> Option<TerminalAuth> {
     Some(TerminalAuth { command, args, label })
 }
 
+/// Whether this session's guard is blocking late traffic (cancelled / torn
+/// down). A missing guard passes through, matching the notification handler:
+/// early requests can land before `new_session` returns and installs it.
+fn session_blocked(guards: &Arc<SessionGuards>, session_id: &SessionId) -> bool {
+    guards
+        .get(session_id)
+        .map(|g| g.is_blocked())
+        .unwrap_or(false)
+}
+
+fn cancelled_session() -> agent_client_protocol::Error {
+    agent_client_protocol::Error::request_cancelled()
+}
+
+/// Map an engine exit into the wire shape.
+fn to_exit_status(exit: CommandExit) -> TerminalExitStatus {
+    let mut status = TerminalExitStatus::new();
+    status.exit_code = exit.exit_code;
+    status.signal = exit.signal;
+    status
+}
+
+/// The error for a terminal id the host does not know. Distinct from a generic
+/// internal error so an agent can tell "you released it already" from "the
+/// command blew up".
+fn unknown_terminal(
+    id: &agent_client_protocol::schema::v1::TerminalId,
+) -> agent_client_protocol::Error {
+    agent_client_protocol::Error::invalid_params()
+        .data(serde_json::json!({ "terminalId": id.0.as_ref() }))
+}
+
 /// What the driver hands back when initialize completes.
 pub struct InitializedAgent {
     pub connection: ConnectionTo<Agent>,
     pub auth_methods: Vec<AuthMethodWire>,
-    pub prompt_image_supported: bool,
+    /// Everything the agent advertised. See [`AgentCaps`].
+    pub caps: AgentCaps,
 }
 
 /// Spawn an ACP agent and wait for its `initialize` handshake to complete.
@@ -235,8 +415,12 @@ pub async fn spawn_agent(
     let (ready_tx, ready_rx) = oneshot::channel::<Result<InitializedAgent>>();
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
+    let terminals: Arc<CommandTerminals> = Arc::new(CommandTerminals::new());
+    let elicitations: Arc<PendingElicitations> = Arc::new(DashMap::new());
+    let elicitations_for_task = elicitations.clone();
     let pending_for_task = pending.clone();
     let guards_for_task = guards.clone();
+    let terminals_for_task = terminals.clone();
     let sink_for_task = sink.clone();
     let command_for_task = command.clone();
     let model_sniffer: Arc<ModelSniffer> = Arc::new(ModelSniffer::new());
@@ -257,6 +441,8 @@ pub async fn spawn_agent(
             sink_for_task.clone(),
             pending_for_task,
             guards_for_task,
+            terminals_for_task,
+            elicitations_for_task,
             stderr_for_task.clone(),
             sniffer_for_task,
             ready_tx,
@@ -311,8 +497,10 @@ pub async fn spawn_agent(
         session_guards: guards,
         shutdown_tx: Some(shutdown_tx),
         auth_methods: initialized.auth_methods,
-        prompt_image_supported: initialized.prompt_image_supported,
-        pending_attachments: Arc::new(DashMap::new()),
+        caps: initialized.caps,
+        pending_elicitations: elicitations,
+        sink,
+        terminals,
         model_sniffer,
     })
 }
@@ -323,6 +511,8 @@ async fn run_driver(
     sink: Arc<dyn EventSink>,
     pending: Arc<PendingPermissions>,
     guards: Arc<SessionGuards>,
+    terminals: Arc<CommandTerminals>,
+    elicitations: Arc<PendingElicitations>,
     stderr_tail: Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
     model_sniffer: Arc<ModelSniffer>,
     ready_tx: oneshot::Sender<Result<InitializedAgent>>,
@@ -363,6 +553,22 @@ async fn run_driver(
     let pending_for_handler = pending.clone();
     let guards_for_notif = guards.clone();
     let guards_for_perm = guards.clone();
+    // One clone per handler closure — each `.on_receive_request` takes ownership
+    // of what it captures, so they cannot share a single binding.
+    let terminals_create = terminals.clone();
+    let terminals_output = terminals.clone();
+    let terminals_wait = terminals.clone();
+    let terminals_kill = terminals.clone();
+    let terminals_release = terminals.clone();
+    let elicitations_for_handler = elicitations.clone();
+    let sink_for_elicit = sink.clone();
+    let guards_for_read = guards.clone();
+    let guards_for_write = guards.clone();
+    // One pump per terminal-shaped tool call (P1.4).
+    let pumped: crate::terminal_pump::PumpedCalls = Arc::new(dashmap::DashSet::new());
+    let pumped_for_notif = pumped.clone();
+    let terminals_for_pump = terminals.clone();
+    let sink_for_pump = sink.clone();
 
     agent_client_protocol::Client
         .builder()
@@ -394,6 +600,24 @@ async fn run_driver(
                     }
                     turn = guard.current_turn();
                 }
+                // A tool call whose content is a bare `terminalId` renders as
+                // nothing on its own — start tailing the terminal so its output
+                // streams into the card through the `_meta.terminal_output`
+                // path the apply layer already handles (P1.4).
+                for (tool_call_id, terminal_id) in
+                    crate::terminal_pump::terminal_refs(&notification.update)
+                {
+                    crate::terminal_pump::spawn(
+                        &pumped_for_notif,
+                        &terminals_for_pump,
+                        sink_for_pump.clone(),
+                        agent_id,
+                        notification.session_id.clone(),
+                        turn,
+                        tool_call_id,
+                        terminal_id,
+                    );
+                }
                 sink_notif.emit(
                     agent_id,
                     AcpEvent::SessionUpdate {
@@ -405,6 +629,224 @@ async fn run_driver(
                 Ok(())
             },
             agent_client_protocol::on_receive_notification!(),
+        )
+        // ── elicitation/create (P3.3) ────────────────────────────────────
+        // The agent asks the USER something mid-turn. Mirrors the permission
+        // handler exactly: stash a oneshot under a fresh id, emit an event, and
+        // answer from the Tauri layer whenever the user responds. Answering
+        // inline is impossible — a human is in the loop.
+        .on_receive_request(
+            async move |request: CreateElicitationRequest, responder, connection| {
+                let pending = elicitations_for_handler.clone();
+                let sink = sink_for_elicit.clone();
+                let request_id = Uuid::new_v4();
+                let (tx, rx) = oneshot::channel::<ElicitationAction>();
+                pending.insert(request_id, PendingElicitationEntry { sender: tx });
+
+                // Project the mode via JSON: `ElicitationMode` is
+                // `#[non_exhaustive]` and unstable-gated, and the UI builds a
+                // form from `requestedSchema` rather than matching variants.
+                let raw = serde_json::to_value(&request.mode).unwrap_or_default();
+                let mode = raw
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("form")
+                    .to_string();
+                let session_id = raw
+                    .pointer("/scope/sessionId")
+                    .and_then(|v| v.as_str())
+                    .map(|s| SessionId::new(s.to_string()));
+                sink.emit(
+                    agent_id,
+                    AcpEvent::Elicitation {
+                        session_id,
+                        request_id,
+                        mode,
+                        message: request.message.clone(),
+                        requested_schema: raw.get("requestedSchema").cloned(),
+                        url: raw.get("url").and_then(|u| u.as_str()).map(str::to_owned),
+                    },
+                    None,
+                );
+
+                connection.spawn(async move {
+                    let action = rx.await.unwrap_or_else(|_| {
+                        // Sender dropped (agent killed, app shutdown). ACP has
+                        // an explicit `cancel` action for exactly this, which
+                        // is far better than leaving the agent blocked forever.
+                        ElicitationAction::Cancel
+                    });
+                    pending.remove(&request_id);
+                    responder.respond(CreateElicitationResponse::new(action))
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        // ── fs/* (P1.3) ──────────────────────────────────────────────────
+        // Both are gated on the session guard, the same gate the notification
+        // and permission handlers use. A cancelled session must not still be
+        // writing to the user's files: after Stop, an in-flight
+        // `fs/write_text_file` is exactly the late effect the guard exists to
+        // suppress. Reads are gated too, for consistency and so a cancelled
+        // turn stops doing work.
+        .on_receive_request(
+            async move |request: ReadTextFileRequest, responder, connection| {
+                let guards = guards_for_read.clone();
+                connection.spawn(async move {
+                    if session_blocked(&guards, &request.session_id) {
+                        return responder.respond_with_error(cancelled_session());
+                    }
+                    match crate::fs::read_text_file(
+                        &request.path,
+                        request.line,
+                        request.limit,
+                    ) {
+                        Ok(content) => responder.respond(ReadTextFileResponse::new(content)),
+                        Err(e) => responder.respond_with_internal_error(e),
+                    }
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: WriteTextFileRequest, responder, connection| {
+                let guards = guards_for_write.clone();
+                connection.spawn(async move {
+                    if session_blocked(&guards, &request.session_id) {
+                        return responder.respond_with_error(cancelled_session());
+                    }
+                    match crate::fs::write_text_file(&request.path, &request.content) {
+                        Ok(()) => {
+                            tracing::debug!(
+                                target: "atlas_acp::driver",
+                                path = %request.path.display(),
+                                bytes = request.content.len(),
+                                "fs/write_text_file"
+                            );
+                            responder.respond(WriteTextFileResponse::new())
+                        }
+                        Err(e) => responder.respond_with_internal_error(e),
+                    }
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        // ── terminal/* (P1.2) ────────────────────────────────────────────
+        // Five client-served methods backed by `atlas_terminal::command`. The
+        // capability that advertises them lives in `capabilities::SERVED`; the
+        // truthfulness test there fails if these registrations and that flag
+        // ever get out of step.
+        //
+        // Each handler answers inside `connection.spawn` rather than inline:
+        // `terminal/wait_for_exit` blocks for the whole lifetime of the
+        // command, and holding the protocol loop for a 10-minute build would
+        // stall every other message on the connection — including the
+        // `session/cancel` the user presses to stop it.
+        .on_receive_request(
+            async move |request: CreateTerminalRequest, responder, connection| {
+                let terminals = terminals_create.clone();
+                connection.spawn(async move {
+                    let env: Vec<(String, String)> = request
+                        .env
+                        .iter()
+                        .map(|v| (v.name.clone(), v.value.clone()))
+                        .collect();
+                    let limit = request.output_byte_limit.unwrap_or(DEFAULT_OUTPUT_BYTE_LIMIT);
+                    let spawned = CommandTerminal::spawn(
+                        &request.command,
+                        &request.args,
+                        &env,
+                        request.cwd.as_deref(),
+                        limit,
+                    );
+                    match spawned {
+                        Ok(terminal) => {
+                            let id = terminals
+                                .insert(request.session_id.0.as_ref(), terminal);
+                            tracing::debug!(
+                                target: "atlas_acp::driver",
+                                terminal_id = %id,
+                                command = %request.command,
+                                "terminal/create"
+                            );
+                            responder.respond(CreateTerminalResponse::new(id))
+                        }
+                        Err(e) => {
+                            // A command that cannot start (missing binary, bad
+                            // cwd) is the agent's problem to handle, so it gets
+                            // a protocol error rather than a phantom terminal
+                            // whose every later call would 404.
+                            tracing::warn!(
+                                target: "atlas_acp::driver",
+                                command = %request.command,
+                                error = %e,
+                                "terminal/create failed"
+                            );
+                            responder.respond_with_internal_error(e)
+                        }
+                    }
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: TerminalOutputRequest, responder, connection| {
+                let terminals = terminals_output.clone();
+                connection.spawn(async move {
+                    let Some(term) = terminals.get(request.terminal_id.0.as_ref()) else {
+                        return responder.respond_with_error(unknown_terminal(&request.terminal_id));
+                    };
+                    let (output, truncated) = term.output();
+                    let mut resp = TerminalOutputResponse::new(output, truncated);
+                    // Present only once the command has finished; while it runs
+                    // the agent polls this to stream progress.
+                    resp.exit_status = term.exit_status().map(to_exit_status);
+                    responder.respond(resp)
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: WaitForTerminalExitRequest, responder, connection| {
+                let terminals = terminals_wait.clone();
+                connection.spawn(async move {
+                    let Some(term) = terminals.get(request.terminal_id.0.as_ref()) else {
+                        return responder.respond_with_error(unknown_terminal(&request.terminal_id));
+                    };
+                    let exit = term.wait_for_exit().await;
+                    responder.respond(WaitForTerminalExitResponse::new(to_exit_status(exit)))
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: KillTerminalRequest, responder, connection| {
+                let terminals = terminals_kill.clone();
+                connection.spawn(async move {
+                    let Some(term) = terminals.get(request.terminal_id.0.as_ref()) else {
+                        return responder.respond_with_error(unknown_terminal(&request.terminal_id));
+                    };
+                    // Kill but KEEP the entry: ACP lets the agent read output
+                    // and exit status after killing, and only `terminal/release`
+                    // drops the handle.
+                    let _ = term.kill();
+                    responder.respond(KillTerminalResponse::new())
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ReleaseTerminalRequest, responder, connection| {
+                let terminals = terminals_release.clone();
+                connection.spawn(async move {
+                    // Releasing an unknown terminal is not an error — the agent
+                    // may release twice, or release one the session teardown
+                    // already reaped.
+                    terminals.release(request.terminal_id.0.as_ref());
+                    responder.respond(ReleaseTerminalResponse::new())
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
         )
         .on_receive_request(
             async move |request: RequestPermissionRequest, responder, connection| {
@@ -478,30 +920,10 @@ async fn run_driver(
             agent_client_protocol::on_receive_request!(),
         )
         .connect_with(agent, |connection: ConnectionTo<Agent>| async move {
-            // Advertise `_meta.terminal-auth: true` so adapters like
-            // claude-agent-acp populate the response's `authMethods`
-            // with structured subprocess specs we can actually run.
-            // Without this flag the adapter returns an empty auth-methods
-            // list and `/login` has no way to launch the OAuth flow.
-            //
-            // `_meta.terminal_output: true` opts into LIVE command output:
-            // claude-agent-acp and codex-acp share this meta contract — a
-            // Bash-shaped tool_call carries `terminal_info` and its updates
-            // stream `terminal_output` / `terminal_exit` in `_meta`, which
-            // the apply layer folds into the tool call's visible result as
-            // it runs. Without the flag both adapters only deliver output
-            // once the command has finished. (Underscore vs. dash matches
-            // each adapter's key exactly — Zed advertises both spellings.)
-            let mut caps = ClientCapabilities::default();
-            let mut meta = Map::new();
-            meta.insert("terminal-auth".into(), Value::Bool(true));
-            meta.insert("terminal_output".into(), Value::Bool(true));
-            // Cursor-only capability (Zed sends it too): opts into
-            // parameterized model ids like `gpt-5.4[reasoning=medium]`.
-            // Unknown meta keys are ignored per the ACP spec, so sending it
-            // unconditionally beats plumbing a per-spec meta field.
-            meta.insert("parameterizedModelPicker".into(), Value::Bool(true));
-            caps.meta = Some(meta);
+            // Built from `capabilities::SERVED` — the single table that also
+            // backs the truthfulness test, so Atlas can never promise a method
+            // it has no handler for. Every flag flips there, not here.
+            let caps = crate::capabilities::client_capabilities();
 
             let init_result = connection
                 .send_request(
@@ -526,12 +948,17 @@ async fn run_driver(
                                 })
                         })
                         .unwrap_or_default();
-                    let prompt_image_supported =
-                        resp.agent_capabilities.prompt_capabilities.image;
+                    // Capture the WHOLE capability tree, not just the two
+                    // fields the pre-P0.3 code read. Downstream tasks (P1.1
+                    // mcpServers, P2.1 embeddedContext, P2.3 resume/list/close,
+                    // P3.2/P3.4/P3.6, A2 logout) then need a struct read rather
+                    // than another handshake.
+                    let caps = AgentCaps::from_agent(&resp.agent_capabilities);
+                    tracing::debug!(?caps, "agent capabilities captured at initialize");
                     let _ = ready_tx.send(Ok(InitializedAgent {
                         connection: connection.clone(),
                         auth_methods: methods,
-                        prompt_image_supported,
+                        caps,
                     }));
                 }
                 Err(e) => {
@@ -551,3 +978,144 @@ async fn run_driver(
     Ok(())
 }
 
+
+#[cfg(test)]
+mod auth_method_tests {
+    use super::*;
+
+    /// Verbatim from `npx -y @agentclientprotocol/claude-agent-acp` (R1,
+    /// 2026-08-19). Typed `terminal` AND the `_meta` fallback, together.
+    #[test]
+    fn claude_terminal_method_parses_both_the_type_and_the_runnable_command() {
+        let raw = serde_json::json!({
+            "id": "claude-ai-login",
+            "name": "Claude Subscription",
+            "description": "Use Claude subscription ",
+            "type": "terminal",
+            "args": ["--cli", "auth", "login", "--claudeai"],
+            "_meta": { "terminal-auth": {
+                "command": "/usr/local/bin/node",
+                "args": ["/tmp/.bin/claude-agent-acp", "--cli", "auth", "login", "--claudeai"],
+                "label": "Claude Login"
+            }}
+        });
+        let m = AuthMethodWire::from_json(&raw).expect("parses");
+        assert_eq!(m.kind, AuthMethodKind::Terminal);
+        assert_eq!(m.args, vec!["--cli", "auth", "login", "--claudeai"]);
+        let (cmd, args) = m.runnable_terminal().expect("meta supplies the binary");
+        assert_eq!(cmd, "/usr/local/bin/node");
+        assert_eq!(args[0], "/tmp/.bin/claude-agent-acp");
+        assert!(m.is_terminal_capable());
+    }
+
+    /// The inversion worth remembering: typed `args` alone cannot be executed,
+    /// because the protocol never names the binary they belong to.
+    #[test]
+    fn a_terminal_method_without_meta_has_no_runnable_command() {
+        let m = AuthMethodWire::from_json(&serde_json::json!({
+            "id": "x", "name": "X", "type": "terminal", "args": ["auth", "login"]
+        }))
+        .expect("parses");
+        assert_eq!(m.kind, AuthMethodKind::Terminal);
+        assert!(
+            m.runnable_terminal().is_none(),
+            "typed args are relative to an unnamed binary — enrichment must fill this"
+        );
+    }
+
+    /// Verbatim from `npx -y @agentclientprotocol/codex-acp` (R1): no `type`
+    /// field at all, plus a proprietary api-key hint.
+    #[test]
+    fn codex_api_key_method_is_an_agent_method_with_a_provider_hint() {
+        let m = AuthMethodWire::from_json(&serde_json::json!({
+            "id": "api-key",
+            "name": "API Key",
+            "description": "Use an API key to authenticate",
+            "_meta": { "api-key": { "provider": "openai" } }
+        }))
+        .expect("parses");
+        assert_eq!(m.kind, AuthMethodKind::Agent, "absent type means agent");
+        assert_eq!(m.api_key_provider.as_deref(), Some("openai"));
+        assert!(!m.is_terminal_capable());
+    }
+
+    #[test]
+    fn codex_chat_gpt_method_is_a_bare_agent_method() {
+        let m = AuthMethodWire::from_json(&serde_json::json!({
+            "id": "chat-gpt", "name": "ChatGPT"
+        }))
+        .expect("parses");
+        assert_eq!(m.kind, AuthMethodKind::Agent);
+        assert!(m.api_key_provider.is_none());
+        assert!(m.env_vars.is_empty());
+    }
+
+    /// No adapter ships this yet (R1), so the branch is spec-driven — which is
+    /// exactly why it needs a test pinning the schema's defaults.
+    #[test]
+    fn an_env_var_method_parses_vars_and_link() {
+        let m = AuthMethodWire::from_json(&serde_json::json!({
+            "id": "gemini-key",
+            "name": "Gemini API Key",
+            "type": "env_var",
+            "link": "https://aistudio.google.com/apikey",
+            "vars": [
+                { "name": "GEMINI_API_KEY", "label": "Gemini key" },
+                { "name": "GOOGLE_PROJECT", "secret": false, "optional": true }
+            ]
+        }))
+        .expect("parses");
+        assert_eq!(m.kind, AuthMethodKind::EnvVar);
+        assert_eq!(m.link.as_deref(), Some("https://aistudio.google.com/apikey"));
+        assert_eq!(m.env_vars.len(), 2);
+        // Defaults must be the SAFER reading when the adapter omits them.
+        assert!(m.env_vars[0].secret, "an unlabelled var is a secret");
+        assert!(!m.env_vars[0].optional, "an unlabelled var is required");
+        assert!(!m.env_vars[1].secret && m.env_vars[1].optional);
+    }
+
+    /// The schema uses `VecSkipError` for `vars`; a malformed entry must not
+    /// take the well-formed ones with it.
+    #[test]
+    fn a_malformed_var_entry_is_skipped_not_fatal() {
+        let m = AuthMethodWire::from_json(&serde_json::json!({
+            "id": "k", "name": "K", "type": "env_var",
+            "vars": [ { "label": "no name here" }, { "name": "REAL_KEY" } ]
+        }))
+        .expect("parses");
+        assert_eq!(m.env_vars.len(), 1);
+        assert_eq!(m.env_vars[0].name, "REAL_KEY");
+    }
+
+    /// These variants are UNSTABLE — a future `type` must degrade, not break.
+    #[test]
+    fn an_unknown_type_degrades_to_agent() {
+        let m = AuthMethodWire::from_json(&serde_json::json!({
+            "id": "future", "name": "Future", "type": "webauthn_or_something"
+        }))
+        .expect("parses");
+        assert_eq!(m.kind, AuthMethodKind::Agent);
+    }
+
+    #[test]
+    fn a_method_without_an_id_is_rejected() {
+        assert!(AuthMethodWire::from_json(&serde_json::json!({ "name": "no id" })).is_none());
+    }
+
+    /// The TS side destructures these names; camelCase is the contract.
+    #[test]
+    fn the_wire_shape_is_camel_case() {
+        let m = AuthMethodWire::from_json(&serde_json::json!({
+            "id": "a", "name": "A", "type": "env_var",
+            "link": "https://example.test",
+            "vars": [{ "name": "K" }],
+            "_meta": { "api-key": { "provider": "openai" } }
+        }))
+        .expect("parses");
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(v["kind"], "env_var");
+        assert_eq!(v["envVars"][0]["name"], "K");
+        assert_eq!(v["apiKeyProvider"], "openai");
+        assert!(v.get("link").is_some());
+    }
+}

@@ -2,15 +2,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1::{
-    AuthenticateRequest, CancelNotification, ContentBlock, ImageContent, LoadSessionRequest,
+    AuthenticateRequest, CancelNotification, CloseSessionRequest, ContentBlock,
+    DeleteSessionRequest, ElicitationAction, ForkSessionRequest, ListSessionsRequest,
+    LoadSessionRequest, LogoutRequest, McpServer,
     NewSessionRequest, PermissionOptionId, PromptRequest, RequestPermissionOutcome,
     SelectedPermissionOutcome, SessionConfigOptionValue, SessionId, SessionModeId,
-    SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason, TextContent,
+    SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
 };
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::capabilities::AgentCaps;
+use crate::events::AcpEvent;
 use crate::driver::{self, AgentRuntime, AuthMethodWire, SessionGuard};
 use crate::error::{AcpError, Result};
 use crate::events::EventSink;
@@ -32,9 +36,23 @@ impl Default for AgentId {
     }
 }
 
+/// One session the AGENT reports it has stored (P2.3), flattened for the wire.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionInfo {
+    pub session_id: String,
+    pub cwd: String,
+    pub title: Option<String>,
+    /// RFC-3339 per the schema; passed through verbatim rather than parsed, so
+    /// an agent with a slightly different stamp still sorts on the frontend.
+    pub updated_at: Option<String>,
+}
+
 /// One image attached to an outbound prompt (multimodal input): base64
-/// `data` + its MIME type, mapped to an ACP `ContentBlock::Image` at send
-/// time when the agent advertised `promptCapabilities.image`.
+/// `data` + its MIME type. The Tauri command folds these into the turn's
+/// content via [`crate::prompt::compose`]; the resulting `ContentBlock::Image`
+/// blocks are stripped again at send time unless the agent advertised
+/// `promptCapabilities.image`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageAttachment {
@@ -346,6 +364,9 @@ pub struct AgentRegistry {
     /// Dynamic (registry-installed) specs, unioned into `known_specs`.
     /// `None` = first-party only (tests, minimal hosts).
     dynamic: Option<Arc<dyn SpecSource>>,
+    /// App config dir holding `mcp-servers.json`. `None` = pass no MCP servers
+    /// (tests, minimal hosts). See [`AgentRegistry::with_config_dir`].
+    config_dir: Option<PathBuf>,
 }
 
 /// Bound an ACP request so a wedged adapter can't hang its caller forever
@@ -381,7 +402,29 @@ impl AgentRegistry {
         Self {
             inner: Arc::new(DashMap::new()),
             dynamic: Some(source),
+            config_dir: None,
         }
+    }
+
+    /// Point the registry at the app config dir so `session/new` and
+    /// `session/load` can pass the user's configured MCP servers (P1.1).
+    /// Without this the registry still works — it simply sends no `mcpServers`,
+    /// which is the pre-P1.1 behaviour.
+    #[must_use]
+    pub fn with_config_dir(mut self, config_dir: PathBuf) -> Self {
+        self.config_dir = Some(config_dir);
+        self
+    }
+
+    /// The user's MCP servers, filtered to the transports this agent advertised.
+    /// Empty when no config dir is set, the file is absent/malformed, or every
+    /// entry was filtered out — all of which are normal, not errors.
+    fn mcp_servers_for(&self, agent_id: AgentId) -> Vec<McpServer> {
+        let Some(dir) = self.config_dir.as_deref() else {
+            return Vec::new();
+        };
+        let caps = self.agent_caps(agent_id).unwrap_or_default();
+        crate::mcp::to_acp_servers(crate::mcp::load_configs(dir), caps)
     }
 
     /// First-party specs ∪ dynamic (registry-installed) specs. First-party
@@ -495,11 +538,28 @@ impl AgentRegistry {
     /// Open a new session in `cwd` against the given agent. Registers
     /// a `SessionGuard` for the returned session id so the driver can
     /// gate inbound traffic on the session's lifecycle.
-    pub async fn new_session(&self, agent_id: AgentId, cwd: PathBuf) -> Result<NewSessionInfo> {
+    pub async fn new_session(
+        &self,
+        agent_id: AgentId,
+        cwd: PathBuf,
+        additional_directories: Vec<PathBuf>,
+    ) -> Result<NewSessionInfo> {
         let connection = self.connection(agent_id)?;
+        let mcp_servers = self.mcp_servers_for(agent_id);
+        let extra_dirs = self.additional_directories_for(agent_id, additional_directories);
+        tracing::info!(
+            target: "atlas_acp::registry",
+            count = mcp_servers.len(),
+            extra_dirs = extra_dirs.len(),
+            "session/new: passing MCP servers"
+        );
         let resp = rpc_timeout("session/new", LIFECYCLE_RPC_SECS, async {
             Ok(connection
-                .send_request(NewSessionRequest::new(cwd))
+                .send_request(
+                    NewSessionRequest::new(cwd)
+                        .mcp_servers(mcp_servers)
+                        .additional_directories(extra_dirs),
+                )
                 .block_task()
                 .await?)
         })
@@ -539,9 +599,15 @@ impl AgentRegistry {
         cwd: PathBuf,
     ) -> Result<Option<serde_json::Value>> {
         let connection = self.connection(agent_id)?;
+        // A resumed session must get the same MCP servers as a fresh one — the
+        // agent rebuilds its tool set from this request, so omitting them here
+        // would make MCP tools vanish on resume.
+        let mcp_servers = self.mcp_servers_for(agent_id);
         let resp = rpc_timeout("session/load", LIFECYCLE_RPC_SECS, async {
             Ok(connection
-                .send_request(LoadSessionRequest::new(session_id.clone(), cwd))
+                .send_request(
+                    LoadSessionRequest::new(session_id.clone(), cwd).mcp_servers(mcp_servers),
+                )
                 .block_task()
                 .await?)
         })
@@ -579,6 +645,262 @@ impl AgentRegistry {
                 .send_request(AuthenticateRequest::new(method_id))
                 .block_task()
                 .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Tell the agent to close a session (P2.3, ACP `session/close`).
+    ///
+    /// `drop_session` only ever cleaned Atlas-side state — guards, terminals,
+    /// buffered notifications — so every closed tab left the AGENT still
+    /// holding that session's context, for the whole life of the process. Best
+    /// effort and capability-gated: an agent that never advertised
+    /// `sessionCapabilities.close` would answer `-32601`, and a tab close must
+    /// not surface a protocol error.
+    pub async fn close_session(&self, agent_id: AgentId, session_id: SessionId) -> Result<()> {
+        if !self.agent_caps(agent_id).is_some_and(|c| c.session_close) {
+            return Ok(());
+        }
+        let connection = self.connection(agent_id)?;
+        rpc_timeout("session/close", LIFECYCLE_RPC_SECS, async {
+            connection
+                .send_request(CloseSessionRequest::new(session_id))
+                .block_task()
+                .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Extra workspace roots to hand the agent at `session/new` (P3.2).
+    ///
+    /// Gated on `sessionCapabilities.additionalDirectories`: an agent that
+    /// never advertised it would reject or ignore the field.
+    ///
+    /// Caller-supplied, because the roots are a property of the SESSION and
+    /// only the host knows them: they are fixed for the session's life and must
+    /// be known before the first prompt, so they cannot be inferred from
+    /// `@workspace` / `@repo` mentions (those are per-MESSAGE context, and
+    /// promoting one would pin a directory the user referenced once as a
+    /// permanent root).
+    ///
+    /// Atlas's own UI passes none today — a workspace has exactly one `path` —
+    /// so in practice this is empty until Atlas grows multi-root sessions. The
+    /// command accepts them regardless, so the feature is usable the moment
+    /// there is something to pass.
+    fn additional_directories_for(
+        &self,
+        agent_id: AgentId,
+        requested: Vec<PathBuf>,
+    ) -> Vec<PathBuf> {
+        if requested.is_empty() {
+            return Vec::new();
+        }
+        if !self
+            .agent_caps(agent_id)
+            .is_some_and(|c| c.session_additional_directories)
+        {
+            tracing::debug!(
+                target: "atlas_acp::registry",
+                count = requested.len(),
+                "dropping additional directories — agent did not advertise the capability"
+            );
+            return Vec::new();
+        }
+        requested
+    }
+
+    /// Branch a session from its current state (P3.4, ACP `session/fork`).
+    ///
+    /// The forked session starts with the parent's history and diverges from
+    /// there, which is what makes "try a different approach from here" possible
+    /// without losing the thread that got you there. `None` when the agent
+    /// never advertised `sessionCapabilities.fork`.
+    pub async fn fork_session(
+        &self,
+        agent_id: AgentId,
+        session_id: SessionId,
+        cwd: PathBuf,
+        additional_directories: Vec<PathBuf>,
+    ) -> Result<Option<NewSessionInfo>> {
+        if !self.agent_caps(agent_id).is_some_and(|c| c.session_fork) {
+            return Ok(None);
+        }
+        let connection = self.connection(agent_id)?;
+        let mcp_servers = self.mcp_servers_for(agent_id);
+        // A fork inherits the parent's roots; the caller re-supplies them.
+        let extra_dirs = self.additional_directories_for(agent_id, additional_directories);
+        let resp = rpc_timeout("session/fork", LIFECYCLE_RPC_SECS, async {
+            Ok(connection
+                .send_request(
+                    ForkSessionRequest::new(session_id, cwd)
+                        .mcp_servers(mcp_servers)
+                        .additional_directories(extra_dirs),
+                )
+                .block_task()
+                .await?)
+        })
+        .await?;
+        // The fork is a real session on the agent — register a guard so it can
+        // be cancelled and torn down through the normal path.
+        self.register_session(agent_id, resp.session_id.clone())?;
+        Ok(Some(NewSessionInfo {
+            session_id: resp.session_id,
+            modes: resp.modes.as_ref().and_then(|m| serde_json::to_value(m).ok()),
+            models: None,
+        }))
+    }
+
+    /// Answer an elicitation the agent raised (P3.3).
+    ///
+    /// `content` is the form's field map for an accept; `None` on decline or
+    /// cancel. Unknown request ids are a no-op rather than an error — a user
+    /// can answer a dialog whose agent already died, and that must not surface
+    /// as a failure they can do nothing about.
+    pub fn respond_elicitation(
+        &self,
+        agent_id: AgentId,
+        request_id: Uuid,
+        action: &str,
+        content: Option<serde_json::Value>,
+    ) -> Result<()> {
+        let entry = self.inner.get(&agent_id).ok_or(AcpError::UnknownAgent)?;
+        let Some((_, pending)) = entry.runtime.pending_elicitations.remove(&request_id) else {
+            return Ok(());
+        };
+        let outcome = match action {
+            "accept" => {
+                // Round-trip the field map through JSON: the value type is
+                // `#[non_exhaustive]` and the UI produces plain JSON scalars.
+                let parsed = content
+                    .and_then(|c| serde_json::from_value(serde_json::json!({ "content": c })).ok())
+                    .unwrap_or_default();
+                ElicitationAction::Accept(parsed)
+            }
+            "decline" => ElicitationAction::Decline,
+            _ => ElicitationAction::Cancel,
+        };
+        let _ = pending.sender.send(outcome);
+        Ok(())
+    }
+
+    // ── P3.6 providers: BLOCKED at the library level ────────────────────
+    //
+    // `providers/list|set|disable` cannot be dispatched from this build. P0.1
+    // made the schema TYPES reachable (`ProviderInfo`, `ListProvidersRequest`,
+    // and `AgentCaps.providers` reads the capability today), but the JSON-RPC
+    // plumbing lives in the top-level `agent-client-protocol` crate, and 1.3.0
+    // does not mention `ListProvidersRequest` anywhere — so the types carry no
+    // `JsonRpcRequest` impl and `send_request` will not accept them. There is
+    // no raw-send escape hatch on the connection either.
+    //
+    // Unblocking needs a newer `agent-client-protocol` that wires the provider
+    // methods. Nothing here is worth faking in the meantime: an agent that
+    // advertises `providers` is still detected (`AgentCaps.providers`), so the
+    // capability is captured and ready the day the dispatch exists.
+
+    /// List the agent's own stored sessions for `cwd` (P2.3, ACP
+    /// `session/list`).
+    ///
+    /// `None` when the agent never advertised `sessionCapabilities.list` — the
+    /// caller then falls back to Atlas's per-agent disk scans. This is the
+    /// method that makes any NEW ACP agent get sidebar history for free: today
+    /// each agent needs a bespoke reader (Claude JSONL, Codex SQLite, Kilo
+    /// SQLite, Cersei JSON, Atlas's own transcripts), and an agent Atlas has
+    /// never heard of gets nothing.
+    ///
+    /// Pages through `next_cursor` so a long history is complete rather than
+    /// truncated at whatever the agent's page size happens to be. Bounded by
+    /// `MAX_SESSION_PAGES` so a misbehaving agent that always returns a cursor
+    /// cannot spin here forever.
+    pub async fn list_sessions(
+        &self,
+        agent_id: AgentId,
+        cwd: PathBuf,
+    ) -> Result<Option<Vec<AgentSessionInfo>>> {
+        if !self.agent_caps(agent_id).is_some_and(|c| c.session_list) {
+            return Ok(None);
+        }
+        const MAX_SESSION_PAGES: usize = 20;
+        let connection = self.connection(agent_id)?;
+        let mut out: Vec<AgentSessionInfo> = Vec::new();
+        let mut cursor: Option<String> = None;
+        for page in 0..MAX_SESSION_PAGES {
+            let req = {
+                let mut r = ListSessionsRequest::new().cwd(cwd.clone());
+                if let Some(c) = cursor.take() {
+                    r = r.cursor(c);
+                }
+                r
+            };
+            let resp = rpc_timeout("session/list", LIFECYCLE_RPC_SECS, async {
+                Ok(connection.send_request(req).block_task().await?)
+            })
+            .await?;
+            out.extend(resp.sessions.iter().map(|s| AgentSessionInfo {
+                session_id: s.session_id.0.to_string(),
+                cwd: s.cwd.to_string_lossy().into_owned(),
+                title: s.title.clone(),
+                updated_at: s.updated_at.clone(),
+            }));
+            match resp.next_cursor.clone() {
+                Some(next) if page + 1 < MAX_SESSION_PAGES => cursor = Some(next),
+                Some(_) => {
+                    tracing::warn!(
+                        target: "atlas_acp::registry",
+                        pages = MAX_SESSION_PAGES,
+                        "session/list still paging at the cap — returning what we have"
+                    );
+                    break;
+                }
+                None => break,
+            }
+        }
+        Ok(Some(out))
+    }
+
+    /// Ask the agent to forget a stored session (P2.3, ACP `session/delete`).
+    /// Capability-gated for the same reason as [`Self::close_session`].
+    pub async fn delete_session(&self, agent_id: AgentId, session_id: SessionId) -> Result<bool> {
+        if !self.agent_caps(agent_id).is_some_and(|c| c.session_delete) {
+            return Ok(false);
+        }
+        let connection = self.connection(agent_id)?;
+        rpc_timeout("session/delete", LIFECYCLE_RPC_SECS, async {
+            connection
+                .send_request(DeleteSessionRequest::new(session_id))
+                .block_task()
+                .await?;
+            Ok(true)
+        })
+        .await
+    }
+
+    /// Whether the agent said it can replay a stored session (P2.3).
+    ///
+    /// Replaces reading the hardcoded per-plugin `TranscriptKind` for resume
+    /// eligibility: that table has to be edited by hand for every new agent,
+    /// whereas this is what the agent itself reported at `initialize`.
+    #[must_use]
+    pub fn supports_load_session(&self, agent_id: AgentId) -> bool {
+        self.agent_caps(agent_id).is_some_and(|c| c.load_session)
+    }
+
+    /// Sign the agent out (A2, ACP `logout`).
+    ///
+    /// Session-less by design — the request carries only `_meta`, because it
+    /// drops the AGENT's stored credentials, not a session's. Both
+    /// claude-agent-acp and codex-acp advertise `auth.logout` (captured live in
+    /// the auth loop's R1), so this has real consumers.
+    ///
+    /// Bounded by the tight lifecycle timeout rather than `authenticate`'s
+    /// 5-minute budget: nothing here waits on a human, so a wedged adapter
+    /// should fail fast instead of hanging a settings click.
+    pub async fn logout(&self, agent_id: AgentId) -> Result<()> {
+        let connection = self.connection(agent_id)?;
+        rpc_timeout("logout", LIFECYCLE_RPC_SECS, async {
+            connection.send_request(LogoutRequest::new()).block_task().await?;
             Ok(())
         })
         .await
@@ -622,6 +944,21 @@ impl AgentRegistry {
             .get(&agent_id)
             .ok_or(AcpError::UnknownAgent)?;
         entry.runtime.session_guards.remove(session_id);
+        // Kill any command this session's agent left running (P1.2). ACP
+        // expects `terminal/release`, but a tab closed mid-build — or an agent
+        // that dies before releasing — would otherwise orphan the child with
+        // nothing left holding a handle to reap it.
+        let reaped = entry
+            .runtime
+            .terminals
+            .release_session(session_id.0.as_ref());
+        if reaped > 0 {
+            tracing::info!(
+                target: "atlas_acp::registry",
+                count = reaped,
+                "drop_session: killed orphaned terminals"
+            );
+        }
         Ok(())
     }
 
@@ -656,82 +993,69 @@ impl AgentRegistry {
         Ok(epoch)
     }
 
-    /// Send a single text prompt, plus any image attachments staged for this
-    /// session via [`Self::stage_attachments`]. Resolves with the turn's
-    /// `StopReason` when the agent finishes streaming. Notifications fire
-    /// over the event sink throughout the turn.
+    /// Send one turn's content. Resolves with the turn's `StopReason` when the
+    /// agent finishes streaming; notifications fire over the event sink
+    /// throughout the turn.
+    ///
+    /// Content arrives already composed (P0.2) — before that, images travelled
+    /// out-of-band through a `stage_attachments` map that this method drained.
+    /// The one thing that cannot move upstream is the capability filter below:
+    /// this is the only layer that knows what the agent advertised.
     pub async fn send_prompt(
         &self,
         agent_id: AgentId,
         session_id: SessionId,
-        text: String,
+        content: Vec<ContentBlock>,
     ) -> Result<StopReason> {
-        // Drain staged images one-shot before the request. Text always goes;
-        // images ride only when the agent advertised promptCapabilities.image
-        // (sending them anyway would violate the ACP spec) — dropped with a
-        // debug log otherwise, never an error.
-        let (image_supported, staged) = {
+        let image_supported = {
             let entry = self.inner.get(&agent_id).ok_or(AcpError::UnknownAgent)?;
-            let staged = entry
-                .runtime
-                .pending_attachments
-                .remove(&session_id)
-                .map(|(_, v)| v)
-                .unwrap_or_default();
-            (entry.runtime.prompt_image_supported, staged)
+            entry.runtime.caps.prompt_image
         };
-        let mut content = vec![ContentBlock::Text(TextContent::new(text))];
-        if !staged.is_empty() {
-            if image_supported {
-                for att in staged {
-                    content.push(ContentBlock::Image(ImageContent::new(
-                        att.data_base64,
-                        att.mime_type,
-                    )));
-                }
-            } else {
-                tracing::debug!(
-                    count = staged.len(),
-                    "dropping image attachments — agent did not advertise promptCapabilities.image"
+        let content = crate::prompt::strip_unsupported(content, image_supported);
+        let connection = self.connection(agent_id)?;
+        let resp = connection
+            .send_request(PromptRequest::new(session_id.clone(), content))
+            .block_task()
+            .await?;
+        // P2.5: `PromptResponse.usage` was discarded here. It arrives as an RPC
+        // RESULT rather than a notification, so the driver task never sees it
+        // and ACP agents showed no token usage at all — the existing usage UI
+        // was native-agent-only for that reason alone. Re-emitted through the
+        // same `AcpEvent::Usage` path the native agent uses, so nothing
+        // downstream needed a new branch.
+        if let Some(usage) = resp.usage.as_ref() {
+            if let Some(entry) = self.inner.get(&agent_id) {
+                entry.runtime.sink.emit(
+                    agent_id,
+                    AcpEvent::Usage {
+                        session_id,
+                        input_tokens: usage.input_tokens,
+                        output_tokens: usage.output_tokens,
+                        // ACP carries no pricing, so the session's running cost
+                        // is left exactly as it was rather than reset.
+                        cost: None,
+                        cache_read_tokens: usage.cached_read_tokens,
+                        cache_write_tokens: usage.cached_write_tokens,
+                    },
+                    None,
                 );
             }
         }
-        let connection = self.connection(agent_id)?;
-        let resp = connection
-            .send_request(PromptRequest::new(session_id, content))
-            .block_task()
-            .await?;
         Ok(resp.stop_reason)
     }
 
-    /// Stage image attachments to ride on this session's *next* prompt. A
-    /// non-empty vec overwrites any previously staged set; an empty vec
-    /// clears. Drained one-shot by [`Self::send_prompt`].
-    pub fn stage_attachments(
-        &self,
-        agent_id: AgentId,
-        session_id: SessionId,
-        attachments: Vec<ImageAttachment>,
-    ) -> Result<()> {
-        let entry = self.inner.get(&agent_id).ok_or(AcpError::UnknownAgent)?;
-        if attachments.is_empty() {
-            entry.runtime.pending_attachments.remove(&session_id);
-        } else {
-            entry
-                .runtime
-                .pending_attachments
-                .insert(session_id, attachments);
-        }
-        Ok(())
-    }
 
     /// Whether the agent advertised `promptCapabilities.image` at
     /// initialize. `false` for unknown agents.
     pub fn prompt_image_supported(&self, agent_id: AgentId) -> bool {
-        self.inner
-            .get(&agent_id)
-            .map(|e| e.runtime.prompt_image_supported)
-            .unwrap_or(false)
+        self.agent_caps(agent_id).is_some_and(|c| c.prompt_image)
+    }
+
+    /// Everything the agent advertised at `initialize` (P0.3). `None` for an
+    /// agent that is not spawned. Downstream parity tasks read this instead of
+    /// re-deriving capabilities from the wire.
+    pub fn agent_caps(&self, agent_id: AgentId) -> Option<AgentCaps> {
+        self.inner.get(&agent_id).map(|e| e.runtime.caps)
     }
 
     /// Switch the session's permission mode (default / acceptEdits / plan /
@@ -791,13 +1115,52 @@ impl AgentRegistry {
         config_id: &str,
         value: String,
     ) -> Result<()> {
+        self.set_config_option_value(
+            agent_id,
+            session_id,
+            config_id,
+            SessionConfigOptionValue::value_id(value),
+        )
+        .await
+    }
+
+    /// Set any advertised config option from a JSON value (P2.2).
+    ///
+    /// ACP has exactly two value shapes and they are not interchangeable on the
+    /// wire, so the JSON type picks: a bool becomes `Boolean`, anything else is
+    /// stringified into `ValueId` (the select form). Before this only the
+    /// select form existed, which made every boolean knob an agent advertised —
+    /// thinking toggles being the common one — unsettable.
+    pub async fn set_config_option_json(
+        &self,
+        agent_id: AgentId,
+        session_id: SessionId,
+        config_id: &str,
+        value: serde_json::Value,
+    ) -> Result<()> {
+        let wire = match value {
+            serde_json::Value::Bool(b) => SessionConfigOptionValue::boolean(b),
+            serde_json::Value::String(s) => SessionConfigOptionValue::value_id(s),
+            other => SessionConfigOptionValue::value_id(other.to_string()),
+        };
+        self.set_config_option_value(agent_id, session_id, config_id, wire)
+            .await
+    }
+
+    async fn set_config_option_value(
+        &self,
+        agent_id: AgentId,
+        session_id: SessionId,
+        config_id: &str,
+        value: SessionConfigOptionValue,
+    ) -> Result<()> {
         let connection = self.connection(agent_id)?;
         rpc_timeout("session/set_config_option", TUNING_RPC_SECS, async {
             connection
                 .send_request(SetSessionConfigOptionRequest::new(
                     session_id,
                     config_id.to_string(),
-                    SessionConfigOptionValue::value_id(value),
+                    value,
                 ))
                 .block_task()
                 .await?;
