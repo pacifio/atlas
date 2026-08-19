@@ -115,16 +115,32 @@ fn profile(root: &Path) -> (String, Vec<(String, String)>) {
 /// Temp directories that must stay writable. `TMPDIR` on macOS is a per-user
 /// path under `/var/folders`, which is where `cc`, `rustc` and `node` put
 /// intermediates; without it almost nothing builds.
+///
+/// Every entry is pushed in **both** spellings — as given and canonicalised —
+/// because Seatbelt matches kernel-resolved paths: `/var` is a symlink to
+/// `/private/var`, so a rule written for `$TMPDIR` verbatim denies the very
+/// directory it names. That is the same failure mode the workspace root fix in
+/// [`profile`] describes, and it broke `cc`, `mktemp` and every linker until
+/// the resolved twin was added.
 fn temp_roots() -> Vec<String> {
-    let mut out = vec!["/tmp".to_string(), "/var/tmp".to_string()];
-    if let Ok(tmpdir) = std::env::var("TMPDIR") {
-        let trimmed = tmpdir.trim_end_matches('/');
-        if !trimmed.is_empty() {
-            out.push(trimmed.to_string());
+    fn push_with_resolved(out: &mut Vec<String>, dir: &str) {
+        let trimmed = dir.trim_end_matches('/');
+        if trimmed.is_empty() {
+            return;
+        }
+        out.push(trimmed.to_string());
+        if let Ok(real) = Path::new(trimmed).canonicalize() {
+            out.push(real.to_string_lossy().into_owned());
         }
     }
-    // `/private/tmp` is the real path `/tmp` symlinks to; the sandbox compares
-    // resolved paths, so both are needed.
+    let mut out = Vec::new();
+    push_with_resolved(&mut out, "/tmp");
+    push_with_resolved(&mut out, "/var/tmp");
+    if let Ok(tmpdir) = std::env::var("TMPDIR") {
+        push_with_resolved(&mut out, &tmpdir);
+    }
+    // Kept as a belt-and-braces pair in case canonicalisation fails: these are
+    // the real paths `/tmp` and `/var/tmp` symlink to on macOS.
     out.push("/private/tmp".to_string());
     out.push("/private/var/tmp".to_string());
     out.sort();
@@ -212,6 +228,32 @@ mod tests {
             let t = t.trim_end_matches('/').to_string();
             if !t.is_empty() {
                 assert!(roots.contains(&t), "TMPDIR must stay writable: {roots:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn temp_roots_carry_the_kernel_resolved_twin_of_each_dir() {
+        // Seatbelt matches resolved paths: on macOS `$TMPDIR` is
+        // `/var/folders/…`, which the kernel sees as `/private/var/folders/…`.
+        // A rule for the unresolved spelling denies the very directory it
+        // names, and `cc`, `mktemp` and every linker fail with "operation not
+        // permitted".
+        let roots = temp_roots();
+        for dir in ["/tmp", "/var/tmp"] {
+            if let Ok(real) = Path::new(dir).canonicalize() {
+                let real = real.to_string_lossy().into_owned();
+                assert!(roots.contains(&real), "missing resolved twin of {dir}: {roots:?}");
+            }
+        }
+        if let Ok(t) = std::env::var("TMPDIR") {
+            let t = t.trim_end_matches('/');
+            if let Ok(real) = Path::new(t).canonicalize() {
+                let real = real.to_string_lossy().into_owned();
+                assert!(
+                    roots.contains(&real),
+                    "missing resolved twin of TMPDIR ({t}): {roots:?}"
+                );
             }
         }
     }

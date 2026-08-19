@@ -28,6 +28,18 @@ Atlas needs — compose the base policy, add workspace-scoped write rules, pass
 paths as `-D` parameters rather than interpolating them into the profile text —
 are about a hundred and fifty lines and live in `seatbelt.rs` in this directory.
 
+## Upstream revision
+
+ADR-0001 requires the vendored revision to be pinned so the rebase cadence has
+an anchor. The revision was not recorded when the files were first vendored
+(2026-08-18); what is known for certain is the upstream paths above and the
+vendoring date. **The next sync against `openai/codex` must record the exact
+upstream commit here** — diff `seatbelt_base_policy.sbpl` and
+`seatbelt_network_policy.sbpl` against upstream, apply what changed, and write
+the commit hash on the line below.
+
+- Vendored: 2026-08-18, upstream revision unrecorded (pin at next sync).
+
 ## Apache License 2.0
 
 ```

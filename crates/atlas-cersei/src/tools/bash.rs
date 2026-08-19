@@ -304,18 +304,30 @@ impl BashTool {
     ///
     /// Returns `None` when the user declines — the caller then reports the
     /// original denied result, which is the honest outcome.
-    async fn offer_escalation(&self, command: &str, ctx: &ToolContext) -> Option<ToolResult> {
+    async fn offer_escalation(
+        &self,
+        command: &str,
+        timeout: Option<u64>,
+        ctx: &ToolContext,
+    ) -> Option<ToolResult> {
         use cersei::tools::permissions::{PermissionDecision, PermissionRequest};
 
+        // The re-run carries the original call's timeout: an escalated slow
+        // build must not silently drop from its requested limit to the default.
+        let mut rerun = serde_json::json!({
+            ESCALATION_MARKER: true,
+            "command": command,
+        });
+        if let Some(ms) = timeout {
+            rerun["timeout"] = serde_json::json!(ms);
+        }
         let request = PermissionRequest {
             tool_name: self.name().to_string(),
-            tool_input: serde_json::json!({
-                ESCALATION_MARKER: true,
-                "command": command,
-            }),
+            tool_input: rerun.clone(),
             permission_level: PermissionLevel::Dangerous,
             description: format!(
-                "The sandbox refused an operation in `{command}`. Run it again outside the                  sandbox? It restarts from the beginning."
+                "The sandbox refused an operation in `{command}`. Run it again outside the \
+                 sandbox? It restarts from the beginning."
             ),
             id: uuid::Uuid::new_v4().to_string(),
         };
@@ -329,17 +341,7 @@ impl BashTool {
                     cancel: self.cancel.clone(),
                     policy: self.policy.clone(),
                 };
-                Some(
-                    escalated
-                        .execute(
-                            serde_json::json!({
-                                ESCALATION_MARKER: true,
-                                "command": command,
-                            }),
-                            ctx,
-                        )
-                        .await,
-                )
+                Some(escalated.execute(rerun, ctx).await)
             }
         }
     }
@@ -439,7 +441,9 @@ impl Tool for BashTool {
                     if !escalated
                         && sandbox.as_ref().is_some_and(|sb| sb.looks_like_denial(&body))
                     {
-                        if let Some(result) = self.offer_escalation(&input.command, ctx).await {
+                        if let Some(result) =
+                            self.offer_escalation(&input.command, input.timeout, ctx).await
+                        {
                             return result;
                         }
                     }

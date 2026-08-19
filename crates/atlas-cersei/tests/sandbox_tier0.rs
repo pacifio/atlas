@@ -121,6 +121,38 @@ fn the_network_still_works() {
 }
 
 #[test]
+fn the_per_user_tmpdir_is_writable() {
+    // `$TMPDIR` on macOS is `/var/folders/…`, resolved by the kernel through
+    // the `/var → /private/var` symlink. A profile that binds the unresolved
+    // spelling denies the very directory it names, and `cc`, `mktemp` and every
+    // linker fail with "operation not permitted" — for every macOS user, since
+    // tier 0 is the default. The tier-0 suite previously never wrote there,
+    // which is how the defect stayed green.
+    let ws = Workspace::new();
+    let (code, out) = confined(
+        &ws,
+        "f=$(mktemp) && echo tmp-ok > \"$f\" && cat \"$f\" && rm -f \"$f\"",
+    );
+    assert_eq!(code, Some(0), "mktemp/write under $TMPDIR was denied: {out}");
+    assert!(out.contains("tmp-ok"), "{out}");
+}
+
+#[test]
+fn a_compiler_can_use_its_temp_files() {
+    // The concrete casualty of an unwritable $TMPDIR: clang cannot create its
+    // intermediate objects. Skipped when no compiler is on the host.
+    if !Path::new("/usr/bin/cc").exists() {
+        eprintln!("skipping: no /usr/bin/cc");
+        return;
+    }
+    let ws = Workspace::new();
+    std::fs::write(ws.path().join("t.c"), "int main(void){return 0;}\n").unwrap();
+    let (code, out) = confined(&ws, "cc t.c -o t.bin && echo CC-OK");
+    assert_eq!(code, Some(0), "cc failed under the sandbox: {out}");
+    assert!(out.contains("CC-OK"), "{out}");
+}
+
+#[test]
 fn writing_outside_the_workspace_is_refused() {
     let ws = Workspace::new();
     let outside = std::env::temp_dir().join(format!("atlas-escape-{}", uuid::Uuid::new_v4()));

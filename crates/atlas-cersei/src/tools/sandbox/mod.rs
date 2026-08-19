@@ -66,8 +66,13 @@ pub fn detect(root: &Path) -> Option<Sandbox> {
 }
 
 impl Sandbox {
+    // `Kind` is empty off macOS (a `Sandbox` cannot be constructed there), so
+    // every match arm referencing a variant must carry the same cfg gate the
+    // variant does — an ungated arm is a compile error on Linux, which is
+    // exactly how the ubuntu CI jobs went red.
     pub fn kind(&self) -> &'static str {
         match self.kind {
+            #[cfg(target_os = "macos")]
             Kind::Seatbelt => "seatbelt",
         }
     }
@@ -81,6 +86,7 @@ impl Sandbox {
     /// an explicit list of credential and browser-profile locations, because a
     /// read whitelist breaks every real build system while the deny list still
     /// answers the threat the user actually named.
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables, unreachable_code))]
     pub fn wrap(&self, argv: Vec<String>) -> Vec<String> {
         match self.kind {
             #[cfg(target_os = "macos")]
@@ -90,8 +96,15 @@ impl Sandbox {
 
     /// Whether a command's failure looks like the sandbox refusing it, rather
     /// than the command itself failing. Drives the escalation offer.
+    ///
+    /// Substring matching over EPERM text can false-positive on an ordinary
+    /// permission failure. That is acceptable because the consequence is only
+    /// an extra *prompt* — never an automatic escalation — and the alternative
+    /// (missing a real denial) leaves the model at a dead end.
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
     pub fn looks_like_denial(&self, output: &str) -> bool {
         match self.kind {
+            #[cfg(target_os = "macos")]
             Kind::Seatbelt => {
                 let lower = output.to_ascii_lowercase();
                 lower.contains("operation not permitted")
@@ -122,6 +135,14 @@ pub const SENSITIVE_HOME_SUBPATHS: &[&str] = &[
     ".npmrc",
     ".pypirc",
     ".cargo/credentials.toml",
+    // Plaintext git credentials (`git config credential.helper store`), and the
+    // XDG spelling of the same file.
+    ".git-credentials",
+    ".config/git/credentials",
+    ".azure",
+    // Shell history routinely contains pasted tokens and connection strings.
+    ".zsh_history",
+    ".bash_history",
     // Atlas's own store. `byok-keys.json` under the app's config directory is
     // the user's provider keys in plaintext; an agent able to read it could
     // exfiltrate the credential that pays for it.
@@ -130,6 +151,12 @@ pub const SENSITIVE_HOME_SUBPATHS: &[&str] = &[
     ".config/atlas",
     "Library/Application Support/Google/Chrome",
     "Library/Application Support/Firefox",
+    // The rest of the Chromium family stores credentials the same way Chrome
+    // does; denying one browser and not its siblings answers nothing.
+    "Library/Application Support/BraveSoftware",
+    "Library/Application Support/Microsoft Edge",
+    "Library/Application Support/Arc",
+    "Library/Application Support/Chromium",
     "Library/Application Support/com.apple.TCC",
     "Library/Keychains",
     "Library/Cookies",
