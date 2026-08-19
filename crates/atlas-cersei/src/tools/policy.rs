@@ -140,11 +140,13 @@ impl std::fmt::Display for Containment {
 /// What the read registry knows about a file at the moment a tool read it.
 ///
 /// Modification time and length, which is what every editor uses to detect an
-/// external change. A content hash was considered and dropped: on every
-/// filesystem Atlas ships to, `mtime` has nanosecond granularity, so the case a
-/// hash would additionally catch — a same-length rewrite inside one clock tick
-/// — does not arise, and hashing would cost a second full read of every file on
-/// the hot path.
+/// external change. A content hash was considered and dropped: hashing costs a
+/// second full read of every file on the hot path, and the case it would
+/// additionally catch — a same-length rewrite that leaves mtime unchanged — is
+/// a milliseconds-wide window. Known bound, accepted deliberately: mtime
+/// granularity is nanoseconds on APFS and mainstream Linux filesystems, but
+/// Linux stamps from a coarse clock (~1–4 ms ticks) and network/FAT mounts can
+/// be 1–2 s, so a same-length rewrite inside one tick passes as fresh there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReadRecord {
     mtime: Option<SystemTime>,
@@ -421,13 +423,6 @@ impl ToolPolicy {
         }
     }
 
-    /// Forget a path's read record. Called after a successful write so the
-    /// writing tool re-registers the post-write state rather than leaving a
-    /// record that now describes the old content.
-    pub fn forget_read(&self, path: &Path) {
-        self.reads.remove(path);
-    }
-
     // ── Approvals + classification (D8) ─────────────────────────────────────
 
     /// The full pre-execution decision, called from the session's
@@ -446,6 +441,36 @@ impl ToolPolicy {
                     return Decision::Deny {
                         reason: c.to_string(),
                     };
+                }
+            }
+        }
+
+        // Freshness next, for a write-class file tool: a write the guard will
+        // refuse as unread or stale must not interrupt the user first. Without
+        // this, Ask mode prompted for an edit and then refused it — a prompt
+        // followed by a denial, the exact shape the containment ordering above
+        // exists to prevent. The guard re-checks at execution; this is the
+        // same verdict, delivered before the dialog instead of after it.
+        if !is_shell_tool(tool_name)
+            && matches!(level, PermissionLevel::Write | PermissionLevel::Dangerous)
+        {
+            for raw in candidate_paths(tool_name, &coerced) {
+                let path = self.resolve(&raw);
+                if !path.exists() {
+                    continue; // creating a new file: nothing to clobber
+                }
+                match self.check_fresh(&path) {
+                    Freshness::Fresh => {}
+                    Freshness::NeverRead => {
+                        return Decision::Deny {
+                            reason: super::errors::must_read_first(&raw),
+                        };
+                    }
+                    Freshness::Stale => {
+                        return Decision::Deny {
+                            reason: super::errors::file_changed(&raw),
+                        };
+                    }
                 }
             }
         }
@@ -494,6 +519,18 @@ impl ToolPolicy {
                 }
             };
         }
+        // A shell tool whose command text could not be extracted at all (an
+        // argv array, a non-string field). The tool will refuse it at decode,
+        // but the decision must fail closed too — and never cache, because a
+        // key derived from unclassifiable input would cover arbitrary later
+        // calls.
+        if is_shell_tool(tool_name) {
+            return Decision::Prompt {
+                reason: "The command could not be read for classification.".to_string(),
+                risk: Risk::Normal,
+                cache_key: None,
+            };
+        }
 
         // Non-shell tools: read-only work never prompts; everything else uses
         // the cache.
@@ -530,13 +567,25 @@ impl ToolPolicy {
     /// For a shell tool it is the command text, so approving `cargo build` does
     /// not also approve `rm -rf target`. For a file tool it is the tool name
     /// plus the target path, so approving an edit to one file does not approve
-    /// edits everywhere.
+    /// edits everywhere. A mutating tool with **no recognised path fields** (an
+    /// MCP tool taking `uri` or `table`, say) is keyed on a hash of its full
+    /// input: without that, every call collapsed to one key and a single
+    /// approval on a harmless invocation silently covered every later call
+    /// with arbitrary arguments — the broad-approval-narrow-disaster shape the
+    /// shell keying exists to prevent.
     fn cache_key(tool_name: &str, input: &Value) -> String {
         if let Some(cmd) = shell_command(tool_name, input) {
             return format!("{tool_name}\u{1}{}", cmd.trim());
         }
-        let paths = candidate_paths(tool_name, input).join("\u{1}");
-        format!("{tool_name}\u{1}{paths}")
+        let paths = candidate_paths(tool_name, input);
+        if paths.is_empty() {
+            use std::hash::{Hash, Hasher};
+            let canon = serde_json::to_string(input).unwrap_or_default();
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            canon.hash(&mut h);
+            return format!("{tool_name}\u{1}#{:016x}", h.finish());
+        }
+        format!("{tool_name}\u{1}{}", paths.join("\u{1}"))
     }
 
     // ── Spill directory (D6) ────────────────────────────────────────────────
@@ -545,8 +594,12 @@ impl ToolPolicy {
     /// workspace so the gate permits the model to read them.
     pub fn spill_dir(&self) -> PathBuf {
         let dir = self.root.join(SPILL_DIR).join(&self.session);
-        if !self.spill_ready.swap(true, Ordering::SeqCst) {
-            let _ = std::fs::create_dir_all(&dir);
+        // Marked ready only on success, so a transient failure retries on the
+        // next spill instead of silently targeting a directory that was never
+        // created. `create_dir_all` is idempotent, so the benign race between
+        // two first callers costs nothing.
+        if !self.spill_ready.load(Ordering::SeqCst) && std::fs::create_dir_all(&dir).is_ok() {
+            self.spill_ready.store(true, Ordering::SeqCst);
         }
         dir
     }
@@ -655,15 +708,24 @@ pub fn is_shell_tool(tool_name: &str) -> bool {
 /// `TerminalWrite` is included deliberately. Its `input` is typed into a live
 /// shell, so it *is* command execution — treating it as opaque data would make
 /// the persistent terminal a way to run anything under one approval.
+///
+/// The classified field is **the field the tool executes**, per tool — never a
+/// generic precedence chain. With a chain, a decoy `command: "ls"` alongside
+/// `input: "rm -rf /"` classified the harmless field while the tool typed the
+/// destructive one into a live shell, skipping the prompt entirely.
 pub fn shell_command<'a>(tool_name: &str, input: &'a Value) -> Option<&'a str> {
     if !is_shell_tool(tool_name) {
         return None;
+    }
+    if tool_name.eq_ignore_ascii_case("terminalwrite") {
+        // A missing `input` is the poll form (the tool defaults it to empty),
+        // so classification sees what execution will see: nothing sent.
+        return Some(input.get("input").and_then(Value::as_str).unwrap_or(""));
     }
     input
         .get("command")
         .and_then(Value::as_str)
         .or_else(|| input.get("cmd").and_then(Value::as_str))
-        .or_else(|| input.get("input").and_then(Value::as_str))
 }
 
 /// Every filesystem path this tool call names, as written by the model.
@@ -695,6 +757,24 @@ pub fn candidate_paths(tool_name: &str, input: &Value) -> Vec<String> {
         for value in obj.values() {
             if let Some(text) = value.as_str() {
                 out.extend(patch_paths(text));
+            }
+        }
+    }
+    // Glob's `pattern` is a path in disguise: the SDK tool joins it onto its
+    // base dir, and `Path::join` with an absolute pattern REPLACES the base, so
+    // `/etc/*` or `../*` enumerated filenames outside the workspace while the
+    // registry-wide containment test (which only exercises `file_path`) stayed
+    // green. Only the non-wildcard prefix is a checkable path, and only an
+    // absolute or traversing pattern can escape — a plain relative one is
+    // anchored inside the root by the join.
+    if tool_name.eq_ignore_ascii_case("glob") {
+        if let Some(pattern) = obj.get("pattern").and_then(Value::as_str) {
+            if pattern.starts_with('/') || pattern.split('/').any(|seg| seg == "..") {
+                let cut = pattern.find(['*', '?', '[', '{']).unwrap_or(pattern.len());
+                let prefix = &pattern[..cut];
+                if !prefix.is_empty() {
+                    out.push(prefix.to_string());
+                }
             }
         }
     }
@@ -1117,6 +1197,133 @@ mod tests {
     }
 
     #[test]
+    fn a_write_the_guard_would_refuse_is_denied_before_the_prompt() {
+        // Ask mode used to prompt the user for an edit and then refuse it as
+        // unread — a prompt followed by a denial, the exact wasted
+        // interruption the containment-first ordering exists to prevent.
+        let tmp = TmpDir::new();
+        let p = policy(tmp.path());
+        std::fs::write(tmp.path().join("a.rs"), "x").unwrap();
+
+        let edit = json!({"file_path": "a.rs", "old_string": "x", "new_string": "y"});
+        let d = p.decide("Edit", PermissionLevel::Write, &edit);
+        assert!(matches!(d, Decision::Deny { .. }), "unread file must deny, not prompt: {d:?}");
+
+        // Once read (and unchanged), the same edit prompts normally.
+        p.record_read(&p.resolve("a.rs"));
+        assert!(matches!(
+            p.decide("Edit", PermissionLevel::Write, &edit),
+            Decision::Prompt { .. }
+        ));
+
+        // Stale is a deny again.
+        std::fs::write(tmp.path().join("a.rs"), "the user's own work").unwrap();
+        assert!(matches!(
+            p.decide("Edit", PermissionLevel::Write, &edit),
+            Decision::Deny { .. }
+        ));
+
+        // Creating a new file never trips it.
+        let create = json!({"file_path": "new.rs", "old_string": "", "new_string": "y"});
+        assert!(matches!(
+            p.decide("Edit", PermissionLevel::Write, &create),
+            Decision::Prompt { .. }
+        ));
+    }
+
+    #[test]
+    fn a_decoy_command_field_cannot_speak_for_terminal_input() {
+        // `shell_command` used a generic precedence chain, so
+        // `{"command": "ls", "input": "rm -rf /"}` classified the harmless
+        // field while the tool typed the destructive one into a live shell —
+        // no prompt at all.
+        let tmp = TmpDir::new();
+        let p = policy(tmp.path());
+        let d = p.decide(
+            "TerminalWrite",
+            PermissionLevel::Execute,
+            &json!({"session_id": "s", "command": "ls", "input": "rm -rf /\n"}),
+        );
+        assert!(
+            matches!(d, Decision::Prompt { risk: Risk::Destructive, cache_key: None, .. }),
+            "the executed field must be the classified field: {d:?}"
+        );
+        // And a decoy `input` on Bash does not shadow its `command` either.
+        let d = p.decide(
+            "Bash",
+            PermissionLevel::Execute,
+            &json!({"command": "rm -rf /", "input": "ls"}),
+        );
+        assert!(matches!(d, Decision::Prompt { risk: Risk::Destructive, .. }), "{d:?}");
+    }
+
+    #[test]
+    fn a_shell_tool_without_readable_command_text_fails_closed_and_uncached() {
+        let tmp = TmpDir::new();
+        let p = policy(tmp.path());
+        for input in [
+            json!({"command": ["ls", "-la"]}),
+            json!({"command": 42}),
+            json!({}),
+        ] {
+            let d = p.decide("Bash", PermissionLevel::Execute, &input);
+            assert!(
+                matches!(d, Decision::Prompt { cache_key: None, .. }),
+                "unclassifiable shell input must prompt and never cache: {input} -> {d:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pathless_mutating_tool_is_cached_per_input_not_per_tool() {
+        // An MCP tool taking `uri` has no recognised path field, so every call
+        // used to share one cache key — one approval on a harmless invocation
+        // silently covered every later call with arbitrary arguments.
+        let tmp = TmpDir::new();
+        let p = policy(tmp.path());
+        let first = json!({"uri": "db://prod/table_a", "op": "read"});
+        let Decision::Prompt { cache_key, .. } =
+            p.decide("McpDbTool", PermissionLevel::Dangerous, &first)
+        else {
+            panic!("expected a prompt");
+        };
+        p.remember_approval(cache_key.as_deref());
+        assert_eq!(
+            p.decide("McpDbTool", PermissionLevel::Dangerous, &first),
+            Decision::Allow,
+            "the identical call is covered"
+        );
+        let different = json!({"uri": "db://prod/users", "op": "drop"});
+        assert!(
+            matches!(
+                p.decide("McpDbTool", PermissionLevel::Dangerous, &different),
+                Decision::Prompt { .. }
+            ),
+            "different arguments must prompt again"
+        );
+    }
+
+    #[test]
+    fn a_glob_pattern_cannot_enumerate_outside_the_workspace() {
+        // The SDK tool joins `pattern` onto its base dir, and `Path::join`
+        // with an absolute pattern replaces the base — so `/etc/*` listed
+        // filenames outside the workspace while every `file_path` test stayed
+        // green.
+        let tmp = TmpDir::new();
+        let p = policy(tmp.path());
+        for pattern in ["/etc/*", "../*", "src/../../*"] {
+            let d = p.decide("Glob", PermissionLevel::ReadOnly, &json!({"pattern": pattern}));
+            assert!(matches!(d, Decision::Deny { .. }), "{pattern} -> {d:?}");
+        }
+        // Ordinary relative patterns, and absolute ones inside the root, pass.
+        let inside = p.root().join("src").to_string_lossy().into_owned() + "/*.rs";
+        for pattern in ["src/**/*.rs", "*.toml", inside.as_str()] {
+            let d = p.decide("Glob", PermissionLevel::ReadOnly, &json!({"pattern": pattern}));
+            assert_eq!(d, Decision::Allow, "{pattern} -> {d:?}");
+        }
+    }
+
+    #[test]
     fn an_escalation_is_always_asked_and_never_remembered() {
         let tmp = TmpDir::new();
         let p = policy(tmp.path());
@@ -1136,7 +1343,11 @@ mod tests {
     #[test]
     fn each_tier_yields_the_expected_decision_for_the_same_input() {
         let tmp = TmpDir::new();
-        let escape = json!({"file_path": "/etc/hosts", "old_string": "a", "new_string": "b"});
+        // A nonexistent target, so this isolates *containment*: an existing
+        // out-of-workspace file would now also trip the freshness deny at the
+        // permissive tiers, which is a different (tested) behaviour.
+        let escape =
+            json!({"file_path": "/etc/atlas-no-such-file.conf", "old_string": "a", "new_string": "b"});
         let cases = [
             (EnforcementTier::Contained, true),
             (EnforcementTier::ApprovalsOnly, false),

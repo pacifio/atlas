@@ -66,8 +66,6 @@ impl ModelCapabilities {
             "gpt-4.1",
             "gpt-4-turbo",
             "gpt-5",
-            "o3",
-            "o4",
             "gemini-",
             "pixtral",
             "llava",
@@ -77,7 +75,15 @@ impl ModelCapabilities {
             "llama-3.2-90b",
         ]
         .iter()
-        .any(|family| m.starts_with(family) || m.contains(family));
+        .any(|family| m.contains(family))
+            // Two-character families match only as the id or its leading
+            // segment. `contains` would light up any id that merely embeds the
+            // letters ("custom-llama-o3"), and the cost is asymmetric: a blind
+            // model wrongly handed ImageView fails its whole turn at the
+            // provider — the failure this flag exists to prevent.
+            || ["o3", "o4"]
+                .iter()
+                .any(|f| m == *f || m.starts_with(&format!("{f}-")));
         Self { accepts_images }
     }
 }
@@ -113,6 +119,18 @@ mod tests {
         // The conservative direction: asking the user to describe a screenshot
         // beats failing the turn at the provider.
         for model in ["some-new-local-model", "deepseek-coder-v2", ""] {
+            assert!(!ModelCapabilities::for_model(model).accepts_images, "{model}");
+        }
+    }
+
+    #[test]
+    fn two_letter_families_match_segments_not_substrings() {
+        for model in ["o3", "o3-mini", "o4-mini", "openai/o3"] {
+            assert!(ModelCapabilities::for_model(model).accepts_images, "{model}");
+        }
+        // An id that merely embeds the letters must not be handed ImageView —
+        // a blind model given it fails its whole turn at the provider.
+        for model in ["custom-llama-o3", "turbo3-instruct", "neo4j-agent"] {
             assert!(!ModelCapabilities::for_model(model).accepts_images, "{model}");
         }
     }

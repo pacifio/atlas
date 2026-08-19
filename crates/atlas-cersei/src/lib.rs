@@ -1061,14 +1061,16 @@ impl PermissionPolicy for UiPolicy {
 
         // The gate: containment, per-command classification, and the approval
         // cache. Only a `Prompt` reaches the user.
-        let cache_key = match self.policy.decide(
+        let (cache_key, reason) = match self.policy.decide(
             &request.tool_name,
             request.permission_level,
             &request.tool_input,
         ) {
             tools::Decision::Allow => return CerseiDecision::Allow,
             tools::Decision::Deny { reason } => return CerseiDecision::Deny(reason),
-            tools::Decision::Prompt { cache_key, .. } => cache_key,
+            tools::Decision::Prompt {
+                cache_key, reason, ..
+            } => (cache_key, reason),
         };
 
         // Prompt the UI and block this tool until the user responds.
@@ -1080,7 +1082,7 @@ impl PermissionPolicy for UiPolicy {
             AcpEvent::PermissionRequest {
                 request_id,
                 session_id: self.session_id.clone(),
-                tool_call: permission_tool_call(request),
+                tool_call: permission_tool_call(request, &reason),
                 options: permission_options(),
             },
             None,
@@ -1115,15 +1117,32 @@ fn permission_options() -> Vec<acp_schema::PermissionOption> {
     ]
 }
 
-fn permission_tool_call(req: &PermissionRequest) -> acp_schema::ToolCallUpdate {
+/// The dialog's tool-call payload. `reason` is the classifier's verdict — the
+/// *why* behind the interruption ("Recursive or forced delete.") — carried as a
+/// standard ACP content block so the dialog can show it. It used to be
+/// computed and then discarded here, so the user was asked to approve with the
+/// classification's user-facing half unplugged. A tool-supplied description
+/// (the sandbox-escalation explanation) takes over when the gate has nothing
+/// more specific to say.
+fn permission_tool_call(req: &PermissionRequest, reason: &str) -> acp_schema::ToolCallUpdate {
     let kind = tool_kind(&req.tool_name);
-    let v = serde_json::json!({
+    let explanation = if !reason.trim().is_empty() {
+        reason
+    } else {
+        req.description.as_str()
+    };
+    let mut v = serde_json::json!({
         "toolCallId": req.id,
         "title": req.tool_name,
         "kind": kind,
         "status": "pending",
         "rawInput": req.tool_input,
     });
+    if !explanation.trim().is_empty() {
+        v["content"] = serde_json::json!([
+            { "type": "content", "content": { "type": "text", "text": explanation } }
+        ]);
+    }
     serde_json::from_value(v).unwrap_or_else(|_| {
         acp_schema::ToolCallUpdate::new(req.id.clone(), acp_schema::ToolCallUpdateFields::default())
     })

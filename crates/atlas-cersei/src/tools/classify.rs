@@ -239,11 +239,11 @@ fn segments(tokens: &[Token]) -> Vec<Vec<&str>> {
 /// writer. Anything whose behaviour depends on a flag lives in
 /// [`is_safe_segment`] instead, where the flags are checked.
 const ALWAYS_READ_ONLY: &[&str] = &[
-    "basename", "cat", "cksum", "cmp", "column", "comm", "date", "df", "dirname", "du", "echo",
+    "basename", "cat", "cksum", "cmp", "column", "comm", "df", "dirname", "du", "echo",
     "env", "false", "file", "fold", "groups", "head", "hostname", "id", "join", "jq", "less",
     "locale", "ls", "md5", "md5sum", "nl", "nproc", "od", "paste", "printenv", "printf", "ps",
-    "pwd", "readlink", "realpath", "rev", "seq", "sha1sum", "sha256sum", "shasum", "sort", "stat",
-    "strings", "tac", "tail", "tr", "tree", "true", "type", "uname", "uniq", "uptime", "wc",
+    "pwd", "readlink", "realpath", "rev", "seq", "sha1sum", "sha256sum", "shasum", "stat",
+    "strings", "tac", "tail", "tr", "tree", "true", "type", "uname", "uptime", "wc",
     "which", "who", "whoami", "xxd", "yes",
 ];
 
@@ -317,13 +317,29 @@ fn is_safe_segment(segment: &[&str]) -> bool {
         }),
         // `sed -i` edits in place; `-n`/`-e`/`-E` only print.
         "sed" => !args.iter().any(|a| a.starts_with("-i") || *a == "--in-place"),
+        // `sort -o out` and `uniq in out` write files, and `date MMDDhhmm` or
+        // `date -s` sets the clock — none of them belonged on the
+        // no-flag-can-write list. Registering their target as "read" is the
+        // worse half: it would let an edit vouch for a file nothing read.
+        "sort" => !args.iter().any(|a| a.starts_with("-o") || a.starts_with("--output")),
+        "uniq" => args.iter().filter(|a| !a.starts_with('-')).count() <= 1,
+        "date" => args
+            .iter()
+            .all(|a| (a.starts_with('+') || a.starts_with('-')) && *a != "-s" && !a.starts_with("--set")),
         "git" => match args.split_first() {
             Some((sub, rest)) => {
                 GIT_READ_ONLY.contains(sub)
                     // `git config --global x y` writes; a bare read does not.
                     && !(*sub == "config" && rest.iter().any(|a| !a.starts_with('-')) && rest.len() > 1)
-                    && !(*sub == "branch" && rest.iter().any(|a| matches!(*a, "-d" | "-D" | "-m" | "-M" | "--delete" | "--move")))
-                    && !(*sub == "tag" && rest.iter().any(|a| matches!(*a, "-d" | "-a" | "--delete")))
+                    // `git branch <name>` and `git tag <name>` CREATE refs; only
+                    // the bare, flags-only forms list. A positional argument
+                    // means a ref is being made, moved, or deleted — prompt.
+                    && !(*sub == "branch"
+                        && (rest.iter().any(|a| !a.starts_with('-'))
+                            || rest.iter().any(|a| matches!(*a, "-d" | "-D" | "-m" | "-M" | "--delete" | "--move"))))
+                    && !(*sub == "tag"
+                        && (rest.iter().any(|a| !a.starts_with('-'))
+                            || rest.iter().any(|a| matches!(*a, "-d" | "-a" | "--delete"))))
                     && !(*sub == "remote" && rest.first().is_some_and(|a| !a.starts_with('-')))
             }
             None => true,
@@ -630,6 +646,40 @@ mod tests {
         assert_eq!(risk("git checkout main"), Risk::Normal);
         assert_eq!(risk("cargo build"), Risk::Normal);
         assert_eq!(risk("npm install"), Risk::Normal);
+    }
+
+    #[test]
+    fn sort_uniq_and_date_are_only_safe_when_they_cannot_write() {
+        // These sat on the no-flag-can-write list, but `sort -o` writes a
+        // file, `uniq in out` writes its second operand, and `date` with a
+        // positional argument or `-s` sets the system clock. Worse than the
+        // missing prompt: a Safe verdict registers named files as "read",
+        // letting an edit vouch for content nothing read.
+        assert_eq!(risk("sort src/lib.rs"), Risk::Safe);
+        assert_eq!(risk("cat a | sort | head -3"), Risk::Safe);
+        assert_eq!(risk("sort -o out.txt in.txt"), Risk::Normal);
+        assert_eq!(risk("sort --output=out.txt in.txt"), Risk::Normal);
+
+        assert_eq!(risk("uniq data.txt"), Risk::Safe);
+        assert_eq!(risk("uniq in.txt out.txt"), Risk::Normal);
+
+        assert_eq!(risk("date"), Risk::Safe);
+        assert_eq!(risk("date -u +%s"), Risk::Safe);
+        assert_eq!(risk("date -s 12:00"), Risk::Normal);
+        assert_eq!(risk("date 0810120026"), Risk::Normal);
+
+        // And none of the writing forms registers a read.
+        assert!(read_paths("sort -o out.txt in.txt").is_empty());
+        assert!(read_paths("uniq in.txt out.txt").is_empty());
+    }
+
+    #[test]
+    fn creating_a_ref_is_not_read_only() {
+        assert_eq!(risk("git branch"), Risk::Safe);
+        assert_eq!(risk("git branch -a"), Risk::Safe);
+        assert_eq!(risk("git tag"), Risk::Safe);
+        assert_eq!(risk("git branch feature-x"), Risk::Normal);
+        assert_eq!(risk("git tag v1.0.0"), Risk::Normal);
     }
 
     // ── Destructive ─────────────────────────────────────────────────────────
