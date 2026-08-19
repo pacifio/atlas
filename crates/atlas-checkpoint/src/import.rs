@@ -457,7 +457,7 @@ fn import_file(
             if line.trim().is_empty() {
                 continue;
             }
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
                 // A transcript being appended to while it is read ends mid-object.
                 outcome.malformed_lines += 1;
                 continue;
@@ -564,7 +564,7 @@ fn import_file(
                 let native_id = turn
                     .native_id
                     .clone()
-                    .unwrap_or_else(|| synthetic_line_id(line_index, &line));
+                    .unwrap_or_else(|| synthetic_line_id(line_index, line));
 
                 match capture.record_turn(
                     &id,
