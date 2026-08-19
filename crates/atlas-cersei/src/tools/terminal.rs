@@ -259,9 +259,26 @@ fn release(id: &str) {
 
 fn render(command: &str, id: &str, text: &str, exit: Option<&str>, dropped: u64) -> String {
     let mut out = String::new();
-    match exit {
-        Some(status) => out.push_str(&format!("Session {id} ({command}) {status}.\n")),
-        None => out.push_str(&format!(
+    match (exit, text.is_empty()) {
+        (Some(status), _) => out.push_str(&format!("Session {id} ({command}) {status}.\n")),
+        // A live session with nothing new to say. The old text said only "is
+        // still running" and invited another read, so a model asked to start a
+        // dev server polled it six times: `npm run dev` never exits, so "is it
+        // done yet" has no answer it can reach by asking again.
+        //
+        // Both readings are offered because the harness genuinely cannot tell
+        // them apart — a server that has finished starting and a process
+        // blocked on stdin are the same silence from out here. What it *can*
+        // say for certain is that another identical read changes nothing, and
+        // that is the part that stops the loop.
+        (None, true) => out.push_str(&format!(
+            "Session {id} ({command}) is still running and has produced no new output since \
+             the last read. Reading again will not change that.\n\
+             If this is a server, watcher or dev build, going quiet is what starting \
+             successfully looks like — say so and move on. If it is waiting for input, send \
+             that input with this session_id.\n"
+        )),
+        (None, false) => out.push_str(&format!(
             "Session {id} ({command}) is still running.\n\
              Use TerminalWrite with this session_id to send input, or with an empty input to \
              read more output.\n"
@@ -273,9 +290,7 @@ fn render(command: &str, id: &str, text: &str, exit: Option<&str>, dropped: u64)
              could be held.]\n"
         ));
     }
-    if text.is_empty() {
-        out.push_str("(no new output)");
-    } else {
+    if !text.is_empty() {
         out.push('\n');
         out.push_str(text);
     }
@@ -568,11 +583,22 @@ mod tests {
             .execute(json!({"session_id": id, "timeout": 300}), &ctx)
             .await;
         assert!(!poll.is_error, "{}", poll.content);
-        assert!(
-            poll.content.ends_with("(no new output)"),
+        // The header echoes the command, which contains the word — so the
+        // check is that it appears once (there) and not twice (re-delivered).
+        assert_eq!(
+            poll.content.matches("ready").count(),
+            1,
             "output was re-delivered: {}",
             poll.content
         );
+        // And the poll tells the model what the quiet means, instead of
+        // inviting it to ask again.
+        assert!(
+            poll.content.contains("no new output since the last read"),
+            "{}",
+            poll.content
+        );
+        assert!(poll.content.contains("Reading again will not change that"), "{}", poll.content);
 
         shutdown_owner(&ctx.session_id);
         assert!(!STORE.lock().contains_key(&id), "teardown terminates everything");

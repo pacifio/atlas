@@ -27,6 +27,12 @@ const RETAIN_BYTES: usize = 256 * 1024;
 /// stray `ESC` cannot swallow the rest of the stream.
 const MAX_ESCAPE: usize = 64;
 
+/// A line this long is committed as it stands. Without it a stream carrying no
+/// newline at all — `cat` of a binary, a minified bundle — would grow the line
+/// in progress without bound, and the whole point of draining incrementally is
+/// that memory stays flat.
+const MAX_LINE: usize = 64 * 1024;
+
 #[derive(Default)]
 enum Mode {
     #[default]
@@ -133,6 +139,9 @@ impl Screen {
     }
 
     fn write(&mut self, b: u8) {
+        if self.cur.len() >= MAX_LINE {
+            self.commit();
+        }
         if self.col < self.cur.len() {
             self.cur[self.col] = b;
         } else {
@@ -160,12 +169,14 @@ impl Screen {
         match final_byte {
             // CHA — cursor to an absolute column. `ESC[1G` is half of every
             // spinner frame.
-            b'G' | b'`' => self.col = first.saturating_sub(1),
+            b'G' | b'`' => self.col = first.saturating_sub(1).min(MAX_LINE),
             // CUB / CUF — relative moves within the line.
             b'D' => self.col = self.col.saturating_sub(first.max(1)),
-            b'C' => self.col += first.max(1),
+            b'C' => self.col = (self.col + first.max(1)).min(MAX_LINE),
             // CUP — row addressing is not modelled, but the column is.
-            b'H' | b'f' => self.col = p.get(1).copied().unwrap_or(1).saturating_sub(1),
+            b'H' | b'f' => {
+                self.col = p.get(1).copied().unwrap_or(1).saturating_sub(1).min(MAX_LINE)
+            }
             // EL — erase in line. The other half of a spinner frame.
             b'K' => match first {
                 1 => {
@@ -209,6 +220,23 @@ impl Screen {
 
     pub fn is_empty(&self) -> bool {
         self.lines.is_empty() && self.cur.is_empty()
+    }
+
+    /// Take the lines completed so far, leaving the line in progress alone.
+    ///
+    /// This is what lets a caller drain every chunk it reads without breaking
+    /// the rendering: a progress line is rewritten in place across many reads
+    /// and only becomes a line when a newline arrives, so taking it early would
+    /// emit one copy of it per read — which is the accumulation this module
+    /// exists to prevent.
+    pub fn take_committed(&mut self) -> String {
+        let mut out = String::new();
+        for line in self.lines.drain(..) {
+            self.retained -= line.len() + 1;
+            out.push_str(&String::from_utf8_lossy(&line));
+            out.push('\n');
+        }
+        out
     }
 
     /// Take everything rendered so far. Delivered output is removed, so a
@@ -324,6 +352,55 @@ mod tests {
         // A prompt waiting for input never ends in a newline, and is exactly
         // what the model needs to see.
         assert_eq!(render(&[b"Ok to proceed? (y) "]), "Ok to proceed? (y) ");
+    }
+
+    #[test]
+    fn draining_every_chunk_still_collapses_a_spinner_across_them() {
+        // The caller that reads a pipe drains on every read to keep memory
+        // flat. If that drain took the line in progress, each read would emit
+        // its own copy of the progress line and the collapse would be undone.
+        let mut s = Screen::new();
+        let mut drained = String::new();
+        for frame in 0..500 {
+            s.push(b"\x1b[1G\x1b[0K");
+            s.push(&[b"|/-\\"[frame % 4]]);
+            drained.push_str(&s.take_committed());
+        }
+        assert_eq!(drained, "", "an unfinished line is not a line yet");
+        s.push(b"\x1b[1G\x1b[0Kdone\n");
+        drained.push_str(&s.take_committed());
+        assert_eq!(drained, "done\n");
+    }
+
+    #[test]
+    fn a_committed_line_is_handed_over_and_not_repeated() {
+        let mut s = Screen::new();
+        s.push(b"one\ntwo\nthr");
+        assert_eq!(s.take_committed(), "one\ntwo\n");
+        assert_eq!(s.take_committed(), "");
+        s.push(b"ee\n");
+        assert_eq!(s.take_committed(), "three\n");
+    }
+
+    #[test]
+    fn a_stream_with_no_newline_does_not_grow_without_bound() {
+        // `cat` of a binary, a minified bundle: nothing commits the line, so
+        // the cap has to.
+        let mut s = Screen::new();
+        let mut total = 0usize;
+        for _ in 0..64 {
+            s.push(&[b'x'; 64 * 1024]);
+            total += s.take_committed().len();
+        }
+        assert!(s.cur.len() <= MAX_LINE, "line in progress grew to {}", s.cur.len());
+        assert!(total > 0, "a capped line must still be delivered");
+    }
+
+    #[test]
+    fn a_wild_cursor_column_does_not_allocate_a_wild_line() {
+        let mut s = Screen::new();
+        s.push(b"\x1b[999999999Gx\n");
+        assert!(s.take().0.len() <= MAX_LINE + 2);
     }
 
     #[test]

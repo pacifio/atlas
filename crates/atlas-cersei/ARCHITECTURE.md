@@ -80,7 +80,7 @@ though under the hood it never speaks ACP on a wire.
 | `mcp.rs` | 110 | Connect configured MCP servers, surface their tools to the model. |
 | `context.rs` | 106 | Build the per-turn repo context (git status + project docs) for the system prompt. |
 | `memory.rs` | 95 | The `search_memory` RAG tool (retrieval backend injected from the Tauri layer). |
-| `tools/` | — | **The tool layer.** Atlas-owned tools (`read/edit/list/bash/terminal/image`), the 10-strategy replacer (`replace.rs`), corrective errors (`errors.rs`), output capping (`truncate.rs`), atomic writes (`atomic.rs`), and — beneath all of them — the gate: `policy.rs` (containment, read registry, approval cache, tier), `guard.rs` (the decorator applied to every tool), `classify.rs` (command classification), `sandbox/` (macOS Seatbelt). `atlas_coding_with()` (`tools/mod.rs`) is the registry seam. See `tools/ATTRIBUTION.md` and `plans/atlas-tool-layer-spec.md`. |
+| `tools/` | — | **The tool layer.** Atlas-owned tools (`read/edit/list/bash/terminal/image`), the 10-strategy replacer (`replace.rs`), corrective errors (`errors.rs`), PTY rendering (`screen.rs`), output capping (`truncate.rs`), atomic writes (`atomic.rs`), and — beneath all of them — the gate: `policy.rs` (containment, read registry, approval cache, tier), `guard.rs` (the decorator applied to every tool), `classify.rs` (command classification), `sandbox/` (macOS Seatbelt). `atlas_coding_with()` (`tools/mod.rs`) is the registry seam. See `tools/ATTRIBUTION.md` and `plans/atlas-tool-layer-spec.md`. |
 
 ---
 
@@ -242,6 +242,34 @@ tier decision (`tools/tiers.rs`): the **shell-first** tier omits the explicit fi
 the **structured** tier includes them. Structured is the default until the BYOK evaluation
 matrix exists, because over-provisioning tools degrades gracefully and under-provisioning
 does not.
+
+### 6a-i. Command output is rendered, not replayed (`tools/screen.rs`)
+A pipe or a PTY carries the *instructions* a terminal follows, not the text it ends up
+showing. `npm install` draws its spinner by emitting `ESC[1G` (cursor to column 1),
+`ESC[0K` (erase to end of line) and one character — thousands of times. Handed to a model
+verbatim that is pure cost: one observed session reached **172.8K tokens**, nearly all of
+it cursor movements describing a spinner that renders to a single line. It also *destroyed*
+output, because the buffer is capped and the spinner pushed everything before it off the
+front.
+
+`Screen` renders on the way **in**, for both `Bash` and the persistent terminal: the cursor
+moves within the current line, a newline commits it, and CR / CHA / EL / backspace are
+honoured so an overwrite overwrites. Colour, window titles and anything unrecognised are
+dropped. `Bash` drains *committed lines* on every read — never at EOF — so memory stays
+flat while a progress line rewritten across several reads still collapses.
+
+It is deliberately **not** a terminal emulator: one line at a time, no row addressing, no
+scroll regions, no alternate screen. Anything unrecognised is dropped rather than guessed
+at, because dropping a colour code loses nothing a model needed where guessing at cursor
+geometry would corrupt the transcript silently. `ESC[2J` clears only the current line for
+the same reason — losing a build error to a `clear` is worse than showing stale text.
+
+**A quiet session is an answer.** A live session with no new output used to say "(no new
+output)" and invite another read, so a model asked to start a dev server polled it six
+times — `npm run dev` never exits, so "is it done yet" has no answer it can reach by asking
+again. It now says that reading again will not change anything, and gives both readings the
+harness genuinely cannot tell apart: a server that has gone quiet has started, and a process
+that has gone quiet may be waiting for input.
 
 ### 6b. The gate (`tools/policy.rs` + `tools/guard.rs`) — the layer beneath the tools
 Every registered tool is wrapped by `Guarded`, which holds one shared `ToolPolicy` per

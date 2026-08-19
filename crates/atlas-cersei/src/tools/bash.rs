@@ -38,7 +38,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use super::policy::{ToolPolicy, ESCALATION_MARKER};
-use super::{coerce, errors, truncate};
+use super::{coerce, errors, screen, truncate};
 
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 const MAX_TIMEOUT_MS: u64 = 600_000;
@@ -146,11 +146,28 @@ fn run_blocking(spec: RunSpec) -> Result<Outcome, String> {
     let mut drain = std::fs::File::open(&capture).map_err(|e| format!("capture file: {e}"))?;
     let mut ring = truncate::HeadTail::new(spec.max_output);
     let mut buf = vec![0u8; 64 * 1024];
-    let mut pump = |drain: &mut std::fs::File, ring: &mut truncate::HeadTail| -> Result<(), String> {
+    // Rendered before the ring sees it. A command run without a TTY usually
+    // turns its spinner off, but `--color=always`, `--progress` and anything
+    // that draws with `\r` do not care whether a terminal is attached — and
+    // raw cursor movements cost the model its context window for output that
+    // renders to a line (see `screen.rs`).
+    //
+    // Drained on every read, not at EOF: `pump` reads until the pipe is empty,
+    // so buffering until then would hold a whole gigabyte in the renderer and
+    // undo the flat memory the capture file buys. Only *committed* lines are
+    // taken, so a progress line rewritten across several reads still collapses.
+    let mut screen = screen::Screen::new();
+    let mut pump = |drain: &mut std::fs::File,
+                    ring: &mut truncate::HeadTail,
+                    screen: &mut screen::Screen|
+     -> Result<(), String> {
         loop {
             match drain.read(&mut buf) {
                 Ok(0) => return Ok(()),
-                Ok(n) => ring.push(&buf[..n]),
+                Ok(n) => {
+                    screen.push(&buf[..n]);
+                    ring.push(screen.take_committed().as_bytes());
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 // A read failure used to become an empty result. It is a real
                 // error: "no output" and "we could not read the output" are
@@ -170,7 +187,7 @@ fn run_blocking(spec: RunSpec) -> Result<Outcome, String> {
         match child.try_wait() {
             Ok(Some(_status)) => break,
             Ok(None) => {
-                pump(&mut drain, &mut ring)?;
+                pump(&mut drain, &mut ring, &mut screen)?;
                 if spec.cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
                     kill_process_group(&mut child);
                     cancelled = true;
@@ -191,8 +208,11 @@ fn run_blocking(spec: RunSpec) -> Result<Outcome, String> {
             }
         }
     }
-    // Whatever the child wrote between the last pump and its exit.
-    pump(&mut drain, &mut ring)?;
+    // Whatever the child wrote between the last pump and its exit, plus the
+    // line it left unfinished — a command that ends without a trailing newline
+    // still said something.
+    pump(&mut drain, &mut ring, &mut screen)?;
+    ring.push(screen.take().0.as_bytes());
 
     // Only a capped run keeps a full copy, and only then does anything touch
     // the workspace. The copy is what makes the truncation notice actionable:
@@ -632,6 +652,55 @@ mod tests {
             "an uncapped command must leave nothing in the workspace — otherwise every \
              shell call churns the user's git status and file watchers: {files:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_progress_line_reaches_the_model_rendered() {
+        // No TTY is attached here, so most tools turn their spinner off — but
+        // `--color=always`, `--progress` and anything drawing with `\r` do not
+        // ask, and raw cursor movements cost the model its context window.
+        let tmp = TmpDir::new();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "command": r"printf '\033[1G\033[0K1\033[1G\033[0K2\033[1G\033[0K3\033[1G\033[0Kadded 312 packages\n'",
+                "timeout": 10000
+            }),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert!(r.content.contains("added 312 packages"), "{}", r.content);
+        assert!(!r.content.contains('\u{1b}'), "raw escapes reached the model: {:?}", r.content);
+        assert!(!r.content.contains("1added"), "a frame survived: {:?}", r.content);
+    }
+
+    #[tokio::test]
+    async fn colour_is_dropped_and_its_text_kept() {
+        let tmp = TmpDir::new();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({
+                "command": r"printf '\033[31mERROR\033[0m: build failed\n'",
+                "timeout": 10000
+            }),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert!(r.content.contains("ERROR: build failed"), "{:?}", r.content);
+    }
+
+    #[tokio::test]
+    async fn output_without_a_trailing_newline_is_not_lost() {
+        // Rendering commits on a newline, so the last line of a command that
+        // does not print one has to be flushed when the child exits.
+        let tmp = TmpDir::new();
+        let r = run(
+            tmp.path(),
+            serde_json::json!({"command": "printf 'no trailing newline'", "timeout": 10000}),
+        )
+        .await;
+        assert!(!r.is_error, "{}", r.content);
+        assert!(r.content.contains("no trailing newline"), "{:?}", r.content);
     }
 
     #[tokio::test]
