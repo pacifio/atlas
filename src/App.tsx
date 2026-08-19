@@ -48,7 +48,7 @@ import {
   hydrateAgentRegistry,
   startCatalogListener,
 } from "@/features/agents/stores/agent-registry-store";
-import { AgentLoginDialogHost } from "@/features/chat/components/agent-login-dialog";
+import { AgentOAuthModalHost } from "@/features/agents/components/agent-oauth-modal";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
 import {
@@ -1444,7 +1444,7 @@ export function App() {
       <SearchOverlay open={searchOpen} onOpenChange={setSearchOpen} />
       <FilePicker open={filePickerOpen} onOpenChange={setFilePickerOpen} />
       <HintOverlay />
-      <AgentLoginDialogHost />
+      <AgentOAuthModalHost />
       <NotificationPanel />
       <FeedbackPanel />
       <UpdateAvailableModal />

@@ -149,7 +149,15 @@ export function canSignIn(agentType: string | undefined): boolean {
   if (!agentType) return false;
   const entry = catalogEntry(agentType);
   if (entry) {
+    // The native agent has no sign-in at all — it uses BYOK keys.
     if (entry.kind === "native") return false;
+    // R6: what the agent ACTUALLY advertised, once it has been spawned. This
+    // is the answer that replaced hardcoding agent names in TS.
+    if (entry.authKinds && entry.authKinds.length > 0) return true;
+    // `authKinds` is empty before the first spawn (auth methods only exist
+    // after `initialize`), so empty means "unknown", NOT "cannot sign in" —
+    // fall back to the static signals rather than hiding `/login` from an
+    // agent that has simply never been started.
     if (entry.kind === "external") return true;
     return entry.login !== null;
   }

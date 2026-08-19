@@ -21,6 +21,7 @@ vi.mock("./agents-api", () => ({
 type CatalogStub = Partial<{
   kind: "native" | "builtin" | "external";
   login: { program: string; args: string[] } | null;
+  authKinds: ("agent" | "env_var" | "terminal")[];
 }>;
 let catalog: Record<string, CatalogStub> = {};
 vi.mock("@/features/agents/lib/agent-meta", () => ({
@@ -225,5 +226,47 @@ describe("bindFailureAction", () => {
     expect(bindFailureAction({ agentType: undefined, err: authErr, alreadyAttempted: false })).toBe(
       "report",
     );
+  });
+});
+
+describe("canSignIn is catalog-first (R6)", () => {
+  it("trusts what the agent actually advertised over the static login field", () => {
+    // Claude has no `login_args` in the builtin table, so the old rule said
+    // "cannot sign in" — yet it advertises two terminal methods. Gating on
+    // advertised data is what removed the per-agent special cases in TS.
+    catalog["claude-code"] = { kind: "builtin", login: null, authKinds: ["terminal"] };
+    expect(canSignIn("claude-code")).toBe(true);
+  });
+
+  it("treats an agent-kind method as signable too", () => {
+    // Codex advertises only `agent` methods (no `type` on the wire).
+    catalog["codex"] = { kind: "builtin", login: null, authKinds: ["agent"] };
+    expect(canSignIn("codex")).toBe(true);
+  });
+
+  it("falls back to the static signals before the agent has ever been spawned", () => {
+    // `authKinds` is empty until `initialize` has run. Empty must mean
+    // "unknown", NOT "cannot sign in" — otherwise `/login` disappears for an
+    // agent the user has simply never started, which is exactly when they
+    // need it.
+    catalog["cursor"] = {
+      kind: "builtin",
+      login: { program: "/x", args: ["login"] },
+      authKinds: [],
+    };
+    expect(canSignIn("cursor")).toBe(true);
+
+    catalog["nologin"] = { kind: "builtin", login: null, authKinds: [] };
+    expect(canSignIn("nologin")).toBe(false);
+  });
+
+  it("never offers sign-in for the native agent, whatever it reports", () => {
+    catalog["cersei"] = { kind: "native", login: null, authKinds: ["agent"] };
+    expect(canSignIn("cersei")).toBe(false);
+  });
+
+  it("still offers sign-in for externals with nothing advertised", () => {
+    catalog["some-external"] = { kind: "external", login: null, authKinds: [] };
+    expect(canSignIn("some-external")).toBe(true);
   });
 });

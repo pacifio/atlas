@@ -31,13 +31,12 @@ import { cn } from "@/lib/utils";
  *   as `<local-command-stdout>…</local-command-stdout>` blocks which flow
  *   through the normal `agent_message_chunk` pipeline and render in the
  *   chat thread alongside regular assistant output. */
-export type SlashCommandHandler =
-  | "atlas-login"
-  | "codex-login"
-  | "agent-login"
-  | "open-settings"
-  | "unavailable"
-  | "passthrough";
+/** Exactly two outcomes (S1): `/login` — the one command Atlas synthesizes —
+ *  and passthrough for everything the agent advertises itself. The former
+ *  per-agent login handlers, the `/skills` settings row and the dimmed
+ *  "unavailable" guard rows are gone; Atlas renders what ACP gives, nothing
+ *  else. */
+export type SlashCommandHandler = "agent-login" | "passthrough";
 
 export interface SlashCommand {
   /** Unique slug used both as the visible command name and matched query. */
@@ -53,6 +52,17 @@ export interface SlashCommand {
  *  the composer and let the user type arguments before pressing Enter. */
 export function commandRequiresArgs(cmd: SlashCommand): boolean {
   return /<[^>]+>/.test(cmd.signature);
+}
+
+/** The agent's own word for what this command takes (P3.1).
+ *
+ *  `AvailableCommand.input.hint` is baked into the signature upstream, so it is
+ *  read back out here. Showing the agent's hint — "branch", "file path" —
+ *  instead of a generic "args" badge is the difference between the picker
+ *  telling the user what to type and merely telling them that something is
+ *  required. Falls back to "args" when the agent supplied no hint. */
+export function argsHint(cmd: SlashCommand): string {
+  return /<([^>]+)>/.exec(cmd.signature)?.[1] ?? "args";
 }
 
 export interface SlashCommandPickerHandle {
@@ -219,7 +229,6 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
             rows.map((cmd, i) => {
               const isActive = i === active;
               const needsArgs = commandRequiresArgs(cmd);
-              const unavailable = cmd.handler === "unavailable";
               return (
                 <button
                   key={cmd.name}
@@ -230,11 +239,9 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
                   }}
                   className={cn(
                     "w-full text-left px-3 h-[26px] flex items-center gap-2 text-[11.5px]",
-                    unavailable
-                      ? "opacity-50"
-                      : isActive
-                        ? "bg-[var(--bg-selected)] text-[var(--text-primary)]"
-                        : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
+                    isActive
+                      ? "bg-[var(--bg-selected)] text-[var(--text-primary)]"
+                      : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
                   )}
                   title={cmd.description}
                 >
@@ -249,17 +256,18 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
                       className="shrink-0 text-[9px] uppercase tracking-wider text-[var(--text-tertiary)] border border-[var(--border-default)] rounded-full px-1.5 py-px"
                       title="This command takes arguments — type them after the command, then press Enter."
                     >
-                      args
+                      {argsHint(cmd)}
                     </span>
                   )}
                 </button>
               );
             })
           )}
-          {/* The guard/login rows are always present, so the empty-state
-              "Loading commands…" branch above never fires in practice — this
-              row makes the startup gap (agent hasn't advertised its commands
-              yet) read as loading instead of a broken, guards-only list. */}
+          {/* `/login` is usually present (S1 left it as the only synthetic
+              row), so the empty-state "Loading commands…" branch above rarely
+              fires — this row makes the startup gap, when the agent has not
+              advertised its commands yet, read as loading rather than as a
+              list with just one entry. */}
           {loading && rows.length > 0 && (
             <div className="px-3 h-[24px] flex items-center gap-1.5 text-[10px] text-[var(--text-tertiary)]">
               <Loader2 size={10} className="animate-spin shrink-0" />

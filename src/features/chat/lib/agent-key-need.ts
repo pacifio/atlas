@@ -89,6 +89,16 @@ const NEEDS: ProviderNeed[] = [
   },
 ];
 
+/** The env vars that satisfy a provider, in preference order. Empty for a
+ *  provider this table has never heard of.
+ *
+ *  Exported so the auth modal can match an advertised `env_var` method against
+ *  a provider the agent named only in prose ("Gemini API key is missing"),
+ *  where `AgentKeyNeed.envVar` is null because no variable was spelled out. */
+export function envVarsForProvider(provider: string): string[] {
+  return NEEDS.find((p) => p.provider === provider)?.envVars ?? [];
+}
+
 export interface AgentKeyNeed {
   provider: string;
   label: string;

@@ -324,10 +324,20 @@ function ProviderTableRow({
           ) : fromEnv ? (
             <span
               className="flex items-center gap-1 text-[10px] font-medium text-text-secondary border border-border-default rounded-full px-1.5 h-[18px]"
-              title={`Imported from ${envKey!.envVar} in your environment.`}
+              // Naming the source is what makes the row actionable (E1): a
+              // process-env key is only there because Atlas was launched from a
+              // terminal that had it exported, and disappears the next time the
+              // app opens from Finder. A shell-profile key persists.
+              title={
+                envKey!.source === "shell-env"
+                  ? `Read from ${envKey!.envVar} in your shell profile (~/.zshrc).`
+                  : envKey!.source === "process-env"
+                    ? `Read from ${envKey!.envVar} in the environment Atlas was launched with — export it in your shell profile to make it permanent.`
+                    : `Imported from ${envKey!.envVar} in your environment.`
+              }
             >
               <Check size={10} />
-              from env
+              {envKey!.source === "shell-env" ? "from profile" : "from env"}
             </span>
           ) : configured ? (
             <>
