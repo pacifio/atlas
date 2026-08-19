@@ -1,0 +1,51 @@
+commit af42d4022103aebead70822f2f6a0f73118fb8e8
+Author: NgoQuocViet2001 <ngoquocviet2001@gmail.com>
+Date:   Fri Aug 14 21:48:24 2026 +0700
+
+    fix(agents): preserve late assistant output
+
+diff --git a/crates/atlas-agents/src/actor.rs b/crates/atlas-agents/src/actor.rs
+index be35f12..e35c8b1 100644
+--- a/crates/atlas-agents/src/actor.rs
++++ b/crates/atlas-agents/src/actor.rs
+@@ -1063,9 +1070,10 @@ mod tests {
+     }
+ 
+     #[tokio::test]
+-    async fn late_event_from_old_turn_is_dropped() {
+-        // An event stamped with a finished turn's epoch must not be applied
+-        // after that turn's terminal.
++    async fn late_assistant_event_after_normal_turn_is_applied() {
++        // A normal turn may launch detached work that reports back after the
++        // prompt future resolves. Its assistant output still belongs in the
++        // session transcript even though the actor is already idle.
+         let (handle, sink, mut gates, _conn) = setup_gated(1);
+         handle.control_tx.send(Control::Send("hi".into())).unwrap();
+         settle().await;
+@@ -1077,17 +1085,19 @@ mod tests {
+         settle().await;
+         gates.remove(0).send("end_turn".into()).unwrap();
+         settle().await;
+-        let before = sink.0.lock().len();
+-        // Straggler stamped with the dead turn's epoch: dropped entirely.
++        // A late assistant chunk stamped with the normally completed turn's
++        // epoch must still be applied.
+         handle
+             .stream_tx
+-            .send(acp_stamped(text_chunk_event("straggler"), 1))
++            .send(acp_stamped(text_chunk_event("background result"), 1))
+             .unwrap();
+         settle().await;
+-        assert_eq!(
+-            sink.0.lock().len(),
+-            before,
+-            "an event stamped with a dead turn's epoch must produce no deltas"
++        assert!(
++            sink.0.lock().iter().any(|e| matches!(
++                &e.delta,
++                SessionDelta::TextChunk { delta, .. } if delta == "background result"
++            )),
++            "late assistant output after a normal finish must reach the transcript"
+         );
+     }
+ 

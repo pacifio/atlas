@@ -1,0 +1,13 @@
+{
+  "tasks": [
+    "edit-codeindex-scan",
+    "edit-git-flags",
+    "edit-recentfiles-store",
+    "edit-redact-thresholds",
+    "edit-telemetry-doc",
+    "history-credential-acronym",
+    "history-late-assistant-output",
+    "feature-wordfreq-top"
+  ],
+  "runs": 1
+}

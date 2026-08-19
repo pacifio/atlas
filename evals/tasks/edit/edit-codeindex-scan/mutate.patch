@@ -1,0 +1,22 @@
+diff --git a/crates/atlas-codeindex/src/lib.rs b/crates/atlas-codeindex/src/lib.rs
+index e6a0e42..572d42a 100644
+--- a/crates/atlas-codeindex/src/lib.rs
++++ b/crates/atlas-codeindex/src/lib.rs
+@@ -74,7 +74,7 @@ fn language_label(language: Language) -> &'static str {
+         Language::TypeScript => "typescript",
+         Language::JavaScript => "javascript",
+         Language::Python => "python",
+-        Language::Go => "go",
++        Language::Go => "golang",
+         Language::Unknown => "unknown",
+     }
+ }
+@@ -99,7 +99,7 @@ fn content_hash(source: &str) -> String {
+ pub fn scan(root: &Path, mtime_ms_of: impl Fn(&Path) -> i64) -> Vec<ScannedFile> {
+     let walker = WalkBuilder::new(root)
+         .hidden(false)
+-        .git_ignore(true)
++        .git_ignore(false)
+         .git_global(true)
+         .git_exclude(true)
+         .ignore(true)

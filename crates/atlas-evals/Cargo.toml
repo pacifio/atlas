@@ -1,0 +1,26 @@
+[package]
+name = "atlas-evals"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+atlas-acp = { path = "../atlas-acp" }
+atlas-agents = { path = "../atlas-agents" }
+atlas-cersei = { path = "../atlas-cersei" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "6"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[patch.crates-io]
+# Same vendored-patch redirection every crate that links cersei carries —
+# without it the guard consts in atlas-cersei fail to compile. See
+# vendor/UPSTREAM.md for the patch inventory.
+cersei-provider = { path = "../../vendor/cersei-provider" }
+cersei-agent = { path = "../../vendor/cersei-agent" }

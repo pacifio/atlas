@@ -1,0 +1,22 @@
+diff --git a/src-tauri/src/commands/git.rs b/src-tauri/src/commands/git.rs
+index 4355d52..6e59281 100644
+--- a/src-tauri/src/commands/git.rs
++++ b/src-tauri/src/commands/git.rs
+@@ -202,7 +202,7 @@ async fn git_status_compute(path: &str) -> Result<GitStatus, String> {
+     let status_fut = git_read_async()
+         .args([
+             "status",
+-            "--porcelain=v1",
++            "--porcelain=v2",
+             "--ignore-submodules=all",
+             "--no-renames",
+         ])
+@@ -292,7 +292,7 @@ pub(crate) fn git_log_compute(
+     let mut args: Vec<String> = vec![
+         "log".into(),
+         format!("-{}", n),
+-        "--topo-order".into(),
++        "--date-order".into(),
+         "--decorate=short".into(),
+         "--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ae%x1f%cr%x1f%P%x1f%D%x1f%ct%x1e".into(),
+     ];

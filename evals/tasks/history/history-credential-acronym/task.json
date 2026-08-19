@@ -1,0 +1,13 @@
+{
+  "bucket": "history",
+  "workspace": { "kind": "git", "rev": "60371e5b4176fd4c565cc84faf5ebd0a80cb5926" },
+  "setup_patch": null,
+  "verify": {
+    "patch": "verify.patch",
+    "script": "verify.sh",
+    "git_clean": false,
+    "timeout_secs": 600
+  },
+  "timeout_secs": 900,
+  "max_turns": 30
+}

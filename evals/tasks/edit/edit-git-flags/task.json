@@ -1,0 +1,8 @@
+{
+  "bucket": "edit",
+  "workspace": { "kind": "git", "rev": "cf3207c2d08efd0596740fcff525031c9e7f0905" },
+  "setup_patch": "mutate.patch",
+  "verify": { "git_clean": true },
+  "timeout_secs": 300,
+  "max_turns": 10
+}

@@ -1,0 +1,22 @@
+diff --git a/crates/atlas-redact/src/credential.rs b/crates/atlas-redact/src/credential.rs
+index 674b487..521fea8 100644
+--- a/crates/atlas-redact/src/credential.rs
++++ b/crates/atlas-redact/src/credential.rs
+@@ -31,7 +31,7 @@ use crate::Category;
+ 
+ /// Shortest value worth flagging. Below this the "secret" is a flag or an enum
+ /// (`token=1`, `auth=on`) far more often than a credential.
+-const MIN_VALUE_LEN: usize = 4;
++const MIN_VALUE_LEN: usize = 3;
+ 
+ /// Key segments that name a credential outright.
+ const SECRET_WORDS: &[&str] = &[
+@@ -291,7 +291,7 @@ fn is_numeric(value: &str) -> bool {
+ 
+ /// Is the raw matched value wrapped in quotes?
+ fn is_quoted(value: &str) -> bool {
+-    value.len() >= 2
++    value.len() > 2
+         && ((value.starts_with('"') && value.ends_with('"'))
+             || (value.starts_with('\'') && value.ends_with('\'')))
+ }

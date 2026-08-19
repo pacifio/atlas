@@ -1,0 +1,8 @@
+{
+  "bucket": "feature",
+  "workspace": { "kind": "fixture", "path": "fixture" },
+  "setup_patch": null,
+  "verify": { "script": "verify.sh", "timeout_secs": 600 },
+  "timeout_secs": 1200,
+  "max_turns": 30
+}

@@ -136,6 +136,8 @@ jobs:
             clippy: true
           - crate: atlas-codeindex
           - crate: atlas-embed
+          - crate: atlas-evals
+            clippy: true
           - crate: atlas-git
           - crate: atlas-gitdiff
           - crate: atlas-kb-server

@@ -1,0 +1,18 @@
+diff --git a/src/features/chat/stores/recent-files-store.ts b/src/features/chat/stores/recent-files-store.ts
+index f053016..f918c77 100644
+--- a/src/features/chat/stores/recent-files-store.ts
++++ b/src/features/chat/stores/recent-files-store.ts
+@@ -50,11 +50,11 @@ export const useRecentFilesStore = createSelectors(
+           workspaceId,
+         })
+           .then((items) => set({ items }))
+-          .catch((e) => console.warn("recent_files_push failed:", e));
++          .catch((e) => console.warn("recent files push failed:", e));
+       },
+       clear: () => {
+         const workspaceId = activeWorkspaceId();
+-        if (!workspaceId) return;
++        if (workspaceId) return;
+         void invoke("recent_files_clear", { workspaceId })
+           .then(() => set({ items: [] }))
+           .catch((e) => console.warn("recent_files_clear failed:", e));

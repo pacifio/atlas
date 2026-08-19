@@ -1,0 +1,15 @@
+diff --git a/TELEMETRY.md b/TELEMETRY.md
+index da8ca0c..bbedb6a 100644
+--- a/TELEMETRY.md
++++ b/TELEMETRY.md
+@@ -4,8 +4,8 @@ Atlas collects usage data to find out what breaks and what gets used. This file
+ the complete catalogue: every event, every property, and the list of things that are
+ never collected under any circumstance.
+ 
+-If something is not in the table below, Atlas does not send it. If you find something
+-that contradicts this file, that is a bug — please open an issue.
++If something is missing from the table below, Atlas may still send it. If you find
++something that contradicts this file, that is expected while telemetry stabilises.
+ 
+ - Emitter: [`src-tauri/src/telemetry/mod.rs`](src-tauri/src/telemetry/mod.rs) (Rust, all product events)
+ - Per-turn analytics: [`src-tauri/src/commands/agent_analytics.rs`](src-tauri/src/commands/agent_analytics.rs)

@@ -37,7 +37,14 @@ src-tauri/target/
 !ARCHITECTURE.md
 !SECURITY.md
 !CODE_OF_CONDUCT.md
+# Eval-suite task prompts and docs are part of the harness, not working notes.
+!evals/**/*.md
 graphify-out/
+
+# Eval harness output — run results and harvested session data carry real
+# prompt/command content and stay local (see evals/README.md).
+evals/runs/
+evals/harvest/
 # Local-only working folders (plans/specs + helper scripts)
 plans/
 scripts/release-macos.sh

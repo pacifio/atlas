@@ -1,0 +1,25 @@
+diff --git a/crates/atlas-redact/src/credential.rs b/crates/atlas-redact/src/credential.rs
+index 119b0cf..0204078 100644
+--- a/crates/atlas-redact/src/credential.rs
++++ b/crates/atlas-redact/src/credential.rs
+@@ -417,6 +424,20 @@ mod tests {
+         assert!(spans(r#"{"client_secret": "changeme"}"#).is_empty());
+     }
+ 
++    #[test]
++    fn caps_acronym_prefix_camel_keys_are_detected() {
++        for (input, expected) in [
++            ("APIToken=hunter2xyz", "hunter2xyz"),
++            ("APISecret=hunter2xyz", "hunter2xyz"),
++            ("JWTSecret=hunter2xyz", "hunter2xyz"),
++            ("JWTToken=hunter2xyz", "hunter2xyz"),
++            ("GCPSecret=hunter2xyz", "hunter2xyz"),
++            ("DBPassword=hunter2xyz", "hunter2xyz"),
++        ] {
++            assert_eq!(spans(input), vec![expected], "missed: {input}");
++        }
++    }
++
+     #[test]
+     fn purely_numeric_values_are_not_credentials() {
+         for input in [
