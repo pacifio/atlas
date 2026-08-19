@@ -61,7 +61,7 @@ const _CERSEI_DELEGATE_PATCH_GUARD: &str = cersei_agent::ATLAS_DELEGATE_PATCH;
 // and the provider-side Retry-After passthrough the retry classifier reads.
 const _CERSEI_STEERING_PATCH_GUARD: &str = cersei_agent::ATLAS_STEERING_PATCH;
 const _CERSEI_DOOM_LOOP_PATCH_GUARD: &str = cersei_agent::ATLAS_DOOM_LOOP_PATCH;
-const _CERSEI_MAX_TOKENS_GUARD: &str = cersei_agent::ATLAS_MAX_TOKENS_GUARD_PATCH;
+const _CERSEI_MAX_TOKENS_PATCH_GUARD: &str = cersei_agent::ATLAS_MAX_TOKENS_GUARD_PATCH;
 const _CERSEI_PRE_COMPACT_PATCH_GUARD: &str = cersei_agent::ATLAS_PRE_COMPACT_PATCH;
 const _CERSEI_RETRY_AFTER_PATCH_GUARD: &str = cersei::provider::ATLAS_RETRY_AFTER_PATCH;
 use uuid::Uuid;
@@ -682,6 +682,23 @@ impl CerseiRuntime {
         session_id: SessionId,
         text: String,
     ) -> Result<String> {
+        self.send_prompt_at_depth(agent_id, session_id, text, 0).await
+    }
+
+    /// [`send_prompt`]'s recursive body. `depth > 0` is a steering follow-up:
+    /// a steer that raced the previous leg's finish (recovered by the
+    /// closing drain) runs NOW as its own leg instead of sitting inert in
+    /// history until the user's next send — the chain still owns the session's
+    /// `busy` flag through the depth-0 frame's guard. Boxed because async
+    /// recursion needs the indirection.
+    fn send_prompt_at_depth(
+        &self,
+        agent_id: AgentId,
+        session_id: SessionId,
+        text: String,
+        depth: u8,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + '_>> {
+        Box::pin(async move {
         let agent = self.agent(agent_id)?;
         let sid = session_id_str(&session_id);
         let entry = self.session(agent_id, &sid)?;
@@ -693,17 +710,22 @@ impl CerseiRuntime {
         // model call, after the in-flight tool batch settles). The error
         // return remains for the closing race where the turn's agent is
         // already gone; the actor then supersedes as before.
-        if entry.busy.swap(true, Ordering::SeqCst) {
-            let guard = entry.live_agent.lock();
-            if let Some(live) = guard.upgrade() {
-                live.steer(text);
-                return Ok("steered".to_string());
+        let _busy = if depth == 0 {
+            if entry.busy.swap(true, Ordering::SeqCst) {
+                let guard = entry.live_agent.lock();
+                if let Some(live) = guard.upgrade() {
+                    live.steer(text);
+                    return Ok("steered".to_string());
+                }
+                return Err(AcpError::other(
+                    "a turn is already running for this session; cancel it or wait for it to finish",
+                ));
             }
-            return Err(AcpError::other(
-                "a turn is already running for this session; cancel it or wait for it to finish",
-            ));
-        }
-        let _busy = BusyGuard(entry.clone());
+            Some(BusyGuard(entry.clone()))
+        } else {
+            // Follow-up leg: the depth-0 frame's guard still holds `busy`.
+            None
+        };
         let turn_started = std::time::Instant::now();
         entry.permission_asks.store(0, Ordering::SeqCst);
         // Stamp every event this turn emits with its identity (0 = no
@@ -896,16 +918,20 @@ impl CerseiRuntime {
         // C1 — pre-compaction memory flush. The hook's payload (the SDK's
         // message snapshot) is deliberately unused: the Tauri layer keeps its
         // own uncompacted transcript, so the flush re-reads from there
-        // instead of carrying SDK types across the crate boundary. No-op
-        // until the Tauri layer registers a flush backend.
+        // instead of carrying SDK types across the crate boundary. The agent
+        // identity is the manager's agent UUID — the extraction job parses it
+        // to key its transcript snapshot, so the plugin id would fail it
+        // silently. No-op until the Tauri layer registers a flush backend.
         {
             let cwd = entry.cwd.clone();
+            let flush_agent = agent_id.0.to_string();
             let flush_sid = sid.clone();
             builder = builder.on_pre_compact(Arc::new(move |_msgs| {
                 let cwd = cwd.clone();
+                let agent = flush_agent.clone();
                 let sid = flush_sid.clone();
                 Box::pin(async move {
-                    memory::memory_flush(cwd, CERSEI_PLUGIN_ID.to_string(), sid).await;
+                    memory::memory_flush(cwd, agent, sid).await;
                 })
             }));
         }
@@ -1087,14 +1113,27 @@ impl CerseiRuntime {
             "turn"
         );
 
+        // A steer that raced this leg's finish becomes a follow-up leg (run
+        // below); on a failed or cancelled leg it is recovered into history
+        // instead, so nothing is lost either way. Depth-capped as a backstop
+        // against a pathological steer-on-every-finish loop.
+        const MAX_STEER_FOLLOW_UPS: u8 = 4;
+        let follow_up = (turn_error.is_none()
+            && stop != "cancelled"
+            && !leftover_steered.is_empty()
+            && depth < MAX_STEER_FOLLOW_UPS)
+            .then(|| leftover_steered.join("\n\n"));
+
         // Persist the updated conversation for resume + context continuation —
         // for FAILED turns too: the user message and any partial progress stay
         // in runtime history (next turn keeps context) and on disk (resume
         // shows the failed turn with its error marker).
         let mut msgs = built.messages();
-        for text in leftover_steered {
-            // Rendered by the FE as sent; answered by the next turn.
-            msgs.push(Message::user(&text));
+        if follow_up.is_none() {
+            for text in &leftover_steered {
+                // Rendered by the FE as sent; answered by the next turn.
+                msgs.push(Message::user(text));
+            }
         }
         *entry.history.lock() = msgs.clone();
         let now = chrono::Utc::now().to_rfc3339();
@@ -1112,7 +1151,15 @@ impl CerseiRuntime {
         if let Some(e) = turn_error {
             return Err(AcpError::other(e));
         }
+        if let Some(next) = follow_up {
+            // The follow-up's runner pushes `next` as its own user prompt, so
+            // it was deliberately NOT pushed into history above.
+            return self
+                .send_prompt_at_depth(agent_id, session_id.clone(), next, depth + 1)
+                .await;
+        }
         Ok(stop)
+        })
     }
 
     // ── internals ─────────────────────────────────────────────────────────────

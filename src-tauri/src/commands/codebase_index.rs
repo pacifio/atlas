@@ -56,7 +56,8 @@ pub async fn codebase_index_status(
         .map_err(|e| e.to_string())?;
     let status = status_of(&idx);
     // Availability probe, not a query: n_results stays 0 by definition;
-    // corpus_size is the signal (0 = the index the features assume is absent).
+    // corpus_size is the signal (0 = the codebase index the features assume
+    // is absent).
     crate::telemetry::retrieval::record(
         &app,
         "codebase_status",
@@ -170,8 +171,8 @@ pub async fn codebase_index_build(
     let save_pp = pp.clone();
     let save_index = index.clone();
     // Propagated, not discarded: a build whose write failed must report
-    // failure, or a truncated index is indistinguishable from "indexed" and
-    // "done" is a lie.
+    // failure, or a truncated codebase index is indistinguishable from
+    // "indexed" and "done" is a lie.
     tokio::task::spawn_blocking(move || atlas_codeindex::save_index(&save_pp, &save_index))
         .await
         .map_err(|e| format!("save index join: {e}"))?

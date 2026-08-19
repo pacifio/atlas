@@ -136,8 +136,8 @@ interface MessageInputProps {
   /**
    * When true, a send while running steers the live turn (the backend injects
    * the message before the agent's next model call) instead of queueing it
-   * client-side. Native (cersei) sessions only — ACP agents can't steer, and
-   * sending would cancel their running turn.
+   * client-side. Atlas Agent (cersei) sessions only — ACP agents can't steer,
+   * and sending would cancel their running turn.
    */
   steerWhileRunning?: boolean;
   /** Hard-disable the composer (e.g. Claude Code isn't installed/authed). */

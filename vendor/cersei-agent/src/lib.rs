@@ -67,9 +67,10 @@ pub const ATLAS_MAX_TOKENS_GUARD_PATCH: &str = "max-tokens-guard-v1";
 /// defined but never emitted.
 pub const ATLAS_PRE_COMPACT_PATCH: &str = "pre-compact-hook-v1";
 
-/// Tool name of the synthetic permission request the runner raises when the
-/// doom-loop detector fires a second time. Not a real tool: permission
-/// policies special-case it (Atlas always prompts unless in bypass mode).
+/// ATLAS PATCH (doom-loop-input-hash-v1): tool name of the synthetic
+/// permission request the runner raises when the doom-loop detector fires a
+/// second time. Not a real tool: permission policies special-case it (Atlas
+/// always prompts unless in bypass mode).
 pub const DOOM_LOOP_ASK: &str = "__doom_loop__";
 
 /// Sentinel content of the tool_result synthesized for a tool_use orphaned by

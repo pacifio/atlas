@@ -89,8 +89,9 @@ pub trait AgentBackend: Send + Sync {
     fn mark_turn_started(&self, agent_id: AgentId, session_id: &SessionId) -> AcpResult<u64>;
     fn cancel_turn(&self, agent_id: AgentId, session_id: SessionId) -> AcpResult<()>;
     /// Route a user message into the running turn (mid-turn steering).
-    /// Default: unsupported — callers fall back to supersede. Only the native
-    /// agent steers; ACP subprocess agents own their loops.
+    /// Default: unsupported — callers fall back to supersede. Only the Atlas
+    /// Agent (the in-process engine) steers; ACP subprocess agents own their
+    /// loops.
     fn steer_turn(
         &self,
         _agent_id: AgentId,

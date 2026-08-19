@@ -73,9 +73,10 @@ pub fn schedule_for(message: &str) -> Option<RetrySchedule> {
     }
 
     if m.contains("http 429") || m.contains("rate limit") || m.contains("rate_limit") {
-        // Honor a server-stated retry-after over the exponential guess — the
-        // provider folds the Retry-After header into the error string as
-        // "(retry-after: Ns)" (see cersei-provider `retry_after_suffix`).
+        // ATLAS PATCH (retry-after-v1): honor a server-stated retry-after
+        // over the exponential guess — the provider folds the Retry-After
+        // header into the error string as "(retry-after: Ns)" (see
+        // cersei-provider `retry_after_suffix`).
         return Some(match retry_after_secs(&m) {
             Some(secs) => RetrySchedule {
                 max_attempts: 4,

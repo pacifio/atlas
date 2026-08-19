@@ -420,7 +420,7 @@ pub fn install_manager(app: &AppHandle) {
         })
     }));
 
-    // C1 — pre-compaction memory flush. The native agent awaits this before
+    // C1 — pre-compaction memory flush. The Atlas Agent awaits this before
     // auto-compaction summarizes a long session, so the middle of the session
     // (where the important reasoning lives, and exactly what lossy
     // summarization hits hardest) gets one chance to persist. The flush

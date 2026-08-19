@@ -79,5 +79,9 @@ fn vendored_pre_compact_patch_is_resolved() {
 /// the retry classifier can pace backoff to the server's answer.
 #[test]
 fn vendored_retry_after_patch_is_resolved() {
-    assert_eq!(cersei::provider::ATLAS_RETRY_AFTER_PATCH, "retry-after-v1");
+    // Referenced as `cersei_provider::…` directly, matching utf8_patch_guard
+    // and the UPSTREAM.md table (the lib guard goes through the
+    // `cersei::provider` facade re-export because the lib has no direct
+    // cersei-provider dependency).
+    assert_eq!(cersei_provider::ATLAS_RETRY_AFTER_PATCH, "retry-after-v1");
 }

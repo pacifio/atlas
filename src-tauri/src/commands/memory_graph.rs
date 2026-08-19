@@ -135,8 +135,9 @@ fn save_index(project_path: &str, index: &StoredIndex) -> Result<(), String> {
     let dir = index_dir(project_path);
     std::fs::create_dir_all(&dir).map_err(|e| format!("create index dir: {e}"))?;
     let json = serde_json::to_string(index).map_err(|e| e.to_string())?;
-    // Atomic temp + rename: a crash mid-write must leave the previous index
-    // intact, never a truncated index.json that load_index reads as empty.
+    // Atomic temp + rename: a crash mid-write must leave the previous flat
+    // store intact, never a truncated index.json that load_index reads as
+    // empty.
     let tmp = dir.join(format!("index.json.tmp.{}", std::process::id()));
     std::fs::write(&tmp, json).map_err(|e| format!("write index temp: {e}"))?;
     if let Err(e) = std::fs::rename(&tmp, index_path(project_path)) {
@@ -300,7 +301,7 @@ fn build_graph_blocking(
             .collect(),
     };
     // Propagated, not discarded: a failed write must fail the build, or a
-    // truncated index is indistinguishable from "indexed".
+    // truncated flat store is indistinguishable from "indexed".
     save_index(&project_path, &stored)?;
 
     // ── Edges ──────────────────────────────────────────────────────────────

@@ -993,40 +993,12 @@ pub async fn run_agent_streaming(
                 // in history: without paired tool_results the next model
                 // call is invalid provider history. Fail each closed and
                 // have the model re-issue the calls in full.
-                let truncated_ids: Vec<String> = response
-                    .message
-                    .content_blocks()
-                    .into_iter()
-                    .filter_map(|b| {
-                        if let ContentBlock::ToolUse { id, .. } = b {
-                            Some(id)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if truncated_ids.is_empty() {
-                    agent
+                match max_tokens_repair(&response.message) {
+                    Some(repair) => agent.messages.lock().push(repair),
+                    None => agent
                         .messages
                         .lock()
-                        .push(Message::user("Continue from exactly where you stopped."));
-                } else {
-                    let mut blocks: Vec<ContentBlock> = truncated_ids
-                        .into_iter()
-                        .map(|id| ContentBlock::ToolResult {
-                            tool_use_id: id,
-                            content: ToolResultContent::Text(
-                                crate::MAX_TOKENS_TOOL_MESSAGE.to_string(),
-                            ),
-                            is_error: Some(true),
-                        })
-                        .collect();
-                    blocks.push(ContentBlock::Text {
-                        text: "Your response was cut off by the output-token limit. \
-                               Re-issue the last tool call(s) in full."
-                            .to_string(),
-                    });
-                    agent.messages.lock().push(Message::user_blocks(blocks));
+                        .push(Message::user("Continue from exactly where you stopped.")),
                 }
             }
             _ => break,
@@ -1232,6 +1204,44 @@ fn doom_loop_pattern(tool_calls: &[ToolCallRecord]) -> bool {
     three_identical || alternating
 }
 
+// ─── MaxTokens truncation repair (ATLAS PATCH max-tokens-guard-v1) ──────────
+
+/// The user message that repairs a MaxTokens-stopped assistant message
+/// carrying tool_use blocks: one error tool_result per call (they were never
+/// executed; their salvage-parsed arguments may be incomplete) plus a text
+/// block telling the model to re-issue. `None` when the message carries no
+/// tool_use — plain truncated prose just gets "continue".
+fn max_tokens_repair(message: &Message) -> Option<Message> {
+    let truncated_ids: Vec<String> = message
+        .content_blocks()
+        .into_iter()
+        .filter_map(|b| {
+            if let ContentBlock::ToolUse { id, .. } = b {
+                Some(id)
+            } else {
+                None
+            }
+        })
+        .collect();
+    if truncated_ids.is_empty() {
+        return None;
+    }
+    let mut blocks: Vec<ContentBlock> = truncated_ids
+        .into_iter()
+        .map(|id| ContentBlock::ToolResult {
+            tool_use_id: id,
+            content: ToolResultContent::Text(crate::MAX_TOKENS_TOOL_MESSAGE.to_string()),
+            is_error: Some(true),
+        })
+        .collect();
+    blocks.push(ContentBlock::Text {
+        text: "Your response was cut off by the output-token limit. \
+               Re-issue the last tool call(s) in full."
+            .to_string(),
+    });
+    Some(Message::user_blocks(blocks))
+}
+
 // ─── Benchmark self-verification helpers ────────────────────────────────────
 
 #[derive(Debug)]
@@ -1339,6 +1349,52 @@ mod tests {
             is_error,
             duration: std::time::Duration::ZERO,
         }
+    }
+
+    #[test]
+    fn max_tokens_with_tool_use_fails_the_calls_closed() {
+        // Pins the guard: a length-stopped message carrying tool_use blocks
+        // gets one error tool_result per call + a re-issue instruction, so
+        // provider history stays valid and the lying calls never run.
+        let msg = Message::assistant_blocks(vec![
+            ContentBlock::Text {
+                text: "Editing now.".into(),
+            },
+            ContentBlock::ToolUse {
+                id: "t1".into(),
+                name: "Edit".into(),
+                input: json!({"file_path": "a.rs", "old_string": "trunca"}),
+            },
+        ]);
+        let repair = max_tokens_repair(&msg).expect("tool_use present → repair");
+        let blocks = repair.content_blocks();
+        let results: Vec<_> = blocks
+            .iter()
+            .filter_map(|b| {
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    is_error,
+                    ..
+                } = b
+                {
+                    Some((tool_use_id.clone(), *is_error))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(results, [("t1".to_string(), Some(true))]);
+        assert!(
+            blocks
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Text { text } if text.contains("Re-issue"))),
+            "the model is told to re-issue the call"
+        );
+    }
+
+    #[test]
+    fn max_tokens_without_tool_use_needs_no_repair() {
+        assert!(max_tokens_repair(&Message::assistant("just prose, cut off")).is_none());
     }
 
     #[test]

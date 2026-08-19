@@ -108,9 +108,9 @@ pub fn scan(root: &Path, mtime_ms_of: impl Fn(&Path) -> i64) -> Vec<ScannedFile>
         .build();
 
     // Every skip is counted by reason and logged once at the end. A scan that
-    // drops files without saying so makes a truncated index indistinguishable
-    // from "project has no source" — you cannot trust an eval on a pipeline
-    // that loses inputs silently.
+    // drops files without saying so makes a truncated codebase index
+    // indistinguishable from "project has no source" — you cannot trust an
+    // eval on a pipeline that loses inputs silently.
     let mut walk_errors: u64 = 0;
     let mut skipped_too_large: u64 = 0;
     let mut skipped_read: u64 = 0;
@@ -279,8 +279,9 @@ pub fn save_index(project_path: &str, index: &CodebaseIndex) -> Result<()> {
     let dir = index_dir(project_path);
     std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
     let bytes = serde_json::to_vec(index).context("serialize codebase index")?;
-    // Atomic temp + rename: a crash mid-write must leave the previous index
-    // intact, never a truncated docs.json that load_index reads as corrupt.
+    // Atomic temp + rename: a crash mid-write must leave the previous
+    // codebase index intact, never a truncated docs.json that load_index
+    // reads as corrupt.
     let target = docs_path(project_path);
     let tmp = dir.join(format!("docs.json.tmp.{}", std::process::id()));
     std::fs::write(&tmp, bytes).with_context(|| format!("write {}", tmp.display()))?;

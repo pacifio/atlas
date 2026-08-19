@@ -190,7 +190,7 @@ survives a reload.
   after the in-flight tool batch settles — so no message ever lands between a
   permission prompt and its approval. Backends that can't steer (ACP agents)
   fall back to the actor's supersede path, and the composer only offers
-  steering for native sessions.
+  steering for Atlas Agent sessions.
 - **Doom loops.** The runner's detector keys on (tool, input-hash) and
   requires failures; the first trigger nudges, a repeat escalates to a
   permission ask (`DOOM_LOOP_ASK`, rendered "Agent stuck in a loop") that
