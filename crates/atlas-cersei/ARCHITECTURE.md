@@ -284,6 +284,26 @@ Auto-compaction now works in rounds, not raw message counts:
 - The snip fallback cuts at the same boundary, and the C1 pre-compact hook
   and `CompactStart`/`CompactEnd` events are unchanged.
 
+### 5e. Provider handoff + the question channel (M5)
+
+- **History transform** (`handoff.rs`): a session's history is written in
+  one provider's dialect; replaying it to another breaks. On a `set_model`
+  that switches provider — and on every `load_session`, since a restored
+  history may carry crash orphans — the transform converts thinking blocks
+  to plain text (signatures don't survive), drops redacted thinking,
+  renames tool ids that fail the strictest grammar (≤64 of `[A-Za-z0-9_-]`)
+  consistently across call and result, synthesizes an interrupted-error
+  result for any unanswered `tool_use`, and drops results whose call is
+  gone. Idempotent.
+- **AskUserQuestion**: the sanctioned question channel — one clarifying
+  question with 2-6 concrete choices, rendered through the permission
+  dialog and answered over the same `respond_permission` wire (a separate
+  `pending_asks` map resolves to the chosen option rather than a
+  permission verdict). Dismissing tells the model to proceed on its best
+  judgment and state the assumption. Main-turn only: the delegate
+  blocklist already names it. Free-form questions stay what they always
+  were — end the turn and ask in prose.
+
 ---
 
 ## 6. The tools — what Atlas can actually do

@@ -13,6 +13,7 @@
 //! atlas-agents can route to either backend.
 
 mod context;
+pub mod handoff;
 mod mcp;
 pub mod profile;
 pub mod tools;
@@ -273,6 +274,10 @@ struct SessionEntry {
     cancel: Mutex<Option<CancellationToken>>,
     /// Pending permission requests awaiting a UI decision.
     pending: DashMap<Uuid, oneshot::Sender<CerseiDecision>>,
+    /// Pending `AskUserQuestion` prompts (M5). Separate from `pending`
+    /// because the answer is the chosen option id itself, not a permission
+    /// verdict. `None` through the channel = the dialog was cancelled.
+    pending_asks: DashMap<Uuid, oneshot::Sender<Option<String>>>,
     cancelled: AtomicBool,
     /// Monotonic turn counter, bumped by `mark_turn_started`. Stamped onto
     /// every event the turn emits so the session actor can drop stragglers
@@ -389,6 +394,7 @@ impl CerseiRuntime {
             usage: Mutex::new(store::StoredUsage::default()),
             cancel: Mutex::new(None),
             pending: DashMap::new(),
+            pending_asks: DashMap::new(),
             cancelled: AtomicBool::new(false),
             turn_seq: AtomicU64::new(0),
             busy: AtomicBool::new(false),
@@ -424,6 +430,9 @@ impl CerseiRuntime {
                 (p, m, Vec::new(), store::StoredUsage::default())
             }
         };
+        // M5 — a restored history may carry crash orphans (a tool_use whose
+        // turn died before the result landed); repair before first replay.
+        let history = handoff::transform_history(history, &provider);
         let entry = Arc::new(SessionEntry {
             session_id: sid.clone(),
             cwd: cwd_str,
@@ -436,6 +445,7 @@ impl CerseiRuntime {
             usage: Mutex::new(usage),
             cancel: Mutex::new(None),
             pending: DashMap::new(),
+            pending_asks: DashMap::new(),
             cancelled: AtomicBool::new(false),
             turn_seq: AtomicU64::new(0),
             busy: AtomicBool::new(false),
@@ -523,8 +533,18 @@ impl CerseiRuntime {
             // Only treat the prefix as a provider if we recognise it; some model
             // ids legitimately contain a slash (e.g. "Qwen/Qwen3-Coder").
             if provider::default_model_for(prov).is_some() || provider::openai_base_url(prov).is_some() || prov == "anthropic" {
+                let switched = *entry.provider.lock() != prov;
                 *entry.provider.lock() = prov.to_string();
                 *entry.model.lock() = m.to_string();
+                // M5 — a mid-session provider switch replays this history to
+                // a different dialect: convert thinking to text, normalize
+                // tool ids, repair orphans, before the next turn builds.
+                if switched {
+                    let mut history = entry.history.lock();
+                    let repaired =
+                        handoff::transform_history(std::mem::take(&mut *history), prov);
+                    *history = repaired;
+                }
                 return Ok(());
             }
         }
@@ -684,6 +704,15 @@ impl CerseiRuntime {
         for s in agent.sessions.iter() {
             if let Some((_, tx)) = s.value().pending.remove(&request_id) {
                 let _ = tx.send(map_decision(decision));
+                return Ok(());
+            }
+            // An AskUserQuestion answer rides the same wire; it resolves to
+            // the chosen option id rather than a permission verdict.
+            if let Some((_, tx)) = s.value().pending_asks.remove(&request_id) {
+                let _ = tx.send(match decision {
+                    atlas_acp::PermissionDecision::Selected { option_id } => Some(option_id),
+                    atlas_acp::PermissionDecision::Cancelled => None,
+                });
                 return Ok(());
             }
         }
@@ -865,6 +894,14 @@ impl CerseiRuntime {
             // makes `build_system_prompt` add the skills guidance automatically.
             // Main turn only (not the delegate toolset) so sub-agents stay focused.
             extras.push(Box::new(crate::tools::skill::AtlasSkillTool));
+            // The sanctioned question channel (M5). Main turn only — the
+            // delegate blocklist strips it from sub-agents.
+            extras.push(Box::new(AskUserQuestionTool {
+                sink: sink.clone(),
+                agent_id,
+                session_id: session_id.clone(),
+                entry: entry.clone(),
+            }));
             // Grounding: expose Atlas's indexed memory as a tool when the Tauri
             // layer has registered a retrieval backend.
             if memory::memory_search_available() {
@@ -1385,6 +1422,138 @@ impl PermissionPolicy for UiPolicy {
         };
 
         self.prompt_user(request, &reason, cache_key).await
+    }
+}
+
+// ─── AskUserQuestion (M5) ───────────────────────────────────────────────────
+
+/// The sanctioned question channel (M5): one clarifying question with 2-6
+/// concrete choices, rendered through the same dialog as a permission ask
+/// and answered over the same `respond_permission` wire. Main-turn only —
+/// the delegate blocklist already names it. Free-form questions stay what
+/// they always were: end the turn and ask in prose.
+struct AskUserQuestionTool {
+    sink: Arc<dyn EventSink>,
+    agent_id: AgentId,
+    session_id: acp_schema::SessionId,
+    entry: Arc<SessionEntry>,
+}
+
+#[async_trait]
+impl cersei::tools::Tool for AskUserQuestionTool {
+    fn name(&self) -> &str {
+        "AskUserQuestion"
+    }
+    fn description(&self) -> &str {
+        "Ask the user ONE clarifying question with 2-6 concrete answer choices, \
+         when a decision materially changes the work and the request doesn't \
+         answer it. The user picks a choice in a dialog and the result is their \
+         selection. Use sparingly — never to ask permission to proceed, and \
+         never when the request or the code already answers the question."
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::ReadOnly
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "question": { "type": "string", "description": "The one question to ask." },
+                "choices": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "minItems": 2,
+                    "maxItems": 6,
+                    "description": "Concrete, mutually exclusive answers the user picks from."
+                }
+            },
+            "required": ["question", "choices"]
+        })
+    }
+    async fn execute(
+        &self,
+        input: serde_json::Value,
+        _ctx: &cersei::tools::ToolContext,
+    ) -> cersei::tools::ToolResult {
+        use cersei::tools::ToolResult;
+        let question = input.get("question").and_then(|q| q.as_str()).unwrap_or("").trim();
+        let choices: Vec<String> = input
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if question.is_empty() {
+            return ToolResult::error("`question` is required.");
+        }
+        if choices.len() < 2 || choices.len() > 6 {
+            return ToolResult::error("`choices` must have 2-6 non-empty entries.");
+        }
+
+        let request_id = Uuid::new_v4();
+        let (tx, rx) = oneshot::channel();
+        self.entry.pending_asks.insert(request_id, tx);
+        self.entry.permission_asks.fetch_add(1, Ordering::SeqCst);
+
+        use acp_schema::{PermissionOption, PermissionOptionKind};
+        let mut options: Vec<PermissionOption> = choices
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                PermissionOption::new(format!("choice_{i}"), c, PermissionOptionKind::AllowOnce)
+            })
+            .collect();
+        options.push(PermissionOption::new(
+            "dismiss",
+            "Dismiss",
+            PermissionOptionKind::RejectOnce,
+        ));
+
+        let tool_call = serde_json::from_value(serde_json::json!({
+            "toolCallId": request_id.to_string(),
+            "title": question,
+            "kind": "other",
+            "status": "pending",
+            "rawInput": input,
+        }))
+        .expect("static tool_call shape");
+        self.sink.emit(
+            self.agent_id,
+            AcpEvent::PermissionRequest {
+                request_id,
+                session_id: self.session_id.clone(),
+                tool_call,
+                options,
+            },
+            None,
+        );
+
+        match rx.await {
+            Ok(Some(option_id)) => {
+                if option_id == "dismiss" {
+                    return ToolResult::success(
+                        "The user dismissed the question without choosing. Proceed with \
+                         your best judgment and state the assumption you made.",
+                    );
+                }
+                let chosen = option_id
+                    .strip_prefix("choice_")
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .and_then(|i| choices.get(i));
+                match chosen {
+                    Some(text) => ToolResult::success(format!("The user chose: {text}")),
+                    None => ToolResult::error("Unknown answer option."),
+                }
+            }
+            Ok(None) | Err(_) => {
+                ToolResult::error("The question was cancelled before the user answered.")
+            }
+        }
     }
 }
 
@@ -2319,6 +2488,126 @@ mod tests {
         assert!(matches!(last, TurnStep::SetStop(ref s) if s == "end_turn"));
     }
 
+    // ── AskUserQuestion (M5) ────────────────────────────────────────────────
+
+    struct AllowAllPolicy;
+    #[async_trait]
+    impl PermissionPolicy for AllowAllPolicy {
+        async fn check(&self, _r: &PermissionRequest) -> CerseiDecision {
+            CerseiDecision::Allow
+        }
+    }
+
+    fn ask_ctx() -> cersei::tools::ToolContext {
+        cersei::tools::ToolContext {
+            working_dir: std::env::temp_dir(),
+            session_id: "s".into(),
+            permissions: Arc::new(AllowAllPolicy),
+            cost_tracker: Arc::new(cersei::tools::CostTracker::new()),
+            mcp_manager: None,
+            extensions: Default::default(),
+        }
+    }
+
+    async fn drive_ask(
+        input: serde_json::Value,
+        answer: Option<&'static str>,
+    ) -> (cersei::tools::ToolResult, Arc<CollectingSink>) {
+        let ui = policy("default");
+        let entry = ui.pending.clone();
+        let (s, c) = sink();
+        let tool = Arc::new(AskUserQuestionTool {
+            sink: s,
+            agent_id: AgentId::new(),
+            session_id: SessionId::new("s".to_string()),
+            entry: entry.clone(),
+        });
+        let handle = tokio::spawn(async move {
+            cersei::tools::Tool::execute(tool.as_ref(), input, &ask_ctx()).await
+        });
+        // Wait for the pending ask, then answer over the same channel
+        // `respond_permission` would use.
+        for _ in 0..200 {
+            if !entry.pending_asks.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let id = entry.pending_asks.iter().next().map(|e| *e.key()).expect("ask registered");
+        let (_, tx) = entry.pending_asks.remove(&id).unwrap();
+        tx.send(answer.map(String::from)).unwrap();
+        (handle.await.unwrap(), c)
+    }
+
+    #[tokio::test]
+    async fn ask_user_question_resolves_to_the_chosen_option() {
+        let input = serde_json::json!({
+            "question": "Which database?",
+            "choices": ["postgres", "sqlite"]
+        });
+        let (result, c) = drive_ask(input, Some("choice_1")).await;
+        assert!(!result.is_error, "{}", result.content);
+        assert!(result.content.contains("sqlite"), "{}", result.content);
+
+        // The emitted dialog carries the question as its title and one
+        // option per choice plus Dismiss.
+        let events = c.events.lock();
+        let ask = events
+            .iter()
+            .find_map(|e| match e {
+                AcpEvent::PermissionRequest { tool_call, options, .. } => {
+                    Some((serde_json::to_value(tool_call).unwrap(), options.len()))
+                }
+                _ => None,
+            })
+            .expect("a PermissionRequest was emitted");
+        assert_eq!(ask.0["title"], "Which database?");
+        assert_eq!(ask.1, 3, "two choices + dismiss");
+    }
+
+    #[tokio::test]
+    async fn a_dismissed_question_tells_the_model_to_proceed_on_judgment() {
+        let input = serde_json::json!({
+            "question": "Proceed how?",
+            "choices": ["a", "b"]
+        });
+        let (result, _c) = drive_ask(input, Some("dismiss")).await;
+        assert!(!result.is_error);
+        assert!(result.content.contains("best judgment"), "{}", result.content);
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_question_is_an_error_result() {
+        let input = serde_json::json!({
+            "question": "q?",
+            "choices": ["a", "b"]
+        });
+        let (result, _c) = drive_ask(input, None).await;
+        assert!(result.is_error);
+        assert!(result.content.contains("cancelled"), "{}", result.content);
+    }
+
+    #[tokio::test]
+    async fn malformed_ask_input_is_rejected_without_a_dialog() {
+        let ui = policy("default");
+        let entry = ui.pending.clone();
+        let (s, c) = sink();
+        let tool = AskUserQuestionTool {
+            sink: s,
+            agent_id: AgentId::new(),
+            session_id: SessionId::new("s".to_string()),
+            entry,
+        };
+        let r = cersei::tools::Tool::execute(
+            &tool,
+            serde_json::json!({"question": "q?", "choices": ["only-one"]}),
+            &ask_ctx(),
+        )
+        .await;
+        assert!(r.is_error);
+        assert!(c.events.lock().is_empty(), "no dialog for invalid input");
+    }
+
     // ── Permission policy (the synthesized modes that mirror Claude Code) ──────
 
     fn policy(mode: &str) -> UiPolicy {
@@ -2340,6 +2629,7 @@ mod tests {
             usage: Mutex::new(store::StoredUsage::default()),
             cancel: Mutex::new(None),
             pending: DashMap::new(),
+            pending_asks: DashMap::new(),
             cancelled: std::sync::atomic::AtomicBool::new(false),
             turn_seq: AtomicU64::new(0),
             busy: AtomicBool::new(false),
