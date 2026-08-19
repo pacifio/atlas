@@ -419,6 +419,8 @@ name = "atlas-acp"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
+ "agent-client-protocol-schema",
+ "atlas-terminal",
  "dashmap",
  "serde",
  "serde_json",

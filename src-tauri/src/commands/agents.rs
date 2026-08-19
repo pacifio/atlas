@@ -737,9 +737,15 @@ pub fn agents_kill(agent_id: AgentId, manager: State<'_, AgentManager>) -> Resul
 pub async fn agents_new_session(
     agent_id: AgentId,
     cwd: PathBuf,
+    // Extra workspace roots (P3.2). Only reaches agents that advertised
+    // `sessionCapabilities.additionalDirectories`; dropped with a log otherwise.
+    additional_directories: Option<Vec<PathBuf>>,
     manager: State<'_, AgentManager>,
 ) -> Result<atlas_agents::SessionInit, CmdError> {
-    manager.new_session(agent_id, cwd).await.map_err(CmdError::from)
+    manager
+        .new_session(agent_id, cwd, additional_directories.unwrap_or_default())
+        .await
+        .map_err(CmdError::from)
 }
 
 /// Whether Codex has stored credentials (`~/.codex/auth.json` exists). Drives
@@ -764,6 +770,99 @@ pub async fn agents_authenticate(
         .authenticate(agent_id, method_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// The agent's OWN stored sessions for `cwd` (P2.3, ACP `session/list`).
+///
+/// `null` when the agent is not running or never advertised
+/// `sessionCapabilities.list` — the sidebar then keeps using whatever bespoke
+/// reader Atlas has for it. This is the path that gives a brand-new ACP agent
+/// sidebar history without anyone writing a transcript parser for it.
+#[tauri::command]
+pub async fn agents_agent_sessions(
+    plugin_id: String,
+    cwd: String,
+    manager: State<'_, AgentManager>,
+) -> Result<Option<Vec<atlas_acp::AgentSessionInfo>>, String> {
+    manager
+        .agent_sessions(&plugin_id, &cwd)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Ask the agent to forget a stored session (P2.3, ACP `session/delete`).
+/// Returns whether the agent actually handled it.
+#[tauri::command]
+pub async fn agents_delete_agent_session(
+    plugin_id: String,
+    session_id: String,
+    manager: State<'_, AgentManager>,
+) -> Result<bool, String> {
+    manager
+        .delete_agent_session(&plugin_id, &session_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Answer an elicitation the agent raised (P3.3).
+///
+/// `action` is `"accept"` / `"decline"` / `"cancel"`; `content` is the form's
+/// field map on accept. Unknown ids are a no-op — the user can answer a dialog
+/// whose agent already died.
+#[tauri::command]
+pub fn agents_respond_elicitation(
+    agent_id: AgentId,
+    request_id: uuid::Uuid,
+    action: String,
+    content: Option<serde_json::Value>,
+    manager: State<'_, AgentManager>,
+) -> Result<(), String> {
+    manager
+        .respond_elicitation(agent_id, request_id, &action, content)
+        .map_err(|e| e.to_string())
+}
+
+/// Branch a session from its current state (P3.4, ACP `session/fork`).
+/// `null` when the agent has no fork capability.
+#[tauri::command]
+pub async fn agents_fork_session(
+    key: SessionKey,
+    manager: State<'_, AgentManager>,
+) -> Result<Option<String>, String> {
+    manager.fork_session(&key).await.map_err(|e| e.to_string())
+}
+
+/// Set any agent-advertised config option (P2.2).
+///
+/// Generic by design: ACP lets an agent advertise arbitrary options and Atlas
+/// previously only ever set `config_id = "model"`, so every other knob it
+/// offered was unreachable. `value` is JSON — a bool maps to the wire's
+/// `Boolean` form, anything else to the `ValueId` (select) form.
+#[tauri::command]
+pub async fn agents_set_config_option(
+    key: SessionKey,
+    config_id: String,
+    value: serde_json::Value,
+    manager: State<'_, AgentManager>,
+) -> Result<(), String> {
+    manager
+        .set_config_option(&key, config_id, value)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Sign the agent out (A2, ACP `logout`).
+///
+/// Only offered for agents that advertised `auth.logout` — the frontend gates on
+/// `AgentCatalogEntry.supportsLogout`, and the backend errors rather than
+/// pretending for the rest. Atlas stores no agent credentials itself, so this is
+/// purely a delegation: the agent drops its own.
+#[tauri::command]
+pub async fn agents_logout(
+    agent_id: AgentId,
+    manager: State<'_, AgentManager>,
+) -> Result<(), String> {
+    manager.logout(agent_id).await.map_err(|e| e.to_string())
 }
 
 /// Read a saved session's transcript off disk for an INSTANT first paint.
@@ -911,6 +1010,10 @@ pub async fn agents_send(
     key: SessionKey,
     text: String,
     attachments: Option<Vec<atlas_acp::ImageAttachment>>,
+    // `@`-mentions that point at files (P2.1). Sent as `ResourceLink` blocks
+    // rather than flattened into the prose — the ACP-native way to hand an
+    // agent a file, and every agent is required to accept it.
+    resource_links: Option<Vec<atlas_acp::ResourceLinkSpec>>,
     manager: State<'_, AgentManager>,
     sharing: State<'_, MemorySharingState>,
     app: AppHandle,
@@ -921,14 +1024,13 @@ pub async fn agents_send(
     // counted twice. `AnalyticsMiddleware` emits it off `Status{Running}`
     // instead, which is the actual turn boundary.
 
-    // Stage image attachments up front so every send exit below (bare or
-    // memory-prefixed) drains them into this turn's prompt. Best-effort: a
-    // staging failure must not block the text send.
-    if let Some(atts) = attachments {
-        if !atts.is_empty() {
-            let _ = manager.stage_attachments(&key, atts);
-        }
-    }
+    // Image attachments ride WITH the turn (P0.2) rather than through a staging
+    // side-channel drained by the next send. Held here and folded into the
+    // content at each of the three send exits below (bare / slash-command /
+    // memory-prefixed), so a send that returns early can't strand images for
+    // some later turn to pick up.
+    let images = attachments.unwrap_or_default();
+    let links = resource_links.unwrap_or_default();
 
     // Resolve the project cwd. Unknown session → fail with the SAME error
     // shape `manager.send` produces, without attempting a send that would
@@ -995,7 +1097,15 @@ pub async fn agents_send(
 
     // No cwd or sharing disabled → bare send (no injection).
     if cwd.is_empty() || !sharing.is_enabled(&cwd) {
-        return manager.send(&key, text).map_err(|e| e.to_string());
+        return manager
+            .send(
+                &key,
+                atlas_acp::prompt::with_resource_links(
+                    atlas_acp::prompt::compose(text, images),
+                    links,
+                ),
+            )
+            .map_err(|e| e.to_string());
     }
 
     // Register this session so the capture path (`TauriDeltaSink::emit`) can
@@ -1011,7 +1121,15 @@ pub async fn agents_send(
     // `mark_sent` uncalled, so whatever memory was pending still rides the next
     // conversational turn instead of being consumed by a turn that dropped it.
     if memory_pack::is_slash_command(&text) {
-        return manager.send(&key, text).map_err(|e| e.to_string());
+        return manager
+            .send(
+                &key,
+                atlas_acp::prompt::with_resource_links(
+                    atlas_acp::prompt::compose(text, images),
+                    links,
+                ),
+            )
+            .map_err(|e| e.to_string());
     }
 
     // v2 push: per-turn shared-memory block, gated by this session's sync clock
@@ -1063,7 +1181,15 @@ pub async fn agents_send(
     } else {
         format!("{}\n\n{}", parts.join("\n\n"), base)
     };
-    manager.send(&key, prefixed).map_err(|e| e.to_string())
+    manager
+        .send(
+            &key,
+            atlas_acp::prompt::with_resource_links(
+                atlas_acp::prompt::compose(prefixed, images),
+                links,
+            ),
+        )
+        .map_err(|e| e.to_string())
 }
 
 /// Assemble the memory-prefixed message. Everything runs inside a single
@@ -1231,6 +1357,26 @@ pub fn agents_respond_permission(
 /// `agents_list_auth_methods` is a sync command; both it and
 /// `agents_run_auth_method` funnel through here, so what the UI offers is
 /// always exactly what runs.
+/// Fill in a runnable login command only where the agent could not supply one
+/// (R3, `plans/atlas-acp-auth-login-loop.md`).
+///
+/// The rule is narrower than "fill every empty slot", because after R2 the
+/// methods carry a `kind` and filling blindly would misrepresent them:
+///
+/// - **Any terminal-capable method present → change nothing.** The adapter knows
+///   its own binary; claude-agent-acp ships a fully-resolved
+///   `_meta["terminal-auth"]` command that our `builtin_login_args` guess would
+///   only degrade.
+/// - **Otherwise, fill any method that has no command** — deliberately NOT
+///   restricted to `terminal`-kind methods. Cursor advertises `cursor_login`
+///   with no `type` at all, which reads as `agent` ("just call authenticate"),
+///   yet that path empirically dead-ends and only the CLI login works. Gating
+///   on kind here would regress a flow that is known to work, so the evidence
+///   wins over the taxonomy. Codex is unaffected either way: it has no
+///   `login_args` in the builtin table, so it returns above untouched.
+/// - **No methods at all** → synthesize one from the builtin table, so `/login`
+///   has something to offer instead of the frontend special-casing agents by
+///   name.
 fn enrich_auth_methods(
     plugin_id: Option<&str>,
     methods: Vec<AuthMethodWire>,
@@ -1239,6 +1385,10 @@ fn enrich_auth_methods(
     let Some(plugin_id) = plugin_id else {
         return methods;
     };
+    // Adapter data wins outright.
+    if methods.iter().any(AuthMethodWire::is_terminal_capable) {
+        return methods;
+    }
     let Some(login_args) = atlas_acp::builtin_login_args(plugin_id) else {
         return methods;
     };
@@ -1248,12 +1398,30 @@ fn enrich_auth_methods(
     let Some(binary) = registry.login_binary_path(plugin_id) else {
         return methods;
     };
+    let args: Vec<String> = login_args.iter().map(|s| (*s).to_string()).collect();
+
+    if methods.is_empty() {
+        return vec![AuthMethodWire {
+            id: format!("{plugin_id}-login"),
+            name: "Sign in".to_string(),
+            description: None,
+            kind: atlas_acp::AuthMethodKind::Terminal,
+            env_vars: Vec::new(),
+            link: None,
+            args: args.clone(),
+            terminal_command: Some(binary),
+            terminal_args: Some(args),
+            terminal_label: Some("Sign in".to_string()),
+            api_key_provider: None,
+        }];
+    }
+
     methods
         .into_iter()
         .map(|mut m| {
             if m.terminal_command.is_none() {
                 m.terminal_command = Some(binary.clone());
-                m.terminal_args = Some(login_args.iter().map(|s| s.to_string()).collect());
+                m.terminal_args = Some(args.clone());
                 if m.terminal_label.is_none() {
                     m.terminal_label = Some(m.name.clone());
                 }
@@ -1261,6 +1429,78 @@ fn enrich_auth_methods(
             m
         })
         .collect()
+}
+
+/// One environment variable an agent's auth method wants, and whether the
+/// system already provides it (R5).
+///
+/// Deliberately value-free: the UI renders a green/red checklist, and a command
+/// that returned the secret would put it in every IPC log and devtools trace for
+/// no gain.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthEnvStatus {
+    /// The auth method this variable belongs to.
+    pub method_id: String,
+    pub name: String,
+    pub label: Option<String>,
+    pub optional: bool,
+    pub satisfied: bool,
+    /// `"process-env"` / `"shell-env"`, or absent when unset.
+    pub source: Option<super::byok::EnvVarSource>,
+}
+
+/// Which env vars an agent's auth methods need, and which the system already
+/// satisfies (R5).
+///
+/// Covers two shapes: typed `env_var` methods (spec) and codex's proprietary
+/// `_meta["api-key"].provider` hint, which is the only api-key signal any
+/// adapter actually ships today (R1) — mapping it through the BYOK provider
+/// table gives those methods the same checklist a typed method would get.
+#[tauri::command]
+pub fn agents_auth_env_status(
+    agent_id: AgentId,
+    manager: State<'_, AgentManager>,
+    registry: State<'_, atlas_registry::RegistryStore>,
+) -> Result<Vec<AuthEnvStatus>, String> {
+    let methods = manager.auth_methods(agent_id).map_err(|e| e.to_string())?;
+    let methods = enrich_auth_methods(
+        manager.plugin_id_for_agent(agent_id).as_deref(),
+        methods,
+        &registry,
+    );
+
+    let mut wanted: Vec<(String, String, Option<String>, bool)> = Vec::new();
+    for m in &methods {
+        for v in &m.env_vars {
+            wanted.push((m.id.clone(), v.name.clone(), v.label.clone(), v.optional));
+        }
+        if let Some(provider) = &m.api_key_provider {
+            for var in super::byok::env_vars_for_provider(provider) {
+                wanted.push((m.id.clone(), (*var).to_string(), None, false));
+            }
+        }
+    }
+
+    // One shell probe for anything the standard sweep never looks at, so an
+    // agent asking for an unusual variable still reports honestly.
+    let names: Vec<String> = wanted.iter().map(|(_, n, _, _)| n.clone()).collect();
+    super::byok::ensure_vars_probed(&names);
+
+    Ok(wanted
+        .into_iter()
+        .map(|(method_id, name, label, optional)| {
+            let source = super::byok::env_var_source(&name);
+            AuthEnvStatus {
+                method_id,
+                name,
+                label,
+                optional,
+                satisfied: source.is_some(),
+                source,
+            }
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -1282,6 +1522,27 @@ struct AuthRunDone {
     success: bool,
     exit_code: Option<i32>,
     message: Option<String>,
+    /// Which agent this run belonged to, and which run it was (R4). Without
+    /// these, two agents signing in at once cross-talk: the frontend resolved
+    /// on ANY `:done` event, so the first CLI to finish completed both flows.
+    agent_id: AgentId,
+    run_id: String,
+}
+
+/// First `https://` URL on a line, if any.
+///
+/// A login CLI prints the OAuth URL and usually opens it itself; surfacing it
+/// gives the user a fallback when the browser hand-off silently fails, which is
+/// otherwise indistinguishable from the flow just hanging. Trailing punctuation
+/// is trimmed because CLIs habitually wrap the URL in prose.
+fn first_url(line: &str) -> Option<String> {
+    let start = line.find("https://")?;
+    let rest = &line[start..];
+    let end = rest
+        .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '<' || c == '>')
+        .unwrap_or(rest.len());
+    let url = rest[..end].trim_end_matches(|c| matches!(c, '.' | ',' | ')' | ']' | ';' | ':'));
+    (url.len() > "https://".len()).then(|| url.to_string())
 }
 
 #[tauri::command]
@@ -1289,7 +1550,7 @@ pub async fn agents_run_auth_method(
     agent_id: AgentId,
     method_id: String,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let manager: State<'_, AgentManager> = app.state();
     let registry: State<'_, atlas_registry::RegistryStore> = app.state();
     let methods = manager.auth_methods(agent_id).map_err(|e| e.to_string())?;
@@ -1310,9 +1571,13 @@ pub async fn agents_run_auth_method(
         .ok_or_else(|| format!("auth method {method_id} has no terminal-auth spec"))?;
     let args = method.terminal_args.unwrap_or_default();
 
+    // Scopes every event this run emits. Returned to the caller so it can
+    // filter, rather than resolving on whichever run finishes first.
+    let run_id = uuid::Uuid::new_v4().to_string();
+
     tracing::info!(
         target: "atlas::agents",
-        "running auth method `{method_id}` via `{command}` (args: {args:?})"
+        "running auth method `{method_id}` via `{command}` (args: {args:?}, run {run_id})"
     );
 
     let mut cmd = AsyncCommand::new(&command);
@@ -1328,6 +1593,7 @@ pub async fn agents_run_auth_method(
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let app_for_stdout = app.clone();
+    let run_for_stdout = run_id.clone();
     if let Some(out) = stdout {
         tokio::spawn(async move {
             let mut lines = BufReader::new(out).lines();
@@ -1335,12 +1601,19 @@ pub async fn agents_run_auth_method(
                 tracing::debug!(target: "atlas::agents::auth_stdout", "{line}");
                 let _ = app_for_stdout.emit(
                     "atlas:auth-run:progress",
-                    serde_json::json!({ "stream": "stdout", "line": line }),
+                    serde_json::json!({
+                        "agentId": agent_id,
+                        "runId": run_for_stdout,
+                        "stream": "stdout",
+                        "line": line,
+                        "url": first_url(&line),
+                    }),
                 );
             }
         });
     }
     let app_for_stderr = app.clone();
+    let run_for_stderr = run_id.clone();
     if let Some(err) = stderr {
         tokio::spawn(async move {
             let mut lines = BufReader::new(err).lines();
@@ -1348,17 +1621,29 @@ pub async fn agents_run_auth_method(
                 tracing::debug!(target: "atlas::agents::auth_stderr", "{line}");
                 let _ = app_for_stderr.emit(
                     "atlas:auth-run:progress",
-                    serde_json::json!({ "stream": "stderr", "line": line }),
+                    serde_json::json!({
+                        "agentId": agent_id,
+                        "runId": run_for_stderr,
+                        // Login CLIs print the OAuth URL and prompts on stderr
+                        // as often as stdout, so both streams are scanned.
+                        "stream": "stderr",
+                        "line": line,
+                        "url": first_url(&line),
+                    }),
                 );
             }
         });
     }
 
     let app_for_wait = app.clone();
+    let run_for_wait = run_id.clone();
+    let run_for_wait_err = run_id.clone();
     tokio::spawn(async move {
         let result = child.wait().await;
         let payload = match result {
             Ok(status) => AuthRunDone {
+                agent_id,
+                run_id: run_for_wait,
                 success: status.success(),
                 exit_code: status.code(),
                 message: if status.success() {
@@ -1371,6 +1656,8 @@ pub async fn agents_run_auth_method(
                 },
             },
             Err(e) => AuthRunDone {
+                agent_id,
+                run_id: run_for_wait_err,
                 success: false,
                 exit_code: None,
                 message: Some(format!("wait failed: {e}")),
@@ -1379,7 +1666,7 @@ pub async fn agents_run_auth_method(
         let _ = app_for_wait.emit("atlas:auth-run:done", payload);
     });
 
-    Ok(())
+    Ok(run_id)
 }
 
 #[cfg(test)]
@@ -1493,9 +1780,16 @@ mod auth_enrichment_tests {
             id: "cursor_login".into(),
             name: "Cursor Login".into(),
             description: Some("Authenticate using existing Cursor login credentials.".into()),
+            // No `type` on the wire → `Agent` (R2). Cursor still needs the CLI
+            // login run, which is why enrichment does not gate on kind.
+            kind: atlas_acp::AuthMethodKind::Agent,
+            env_vars: Vec::new(),
+            link: None,
+            args: Vec::new(),
             terminal_command: None,
             terminal_args: None,
             terminal_label: None,
+            api_key_provider: None,
         }
     }
 
@@ -1549,6 +1843,64 @@ mod auth_enrichment_tests {
         assert!(out[0].terminal_command.is_none());
     }
 
+    /// R3: when the adapter supplied a usable command for ANY method, none of
+    /// the others get a guessed one either — a mixed list must not end up half
+    /// adapter-resolved and half `builtin_login_args` guesswork.
+    #[test]
+    fn one_adapter_supplied_method_suppresses_enrichment_of_its_siblings() {
+        let store = store();
+        store.set_discovered_for_tests(vec![atlas_registry::DiscoveredAgent {
+            spec_id: "cursor".into(),
+            program: "/usr/local/bin/cursor-agent".into(),
+            args: vec!["acp".into()],
+            env: Default::default(),
+            display_name: "Cursor".into(),
+            help_url: None,
+        }]);
+        let mut adapter_supplied = cursor_method();
+        adapter_supplied.id = "real".into();
+        adapter_supplied.terminal_command = Some("/adapter/node".into());
+        let out = enrich_auth_methods(
+            Some("cursor"),
+            vec![adapter_supplied, cursor_method()],
+            &store,
+        );
+        assert_eq!(out[0].terminal_command.as_deref(), Some("/adapter/node"));
+        assert!(
+            out[1].terminal_command.is_none(),
+            "sibling must stay untouched once the adapter proved it knows its own binary"
+        );
+    }
+
+    /// R3: agents that advertise no methods at all still need `/login` to offer
+    /// something — that is what removes the per-agent special cases in TS.
+    #[test]
+    fn an_agent_advertising_no_methods_gets_one_synthesized() {
+        let store = store();
+        store.set_discovered_for_tests(vec![atlas_registry::DiscoveredAgent {
+            spec_id: "cursor".into(),
+            program: "/usr/local/bin/cursor-agent".into(),
+            args: vec!["acp".into()],
+            env: Default::default(),
+            display_name: "Cursor".into(),
+            help_url: None,
+        }]);
+        let out = enrich_auth_methods(Some("cursor"), Vec::new(), &store);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].kind, atlas_acp::AuthMethodKind::Terminal);
+        assert_eq!(
+            out[0].terminal_command.as_deref(),
+            Some("/usr/local/bin/cursor-agent")
+        );
+        assert_eq!(out[0].terminal_args.as_ref().unwrap(), &["login"]);
+    }
+
+    /// Nothing to synthesize FROM: no builtin login args means no invention.
+    #[test]
+    fn an_agent_with_no_methods_and_no_login_args_stays_empty() {
+        assert!(enrich_auth_methods(Some("codex"), Vec::new(), &store()).is_empty());
+    }
+
     #[test]
     fn an_adapter_supplied_spec_always_wins() {
         let mut m = cursor_method();
@@ -1557,5 +1909,67 @@ mod auth_enrichment_tests {
         let out = enrich_auth_methods(Some("cursor"), vec![m], &store());
         assert_eq!(out[0].terminal_command.as_deref(), Some("/adapter/own/node"));
         assert_eq!(out[0].terminal_args.as_ref().unwrap(), &["--cli", "auth"]);
+    }
+}
+
+#[cfg(test)]
+mod auth_url_tests {
+    use super::first_url;
+
+    /// The whole point: a login CLI prints the OAuth URL in prose, and the user
+    /// needs it when the automatic browser hand-off fails.
+    #[test]
+    fn a_url_is_lifted_out_of_surrounding_prose() {
+        assert_eq!(
+            first_url("Visit https://auth.example.com/device?code=ABC to continue").as_deref(),
+            Some("https://auth.example.com/device?code=ABC")
+        );
+    }
+
+    /// CLIs habitually end the sentence right after the URL; a trailing period
+    /// silently 404s if it rides along.
+    #[test]
+    fn trailing_sentence_punctuation_is_trimmed() {
+        assert_eq!(
+            first_url("Open https://example.com/auth.").as_deref(),
+            Some("https://example.com/auth")
+        );
+        assert_eq!(
+            first_url("see (https://example.com/x), then return").as_deref(),
+            Some("https://example.com/x")
+        );
+    }
+
+    #[test]
+    fn quoted_and_bracketed_urls_stop_at_the_delimiter() {
+        assert_eq!(
+            first_url("go to \"https://example.com/a\" now").as_deref(),
+            Some("https://example.com/a")
+        );
+        assert_eq!(
+            first_url("<https://example.com/b>").as_deref(),
+            Some("https://example.com/b")
+        );
+    }
+
+    #[test]
+    fn lines_without_a_url_yield_nothing() {
+        assert!(first_url("Waiting for authentication…").is_none());
+        // Deliberately https-only: an http:// login URL would be a downgrade we
+        // should not be steering the user toward.
+        assert!(first_url("http://insecure.example.com").is_none());
+    }
+
+    #[test]
+    fn a_bare_scheme_is_not_a_url() {
+        assert!(first_url("prefix https:// suffix").is_none());
+    }
+
+    #[test]
+    fn the_first_url_wins_when_a_line_has_several() {
+        assert_eq!(
+            first_url("https://first.example.com and https://second.example.com").as_deref(),
+            Some("https://first.example.com")
+        );
     }
 }

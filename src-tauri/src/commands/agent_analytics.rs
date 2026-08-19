@@ -415,6 +415,8 @@ mod tests {
             status,
             arguments: args,
             result: None,
+            raw_output: None,
+            content_blocks: Vec::new(),
             locations: Vec::new(),
         }
     }

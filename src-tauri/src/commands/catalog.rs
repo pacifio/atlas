@@ -83,6 +83,25 @@ pub struct AgentCatalogEntry {
     /// "none" | "claude_jsonl" | "cersei_json".
     pub transcript: String,
     pub login: Option<LoginSpec>,
+    /// Auth-method kinds this agent advertised at `initialize` — `"agent"`,
+    /// `"env_var"`, `"terminal"` (R6). **Empty before the agent has ever been
+    /// spawned**, because auth methods only exist after the handshake; the
+    /// frontend must fall back to `login` / `kind` in that window rather than
+    /// treating empty as "cannot sign in". Exists so `/login` and `canSignIn`
+    /// gate on data instead of hardcoding agent names in TS.
+    pub auth_kinds: Vec<String>,
+    /// Whether the agent advertised `auth.logout` (A2). Same pre-spawn caveat
+    /// as [`Self::auth_kinds`]: false until the handshake has happened.
+    pub supports_logout: bool,
+    /// Whether the agent advertised `loadSession` (P2.3) — i.e. it can replay a
+    /// stored session itself. Same pre-spawn caveat as [`Self::auth_kinds`];
+    /// the `transcript` field remains the fallback until the handshake.
+    pub supports_load_session: bool,
+    /// Whether the agent advertised `sessionCapabilities.list` (P2.3), meaning
+    /// the sidebar can ask IT for history instead of scanning disk.
+    pub supports_session_list: bool,
+    /// Whether the agent advertised `sessionCapabilities.fork` (P3.4).
+    pub supports_fork: bool,
     pub icon_data_url: Option<String>,
     pub help_url: Option<String>,
     pub repository: Option<String>,
@@ -208,6 +227,11 @@ fn build(app: &AppHandle) -> AgentCatalog {
                 supports_models: plugin.supports_models,
                 transcript: transcript_token(plugin.transcript).to_string(),
                 login,
+                auth_kinds: manager.auth_kinds_for_plugin(&id),
+                supports_logout: manager.plugin_supports_logout(&id),
+                supports_load_session: manager.plugin_supports_load_session(&id),
+                supports_session_list: manager.plugin_supports_session_list(&id),
+                supports_fork: manager.plugin_supports_fork(&id),
                 icon_data_url: market.and_then(|m| m.icon_data_url.clone()),
                 help_url: discovered
                     .get(&id)

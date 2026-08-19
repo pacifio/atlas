@@ -211,6 +211,82 @@ pub fn ensure_shell_probe(app: &AppHandle) {
 /// contain `` (unit separator) — a safe assumption for API keys.
 fn shell_env_values() -> BTreeMap<String, String> {
     let vars: Vec<&str> = ENV_KEY_VARS.iter().flat_map(|(_, vs)| vs.iter().copied()).collect();
+    probe_shell_vars(&vars)
+}
+
+/// The env vars that satisfy a provider, in preference order. Empty for a
+/// provider the BYOK table has never heard of.
+#[must_use]
+pub fn env_vars_for_provider(provider: &str) -> &'static [&'static str] {
+    ENV_KEY_VARS
+        .iter()
+        .find(|(p, _)| *p == provider)
+        .map(|(_, vars)| *vars)
+        .unwrap_or(&[])
+}
+
+/// Where a variable's value was found. Never carries the value itself — the
+/// auth UI only ever needs to say "this is set", and routing secrets through an
+/// extra surface is how they end up in a log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EnvVarSource {
+    /// Exported in the environment Atlas itself was launched with.
+    ProcessEnv,
+    /// Found by the login-shell probe, i.e. it lives in `~/.zshrc` & friends.
+    ShellEnv,
+}
+
+/// Whether `name` is set, and where it came from (R5).
+///
+/// Process env is checked first and wins: a var exported in the terminal that
+/// launched Atlas is more current than whatever the shell profile says. Falls
+/// back to the cached login-shell probe, which is what makes a key the user put
+/// in `~/.zshrc` visible to an app launched from Finder — the case the whole
+/// env-BYOK model depends on.
+pub fn env_var_source(name: &str) -> Option<EnvVarSource> {
+    if std::env::var(name).is_ok_and(|v| !v.trim().is_empty()) {
+        return Some(EnvVarSource::ProcessEnv);
+    }
+    env_state()
+        .read()
+        .by_var
+        .get(name)
+        .filter(|v| !v.trim().is_empty())
+        .map(|_| EnvVarSource::ShellEnv)
+}
+
+/// Probe the login shell for variables the standard [`ENV_KEY_VARS`] sweep does
+/// not cover — an agent's `env_var` auth method may name anything.
+///
+/// Results are merged into the shared cache so a second lookup for the same var
+/// is free. Deliberately does nothing when every name is already known: each
+/// call costs a `$SHELL -lic` spawn, and the auth modal re-checks on every
+/// `atlas:byok-env-updated`.
+pub fn ensure_vars_probed(names: &[String]) {
+    let unknown: Vec<&str> = {
+        let state = env_state().read();
+        names
+            .iter()
+            .filter(|n| !state.by_var.contains_key(n.as_str()))
+            .filter(|n| std::env::var(n.as_str()).is_err())
+            .map(String::as_str)
+            .collect()
+    };
+    if unknown.is_empty() {
+        return;
+    }
+    let found = probe_shell_vars(&unknown);
+    let mut state = env_state().write();
+    for (var, value) in found {
+        state.by_var.entry(var).or_insert(value);
+    }
+}
+
+fn probe_shell_vars(vars: &[&str]) -> BTreeMap<String, String> {
+    if vars.is_empty() {
+        return BTreeMap::new();
+    }
     let fmt: String = vars
         .iter()
         .map(|v| format!("\"${{{v}}}\""))
@@ -258,6 +334,12 @@ pub struct EnvKeyMeta {
     pub provider: String,
     pub env_var: String,
     pub last4: String,
+    /// Where it came from (E1). The distinction is what the user needs in
+    /// order to act: a `shell-env` key lives in their profile and persists,
+    /// while a `process-env` one only exists because they launched Atlas from a
+    /// terminal that had it exported — and will vanish next time they open the
+    /// app from Finder.
+    pub source: Option<EnvVarSource>,
 }
 
 /// Env-imported keys (provider + var + last4). Instant: reads the current
@@ -272,6 +354,7 @@ pub fn byok_env_list(app: AppHandle) -> Vec<EnvKeyMeta> {
             provider: k.provider.clone(),
             env_var: k.env_var.clone(),
             last4: k.key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect(),
+            source: env_var_source(&k.env_var),
         })
         .collect()
 }
