@@ -144,11 +144,14 @@ pub const SENSITIVE_HOME_SUBPATHS: &[&str] = &[
     ".zsh_history",
     ".bash_history",
     // Atlas's own store. `byok-keys.json` under the app's config directory is
-    // the user's provider keys in plaintext; an agent able to read it could
-    // exfiltrate the credential that pays for it.
-    "Library/Application Support/com.atlas.app",
-    "Library/Application Support/atlas",
-    ".config/atlas",
+    // the user's provider keys in plaintext, and the session transcripts sit
+    // beside it; an agent able to read either could exfiltrate the credential
+    // that pays for it. The directory is `app_config_dir()`, i.e. the bundle
+    // identifier from `src-tauri/tauri.conf.json` — `dev.atlas.ide` — under
+    // `Library/Application Support` (macOS) or `.config` (Linux XDG). It must
+    // match `byok.rs::store_path` exactly; a guessed identifier denies nothing.
+    "Library/Application Support/dev.atlas.ide",
+    ".config/dev.atlas.ide",
     "Library/Application Support/Google/Chrome",
     "Library/Application Support/Firefox",
     // The rest of the Chromium family stores credentials the same way Chrome
@@ -177,5 +180,24 @@ mod tests {
     #[test]
     fn non_macos_hosts_get_no_sandbox_and_that_is_tier_1() {
         assert!(detect(Path::new("/")).is_none());
+    }
+
+    #[test]
+    fn the_byok_key_store_directory_is_denied() {
+        // `byok.rs` writes provider keys to `app_config_dir()/byok-keys.json`,
+        // and the bundle identifier (src-tauri/tauri.conf.json) is
+        // `dev.atlas.ide`, so the plaintext store lives at
+        // `~/Library/Application Support/dev.atlas.ide/` on macOS and
+        // `~/.config/dev.atlas.ide/` on Linux. The deny list must name that real
+        // directory: a guessed identifier leaves the key — and every stored
+        // session transcript under the same dir — readable from inside the
+        // sandbox, which is exactly the threat this list exists to answer.
+        assert!(
+            SENSITIVE_HOME_SUBPATHS
+                .iter()
+                .any(|p| p.contains("dev.atlas.ide")),
+            "the real BYOK config dir (dev.atlas.ide) must be in the deny list, \
+             not a guessed bundle identifier"
+        );
     }
 }

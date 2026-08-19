@@ -204,6 +204,15 @@ mod tests {
             params.iter().any(|(_, v)| v.ends_with("/.ssh")),
             "the SSH key directory must be denied"
         );
+        // The app's own key store (B1): `byok.rs` writes to
+        // `~/Library/Application Support/dev.atlas.ide/byok-keys.json`, so that
+        // directory must appear as a denial binding — not a guessed identifier.
+        assert!(
+            params
+                .iter()
+                .any(|(_, v)| v.ends_with("/Library/Application Support/dev.atlas.ide")),
+            "the BYOK key store directory must be denied: {params:?}"
+        );
     }
 
     #[test]
