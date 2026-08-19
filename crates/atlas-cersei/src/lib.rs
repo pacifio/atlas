@@ -736,16 +736,22 @@ impl CerseiRuntime {
             Arc::new(move || provider::build_provider(&pid, &key, &m).map_err(|e| e.to_string()))
         };
         // Sub-agents (delegate) get the same Atlas-owned coding toolset, gated
-        // by the same policy — a delegate must not be a way around the gate.
+        // by the same policy — a delegate must not be a way around the gate —
+        // and the same turn cancel token: with `None` here, a delegate's Bash
+        // survived Stop for up to its own timeout (ten minutes), still writing,
+        // which is the exact defect the cancel patch fixed for the main turn.
         let toolset_factory: ToolsetFactory = {
             let policy = tool_policy.clone();
-            Arc::new(move || crate::tools::atlas_coding_with(None, policy.clone(), tier, caps))
+            let cancel = token.clone();
+            Arc::new(move || {
+                crate::tools::atlas_coding_with(Some(cancel.clone()), policy.clone(), tier, caps)
+            })
         };
 
         let mut tools = {
             // Main turn: Bash gets the turn's cancel token so Stop kills the
-            // running command's process group (delegate children keep the
-            // plain set via the factory above).
+            // running command's process group (delegate children get the same
+            // token via the factory above, so they die with the parent turn).
             let mut t = crate::tools::atlas_coding_with(
                 Some(token.clone()),
                 tool_policy.clone(),
