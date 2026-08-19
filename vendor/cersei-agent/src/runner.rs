@@ -988,6 +988,18 @@ pub async fn run_agent_streaming(
             StopReason::MaxTokens => {
                 max_tokens_retries += 1;
                 if max_tokens_retries > MAX_TOKENS_RETRY_LIMIT {
+                    // ATLAS PATCH (max-tokens-guard-v1): repair before giving
+                    // up, not only before retrying. The length-stopped message
+                    // is already in history and can carry salvage-parsed
+                    // tool_use blocks; breaking out without answering them
+                    // leaves invalid provider history that nothing on the
+                    // ordinary send path repairs (`transform_history` runs on
+                    // load_session and on a provider-switching set_model, never
+                    // here). Every later turn in the session then failed with
+                    // an opaque API 400 until the user restarted.
+                    if let Some(repair) = max_tokens_repair(&response.message) {
+                        agent.messages.lock().push(repair);
+                    }
                     break; // Give up after 3 retries
                 }
                 // ── Truncation guard (ATLAS PATCH max-tokens-guard-v1) ──
@@ -1504,5 +1516,161 @@ mod tests {
             .map(|i| call("Bash", json!({"command": format!("test {i}")}), true))
             .collect();
         assert!(!doom_loop_pattern(&calls));
+    }
+
+    // ── Scripted provider ───────────────────────────────────────────────────
+    //
+    // The crate had no way to drive the loop: `StubProvider` in lib.rs yields
+    // an empty stream, so every branch of `run_agentic_loop` that depends on
+    // what the model said back was untestable. This replays a canned script,
+    // one entry per model call.
+
+    /// One scripted model response.
+    struct Scripted {
+        /// tool_use blocks the response carries: (id, name, input JSON).
+        tool_uses: Vec<(String, String, String)>,
+        text: Option<String>,
+        stop_reason: StopReason,
+    }
+
+    struct ScriptedProvider {
+        script: std::sync::Mutex<std::collections::VecDeque<Scripted>>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl cersei_provider::Provider for ScriptedProvider {
+        fn name(&self) -> &str {
+            "scripted"
+        }
+        fn context_window(&self, _model: &str) -> u64 {
+            1_000_000
+        }
+        fn capabilities(&self, _model: &str) -> cersei_provider::ProviderCapabilities {
+            cersei_provider::ProviderCapabilities::default()
+        }
+        async fn complete(
+            &self,
+            _request: cersei_provider::CompletionRequest,
+        ) -> cersei_types::Result<cersei_provider::CompletionStream> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let next = self.script.lock().unwrap().pop_front();
+            let (tx, rx) = tokio::sync::mpsc::channel(64);
+            let step = next.unwrap_or(Scripted {
+                tool_uses: Vec::new(),
+                text: Some("done".into()),
+                stop_reason: StopReason::EndTurn,
+            });
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(StreamEvent::MessageStart {
+                        id: "m".into(),
+                        model: "scripted".into(),
+                    })
+                    .await;
+                let mut index = 0usize;
+                if let Some(text) = step.text {
+                    let _ = tx
+                        .send(StreamEvent::ContentBlockStart {
+                            index,
+                            block_type: "text".into(),
+                            id: None,
+                            name: None,
+                        })
+                        .await;
+                    let _ = tx.send(StreamEvent::TextDelta { index, text }).await;
+                    let _ = tx.send(StreamEvent::ContentBlockStop { index }).await;
+                    index += 1;
+                }
+                for (id, name, input) in step.tool_uses {
+                    let _ = tx
+                        .send(StreamEvent::ContentBlockStart {
+                            index,
+                            block_type: "tool_use".into(),
+                            id: Some(id),
+                            name: Some(name),
+                        })
+                        .await;
+                    let _ = tx
+                        .send(StreamEvent::InputJsonDelta {
+                            index,
+                            partial_json: input,
+                        })
+                        .await;
+                    let _ = tx.send(StreamEvent::ContentBlockStop { index }).await;
+                    index += 1;
+                }
+                let _ = tx
+                    .send(StreamEvent::MessageDelta {
+                        stop_reason: Some(step.stop_reason),
+                        usage: None,
+                    })
+                    .await;
+                let _ = tx.send(StreamEvent::MessageStop).await;
+            });
+            Ok(cersei_provider::CompletionStream::new(rx))
+        }
+    }
+
+    /// Every `tool_use` in `messages` has a `tool_result` answering it — the
+    /// invariant every provider enforces on the next call.
+    fn history_is_pair_complete(messages: &[Message]) -> bool {
+        let mut open: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for m in messages {
+            for b in m.content_blocks() {
+                match &b {
+                    ContentBlock::ToolUse { id, .. } => {
+                        open.insert(id.clone());
+                    }
+                    ContentBlock::ToolResult { tool_use_id, .. } => {
+                        open.remove(tool_use_id);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        open.is_empty()
+    }
+
+    #[tokio::test]
+    async fn giving_up_on_max_tokens_leaves_a_replayable_history() {
+        // The retry-exhaustion path `break`s BEFORE the truncation guard runs,
+        // so the final length-stopped message — which can carry salvage-parsed
+        // tool_use blocks — stayed in history with nothing answering it. That
+        // is invalid provider history, and `transform_history` (which would
+        // repair it) runs only on load_session and on a provider-switching
+        // set_model, never on the ordinary next send. So every subsequent turn
+        // in the session failed with an opaque API 400 until the user
+        // restarted — with nothing naming the cause.
+        let script: std::collections::VecDeque<Scripted> = (0..6)
+            .map(|i| Scripted {
+                tool_uses: vec![(
+                    format!("call-{i}"),
+                    "Bash".into(),
+                    r#"{"command":"echo hi"}"#.into(),
+                )],
+                text: None,
+                stop_reason: StopReason::MaxTokens,
+            })
+            .collect();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = ScriptedProvider {
+            script: std::sync::Mutex::new(script),
+            calls: calls.clone(),
+        };
+
+        let agent = crate::Agent::builder()
+            .provider(provider)
+            .model("scripted")
+            .max_turns(10)
+            .build()
+            .unwrap();
+        let _ = agent.run("go").await;
+
+        let history = agent.messages.lock().clone();
+        assert!(
+            history_is_pair_complete(&history),
+            "a tool_use was left unanswered after giving up: {history:#?}"
+        );
     }
 }
