@@ -35,6 +35,13 @@ use super::policy::ToolPolicy;
 /// (a session can outlive one).
 pub fn file_tag(content: &str) -> String {
     let mut hash: u32 = 0x811c9dc5;
+    // Neither a BOM nor the choice of line terminator is content the model
+    // addressed, and the two sides of the check see different forms: `Read`
+    // hashes the file as it sits on disk, while the editor hashes the
+    // LF-normalised, BOM-stripped text it edits. Folding both here is what
+    // keeps the tag agreeing across that seam. (`str::lines` already drops the
+    // `\r` of a CRLF terminator; `trim_end` covers a stray one.)
+    let content = content.strip_prefix(super::edit::BOM).unwrap_or(content);
     for line in content.lines() {
         for b in line.trim_end().bytes() {
             hash ^= u32::from(b);
@@ -243,10 +250,29 @@ impl Tool for HashlineEditTool {
         let path = PathBuf::from(&parsed.file_path);
         let rel = display_rel(&path, self.policy.root());
 
-        let content = match std::fs::read_to_string(&path) {
+        // Per-file lock, keyed on the canonical path, taken before the read.
+        // The runner runs a tool batch in parallel and every hashline profile
+        // allows parallel calls, so without this two edits to one file both
+        // read the same content, both pass the same tag check, and the second
+        // write discards the first — with both results reporting success. The
+        // loser now re-reads post-write content and fails the tag check, which
+        // is the retry path this mode is built around.
+        let lock = super::edit::file_lock(&path);
+        let _guard = lock.lock().await;
+
+        let raw = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => return ToolResult::error(format!("Failed to read {rel}: {e}")),
         };
+        // Line-ending + BOM sandwich, exactly as `edit.rs` does it: address and
+        // edit in LF, restore on write. `lines()` strips the `\r` of a CRLF
+        // terminator, so joining with "\n" rewrote every line ending in the
+        // file — whole-file churn in git from a one-line edit, and a diff
+        // claiming every line changed.
+        let had_bom = raw.starts_with(super::edit::BOM);
+        let stripped = raw.strip_prefix(super::edit::BOM).unwrap_or(&raw);
+        let crlf = super::edit::detect_crlf(stripped);
+        let content = stripped.replace("\r\n", "\n");
         let lines: Vec<String> = content.lines().map(String::from).collect();
         let current_tag = file_tag(&content);
 
@@ -303,7 +329,17 @@ impl Tool for HashlineEditTool {
         if content.ends_with('\n') || new_content.is_empty() {
             new_content.push('\n');
         }
-        if let Err(e) = atomic::write(&path, new_content.as_bytes()).await {
+        // The tag and the echoed preview describe the LF form the model
+        // addressed; only the bytes on disk get the original terminators back.
+        let mut to_write = if crlf {
+            new_content.replace('\n', "\r\n")
+        } else {
+            new_content.clone()
+        };
+        if had_bom {
+            to_write.insert_str(0, super::edit::BOM);
+        }
+        if let Err(e) = atomic::write(&path, to_write.as_bytes()).await {
             return ToolResult::error(format!("Failed to write {rel}: {e}"));
         }
 
@@ -353,6 +389,79 @@ mod tests {
         s.lines().map(String::from).collect()
     }
 
+    /// Scratch dir removed on drop (house idiom — no tempfile dependency).
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            let p = std::env::temp_dir().join(format!("atlas-hashline-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&p).unwrap();
+            Scratch(p)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn two_edits_to_one_file_cannot_lose_one_another() {
+        // The runner executes a tool batch in parallel (`join_all`), and every
+        // profile that selects hashline also resolves `parallel_tools: true`.
+        // Without a per-file lock both calls read the same content, both pass
+        // the same tag check, and the second `atomic::write` discards the
+        // first's edit — while both results report success with a fresh tag.
+        // `edit.rs` has taken this lock since it was written.
+        let tmp = Scratch::new();
+        let path = tmp.0.join("a.rs");
+        std::fs::write(&path, "one\ntwo\nthree\n").unwrap();
+        let tag = file_tag(&std::fs::read_to_string(&path).unwrap());
+
+        let policy = ToolPolicy::contained(tmp.0.clone());
+        // Both lines count as displayed, so the seen-line guard is not what is
+        // under test here.
+        let mut sl = SeenLines { tag: tag.clone(), ranges: Vec::new() };
+        sl.note(&tag, 1, 3);
+        policy.record_hashline_seen(&path, sl);
+
+        let tool = Arc::new(HashlineEditTool { policy });
+        let ctx = Arc::new(crate::tools::test_ctx(tmp.0.clone()));
+        let call = |line: usize, text: &str| {
+            let tool = Arc::clone(&tool);
+            let ctx = Arc::clone(&ctx);
+            let input = serde_json::json!({
+                "file_path": path.to_string_lossy(),
+                "tag": tag,
+                "edits": [{"op": "replace", "start_line": line, "end_line": line, "text": text}]
+            });
+            async move { tool.execute(input, &ctx).await }
+        };
+        let (a, b) = tokio::join!(call(1, "ONE"), call(3, "THREE"));
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        let landed = [&a, &b].iter().filter(|r| !r.is_error).count();
+        // Whichever runs second sees content whose tag has moved and fails
+        // closed — the retry path the model already knows how to follow. What
+        // must never happen is two successes with only one edit on disk.
+        for r in [&a, &b] {
+            if !r.is_error {
+                continue;
+            }
+            assert!(
+                r.content.contains("Stale tag"),
+                "the loser must fail closed on the tag, not silently: {}",
+                r.content
+            );
+        }
+        let edits_on_disk =
+            after.contains("ONE") as usize + after.contains("THREE") as usize;
+        assert_eq!(
+            landed, edits_on_disk,
+            "a reported success was lost: results said {landed} landed, disk has \
+             {edits_on_disk} ({after:?})"
+        );
+    }
+
     #[test]
     fn the_tag_ignores_trailing_whitespace_and_is_4_hex() {
         let a = file_tag("fn main() {}\nlet x = 1;\n");
@@ -361,6 +470,17 @@ mod tests {
         assert_eq!(a.len(), 4);
         assert!(a.bytes().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, file_tag("fn main() {}\nlet x = 2;\n"), "content moves the tag");
+    }
+
+    #[test]
+    fn the_tag_ignores_the_bom_and_the_line_terminator() {
+        // Read hashes the file as it sits on disk; the editor hashes the
+        // LF-normalised, BOM-stripped text it addresses. If those disagree,
+        // every edit to a CRLF or BOM'd file fails as a stale tag forever.
+        let lf = file_tag("a\nb\n");
+        assert_eq!(lf, file_tag("a\r\nb\r\n"), "CRLF must not move the tag");
+        assert_eq!(lf, file_tag("\u{feff}a\nb\n"), "a BOM must not move the tag");
+        assert_eq!(lf, file_tag("\u{feff}a\r\nb\r\n"), "nor the two together");
     }
 
     #[test]

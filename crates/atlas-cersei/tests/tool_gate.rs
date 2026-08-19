@@ -729,6 +729,51 @@ fn tag_from(read_result: &str) -> String {
 /// the tag, and a result that echoes the fresh tag so the next edit can
 /// chain without a re-read.
 #[tokio::test]
+async fn hashline_preserves_crlf_and_bom() {
+    // `edit.rs` detects CRLF and restores it on write, pinned by its own
+    // `crlf_preserved` test. Hashline re-implemented the write path with
+    // `content.lines()` (which strips the `\r`) and `join("\n")`, so a one-line
+    // edit rewrote every line ending in the file: whole-file churn in git from
+    // a one-line change, and a structured diff claiming every line moved.
+    // Hashline mode targets the weak-model classes, whose users are no less
+    // likely to be on Windows-authored sources.
+    let fx = Fixture::new();
+    let crlf = "\u{feff}pub fn a() -> u8 { 1 }\r\npub fn b() -> u8 { 2 }\r\npub fn c() -> u8 { 3 }\r\n";
+    std::fs::write(fx.path().join("src/lib.rs"), crlf).unwrap();
+    let s = hashline_session(fx.path());
+
+    let r = s.call("Read", json!({"file_path": "src/lib.rs"})).await;
+    assert!(!r.is_error, "{}", r.content);
+    let tag = tag_from(&r.content);
+
+    let r = s
+        .call(
+            "Edit",
+            json!({
+                "file_path": "src/lib.rs",
+                "tag": tag,
+                "edits": [{"op": "replace", "start_line": 2, "end_line": 2,
+                           "text": "pub fn b() -> u8 { 20 }"}]
+            }),
+        )
+        .await;
+    assert!(!r.is_error, "{}", r.content);
+
+    let after = fx.read("src/lib.rs");
+    assert!(after.contains("{ 20 }"), "the edit did not land: {after:?}");
+    assert!(after.starts_with('\u{feff}'), "the BOM was dropped: {after:?}");
+    assert_eq!(
+        after.matches("\r\n").count(),
+        3,
+        "every line must keep its CRLF terminator: {after:?}"
+    );
+    assert!(
+        !after.replace("\r\n", "").contains('\n'),
+        "a bare LF was introduced: {after:?}"
+    );
+}
+
+#[tokio::test]
 async fn hashline_reads_tag_and_line_edits_apply_and_chain() {
     let fx = Fixture::new();
     std::fs::write(

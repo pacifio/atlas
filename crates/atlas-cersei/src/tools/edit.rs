@@ -65,7 +65,7 @@ fn lock_key(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn file_lock(path: &Path) -> Arc<Mutex<()>> {
+pub(super) fn file_lock(path: &Path) -> Arc<Mutex<()>> {
     let key = lock_key(path);
     if LOCKS.len() > LOCK_CAPACITY {
         // Only entries nobody is holding: `strong_count == 1` means the map is
@@ -75,9 +75,9 @@ fn file_lock(path: &Path) -> Arc<Mutex<()>> {
     LOCKS.entry(key).or_default().clone()
 }
 
-const BOM: &str = "\u{feff}";
+pub(super) const BOM: &str = "\u{feff}";
 
-fn detect_crlf(s: &str) -> bool {
+pub(super) fn detect_crlf(s: &str) -> bool {
     s.contains("\r\n")
 }
 
