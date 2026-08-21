@@ -105,6 +105,8 @@ jobs:
           - crate: atlas-acp
           - crate: atlas-acp-thread
             clippy: true
+          - crate: atlas-agent-servers
+            clippy: true
           - crate: atlas-agentkit
           - crate: atlas-agents
           - crate: atlas-bus
