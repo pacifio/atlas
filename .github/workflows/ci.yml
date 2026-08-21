@@ -103,6 +103,8 @@ jobs:
       matrix:
         include:
           - crate: atlas-acp
+          - crate: atlas-acp-thread
+            clippy: true
           - crate: atlas-agentkit
           - crate: atlas-agents
           - crate: atlas-bus
