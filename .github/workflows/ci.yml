@@ -107,6 +107,8 @@ jobs:
             clippy: true
           - crate: atlas-agent-servers
             clippy: true
+          - crate: atlas-agent-store
+            clippy: true
           - crate: atlas-agentkit
           - crate: atlas-agents
           - crate: atlas-bus
