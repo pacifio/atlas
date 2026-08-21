@@ -7,6 +7,15 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["tests", "src/**/*.test.ts", "src/**/*.test.tsx", "vitest.config.ts"],
+  "include": [
+    "tests",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "vitest.config.ts",
+    // Asset-module declarations (vite/client: *.svg …). Tests that import
+    // components transitively reach asset imports, and this file is outside
+    // the test-glob include set.
+    "src/vite-env.d.ts"
+  ],
   "exclude": []
 }

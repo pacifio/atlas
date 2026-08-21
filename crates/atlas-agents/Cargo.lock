@@ -342,6 +342,7 @@ version = "0.1.0"
 dependencies = [
  "atlas-acp",
  "base64 0.21.7",
+ "bzip2",
  "chrono",
  "dashmap",
  "flate2",
