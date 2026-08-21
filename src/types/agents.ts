@@ -102,10 +102,9 @@ export interface SessionSnapshot {
    *  Claude Code / Codex model picker; empty when unsupported. */
   available_models: SessionModeInfo[];
   available_commands: unknown[];
-  /** Raw ACP `config_option_update` state — advertised config options and
-   *  their current values. No UI consumes this yet; mirrored so an in-agent
-   *  change (e.g. `/model`) is at least visible in the snapshot. */
-  config_options?: unknown[];
+  /** The agent's advertised `session/set_config_option` state. ACP's general
+   *  settings mechanism — mode and model are just two well-known ids. */
+  config_options?: AcpConfigOption[];
   /** Whether the agent's transport accepts image content blocks in prompts
    *  (`promptCapabilities.image`). Drives the composer's attach routing:
    *  true → picked/pasted images become inline base64 attachments; false →
@@ -122,6 +121,31 @@ export interface SessionSnapshot {
  * Single multiplexed delta stream emitted on the `atlas:agents` window event.
  * `kind` discriminates; `agent_id` + `session_id` route to the right tab.
  */
+/** One entry of an agent's advertised `config_options`.
+ *
+ *  Field names are the ACP v1 wire shape, verified against
+ *  `agent-client-protocol-schema`'s `SessionConfigOption`: a flattened `type`
+ *  discriminator, `currentValue` for BOTH kinds (a value id for `select`, a
+ *  bool for `boolean`), and `options` — not `values`/`availableValues` — for a
+ *  select's choices. Getting these wrong is silent: the schema deserializes
+ *  the option list with `DefaultOnError`, so one malformed entry empties the
+ *  WHOLE list rather than erroring.
+ *
+ *  `type` is left open because ACP's option kinds are extensible and Atlas
+ *  renders whatever an agent publishes rather than enumerating kinds. */
+export interface AcpConfigOption {
+  id: string;
+  name?: string;
+  description?: string | null;
+  /** Semantic category (UX only), e.g. "model" / "mode" / "thought_level". */
+  category?: string | null;
+  type?: "select" | "boolean" | (string & {});
+  /** Value id for a select, boolean for a toggle. */
+  currentValue?: string | boolean | null;
+  /** A select's choices. */
+  options?: { value: string; name?: string; description?: string | null }[];
+}
+
 export type AgentDelta =
   | {
       kind: "status";
@@ -191,6 +215,12 @@ export type AgentDelta =
       agent_id: AgentId;
       session_id: AcpSessionId;
       commands: unknown[];
+    }
+  | {
+      kind: "config_options_updated";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      options: AcpConfigOption[];
     }
   | {
       kind: "usage_updated";

@@ -11,7 +11,7 @@
 import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Check, Download, Github, Globe, Loader2, RefreshCw, Search, X } from "lucide-react";
+import { Download, Github, Globe, Loader2, RefreshCw, Search, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -23,9 +23,6 @@ import {
   type RegistryInstallProgress,
 } from "@/features/agents/lib/agent-registry-api";
 import { hydrateAgentRegistry } from "@/features/agents/stores/agent-registry-store";
-import { useProjectStore } from "@/features/project/stores/project-store";
-import { isOptionalBuiltinAgent } from "@/types/agent";
-import { Toggle } from "../settings-panel";
 import { downloadTrend, fmtDownloads } from "@/features/agents/lib/download-trends";
 import { TrendSparkline } from "@/components/trend-sparkline";
 
@@ -130,8 +127,8 @@ export function AgentsMarketplace() {
     const all = listing?.entries ?? [];
     const q = query.trim().toLowerCase();
     return all.filter((e) => {
-      if (filter === "installed" && !(e.installed || e.builtin)) return false;
-      if (filter === "not-installed" && (e.installed || e.builtin)) return false;
+      if (filter === "installed" && !e.installed) return false;
+      if (filter === "not-installed" && e.installed) return false;
       if (!q) return true;
       return (
         e.name.toLowerCase().includes(q) ||
@@ -348,42 +345,6 @@ const AgentCard = memo(function AgentCard({
   );
 });
 
-/** On/off switch for an optional built-in (cursor / opencode / kilo).
- *
- *  "Off" means hidden from every agent picker and never spawned — including
- *  the background pre-warms, and including a resume of an old session recorded
- *  against it (Rust rejects that spawn). Chat history is untouched either way,
- *  and turning it back on reuses the already-downloaded binary. */
-function BuiltinToggle({ entry }: { entry: AcpRegistryEntry }) {
-  const disabledIds = useProjectStore((s) => s.settings.disabledBuiltinAgents);
-  const { updateSettings } = useProjectStore.use.actions();
-  const enabled = !disabledIds.includes(entry.id);
-  return (
-    <span
-      className="flex items-center gap-2"
-      title={
-        enabled
-          ? `${entry.name} is available in the agent picker. Turn it off to hide it.`
-          : `${entry.name} is hidden. Your chat history with it is kept.`
-      }
-    >
-      <span className="text-[10.5px] font-medium text-[var(--text-tertiary)] w-5 text-right">
-        {enabled ? "On" : "Off"}
-      </span>
-      <Toggle
-        checked={enabled}
-        onChange={(next) =>
-          updateSettings({
-            disabledBuiltinAgents: next
-              ? disabledIds.filter((id) => id !== entry.id)
-              : [...disabledIds, entry.id],
-          })
-        }
-      />
-    </span>
-  );
-}
-
 function CardAction({
   entry,
   installing,
@@ -397,21 +358,6 @@ function CardAction({
   onInstall: (entry: AcpRegistryEntry) => void;
   onUninstall: (entry: AcpRegistryEntry) => void;
 }) {
-  if (entry.builtin) {
-    // Cursor / OpenCode / Kilo are optional built-ins: they ship with Atlas but
-    // the user can hide them. Claude and Codex are what Atlas is built around
-    // and only ever show the badge — there is nothing to switch off.
-    if (isOptionalBuiltinAgent(entry.id)) return <BuiltinToggle entry={entry} />;
-    return (
-      <span
-        className="flex items-center gap-1 h-6 px-2 rounded-md text-[10.5px] font-medium text-[var(--text-tertiary)] border border-[var(--border-default)]"
-        title="This agent ships with Atlas."
-      >
-        <Check size={10} />
-        Built-in
-      </span>
-    );
-  }
   if (installing) {
     return (
       <span className="flex items-center gap-1.5 h-6 px-2 rounded-md text-[10.5px] font-medium text-[var(--text-secondary)] border border-[var(--border-default)] tabular-nums">

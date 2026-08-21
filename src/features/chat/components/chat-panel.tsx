@@ -3,7 +3,7 @@ import { useChatStore } from "../stores/chat-store";
 import { useDetailPanelStore } from "../stores/detail-panel-store";
 import { appendNextStepsDirective } from "../lib/next-steps";
 import { stripInjectedContext } from "../lib/atlas-context";
-import { agents, ensureAgent, CODEX_PLUGIN_ID, codexStatus } from "../lib/agents-api";
+import { agents, ensureAgent } from "../lib/agents-api";
 import { loadCachedAcpModes } from "../lib/acp-modes-cache";
 import { warmAcpModels, otherAcpAgents } from "../lib/warm-acp-models";
 import type { ImageAttachment, SessionKey } from "@/types/agents";
@@ -13,10 +13,10 @@ import {
   isBusyAgentStatus,
   agentTypeFromPluginId,
   pluginIdForAgent,
-  CLAUDE_PERMISSION_MODES,
+  NATIVE_AGENT,
 } from "@/types/agent";
-import { agentMeta, isAgentDisabled } from "@/features/agents/lib/agent-meta";
-import { canSignIn, isAuthError, promptSignIn } from "../lib/agent-signin";
+import { agentMeta, switchableAgentIds } from "@/features/agents/lib/agent-meta";
+import { canSignIn, isAuthError, promptSignIn, signInToAgent } from "../lib/agent-signin";
 import { toast } from "sonner";
 
 /** Tab+agent pairs whose bind failure has already been surfaced, so the
@@ -40,11 +40,8 @@ import { OPEN_TURN_DIFF_EVENT, toRepoRelative, type TurnDiffRequest } from "../l
  *  this much so the first row clears the bar. Must match `ChatHeader`'s bar. */
 const HEADER_INSET = 46;
 import { PermissionModal } from "./permission-modal";
-import { ClaudeSetupBanner } from "@/features/claude-setup/components/claude-setup-banner";
 import { NodeSetupBanner } from "@/features/node-setup/components/node-setup-banner";
 import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
-import { ClaudeLoginDialog } from "@/features/claude-setup/components/claude-login-dialog";
-import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 
 // Both panels are modal-style and never visible on first paint. Lazy so
 // they don't add to the initial chunk.
@@ -85,7 +82,6 @@ import {
   FlaskConical,
 } from "lucide-react";
 import { AtlasIcon } from "@/components/atlas-icon";
-import { copyText } from "@/lib/clipboard";
 import { PanelSkeleton } from "@/components/panel-skeleton";
 import { logEvent } from "@/features/log/lib/log";
 import { cn } from "@/lib/utils";
@@ -362,14 +358,9 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // bypassPermissions and still trigger a stray prompt on turn one.
         // Awaiting here guarantees the agent is in the right mode first.
         const session = useChatStore.getState().sessions[tabId];
-        const selectedMode = session?.claudePermissionMode ?? "default";
-        // `default` means the user has not overridden the agent. Preserve the
-        // mode resolved by Claude/Codex from their own user-level config.
-        const requestedClaudeMode = session?.claudePermissionModeExplicit
-          ? selectedMode
-          : undefined;
-        const requestedAcpMode = session?.acpModeExplicit ? session.acpCurrentMode : undefined;
-        const requestedMode = nowAt === "claude-code" ? requestedClaudeMode : requestedAcpMode;
+        // No explicit pick means "defer to the agent" — preserve whatever mode
+        // it resolved from its own user-level config rather than overriding it.
+        const requestedMode = session?.acpModeExplicit ? session.acpCurrentMode : undefined;
         const mode = requestedMode ?? init.current_mode;
         const modeAdvertised =
           !mode ||
@@ -389,19 +380,11 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // default instead of a hard-coded Atlas fallback.
         if (!cancelled) {
           const actions = useChatStore.getState().actions;
-          if (
-            nowAt === "claude-code" &&
-            (effectiveMode ?? init.current_mode) &&
-            CLAUDE_PERMISSION_MODES.includes(
-              (effectiveMode ?? init.current_mode) as (typeof CLAUDE_PERMISSION_MODES)[number],
-            )
-          ) {
-            actions.hydrateClaudePermissionMode(
-              tabId,
-              (effectiveMode ?? init.current_mode) as (typeof CLAUDE_PERMISSION_MODES)[number],
-            );
-          } else if (nowAt !== "claude-code" && init.available_modes.length > 0) {
+          if (init.available_modes.length > 0) {
             actions.setAcpModes(tabId, effectiveMode, init.available_modes, nowAt);
+          } else if (effectiveMode ?? init.current_mode) {
+            // An agent that reports a mode but advertises no list to pick from.
+            actions.hydrateAcpMode(tabId, (effectiveMode ?? init.current_mode) as string);
           }
         }
         useChatStore.getState().actions.setAcpBinding(tabId, agent.agent_id, key.session_id, cwd);
@@ -564,7 +547,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           // model stamp/badge again in resumed sessions.
           // Re-read the agent type from the store — the closed-over `session`
           // is the render-time value and can be stale after the await.
-          const at = useChatStore.getState().sessions[tabId]?.agentType ?? "claude-code";
+          const at = useChatStore.getState().sessions[tabId]?.agentType ?? NATIVE_AGENT;
           const cached = loadCachedAcpModels(at);
           if (cached && cached.availableModels.length > 0) {
             useChatStore
@@ -618,20 +601,10 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
       if (!root || !active || !root.contains(active)) return;
       e.preventDefault();
       e.stopPropagation();
-      // The store action both cycles the mode AND propagates it to the bound
-      // agent (so e.g. bypassPermissions actually stops permission prompts).
-      // For non-Claude agents (Codex) cycle the agent-advertised ACP modes.
-      const sess = useChatStore.getState().sessions[tabId];
-      const actions = useChatStore.getState().actions;
-      if (sess?.agentType !== "claude-code") {
-        const modes = sess?.acpAvailableModes ?? [];
-        if (modes.length === 0) return;
-        const i = modes.findIndex((m) => m.id === sess?.acpCurrentMode);
-        const next = modes[(i + 1) % modes.length];
-        actions.setAcpMode(tabId, next.id);
-        return;
-      }
-      actions.cycleClaudePermissionMode(tabId);
+      // The store action both cycles to the agent's next advertised mode AND
+      // propagates it to the bound agent (so e.g. bypassPermissions actually
+      // stops permission prompts).
+      useChatStore.getState().actions.cycleAcpMode(tabId);
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
@@ -652,9 +625,12 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     if (acpPrewarmStarted) return;
     acpPrewarmStarted = true;
     const timers: ReturnType<typeof setTimeout>[] = [];
-    (["codex", "opencode", "cursor", "kilo"] as const).forEach((at, i) => {
+    // Prewarm candidates come from the live install list, not a hardcoded id
+    // table — an uninstalled agent must never be spawned, and an installed one
+    // the user actually uses (has a modes cache) should be warm.
+    const candidates = switchableAgentIds().filter((id) => id !== NATIVE_AGENT);
+    candidates.forEach((at, i) => {
       if (!loadCachedAcpModes(at)) return; // never used → skip
-      if (isAgentDisabled(at)) return; // turned off → never spawn, even to pre-warm
       timers.push(
         setTimeout(
           () => {
@@ -1085,10 +1061,11 @@ function LoadingTranscriptState() {
 }
 
 /**
- * Composer wrapper: the setup banner + login dialog + the real `MessageInput`.
- * Subscribes to the Claude-Code setup phase from `useClaudeSetupStore` and
- * hard-disables the input when Claude isn't installed/authed so we don't
- * surface confusing failures from inside the ACP spawn path.
+ * Composer wrapper: the sign-in pill + the real `MessageInput`.
+ *
+ * Agent-agnostic by construction — it holds no per-agent probe or gate, and
+ * the only auth state it carries is "this session's agent reported it needs
+ * credentials", learned from the agent itself.
  */
 // Memoized: with the parent passing stable callbacks + value props, this heavy
 // subtree (input, mode/agent pickers, attach menu) skips re-render on every
@@ -1112,97 +1089,61 @@ const ChatComposer = memo(function ChatComposer({
   jumpCount: number;
   onScrollToBottom: () => void;
 }) {
-  // The Claude install/auth gating only applies to Claude sessions. A Codex
-  // chat must not be blocked by Claude's status (Codex inherits its own
-  // ~/.codex / OPENAI auth); it surfaces its own errors from the spawn path.
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
-  const isClaude = agentType === "claude-code";
-  const isCodex = agentType === "codex";
-  const phase = useClaudeSetupStore.use.phase();
+  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? NATIVE_AGENT);
 
-  // Codex sign-in state (Codex sessions ONLY — probing ~/.codex/auth.json for
-  // any other agent both wastes a call and, worse, blocks that agent's
-  // composer on Codex's auth state). `null` = still probing.
-  const [codexAuthed, setCodexAuthed] = useState<boolean | null>(null);
-  // Auth-classified turn failure on a Codex session → surface the sign-in
-  // pill (the probe state below) instead of a generic error banner.
+  // ── Sign-in, the same way for every agent ────────────────────────────────
+  //
+  // No agent is probed up front and no agent's auth state disables the
+  // composer. Atlas learns an agent needs credentials the only way that is
+  // true for all of them: the agent said so, as an auth-classified failure on
+  // THIS session. That raises one pill, which opens the one shared sign-in
+  // dialog, which offers whatever methods the agent itself advertised.
+  //
+  // What this replaces: a Claude-only install/auth probe that hard-disabled
+  // the composer, a Codex-only `~/.codex/auth.json` probe with its own pill,
+  // and a per-agent table of terminal login commands to copy-paste.
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
+  useEffect(() => setNeedsAuth(false), [agentType, tabId]);
   useEffect(() => {
-    if (!isCodex) return;
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
-      if (detail?.agentType !== "codex") return;
-      const sess = useChatStore.getState().sessions[tabId];
-      if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;
-      setCodexAuthed(false);
-    };
-    window.addEventListener("atlas:auth-required", handler);
-    return () => window.removeEventListener("atlas:auth-required", handler);
-  }, [isCodex, tabId]);
-  const [codexSigningIn, setCodexSigningIn] = useState(false);
-  useEffect(() => {
-    if (!isCodex) return;
-    let cancelled = false;
-    codexStatus()
-      .then((a) => !cancelled && setCodexAuthed(a))
-      .catch(() => !cancelled && setCodexAuthed(true)); // probe failure → don't block
-    return () => {
-      cancelled = true;
-    };
-  }, [isCodex]);
-  const codexNeedsAuth = isCodex && codexAuthed === false;
-
-  // OpenCode / Cursor auth is terminal-only (`opencode auth login` /
-  // `cursor-agent login`) and neither agent should block the composer
-  // (OpenCode works unauthenticated with the free Zen models; Cursor errors
-  // surface per-turn), so nothing is probed. An auth-classified turn failure
-  // just shows an instruction pill until the tab rebinds or it's dismissed.
-  const terminalLoginCommand =
-    agentType === "opencode"
-      ? "opencode auth login"
-      : agentType === "cursor"
-        ? "cursor-agent login"
-        : agentType === "kilo"
-          ? "kilo auth login"
-          : null;
-  const [terminalAuthHint, setTerminalAuthHint] = useState(false);
-  useEffect(() => {
-    if (!terminalLoginCommand) {
-      setTerminalAuthHint(false);
-      return;
-    }
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
       if (detail?.agentType !== agentType) return;
       const sess = useChatStore.getState().sessions[tabId];
       if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;
-      setTerminalAuthHint(true);
+      setNeedsAuth(true);
     };
     window.addEventListener("atlas:auth-required", handler);
     return () => window.removeEventListener("atlas:auth-required", handler);
-  }, [agentType, terminalLoginCommand, tabId]);
-  const signInCodex = async () => {
-    setCodexSigningIn(true);
+  }, [agentType, tabId]);
+
+  const signIn = async () => {
+    setSigningIn(true);
     try {
-      const agent = await ensureAgent(CODEX_PLUGIN_ID);
-      // Blocks while codex-acp runs the OpenAI browser OAuth.
-      await agents.authenticate(agent.agent_id, "chatgpt");
-      setCodexAuthed(await codexStatus());
+      await signInToAgent(agentType);
+      setNeedsAuth(false);
     } catch (err) {
+      // The dialog is the richer surface (it lists every advertised method and
+      // streams the login process); fall back to it when the one-shot path
+      // can't complete on its own.
+      promptSignIn(agentType);
       logEvent({
         source: "atlas",
-        kind: "codex-auth",
-        summary: "Codex sign-in failed",
+        kind: "agent-auth",
+        summary: `${agentMeta(agentType).label} sign-in failed`,
         status: "failure",
-        payload: { error: String(err) },
+        payload: { error: String(err), agentType },
       });
     } finally {
-      setCodexSigningIn(false);
+      setSigningIn(false);
     }
   };
 
-  const disabled = (isClaude && phase !== "ready") || codexNeedsAuth;
+  // An agent that needs credentials is not a broken composer: the user can
+  // still switch agents, edit their draft, and read the thread.
+  const disabled = false;
 
-  const setupVisible = (isClaude && phase !== "ready") || codexNeedsAuth || terminalAuthHint;
+  const setupVisible = needsAuth;
   // Node install pill (bundled-nvm). Non-blocking — informs only, doesn't
   // disable the composer. Shown for both agents since `npx` powers both.
   const nodePhase = useNodeSetupStore.use.phase();
@@ -1225,38 +1166,17 @@ const ChatComposer = memo(function ChatComposer({
                   <NodeSetupBanner />
                 </span>
               )}
-              {setupVisible && isClaude && (
-                <span key={`setup-${phase}`} className="atlas-pill-in">
-                  <ClaudeSetupBanner />
-                </span>
-              )}
-              {codexNeedsAuth && (
+              {needsAuth && canSignIn(agentType) && (
                 <button
-                  key="codex-signin"
-                  onClick={signInCodex}
-                  disabled={codexSigningIn}
+                  key="agent-signin"
+                  onClick={signIn}
+                  disabled={signingIn}
                   className="atlas-pill-in inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[11px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer disabled:opacity-60"
                 >
-                  {codexSigningIn ? (
-                    <Loader2 size={11} className="animate-spin" />
-                  ) : (
-                    <LogIn size={11} />
-                  )}
-                  {codexSigningIn ? "Opening OpenAI sign-in…" : "Sign in to Codex with ChatGPT"}
-                </button>
-              )}
-              {terminalAuthHint && terminalLoginCommand && (
-                <button
-                  key="terminal-auth-hint"
-                  onClick={() => {
-                    void copyText(terminalLoginCommand);
-                    setTerminalAuthHint(false);
-                  }}
-                  title="Copies the command; run it in a terminal, then send again."
-                  className="atlas-pill-in inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[11px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                >
-                  <LogIn size={11} />
-                  {agentMeta(agentType).label} needs auth — copy `{terminalLoginCommand}`
+                  {signingIn ? <Loader2 size={11} className="animate-spin" /> : <LogIn size={11} />}
+                  {signingIn
+                    ? `Signing in to ${agentMeta(agentType).label}…`
+                    : `Sign in to ${agentMeta(agentType).label}`}
                 </button>
               )}
               {showJumpToBottom && (
@@ -1295,7 +1215,6 @@ const ChatComposer = memo(function ChatComposer({
           placeholder="Ask Atlas what to do…"
         />
       </div>
-      {isClaude && <ClaudeLoginDialog />}
     </>
   );
 });

@@ -139,6 +139,10 @@ async fn download_and_extract(
 enum ArchiveKind {
     Zip,
     TarGz,
+    /// goose ships `.tar.bz2` in the official registry (block/goose releases).
+    TarBz2,
+    /// An archive format we don't handle — refuse rather than mis-install.
+    Unsupported,
     /// URL without a recognized archive extension → the payload IS the binary.
     Raw,
 }
@@ -150,6 +154,14 @@ impl ArchiveKind {
             Self::Zip
         } else if path.ends_with(".tar.gz") || path.ends_with(".tgz") {
             Self::TarGz
+        } else if path.ends_with(".tar.bz2") || path.ends_with(".tbz2") {
+            Self::TarBz2
+        } else if path.ends_with(".tar.xz") || path.ends_with(".txz") || path.ends_with(".7z") {
+            // Fail closed HERE, off the URL. The old guard checked the
+            // downloaded payload's filename — a temp name with no extension —
+            // so unhandled archives sniffed as Raw and the compressed blob was
+            // installed as the "binary" (exactly how goose broke).
+            Self::Unsupported
         } else {
             Self::Raw
         }
@@ -157,12 +169,12 @@ impl ArchiveKind {
 }
 
 fn extract(payload: &Path, dir: &Path, kind: ArchiveKind, cmd: &str) -> Result<()> {
-    // Fail closed on formats we don't handle rather than mis-extracting.
-    let lowered = payload.to_string_lossy().to_lowercase();
-    if lowered.ends_with(".tar.bz2") || lowered.ends_with(".tbz2") || lowered.ends_with(".tar.xz") {
-        return Err(RegistryError::UnsupportedArchiveFormat(lowered));
-    }
     match kind {
+        ArchiveKind::Unsupported => {
+            return Err(RegistryError::UnsupportedArchiveFormat(
+                payload.to_string_lossy().to_string(),
+            ));
+        }
         ArchiveKind::Zip => {
             let file = std::fs::File::open(payload)?;
             let mut archive = zip::ZipArchive::new(file)
@@ -175,6 +187,12 @@ fn extract(payload: &Path, dir: &Path, kind: ArchiveKind, cmd: &str) -> Result<(
             let file = std::fs::File::open(payload)?;
             let gz = flate2::read::GzDecoder::new(file);
             let mut archive = tar::Archive::new(gz);
+            archive.unpack(dir)?;
+        }
+        ArchiveKind::TarBz2 => {
+            let file = std::fs::File::open(payload)?;
+            let bz = bzip2::read::BzDecoder::new(file);
+            let mut archive = tar::Archive::new(bz);
             archive.unpack(dir)?;
         }
         ArchiveKind::Raw => {
@@ -261,6 +279,18 @@ mod tests {
         assert_eq!(ArchiveKind::sniff("https://x/y.tar.gz"), ArchiveKind::TarGz);
         assert_eq!(ArchiveKind::sniff("https://x/y.tgz"), ArchiveKind::TarGz);
         assert_eq!(ArchiveKind::sniff("https://x/amp-acp"), ArchiveKind::Raw);
+        // goose's real distribution URL — must extract, not install the blob.
+        assert_eq!(
+            ArchiveKind::sniff(
+                "https://github.com/block/goose/releases/download/v1.46.0/goose-aarch64-apple-darwin.tar.bz2"
+            ),
+            ArchiveKind::TarBz2
+        );
+        // Unhandled formats fail closed AT SNIFF (off the URL): the payload's
+        // temp filename carries no extension, so a payload-side guard never
+        // fired and the compressed blob installed as the "binary".
+        assert_eq!(ArchiveKind::sniff("https://x/y.tar.xz"), ArchiveKind::Unsupported);
+        assert_eq!(ArchiveKind::sniff("https://x/y.7z"), ArchiveKind::Unsupported);
     }
 
     #[test]

@@ -82,6 +82,12 @@ pub enum SessionDelta {
     AvailableCommands {
         commands: Vec<serde_json::Value>,
     },
+    /// The agent's advertised `session/set_config_option` state changed — the
+    /// full option list, raw, as ACP defines it. Additive: consumers that only
+    /// know mode/model ignore it.
+    ConfigOptionsUpdated {
+        options: Vec<serde_json::Value>,
+    },
     UsageUpdated {
         usage: Usage,
     },

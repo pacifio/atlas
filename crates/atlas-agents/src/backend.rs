@@ -58,6 +58,18 @@ pub trait AgentBackend: Send + Sync {
     ) -> AcpResult<()> {
         Ok(())
     }
+    /// Set one of the agent's advertised config options
+    /// (`session/set_config_option`). ACP's general settings mechanism — mode
+    /// and model are just two well-known ids. Default: no-op.
+    async fn set_session_config_option(
+        &self,
+        _agent_id: AgentId,
+        _session_id: SessionId,
+        _option_id: String,
+        _value: serde_json::Value,
+    ) -> AcpResult<()> {
+        Ok(())
+    }
     /// Update the session's reasoning-effort level. Default: no-op (only the
     /// native agent applies a thinking budget).
     fn set_effort(&self, _agent_id: AgentId, _session_id: &SessionId, _effort: String) -> AcpResult<()> {
@@ -191,7 +203,12 @@ impl AgentBackend for AcpBackend {
         // config-option error is reported since that's the primary dialect.
         match self
             .0
-            .set_session_config_option(agent_id, session_id.clone(), "model", model_id.clone())
+            .set_session_config_option(
+                agent_id,
+                session_id.clone(),
+                "model",
+                serde_json::Value::String(model_id.clone()),
+            )
             .await
         {
             Ok(()) => Ok(()),
@@ -204,6 +221,17 @@ impl AgentBackend for AcpBackend {
                 Err(_) => Err(config_err),
             },
         }
+    }
+    async fn set_session_config_option(
+        &self,
+        agent_id: AgentId,
+        session_id: SessionId,
+        option_id: String,
+        value: serde_json::Value,
+    ) -> AcpResult<()> {
+        self.0
+            .set_session_config_option(agent_id, session_id, &option_id, value)
+            .await
     }
     fn mark_turn_started(&self, agent_id: AgentId, session_id: &SessionId) -> AcpResult<u64> {
         self.0.mark_turn_started(agent_id, session_id)

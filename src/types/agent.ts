@@ -1,94 +1,56 @@
-import type { SessionModeInfo } from "./agents";
+import type { AcpConfigOption, SessionModeInfo } from "./agents";
 
-/** The six agents Atlas ships. External (registry-installed) agents extend
- *  this set at runtime — their agent type IS their plugin id. */
-export type FirstPartyAgent = "claude-code" | "codex" | "opencode" | "cursor" | "kilo" | "cersei";
+/** The one agent Atlas ships: the native, in-process agent. Everything else is
+ *  an ACP agent the user installed from the registry, and its agent type IS its
+ *  registry id. */
+export const NATIVE_AGENT = "cersei" as const;
 
-/** Agent identity is plugin-id-first and OPEN (Paseo-style): the first-party
- *  literals keep autocomplete/narrowing, but any registry-installed plugin id
- *  is a valid agent type. `"custom"` survives as a legacy value only. */
-export type AgentType = FirstPartyAgent | "custom" | (string & {});
+/** Agent identity is registry-id-first and OPEN: any installed agent id is a
+ *  valid agent type. */
+export type AgentType = typeof NATIVE_AGENT | (string & {});
 
 /** Open alias — kept for call-site readability where "switchable" intent
- *  matters. The actual switchable list is dynamic: `useSwitchableAgents()`
- *  in features/agents (first-party + installed externals). */
-export type SwitchableAgent = FirstPartyAgent | (string & {});
+ *  matters. The switchable list is fully dynamic: `useSwitchableAgents()` in
+ *  features/agents (the native agent + whatever is installed). */
+export type SwitchableAgent = AgentType;
 
-/** First-party agents in switch order (for option+/). Installed externals are
- *  appended dynamically by `switchableAgentIds()` — never index UI state off
- *  this array alone. */
-export const SWITCHABLE_AGENTS: FirstPartyAgent[] = [
-  "claude-code",
-  "codex",
-  "opencode",
-  "cursor",
-  "kilo",
-  "cersei",
-];
+/** Agents Atlas ships a hand-drawn brand glyph and colour token for. This is
+ *  PURELY presentational — it grants no availability, precedence or behaviour,
+ *  and an agent absent from it renders with its registry icon instead. Keyed by
+ *  canonical registry id. */
+export type BrandedAgent =
+  | "claude-acp"
+  | "codex-acp"
+  | "opencode"
+  | "cursor"
+  | "kilo"
+  | typeof NATIVE_AGENT;
 
-/** First-party labels. For externals use `agentMeta(id).label`
- *  (features/agents/lib/agent-meta). */
-export const AGENT_LABEL: Record<FirstPartyAgent, string> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
+/** Display labels for the branded agents. For anything else use
+ *  `agentMeta(id).label`, which reads the agent's own registry metadata. */
+export const AGENT_LABEL: Record<BrandedAgent, string> = {
+  "claude-acp": "Claude Code",
+  "codex-acp": "Codex",
   opencode: "OpenCode",
   cursor: "Cursor",
   kilo: "Kilo",
   cersei: "Atlas",
 };
 
-/** The Rust-side spawnable plugin id for each first-party agent (see
- *  `AgentSpec::all_known()` in crates/atlas-acp). Single source of truth —
- *  every agentType→pluginId decision goes through `pluginIdForAgent`. */
-export const PLUGIN_ID_BY_AGENT: Record<FirstPartyAgent, string> = {
-  "claude-code": "claude-code-ts",
-  codex: "codex",
-  opencode: "opencode",
-  cursor: "cursor",
-  kilo: "kilo",
-  cersei: "cersei",
-};
-
-function isFirstPartyAgent(agentType: string): agentType is FirstPartyAgent {
-  return Object.prototype.hasOwnProperty.call(PLUGIN_ID_BY_AGENT, agentType);
-}
-
+/** The spawnable plugin id for an agent type. These are the same string for
+ *  every agent — this exists only to give an absent id a defined answer: the
+ *  native agent, the one agent guaranteed to exist. */
 export function pluginIdForAgent(agentType: AgentType | undefined): string {
-  if (!agentType || agentType === "custom") return PLUGIN_ID_BY_AGENT["claude-code"];
-  if (isFirstPartyAgent(agentType)) return PLUGIN_ID_BY_AGENT[agentType];
-  // External agents: the agent type IS the plugin id.
-  return agentType;
+  return agentType || NATIVE_AGENT;
 }
 
-/** First-party ACP-transport agents (out-of-process adapters) — the ones with
- *  modes/models advertised over ACP and warmable caches. Excludes the native
- *  in-process agent. Installed externals are also ACP-transport; consumers
- *  that care use the dynamic registry, not this constant. */
-export const ACP_AGENTS: FirstPartyAgent[] = ["claude-code", "codex", "opencode", "cursor", "kilo"];
-
-/** The built-ins a user may turn off in Settings → Agents: the three with no
- *  npx distribution, which Atlas downloads on demand. Mirrors
- *  `atlas_acp::AUTO_MANAGED_BUILTIN_IDS` (their agentType and plugin id are
- *  the same string). Claude, Codex and Cersei are the agents Atlas is built
- *  around — they are always available and never appear here. */
-export const OPTIONAL_BUILTIN_AGENTS: FirstPartyAgent[] = ["cursor", "opencode", "kilo"];
-
-export function isOptionalBuiltinAgent(id: string): boolean {
-  return (OPTIONAL_BUILTIN_AGENTS as string[]).includes(id);
-}
-
-/** Derive the display agent type from a spawnable plugin id. Unknown ids pass
- *  through unchanged — an external agent's identity is its plugin id, and
- *  collapsing it (the old `"custom"` fallback) lost it forever. */
+/** Derive the display agent type from a spawnable plugin id. Ids pass through
+ *  unchanged — an agent's identity IS its registry id, and collapsing it (the
+ *  old `"custom"` fallback) lost it forever. */
 export function agentTypeFromPluginId(pluginId: string): AgentType {
-  if (pluginId === "codex") return "codex";
-  if (pluginId === "opencode") return "opencode";
-  if (pluginId === "cursor") return "cursor";
-  if (pluginId === "kilo") return "kilo";
-  if (pluginId === "cersei") return "cersei";
-  if (pluginId.startsWith("claude")) return "claude-code";
   return pluginId;
 }
+
 export type AgentStatus = "idle" | "running" | "waiting" | "done" | "error";
 
 /** True when the agent is actively working OR paused waiting on the user (a
@@ -115,22 +77,6 @@ export function hasInFlightToolCalls(
   return false;
 }
 export type MessageRole = "user" | "assistant" | "system" | "tool";
-export type ClaudePermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
-
-export const CLAUDE_PERMISSION_MODES: ClaudePermissionMode[] = [
-  "default",
-  "acceptEdits",
-  "plan",
-  "bypassPermissions",
-];
-
-export const CLAUDE_PERMISSION_MODE_LABEL: Record<ClaudePermissionMode, string> = {
-  default: "Default",
-  acceptEdits: "Accept Edits",
-  plan: "Plan Mode",
-  bypassPermissions: "Bypass Permissions",
-};
-
 /** One file a turn read or modified, with edit line counts (0 for reads). */
 export interface TurnFile {
   path: string;
@@ -200,11 +146,10 @@ export interface ChatSession {
   tasks: AgentTask[];
   createdAt: string;
   updatedAt: string;
-  /** Claude-only permission mode. Absent for non-Claude agents (e.g. Codex),
-   *  which drive their modes via the generic ACP `acpCurrentMode`/snapshot. */
-  claudePermissionMode?: ClaudePermissionMode;
-  /** True only after the user explicitly changes Claude's mode in this tab. */
-  claudePermissionModeExplicit?: boolean;
+  /** The agent's advertised ACP config options (its general settings). When
+   *  non-empty these supersede the mode + model pills, matching Zed's
+   *  `conversation_view` precedence. */
+  acpConfigOptions?: AcpConfigOption[];
   /** Id of the user message sent JUST NOW — the only row that plays the
    *  composer-side bubble entrance animation (see UserRowView). */
   justSentMessageId?: string;

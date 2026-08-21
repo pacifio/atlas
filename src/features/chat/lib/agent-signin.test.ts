@@ -58,19 +58,18 @@ describe("isAuthError", () => {
 });
 
 describe("canSignIn", () => {
-  it("is true for the agents Atlas can drive a CLI login for", () => {
-    expect(canSignIn("cursor")).toBe(true);
-    expect(canSignIn("opencode")).toBe(true);
-    expect(canSignIn("kilo")).toBe(true);
+  it("is true for every ACP agent, whoever they are", () => {
+    // The point of the port: sign-in is not a privilege granted to a list of
+    // blessed ids. Any agent may advertise auth methods, and the same dialog
+    // renders whatever it advertised.
+    for (const id of ["claude-acp", "codex-acp", "cursor", "opencode", "kilo", "amp-acp"]) {
+      expect(canSignIn(id)).toBe(true);
+    }
   });
 
-  it("is false for agents that own their sign-in elsewhere", () => {
-    // Claude has its login dialog, Codex its pill; cersei is in-process, and
-    // externals aren't ours to log in.
-    expect(canSignIn("claude-code")).toBe(false);
-    expect(canSignIn("codex")).toBe(false);
+  it("is false only for the native agent and a missing id", () => {
+    // The in-process agent has no external account to sign in to.
     expect(canSignIn("cersei")).toBe(false);
-    expect(canSignIn("amp-acp")).toBe(false);
     expect(canSignIn(undefined)).toBe(false);
   });
 });

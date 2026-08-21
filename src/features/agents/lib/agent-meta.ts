@@ -4,46 +4,37 @@
 // surface (composer menu, pill, glyphs, sidebar, memory dropdown, timeline)
 // resolves through here instead of hardcoded Records/if-ladders.
 
-import {
-  AGENT_LABEL,
-  PLUGIN_ID_BY_AGENT,
-  SWITCHABLE_AGENTS,
-  isOptionalBuiltinAgent,
-  type AgentType,
-  type FirstPartyAgent,
-} from "@/types/agent";
-import { useProjectStore } from "@/features/project/stores/project-store";
+import { AGENT_LABEL, NATIVE_AGENT, type AgentType, type BrandedAgent } from "@/types/agent";
 import { useAgentRegistryStore } from "../stores/agent-registry-store";
 
 export interface AgentMeta {
-  /** Canonical plugin id ("claude-code-ts", "codex", or an external id). */
+  /** Canonical registry id ("claude-acp", "amp-acp", "cersei"…). */
   pluginId: string;
-  /** The agentType-shaped identity UI state carries ("claude-code", external id…). */
+  /** The agentType-shaped identity UI state carries — the same string. */
   agentType: AgentType;
   label: string;
-  /** First-party brand icon key, or null → use `iconDataUrl` / monogram. */
-  firstPartyIcon: FirstPartyAgent | null;
+  /** Branded glyph key, or null → use `iconDataUrl` / monogram. */
+  firstPartyIcon: BrandedAgent | null;
   iconDataUrl: string | null;
-  /** `.agent-*` token class for the amark badge ("" for externals). */
+  /** `.agent-*` token class for the amark badge ("" when unbranded). */
   cssClass: string;
+  /** True for every ACP agent; false only for the native in-process agent. */
   external: boolean;
 }
 
-const FIRST_PARTY_CSS: Record<FirstPartyAgent, string> = {
-  "claude-code": "agent-claude",
-  codex: "agent-codex",
+/** Presentation only — see `BrandedAgent`. An agent missing from this map is
+ *  not lesser, it just renders with its own registry icon. */
+const BRAND_CSS: Record<BrandedAgent, string> = {
+  "claude-acp": "agent-claude",
+  "codex-acp": "agent-codex",
   opencode: "agent-opencode",
   cursor: "agent-cursor",
   kilo: "agent-kilo",
   cersei: "agent-cersei",
 };
 
-/** Map an agentType OR plugin id to first-party identity, when it is one. */
-function firstPartyOf(id: string): FirstPartyAgent | null {
-  if (id in FIRST_PARTY_CSS) return id as FirstPartyAgent;
-  if (id === "claude-code-ts" || id === "claude-code-rs" || id.startsWith("claude"))
-    return "claude-code";
-  return null;
+function brandOf(id: string): BrandedAgent | null {
+  return id in BRAND_CSS ? (id as BrandedAgent) : null;
 }
 
 /** Non-reactive resolver — safe from event handlers, stores, and render paths
@@ -53,36 +44,27 @@ function firstPartyOf(id: string): FirstPartyAgent | null {
  *  (glyphs, pills, sidebar, memory, timeline) funnels through, and a single
  *  non-string slipping in crashed the whole tree ("id.startsWith is not a
  *  function" inside AgentMark, caught only by the app-level error boundary).
- *  A missing id resolves to the Claude default instead of throwing — the same
- *  fallback the rest of the app uses for absent agent identity. */
+ *  A missing id resolves to the native agent — the one agent that always
+ *  exists — rather than throwing. */
 export function agentMeta(agentTypeOrPluginId: string | null | undefined): AgentMeta {
   const id =
     typeof agentTypeOrPluginId === "string" && agentTypeOrPluginId.length > 0
       ? agentTypeOrPluginId
-      : "claude-code";
-  const firstParty = firstPartyOf(id);
-  if (firstParty) {
-    return {
-      pluginId: PLUGIN_ID_BY_AGENT[firstParty],
-      agentType: firstParty,
-      label: AGENT_LABEL[firstParty],
-      firstPartyIcon: firstParty,
-      iconDataUrl: null,
-      cssClass: FIRST_PARTY_CSS[firstParty],
-      external: false,
-    };
-  }
+      : NATIVE_AGENT;
+  const brand = brandOf(id);
   const { plugins, registryEntries } = useAgentRegistryStore.getState();
   const entry = registryEntries.find((e) => e.id === id) ?? null;
   const plugin = plugins.find((p) => p.plugin_id === id) ?? null;
   return {
     pluginId: id,
     agentType: id,
-    label: entry?.name ?? plugin?.display_name ?? prettifyId(id),
-    firstPartyIcon: null,
-    iconDataUrl: entry?.iconDataUrl ?? null,
-    cssClass: "",
-    external: true,
+    label: brand ? AGENT_LABEL[brand] : (entry?.name ?? plugin?.display_name ?? prettifyId(id)),
+    firstPartyIcon: brand,
+    // A branded agent still prefers its own registry icon only when Atlas has
+    // no glyph for it; the glyph is the higher-fidelity asset.
+    iconDataUrl: brand ? null : (entry?.iconDataUrl ?? null),
+    cssClass: brand ? BRAND_CSS[brand] : "",
+    external: id !== NATIVE_AGENT,
   };
 }
 
@@ -96,37 +78,41 @@ function prettifyId(id: string): string {
     .join(" ");
 }
 
-/** Whether the user turned this optional built-in off in Settings → Agents.
- *  Always false for Claude / Codex / Cersei and for external agents (which are
- *  uninstalled rather than disabled). Rust enforces the same rule at spawn —
- *  see `AppSettings::builtin_disabled`. */
-export function isAgentDisabled(agentTypeOrPluginId: string): boolean {
-  if (!isOptionalBuiltinAgent(agentTypeOrPluginId)) return false;
-  // `?? []`: settings hydrate async — a pre-hydration read must mean
-  // "nothing disabled", never a crash.
-  return (useProjectStore.getState().settings.disabledBuiltinAgents ?? []).includes(
-    agentTypeOrPluginId,
-  );
-}
-
-/** The dynamic switch list: first-party agents in their fixed order, then
- *  installed external plugin ids sorted by label. Drives option+/ cycling and
- *  the composer "+" agent picker. Agents the user turned off are omitted —
- *  that is what "off" means everywhere the user picks an agent. */
+/** The dynamic switch list: the native agent first, then every installed ACP
+ *  agent sorted by label. Drives option+/ cycling and the composer "+" agent
+ *  picker.
+ *
+ *  There is no enable/disable filter any more and no fixed head of the list
+ *  beyond the native agent — an agent appears here exactly when it is
+ *  installed, and disappears when it is uninstalled. */
 export function switchableAgentIds(): string[] {
   const { plugins } = useAgentRegistryStore.getState();
   const externals = plugins
     .filter((p) => p.external)
     .map((p) => p.plugin_id)
     .sort((a, b) => agentMeta(a).label.localeCompare(agentMeta(b).label));
-  return [...SWITCHABLE_AGENTS, ...externals].filter((id) => !isAgentDisabled(id));
+  return [NATIVE_AGENT, ...externals];
 }
 
 /** Reactive variant for components that must re-render when agents are
- *  installed/uninstalled — or turned on/off, hence the settings subscription
- *  alongside the registry signature. */
+ *  installed or uninstalled. */
 export function useSwitchableAgents(): string[] {
   useAgentRegistryStore((s) => s.signature);
-  useProjectStore((s) => s.settings.disabledBuiltinAgents);
   return switchableAgentIds();
+}
+
+/** Agent identity → the skills-registry TOOL target whose config dirs the
+ *  agent's CLI reads (`agents_list_skill_targets` ids: "claude-code" /
+ *  "codex" / "atlas").
+ *
+ *  This is a capability namespace bridge, not agent special-casing — the same
+ *  class of fact as `TranscriptKind`: any adapter fronting the Claude Code CLI
+ *  reads `.claude/skills` whatever its registry id, and codex-acp fronts the
+ *  Codex CLI's `.codex` dirs. Ids with no skills target pass through
+ *  unchanged, which (as before the ACP port) simply never matches a pack's
+ *  `enabledAgents` list. */
+export function skillToolIdForAgent(agentType: string): string {
+  if (agentType.startsWith("claude")) return "claude-code";
+  if (agentType === "codex-acp" || agentType === "codex") return "codex";
+  return agentType;
 }

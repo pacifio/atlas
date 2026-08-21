@@ -251,9 +251,9 @@ export function ComposerAddMenu({
                         : "text-[var(--text-tertiary)] opacity-45 hover:opacity-100 hover:bg-[var(--bg-hover)]",
                     )}
                   >
-                    {a === "claude-code" ? (
+                    {a === "claude-acp" ? (
                       <AgentIcons.Claude className="size-3" />
-                    ) : a === "codex" ? (
+                    ) : a === "codex-acp" ? (
                       <AgentIcons.Codex className="size-3" />
                     ) : a === "opencode" ? (
                       <AgentIcons.OpenCode className="size-3" />

@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use atlas_agents::{
     AgentId, AgentInfo, AgentManager, AuthMethodWire, DeltaSink, Message, OutboundMiddleware,
-    OutboundPipeline, PermissionDecision, PluginSpec, SessionDelta, SessionDeltaEnvelope, SessionId,
-    SessionKey, SessionSnapshot, SessionStatus,
+    OutboundPipeline, PermissionDecision, PluginSpec, SessionDelta, SessionDeltaEnvelope,
+    SessionId, SessionKey, SessionSnapshot, SessionStatus,
 };
 
 use super::agent_analytics::AnalyticsState;
@@ -60,7 +60,9 @@ impl TauriDeltaSink {
             // the bus drops events for a lagging subscriber, and a dropped event
             // is a turn missing from the permanent record. This stage only
             // enqueues; all disk work happens on the capture worker thread.
-            .with(Arc::new(super::capture::CaptureMiddleware { app: app.clone() }))
+            .with(Arc::new(super::capture::CaptureMiddleware {
+                app: app.clone(),
+            }))
             .with(Arc::new(MemoryIngestMiddleware { app }));
         Self { pipeline }
     }
@@ -134,7 +136,10 @@ impl AnalyticsMiddleware {
         };
         let plugin_id = self.plugin_id(envelope);
         if let (Some(map), Some(more)) = (props.as_object_mut(), extra.as_object()) {
-            map.insert("agent_family".into(), serde_json::json!(Self::family(&plugin_id)));
+            map.insert(
+                "agent_family".into(),
+                serde_json::json!(Self::family(&plugin_id)),
+            );
             map.insert("plugin_id".into(), serde_json::json!(plugin_id));
             map.insert(
                 "session_ref".into(),
@@ -388,13 +393,10 @@ pub fn install_manager(app: &AppHandle) {
     // for their `auth login` TUI. The immediate sync uses the instant
     // process-env snapshot; the login-shell probe runs on its own thread and
     // re-syncs (+ notifies the settings UI) when it lands.
-    super::byok::sync_builtin_agent_env(app);
+    super::byok::sync_agent_key_env(app);
     super::byok::ensure_shell_probe(app);
-    let manager = AgentManager::with_spec_source(
-        sink,
-        config_dir,
-        Some(Arc::new(registry_store.clone())),
-    );
+    let manager =
+        AgentManager::with_spec_source(sink, config_dir, Some(Arc::new(registry_store.clone())));
     app.manage(manager);
     tauri::async_runtime::spawn(async move {
         let _ = registry_store.refresh(false).await;
@@ -433,110 +435,22 @@ pub fn agents_list_running(manager: State<'_, AgentManager>) -> Vec<AgentInfo> {
     manager.list_agents()
 }
 
-/// Byte progress for a built-in agent's managed-binary download, emitted while
-/// a spawn waits on it. Deliberately its OWN event rather than reusing
-/// `atlas:registry-install:*`: this is a spawn-time acquisition, not an
-/// install, and the marketplace only clears its progress map from the install
-/// flow — feeding it entries from here would leak them.
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AcquireProgress {
-    agent_id: String,
-    received: u64,
-    total: Option<u64>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AcquireDone {
-    agent_id: String,
-    /// Whether a managed binary is now in place. `false` means the spawn falls
-    /// back to the agent's bare CLI command (which may still succeed).
-    ready: bool,
-}
-
-/// Whole-percent to emit for a download chunk, or `None` to skip this one.
-///
-/// `ensure_binary` invokes its progress callback once PER HTTP CHUNK — ~56k
-/// times for Cursor's 77 MB archive. Emitting a Tauri event each time would
-/// flood the IPC bridge and jank the UI, so a percent is emitted only when it
-/// actually changes (~101 events for a whole download). Chunks with no
-/// content-length are skipped entirely — there is no percent to show.
-fn acquire_pct_to_emit(
-    received: u64,
-    total: Option<u64>,
-    last: &std::sync::atomic::AtomicU64,
-) -> Option<u64> {
-    let total = total.filter(|t| *t > 0)?;
-    let pct = received.saturating_mul(100) / total;
-    (last.swap(pct, std::sync::atomic::Ordering::Relaxed) != pct).then_some(pct)
-}
-
 #[tauri::command]
 pub async fn agents_spawn(
     plugin_id: String,
-    app: AppHandle,
     manager: State<'_, AgentManager>,
     registry: State<'_, atlas_registry::RegistryStore>,
-    app_state: State<'_, crate::state::AppStateHandle>,
 ) -> Result<AgentInfo, String> {
-    // The user turned this built-in off in Settings → Agents. The UI already
-    // hides it from the picker; this is the authority behind that — it also
-    // covers paths the picker doesn't gate, notably resuming an old session
-    // that was recorded against the agent before it was switched off.
-    // Deliberately BEFORE any acquisition work: a disabled agent must never
-    // trigger a download.
-    if app_state.lock().settings.builtin_disabled(&plugin_id) {
-        let name = atlas_acp::AgentSpec::all_known()
-            .into_iter()
-            .find(|s| s.spec_id == plugin_id)
-            .map(|s| s.display_name)
-            .unwrap_or_else(|| plugin_id.clone());
-        return Err(format!(
-            "{name} is turned off. Turn it back on in Settings → Agents."
-        ));
-    }
-    // Self-heal for registry-installed externals: re-download a binary payload
-    // that went missing (killed mid-install, cache purge). No-op otherwise.
+    // Self-heal: re-download a binary payload that went missing (killed
+    // mid-install, cache purge). No-op for npx/uvx, custom and healthy agents.
+    //
+    // This is the ONLY acquisition step in the spawn path. An agent that was
+    // never installed simply is not in `known_specs` and fails with
+    // `UnknownSpec` — Atlas never downloads an agent the user did not ask for.
     registry
         .ensure_ready(&plugin_id)
         .await
         .map_err(|e| e.to_string())?;
-    // Built-ins with no npx distribution (cursor / opencode / kilo): acquire
-    // their official binary from the registry so they spawn with zero manual
-    // setup, the way `npx -y` already handles Claude/Codex. Deliberately not
-    // fatal — on failure the bare-CLI command still runs, which is the
-    // behaviour that existed before. Cold cache means a real download here,
-    // so the composer gets progress to show instead of a silent 20 s stall.
-    if atlas_acp::AUTO_MANAGED_BUILTIN_IDS.contains(&plugin_id.as_str()) {
-        let progress_app = app.clone();
-        let progress_id = plugin_id.clone();
-        let last_pct = std::sync::atomic::AtomicU64::new(u64::MAX);
-        let progress = move |received: u64, total: Option<u64>| {
-            // Throttled — see `acquire_pct_to_emit`.
-            if acquire_pct_to_emit(received, total, &last_pct).is_none() {
-                return;
-            }
-            let _ = progress_app.emit(
-                "atlas:agent-acquire:progress",
-                AcquireProgress {
-                    agent_id: progress_id.clone(),
-                    received,
-                    total,
-                },
-            );
-        };
-        let ready = registry.ensure_builtin(&plugin_id, Some(&progress)).await;
-        // Always emitted (cache hit, download, or failure) so the composer can
-        // clear its "Setting up…" pill on every path.
-        let _ = app.emit(
-            "atlas:agent-acquire:done",
-            AcquireDone {
-                agent_id: plugin_id.clone(),
-                ready,
-            },
-        );
-    }
     manager.spawn(&plugin_id).await.map_err(|e| e.to_string())
 }
 
@@ -557,18 +471,6 @@ pub async fn agents_new_session(
         .map_err(|e| e.to_string())
 }
 
-/// Whether Codex has stored credentials (`~/.codex/auth.json` exists). Drives
-/// the "Sign in with ChatGPT" prompt on a Codex chat. Cheap file check.
-#[tauri::command]
-pub fn codex_status() -> bool {
-    dirs::home_dir()
-        .map(|h| h.join(".codex").join("auth.json").is_file())
-        .unwrap_or(false)
-}
-
-/// Run an agent's ACP `authenticate` flow (e.g. Codex's "chatgpt" browser
-/// OAuth). Awaits until the agent reports success — for Codex this resolves
-/// once the OpenAI sign-in completes and `~/.codex/auth.json` is written.
 #[tauri::command]
 pub async fn agents_authenticate(
     agent_id: AgentId,
@@ -696,9 +598,9 @@ pub async fn agents_send(
     // Placed before the bare-send branch so capture does not depend on whether
     // memory sharing happens to be enabled for the project.
     // `plugin_id` rather than `agent_id`: the latter is a per-process UUID, and
-    // the former ("claude-code", "codex", the native agent's id) is both what a
-    // reader wants to see on a timeline row and what tells capture whether this
-    // is an ACP-hosted agent or the native one.
+    // the former (the agent's registry id, or the native agent's id) is both
+    // what a reader wants to see on a timeline row and what tells capture
+    // whether this is an ACP-hosted agent or the native one.
     app.state::<super::capture::CaptureState>().note_prompt(
         &key.session_id,
         &cwd,
@@ -807,20 +709,22 @@ async fn build_injection(
         };
 
         let handoff_block = if let Some((raw_body, turns)) = handoff_raw {
-            let (body, attribution) = if pref.mode == "provider"
-                && !pref.provider.is_empty()
-                && !pref.model.is_empty()
-            {
-                let summary =
-                    memory_summarize::summarize(app, &raw_body, &pref.provider, &pref.model).await;
-                if summary == raw_body {
-                    (raw_body, "raw".to_string())
+            let (body, attribution) =
+                if pref.mode == "provider" && !pref.provider.is_empty() && !pref.model.is_empty() {
+                    let summary =
+                        memory_summarize::summarize(app, &raw_body, &pref.provider, &pref.model)
+                            .await;
+                    if summary == raw_body {
+                        (raw_body, "raw".to_string())
+                    } else {
+                        (
+                            summary,
+                            format!("summarized by {}/{}", pref.provider, pref.model),
+                        )
+                    }
                 } else {
-                    (summary, format!("summarized by {}/{}", pref.provider, pref.model))
-                }
-            } else {
-                (raw_body, "raw".to_string())
-            };
+                    (raw_body, "raw".to_string())
+                };
             Some(memory_pack::wrap_handoff(&body, turns, &attribution))
         } else {
             None
@@ -859,7 +763,10 @@ pub fn agents_drop_session(
     // Release the per-turn accumulator with the session, so a tab closed
     // mid-turn doesn't hold one for the life of the process.
     analytics.forget_session(&session_id);
-    let key = SessionKey { agent_id, session_id };
+    let key = SessionKey {
+        agent_id,
+        session_id,
+    };
     manager.drop_session(&key).map_err(|e| e.to_string())
 }
 
@@ -879,6 +786,21 @@ pub fn agents_set_model(
     manager: State<'_, AgentManager>,
 ) -> Result<(), String> {
     manager.set_model(&key, model_id).map_err(|e| e.to_string())
+}
+
+/// Set one of the agent's advertised ACP config options
+/// (`session/set_config_option`). This is the general settings write — mode
+/// and model are two well-known ids that happen to have their own commands.
+#[tauri::command]
+pub fn agents_set_config_option(
+    key: SessionKey,
+    option_id: String,
+    value: serde_json::Value,
+    manager: State<'_, AgentManager>,
+) -> Result<(), String> {
+    manager
+        .set_config_option(&key, option_id, value)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -923,43 +845,27 @@ pub fn agents_respond_permission(
 // localhost-loopback OAuth flow, opens the browser, catches the callback,
 // writes credentials. The host's only job is to spawn the spec.
 
-/// Fill in a runnable terminal-auth spec for the auto-managed built-ins.
+/// Normalise the auth methods an agent advertised, without inventing any.
 ///
-/// Cursor / OpenCode / Kilo advertise an auth method but no
-/// `_meta.terminal-auth`, so `terminal_command` arrives `None` and the whole
-/// sign-in path dead-ends: `agents_run_auth_method` rejects the method, the UI
-/// has no command to offer, and the user can't fall back to a shell either
-/// because Atlas downloaded the CLI into its own app-data dir instead of onto
-/// `PATH`. Pairing the managed binary with the agent's documented login argv
-/// (`atlas_acp::builtin_login_args`) makes the existing runner work unchanged.
+/// Every method reaches the UI, and the UI decides how to run it from what the
+/// agent itself declared:
 ///
-/// A spec the adapter DID supply always wins — this only fills a hole.
-fn enrich_auth_methods(
-    plugin_id: Option<&str>,
-    methods: Vec<AuthMethodWire>,
-    registry: &atlas_registry::RegistryStore,
-) -> Vec<AuthMethodWire> {
-    let Some(plugin_id) = plugin_id else {
-        return methods;
-    };
-    let Some(login_args) = atlas_acp::builtin_login_args(plugin_id) else {
-        return methods;
-    };
-    // Absent when nothing has been downloaded yet (the user is on a PATH
-    // install, or acquisition failed) — leave the methods untouched rather
-    // than inventing a command that isn't there.
-    let Some(binary) = registry.builtin_binary_path(plugin_id) else {
-        return methods;
-    };
+/// 1. `_meta.terminal-auth` present → `agents_run_auth_method` spawns exactly
+///    the command the agent asked for (Claude Code, Codex, Gemini).
+/// 2. No terminal-auth → the UI calls `agents_authenticate`, the protocol's
+///    own `authenticate` RPC, and any device code / URL the agent needs comes
+///    back as an elicitation into the shared modal.
+///
+/// There is deliberately no per-agent login-argv table here. Guessing a CLI's
+/// sign-in invocation is how Atlas ended up with agent-specific auth paths in
+/// the first place; an agent that wants a terminal login says so on the wire.
+/// The one thing filled in is a display label, which is cosmetic.
+fn enrich_auth_methods(methods: Vec<AuthMethodWire>) -> Vec<AuthMethodWire> {
     methods
         .into_iter()
         .map(|mut m| {
-            if m.terminal_command.is_none() {
-                m.terminal_command = Some(binary.clone());
-                m.terminal_args = Some(login_args.iter().map(|s| s.to_string()).collect());
-                if m.terminal_label.is_none() {
-                    m.terminal_label = Some(m.name.clone());
-                }
+            if m.terminal_command.is_some() && m.terminal_label.is_none() {
+                m.terminal_label = Some(m.name.clone());
             }
             m
         })
@@ -970,14 +876,9 @@ fn enrich_auth_methods(
 pub fn agents_list_auth_methods(
     agent_id: AgentId,
     manager: State<'_, AgentManager>,
-    registry: State<'_, atlas_registry::RegistryStore>,
 ) -> Result<Vec<AuthMethodWire>, String> {
     let methods = manager.auth_methods(agent_id).map_err(|e| e.to_string())?;
-    Ok(enrich_auth_methods(
-        manager.plugin_id_for_agent(agent_id).as_deref(),
-        methods,
-        &registry,
-    ))
+    Ok(enrich_auth_methods(methods))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -994,23 +895,22 @@ pub async fn agents_run_auth_method(
     app: AppHandle,
 ) -> Result<(), String> {
     let manager: State<'_, AgentManager> = app.state();
-    let registry: State<'_, atlas_registry::RegistryStore> = app.state();
     let methods = manager.auth_methods(agent_id).map_err(|e| e.to_string())?;
-    // Same enrichment the list command applies, so what the UI offers is
+    // Same normalisation the list command applies, so what the UI offers is
     // exactly what runs here.
-    let methods = enrich_auth_methods(
-        manager.plugin_id_for_agent(agent_id).as_deref(),
-        methods,
-        &registry,
-    );
+    let methods = enrich_auth_methods(methods);
     let method = methods
         .into_iter()
         .find(|m| m.id == method_id)
         .ok_or_else(|| format!("auth method not found: {method_id}"))?;
 
-    let command = method
-        .terminal_command
-        .ok_or_else(|| format!("auth method {method_id} has no terminal-auth spec"))?;
+    let command = method.terminal_command.ok_or_else(|| {
+        format!(
+            "`{method_id}` is not a terminal sign-in — the agent did not declare a \
+             `_meta.terminal-auth` command for it. Use the protocol's `authenticate` \
+             call for this method instead."
+        )
+    })?;
     let args = method.terminal_args.unwrap_or_default();
 
     tracing::info!(
@@ -1069,7 +969,10 @@ pub async fn agents_run_auth_method(
                 } else {
                     Some(format!(
                         "auth subprocess exited with code {}",
-                        status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into())
+                        status
+                            .code()
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "?".into())
                     ))
                 },
             },
@@ -1086,120 +989,47 @@ pub async fn agents_run_auth_method(
 }
 
 #[cfg(test)]
-mod acquire_progress_tests {
-    use super::acquire_pct_to_emit;
-    use std::sync::atomic::AtomicU64;
-
-    /// Replays a download the way `ensure_binary` drives the callback (one call
-    /// per HTTP chunk) and counts how many events would reach the UI.
-    fn emits_for(total: u64, chunk: u64) -> Vec<u64> {
-        let last = AtomicU64::new(u64::MAX);
-        let mut out = Vec::new();
-        let mut received = 0;
-        while received < total {
-            received = (received + chunk).min(total);
-            if let Some(pct) = acquire_pct_to_emit(received, Some(total), &last) {
-                out.push(pct);
-            }
-        }
-        out
-    }
-
-    #[test]
-    fn collapses_a_per_chunk_flood_into_one_event_per_percent() {
-        // Cursor's real archive: 77_650_670 bytes in ~1.4 KB chunks = ~56k
-        // callbacks. Unthrottled that many IPC emits would jank the UI.
-        let emits = emits_for(77_650_670, 1_369);
-        assert_eq!(emits.len(), 101, "0..=100 inclusive, once each");
-        assert_eq!(emits.first(), Some(&0));
-        assert_eq!(emits.last(), Some(&100), "always finishes at 100%");
-        assert!(emits.windows(2).all(|w| w[1] > w[0]), "monotonic, no repeats");
-    }
-
-    #[test]
-    fn a_tiny_download_still_reports_completion() {
-        // Fewer chunks than percents: every chunk is a new percent, and the
-        // pill must still reach 100 so the UI can settle.
-        let emits = emits_for(300, 100);
-        assert_eq!(emits, vec![33, 66, 100]);
-    }
-
-    #[test]
-    fn without_a_content_length_nothing_is_emitted() {
-        // No total → no percent to render; the pill falls back to its
-        // indeterminate "Setting up X…" text instead of showing a bogus 0%.
-        let last = AtomicU64::new(u64::MAX);
-        assert_eq!(acquire_pct_to_emit(1_024, None, &last), None);
-        assert_eq!(acquire_pct_to_emit(2_048, Some(0), &last), None);
-    }
-}
-
-#[cfg(test)]
-mod auth_enrichment_tests {
+mod auth_method_tests {
     use super::enrich_auth_methods;
     use atlas_agents::AuthMethodWire;
 
-    /// Exactly what `cursor-agent acp` returns from `initialize` — captured
-    /// live: an auth method with NO `_meta.terminal-auth`, which is why the
-    /// sign-in path dead-ended before this enrichment existed.
-    fn cursor_method() -> AuthMethodWire {
+    fn method(terminal: Option<&str>) -> AuthMethodWire {
         AuthMethodWire {
-            id: "cursor_login".into(),
-            name: "Cursor Login".into(),
-            description: Some("Authenticate using existing Cursor login credentials.".into()),
-            terminal_command: None,
+            id: "login".into(),
+            name: "Sign in".into(),
+            description: None,
+            terminal_command: terminal.map(str::to_string),
             terminal_args: None,
             terminal_label: None,
         }
     }
 
-    fn store() -> atlas_registry::RegistryStore {
-        atlas_registry::RegistryStore::new(std::env::temp_dir().join("atlas-auth-test"))
-    }
-
     #[test]
-    fn without_an_acquired_binary_nothing_is_invented() {
-        // Nothing downloaded → leave the method exactly as the adapter sent it,
-        // rather than pointing the runner at a path that doesn't exist.
-        let out = enrich_auth_methods(Some("cursor"), vec![cursor_method()], &store());
+    fn a_method_without_a_terminal_spec_is_passed_through_untouched() {
+        // Exactly what `cursor-agent acp` returns: an auth method with no
+        // `_meta.terminal-auth`. Atlas must NOT synthesise a login command for
+        // it — it goes to the protocol's `authenticate` call instead.
+        let out = enrich_auth_methods(vec![method(None)]);
+        assert_eq!(out.len(), 1);
         assert!(out[0].terminal_command.is_none());
+        assert!(out[0].terminal_args.is_none());
     }
 
     #[test]
-    fn agents_that_are_not_auto_managed_are_untouched() {
-        for id in ["claude-code-ts", "codex", "cersei", "amp-acp"] {
-            let out = enrich_auth_methods(Some(id), vec![cursor_method()], &store());
-            assert!(out[0].terminal_command.is_none(), "{id} must not be enriched");
-        }
-        // …and an unknown agent (no plugin id resolved) too.
-        let out = enrich_auth_methods(None, vec![cursor_method()], &store());
-        assert!(out[0].terminal_command.is_none());
-    }
-
-    #[test]
-    fn an_adapter_supplied_spec_always_wins() {
-        let mut m = cursor_method();
-        m.terminal_command = Some("/adapter/own/node".into());
-        m.terminal_args = Some(vec!["--cli".into(), "auth".into()]);
-        let out = enrich_auth_methods(Some("cursor"), vec![m], &store());
-        assert_eq!(out[0].terminal_command.as_deref(), Some("/adapter/own/node"));
-        assert_eq!(out[0].terminal_args.as_ref().unwrap(), &["--cli", "auth"]);
-    }
-
-    #[test]
-    fn login_argv_matches_each_cli() {
-        // Verified against the downloaded binaries' `--help`: cursor exposes a
-        // top-level `login`; opencode/kilo nest it under `auth login`.
-        assert_eq!(atlas_acp::builtin_login_args("cursor"), Some(&["login"][..]));
+    fn an_agent_supplied_spec_is_preserved_and_gets_a_label() {
+        let out = enrich_auth_methods(vec![method(Some("/adapter/own/node"))]);
         assert_eq!(
-            atlas_acp::builtin_login_args("opencode"),
-            Some(&["auth", "login"][..])
+            out[0].terminal_command.as_deref(),
+            Some("/adapter/own/node")
         );
-        assert_eq!(
-            atlas_acp::builtin_login_args("kilo"),
-            Some(&["auth", "login"][..])
-        );
-        assert_eq!(atlas_acp::builtin_login_args("codex"), None);
-        assert_eq!(atlas_acp::builtin_login_args("claude-code-ts"), None);
+        assert_eq!(out[0].terminal_label.as_deref(), Some("Sign in"));
+    }
+
+    #[test]
+    fn every_advertised_method_survives_normalisation() {
+        // No filtering by agent id: whatever the agent advertised is what the
+        // one shared sign-in modal renders.
+        let methods = vec![method(None), method(Some("/x")), method(None)];
+        assert_eq!(enrich_auth_methods(methods).len(), 3);
     }
 }

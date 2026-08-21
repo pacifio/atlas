@@ -14,7 +14,7 @@
 //! (`atlas_acp::register_managed_node_bin`). Node binaries themselves are still
 //! fetched by nvm from nodejs.org on first install (network required once).
 //!
-//! Mirrors `claude_setup.rs`: `node_check` is a fast probe; `node_install`
+//! `node_check` is a fast probe; `node_install`
 //! streams progress as `atlas:node-install:progress` window events and emits
 //! `atlas:node-install:done` on completion.
 
@@ -53,12 +53,12 @@ pub struct NodeStatus {
 }
 
 /// Resolve a CLI to an absolute path via the user's login shell
-/// (covers nvm/fnm/volta/brew). Mirrors `claude_setup::resolve_cli`.
+/// (covers nvm/fnm/volta/brew).
 async fn resolve_cli(name: &str) -> Option<String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     // `-lic`, not `-lc` — interactive so ~/.zshrc PATH exports (nvm init,
     // opencode, …) are seen; rc noise handled by taking the last line. See
-    // `claude_setup::resolve_cli` / `atlas_acp::spawn::probe_shell`.
+    // `atlas_acp::spawn::probe_shell`.
     let probe = AsyncCommand::new(&shell)
         .args(["-lic", &format!("command -v {name} 2>/dev/null")])
         .output();

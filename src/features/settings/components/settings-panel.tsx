@@ -30,9 +30,7 @@ import { AtlasThemesSettings } from "./atlas-themes-settings";
 import { SkillsAndPacks } from "./skills-and-packs";
 import { AgentsMarketplace } from "./agents-marketplace/agents-marketplace";
 import { ModelsManager } from "./models-manager";
-import { useDevFlagsStore } from "../stores/dev-flags-store";
 import { useModelPricingStore } from "../stores/model-pricing-store";
-import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { setEnabled as setTelemetryEnabled } from "@/features/telemetry/posthog-client";
 import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
@@ -676,38 +674,13 @@ function KeybindingsSettings() {
 }
 
 function DeveloperSettings() {
-  const triggerClaudeInstall = useDevFlagsStore.use.triggerClaudeInstall();
-  const { setTriggerClaudeInstall } = useDevFlagsStore.use.actions();
-  const { refreshStatus } = useClaudeSetupStore.use.actions();
-
   return (
     <div className="space-y-6">
       <SectionTitle
         title="Developer"
         subtitle="Diagnostic toggles for UI testing — these change app behavior, leave off in normal use"
       />
-
-      <div className="space-y-2">
-        <div className="text-[10px] uppercase tracking-wider text-text-tertiary px-1">
-          Claude Code setup
-        </div>
-        <div className="rounded-lg border border-border-default bg-bg-secondary px-3 py-3 space-y-3">
-          <SettingRow
-            label="Trigger Claude Install"
-            description="Force the install banner to appear regardless of whether the CLI is actually installed. The Install button and sign-in dialog run a simulated flow on this machine — no real curl, no real `claude /login`. Use this to UI-test the onboarding surface."
-          >
-            <Toggle
-              checked={triggerClaudeInstall}
-              onChange={(next) => {
-                setTriggerClaudeInstall(next);
-                // Re-run status so the banner reflects the new override
-                // immediately (turning OFF probes the real CLI again).
-                void refreshStatus();
-              }}
-            />
-          </SettingRow>
-        </div>
-      </div>
+      <div className="text-[11px] text-text-tertiary px-1">No developer toggles right now.</div>
     </div>
   );
 }

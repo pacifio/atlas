@@ -16,7 +16,6 @@ use uuid::Uuid;
 
 use crate::error::{AcpError, Result};
 use crate::events::{AcpEvent, EventSink};
-use crate::model_sniff::ModelSniffer;
 use crate::registry::AgentId;
 
 /// Per-(agent, session) lifecycle guard the driver consults before
@@ -137,9 +136,6 @@ pub struct AgentRuntime {
     pub prompt_image_supported: bool,
     /// Images staged for each session's next prompt. See [`PendingAttachments`].
     pub pending_attachments: Arc<PendingAttachments>,
-    /// Legacy `models` blobs recovered off the raw wire for agents still on the
-    /// pre-config-options dialect (OpenCode, Cursor). See [`ModelSniffer`].
-    pub model_sniffer: Arc<ModelSniffer>,
 }
 
 /// JSON-friendly projection of `AuthMethod` for the wire. The ACP Rust
@@ -239,8 +235,6 @@ pub async fn spawn_agent(
     let guards_for_task = guards.clone();
     let sink_for_task = sink.clone();
     let command_for_task = command.clone();
-    let model_sniffer: Arc<ModelSniffer> = Arc::new(ModelSniffer::new());
-    let sniffer_for_task = model_sniffer.clone();
 
     // Trailing stderr from the agent process (ring buffer, newest last). When
     // the driver dies, the tail rides on the AgentDisconnected reason so the
@@ -258,7 +252,6 @@ pub async fn spawn_agent(
             pending_for_task,
             guards_for_task,
             stderr_for_task.clone(),
-            sniffer_for_task,
             ready_tx,
             shutdown_rx,
         )
@@ -313,7 +306,6 @@ pub async fn spawn_agent(
         auth_methods: initialized.auth_methods,
         prompt_image_supported: initialized.prompt_image_supported,
         pending_attachments: Arc::new(DashMap::new()),
-        model_sniffer,
     })
 }
 
@@ -324,7 +316,6 @@ async fn run_driver(
     pending: Arc<PendingPermissions>,
     guards: Arc<SessionGuards>,
     stderr_tail: Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
-    model_sniffer: Arc<ModelSniffer>,
     ready_tx: oneshot::Sender<Result<InitializedAgent>>,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<()> {
@@ -348,11 +339,9 @@ async fn run_driver(
             }
             LineDirection::Stdin => {
                 tracing::trace!(target: "atlas_acp::stdin", agent = ?agent_id, "{line}");
-                model_sniffer.observe_outgoing(&line);
             }
             LineDirection::Stdout => {
                 tracing::trace!(target: "atlas_acp::stdout", agent = ?agent_id, "{line}");
-                model_sniffer.observe_incoming(&line);
             }
         }
         let _ = &sink_dbg; // keep sink alive in this scope; reserved for future ring-buffer

@@ -16,8 +16,8 @@
 // pooled per plugin, so this is one cheap extra ACP session per agent per launch.
 
 import { agents, ensureAgent } from "./agents-api";
-import { ACP_AGENTS, pluginIdForAgent, type SwitchableAgent } from "@/types/agent";
-import { isAgentDisabled } from "@/features/agents/lib/agent-meta";
+import { NATIVE_AGENT, pluginIdForAgent, type SwitchableAgent } from "@/types/agent";
+import { switchableAgentIds } from "@/features/agents/lib/agent-meta";
 import {
   loadCachedAcpModels,
   saveCachedAcpModels,
@@ -30,21 +30,23 @@ import {
  *  waste. A week keeps it fresh enough while eliminating the per-launch spawns. */
 const MODELS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-function asAcpAgent(agentType: string): SwitchableAgent | null {
-  return (ACP_AGENTS as string[]).includes(agentType) ? (agentType as SwitchableAgent) : null;
+/** Every installed ACP agent. Derived from the live registry rather than a
+ *  constant — warming must follow what the user actually installed. */
+function installedAcpAgents(): SwitchableAgent[] {
+  return switchableAgentIds().filter((id) => id !== NATIVE_AGENT);
 }
 
-/** The ACP agents to prefetch when `agentType` is active: every other ACP
- *  agent the user has used before (has a persisted model cache). Warming
- *  never-touched agents would spawn CLIs the user may not even have installed.
- *  Agents the user turned off are skipped too — a disabled agent must not be
- *  spawned in the background (and a previously-used one still has a cache, so
- *  the `loadCachedAcpModels` test alone would let it through). */
+function asAcpAgent(agentType: string): SwitchableAgent | null {
+  return installedAcpAgents().includes(agentType) ? (agentType as SwitchableAgent) : null;
+}
+
+/** The ACP agents to prefetch when `agentType` is active: every OTHER
+ *  installed agent the user has used before (has a persisted model cache).
+ *  Warming never-touched agents would spawn CLIs for no reason, and an
+ *  uninstalled agent is not in the list at all. */
 export function otherAcpAgents(agentType: string): SwitchableAgent[] {
   if (!asAcpAgent(agentType)) return [];
-  return ACP_AGENTS.filter(
-    (a) => a !== agentType && !isAgentDisabled(a) && loadCachedAcpModels(a) !== null,
-  );
+  return installedAcpAgents().filter((a) => a !== agentType && loadCachedAcpModels(a) !== null);
 }
 
 // Warm at most once per agent per app session (a model list is static per
@@ -59,10 +61,6 @@ const warmed = new Set<string>();
 export async function warmAcpModels(agentType: string, cwd: string): Promise<void> {
   const at = asAcpAgent(agentType);
   if (!at) return;
-  // Turned off in Settings → Agents: never spawn it, not even for a throwaway
-  // model-harvest session. (Also guarded in Rust — this just avoids the
-  // pointless round-trip and its rejection.)
-  if (isAgentDisabled(at)) return;
   if (warmed.has(at)) return;
   // TTL gate: if we already have a fresh cached list, DON'T spawn a throwaway
   // session to re-fetch a static catalog — the cache drives the picker and any
@@ -87,12 +85,12 @@ export async function warmAcpModels(agentType: string, cwd: string): Promise<voi
 }
 
 /**
- * Startup refresh: silently re-warm every ACP agent we've cached before (i.e.
- * the user has used it), keeping the cache fresh without spawning agents the
- * user never touches. Deferred so it never blocks launch.
+ * Startup refresh: silently re-warm every INSTALLED agent we've cached before
+ * (i.e. the user has used it), keeping the cache fresh without spawning agents
+ * the user never touches. Deferred so it never blocks launch.
  */
 export function refreshCachedAcpModels(cwd: string): void {
-  for (const agentType of ACP_AGENTS) {
+  for (const agentType of installedAcpAgents()) {
     if (loadCachedAcpModels(agentType)) {
       void warmAcpModels(agentType, cwd);
     }

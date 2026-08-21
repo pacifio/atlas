@@ -481,6 +481,18 @@ impl AgentManager {
         self.handle_for(key)?.set_model(model_id)
     }
 
+    /// Set one of the agent's advertised config options. Atlas does not
+    /// validate the id or value — the agent published the option list, and it
+    /// is the authority on what is legal.
+    pub fn set_config_option(
+        &self,
+        key: &SessionKey,
+        option_id: String,
+        value: serde_json::Value,
+    ) -> Result<()> {
+        self.handle_for(key)?.set_config_option(option_id, value)
+    }
+
     pub fn set_effort(&self, key: &SessionKey, effort: String) -> Result<()> {
         self.handle_for(key)?.set_effort(effort)
     }

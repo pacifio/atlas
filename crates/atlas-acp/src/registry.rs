@@ -58,162 +58,16 @@ pub struct AgentSpec {
     pub help_url: Option<String>,
 }
 
-/// Provider of additional spawnable specs beyond [`AgentSpec::all_known`] —
-/// implemented by the dynamic ACP registry (`atlas-registry`) so installed
-/// external agents flow through the exact same spawn path as first-party ones.
+/// The sole provider of spawnable ACP agents — implemented by the dynamic ACP
+/// registry (`atlas-registry`).
+///
+/// There is no second source. Atlas ships **zero** built-in ACP agents: an
+/// external agent is spawnable if and only if the user installed it, exactly
+/// the way Zed derives `external_agents` solely from its `agent_servers`
+/// settings map. The native in-process agent (Cersei) is not an ACP agent and
+/// never travels through here.
 pub trait SpecSource: Send + Sync {
     fn extra_specs(&self) -> Vec<AgentSpec>;
-}
-
-/// Built-in agents whose adapter is a plain CLI binary rather than an npm
-/// package. Claude and Codex spawn through `npx -y …`, so npm fetches their
-/// adapter on first run and they work on a machine that never installed
-/// anything by hand; these three do not, and their bare commands
-/// (`cursor-agent acp`, `opencode acp`, `kilo acp`) simply ENOENT there.
-///
-/// `atlas-registry` closes that gap by downloading each one's official binary
-/// from the ACP registry manifest and offering it as a dynamic spec. For these
-/// ids ONLY, that dynamic spec's command REPLACES the bare command below (see
-/// [`AgentRegistry::known_specs`]) — every other id keeps first-party
-/// precedence, so a registry install can never shadow a built-in agent.
-pub const AUTO_MANAGED_BUILTIN_IDS: &[&str] = &["cursor", "opencode", "kilo"];
-
-/// The CLI argv that signs a user in to an auto-managed built-in, appended to
-/// its managed binary.
-///
-/// These three adapters advertise an `authMethod` but ship NO
-/// `_meta.terminal-auth` block, so there is nothing for the host's terminal-auth
-/// runner to execute — and because Atlas downloads their binary into its own
-/// app-data dir, the user has no CLI on `PATH` to run by hand either. Without
-/// this table "sign in" is simply impossible from inside Atlas: the agent
-/// answers every prompt with `Authentication required` forever.
-///
-/// Verified against the downloaded binaries (`--help`): cursor exposes a
-/// top-level `login`; opencode (and its Kilo fork) nest it under `auth login`.
-/// Each opens the browser and prints the URL on stdout, which the auth runner
-/// already streams to the UI.
-pub fn builtin_login_args(spec_id: &str) -> Option<&'static [&'static str]> {
-    match spec_id {
-        "cursor" => Some(&["login"]),
-        "opencode" | "kilo" => Some(&["auth", "login"]),
-        _ => None,
-    }
-}
-
-impl AgentSpec {
-    pub fn claude_code_ts() -> Self {
-        Self {
-            spec_id: "claude-code-ts".into(),
-            display_name: "Claude Code (canonical)".into(),
-            // Upstream rename: `@zed-industries/claude-code-acp` was renamed
-            // to `@agentclientprotocol/claude-agent-acp`. The old name still
-            // resolves but no longer receives updates.
-            command: "npx -y @agentclientprotocol/claude-agent-acp".into(),
-            help_url: None,
-        }
-    }
-
-    pub fn claude_code_rs() -> Self {
-        Self {
-            spec_id: "claude-code-rs".into(),
-            display_name: "Claude Code (Rust)".into(),
-            command: "claude-code-acp-rs".into(),
-            help_url: None,
-        }
-    }
-
-    /// Codex ACP bridge — speaks ACP over stdio around the Codex engine.
-    /// Launched via `npx` (mirrors `claude_code_ts`); ships a `codex-acp` bin.
-    /// Auth is inherited from the host env / `~/.codex` (ChatGPT login or
-    /// `OPENAI_API_KEY`) — see `sanitize_host_env`.
-    ///
-    /// Uses `@agentclientprotocol/codex-acp` (the maintained replacement for the
-    /// deprecated `@zed-industries/codex-acp`). CRITICAL: the old package shipped
-    /// the Codex engine as a platform-specific **optional dependency**
-    /// (`@zed-industries/codex-acp-darwin-arm64`); after an npm/npx cache clear
-    /// npx would silently fail to reinstall that optional binary, and the agent
-    /// crashed on launch with `ERR_MODULE_NOT_FOUND`. The new package has no
-    /// optional platform binary — it depends on `@openai/codex` as a regular
-    /// dependency + a pure-JS `dist/index.js`, so a clean/cold cache installs it
-    /// reliably. Do NOT revert to `@zed-industries/codex-acp`.
-    pub fn codex() -> Self {
-        Self {
-            spec_id: "codex".into(),
-            display_name: "Codex (ACP)".into(),
-            command: "npx -y @agentclientprotocol/codex-acp".into(),
-            help_url: None,
-        }
-    }
-
-    /// OpenCode — the `opencode` CLI speaks ACP natively over stdio via its
-    /// `acp` subcommand (verified live against 1.3.15: protocol v1,
-    /// `loadSession`, session `list`/`resume`/`fork`, image prompts, and a
-    /// `models` blob + `build`/`plan` modes on `session/new`). Auth is the
-    /// user's own `opencode auth login`; unauthenticated installs still work
-    /// with the free OpenCode Zen models. Model selection uses
-    /// `session/set_model` (it does NOT implement `session/set_config_option`)
-    /// — see `AcpBackend::set_session_model`'s fallback.
-    pub fn opencode() -> Self {
-        Self {
-            spec_id: "opencode".into(),
-            display_name: "OpenCode".into(),
-            command: "opencode acp".into(),
-            help_url: None,
-        }
-    }
-
-    /// Cursor — `cursor-agent acp` speaks stock ACP v1 over stdio (verified
-    /// live against 2026.07.23 + the official doc, which names the binary
-    /// `agent`; the installed CLI ships it as `cursor-agent`). Models arrive
-    /// in the `session/new` `models` blob and switch via `session/set_model`
-    /// (its `set_config_option` takes plain-string values our typed request
-    /// can't produce — the backend's set_model fallback covers it). Modes are
-    /// agent/plan/ask. Auth is the user's own `cursor-agent login`
-    /// (method id `cursor_login`); quota exhaustion on free plans arrives as a
-    /// NORMAL assistant message, not an error. Slash commands were never
-    /// observed (`available_commands_update` may simply not fire).
-    pub fn cursor() -> Self {
-        Self {
-            spec_id: "cursor".into(),
-            display_name: "Cursor".into(),
-            command: "cursor-agent acp".into(),
-            help_url: None,
-        }
-    }
-
-    /// Kilo Code — `kilo acp` (npm `@kilocode/cli`, an OpenCode fork) speaks
-    /// ACP v1 as NDJSON over stdio (probed live against 7.4.20). It is on the
-    /// newer config-options dialect: `session/new`/`load` return NO
-    /// `modes`/`models` blobs — modes, models (~300, `provider/model`) and a
-    /// reasoning-effort level all arrive as `configOptions` selects (see
-    /// `schema.rs`'s normalisers). `session/set_mode` and
-    /// `session/set_config_option` both work (the backend's set-model ladder
-    /// succeeds on its first rung). `loadSession: true` with FULL transcript
-    /// replay; ACP session ids are Kilo's real `ses_…` ids
-    /// (`~/.local/share/kilo/kilo.db`). No terminal methods — shell output
-    /// streams as `tool_call_update` content. Auth is the user's own
-    /// `kilo auth login` (method id `kilo-login`); NOTE its `terminal-auth`
-    /// meta still says `command: "opencode"` (fork residue) — never exec it
-    /// verbatim. The embedded HTTP server makes `session/new` take ~1s extra.
-    pub fn kilo() -> Self {
-        Self {
-            spec_id: "kilo".into(),
-            display_name: "Kilo Code".into(),
-            command: "kilo acp".into(),
-            help_url: None,
-        }
-    }
-
-    pub fn all_known() -> Vec<AgentSpec> {
-        vec![
-            Self::claude_code_ts(),
-            Self::claude_code_rs(),
-            Self::codex(),
-            Self::opencode(),
-            Self::cursor(),
-            Self::kilo(),
-        ]
-    }
 }
 
 /// Public view of a spawned agent — what the Tauri layer hands back to the UI.
@@ -265,8 +119,7 @@ impl AgentRegistry {
         Self::default()
     }
 
-    /// Production constructor: first-party specs plus whatever the dynamic
-    /// registry store has installed.
+    /// Production constructor: every spec comes from the registry store.
     pub fn with_spec_source(source: Arc<dyn SpecSource>) -> Self {
         Self {
             inner: Arc::new(DashMap::new()),
@@ -274,31 +127,17 @@ impl AgentRegistry {
         }
     }
 
-    /// First-party specs ∪ dynamic (registry-installed) specs. First-party
-    /// wins on a spec-id collision — a registry install must never shadow a
-    /// built-in agent.
+    /// The installed agents, and nothing else.
     ///
-    /// The one exception is [`AUTO_MANAGED_BUILTIN_IDS`]: those built-ins have
-    /// no npx distribution, so the registry's downloaded binary is strictly
-    /// better than their bare-CLI command and takes over the `command` field
-    /// IN PLACE — same id, same slot, same display name, never a second entry
-    /// for one agent (the plugin catalog keys off `spec_id`). When no binary
-    /// has been acquired the dynamic spec is simply absent and the bare
-    /// command stands, which is the pre-existing behaviour.
+    /// Without a [`SpecSource`] this is empty — which is the correct answer for
+    /// a host that has installed no agents, and the reason a fresh Atlas shows
+    /// only its native agent. Ids are unique by construction (the install store
+    /// is keyed by id), so there is no precedence rule to apply here any more.
     pub fn known_specs(&self) -> Vec<AgentSpec> {
-        let mut specs = AgentSpec::all_known();
-        if let Some(source) = &self.dynamic {
-            for spec in source.extra_specs() {
-                match specs.iter().position(|s| s.spec_id == spec.spec_id) {
-                    Some(i) if AUTO_MANAGED_BUILTIN_IDS.contains(&spec.spec_id.as_str()) => {
-                        specs[i].command = spec.command;
-                    }
-                    Some(_) => {}
-                    None => specs.push(spec),
-                }
-            }
-        }
-        specs
+        self.dynamic
+            .as_ref()
+            .map(|source| source.extra_specs())
+            .unwrap_or_default()
     }
 
     pub fn list(&self) -> Vec<AgentInfo> {
@@ -314,11 +153,7 @@ impl AgentRegistry {
 
     /// Spawn an agent matching `spec_id`. Resolves once the protocol
     /// handshake completes (or fails).
-    pub async fn spawn(
-        &self,
-        spec_id: &str,
-        sink: Arc<dyn EventSink>,
-    ) -> Result<AgentInfo> {
+    pub async fn spawn(&self, spec_id: &str, sink: Arc<dyn EventSink>) -> Result<AgentInfo> {
         let spec = self
             .known_specs()
             .into_iter()
@@ -388,15 +223,7 @@ impl AgentRegistry {
         })
         .await?;
         self.register_session(agent_id, resp.session_id.clone())?;
-        let session_id = resp.session_id.clone();
-        let mut info: NewSessionInfo = resp.into();
-        // Agents still on the pre-config-options dialect (OpenCode, Cursor)
-        // answer with a top-level `models` blob that the typed
-        // `NewSessionResponse` drops on the floor — without this their model
-        // picker never renders. Recover it from the raw wire.
-        if info.models.is_none() {
-            info.models = self.take_sniffed_models(agent_id, session_id.0.as_ref());
-        }
+        let info: NewSessionInfo = resp.into();
         // Diagnostic: surface what the agent advertised for model selection, so a
         // missing model picker can be diagnosed (agent didn't send `models` vs.
         // a parse gap). Logs once per new session.
@@ -469,24 +296,9 @@ impl AgentRegistry {
 
     /// Install a lifecycle guard for a session. Idempotent — if a
     /// guard for this session already exists, the call is a no-op.
-    /// Collect the legacy `models` blob the driver's wire tap captured for this
-    /// session, if the agent sent one. `None` for agents on the config-options
-    /// dialect (whose models come through the typed response) and for agents
-    /// with no model selection at all.
-    fn take_sniffed_models(&self, agent_id: AgentId, session_id: &str) -> Option<serde_json::Value> {
-        self.inner
-            .get(&agent_id)?
-            .runtime
-            .model_sniffer
-            .take(session_id)
-    }
-
     /// Called from `new_session` / `load_session`.
     pub fn register_session(&self, agent_id: AgentId, session_id: SessionId) -> Result<()> {
-        let entry = self
-            .inner
-            .get(&agent_id)
-            .ok_or(AcpError::UnknownAgent)?;
+        let entry = self.inner.get(&agent_id).ok_or(AcpError::UnknownAgent)?;
         entry
             .runtime
             .session_guards
@@ -500,10 +312,7 @@ impl AgentRegistry {
     /// agent kill) so the driver's gates drop any further inbound
     /// traffic for this id.
     pub fn drop_session(&self, agent_id: AgentId, session_id: &SessionId) -> Result<()> {
-        let entry = self
-            .inner
-            .get(&agent_id)
-            .ok_or(AcpError::UnknownAgent)?;
+        let entry = self.inner.get(&agent_id).ok_or(AcpError::UnknownAgent)?;
         entry.runtime.session_guards.remove(session_id);
         Ok(())
     }
@@ -515,15 +324,8 @@ impl AgentRegistry {
     /// Returns the new turn epoch — the driver stamps it onto every
     /// event it emits for this session, and the actor matches the
     /// stamps against this value to drop stale-turn stragglers.
-    pub fn mark_turn_started(
-        &self,
-        agent_id: AgentId,
-        session_id: &SessionId,
-    ) -> Result<u64> {
-        let entry = self
-            .inner
-            .get(&agent_id)
-            .ok_or(AcpError::UnknownAgent)?;
+    pub fn mark_turn_started(&self, agent_id: AgentId, session_id: &SessionId) -> Result<u64> {
+        let entry = self.inner.get(&agent_id).ok_or(AcpError::UnknownAgent)?;
         if let Some(guard) = entry.runtime.session_guards.get(session_id) {
             return Ok(guard.mark_turn_started());
         }
@@ -667,20 +469,32 @@ impl AgentRegistry {
     /// Set a session config option (`session/set_config_option`) — the current
     /// mechanism Claude Code / Codex use for model (config_id "model"), effort,
     /// etc. `value` is the option's selected value id.
+    /// Set one of the agent's advertised config options.
+    ///
+    /// `value` is the raw JSON the UI produced, mapped onto the wire shape ACP
+    /// defines: a JSON bool becomes a `boolean` value, anything else becomes a
+    /// `value_id` (the form every id-based option kind — `select`, `radio`, … —
+    /// uses). The option ids and their legal values come from the agent's own
+    /// `config_options` advertisement; Atlas never enumerates them.
     pub async fn set_session_config_option(
         &self,
         agent_id: AgentId,
         session_id: SessionId,
         config_id: &str,
-        value: String,
+        value: serde_json::Value,
     ) -> Result<()> {
         let connection = self.connection(agent_id)?;
+        let wire = match &value {
+            serde_json::Value::Bool(b) => SessionConfigOptionValue::boolean(*b),
+            serde_json::Value::String(s) => SessionConfigOptionValue::value_id(s.clone()),
+            other => SessionConfigOptionValue::value_id(other.to_string()),
+        };
         rpc_timeout("session/set_config_option", TUNING_RPC_SECS, async {
             connection
                 .send_request(SetSessionConfigOptionRequest::new(
                     session_id,
                     config_id.to_string(),
-                    SessionConfigOptionValue::value_id(value),
+                    wire,
                 ))
                 .block_task()
                 .await?;
@@ -703,10 +517,7 @@ impl AgentRegistry {
     ///    turn and replies to `send_prompt` with
     ///    `StopReason::Cancelled` per ACP spec.
     pub fn cancel_turn(&self, agent_id: AgentId, session_id: SessionId) -> Result<()> {
-        let entry = self
-            .inner
-            .get(&agent_id)
-            .ok_or(AcpError::UnknownAgent)?;
+        let entry = self.inner.get(&agent_id).ok_or(AcpError::UnknownAgent)?;
         if let Some(guard) = entry.runtime.session_guards.get(&session_id) {
             guard.mark_cancelled();
         }
@@ -716,8 +527,7 @@ impl AgentRegistry {
             .retain(|_, p| p.session_id != session_id);
         let connection = entry.runtime.connection.clone();
         drop(entry);
-        connection
-            .send_notification(CancelNotification::new(session_id))?;
+        connection.send_notification(CancelNotification::new(session_id))?;
         Ok(())
     }
 
@@ -726,11 +536,7 @@ impl AgentRegistry {
     /// `Cancelled`, so the agent gets a clean outcome for each in-flight
     /// request (ACP spec). Called by the session actor when a turn
     /// finalizes, so no modal survives its turn (H6/M3).
-    pub fn take_pending_permissions(
-        &self,
-        agent_id: AgentId,
-        session_id: &SessionId,
-    ) -> Vec<Uuid> {
+    pub fn take_pending_permissions(&self, agent_id: AgentId, session_id: &SessionId) -> Vec<Uuid> {
         let Some(entry) = self.inner.get(&agent_id) else {
             return Vec::new();
         };
@@ -754,10 +560,7 @@ impl AgentRegistry {
         request_id: Uuid,
         outcome: PermissionDecision,
     ) -> Result<()> {
-        let entry = self
-            .inner
-            .get(&agent_id)
-            .ok_or(AcpError::UnknownAgent)?;
+        let entry = self.inner.get(&agent_id).ok_or(AcpError::UnknownAgent)?;
         let (_, pending) = entry
             .runtime
             .pending_permissions
@@ -776,11 +579,11 @@ impl AgentRegistry {
         Ok(())
     }
 
-    fn connection(&self, agent_id: AgentId) -> Result<agent_client_protocol::ConnectionTo<agent_client_protocol::Agent>> {
-        let entry = self
-            .inner
-            .get(&agent_id)
-            .ok_or(AcpError::UnknownAgent)?;
+    fn connection(
+        &self,
+        agent_id: AgentId,
+    ) -> Result<agent_client_protocol::ConnectionTo<agent_client_protocol::Agent>> {
+        let entry = self.inner.get(&agent_id).ok_or(AcpError::UnknownAgent)?;
         Ok(entry.runtime.connection.clone())
     }
 
@@ -788,10 +591,7 @@ impl AgentRegistry {
     /// Empty if the agent doesn't support any (or didn't run `initialize`
     /// successfully — though spawn would have errored in that case).
     pub fn auth_methods(&self, agent_id: AgentId) -> Result<Vec<AuthMethodWire>> {
-        let entry = self
-            .inner
-            .get(&agent_id)
-            .ok_or(AcpError::UnknownAgent)?;
+        let entry = self.inner.get(&agent_id).ok_or(AcpError::UnknownAgent)?;
         Ok(entry.runtime.auth_methods.clone())
     }
 }
@@ -830,59 +630,52 @@ mod spec_source_tests {
     }
 
     #[test]
-    fn known_specs_is_first_party_only_without_a_source() {
-        let registry = AgentRegistry::new();
-        let ids: Vec<String> = registry.known_specs().into_iter().map(|s| s.spec_id).collect();
-        assert_eq!(
-            ids,
-            AgentSpec::all_known().into_iter().map(|s| s.spec_id).collect::<Vec<_>>()
-        );
+    fn a_host_with_no_registry_source_can_spawn_nothing() {
+        // The fresh-install invariant: Atlas ships zero built-in ACP agents, so
+        // with no install store wired up there is nothing to spawn. Anything
+        // that reintroduces a hardcoded agent table fails here.
+        assert!(AgentRegistry::new().known_specs().is_empty());
     }
 
     #[test]
-    fn known_specs_unions_dynamic_specs() {
+    fn known_specs_is_exactly_what_the_registry_installed() {
         let registry = AgentRegistry::with_spec_source(Arc::new(FakeSource(vec![
             external("amp-acp"),
+            external("claude-acp"),
         ])));
-        let ids: Vec<String> = registry.known_specs().into_iter().map(|s| s.spec_id).collect();
-        assert!(ids.contains(&"amp-acp".to_string()));
-        assert_eq!(ids.len(), AgentSpec::all_known().len() + 1);
+        let mut ids: Vec<String> = registry
+            .known_specs()
+            .into_iter()
+            .map(|s| s.spec_id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec!["amp-acp".to_string(), "claude-acp".to_string()]);
     }
 
     #[test]
-    fn first_party_wins_on_spec_id_collision() {
-        // A registry install must never shadow a built-in agent's command.
-        let registry = AgentRegistry::with_spec_source(Arc::new(FakeSource(vec![
-            external("codex"),
-        ])));
-        let specs = registry.known_specs();
-        let codex: Vec<&AgentSpec> = specs.iter().filter(|s| s.spec_id == "codex").collect();
-        assert_eq!(codex.len(), 1);
-        assert_eq!(codex[0].command, AgentSpec::codex().command);
+    fn no_agent_id_gets_special_precedence() {
+        // The ids Atlas used to hardcode as built-ins are now ordinary registry
+        // entries: their command comes from the install record like any other
+        // agent's, with no first-party table shadowing it.
+        for id in [
+            "claude-acp",
+            "codex-acp",
+            "cursor",
+            "opencode",
+            "kilo",
+            "gemini",
+        ] {
+            let registry =
+                AgentRegistry::with_spec_source(Arc::new(FakeSource(vec![external(id)])));
+            let specs = registry.known_specs();
+            assert_eq!(specs.len(), 1, "{id} must resolve to exactly one spec");
+            assert_eq!(specs[0].command, format!("npx -y {id}"));
+        }
     }
 
     #[test]
-    fn auto_managed_builtin_takes_the_dynamic_command_in_place() {
-        // cursor/opencode/kilo have no npx distribution, so the registry's
-        // downloaded binary replaces the bare CLI — but stays ONE entry with
-        // the built-in's own display name.
-        let registry = AgentRegistry::with_spec_source(Arc::new(FakeSource(vec![
-            external("cursor"),
-        ])));
-        let specs = registry.known_specs();
-        let cursor: Vec<&AgentSpec> = specs.iter().filter(|s| s.spec_id == "cursor").collect();
-        assert_eq!(cursor.len(), 1);
-        assert_eq!(cursor[0].command, "npx -y cursor");
-        assert_eq!(cursor[0].display_name, AgentSpec::cursor().display_name);
-        assert_eq!(specs.len(), AgentSpec::all_known().len());
-    }
-
-    #[test]
-    fn auto_managed_builtin_keeps_bare_command_without_a_dynamic_spec() {
-        // Nothing acquired (offline / no manifest) → pre-existing behaviour.
+    fn an_uninstalled_agent_is_not_spawnable() {
         let registry = AgentRegistry::with_spec_source(Arc::new(FakeSource(vec![])));
-        let specs = registry.known_specs();
-        let cursor = specs.iter().find(|s| s.spec_id == "cursor").unwrap();
-        assert_eq!(cursor.command, "cursor-agent acp");
+        assert!(registry.known_specs().iter().all(|s| s.spec_id != "cursor"));
     }
 }

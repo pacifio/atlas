@@ -46,7 +46,6 @@ import { pruneContextUsageCache } from "@/features/chat/lib/context-usage-cache"
 import { isScrollHot } from "@/lib/scroll-hot";
 import { hydrateAgentRegistry } from "@/features/agents/stores/agent-registry-store";
 import { AgentLoginDialogHost } from "@/features/chat/components/agent-login-dialog";
-import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
 import {
   isPermissionGranted,
@@ -103,10 +102,9 @@ export function App() {
     // missing or too old, the store auto-installs the latest LTS via the
     // bundled nvm in the background and re-runs ACP discovery when ready.
     void useNodeSetupStore.getState().actions.check();
-    void useClaudeSetupStore.getState().actions.refreshStatus();
-    // Agent identity registry (first-party + registry-installed externals):
-    // hydrate once so pickers/glyphs/memory dropdown resolve external
-    // metadata; the marketplace re-hydrates after installs.
+    // Agent identity registry (the native agent + registry-installed agents):
+    // hydrate once so pickers/glyphs/memory dropdown resolve agent metadata;
+    // the marketplace re-hydrates after installs.
     void hydrateAgentRegistry();
   }, []);
 

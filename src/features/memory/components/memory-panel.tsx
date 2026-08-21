@@ -276,6 +276,10 @@ function isDynamicAgentSub(sub: string): boolean {
  *  fixed dropdown entries — everything else in `capture_agent_session_counts`
  *  is a dynamic (external) agent. */
 const FIRST_PARTY_PLUGIN_IDS = new Set([
+  // Canonical registry ids (what capture stamps since the ACP port), plus the
+  // pre-port ids so old capture rows don't resurface as duplicate entries.
+  "claude-acp",
+  "codex-acp",
   "claude-code-ts",
   "claude-code-rs",
   "codex",

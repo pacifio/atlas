@@ -104,7 +104,7 @@ pub fn resolve_program_abs(program: &str) -> Option<String> {
 /// login-only `-lc` probe reads `.zprofile`/`.zlogin` but skips `.zshrc`, so
 /// the bundled app couldn't find `opencode` even though the terminal (and
 /// `tauri dev`) could — agent worked in dev, ENOENT in production. Mirrors
-/// `claude_setup::resolve_cli`, which already probes with `-lic` for the same
+/// the CLI probes, which already use `-lic` for the same
 /// reason. Interactive rcs can print noise; callers must parse defensively
 /// (last line / filtered entries).
 fn probe_shell(
@@ -205,8 +205,10 @@ fn shell_quote(s: &str) -> String {
 /// surfaces the underlying error (instead of the old "driver task panicked
 /// before initialize" mask), but a bare "No such file or directory (os error
 /// 2)" still doesn't tell the user that the missing thing is the runtime the
-/// agent needs. The default agents launch via `npx`, so an ENOENT almost always
-/// means Node.js isn't installed (or isn't on the GUI app's PATH).
+/// agent needs. Most registry agents launch via `npx` (or `uvx`), so an ENOENT
+/// almost always means that runtime isn't installed (or isn't on the GUI app's
+/// PATH). Everything else is answered from the agent's own registry metadata —
+/// there are no per-agent hints, because there are no per-agent agents.
 pub(crate) fn explain_spawn_failure(spec: &AgentSpec, err: AcpError) -> AcpError {
     let raw = err.to_string();
     let looks_missing = raw.contains("os error 2")
@@ -228,23 +230,6 @@ pub(crate) fn explain_spawn_failure(spec: &AgentSpec, err: AcpError) -> AcpError
         "Node.js (which provides `npx`) was not found. Install Node.js \
          (https://nodejs.org) and relaunch Atlas. If it is installed, make sure \
          it is on your login shell's PATH."
-    // The three auto-managed built-ins (AUTO_MANAGED_BUILTIN_IDS). Reaching
-    // this branch means the managed download did NOT happen — Atlas normally
-    // fetches these itself at spawn, so the actionable advice is "check your
-    // connection", not "go install it" (though installing the CLI by hand
-    // still works: a PATH binary is used when no managed one is available).
-    } else if program == "opencode" {
-        "OpenCode could not be set up. Atlas downloads it automatically — check \
-         your internet connection and try again. You can also install it \
-         yourself from https://opencode.ai. Sign in with `opencode auth login`."
-    } else if program == "cursor-agent" {
-        "Cursor could not be set up. Atlas downloads it automatically — check \
-         your internet connection and try again. You can also install the CLI \
-         yourself from https://cursor.com/cli. Sign in with `cursor-agent login`."
-    } else if program == "kilo" {
-        "Kilo Code could not be set up. Atlas downloads it automatically — check \
-         your internet connection and try again. You can also install it with \
-         `npm install -g @kilocode/cli`. Sign in with `kilo auth login`."
     } else if program == "uvx" {
         "uv (which provides `uvx`) was not found. Install uv \
          (https://docs.astral.sh/uv) and relaunch Atlas."
@@ -308,7 +293,7 @@ fn enrich_path() {
     //    guesses in pass 1 can't cover every version manager. The login shell
     //    resolves PATH exactly the way the user's terminal does (which is why
     //    `tauri dev` from a terminal "just works" but the bundled app didn't).
-    //    Mirrors `commands::claude_setup::resolve_cli`, but applied process-wide
+    //    Same probe the CLI resolvers use, but applied process-wide
     //    so the ACP agent spawn — not just `claude_status` — benefits.
     //
     // 3. The `~/.nvm/versions/node/*` enumeration on a background thread, kept

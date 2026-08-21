@@ -1,18 +1,21 @@
-// Sign-in for the auto-managed built-ins (cursor / opencode / kilo).
+// The ONE sign-in flow, for every ACP agent.
 //
-// Claude and Codex each own a bespoke sign-in surface (the login dialog and the
-// Codex pill). These three had none: an unauthenticated agent answered every
-// prompt with a raw `Authentication required` protocol error and there was no
-// way to act on it — their CLI lives in Atlas's app-data dir, not on PATH, so
-// "run `cursor-agent login`" was advice the user could not follow.
+// No agent has a bespoke auth surface any more. The ladder is whatever the
+// agent itself advertised in its `initialize` response:
 //
-// The flow mirrors what the adapters ask for: run the CLI's own login (opens
-// the browser, streamed through `atlas:auth-run:*`), then call ACP
-// `authenticate()` on the live agent so the already-running session picks the
-// new credentials up without a respawn.
+//   1. A method carrying `_meta.terminal-auth` → run exactly the command the
+//      agent declared (browser flow, streamed through `atlas:auth-run:*`),
+//      then call ACP `authenticate()` so the live session re-reads the fresh
+//      credentials without a respawn.
+//   2. A method without one → call `authenticate()` directly; anything the
+//      agent still needs (device code, URL) arrives as an elicitation and is
+//      answered in the shared elicitation modal.
+//
+// Atlas never guesses a CLI's login invocation. An agent that wants a terminal
+// login says so on the wire.
 
 import { agents, ensureAgent, listenAuthRunDone } from "./agents-api";
-import { isOptionalBuiltinAgent, pluginIdForAgent } from "@/types/agent";
+import { NATIVE_AGENT, pluginIdForAgent } from "@/types/agent";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
 
 /** Resolves when the login subprocess exits. `agents.runAuthMethod` returns as
@@ -69,13 +72,10 @@ export async function signInToAgent(agentType: string): Promise<void> {
   const label = agentMeta(agentType).label;
   const agent = await ensureAgent(pluginIdForAgent(agentType));
   const methods = await agents.listAuthMethods(agent.agent_id);
-  const method = methods[0];
+  // Prefer a method the agent gave us a runnable command for; otherwise take
+  // the first one and let `authenticate()` drive it.
+  const method = methods.find((m) => m.terminalCommand) ?? methods[0];
   if (!method) throw new Error(`${label} didn't offer a sign-in method.`);
-  if (!method.terminalCommand) {
-    throw new Error(
-      `${label} can't be signed in from Atlas yet — its adapter offered no login command.`,
-    );
-  }
   await runSignInMethod(agent.agent_id, method, label);
 }
 
@@ -98,9 +98,12 @@ export function isAuthError(err: unknown): boolean {
   );
 }
 
-/** True when `agentType` is one Atlas can drive a sign-in for. */
+/** True when `agentType` is one Atlas can drive a sign-in for — i.e. any ACP
+ *  agent. The native in-process agent has no external account to sign in to.
+ *  Whether a given agent actually offers methods is answered by the agent, at
+ *  the point the modal asks it; there is no id list here. */
 export function canSignIn(agentType: string | undefined): boolean {
-  return !!agentType && isOptionalBuiltinAgent(agentType);
+  return !!agentType && agentType !== NATIVE_AGENT;
 }
 
 // ── Sign-in dialog plumbing ─────────────────────────────────────────────────

@@ -1,10 +1,11 @@
 //! Plugin descriptors. Each describes a spawnable agent and how Atlas should
 //! treat its persistent transcripts.
 //!
-//! v1 wraps `atlas_acp::AgentRegistry::known_specs()` — the underlying process
-//! commands still live in atlas-acp. atlas-agents adds metadata (transcript
-//! kind, capability flags) and the manager surface above it. New plugins
-//! (codex, opencode) plug in by adding entries to both lists.
+//! Wraps `atlas_acp::AgentRegistry::known_specs()` — i.e. whatever the user
+//! installed from the ACP registry — and adds Atlas metadata (transcript kind,
+//! capability flags) on top. There is no plugin list to add to: an ACP agent
+//! enters the catalog by being installed, and the only entry not sourced that
+//! way is the native in-process agent appended at the end.
 
 use serde::{Deserialize, Serialize};
 
@@ -21,8 +22,8 @@ pub struct PluginSpec {
     pub supports_modes: bool,
     /// Whether the agent supports `session/set_model` style notifications.
     pub supports_models: bool,
-    /// True for registry-installed third-party agents (anything not in
-    /// `atlas_acp::AgentSpec::all_known()` and not the native cersei agent).
+    /// True for every ACP agent (all of which are registry-installed), false
+    /// only for the native in-process agent.
     #[serde(default)]
     pub external: bool,
 }
@@ -39,14 +40,10 @@ pub enum TranscriptKind {
     CerseiJson,
 }
 
-/// Plugin catalog: first-party specs, registry-installed externals (via the
-/// registry's `SpecSource` wired into `acp`), and the native cersei agent.
-/// First-party additions still go through `atlas_acp::AgentSpec::all_known()`.
+/// Plugin catalog: every registry-installed ACP agent, plus the native cersei
+/// agent. Nothing here is hardcoded — an empty install store yields a catalog
+/// of exactly one entry, the native agent.
 pub fn builtin_plugins(acp: &atlas_acp::AgentRegistry) -> Vec<PluginSpec> {
-    let first_party: Vec<String> = atlas_acp::AgentSpec::all_known()
-        .into_iter()
-        .map(|s| s.spec_id)
-        .collect();
     let mut plugins: Vec<PluginSpec> = acp
         .known_specs()
         .into_iter()
@@ -57,7 +54,7 @@ pub fn builtin_plugins(acp: &atlas_acp::AgentRegistry) -> Vec<PluginSpec> {
             transcript: classify_transcript(&s.spec_id),
             supports_modes: true,
             supports_models: true,
-            external: !first_party.iter().any(|id| id == &s.spec_id),
+            external: true,
         })
         .collect();
     // The native in-process agent (no subprocess command).
@@ -77,6 +74,10 @@ pub fn find_plugin(acp: &atlas_acp::AgentRegistry, plugin_id: &str) -> Option<Pl
     builtin_plugins(acp).into_iter().find(|p| p.plugin_id == plugin_id)
 }
 
+/// Which on-disk transcript format (if any) an agent writes. This is a
+/// capability question, not an identity one: any adapter fronting the Claude
+/// Code CLI writes the canonical `~/.claude/projects` JSONL, whatever id the
+/// registry gives it.
 fn classify_transcript(spec_id: &str) -> TranscriptKind {
     if spec_id.starts_with("claude") {
         TranscriptKind::ClaudeJsonl

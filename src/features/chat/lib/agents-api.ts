@@ -109,7 +109,6 @@ export const agents = {
 };
 
 /** Whether Codex has stored credentials (`~/.codex/auth.json`). */
-export const codexStatus = (): Promise<boolean> => invoke<boolean>("codex_status");
 
 export const listenAuthRunDone = (handler: (p: AuthRunDone) => void): Promise<UnlistenFn> =>
   listen<AuthRunDone>("atlas:auth-run:done", (e) => handler(e.payload));
@@ -122,18 +121,14 @@ export const listenAgents = (handler: (env: AgentDelta) => void): Promise<Unlist
   listen<AgentDelta>("atlas:agents", (e) => handler(e.payload));
 
 // ── Lazy per-agent registry ─────────────────────────────────────────────────
-// One shared live process PER pluginId. App.tsx pre-spawns the default so the
-// first prompt doesn't pay npx/node cold-start (10–30s); a chat bound to a
-// different agent (e.g. Codex) spawns that agent the first time it's used.
+// One shared live process PER pluginId, spawned the first time a chat binds to
+// that agent. Nothing is pre-spawned by id: an agent Atlas has not been asked
+// for is an agent Atlas does not start.
 
-/** The coding agents Atlas ships. claude is the default for new chats.
- *  Kept in sync with `PLUGIN_ID_BY_AGENT` in `src/types/agent.ts` — prefer
- *  `pluginIdForAgent(agentType)` over these constants for routing. */
-export const DEFAULT_PLUGIN_ID = "claude-code-ts";
-export const CODEX_PLUGIN_ID = "codex";
-export const OPENCODE_PLUGIN_ID = "opencode";
-export const CURSOR_PLUGIN_ID = "cursor";
-/** Atlas's native in-process agent (atlas-cersei). */
+/** Atlas's native in-process agent (atlas-cersei) — the only plugin id the
+ *  frontend may name, because it is the only agent that always exists. Every
+ *  other agent id comes from the registry at runtime; route through
+ *  `pluginIdForAgent(agentType)`, never a hardcoded constant. */
 export const CERSEI_PLUGIN_ID = "cersei";
 
 const agentPromises = new Map<string, Promise<AgentInfo>>();
@@ -192,6 +187,6 @@ export function resetAgent(pluginId?: string): void {
   }
 }
 
-// Back-compat thin wrappers (default = Claude) for existing callers.
-export const ensureDefaultAgent = (): Promise<AgentInfo> => ensureAgent(DEFAULT_PLUGIN_ID);
-export const getDefaultAgentSync = (): AgentInfo | null => getAgentSync(DEFAULT_PLUGIN_ID);
+/** The agent a caller gets when it has no agent in hand: the native one. */
+export const ensureDefaultAgent = (): Promise<AgentInfo> => ensureAgent(CERSEI_PLUGIN_ID);
+export const getDefaultAgentSync = (): AgentInfo | null => getAgentSync(CERSEI_PLUGIN_ID);

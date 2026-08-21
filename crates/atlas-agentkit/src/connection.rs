@@ -48,6 +48,9 @@ pub trait AgentConnection: Send + Sync {
     fn session_modes(&self) -> Option<Arc<dyn SessionModes>> {
         None
     }
+    fn session_config_options(&self) -> Option<Arc<dyn SessionConfigOptions>> {
+        None
+    }
     fn effort_control(&self) -> Option<Arc<dyn EffortControl>> {
         None
     }
@@ -70,6 +73,19 @@ pub trait ModelSelector: Send + Sync {
 #[async_trait]
 pub trait SessionModes: Send + Sync {
     async fn set(&self, session: &SessionId, mode_id: String) -> Result<()>;
+}
+
+/// Set one of the agent's advertised `session/set_config_option` values.
+///
+/// This is ACP's GENERAL settings mechanism — modes and models are just two
+/// well-known option ids, and an agent may advertise any number of others
+/// (reasoning effort, thinking budget, sandbox policy…). Zed's equivalent is
+/// `AgentSessionConfigOptions`, and like Zed we treat the option list the
+/// agent publishes as authoritative rather than enumerating ids ourselves.
+#[async_trait::async_trait]
+pub trait SessionConfigOptions: Send + Sync {
+    async fn set(&self, session: &SessionId, option_id: String, value: serde_json::Value)
+    -> Result<()>;
 }
 
 /// Set the reasoning-effort / thinking-budget level (native agent only today).

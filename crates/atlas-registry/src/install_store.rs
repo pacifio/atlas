@@ -42,6 +42,19 @@ pub struct InstalledAgent {
     /// Set instead of removing the row — see module docs.
     #[serde(default)]
     pub uninstalled_at: Option<String>,
+    /// User-supplied env overrides for this agent, layered ON TOP of the
+    /// registry manifest's env and Atlas's BYOK keys (Zed's
+    /// `CustomAgentServerSettings::{Custom,Registry}.env`). Empty by default.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// A user-defined **custom** agent: an arbitrary program that speaks ACP
+    /// over stdio, with no registry entry behind it (Zed's `Custom` settings
+    /// variant / `LocalCustomAgent`). When set it bypasses `distribution`
+    /// entirely. `None` = an ordinary registry install.
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
     /// Populated after a binary distribution's download+extract completes.
     /// `None` = npx/uvx distribution (nothing cached locally) or a binary
     /// install that was interrupted (self-healed at next spawn).
@@ -106,6 +119,9 @@ mod tests {
                 repository: None,
                 website: None,
                 distribution: Distribution::default(),
+                env: HashMap::new(),
+                command: None,
+                args: Vec::new(),
                 installed_at: "2026-08-14T00:00:00Z".into(),
                 uninstalled_at: None,
                 resolved_binary: None,

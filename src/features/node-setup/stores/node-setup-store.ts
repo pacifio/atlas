@@ -13,7 +13,6 @@
 import { create } from "zustand";
 import { createSelectors } from "@/lib/create-selectors";
 import { resetAgent } from "@/features/chat/lib/agents-api";
-import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import { logEvent } from "@/features/log/lib/log";
 import {
   nodeSetup,
@@ -134,7 +133,6 @@ export const useNodeSetupStore = createSelectors(
           // Node now resolvable (registered as managed bin in Rust). Drop any
           // cached/failed agent spawns and re-run ACP discovery.
           resetAgent();
-          void useClaudeSetupStore.getState().actions.refreshStatus();
           setTimeout(() => set({ phase: "ok", reason: null }), SUCCESS_FLASH_MS);
         } else {
           logEvent({

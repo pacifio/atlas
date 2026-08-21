@@ -6,7 +6,6 @@ pub mod app_state;
 pub mod browser;
 pub mod byok;
 pub mod cersei;
-pub mod claude_setup;
 pub mod node_setup;
 pub mod cli;
 pub mod modelchat;

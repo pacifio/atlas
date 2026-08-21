@@ -44,6 +44,10 @@ impl SessionHandle {
         self.control(Control::SetModel(model_id))
     }
 
+    pub fn set_config_option(&self, option_id: String, value: serde_json::Value) -> Result<()> {
+        self.control(Control::SetConfigOption(option_id, value))
+    }
+
     pub fn set_effort(&self, effort: String) -> Result<()> {
         self.control(Control::SetEffort(effort))
     }

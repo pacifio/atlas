@@ -243,9 +243,17 @@ fn apply_session_update(
             else {
                 return;
             };
-            let mut st = state.lock();
-            st.config_options = options;
-            st.touch();
+            let (agent_id, sid) = {
+                let mut st = state.lock();
+                st.config_options = options.clone();
+                st.touch();
+                (st.agent_id, st.session_id.clone())
+            };
+            emitter.emit(SessionDeltaEnvelope {
+                agent_id,
+                session_id: sid,
+                delta: SessionDelta::ConfigOptionsUpdated { options },
+            });
         }
         "agent_thought_chunk" => {
             let Some(content) = v.get("content") else {
@@ -640,6 +648,90 @@ mod tests {
             "claude-code".into(),
         ));
         (emitter, state)
+    }
+
+    /// A sink that records every delta, for assertions about what the UI sees.
+    #[derive(Default)]
+    struct RecordingSink(Mutex<Vec<SessionDelta>>);
+    impl DeltaSink for RecordingSink {
+        fn emit(&self, envelope: SessionDeltaEnvelope) {
+            self.0.lock().push(envelope.delta);
+        }
+    }
+
+    fn recording_session() -> (Emitter, Mutex<SessionState>, Arc<RecordingSink>) {
+        let sink = Arc::new(RecordingSink::default());
+        let emitter = Emitter::new(sink.clone());
+        let state = Mutex::new(SessionState::new(
+            AgentId(uuid::Uuid::nil()),
+            "sess-1".into(),
+            "/tmp/project".into(),
+            "some-agent".into(),
+        ));
+        (emitter, state, sink)
+    }
+
+    #[test]
+    fn a_config_option_update_reaches_the_ui_and_the_snapshot() {
+        // ACP's general settings mechanism. Before this the host stored the
+        // options for the snapshot but emitted nothing, so an option changed
+        // inside the agent (a `/model`, a thinking toggle) never repainted the
+        // composer. Whatever the agent publishes is forwarded verbatim —
+        // Atlas enumerates no option ids.
+        //
+        // The payload is the exact ACP v1 wire shape (`SessionConfigOption`:
+        // flattened `type`, `currentValue` for both kinds, `options` for a
+        // select). That precision matters: the schema deserializes the list
+        // with `DefaultOnError`, so a single wrong field name silently yields
+        // an EMPTY list instead of an error.
+        let (emitter, state, sink) = recording_session();
+
+        apply_session_update(
+            &emitter,
+            &state,
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "config_option_update",
+                "configOptions": [
+                    {
+                        "id": "reasoning-effort",
+                        "name": "Reasoning",
+                        "type": "select",
+                        "currentValue": "high",
+                        "options": [
+                            { "value": "low", "name": "Low" },
+                            { "value": "high", "name": "High" },
+                        ],
+                    },
+                    {
+                        "id": "thinking",
+                        "name": "Thinking",
+                        "type": "boolean",
+                        "currentValue": true,
+                    },
+                ],
+            }))
+            .expect("config_option_update decodes"),
+        );
+
+        // Snapshot side (resume / late-binding readers).
+        assert_eq!(state.lock().config_options.len(), 2);
+
+        // Live side (the composer pills).
+        let deltas = sink.0.lock();
+        let options = deltas
+            .iter()
+            .find_map(|d| match d {
+                SessionDelta::ConfigOptionsUpdated { options } => Some(options.clone()),
+                _ => None,
+            })
+            .expect("a ConfigOptionsUpdated delta was emitted");
+        assert_eq!(options.len(), 2);
+        // An option id Atlas has never heard of survives with its choices.
+        assert_eq!(options[0]["id"], "reasoning-effort");
+        assert_eq!(options[0]["currentValue"], "high");
+        assert_eq!(options[0]["options"][1]["value"], "high");
+        // Both option kinds report state under the same `currentValue` key.
+        assert_eq!(options[1]["currentValue"], true);
     }
 
     /// Read the single tool call back out of the session state.

@@ -35,7 +35,7 @@ import {
   useState,
 } from "react";
 import type { ChatMessage } from "@/types/agent";
-import { type SwitchableAgent } from "@/types/agent";
+import { NATIVE_AGENT, type SwitchableAgent } from "@/types/agent";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
 import { AgentIcons, ExternalAgentIcon, AgentMonogram } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
@@ -106,29 +106,19 @@ const BOTTOM_GAP = 28;
 const STICKY_SETTLE_MS = 4000;
 
 function switchable(agentType: string | undefined): SwitchableAgent {
-  if (
-    agentType === "codex" ||
-    agentType === "opencode" ||
-    agentType === "cursor" ||
-    agentType === "kilo" ||
-    agentType === "cersei"
-  )
-    return agentType;
-  if (!agentType || agentType === "custom" || agentType.startsWith("claude")) return "claude-code";
-  // Registry-installed external agent — identity passes through.
-  return agentType;
+  return agentType || NATIVE_AGENT;
 }
 
-/** Resolved ONCE per thread and handed to every row as a stable element — a
- *  session's agent never changes mid-thread, so deriving this per row would be
- *  pure per-row cost in the scroll path. */
-const AGENT_ICON: Record<SwitchableAgent, React.ReactNode> = {
-  codex: <AgentIcons.Codex className="size-3.5 text-[var(--text-secondary)]" />,
+/** Brand glyphs Atlas draws itself, keyed by canonical registry id. Any other
+ *  installed agent falls through to the generic mark — this map is decoration,
+ *  not a list of supported agents. */
+const AGENT_ICON: Partial<Record<string, React.ReactNode>> = {
+  "codex-acp": <AgentIcons.Codex className="size-3.5 text-[var(--text-secondary)]" />,
   opencode: <AgentIcons.OpenCode className="size-3.5 text-[var(--text-secondary)]" />,
   cursor: <AgentIcons.Cursor className="size-3.5 text-[var(--text-secondary)]" />,
   kilo: <AgentIcons.Kilo className="size-3.5 text-[var(--text-secondary)]" />,
   cersei: <AtlasIcon size={14} />,
-  "claude-code": <AgentIcons.Claude className="size-3.5 text-[var(--text-secondary)]" />,
+  "claude-acp": <AgentIcons.Claude className="size-3.5 text-[var(--text-secondary)]" />,
 };
 
 export interface TranscriptHandle {

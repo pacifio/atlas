@@ -22,6 +22,8 @@ tracing = "0.1"
 dirs = "6"
 
 [dev-dependencies]
+atlas-registry = { path = "../atlas-registry" }
+atlas-checkpoint = { path = "../atlas-checkpoint" }
 # `test-util` unlocks tokio's paused-clock helpers (pause/advance) so the
 # finalize backstop timer can be tested deterministically without real waits.
 tokio = { version = "1", features = ["full", "test-util"] }

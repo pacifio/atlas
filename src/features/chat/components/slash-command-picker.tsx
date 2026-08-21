@@ -18,9 +18,9 @@ import { cn } from "@/lib/utils";
 
 /** Where the command is dispatched.
  *
- * - `atlas-login` / `codex-login` — opens Atlas's own sign-in dialog for the
- *   bound agent (the ACP adapter filters `/login` from its slash list, so
- *   sending it as text is a no-op; we drive a host-side OAuth flow instead).
+ * - `agent-login` — opens Atlas's one shared sign-in dialog for the bound
+ *   agent (the ACP adapters filter `/login` from their slash list, so sending
+ *   it as text is a no-op; we drive the host-side auth flow instead).
  * - `open-settings` — host-handled, opens Settings on a fixed section
  *   (currently only `/skills`).
  * - `unavailable` — host-handled guard row for a command the agent doesn't
@@ -31,13 +31,7 @@ import { cn } from "@/lib/utils";
  *   as `<local-command-stdout>…</local-command-stdout>` blocks which flow
  *   through the normal `agent_message_chunk` pipeline and render in the
  *   chat thread alongside regular assistant output. */
-export type SlashCommandHandler =
-  | "atlas-login"
-  | "codex-login"
-  | "agent-login"
-  | "open-settings"
-  | "unavailable"
-  | "passthrough";
+export type SlashCommandHandler = "agent-login" | "open-settings" | "unavailable" | "passthrough";
 
 export interface SlashCommand {
   /** Unique slug used both as the visible command name and matched query. */

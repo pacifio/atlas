@@ -200,7 +200,7 @@ pub fn ensure_shell_probe(app: &AppHandle) {
             }
             state.shell_done = true;
         }
-        sync_builtin_agent_env(&app);
+        sync_agent_key_env(&app);
         use tauri::Emitter;
         let _ = app.emit("atlas:byok-env-updated", ());
     });
@@ -281,7 +281,7 @@ pub fn byok_env_list(app: AppHandle) -> Vec<EnvKeyMeta> {
 /// OAuth and ignores these). Google gets both spellings — the Vercel AI SDK
 /// stack inside opencode reads `GOOGLE_GENERATIVE_AI_API_KEY`, other tooling
 /// reads `GEMINI_API_KEY`.
-fn builtin_agent_env(store: &Store) -> std::collections::HashMap<String, String> {
+fn agent_key_env(store: &Store) -> std::collections::HashMap<String, String> {
     let mut env = std::collections::HashMap::new();
     let mut add = |provider: &str, vars: &[&str]| {
         if let Some(k) = store.get(provider) {
@@ -319,14 +319,19 @@ fn builtin_agent_env(store: &Store) -> std::collections::HashMap<String, String>
     env
 }
 
-/// Push the current BYOK keys into the registry store's built-in spawn env so
-/// opencode/kilo work out of the box with Atlas-configured keys — the clean
-/// alternative to their interactive `auth login` TUI, which Atlas cannot
-/// drive (it spawns login subprocesses with stdin closed). Called at boot and
-/// after every key add/remove; live agents keep their env until respawned.
-pub fn sync_builtin_agent_env(app: &AppHandle) {
+/// Push the current BYOK keys into the registry store's spawn env, so any
+/// installed agent that reads a standard provider key works out of the box —
+/// the clean alternative to an interactive `auth login` TUI, which Atlas
+/// cannot drive (it spawns login subprocesses with stdin closed).
+///
+/// Applied to EVERY installed agent, not a list of blessed ids: a key is a
+/// host capability, and whether an agent uses it is the agent's business. The
+/// agent's own registry env is the base and the user's per-install overrides
+/// still win. Called at boot and after every key add/remove; live agents keep
+/// their env until respawned.
+pub fn sync_agent_key_env(app: &AppHandle) {
     if let Some(registry) = app.try_state::<atlas_registry::RegistryStore>() {
-        registry.set_builtin_env(builtin_agent_env(&read_store(app)));
+        registry.set_agent_env(agent_key_env(&read_store(app)));
     }
 }
 
@@ -356,7 +361,7 @@ pub fn byok_set(
     let mut store = read_store(&app);
     store.insert(provider, StoredKey { key, last4, added_at });
     write_store(&app, &store)?;
-    sync_builtin_agent_env(&app);
+    sync_agent_key_env(&app);
     Ok(())
 }
 
@@ -366,7 +371,7 @@ pub fn byok_delete(app: AppHandle, provider: String) -> Result<(), String> {
     let mut store = read_store(&app);
     store.remove(&provider);
     write_store(&app, &store)?;
-    sync_builtin_agent_env(&app);
+    sync_agent_key_env(&app);
     Ok(())
 }
 

@@ -135,7 +135,7 @@ export async function openAgentSession({
   // Resume through the session's OWN agent — loading a Codex/OpenCode session
   // through the Claude plugin fails and falls back to a blank chat.
   const pluginId = pluginIdForAgent(agentType);
-  if (agentType && agentType !== "custom") {
+  if (agentType) {
     useChatStore.getState().actions.setSessionAgentType(targetTabId, agentType);
   }
   const cached = getAgentSync(pluginId);

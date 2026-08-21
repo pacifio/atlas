@@ -101,6 +101,38 @@ pub fn acp_registry_uninstall(
     Ok(())
 }
 
+/// Install a **custom** agent: any local program that speaks ACP over stdio,
+/// with no registry entry behind it. Atlas's equivalent of a `"type": "custom"`
+/// entry in Zed's `agent_servers` settings map, and the only install path that
+/// does not go through the registry. Custom agents spawn, authenticate and
+/// stream through exactly the same code as registry installs.
+#[tauri::command]
+pub fn acp_registry_install_custom(
+    agent_id: String,
+    name: String,
+    command: String,
+    args: Vec<String>,
+    env: std::collections::HashMap<String, String>,
+    store: State<'_, RegistryStore>,
+) -> Result<(), String> {
+    store
+        .install_custom(&agent_id, &name, &command, args, env)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Replace an installed agent's user env overrides. These layer on top of the
+/// registry manifest's env and Atlas's BYOK keys, and win over both. Takes
+/// effect on the agent's next spawn.
+#[tauri::command]
+pub fn acp_registry_set_env(
+    agent_id: String,
+    env: std::collections::HashMap<String, String>,
+    store: State<'_, RegistryStore>,
+) -> Result<(), String> {
+    store.set_env_overrides(&agent_id, env).map_err(|e| e.to_string())
+}
+
 /// Metadata for any id ever known — the timeline/memory fallback for
 /// uninstalled-but-captured agents.
 #[tauri::command]

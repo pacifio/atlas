@@ -181,6 +181,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "atlas-acp",
+ "serde_json",
  "tokio",
  "uuid",
 ]

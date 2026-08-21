@@ -31,6 +31,8 @@ import { openAgentSession } from "@/features/chat/lib/open-agent-session";
 import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { AgentIcons } from "@/components/agent-icons";
+import { AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
+import { agentMeta } from "@/features/agents/lib/agent-meta";
 import { useRecentChatsStore, type RecentChat } from "../stores/recent-chats-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
@@ -466,18 +468,10 @@ function ChatRow({
   running: boolean;
   onOpen: () => void;
 }) {
-  // Cersei (the Atlas native agent) gets its own brand mark — falling through
-  // to the Claude icon mislabeled Atlas chats in this panel.
-  const AgentIcon =
-    chat.agentType === "codex"
-      ? AgentIcons.Codex
-      : chat.agentType === "opencode"
-        ? AgentIcons.OpenCode
-        : chat.agentType === "cursor"
-          ? AgentIcons.Cursor
-          : chat.agentType === "kilo"
-            ? AgentIcons.Kilo
-            : AgentIcons.Claude;
+  // Resolve through the one identity chokepoint — a hardcoded id ladder here
+  // mislabeled every agent it didn't know (post-port ids like "codex-acp" and
+  // any registry-installed agent all fell through to the Claude icon).
+  const meta = agentMeta(chat.agentType);
   return (
     <div
       data-hint
@@ -490,8 +484,20 @@ function ChatRow({
         <AtlasLoader size={11} className="mt-0.5 shrink-0 text-[var(--accent-primary)]" />
       ) : chat.agentType === "cersei" ? (
         <AtlasIcon size={14} className="mt-0.5 shrink-0" />
+      ) : meta.firstPartyIcon === "claude-acp" ? (
+        <AgentIcons.Claude className="mt-0.5 size-3.5 shrink-0" />
+      ) : meta.firstPartyIcon === "codex-acp" ? (
+        <AgentIcons.Codex className="mt-0.5 size-3.5 shrink-0" />
+      ) : meta.firstPartyIcon === "opencode" ? (
+        <AgentIcons.OpenCode className="mt-0.5 size-3.5 shrink-0" />
+      ) : meta.firstPartyIcon === "cursor" ? (
+        <AgentIcons.Cursor className="mt-0.5 size-3.5 shrink-0" />
+      ) : meta.firstPartyIcon === "kilo" ? (
+        <AgentIcons.Kilo className="mt-0.5 size-3.5 shrink-0" />
+      ) : meta.iconDataUrl ? (
+        <ExternalAgentIcon dataUrl={meta.iconDataUrl} size={14} />
       ) : (
-        <AgentIcon className="mt-0.5 size-3.5 shrink-0" />
+        <AgentMonogram label={meta.label} size={14} />
       )}
       <div
         className={cn(

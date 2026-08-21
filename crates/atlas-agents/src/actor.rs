@@ -69,6 +69,7 @@ pub enum Control {
     },
     SetMode(String),
     SetModel(String),
+    SetConfigOption(String, serde_json::Value),
     SetEffort(String),
     SetCompress(bool),
 }
@@ -382,6 +383,24 @@ impl SessionActor {
                         requested: model_id,
                         result,
                     });
+                });
+            }
+            Control::SetConfigOption(option_id, value) => {
+                // ACP's general settings write. Unlike mode/model there is no
+                // Atlas-side mirror of the value to roll back — the agent
+                // answers a `config_option_update` with its authoritative
+                // state, which is what repaints the pills.
+                let Some(opts) = self.conn.session_config_options() else {
+                    return;
+                };
+                let session = self.session_id.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = opts.set(&session, option_id.clone(), value).await {
+                        tracing::warn!(
+                            target: "atlas_agents::actor",
+                            "set_config_option({option_id}) failed: {e}"
+                        );
+                    }
                 });
             }
             Control::SetEffort(effort) => {

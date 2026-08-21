@@ -17,7 +17,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use atlas_acp::{AgentId, AuthMethodWire, PermissionDecision, Result, SessionId};
 use atlas_agentkit::{
-    AgentConnection, AuthFlow, CompressionCtl, EffortControl, ModelSelector, SessionModes,
+    AgentConnection, AuthFlow, CompressionCtl, EffortControl, ModelSelector, SessionConfigOptions,
+    SessionModes,
 };
 use uuid::Uuid;
 
@@ -72,6 +73,9 @@ impl AgentConnection for BackendConnection {
     fn session_modes(&self) -> Option<Arc<dyn SessionModes>> {
         Some(self.caps())
     }
+    fn session_config_options(&self) -> Option<Arc<dyn SessionConfigOptions>> {
+        Some(self.caps())
+    }
     fn effort_control(&self) -> Option<Arc<dyn EffortControl>> {
         Some(self.caps())
     }
@@ -95,6 +99,20 @@ impl ModelSelector for BackendCaps {
     async fn select(&self, session: &SessionId, model_id: String) -> Result<()> {
         self.backend
             .set_session_model(self.agent_id, session.clone(), model_id)
+            .await
+    }
+}
+
+#[async_trait]
+impl SessionConfigOptions for BackendCaps {
+    async fn set(
+        &self,
+        session: &SessionId,
+        option_id: String,
+        value: serde_json::Value,
+    ) -> Result<()> {
+        self.backend
+            .set_session_config_option(self.agent_id, session.clone(), option_id, value)
             .await
     }
 }

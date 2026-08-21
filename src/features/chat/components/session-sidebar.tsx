@@ -47,7 +47,13 @@ import { resumeSessionFast, ResumeError } from "../lib/resume-session";
  *  of repeated ternaries that silently mislabel new agents. */
 type SidebarAgent = "claude" | "codex" | "opencode" | "cursor" | "kilo" | "cersei" | (string & {});
 
-function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
+export function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
+  // The bands name transcript STORES, not agents: any adapter fronting the
+  // Claude Code CLI writes ~/.claude/projects JSONL, codex-acp writes the
+  // ~/.codex SQLite, etc. A live session must land in the same band as the
+  // disk row its transcript produces, or the live/disk twin suppression, row
+  // icon, and delete routing all miss each other.
+  if (agentType === "codex-acp") return "codex";
   if (
     agentType === "codex" ||
     agentType === "opencode" ||
@@ -57,13 +63,16 @@ function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
   )
     return agentType;
   if (!agentType || agentType === "custom" || agentType.startsWith("claude")) return "claude";
-  // Registry-installed external agent: its plugin id IS its identity.
+  // Registry-installed external agent: its registry id IS its identity.
   return agentType;
 }
 
-const AGENT_TYPE_BY_SIDEBAR: Partial<Record<string, SwitchableAgent>> = {
-  claude: "claude-code",
-  codex: "codex",
+/** Band → the registry id resume must spawn through. The claude/codex bands
+ *  come from disk listings that predate any live session, so they need an
+ *  explicit mapping back to the registry entries that own those stores. */
+export const AGENT_TYPE_BY_SIDEBAR: Partial<Record<string, SwitchableAgent>> = {
+  claude: "claude-acp",
+  codex: "codex-acp",
   opencode: "opencode",
   cursor: "cursor",
   kilo: "kilo",
@@ -191,7 +200,7 @@ export const SessionSidebar = memo(function SessionSidebar({
         "|" +
         (x.userMessageCount ?? 0) +
         "|" +
-        (x.agentType ?? "claude-code") +
+        (x.agentType ?? "cersei") +
         "|" +
         (x.workingDirectory ?? "") +
         "|" +
@@ -230,7 +239,7 @@ export const SessionSidebar = memo(function SessionSidebar({
         updatedAt: sess.updatedAt,
         firstUserContent: sess.firstUserContent ?? "",
         userMessageCount: sess.userMessageCount ?? 0,
-        agentType: sess.agentType ?? "claude-code",
+        agentType: sess.agentType ?? "cersei",
         workingDirectory: sess.workingDirectory ?? "",
         hasAnyMessage: sess.messages.length > 0,
       };

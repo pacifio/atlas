@@ -19,6 +19,7 @@ mod connection;
 mod turn;
 
 pub use connection::{
-    AgentConnection, AuthFlow, CompressionCtl, EffortControl, ModelSelector, SessionModes,
+    AgentConnection, AuthFlow, CompressionCtl, EffortControl, ModelSelector, SessionConfigOptions,
+    SessionModes,
 };
 pub use turn::{RunningTurn, TurnId};

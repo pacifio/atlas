@@ -12,20 +12,24 @@ import {
   Cpu,
   ChevronDown,
   Search,
+  SlidersHorizontal,
+  Download,
+  Plus,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useChatStore } from "../stores/chat-store";
 import { agents } from "../lib/agents-api";
+import { NATIVE_AGENT, agentTypeFromPluginId, type SwitchableAgent } from "@/types/agent";
 import {
-  CLAUDE_PERMISSION_MODE_LABEL,
-  CLAUDE_PERMISSION_MODES,
-  type ClaudePermissionMode,
-  agentTypeFromPluginId,
-  pluginIdForAgent,
-  type SwitchableAgent,
-} from "@/types/agent";
-import { agentMeta, useSwitchableAgents } from "@/features/agents/lib/agent-meta";
-import { useAgentAcquire, acquirePercent } from "../lib/agent-acquire";
+  agentMeta,
+  skillToolIdForAgent,
+  useSwitchableAgents,
+} from "@/features/agents/lib/agent-meta";
+import {
+  installFeaturedAgent,
+  useInstallingAgents,
+  useSuggestedAgents,
+} from "@/features/agents/lib/featured-agents";
 import { canSignIn, promptSignIn } from "../lib/agent-signin";
 import { switchAgentForTab } from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
@@ -55,13 +59,12 @@ import type {
   SlashCommand,
 } from "./slash-command-picker";
 import { commandRequiresArgs } from "./slash-command-picker";
-import { CodexLoginDialog } from "./codex-login-dialog";
 import { PlanTasksPill } from "./plan-tasks-pill";
 import { RetryPill } from "./retry-pill";
 import { ComposerAddMenu } from "./composer-add-menu";
 import type { GithubRepo } from "@/features/github/types";
 import { imageMimeFromPath } from "@/features/model-chat/lib/model-capabilities";
-import type { ImageAttachment } from "@/types/agents";
+import type { AcpConfigOption, ImageAttachment } from "@/types/agents";
 import type {
   MentionFile,
   MentionWorkspace,
@@ -73,7 +76,6 @@ import { toast } from "sonner";
 import { useComposerFileDrop } from "../hooks/use-composer-file-drop";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { openSettingsSection } from "@/features/settings/lib/open-settings";
-import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import type { MentionTrigger } from "../lib/cm-mention-extension";
 import type { SlashTrigger } from "../lib/cm-slash-extension";
 // Value import — MUST come from the CodeMirror-free module, not from
@@ -310,21 +312,48 @@ function displayModeName(name: string): string {
   return /^[a-z][a-z0-9-]*$/.test(name) ? name.charAt(0).toUpperCase() + name.slice(1) : name;
 }
 
-type ComposerGroup = "agent" | "mode" | "model";
+/** A composer pill group. Beyond the three fixed ones, every ACP config
+ *  option the agent advertises gets its own group, keyed `cfg:<optionId>`. */
+type ComposerGroup = "agent" | "mode" | "model" | (string & {});
 const GROUP_ORDER: ComposerGroup[] = ["agent", "mode", "model"];
 
-/** Colour class for the Claude permission-mode dot (mirrors the old pill). */
-function claudeModeDotClass(mode: ClaudePermissionMode): string {
-  switch (mode) {
-    case "acceptEdits":
-      return "bg-[var(--status-success)]";
-    case "plan":
-      return "bg-[var(--accent-primary)]";
-    case "bypassPermissions":
-      return "bg-[var(--status-error)]";
-    default:
-      return "bg-[var(--text-tertiary)]";
-  }
+/** The two options Atlas already surfaces with dedicated pills — the host
+ *  normalises them out of `config_options` into mode/model state (see
+ *  `atlas_acp::schema`), so re-rendering them here would double them up.
+ *
+ *  Matched on ACP's `category` (the semantic field) before falling back to the
+ *  id, so an agent that names the option `permission-mode` but categorises it
+ *  `mode` still dedupes correctly.
+ *
+ *  This is where Atlas diverges from Zed, deliberately. Zed suppresses its
+ *  mode and model selectors whenever `config_options` is present, because its
+ *  generic `ConfigOptionsView` renders those two as well. Atlas's mode/model
+ *  pills ARE the rendering of those options, so suppressing them would remove
+ *  affordances rather than relocate them. Everything else the agent
+ *  advertises renders generically below — nothing is dropped either way. */
+const DEDICATED_OPTIONS = new Set(["mode", "model"]);
+
+function isDedicatedOption(opt: AcpConfigOption): boolean {
+  return DEDICATED_OPTIONS.has(opt.category ?? opt.id);
+}
+
+/** A select option's choices (ACP `options: [{ value, name }]`). */
+function optionValues(opt: AcpConfigOption): { id: string; label: string }[] {
+  return (opt.options ?? [])
+    .filter((v) => !!v.value)
+    .map((v) => ({ id: v.value, label: v.name ?? v.value }));
+}
+
+function optionValue(opt: AcpConfigOption): string | boolean | undefined {
+  return opt.currentValue ?? undefined;
+}
+
+/** Label for an option's current state, falling back to the option's name. */
+function optionLabel(opt: AcpConfigOption): string {
+  const cur = optionValue(opt);
+  if (typeof cur === "boolean") return `${opt.name ?? opt.id}: ${cur ? "On" : "Off"}`;
+  const match = optionValues(opt).find((v) => v.id === cur);
+  return displayModeName(match?.label ?? (typeof cur === "string" ? cur : (opt.name ?? opt.id)));
 }
 
 /**
@@ -350,16 +379,16 @@ function ComposerGroupsMenu({
   currentAgent: SwitchableAgent;
   onSwitchAgent: (agent: SwitchableAgent) => void;
 }) {
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
-  const permissionMode = useChatStore((s) => s.sessions[tabId]?.claudePermissionMode ?? "default");
+  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? NATIVE_AGENT);
   const currentMode = useChatStore((s) => s.sessions[tabId]?.acpCurrentMode);
   const availableModes = useChatStore((s) => s.sessions[tabId]?.acpAvailableModes);
   const modesPending = useChatStore((s) => s.sessions[tabId]?.acpModesPending ?? false);
   const currentModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel);
   const availableModels = useChatStore((s) => s.sessions[tabId]?.acpAvailableModels);
-  const { setAcpMode, setAcpModel, setClaudePermissionMode } = useChatStore.use.actions();
-  const acquiring = useAgentAcquire(pluginIdForAgent(agentType));
+  const { setAcpMode, setAcpModel, setAcpConfigOption } = useChatStore.use.actions();
   const switchableAgents = useSwitchableAgents();
+  const suggestedAgents = useSuggestedAgents();
+  const installingAgents = useInstallingAgents();
 
   const [openGroup, setOpenGroup] = useState<ComposerGroup | null>(null);
   const [dir, setDir] = useState(1);
@@ -416,9 +445,21 @@ function ComposerGroupsMenu({
     );
   }, [models, q]);
 
-  const isClaude = agentType === "claude-code";
+  // Every option the agent advertises that isn't already a dedicated pill.
+  // Atlas enumerates no option ids: whatever the agent publishes, renders.
+  const configOptions = useChatStore((s) => s.sessions[tabId]?.acpConfigOptions);
+  const extraOptions = useMemo(
+    () =>
+      (configOptions ?? []).filter(
+        (o) =>
+          !isDedicatedOption(o) &&
+          (optionValues(o).length > 0 || typeof optionValue(o) === "boolean"),
+      ),
+    [configOptions],
+  );
+
   const hasAcpModes = !!availableModes && availableModes.length > 0;
-  const showMode = isClaude || hasAcpModes || modesPending;
+  const showMode = hasAcpModes || modesPending;
   const showModel = agentType !== "cersei" && models.length > 0;
 
   const toggle = (g: ComposerGroup) => {
@@ -493,39 +534,110 @@ function ComposerGroupsMenu({
                     </button>
                   );
                 })}
+                {/* One-click install suggestions (Zed's featured-agents
+                    pattern): the marketplace Install button relocated next to
+                    the picker. A row installs, then switches the chat to the
+                    fresh agent; installed agents leave the list above it. */}
+                {suggestedAgents.length > 0 && (
+                  <>
+                    <div className="my-1 h-px bg-[var(--border-subtle)]" />
+                    {suggestedAgents.map((a) => {
+                      const busy = installingAgents.has(a);
+                      return (
+                        <button
+                          key={a}
+                          disabled={busy}
+                          onClick={() => {
+                            void installFeaturedAgent(a)
+                              .then(() => onSwitchAgent(a as SwitchableAgent))
+                              .catch((err) =>
+                                toast.error(
+                                  `Couldn't install ${agentMeta(a).label}: ${String(err).slice(0, 120)}`,
+                                ),
+                              );
+                          }}
+                          title={`Install ${agentMeta(a).label} from the ACP registry`}
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer hover:bg-[var(--bg-hover)] disabled:cursor-default"
+                        >
+                          <AgentMark
+                            agentType={a}
+                            className="!h-4 !w-4 !text-[9px] !rounded opacity-70"
+                          />
+                          <span className="flex-1 truncate text-[11px] font-medium text-[var(--text-secondary)]">
+                            {agentMeta(a).label}
+                          </span>
+                          {busy ? (
+                            <Loader2
+                              size={11}
+                              className="animate-spin text-[var(--text-tertiary)]"
+                            />
+                          ) : (
+                            <Download size={11} className="text-[var(--text-tertiary)]" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
+                <div className="my-1 h-px bg-[var(--border-subtle)]" />
+                <button
+                  onClick={() => {
+                    openSettingsSection("agents");
+                    close();
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer hover:bg-[var(--bg-hover)]"
+                >
+                  <Plus size={12} className="text-[var(--text-tertiary)]" />
+                  <span className="flex-1 truncate text-[11px] font-medium text-[var(--text-secondary)]">
+                    Add more agents
+                  </span>
+                </button>
               </div>
             )}
 
-            {openGroup === "mode" && isClaude && (
-              <div className="p-1">
-                {CLAUDE_PERMISSION_MODES.map((m) => {
-                  const active = m === permissionMode;
-                  return (
+            {extraOptions.map((opt) =>
+              openGroup === `cfg:${opt.id}` ? (
+                <div key={opt.id} className="p-1">
+                  {typeof optionValue(opt) === "boolean" ? (
                     <button
-                      key={m}
                       onClick={() => {
-                        setClaudePermissionMode(tabId, m);
+                        setAcpConfigOption(tabId, opt.id, !optionValue(opt));
                         close();
                       }}
-                      className={cn(
-                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                        active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
-                      )}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer hover:bg-[var(--bg-hover)]"
                     >
-                      <span
-                        className={cn("h-1.5 w-1.5 shrink-0 rounded-full", claudeModeDotClass(m))}
-                      />
                       <span className="flex-1 text-[11px] font-medium text-[var(--text-primary)]">
-                        {CLAUDE_PERMISSION_MODE_LABEL[m]}
+                        {optionValue(opt) ? "Turn off" : "Turn on"}
                       </span>
-                      {active && <Check size={11} className="text-[var(--accent-primary)]" />}
                     </button>
-                  );
-                })}
-              </div>
+                  ) : (
+                    optionValues(opt).map((v) => {
+                      const active = v.id === optionValue(opt);
+                      return (
+                        <button
+                          key={v.id}
+                          onClick={() => {
+                            setAcpConfigOption(tabId, opt.id, v.id);
+                            close();
+                          }}
+                          className={cn(
+                            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
+                            active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
+                          )}
+                        >
+                          <span className="flex-1 truncate text-[11px] font-medium text-[var(--text-primary)]">
+                            {displayModeName(v.label)}
+                          </span>
+                          {active && <Check size={11} className="text-[var(--accent-primary)]" />}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              ) : null,
             )}
 
-            {openGroup === "mode" && !isClaude && (
+            {openGroup === "mode" && (
               <div className="p-1">
                 {!hasAcpModes ? (
                   <div className="flex items-center gap-1.5 px-2 py-2 text-[11px] text-[var(--text-tertiary)]">
@@ -639,47 +751,24 @@ function ComposerGroupsMenu({
         <span className={labelCls(openGroup === "agent")}>{agentMeta(currentAgent).label}</span>
       </button>
 
-      {acquiring ? (
-        <span
-          className="flex h-6.5 items-center gap-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] px-2 text-[10px] font-medium leading-none text-[var(--text-tertiary)] select-none tabular-nums"
-          title={`Downloading ${agentMeta(agentType).label} — this happens once.`}
+      {showMode && (
+        <button
+          onClick={() => toggle("mode")}
+          className={pillCls(openGroup === "mode")}
+          title="Permission mode — pick here, ⇧⇥ cycles"
         >
-          <Loader2 size={11} className="shrink-0 animate-spin" />
-          {acquirePercent(acquiring) !== null
-            ? `Setting up ${agentMeta(agentType).label}… ${acquirePercent(acquiring)}%`
-            : `Setting up ${agentMeta(agentType).label}…`}
-        </span>
-      ) : (
-        showMode && (
-          <button
-            onClick={() => toggle("mode")}
-            className={pillCls(openGroup === "mode")}
-            title="Permission mode — pick here, ⇧⇥ cycles"
-          >
-            {isClaude ? (
-              <span
-                className={cn(
-                  "h-1.5 w-1.5 shrink-0 rounded-full",
-                  claudeModeDotClass(permissionMode),
-                )}
-              />
-            ) : (
-              <span
-                className="h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ background: acpModeColor(currentMode) }}
-              />
-            )}
-            <span className={labelCls(openGroup === "mode")}>
-              {isClaude
-                ? CLAUDE_PERMISSION_MODE_LABEL[permissionMode]
-                : currentAcpMode
-                  ? displayModeName(currentAcpMode.name)
-                  : modesPending
-                    ? "Loading…"
-                    : "Mode"}
-            </span>
-          </button>
-        )
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{ background: acpModeColor(currentMode) }}
+          />
+          <span className={labelCls(openGroup === "mode")}>
+            {currentAcpMode
+              ? displayModeName(currentAcpMode.name)
+              : modesPending
+                ? "Loading…"
+                : "Mode"}
+          </span>
+        </button>
       )}
 
       {showModel && (
@@ -695,6 +784,24 @@ function ComposerGroupsMenu({
           <ChevronDown size={10} className="ml-0.5 shrink-0 text-[var(--text-tertiary)]" />
         </button>
       )}
+
+      {/* Everything else the agent advertises over `session/set_config_option`.
+          No id list here — an agent that invents a new option gets a pill for
+          free, which is the whole point of the ACP mechanism. */}
+      {extraOptions.map((opt) => (
+        <button
+          key={opt.id}
+          onClick={() => toggle(`cfg:${opt.id}`)}
+          className={pillCls(openGroup === `cfg:${opt.id}`)}
+          title={opt.description ?? opt.name ?? opt.id}
+        >
+          <SlidersHorizontal size={11} className="shrink-0 text-[var(--text-tertiary)]" />
+          <span className={cn(labelCls(openGroup === `cfg:${opt.id}`), "max-w-[120px] truncate")}>
+            {optionLabel(opt)}
+          </span>
+          <ChevronDown size={10} className="ml-0.5 shrink-0 text-[var(--text-tertiary)]" />
+        </button>
+      ))}
     </div>
   );
 }
@@ -712,6 +819,7 @@ export function MessageInput({
     enqueueMessage,
     removeQueueItem,
     setAcpModes,
+    setAcpConfigOptions,
     setAcpModesPending,
     setCerseiProvider,
     setCerseiModel,
@@ -726,15 +834,17 @@ export function MessageInput({
   // first bound, but that path can be missed (resumed/restored sessions, an
   // effect that didn't re-run, etc.) — leaving a bound Codex session with the
   // modes sitting in Rust state but never pushed to the store, so no pill.
-  // Since THIS component is what renders the pill, seed from here too: whenever
-  // we're a bound non-Claude session with no modes loaded, pull the snapshot
-  // and seed. Idempotent (bails once modes exist) and mirrors the codebase's
+  // Since THIS component is what renders the pill, seed from here too:
+  // whenever we're a bound session with no modes loaded, pull the snapshot and
+  // seed. Idempotent (bails once modes exist) and mirrors the codebase's
   // consumer-side self-heal pattern (file index / knowledge mentions).
   const seedBinding = useChatStore((s) => {
     const sess = s.sessions[tabId];
-    if (!sess || sess.agentType === "claude-code") return null;
+    if (!sess) return null;
     if (!sess.acpAgentId || !sess.acpSessionId) return null;
-    if ((sess.acpAvailableModes?.length ?? 0) > 0) return null;
+    const haveModes = (sess.acpAvailableModes?.length ?? 0) > 0;
+    const haveOptions = sess.acpConfigOptions !== undefined;
+    if (haveModes && haveOptions) return null;
     return `${sess.acpAgentId}::${sess.acpSessionId}`;
   });
   useEffect(() => {
@@ -744,7 +854,8 @@ export function MessageInput({
     void (async () => {
       try {
         const snap = await agents.snapshotMeta({ agent_id, session_id });
-        if (!cancelled && snap.available_modes.length > 0) {
+        if (cancelled) return;
+        if (snap.available_modes.length > 0) {
           setAcpModes(
             tabId,
             snap.current_mode,
@@ -752,14 +863,17 @@ export function MessageInput({
             agentTypeFromPluginId(snap.plugin_id),
           );
         }
+        // `?? []` rather than a length guard: an agent with no config options
+        // must record that fact, or this self-heal re-fetches on every render.
+        setAcpConfigOptions(tabId, snap.config_options ?? []);
       } catch (err) {
-        console.warn("seed ACP modes (composer self-heal) failed:", err);
+        console.warn("seed ACP settings (composer self-heal) failed:", err);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [tabId, seedBinding, setAcpModes]);
+  }, [tabId, seedBinding, setAcpModes, setAcpConfigOptions]);
   // Safety net: an agent whose boot hangs (e.g. Codex's models-refresh times out
   // waiting on a child process) never resolves `new_session`, so the create
   // effect's `setAcpModesPending(false)` never runs and the picker spins
@@ -774,7 +888,7 @@ export function MessageInput({
   // Narrow per-tab selectors — primitives only, no message-array refs. This
   // component otherwise would re-render on every streaming chunk because it
   // sits inside the active chat panel.
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
+  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? NATIVE_AGENT);
   // Settings → General → "Enter to send". Narrow selector so a toggle flip
   // only re-renders composers, not the whole settings surface.
   const enterToSend = useProjectStore((s) => s.settings.enterToSend);
@@ -785,7 +899,7 @@ export function MessageInput({
   // ladder here silently remapped every EXTERNAL agent to claude-code, which
   // pointed the grouped picker's current-agent highlight (and session scope)
   // at the wrong agent.
-  const switchableAgent: SwitchableAgent = agentType === "custom" ? "claude-code" : agentType;
+  const switchableAgent: SwitchableAgent = agentType;
   // Native Cersei agent only: BYOK provider + model selection for the composer.
   const cerseiProvider = useChatStore((s) => s.sessions[tabId]?.cerseiProvider ?? "");
   const cerseiModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel ?? "");
@@ -871,43 +985,20 @@ export function MessageInput({
         };
       })
       .filter((c) => c.name && c.name !== "login");
-    // `/login` is Atlas-handled, not advertised by either adapter: it opens
-    // the host sign-in dialog for the bound agent. OpenCode / Cursor / Kilo
-    // auth is terminal-only — no host dialog, so no synthetic `/login`;
-    // the composer's auth pill covers them.
-    const login: SlashCommand | null =
-      agentType === "codex"
-        ? {
-            name: "login",
-            signature: "/login",
-            description: "Sign in to Codex (ChatGPT or API key).",
-            handler: "codex-login" as const,
-          }
-        : agentType === "claude-code"
-          ? {
-              name: "login",
-              signature: "/login",
-              description: "Sign in to your Anthropic account.",
-              handler: "atlas-login" as const,
-            }
-          : canSignIn(agentType)
-            ? {
-                // Auto-managed built-ins (Cursor / OpenCode / Kilo): route
-                // through the shared sign-in dialog — their CLI lives in
-                // Atlas's app-data dir, so there is no terminal command to
-                // point the user at.
-                name: "login",
-                signature: "/login",
-                description: `Sign in to ${agentMeta(agentType).label}.`,
-                handler: "agent-login" as const,
-              }
-            : null;
+    // `/login` is Atlas-handled and synthesised the same way for every ACP
+    // agent — the adapters filter it out of their own command list, so without
+    // this row there is nothing to select. It opens the one shared sign-in
+    // dialog, which lists whatever methods the bound agent advertised.
+    const login: SlashCommand | null = canSignIn(agentType)
+      ? {
+          name: "login",
+          signature: "/login",
+          description: `Sign in to ${agentMeta(agentType).label}.`,
+          handler: "agent-login" as const,
+        }
+      : null;
     // Host-handled guard rows, merged in alongside whatever the agent
     // advertises. `/skills` opens Settings for any supported agent.
-    // `/clear`/`/logout` are dimmed for Claude Code specifically — the ACP
-    // adapter blocklists both from `available_commands_update`, so without
-    // these rows selecting the typed name would silently do nothing; with
-    // them the picker explains why and points at the TUI instead.
     const guards: SlashCommand[] = [
       {
         name: "skills",
@@ -915,22 +1006,6 @@ export function MessageInput({
         description: "Open Skills settings.",
         handler: "open-settings",
       },
-      ...(agentType === "claude-code"
-        ? [
-            {
-              name: "clear",
-              signature: "/clear",
-              description: "Not available in Atlas — use the Claude Code TUI.",
-              handler: "unavailable" as const,
-            },
-            {
-              name: "logout",
-              signature: "/logout",
-              description: "Not available in Atlas — use the Claude Code TUI.",
-              handler: "unavailable" as const,
-            },
-          ]
-        : []),
     ];
     const guardNames = new Set(guards.map((g) => g.name));
     const deduped = fromAgent.filter((c) => !guardNames.has(c.name));
@@ -1038,7 +1113,6 @@ export function MessageInput({
 
   // ── Slash-command picker orchestration ────────────────────────────────
   const [slashTrigger, setSlashTrigger] = useState<SlashTrigger | null>(null);
-  const [codexLoginOpen, setCodexLoginOpen] = useState(false);
   // Close a picker left open across an agent switch — the new agent's
   // catalogue (or lack of one, for cersei) must not inherit the open state.
   useEffect(() => {
@@ -1047,15 +1121,11 @@ export function MessageInput({
   const slashPickerRef = useRef<SlashCommandPickerHandle>(null);
   const slashTriggerRef = useRef<SlashTrigger | null>(null);
   slashTriggerRef.current = slashTrigger;
-  const { openLoginDialog } = useClaudeSetupStore.use.actions();
 
-  // An auth-classified turn failure routes to the sign-in flow (P15) instead
-  // of dying as a generic banner. Claude sessions open the login dialog; the
-  // Codex sign-in pill is handled in ChatComposer (it owns that probe state);
-  // the auto-managed built-ins open the shared sign-in dialog (same modal
-  // treatment as Claude/Codex — see AgentLoginDialogHost); without it their
-  // `Authentication required` error was a dead end the user could not act on
-  // (their CLI isn't on PATH to log in by hand).
+  // An auth-classified turn failure routes to the sign-in flow instead of
+  // dying as a generic banner — the SAME shared dialog for every agent, which
+  // offers whatever methods that agent advertised. Without it an
+  // `Authentication required` error is a dead end the user cannot act on.
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
@@ -1063,15 +1133,11 @@ export function MessageInput({
       if (!at) return;
       const sess = useChatStore.getState().sessions[tabId];
       if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;
-      if (at === "claude-code") {
-        openLoginDialog();
-        return;
-      }
       if (canSignIn(at)) promptSignIn(at);
     };
     window.addEventListener("atlas:auth-required", handler);
     return () => window.removeEventListener("atlas:auth-required", handler);
-  }, [tabId, openLoginDialog]);
+  }, [tabId]);
 
   const handleMentionSelect = useCallback((mention: MentionData) => {
     const t = triggerRef.current;
@@ -1373,19 +1439,12 @@ export function MessageInput({
       const view = inputRef.current?.view();
       if (!t || !view) return;
 
-      if (
-        cmd.handler === "atlas-login" ||
-        cmd.handler === "codex-login" ||
-        cmd.handler === "agent-login"
-      ) {
-        // `/login` doesn't pass through to the agent — open Atlas's own sign-in
-        // dialog (Claude's setup dialog, the Codex auth modal, or the shared
-        // agent sign-in modal for the managed built-ins).
+      if (cmd.handler === "agent-login") {
+        // `/login` doesn't pass through to the agent — it opens Atlas's one
+        // shared sign-in dialog for whichever agent is bound.
         clearSlashRange(view, t.from, t.to);
         setSlashTrigger(null);
-        if (cmd.handler === "codex-login") setCodexLoginOpen(true);
-        else if (cmd.handler === "agent-login") promptSignIn(agentType);
-        else openLoginDialog();
+        promptSignIn(agentType);
         inputRef.current?.focus();
         return;
       }
@@ -1460,7 +1519,7 @@ export function MessageInput({
       // submit path — trim/mentions/queueing behave exactly like a typed Enter.
       submitRef.current();
     },
-    [openLoginDialog, disabled, agentType],
+    [disabled, agentType],
   );
 
   // Forward Up/Down/Enter/Esc/Backspace/Tab from CodeMirror to whichever
@@ -1914,7 +1973,7 @@ export function MessageInput({
               <ComposerAddMenu
                 disabled={disabled || githubSyncing !== null}
                 projectPath={useProjectStore.getState().currentProject?.path ?? null}
-                agentId={switchableAgent}
+                agentId={skillToolIdForAgent(agentType)}
                 imageSupported={imageSupported}
                 onAddFilesOrPhotos={() => void pickFilesOrPhotos()}
                 onAttachMedia={() => void pickMedia()}
@@ -1964,9 +2023,10 @@ export function MessageInput({
           initialScope={trigger?.scope ?? null}
           projectPath={projectPath}
           // Per-agent component gating: pack components (command/agent/rule)
-          // only list ones enabled for the active agent (registry ids
-          // "claude-code" / "codex" match agentType).
-          agentId={agentType}
+          // only list ones enabled for the active agent. The skills registry
+          // keys enablement on TOOL ids ("claude-code" / "codex" / "atlas"),
+          // not agent registry ids — map through the capability bridge.
+          agentId={skillToolIdForAgent(agentType)}
           onSelect={handleMentionSelect}
           onClose={() => setTrigger(null)}
         />
@@ -1982,19 +2042,10 @@ export function MessageInput({
           commands={agentSlashCommands}
           loading={slashCommandsLoading}
           footerLabel={
-            agentType === "codex"
-              ? "Codex commands"
-              : agentType === "opencode"
-                ? "OpenCode commands"
-                : agentType === "cursor"
-                  ? "Cursor commands"
-                  : agentType === "claude-code"
-                    ? "Claude Code commands"
-                    : undefined
+            agentType === NATIVE_AGENT ? undefined : `${agentMeta(agentType).label} commands`
           }
         />
       )}
-      <CodexLoginDialog open={codexLoginOpen} onOpenChange={setCodexLoginOpen} />
     </div>
   );
 }
