@@ -19,10 +19,13 @@
 
 # Atlas
 
-Atlas is open source source control for coding agents. Run multiple agents like Claude Code and Codex in parallel, track what each agent changes across your codebase, and query their sessions, decisions, and history from one place. Atlas gives your agents shared memory and context, so you can switch between agents without agents forgetting.
+Atlas is source control for coding agents. Every agent run produces checkpoints: commits are linked back to the session that made it alongside the prompts, tool calls, and reasoning. You see which agent did exactly what and why.
 
-- **Run agents in parallel.** Multiple sessions across tabs, each streaming independently. Switching tabs never freezes or drops a run in flight.
-- **One memory, three agents.** A decision Claude Code made shows up in Codex's next prompt. Plans, file changes, failures, and architecture notes are shared automatically, matched on-device against what you're asking about.
+Run Claude Code, Codex, Atlas's own agent, or anything from the ACP registry side by side against the same codebase, with shared memory so switching agents mid-task doesn't mean starting over.
+
+- **Every commit, explained.** A checkpoint links a commit back to the session that produced it: prompts, tool calls, and file changes kept together, queryable months later.
+- **Run any agent, side by side.** Claude Code, Codex, Atlas's own agent, and the wider ACP registry, all in the same window, against the same codebase. Switching agents mid-task doesn't mean starting over.
+- **One memory, every agent.** A decision Claude Code made shows up in Codex's next prompt. Plans, file changes, failures, and architecture notes are shared automatically, matched on-device against what you're asking about.
 - **Your notes are agent context.** Markdown in `.atlas/knowledge/`, plus the `CLAUDE.md` and `AGENTS.md` you already wrote, feed every agent in the project.
 - **`@` anything into a prompt.** Files, folders, symbols, branches, commits, notes, papers, and past sessions resolve locally before the prompt is sent.
 - **Local by default.** Code, notes, and sessions stay on your machine. Sign in and create an organisation when you want to sync across a team.
@@ -30,6 +33,8 @@ Atlas is open source source control for coding agents. Run multiple agents like 
 **[Join the Discord](https://discord.gg/GmnFggaPfP)** · `#general` chat · `#dev` build questions · `#feature-requests` ideas · `#bugs` report breakage
 
 Start with [CONTRIBUTING.md](CONTRIBUTING.md) to send a change, or [open an issue](https://github.com/pacifio/atlas/issues) for anything you hit.
+
+---
 
 ## Table of contents
 
@@ -52,14 +57,19 @@ Agents now write a large share of the code and keep none of the reasoning behind
 - **Switching agents loses the thread.** The first message of a new session carries a curated fact pack and the tail of your last one, even when that session ran on a different agent.
 - **You can't review what you can't see.** Every session is stored and searchable, next to a real commit graph and file-level diffs of what actually landed.
 - **Context lives in ten places.** The knowledge base, `CLAUDE.md`, `AGENTS.md`, Claude Code's memory files, and Codex's history fold into one index every agent reads from.
-- **Nothing is locked in.** Notes are markdown, canvases are JSON, sessions are JSONL, and the editor is a file on disk. Close Atlas and pick up in vim. The one exception is the checkpoint record — which agent session produced which commit — which is SQLite in the project's gitignored `.atlas/`, because it is queried, not read.
+- **Nothing is locked in.** Notes are markdown, canvases are JSON, sessions are JSONL, and the editor is a file on disk. Close Atlas and pick up in vim. The one exception is the checkpoint record (which agent session produced which commit), which is SQLite in the project's gitignored `.atlas/`, because it is queried, not read.
 - **Built for agents from the ground up.** The agent runtime, shared memory, and session history are the foundation the rest of the app is built on.
 
 ## How it works
 
-Atlas runs Claude Code and Codex as they are, and enriches what they see.
+Atlas runs your agents as they are, and enriches what they see.
 
-Both run as external subprocesses over [ACP](https://github.com/zed-industries/agent-client-protocol). The Atlas agent runs in-process on [Cersei](https://cersei.tryatlas.cc/docs), our Rust agent framework. All three go through the same send path, so everything below applies whichever one you pick.
+Claude Code and Codex run as external subprocesses over [ACP](https://github.com/zed-industries/agent-client-protocol), the most-used, most-tested path. The Atlas agent runs in-process on [Cersei](https://cersei.tryatlas.cc/docs), our Rust agent framework.
+
+Beyond those, Atlas can spawn any agent in the ACP registry (Cursor, OpenCode, Kilo Code, and more), pulling in each one's official binary automatically. All of them go through the same send path, so everything below applies whichever one you pick.
+
+> [!NOTE]
+> QA on the long tail of registry agents is ongoing.
 
 Before your message reaches the agent, Atlas assembles context around it:
 
@@ -78,7 +88,13 @@ Before your message reaches the agent, Atlas assembles context around it:
 
 ## Checkpoints
 
-Atlas records every agent session locally in `.atlas/sessions.db`, with secrets scrubbed before anything touches disk. When you commit — from any tool, even with Atlas closed — the commit is linked back to the session that produced it as a Checkpoint, and links survive rebases and amends. Local mode works fully offline with no account.
+A checkpoint is what a commit doesn't tell you on its own: which session produced it, what the agent was asked, the tool calls it made, and the reasoning behind the change, kept together instead of lost the moment the terminal scrolls.
+
+Atlas records every agent session locally in `.atlas/sessions.db`, with secrets scrubbed before anything touches disk. When you commit (from any tool, even with Atlas closed), the commit is linked back to the session that produced it as a checkpoint, and links survive rebases and amends.
+
+You don't have to read the raw transcript to get the context back: select a checkpoint and chat with it directly, and it answers from what actually happened in that session. Local mode works fully offline with no account.
+
+---
 
 ## Features
 
@@ -122,40 +138,48 @@ Works with no account and no network.
 | **Split view** | Up to three resizable columns, each with its own tabs |
 | **Activity log** | Every significant event in the project, filterable, with rows you can pin across restarts |
 
+---
+
 ## Download
 
-Grab the latest `.dmg` from [tryatlas.cc](https://www.tryatlas.cc/) or the [releases page](https://github.com/pacifio/atlas/releases). macOS is the supported platform.
+Grab the latest `.dmg` from [tryatlas.cc](https://www.tryatlas.cc/) or the [releases page](https://github.com/pacifio/atlas/releases).
+
+> [!NOTE]
+> macOS is the supported platform.
 
 <!-- #todo homebrew tap so this becomes `brew install atlas` -->
 
 ## Build from source
 
-Linux and Windows build from the same Tauri codebase but are untested.
+> [!NOTE]
+> Linux and Windows build from the same Tauri codebase but are untested.
 
 To use the Claude Code agent, install the `claude` CLI and put it on your `PATH`. Atlas's native agent needs no external CLI.
 
 Requires **[Bun](https://bun.sh/)**, **Rust** (stable, via [rustup](https://rustup.rs/)), and **Xcode Command Line Tools**.
 
-### System Prerequisites
-* **Linux System Dependencies**: GTK 3, WebKit2GTK (4.1), and GLib headers:
+<details>
+<summary>Linux system dependencies (GTK 3, WebKit2GTK 4.1, GLib headers)</summary>
 
-  * **Debian / Ubuntu / Linux Mint**:
-    ```bash
-    sudo apt install -y libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
-    ```
-  * **Fedora / RHEL**:
-    ```bash
-    sudo dnf install glib2-devel gtk3-devel webkit2gtk4.1-devel
-    ```
-  * **Arch Linux / Manjaro**:
-    ```bash
-    sudo pacman -S glib2 gtk3 webkit2gtk-4.1
-    ```
-  * **openSUSE**:
-    ```bash
-    sudo zypper install glib2-devel gtk3-devel webkit2gtk3-devel
-    ```
----
+* **Debian / Ubuntu / Linux Mint**:
+  ```bash
+  sudo apt install -y libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+  ```
+* **Fedora / RHEL**:
+  ```bash
+  sudo dnf install glib2-devel gtk3-devel webkit2gtk4.1-devel
+  ```
+* **Arch Linux / Manjaro**:
+  ```bash
+  sudo pacman -S glib2 gtk3 webkit2gtk-4.1
+  ```
+* **openSUSE**:
+  ```bash
+  sudo zypper install glib2-devel gtk3-devel webkit2gtk3-devel
+  ```
+
+</details>
+
 ```bash
 git clone https://github.com/pacifio/atlas
 cd atlas
@@ -181,9 +205,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Two things catch people out:
 
 [ARCHITECTURE.md](ARCHITECTURE.md) covers how Atlas is built. [SECURITY.md](SECURITY.md) covers reporting vulnerabilities.
 
+---
+
 ## Roadmap
 
-- **Source control for agents.** The organisation-wide half: agent history from every machine on the team rolled into one queryable record.
+- **Team timeline.** Agent history from every machine on the team, rolled into one queryable record: the multiplayer half of source control for agents. Client-side groundwork (checkpoints surviving rebase/amend/squash, session capture, the Cloud path) is built; the ingest service isn't live yet.
 - **AI gateway via Atlas accounts.** Route any provider through your Atlas account, with usage and spend visible per person and per agent.
 - **Timeline boards covering how team members are changing code.** A shared view of what each person's agents shipped, and when.
 - **Organisational agents.** Agents scoped to a team, carrying the organisation's own memory, skills, and conventions.
@@ -195,7 +221,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Two things catch people out:
 
 - **Your code, notes, and sessions stay on your machine.** Nothing is uploaded to run an agent.
 - **Secrets are scrubbed before anything is written to disk.** Not before upload, before persistence.
-- **Session capture is local-only by default.** The [Checkpoints](#checkpoints) record of your agent sessions is written to `.atlas/sessions.db` on your machine and stays there — no account required, and nothing sent anywhere until you explicitly opt in to sync.
+- **Session capture is local-only by default.** The [Checkpoints](#checkpoints) record of your agent sessions is written to `.atlas/sessions.db` on your machine and stays there. No account required, and nothing sent anywhere until you explicitly opt in to sync.
 - **Accounts are opt-in.** Sign in to create an organisation and sync across devices and teammates.
 - **Anonymous usage analytics are on by default.** Coarse metadata, never code or prompts. [What's collected, and how to turn it off](TELEMETRY.md).
 
