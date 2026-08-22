@@ -15,6 +15,7 @@
     "format": "oxfmt --write src/",
     "format:check": "oxfmt --check src/",
     "test": "vitest run",
+    "test:rust": "bash scripts/test-rust.sh",
     "test:watch": "vitest",
     "acp:test": "SDKROOT=\"$(xcrun --show-sdk-path)\" cargo run --manifest-path crates/atlas-agents/Cargo.toml --example backend_suite",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
