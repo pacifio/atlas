@@ -54,7 +54,6 @@ pub mod mission_control;
 pub mod project_session;
 pub mod pdf_annotations;
 pub mod plans;
-pub mod pomodoro;
 pub mod recent_files;
 pub mod registry;
 pub mod search;

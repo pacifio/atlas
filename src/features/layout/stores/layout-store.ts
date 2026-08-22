@@ -3,7 +3,7 @@ import { persist } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
 import { createSelectors } from "@/lib/create-selectors";
 import { invoke } from "@tauri-apps/api/core";
-import type { TabType } from "@/lib/constants";
+import { TAB_TYPES, type TabType } from "@/lib/constants";
 import type { LayoutTemplate } from "../templates";
 
 export interface Tab {
@@ -910,9 +910,21 @@ export const useLayoutStore = createSelectors(
           const RIGHT = ["changes", "github", "git-graph"];
           if (!LEFT.includes(leftPanel.activeSection)) leftPanel.activeSection = "files";
           if (!RIGHT.includes(rightPanel.activeSection)) rightPanel.activeSection = "changes";
+          // Tabs whose feature has since been removed (pomodoro, model-chat,
+          // research…) still sit in persisted state.json; restoring them
+          // yields a permanent placeholder tab. Drop them, and repoint
+          // activeTabId if it pointed at one.
+          const validTypes = new Set<string>(TAB_TYPES);
+          const tabs = (p.tabs ?? current.tabs).filter((t) => validTypes.has(t.type));
+          let activeTabId = p.activeTabId ?? current.activeTabId;
+          if (activeTabId !== null && !tabs.some((t) => t.id === activeTabId)) {
+            activeTabId = tabs[0]?.id ?? null;
+          }
           return {
             ...current,
             ...p,
+            tabs,
+            activeTabId,
             leftPanel,
             rightPanel,
             knowledgePanel: { ...current.knowledgePanel, ...p.knowledgePanel },

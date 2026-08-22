@@ -1,4 +1,4 @@
-const TAB_TYPES = [
+export const TAB_TYPES = [
   "chat",
   "canvas",
   "browser",
@@ -15,7 +15,6 @@ const TAB_TYPES = [
   "svg",
   "pdf",
   "unsupported",
-  "pomodoro",
   "mission-control",
   "artifacts",
 ] as const;

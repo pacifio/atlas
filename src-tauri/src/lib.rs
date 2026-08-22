@@ -573,8 +573,6 @@ pub fn run() {
             commands::sessions_watch::sessions_watch_open,
             commands::sessions_watch::sessions_watch_close,
             commands::sessions_watch::sessions_watch_status,
-            commands::pomodoro::pomodoro_load,
-            commands::pomodoro::pomodoro_save,
             commands::plans::plans_load,
             commands::plans::plans_append,
             commands::agent_memory::list_codex_sessions,

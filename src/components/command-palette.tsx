@@ -22,7 +22,6 @@ import {
   Network,
   BrainCircuit,
   ScrollText,
-  Timer,
   Code,
   GitBranch,
   ArrowLeftToLine,
@@ -89,7 +88,6 @@ export function CommandPalette({
     "knowledge-graph",
     "memory",
     "log",
-    "pomodoro",
     "settings",
   ]);
   const openTab = (type: TabType, title: string) =>
@@ -196,13 +194,6 @@ export function CommandPalette({
         icon: ScrollText,
         category: "Open",
         action: () => openTab("log", "Log"),
-      },
-      {
-        id: "new-pomodoro",
-        label: "Pomodoro",
-        icon: Timer,
-        category: "Open",
-        action: () => openTab("pomodoro", "Pomodoro"),
       },
 
       // ── Layout toggles ──

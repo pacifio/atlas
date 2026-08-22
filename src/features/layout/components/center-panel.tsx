@@ -67,11 +67,6 @@ const SettingsPanel = lazy(() =>
 const LogPanel = lazy(() =>
   import("@/features/log/components/log-panel").then((m) => ({ default: m.LogPanel })),
 );
-const PomodoroPanel = lazy(() =>
-  import("@/features/pomodoro/components/pomodoro-panel").then((m) => ({
-    default: m.PomodoroPanel,
-  })),
-);
 const MissionControlPanel = lazy(() =>
   import("@/features/mission-control/components/mission-control-panel").then((m) => ({
     default: m.MissionControlPanel,
@@ -111,7 +106,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ScrollText,
-  Timer,
   FileText,
   Columns2,
   LayoutDashboard,
@@ -136,7 +130,6 @@ const tabIcons: Record<TabType, React.ElementType> = {
   svg: Code,
   pdf: FileText,
   unsupported: Code,
-  pomodoro: Timer,
   "mission-control": LayoutDashboard,
   artifacts: Layers,
 };
@@ -634,8 +627,6 @@ function TabContent({ tab }: { tab: Tab }) {
       return <SettingsPanel initialSection={tab.data.section as string | undefined} />;
     case "log":
       return <LogPanel />;
-    case "pomodoro":
-      return <PomodoroPanel />;
     case "mission-control":
       return <MissionControlPanel />;
     case "artifacts":
@@ -688,7 +679,6 @@ const NEW_TAB_OPTIONS: Array<{ type: TabType; label: string; icon: React.Element
   { type: "knowledge", label: "Knowledge", icon: Brain },
   { type: "memory", label: "Memory", icon: BrainCircuit },
   { type: "log", label: "Log", icon: ScrollText },
-  { type: "pomodoro", label: "Pomodoro", icon: Timer },
 ];
 
 function NewTabDropdown({

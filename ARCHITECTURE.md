@@ -105,7 +105,7 @@ One Rust module per IPC domain under `src-tauri/src/commands/`. `commands/mod.rs
 | Git | git, git_graph, git_watcher, gitdiff |
 | GitHub | github |
 | Knowledge | knowledge, knowledge_meta, knowledge_links, knowledge_export |
-| Canvas / misc | canvas, pomodoro, log |
+| Canvas / misc | canvas, log |
 | Memory | memory_* — chat, sessions, graph, pack, policy, sharing, summarize, timeline, delta, inject, compile, indexer, retrieve |
 | Models | models, models_pricing |
 | Model chat | modelchat, modelchat_sessions |
