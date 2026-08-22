@@ -29,12 +29,7 @@ import {
   Star,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { AgentIcons } from "@/components/agent-icons";
-import { AtlasIcon } from "@/components/atlas-icon";
-import { type SwitchableAgent } from "@/types/agent";
-import { agentMeta, useSwitchableAgents } from "@/features/agents/lib/agent-meta";
 import { openSettingsSection } from "@/features/settings/lib/open-settings";
-import { AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
 import type { GithubRepo, ClonedRepo } from "@/features/github/types";
 import {
   searchMentions,
@@ -60,10 +55,6 @@ interface ComposerAddMenuProps {
   /** Reference another project in the active org — inserts a `@workspace`
    *  mention that hands the agent that project's path. */
   onPickWorkspace: (workspace: MentionWorkspace) => void;
-  /** The chat's current coding agent (footer switcher highlights it). */
-  currentAgent: SwitchableAgent;
-  /** Switch the chat to a specific coding agent (mirrors the ⌥/ cycle). */
-  onSwitchAgent: (agent: SwitchableAgent) => void;
 }
 
 const ITEM_CLASS =
@@ -124,8 +115,6 @@ export function ComposerAddMenu({
   onCloneRepo,
   onPickSession,
   onPickWorkspace,
-  currentAgent,
-  onSwitchAgent,
 }: ComposerAddMenuProps) {
   const [open, setOpen] = useState(false);
 
@@ -140,7 +129,6 @@ export function ComposerAddMenu({
     return () => window.removeEventListener("atlas:composer-menu-open", onOther);
   }, []);
   // First-party agents + installed registry externals (re-renders on install).
-  const switchableAgents = useSwitchableAgents();
 
   return (
     <DropdownMenu.Root
@@ -226,64 +214,6 @@ export function ComposerAddMenu({
             onPickWorkspace={onPickWorkspace}
           />
 
-          {/* Footer — agent switcher: circular brand icons on the left, the ⌥/
-              cycle shortcut on the right. Plain buttons (not menu items) so a
-              switch doesn't feel like "picking" an attachment; we close the
-              menu ourselves after switching. */}
-          <DropdownMenu.Separator className="my-1 h-px bg-[var(--border-default)]" />
-          <div className="flex items-center justify-between px-2 py-0.5">
-            <div className="flex items-center gap-1">
-              {switchableAgents.map((a) => {
-                const active = a === currentAgent;
-                return (
-                  <button
-                    key={a}
-                    type="button"
-                    onClick={() => {
-                      if (!active) onSwitchAgent(a);
-                      setOpen(false);
-                    }}
-                    title={`Switch to ${agentMeta(a).label}`}
-                    className={cn(
-                      "flex items-center justify-center h-5 w-5 rounded-full border border-[var(--border-default)] transition-colors outline-none cursor-pointer",
-                      active
-                        ? "bg-[var(--bg-elevated)] text-[var(--text-primary)]"
-                        : "text-[var(--text-tertiary)] opacity-45 hover:opacity-100 hover:bg-[var(--bg-hover)]",
-                    )}
-                  >
-                    {a === "claude-acp" ? (
-                      <AgentIcons.Claude className="size-3" />
-                    ) : a === "codex-acp" ? (
-                      <AgentIcons.Codex className="size-3" />
-                    ) : a === "opencode" ? (
-                      <AgentIcons.OpenCode className="size-3" />
-                    ) : a === "cursor" ? (
-                      <AgentIcons.Cursor className="size-3" />
-                    ) : a === "kilo" ? (
-                      <AgentIcons.Kilo className="size-3" />
-                    ) : a === "cersei" ? (
-                      <AtlasIcon size={12} className="rounded-[2px]" />
-                    ) : agentMeta(a).iconDataUrl ? (
-                      <ExternalAgentIcon dataUrl={agentMeta(a).iconDataUrl!} size={12} />
-                    ) : (
-                      <AgentMonogram label={agentMeta(a).label} size={12} />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-            <span
-              className="flex items-center gap-1 text-[10px] text-[var(--text-tertiary)]"
-              title="Cycle coding agent"
-            >
-              <kbd className="rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] px-1 leading-[15px] font-sans">
-                ⌥
-              </kbd>
-              <kbd className="rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] px-1 leading-[15px] font-sans">
-                /
-              </kbd>
-            </span>
-          </div>
           {/* Zed-style registry entry point: opens Settings → Agents so any
               ACP-registry agent can join the switcher row above. */}
           <DropdownMenu.Separator className="my-1 h-px bg-[var(--border-default)]" />

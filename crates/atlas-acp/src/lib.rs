@@ -20,7 +20,7 @@ pub use events::{AcpEvent, EventSink};
 pub use registry::{
     AgentId, AgentInfo, AgentRegistry, AgentSpec, ImageAttachment, PermissionDecision, SpecSource,
 };
-pub use schema::NewSessionInfo;
+pub use schema::{LoadedSessionInfo, NewSessionInfo};
 pub use spawn::{managed_node_bin, register_managed_node_bin, sanitize_host_env};
 
 /// Login-shell program resolution, re-exported for the dynamic registry

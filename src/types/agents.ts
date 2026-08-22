@@ -14,6 +14,9 @@ export interface SessionInit {
   key: SessionKey;
   current_mode: string | null;
   available_modes: SessionModeInfo[];
+  /** The agent's advertised config options at session creation. Absent when
+   *  the agent advertises none (serde skips an empty vec). */
+  config_options?: AcpConfigOption[];
 }
 
 export type TranscriptKind = { kind: "none" } | { kind: "claude_jsonl" } | { kind: "cersei_json" };

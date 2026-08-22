@@ -20,6 +20,10 @@ import type {
 } from "@/types/agents";
 import { splitAtlasContext } from "../lib/atlas-context";
 import { loadCachedAcpModes, saveCachedAcpModes } from "../lib/acp-modes-cache";
+import {
+  loadCachedAcpConfigOptions,
+  saveCachedAcpConfigOptions,
+} from "../lib/acp-config-options-cache";
 import { loadLastModePref, saveLastModePref } from "../lib/last-mode-pref";
 import { loadCachedAcpModels, saveCachedAcpModels } from "../lib/acp-models-cache";
 import { resolveModelLabel } from "../lib/model-label";
@@ -302,8 +306,15 @@ interface ChatActions {
      *  the user switches projects so dead acpSessionIds from the old
      *  project's `.atlas/` don't linger and cause ghost-bound tabs. */
     resetSessions: () => void;
-    /** Seed the agent's advertised config options from a session snapshot. */
-    setAcpConfigOptions: (sessionId: string, options: AcpConfigOption[]) => void;
+    /** Seed the agent's advertised config options from a live session's
+     *  `session/new` response or snapshot. `sourceAgentType` is the agent the
+     *  data actually came from — a mismatch with the tab's current agent means
+     *  it's stale and is dropped (see `setAcpModes` for the incident). */
+    setAcpConfigOptions: (
+      sessionId: string,
+      options: AcpConfigOption[],
+      sourceAgentType?: AgentType,
+    ) => void;
     /** Write one config option (`session/set_config_option`) and push it. The
      *  agent answers with its authoritative state, which repaints the pill. */
     setAcpConfigOption: (sessionId: string, optionId: string, value: string | boolean) => void;
@@ -621,6 +632,15 @@ export const useChatStore = createSelectors(
                   acpModesPending: true,
                 };
               })(),
+              // Optimistically pre-fill the agent's config options (the effort
+              // picker) from cache so a switch paints instantly instead of
+              // waiting out the agent's npx cold start; `…Confirmed` stays
+              // false until a live session reconciles it.
+              ...(() => {
+                const cached = loadCachedAcpConfigOptions(agentType);
+                return cached ? { acpConfigOptions: cached } : {};
+              })(),
+              acpConfigOptionsConfirmed: false,
               // Pre-fill models from cache; empty for the native agent.
               ...(() => {
                 const m = loadCachedAcpModels(agentType);
@@ -667,6 +687,13 @@ export const useChatStore = createSelectors(
             // the old agent's list must not survive the switch or it renders
             // under the new agent until its own update lands.
             sess.availableCommands = undefined;
+            // Config options are per-agent too. Re-seed from THIS agent's
+            // cache (instant paint) and mark unconfirmed so the composer's
+            // self-heal still reconciles against the live session. Carrying
+            // the previous agent's list over is what suppressed the effort
+            // pill until the agent happened to push a config_option_update.
+            sess.acpConfigOptions = loadCachedAcpConfigOptions(agentType) ?? undefined;
+            sess.acpConfigOptionsConfirmed = false;
             // Optimistically seed from cache so the pill appears instantly with
             // the right modes; keep pending until the new binding confirms. A
             // cache miss (first-ever use) shows a pure loading state.
@@ -692,6 +719,10 @@ export const useChatStore = createSelectors(
               sess.agentType = agentType;
               // Per-agent ACP command list — stale across an agent change.
               sess.availableCommands = undefined;
+              // Same rule as switchChatAgent: optimistic cache seed, marked
+              // unconfirmed so the snapshot self-heal reconciles it.
+              sess.acpConfigOptions = loadCachedAcpConfigOptions(agentType) ?? undefined;
+              sess.acpConfigOptionsConfirmed = false;
               sess.acpModeExplicit = false;
               // The resume flow calls `setAcpModes` immediately after with the
               // session's real advertised modes, so no cache seeding is needed
@@ -854,11 +885,22 @@ export const useChatStore = createSelectors(
             }
             delete s.queues[sessionId];
           }),
-        setAcpConfigOptions: (sessionId, options) =>
+        setAcpConfigOptions: (sessionId, options, sourceAgentType) => {
+          const at = get().sessions[sessionId]?.agentType;
+          if (sourceAgentType && at && sourceAgentType !== at) return;
           set((s) => {
             const session = s.sessions[sessionId];
-            if (session) session.acpConfigOptions = options;
-          }),
+            if (!session) return;
+            session.acpConfigOptions = options;
+            // Confirmed by a live session — stops the composer's snapshot
+            // self-heal from re-fetching, and marks the optimistic cache seed
+            // as reconciled.
+            session.acpConfigOptionsConfirmed = true;
+          });
+          // Persist for the next switch to this agent (side effect, outside
+          // the immer pass). Empty sets are not cached — see the cache module.
+          if (at) saveCachedAcpConfigOptions(at, options);
+        },
         setAcpConfigOption: (sessionId, optionId, value) => {
           // Optimistic paint so the pill responds immediately; the agent's
           // `config_option_update` is what settles it (and corrects us if the

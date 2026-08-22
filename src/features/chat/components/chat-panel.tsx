@@ -380,6 +380,12 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // default instead of a hard-coded Atlas fallback.
         if (!cancelled) {
           const actions = useChatStore.getState().actions;
+          // Config options ride the session/new response — seed them with the
+          // modes so the composer's pickers (effort) paint at bind. Agents that
+          // only answer on session/new and never push a config_option_update
+          // (Codex) have no other source. `?? []` records "none advertised",
+          // which is what stops the composer self-heal from re-fetching.
+          actions.setAcpConfigOptions(tabId, init.config_options ?? [], nowAt);
           if (init.available_modes.length > 0) {
             actions.setAcpModes(tabId, effectiveMode, init.available_modes, nowAt);
           } else if (effectiveMode ?? init.current_mode) {

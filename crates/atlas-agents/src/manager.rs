@@ -44,6 +44,11 @@ pub struct SessionInit {
     pub key: SessionKey,
     pub current_mode: Option<String>,
     pub available_modes: Vec<SessionModeInfo>,
+    /// The agent's advertised config options, raw — so the composer can paint
+    /// its pickers (effort, …) at bind instead of waiting for a snapshot
+    /// self-heal or an agent-pushed `config_option_update`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config_options: Vec<serde_json::Value>,
 }
 
 #[derive(Clone)]
@@ -216,11 +221,18 @@ impl AgentManager {
             Vec::new(),
             resp.modes,
             resp.models,
+            resp.config_options.clone(),
         );
+        let config_options = resp
+            .config_options
+            .as_ref()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default();
         Ok(SessionInit {
             key,
             current_mode,
             available_modes,
+            config_options,
         })
     }
 
@@ -301,14 +313,23 @@ impl AgentManager {
             let seeds = cersei_replay_to_messages(
                 self.inner.cersei.replay_session(&cwd_str, &session_id_str),
             );
-            let modes = self
+            let loaded = self
                 .backend_for(agent_id)?
                 .load_session(agent_id, session_id.clone(), cwd)
                 .await?;
             if self.inner.sessions.contains_key(&key) {
                 return Ok(key);
             }
-            self.install_session(key.clone(), session_id, cwd_str, plugin_id, seeds, modes, None);
+            self.install_session(
+                key.clone(),
+                session_id,
+                cwd_str,
+                plugin_id,
+                seeds,
+                loaded.modes,
+                None,
+                loaded.config_options,
+            );
             return Ok(key);
         }
 
@@ -327,10 +348,11 @@ impl AgentManager {
                 Vec::new(),
                 None,
                 None,
+                None,
             );
             match self.backend_for(agent_id)?.load_session(agent_id, session_id, cwd).await {
-                Ok(modes) => {
-                    self.seed_modes(&key, modes);
+                Ok(loaded) => {
+                    self.seed_loaded(&key, loaded);
                     Ok(key)
                 }
                 Err(e) => {
@@ -346,7 +368,7 @@ impl AgentManager {
             // worker is ready for a follow-up `send_prompt`; the resumed
             // session's advertised modes come back here.
             let seeds = transcript::replay(plugin.transcript, &cwd_str, &session_id_str).await?;
-            let modes = self
+            let loaded = self
                 .backend_for(agent_id)?
                 .load_session(agent_id, session_id.clone(), cwd)
                 .await?;
@@ -357,7 +379,16 @@ impl AgentManager {
                 return Ok(key);
             }
 
-            self.install_session(key.clone(), session_id, cwd_str, plugin_id, seeds, modes, None);
+            self.install_session(
+                key.clone(),
+                session_id,
+                cwd_str,
+                plugin_id,
+                seeds,
+                loaded.modes,
+                None,
+                loaded.config_options,
+            );
             Ok(key)
         }
     }
@@ -365,17 +396,25 @@ impl AgentManager {
     /// Apply a `session/load` | `session/new` `modes` blob onto an
     /// already-installed session's state (used by the transcript-less resume
     /// path, where the session is installed before the modes are known).
-    fn seed_modes(&self, key: &SessionKey, modes: Option<serde_json::Value>) {
-        let (Some(modes), Ok(handle)) = (modes, self.handle_for(key)) else {
+    /// Seed a resumed session's advertised state from its `session/load`
+    /// response — modes AND config options, so a resumed session gets the same
+    /// pickers a fresh one does.
+    fn seed_loaded(&self, key: &SessionKey, loaded: atlas_acp::LoadedSessionInfo) {
+        let Ok(handle) = self.handle_for(key) else {
             return;
         };
-        let (current, available) = parse_session_modes(&modes);
         let mut st = handle.state.lock();
-        if let Some(c) = current {
-            st.current_mode = Some(c);
+        if let Some(modes) = loaded.modes.as_ref() {
+            let (current, available) = parse_session_modes(modes);
+            if let Some(c) = current {
+                st.current_mode = Some(c);
+            }
+            if !available.is_empty() {
+                st.available_modes = available;
+            }
         }
-        if !available.is_empty() {
-            st.available_modes = available;
+        if let Some(options) = loaded.config_options.as_ref().and_then(|v| v.as_array()) {
+            st.config_options = options.clone();
         }
     }
 
@@ -607,6 +646,7 @@ impl AgentManager {
         seed_messages: Vec<Message>,
         modes: Option<serde_json::Value>,
         models: Option<serde_json::Value>,
+        config_options: Option<serde_json::Value>,
     ) {
         let mut state = SessionState::new(
             key.agent_id,
@@ -637,6 +677,14 @@ impl AgentManager {
             if !available.is_empty() {
                 state.available_models = available;
             }
+        }
+        // Seed the agent's advertised config options from the `session/new` |
+        // `session/load` response. Without this the host only learns them if
+        // the agent later PUSHES a `config_option_update` — Claude does, Codex
+        // does not, which is exactly why Codex's `reasoning_effort` picker was
+        // missing while Claude's worked.
+        if let Some(options) = config_options.as_ref().and_then(|v| v.as_array()) {
+            state.config_options = options.clone();
         }
         let state = Arc::new(Mutex::new(state));
 
@@ -964,6 +1012,43 @@ mod tests {
     /// session. `dispatch` used to drop it silently — slash commands then
     /// stayed empty for the whole session. The pre-install buffer must hold
     /// the event and `install_session` must replay it into `SessionState`.
+        /// `install_session` must seed the agent's advertised config options into
+    /// the state, and the snapshot must carry them out — this is the ONLY
+    /// source for agents that advertise on `session/new` and never push a
+    /// `config_option_update` (codex-acp's `reasoning_effort`). A delta
+    /// subscription alone misses them entirely.
+    #[tokio::test]
+    async fn install_session_seeds_config_options_into_the_snapshot() {
+        let mgr = AgentManager::new(
+            Arc::new(NoopSink),
+            std::env::temp_dir().join("atlas-agents-test-config"),
+        );
+        let acp_sid = atlas_acp::SessionId::new("sess-cfg");
+        let key = SessionKey {
+            agent_id: AgentId::new(),
+            session_id: "sess-cfg".into(),
+        };
+        let options = serde_json::json!([
+            {"id":"reasoning_effort","name":"Reasoning Effort",
+             "category":"thought_level","type":"select","currentValue":"medium",
+             "options":[{"value":"low","name":"Low"},{"value":"high","name":"High"}]}
+        ]);
+        mgr.install_session(
+            key.clone(),
+            acp_sid,
+            "/tmp".into(),
+            "codex-acp".into(),
+            Vec::new(),
+            None,
+            None,
+            Some(options),
+        );
+        let snap = mgr.snapshot_meta(&key).expect("session installed");
+        assert_eq!(snap.config_options.len(), 1);
+        assert_eq!(snap.config_options[0]["category"], "thought_level");
+        assert_eq!(snap.config_options[0]["currentValue"], "medium");
+    }
+
     #[tokio::test]
     async fn early_available_commands_survive_the_install_race() {
         let mgr = AgentManager::new(
@@ -1003,6 +1088,7 @@ mod tests {
             "/tmp".into(),
             "codex".into(),
             Vec::new(),
+            None,
             None,
             None,
         );
@@ -1075,6 +1161,7 @@ mod tests {
             "/tmp".into(),
             "claude-code".into(),
             vec![crate::session::new_user_message("the same prompt, from disk".into())],
+            None,
             None,
             None,
         );

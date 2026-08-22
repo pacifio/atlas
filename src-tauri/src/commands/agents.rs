@@ -649,8 +649,19 @@ pub async fn agents_send(
     // exists.
     const INDEX_TOP_K: usize = 3;
     let chat_state = app.state::<MemoryChatState>();
+    let t_retrieve = std::time::Instant::now();
     let mut index_docs =
         memory_retrieve::retrieve(&app, chat_state.inner(), &cwd, &text, INDEX_TOP_K).await;
+    // Every millisecond here is silent "agent is thinking" to the user — a
+    // slow stage must name itself, or the next latency report is undiagnosable
+    // (this one presented as "the ACP port made Claude slower").
+    if t_retrieve.elapsed() > Duration::from_secs(1) {
+        tracing::warn!(
+            target: "atlas::agents::send_latency",
+            "pre-send memory retrieval took {:?}",
+            t_retrieve.elapsed()
+        );
+    }
     index_docs.retain(|d| sharing.note_index_doc(&key, &d.id));
     let index_block = memory_retrieve::compose_index_block(&index_docs);
 
@@ -659,7 +670,15 @@ pub async fn agents_send(
     // by INJECT_BUDGET_SECS inside `build_injection`).
     let base = if !sharing.already_sent(&key) {
         let pref = sharing.summarizer_pref(&cwd);
+        let t_inject = std::time::Instant::now();
         let built = build_injection(&app, &cwd, &key.session_id, &pref, &text).await;
+        if t_inject.elapsed() > Duration::from_secs(1) {
+            tracing::warn!(
+                target: "atlas::agents::send_latency",
+                "first-send memory bootstrap took {:?} (budget {INJECT_BUDGET_SECS}s)",
+                t_inject.elapsed()
+            );
+        }
         sharing.mark_sent(&key);
         built
     } else {

@@ -263,6 +263,7 @@ export const SessionSidebar = memo(function SessionSidebar({
     setResumePending,
     createSession,
     hydrateSessionSnapshot,
+    setAcpConfigOptions,
   } = useChatStore.use.actions();
 
   const chatSidebar = useLayoutStore.use.chatSidebar();
@@ -831,6 +832,14 @@ export const SessionSidebar = memo(function SessionSidebar({
       // agents don't reliably re-advertise, so the snapshot is the only
       // source for resumed sessions.
       setAcpAvailableCommands(targetTabId, snapshot.available_commands ?? []);
+      // Config options ride the same snapshot (resumed agents don't reliably
+      // re-push them) — without this the effort pill is missing on a resumed
+      // session until the agent's next config_option_update.
+      setAcpConfigOptions(
+        targetTabId,
+        snapshot.config_options ?? [],
+        agentTypeFromPluginId(snapshot.plugin_id),
+      );
       setTranscriptLoading(targetTabId, false);
     })();
   };

@@ -201,6 +201,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
+        // Config options as the composer would see them at bind — the effort
+        // picker's only source for agents that never push a config_option_update.
+        match acp.new_session(info.agent_id, std::env::current_dir().unwrap_or_default()).await {
+            Ok(init) => {
+                let opts = init
+                    .config_options
+                    .as_ref()
+                    .and_then(|v| v.as_array().cloned())
+                    .unwrap_or_default();
+                let ids: Vec<String> = opts
+                    .iter()
+                    .map(|o| {
+                        format!(
+                            "{}({})",
+                            o.get("id").and_then(|v| v.as_str()).unwrap_or("?"),
+                            o.get("category").and_then(|v| v.as_str()).unwrap_or("-")
+                        )
+                    })
+                    .collect();
+                eprintln!("  ⚙ session/new config options: [{}]", ids.join(", "));
+            }
+            Err(e) => eprintln!("  ⚙ session/new failed: {e}"),
+        }
+
         // What the shared sign-in modal would offer for this agent.
         match acp.auth_methods(info.agent_id) {
             Ok(methods) if !methods.is_empty() => {

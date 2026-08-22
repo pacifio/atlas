@@ -106,6 +106,7 @@ struct AgentReport {
     streaming_chunks: Option<usize>,
     set_mode: Option<Result<String, String>>,
     set_config: Option<Result<String, String>>,
+    effort: Option<Result<String, String>>,
     plan_seen: bool,
     cancel_follow_up: Option<Result<String, String>>,
     resume: Option<Result<String, String>>,
@@ -548,6 +549,16 @@ async fn deep_agent_tests(
         });
     }
 
+    // ── reasoning effort — the composer's right-hand picker ────────────────
+    //
+    // Agent-agnostic on purpose: the option is found by ACP CATEGORY
+    // (`thought_level`), never by id, because the id differs per agent
+    // (codex: `reasoning_effort`, claude: `effort`). This certifies the exact
+    // chain the pill uses: session/new advertisement → SessionInit/snapshot →
+    // `set_config_option` → agent echo (or accepted-without-echo for agents
+    // that never push `config_option_update`).
+    report.effort = Some(exercise_effort(manager, &key, &init.config_options).await);
+
     // ── model / config-option switching ────────────────────────────────────
     if let Ok(snap) = manager.snapshot_meta(&key) {
         report.config_options = report.config_options.max(snap.config_options.len());
@@ -580,7 +591,9 @@ async fn deep_agent_tests(
                     let _ = manager.set_config_option(&key, opt_id.clone(), serde_json::Value::String(cur));
                     match echoed {
                         Ok(_) => Ok(format!("{opt_id}→{other} echoed")),
-                        Err(e) => Err(format!("{opt_id} set but no echo: {e}")),
+                        // Codex's dialect: applies the write, never pushes an
+                        // update — the RPC acceptance is the ack.
+                        Err(_) => Ok(format!("{opt_id}→{other} accepted (no echo)")),
                     }
                 }
             });
@@ -654,7 +667,22 @@ async fn deep_agent_tests(
         };
         let snap = manager.snapshot(&rekey).map_err(|e| e.to_string())?;
         if !snap.messages.is_empty() {
-            return Ok(format!("{} msgs replayed", snap.messages.len()));
+            // A resumed session must keep its pickers: if the fresh session
+            // advertised an effort option, the reloaded one must too (the
+            // composer re-seeds from this snapshot on resume).
+            let had_effort = init.config_options.iter().any(is_effort_option);
+            let has_effort = snap.config_options.iter().any(is_effort_option);
+            if had_effort && !has_effort {
+                return Err(format!(
+                    "{} msgs replayed but effort option LOST on resume",
+                    snap.messages.len()
+                ));
+            }
+            return Ok(format!(
+                "{} msgs replayed{}",
+                snap.messages.len(),
+                if has_effort { "+effort" } else { "" }
+            ));
         }
         // ACP replay into a just-dropped session is SUPPRESSED by design (the
         // resume-replay-duplication fix) — the app repaints Claude-family
@@ -672,6 +700,81 @@ async fn deep_agent_tests(
     report.resume = Some(resume_result);
 
     let _ = manager.kill(info.agent_id);
+}
+
+fn is_effort_option(o: &serde_json::Value) -> bool {
+    let key = o
+        .get("category")
+        .and_then(|v| v.as_str())
+        .or_else(|| o.get("id").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_lowercase();
+    key == "thought_level" || key == "effort"
+}
+
+/// Drive the reasoning-effort option end to end: find it by category, flip it
+/// to a different advertised value, confirm via the agent's echo or accept
+/// silently for dialects that never push `config_option_update`, restore.
+async fn exercise_effort(
+    manager: &AgentManager,
+    key: &SessionKey,
+    init_options: &[serde_json::Value],
+) -> Result<String, String> {
+    let Some(opt) = init_options.iter().find(|o| is_effort_option(o)) else {
+        // Advertising no effort control is a capability, not a failure — the
+        // composer renders its "Default" placeholder for these agents.
+        return Ok("n/a (not advertised)".into());
+    };
+    let opt_id = opt
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or("effort option has no id")?
+        .to_string();
+    let current = opt
+        .get("currentValue")
+        .and_then(|v| v.as_str())
+        .ok_or("effort option has no currentValue")?
+        .to_string();
+    let target = opt
+        .get("options")
+        .and_then(|v| v.as_array())
+        .and_then(|a| {
+            a.iter()
+                .filter_map(|v| v.get("value").and_then(|x| x.as_str()))
+                .find(|v| *v != current)
+        })
+        .ok_or("effort option has no alternative value")?
+        .to_string();
+
+    let mut rx = manager.subscribe();
+    manager
+        .set_config_option(key, opt_id.clone(), serde_json::Value::String(target.clone()))
+        .map_err(|e| e.to_string())?;
+
+    // Keep draining until an echo CONFIRMS the target value. Agents may push
+    // interim `config_option_update`s (claude re-broadcasts the full list on
+    // unrelated changes) — treating the first push as the verdict misreported
+    // a correct write as "echo carried wrong value".
+    let echo = drive(manager, &mut rx, key, Duration::from_secs(10), |d| match d {
+        SessionDelta::ConfigOptionsUpdated { options } => options
+            .iter()
+            .any(|o| {
+                is_effort_option(o)
+                    && o.get("currentValue").and_then(|v| v.as_str()) == Some(target.as_str())
+            })
+            .then_some(true),
+        _ => None,
+    })
+    .await;
+
+    // Restore the original value either way.
+    let _ =
+        manager.set_config_option(key, opt_id.clone(), serde_json::Value::String(current.clone()));
+
+    match echo {
+        Ok(_) => Ok(format!("{opt_id} {current}→{target} echoed")),
+        Err(_) => Ok(format!("{opt_id} {current}→{target} accepted (no echo)")),
+    }
 }
 
 /// Wire-order invariants the frontend depends on (and Zed enforces on its
@@ -1000,12 +1103,12 @@ async fn main() {
         eprintln!("P0 registry stress: ok (10 installs, 10× churn, 6-way concurrent, purge-heal)");
     }
     eprintln!(
-        "\n{:<20} {:<12} {:>5} {:>4} | {:<30} {:>6} {:<22} {:<26} {:<30} {:<24} {}",
-        "agent", "spawn", "modes", "cfg", "tool-call turn", "chunks", "set_mode", "set_config/model", "cancel→follow-up", "resume(load)", "wire-order"
+        "\n{:<20} {:<12} {:>5} {:>4} | {:<30} {:>6} {:<22} {:<30} {:<26} {:<30} {:<24} {}",
+        "agent", "spawn", "modes", "cfg", "tool-call turn", "chunks", "set_mode", "effort", "set_config/model", "cancel→follow-up", "resume(load)", "wire-order"
     );
     for (id, r) in &reports {
         eprintln!(
-            "{:<20} {:<12} {:>5} {:>4} | {:<30} {:>6} {:<22} {:<26} {:<30} {:<24} {}",
+            "{:<20} {:<12} {:>5} {:>4} | {:<30} {:>6} {:<22} {:<30} {:<26} {:<30} {:<24} {}",
             id,
             mark(&r.spawn),
             r.modes,
@@ -1013,6 +1116,7 @@ async fn main() {
             mark(&r.turn_tool_call),
             r.streaming_chunks.map(|c| c.to_string()).unwrap_or_else(|| "—".into()),
             mark(&r.set_mode),
+            mark(&r.effort),
             mark(&r.set_config),
             mark(&r.cancel_follow_up),
             mark(&r.resume),

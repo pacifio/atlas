@@ -14,6 +14,18 @@ pub struct NewSessionInfo {
     pub modes: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub models: Option<serde_json::Value>,
+    /// The agent's advertised `config_options`, RAW.
+    ///
+    /// Not redundant with `modes`/`models` above: those are normalised
+    /// PROJECTIONS of two well-known ids, and everything else the agent
+    /// advertises (Codex's `reasoning_effort`, Claude's `effort`/`fast`) lived
+    /// nowhere once they were extracted. Agents that push a
+    /// `config_option_update` after session start (Claude) happened to
+    /// backfill it; agents that only answer on `session/new` (Codex) left the
+    /// host with nothing — which is exactly how the effort picker went missing
+    /// for Codex while working for Claude.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_options: Option<serde_json::Value>,
 }
 
 impl From<NewSessionResponse> for NewSessionInfo {
@@ -46,8 +58,20 @@ impl From<NewSessionResponse> for NewSessionInfo {
             session_id: resp.session_id,
             modes,
             models,
+            config_options: config_options.filter(|v| v.as_array().is_some_and(|a| !a.is_empty())),
         }
     }
+}
+
+/// What a resumed session advertises. Mirrors the `session/new` projection so
+/// `load_session` seeds exactly the same state — a resumed Codex session must
+/// get its `reasoning_effort` picker back, not just its modes.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LoadedSessionInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modes: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_options: Option<serde_json::Value>,
 }
 
 /// Normalise a `config_options` array into a `SessionModeState`-shaped JSON
@@ -136,6 +160,68 @@ fn model_blob_from_config_options(config_options: &serde_json::Value) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Verbatim `configOptions` shapes from live `codex-acp` 1.6.2 and
+    /// `claude-agent-acp` 0.70.0 `session/new` probes (2026-08-22). Codex is
+    /// the load-bearing case: it advertises `reasoning_effort` ONLY here — it
+    /// never pushes a `config_option_update` — so dropping the raw list from
+    /// the projection is precisely how its effort picker went missing while
+    /// Claude's (which does push) kept working.
+    fn codex_new_session_response() -> NewSessionResponse {
+        serde_json::from_value(serde_json::json!({
+            "sessionId": "sess-codex-1",
+            "configOptions": [
+                {"id":"mode","name":"Mode","category":"mode","type":"select",
+                 "currentValue":"agent",
+                 "options":[{"value":"read-only","name":"Read Only"},
+                            {"value":"agent","name":"Agent"},
+                            {"value":"agent-full-access","name":"Full Access"}]},
+                {"id":"model","name":"Model","category":"model","type":"select",
+                 "currentValue":"gpt-5.6-terra",
+                 "options":[{"value":"gpt-5.6-terra","name":"GPT-5.6-Terra"},
+                            {"value":"gpt-5.6-luna","name":"GPT-5.6-Luna"}]},
+                {"id":"reasoning_effort","name":"Reasoning Effort",
+                 "category":"thought_level","type":"select",
+                 "currentValue":"medium",
+                 "options":[{"value":"low","name":"Low"},{"value":"medium","name":"Medium"},
+                            {"value":"high","name":"High"},{"value":"xhigh","name":"Xhigh"},
+                            {"value":"max","name":"Max"},{"value":"ultra","name":"Ultra"}]}
+            ]
+        }))
+        .expect("live codex session/new shape decodes")
+    }
+
+    #[test]
+    fn new_session_info_carries_config_options_raw() {
+        // The projection must keep the FULL advertised list alongside the
+        // derived modes/models — `reasoning_effort` has no derived form, and
+        // the composer's effort picker reads it from exactly this field.
+        let info: NewSessionInfo = codex_new_session_response().into();
+        let opts = info.config_options.expect("raw options carried");
+        let arr = opts.as_array().unwrap();
+        assert_eq!(arr.len(), 3, "nothing filtered out of the advertisement");
+        let effort = arr
+            .iter()
+            .find(|o| o["category"] == "thought_level")
+            .expect("reasoning effort present, findable by CATEGORY (its id is
+                     agent-specific: codex says reasoning_effort, claude says effort)");
+        assert_eq!(effort["currentValue"], "medium");
+        assert_eq!(effort["options"].as_array().unwrap().len(), 6);
+        // …and the derived projections still work off the same list.
+        assert!(info.modes.is_some(), "mode select still projects to modes");
+        assert!(info.models.is_some(), "model select still projects to models");
+    }
+
+    #[test]
+    fn empty_config_options_project_to_none() {
+        // An agent with no options must record None, not Some([]) — the UI
+        // treats "advertised nothing" and "not yet seeded" differently.
+        let resp: NewSessionResponse =
+            serde_json::from_value(serde_json::json!({ "sessionId": "s", "configOptions": [] }))
+                .unwrap();
+        let info: NewSessionInfo = resp.into();
+        assert!(info.config_options.is_none());
+    }
 
     /// Verbatim (truncated) `configOptions` from a live `kilo acp` 7.4.20
     /// `session/new` probe — the config-options dialect with NO legacy

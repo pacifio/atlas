@@ -146,10 +146,14 @@ export interface ChatSession {
   tasks: AgentTask[];
   createdAt: string;
   updatedAt: string;
-  /** The agent's advertised ACP config options (its general settings). When
-   *  non-empty these supersede the mode + model pills, matching Zed's
-   *  `conversation_view` precedence. */
+  /** The agent's advertised ACP config options (its general settings) — the
+   *  source for the composer's reasoning-effort picker. May be an OPTIMISTIC
+   *  seed from the per-agent cache; see `acpConfigOptionsConfirmed`. */
   acpConfigOptions?: AcpConfigOption[];
+  /** True once a live session's `session/new` response or snapshot confirmed
+   *  the options above. False while they are a cache seed (or absent), which
+   *  is what re-arms the composer's snapshot self-heal after an agent switch. */
+  acpConfigOptionsConfirmed?: boolean;
   /** Id of the user message sent JUST NOW — the only row that plays the
    *  composer-side bubble entrance animation (see UserRowView). */
   justSentMessageId?: string;

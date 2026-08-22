@@ -32,7 +32,7 @@ pub trait AgentBackend: Send + Sync {
         agent_id: AgentId,
         session_id: SessionId,
         cwd: PathBuf,
-    ) -> AcpResult<Option<serde_json::Value>>;
+    ) -> AcpResult<atlas_acp::LoadedSessionInfo>;
     /// Drive one prompt turn; returns the canonical snake_case stop-reason
     /// token ("end_turn", "max_tokens", …) per the frontend contract in
     /// `src/types/acp.ts`.
@@ -141,7 +141,7 @@ impl AgentBackend for AcpBackend {
         agent_id: AgentId,
         session_id: SessionId,
         cwd: PathBuf,
-    ) -> AcpResult<Option<serde_json::Value>> {
+    ) -> AcpResult<atlas_acp::LoadedSessionInfo> {
         self.0.load_session(agent_id, session_id, cwd).await
     }
     fn stage_attachments(
@@ -283,7 +283,7 @@ impl AgentBackend for CerseiBackend {
         agent_id: AgentId,
         session_id: SessionId,
         cwd: PathBuf,
-    ) -> AcpResult<Option<serde_json::Value>> {
+    ) -> AcpResult<atlas_acp::LoadedSessionInfo> {
         self.0.load_session(agent_id, session_id, cwd)
     }
     async fn send_prompt(

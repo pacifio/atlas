@@ -255,6 +255,10 @@ impl CerseiRuntime {
             session_id: SessionId::new(session_id),
             modes: Some(modes_blob("default")),
             models: None,
+            // The native agent exposes its knobs (provider/model/effort/
+            // compress) through its own composer pills, not ACP config
+            // options.
+            config_options: None,
         })
     }
 
@@ -265,7 +269,7 @@ impl CerseiRuntime {
         agent_id: AgentId,
         session_id: SessionId,
         cwd: PathBuf,
-    ) -> Result<Option<serde_json::Value>> {
+    ) -> Result<atlas_acp::LoadedSessionInfo> {
         let agent = self.agent(agent_id)?;
         let sid = session_id_str(&session_id);
         let cwd_str = cwd.to_string_lossy().into_owned();
@@ -294,7 +298,10 @@ impl CerseiRuntime {
             busy: AtomicBool::new(false),
         });
         agent.sessions.insert(sid, entry);
-        Ok(Some(modes_blob("default")))
+        Ok(atlas_acp::LoadedSessionInfo {
+            modes: Some(modes_blob("default")),
+            config_options: None,
+        })
     }
 
     /// UI-facing transcript for a stored session (for replay on resume).

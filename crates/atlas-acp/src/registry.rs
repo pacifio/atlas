@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::driver::{self, AgentRuntime, AuthMethodWire, SessionGuard};
 use crate::error::{AcpError, Result};
 use crate::events::EventSink;
-use crate::schema::NewSessionInfo;
+use crate::schema::{LoadedSessionInfo, NewSessionInfo};
 use crate::spawn::{explain_spawn_failure, resolve_command};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -247,7 +247,7 @@ impl AgentRegistry {
         agent_id: AgentId,
         session_id: SessionId,
         cwd: PathBuf,
-    ) -> Result<Option<serde_json::Value>> {
+    ) -> Result<LoadedSessionInfo> {
         let connection = self.connection(agent_id)?;
         let resp = rpc_timeout("session/load", LIFECYCLE_RPC_SECS, async {
             Ok(connection
@@ -262,16 +262,21 @@ impl AgentRegistry {
         // session-mode list for the resumed session. Config-options-dialect
         // agents (Kilo) advertise modes only as a `configOptions` select —
         // fall back to normalising that (mirrors `NewSessionInfo::from`).
+        let config_options = serde_json::to_value(&resp.config_options).ok();
         let modes = resp
             .modes
             .as_ref()
             .and_then(|m| serde_json::to_value(m).ok())
             .or_else(|| {
-                serde_json::to_value(&resp.config_options)
-                    .ok()
-                    .and_then(|co| crate::schema::modes_blob_from_config_options(&co))
+                config_options
+                    .as_ref()
+                    .and_then(crate::schema::modes_blob_from_config_options)
             });
-        Ok(modes)
+        Ok(LoadedSessionInfo {
+            modes,
+            config_options: config_options
+                .filter(|v| v.as_array().is_some_and(|a| !a.is_empty())),
+        })
     }
 
     /// Run the agent's ACP `authenticate` flow for `method_id`. For Codex's

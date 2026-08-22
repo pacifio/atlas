@@ -790,6 +790,27 @@ mod tests {
         pending_perms: Mutex<Vec<Uuid>>,
         /// Pluggable `SessionModes` capability (None = not advertised).
         modes: Mutex<Option<Arc<TestModes>>>,
+        /// Pluggable `SessionConfigOptions` capability (None = not advertised).
+        config_options: Mutex<Option<Arc<TestConfigOptions>>>,
+    }
+
+    /// Records every `set_config_option` write the actor forwards.
+    #[derive(Default)]
+    struct TestConfigOptions {
+        writes: Mutex<Vec<(String, serde_json::Value)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl atlas_agentkit::SessionConfigOptions for TestConfigOptions {
+        async fn set(
+            &self,
+            _s: &SessionId,
+            option_id: String,
+            value: serde_json::Value,
+        ) -> AcpResult<()> {
+            self.writes.lock().push((option_id, value));
+            Ok(())
+        }
     }
 
     #[derive(Clone, Copy)]
@@ -844,6 +865,14 @@ mod tests {
                 .lock()
                 .clone()
                 .map(|m| m as Arc<dyn atlas_agentkit::SessionModes>)
+        }
+        fn session_config_options(
+            &self,
+        ) -> Option<Arc<dyn atlas_agentkit::SessionConfigOptions>> {
+            self.config_options
+                .lock()
+                .clone()
+                .map(|m| m as Arc<dyn atlas_agentkit::SessionConfigOptions>)
         }
     }
 
@@ -944,6 +973,7 @@ mod tests {
             cancels: AtomicUsize::new(0),
             pending_perms: Mutex::new(Vec::new()),
             modes: Mutex::new(None),
+            config_options: Mutex::new(None),
         });
         let handle = SessionActor::spawn(
             state,
@@ -1504,4 +1534,51 @@ mod tests {
              (got {text_pos}, {failed_pos}, {disc_pos})"
         );
     }
+    /// The generic settings write (the effort picker's transport): the actor
+    /// must forward id + value verbatim to the advertised capability. The
+    /// value shape matters — a select's value id rides as a JSON string.
+    #[tokio::test]
+    async fn set_config_option_forwards_to_the_capability() {
+        let (handle, _sink, _txs, conn) = setup_gated(0);
+        let recorder = Arc::new(TestConfigOptions::default());
+        *conn.config_options.lock() = Some(recorder.clone());
+
+        handle
+            .control_tx
+            .send(Control::SetConfigOption(
+                "reasoning_effort".into(),
+                serde_json::json!("high"),
+            ))
+            .expect("control accepted");
+
+        for _ in 0..200 {
+            if !recorder.writes.lock().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let writes = recorder.writes.lock().clone();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].0, "reasoning_effort");
+        assert_eq!(writes[0].1, serde_json::json!("high"));
+    }
+
+    /// An agent that advertises no config-option capability: the control must
+    /// be a silent no-op — not an error, not a wedge (the composer can race a
+    /// write against a session whose capability hasn't been probed yet).
+    #[tokio::test]
+    async fn set_config_option_without_capability_is_a_no_op() {
+        let (handle, sink, _txs, _conn) = setup_gated(0);
+        handle
+            .control_tx
+            .send(Control::SetConfigOption("effort".into(), serde_json::json!("low")))
+            .expect("control accepted even without the capability");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Nothing emitted, nothing crashed.
+        assert!(sink.0.lock().iter().all(|e| !matches!(
+            e.delta,
+            SessionDelta::TurnFailed { .. } | SessionDelta::AgentDisconnected { .. }
+        )));
+    }
+
 }
