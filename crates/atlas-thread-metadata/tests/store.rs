@@ -637,3 +637,86 @@ fn clearing_the_history_view_deletes_every_thread_it_showed() {
 
     assert!(open(&dir).threads().is_empty());
 }
+
+#[test]
+fn the_sidebar_sees_every_project_at_once_newest_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let older_project = ThreadMetadata {
+        updated_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        ..thread("cersei", &["/tmp/other"])
+    };
+    let this_project_old = ThreadMetadata {
+        updated_at: Utc.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).unwrap(),
+        ..thread("cersei", &["/tmp/atlas"])
+    };
+    let this_project_new = ThreadMetadata {
+        updated_at: Utc.with_ymd_and_hms(2026, 8, 22, 0, 0, 0).unwrap(),
+        ..thread("claude-code", &["/tmp/atlas"])
+    };
+    let shelved = thread("cersei", &["/tmp/atlas"]);
+    store.save_all(vec![
+        older_project.clone(),
+        this_project_old.clone(),
+        this_project_new.clone(),
+        shelved.clone(),
+    ]);
+    store.archive(shelved.thread_id);
+    store.flush().unwrap();
+
+    let projects = store.projects();
+
+    assert_eq!(projects.len(), 2, "work in another worktree is visible");
+    assert_eq!(
+        projects[0].paths.paths(),
+        &[PathBuf::from("/tmp/atlas")],
+        "the project worked in most recently comes first"
+    );
+    assert_eq!(
+        projects[0]
+            .threads
+            .iter()
+            .map(|t| t.thread_id)
+            .collect::<Vec<_>>(),
+        vec![this_project_new.thread_id, this_project_old.thread_id],
+        "and its threads are newest first, with the archived one absent"
+    );
+    assert_eq!(projects[1].paths.paths(), &[PathBuf::from("/tmp/other")]);
+}
+
+#[test]
+fn a_linked_worktree_is_listed_under_the_project_it_belongs_to() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let mut linked = thread("cersei", &["/tmp/atlas-feature"]);
+    linked.worktree_paths = WorktreePaths::from_path_lists(
+        PathList::new(&[PathBuf::from("/tmp/atlas")]),
+        PathList::new(&[PathBuf::from("/tmp/atlas-feature")]),
+    )
+    .unwrap();
+    store.save_all(vec![thread("cersei", &["/tmp/atlas"]), linked]);
+    store.flush().unwrap();
+
+    let projects = store.projects();
+
+    assert_eq!(projects.len(), 1, "one project, not two");
+    assert_eq!(projects[0].threads.len(), 2);
+}
+
+#[test]
+fn the_chat_you_are_looking_at_is_not_also_listed_beneath_itself() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let sent = thread("cersei", &["/tmp/atlas"]);
+    store.save_all(vec![sent.clone(), draft("cersei", &["/tmp/atlas"])]);
+    store.flush().unwrap();
+
+    let projects = store.projects();
+
+    assert_eq!(projects.len(), 1);
+    assert_eq!(
+        projects[0].threads.iter().map(|t| t.thread_id).collect::<Vec<_>>(),
+        vec![sent.thread_id],
+        "a draft is the open tab, not a history row"
+    );
+}

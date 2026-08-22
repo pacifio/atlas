@@ -924,6 +924,25 @@ impl AcpThread {
         self.title.as_ref()
     }
 
+    /// What to call this thread when the agent has not titled it.
+    ///
+    /// The first line of the first thing the user said, bounded. Not a
+    /// substitute for a real title — the agent's own is better and replaces
+    /// this the moment it arrives — but a history row reading "New Thread"
+    /// forever, because the agent never got around to naming it, is a row the
+    /// user cannot pick out of a list.
+    pub fn fallback_title(&self) -> Option<Arc<str>> {
+        let first = self.entries.iter().find_map(|entry| match entry {
+            AgentThreadEntry::UserMessage(message) => Some(message.content.to_text()),
+            _ => None,
+        })?;
+        let line = first.trim().lines().next()?.trim();
+        if line.is_empty() {
+            return None;
+        }
+        Some(Arc::from(line.chars().take(80).collect::<String>().as_str()))
+    }
+
     /// A thread is a draft until its first message is sent.
     ///
     /// Zed's `is_draft_thread` (`acp_thread.rs:2346-2348`). Note what it is

@@ -59,7 +59,7 @@ pub use model::{ThreadFilter, ThreadId, ThreadMetadata, DEFAULT_THREAD_TITLE};
 pub use paths::{LengthMismatch, PathList, SerializedPathList, WorktreePaths};
 pub use recorder::{affects_thread_metadata, ThreadRecorder, ThreadSnapshot};
 pub use schema::SCHEMA_VERSION;
-pub use store::{LiveThreadUpdate, ThreadMetadataStore, ThreadStoreEvent};
+pub use store::{LiveThreadUpdate, ThreadMetadataStore, ThreadProject, ThreadStoreEvent};
 
 /// Where the store lives: one file beside the rest of Atlas's app-level state.
 ///

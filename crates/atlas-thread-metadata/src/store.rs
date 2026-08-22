@@ -64,6 +64,15 @@ pub enum ThreadStoreEvent {
     ThreadArchived(ThreadId),
 }
 
+/// One project's threads, as the sidebar groups them.
+#[derive(Debug, Clone)]
+pub struct ThreadProject {
+    /// The project's main worktree paths — its identity, and its group key.
+    pub paths: PathList,
+    /// Its unarchived threads, newest first. Never empty.
+    pub threads: Vec<ThreadMetadata>,
+}
+
 /// The live update behind one row, as the conversation produces it.
 ///
 /// This is the store-side half of Zed's `handle_conversation_event`
@@ -320,6 +329,50 @@ impl ThreadMetadataStore {
     /// Every session id the store knows. Import dedupes against this.
     pub fn known_session_ids(&self) -> HashSet<acp::SessionId> {
         read(&self.inner.cache).by_session.keys().cloned().collect()
+    }
+
+    /// Every project the user has threads in, newest first, each with its own
+    /// unarchived threads.
+    ///
+    /// The sidebar's whole list. Grouped by *main worktree* paths, so a thread
+    /// opened in a linked git worktree is listed under the project it belongs
+    /// to rather than as a project of its own (`sidebar.rs:1592-1602`).
+    ///
+    /// Across every project, not just the open one: the store is app-level
+    /// precisely so that work in another worktree is visible and resumable
+    /// without switching to it first (ADR-0001).
+    ///
+    /// Drafts are absent. Zed lists them, because in Zed a draft is a thread
+    /// you can navigate back to; in Atlas a draft *is* the chat tab already on
+    /// screen, and it is deleted when that tab closes — so a row for it would
+    /// be a second copy of the thing the user is looking at.
+    pub fn projects(&self) -> Vec<ThreadProject> {
+        let cache = read(&self.inner.cache);
+        let mut projects: Vec<ThreadProject> = cache
+            .by_main_paths
+            .iter()
+            .filter_map(|(paths, ids)| {
+                let mut threads: Vec<ThreadMetadata> = ids
+                    .iter()
+                    .filter_map(|id| cache.threads.get(id))
+                    .filter(|t| !t.archived && !t.is_draft())
+                    .cloned()
+                    .collect();
+                if threads.is_empty() {
+                    return None;
+                }
+                threads.sort_by(|a, b| {
+                    b.updated_at.cmp(&a.updated_at).then_with(|| tiebreak(a, b))
+                });
+                Some(ThreadProject {
+                    paths: paths.clone(),
+                    threads,
+                })
+            })
+            .collect();
+        // A project is as recent as the last thing done in it.
+        projects.sort_by(|a, b| b.threads[0].updated_at.cmp(&a.threads[0].updated_at));
+        projects
     }
 
     /// The unarchived threads whose folder paths are exactly `path_list` —

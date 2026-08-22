@@ -969,6 +969,33 @@ pub async fn threads_delete(
         .map_err(CmdError::from)
 }
 
+/// Every project the user has threads in — the sidebar's only source (#21).
+#[tauri::command]
+pub fn threads_projects(
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<Vec<super::agent_host::ThreadProjectWire>, CmdError> {
+    host.thread_projects().map_err(CmdError::from)
+}
+
+/// Every thread, archived or not, newest-started first — the history view.
+#[tauri::command]
+pub fn threads_history(
+    archived_only: bool,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<Vec<super::agent_host::ThreadRow>, CmdError> {
+    host.thread_history(archived_only).map_err(CmdError::from)
+}
+
+/// Take a thread out of the active list, keeping it in history.
+#[tauri::command]
+pub fn threads_archive(
+    thread_id: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<(), CmdError> {
+    host.archive_thread(parse_thread_id(&thread_id)?)
+        .map_err(CmdError::from)
+}
+
 /// Which installed agents can be imported from, and how much they have.
 ///
 /// Spawns each installed agent to ask — the capability only exists after

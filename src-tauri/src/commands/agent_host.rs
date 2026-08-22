@@ -45,8 +45,8 @@ use atlas_agent_wire::{
 };
 use atlas_native_agent::{CerseiAgentServer, CERSEI_AGENT_ID};
 use atlas_thread_metadata::{
-    affects_thread_metadata, collect_all_sessions, importable_threads, ThreadId,
-    ThreadMetadataStore, ThreadRecorder, ThreadSnapshot,
+    affects_thread_metadata, collect_all_sessions, importable_threads, PathList, ThreadFilter,
+    ThreadId, ThreadMetadata, ThreadMetadataStore, ThreadRecorder, ThreadSnapshot,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -1157,6 +1157,47 @@ impl AgentHost {
         Ok(())
     }
 
+    /// Every project the user has threads in, each with its own threads.
+    ///
+    /// The sidebar's only source. Across all projects, because the store is
+    /// app-level and work in another worktree should be visible and resumable
+    /// without switching to it first.
+    pub fn thread_projects(&self) -> Result<Vec<ThreadProjectWire>> {
+        Ok(self
+            .history_or_err()?
+            .store()
+            .projects()
+            .into_iter()
+            .map(|project| ThreadProjectWire {
+                name: project_name(&project.paths),
+                paths: paths_of(&project.paths),
+                threads: project.threads.iter().map(thread_row).collect(),
+            })
+            .collect())
+    }
+
+    /// Every thread, archived or not, newest-started first — the history view.
+    pub fn thread_history(&self, archived_only: bool) -> Result<Vec<ThreadRow>> {
+        let filter = if archived_only {
+            ThreadFilter::ArchivedOnly
+        } else {
+            ThreadFilter::All
+        };
+        Ok(self
+            .history_or_err()?
+            .store()
+            .history(filter)
+            .iter()
+            .map(thread_row)
+            .collect())
+    }
+
+    /// Take a thread out of the active list, keeping it in history.
+    pub fn archive_thread(&self, thread_id: ThreadId) -> Result<()> {
+        self.history_or_err()?.store().archive(thread_id);
+        Ok(())
+    }
+
     /// Which installed agents can be imported from, and how much they have.
     ///
     /// Connecting to every installed agent is the price of the answer, and Zed
@@ -1404,7 +1445,10 @@ fn snapshot_of(thread: &AcpThreadHandle) -> ThreadSnapshot {
     let thread = lock_thread(thread);
     ThreadSnapshot {
         is_draft: thread.is_draft(),
-        title: thread.title().cloned(),
+        // The agent's title when it has produced one, else what the user
+        // opened with. A row the user cannot recognise is a row they cannot
+        // use, and agents title threads late or not at all.
+        title: thread.title().cloned().or_else(|| thread.fallback_title()),
         work_dirs: thread.work_dirs().to_vec(),
     }
 }
@@ -1452,6 +1496,80 @@ impl ThreadObserver for HistoryObserver {
             snapshot_of(thread),
         );
     }
+}
+
+/// One thread, as every history surface renders it.
+///
+/// Deliberately flat and already-formatted: the sidebar re-reads this on every
+/// store change, and shaping it in the webview would be work repeated per
+/// render. `title` is the *display* title — the user's rename if there is one,
+/// the agent's if not, the default otherwise — because no caller has ever
+/// wanted to re-derive that precedence.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadRow {
+    pub thread_id: String,
+    /// Absent while the thread is a draft.
+    pub session_id: Option<String>,
+    /// Which agent ran it — the row's icon, and who resumes it.
+    pub agent_id: String,
+    pub title: String,
+    pub updated_at: String,
+    pub created_at: Option<String>,
+    pub archived: bool,
+    /// The project this thread belongs to, for a history row that is shown
+    /// outside its project's group.
+    pub project_name: String,
+    pub folder_paths: Vec<String>,
+}
+
+/// One project's threads, as the sidebar groups them.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadProjectWire {
+    pub name: String,
+    pub paths: Vec<String>,
+    pub threads: Vec<ThreadRow>,
+}
+
+fn thread_row(thread: &ThreadMetadata) -> ThreadRow {
+    ThreadRow {
+        thread_id: thread.thread_id.to_key_string(),
+        session_id: thread.session_id.as_ref().map(|id| id.to_string()),
+        agent_id: thread.agent_id.to_string(),
+        title: thread.display_title().to_string(),
+        updated_at: thread.updated_at.to_rfc3339(),
+        created_at: thread.created_at.map(|at| at.to_rfc3339()),
+        archived: thread.archived,
+        project_name: project_name(thread.main_worktree_paths()),
+        folder_paths: paths_of(thread.folder_paths()),
+    }
+}
+
+fn paths_of(paths: &PathList) -> Vec<String> {
+    paths
+        .ordered_paths()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
+}
+
+/// What to call a project: the name of its directory, or all of their names
+/// when it spans several.
+///
+/// Two projects whose directories share a name read identically here. The row
+/// carries the full path as its tooltip, which is where the user disambiguates;
+/// Zed prefixes linked worktrees with their main project's name instead
+/// (`thread_metadata_store.rs:415-431`), a refinement Atlas has not needed yet.
+fn project_name(paths: &PathList) -> String {
+    let names: Vec<String> = paths
+        .ordered_paths()
+        .filter_map(|path| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .collect();
+    if names.is_empty() {
+        return "No project".to_string();
+    }
+    names.join(", ")
 }
 
 /// One installed agent, as the import flow lists it.
