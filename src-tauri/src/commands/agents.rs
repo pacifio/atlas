@@ -930,6 +930,37 @@ pub async fn agents_load_session(
         .map_err(CmdError::from)
 }
 
+/// Turn a history row into a live session.
+///
+/// The only way a history row is reopened: through the protocol, by whichever
+/// of `session/load` / `session/resume` the agent advertised, starting the
+/// agent if it is not running (#19).
+#[tauri::command]
+pub async fn threads_resume(
+    thread_id: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<super::agent_host::ResumedThread, CmdError> {
+    host.resume_thread(parse_thread_id(&thread_id)?)
+        .await
+        .map_err(CmdError::from)
+}
+
+/// Remove a history row. Always local; agent-side only when advertised.
+#[tauri::command]
+pub async fn threads_delete(
+    thread_id: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<(), CmdError> {
+    host.delete_thread(parse_thread_id(&thread_id)?)
+        .await
+        .map_err(CmdError::from)
+}
+
+fn parse_thread_id(raw: &str) -> Result<atlas_thread_metadata::ThreadId, CmdError> {
+    raw.parse()
+        .map_err(|_| CmdError::new(format!("not a thread id: {raw}"), ErrorClass::Fatal))
+}
+
 #[tauri::command]
 pub fn agents_snapshot(
     key: SessionKey,

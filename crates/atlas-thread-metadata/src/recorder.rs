@@ -106,6 +106,15 @@ impl ThreadRecorder {
         &self.store
     }
 
+    /// Bind a live session to a history row that already exists.
+    ///
+    /// What opening a **draft** row calls: the row has no session id to be
+    /// found by, so without this the first event of the new session would mint
+    /// a second row and leave the one the user clicked orphaned.
+    pub fn adopt(&self, session_id: acp::SessionId, thread_id: ThreadId) {
+        self.lock().insert(session_id, thread_id);
+    }
+
     /// The conversation is connected and has a session.
     ///
     /// Zed's other write trigger: its store upserts when a `ConversationView`'s

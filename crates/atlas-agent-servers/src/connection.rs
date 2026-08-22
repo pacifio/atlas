@@ -27,6 +27,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use crate::debug_log::{AcpDebugLog, AcpDebugMessage, AcpDebugMessageDirection};
 use crate::handlers::{self, ClientContext};
 use crate::session::{AcpSession, ConfigOptions, SessionDirectories, SessionRegistry};
+use crate::session_list::AcpSessionList;
 
 /// Zed rejects anything below v1 outright rather than trying to degrade.
 const MINIMUM_SUPPORTED_VERSION: ProtocolVersion = ProtocolVersion::V1;
@@ -66,6 +67,9 @@ pub struct AcpConnection {
     sessions: Arc<SessionRegistry>,
     auth_methods: Vec<acp::AuthMethod>,
     agent_capabilities: acp::AgentCapabilities,
+    /// Present only when the agent advertised `sessionCapabilities.list`. Its
+    /// absence is what "this agent has no listable history" means, everywhere.
+    session_list: Option<Arc<AcpSessionList>>,
     request_elicitations: ElicitationStoreHandle,
     defaults: AcpConnectionDefaults,
     thread_events: ThreadEventSink,
@@ -257,6 +261,11 @@ impl AcpConnection {
         let agent_version = agent_info
             .and_then(|info| (!info.version.is_empty()).then(|| Arc::from(info.version.as_str())));
 
+        // Built before the connection moves into the struct, and only when the
+        // agent advertised `sessionCapabilities.list`.
+        let session_list =
+            AcpSessionList::for_capabilities(connection.clone(), &response.agent_capabilities);
+
         Ok(Self {
             id: agent_id,
             telemetry_id,
@@ -264,6 +273,7 @@ impl AcpConnection {
             connection,
             sessions,
             auth_methods: response.auth_methods,
+            session_list,
             agent_capabilities: response.agent_capabilities,
             request_elicitations,
             defaults,
@@ -681,6 +691,12 @@ impl AgentConnection for AcpConnection {
             .await
         }
         .boxed()
+    }
+
+    fn session_list(&self) -> Option<Arc<dyn atlas_acp_thread::AgentSessionList>> {
+        self.session_list
+            .clone()
+            .map(|list| list as Arc<dyn atlas_acp_thread::AgentSessionList>)
     }
 
     fn supports_close_session(&self) -> bool {

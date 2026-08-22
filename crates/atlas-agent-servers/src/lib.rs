@@ -58,6 +58,7 @@ pub mod handlers;
 pub mod host_env;
 pub mod server;
 pub mod session;
+pub mod session_list;
 
 pub use connection::{
     client_capabilities_for_agent, map_acp_error, AcpConnection, AcpConnectionDefaults,
@@ -73,3 +74,4 @@ pub use server::{
     CustomAgentServer, ExternalAgentServer,
 };
 pub use session::{AcpSession, ConfigOptions, SessionDirectories, SessionRegistry};
+pub use session_list::AcpSessionList;

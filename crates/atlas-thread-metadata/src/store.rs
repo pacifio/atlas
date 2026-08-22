@@ -364,8 +364,15 @@ impl ThreadMetadataStore {
 
         self.save(ThreadMetadata {
             thread_id: update.thread_id,
+            // A draft's session id is never persisted (`:1286-1290`) — but a
+            // thread that already has one never goes back to being a draft.
+            // `is_draft` is "the thread has no entries", and a session reopened
+            // with `session/resume` has none by definition: the agent continues
+            // it without replaying it. Taking that at face value would blank
+            // the session id of a real conversation, and the row would then be
+            // deleted as an abandoned draft when its tab closed.
             session_id: if update.is_draft {
-                None
+                existing.as_ref().and_then(|t| t.session_id.clone())
             } else {
                 update.session_id
             },

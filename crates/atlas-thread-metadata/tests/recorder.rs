@@ -346,3 +346,73 @@ fn everything_that_can_change_a_row_writes_one() {
         assert_eq!(store.threads().len(), 1, "{event:?} should have written a row");
     }
 }
+
+#[test]
+fn a_conversation_the_agent_could_not_reopen_keeps_its_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(&dir);
+    let recorder = ThreadRecorder::new(store.clone());
+    let session = acp::SessionId::new("ses-1");
+    recorder.record(
+        &"claude-code".into(),
+        &session,
+        &AcpThreadEvent::NewEntry,
+        snapshot(false, Some("Yesterday's work"), &["/tmp/atlas"]),
+    );
+    store.flush().unwrap();
+    let thread_id = store.threads()[0].thread_id;
+
+    // The agent has forgotten the session. That is the agent's record, not
+    // Atlas's, and Atlas's must survive it — only the user deletes rows.
+    recorder.record(
+        &"claude-code".into(),
+        &session,
+        &AcpThreadEvent::LoadError(atlas_acp_thread::LoadError::Other(
+            "no conversation found with that id".into(),
+        )),
+        snapshot(false, Some("Yesterday's work"), &["/tmp/atlas"]),
+    );
+    store.flush().unwrap();
+
+    let after = store.thread(thread_id).expect("the row is still there");
+    assert_eq!(after.display_title().as_ref(), "Yesterday's work");
+    assert_eq!(after.session_id, Some(session));
+}
+
+#[test]
+fn a_session_resumed_without_its_history_is_not_mistaken_for_a_draft() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(&dir);
+    let session = acp::SessionId::new("ses-1");
+    {
+        let yesterday = ThreadRecorder::new(store.clone());
+        yesterday.record(
+            &"some-agent".into(),
+            &session,
+            &AcpThreadEvent::NewEntry,
+            snapshot(false, Some("Yesterday's work"), &["/tmp/atlas"]),
+        );
+        store.flush().unwrap();
+    }
+    let thread_id = store.threads()[0].thread_id;
+
+    // The agent only supports `session/resume`, so the reopened thread has no
+    // entries at all — which is exactly what a draft looks like.
+    let today = ThreadRecorder::new(store.clone());
+    today.record_connected(
+        &"some-agent".into(),
+        &session,
+        snapshot(true, Some("Yesterday's work"), &["/tmp/atlas"]),
+    );
+    store.flush().unwrap();
+    assert_eq!(
+        store.thread(thread_id).unwrap().session_id,
+        Some(session.clone()),
+        "the conversation keeps its session id"
+    );
+
+    // …so closing the tab must not take it for an abandoned draft.
+    today.forget(&session);
+    store.flush().unwrap();
+    assert_eq!(store.threads().len(), 1, "the history row survives");
+}

@@ -102,6 +102,23 @@ pub enum AgentManagerEvent {
     ConnectionsChanged,
 }
 
+/// How a stored session came back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeMode {
+    /// The agent replayed the conversation as `session/update` notifications
+    /// during `session/load`. The user sees their history.
+    Replayed,
+    /// The agent continued the session without replaying it (`session/resume`).
+    /// The conversation works; the old messages are not there, and the user has
+    /// to be told so rather than left to wonder where they went.
+    WithoutHistory,
+}
+
+pub struct ResumedSession {
+    pub thread: AcpThreadHandle,
+    pub mode: ResumeMode,
+}
+
 /// One open session and the agent it belongs to.
 #[derive(Clone)]
 pub struct SessionHandle {
@@ -512,6 +529,75 @@ impl AgentManager {
             .await?;
         self.register_session(agent, &thread);
         Ok(thread)
+    }
+
+    /// Bring a stored session back to life, by whatever the agent advertised.
+    ///
+    /// Ported from Zed's resume ladder (`conversation_view.rs:1109-1143`):
+    /// `session/load` when the agent advertises `loadSession`, else
+    /// `session/resume` when it advertises `sessionCapabilities.resume`, else
+    /// an error naming the limitation. The connection is obtained the usual
+    /// way, so an agent that is not running is started first — resume is one
+    /// action, not two.
+    ///
+    /// A failure here is a failure. It never falls back to starting a fresh
+    /// session: the user clicked a specific conversation, and quietly handing
+    /// them an empty one instead is worse than saying the agent could not
+    /// reopen it. The history row is untouched either way — only the user
+    /// deletes rows.
+    pub async fn resume_stored_session(
+        self: &Arc<Self>,
+        agent: Agent,
+        session_id: acp::SessionId,
+        work_dirs: Vec<PathBuf>,
+        title: Option<Arc<str>>,
+    ) -> Result<ResumedSession> {
+        let connection = self.connection(agent.clone()).await?;
+        let (thread, mode) = if connection.supports_load_session() {
+            let thread = connection
+                .clone()
+                .load_session(session_id, work_dirs, title)
+                .await?;
+            (thread, ResumeMode::Replayed)
+        } else if connection.supports_resume_session() {
+            let thread = connection
+                .clone()
+                .resume_session(session_id, work_dirs, title)
+                .await?;
+            (thread, ResumeMode::WithoutHistory)
+        } else {
+            return Err(anyhow!(
+                "Loading or resuming sessions is not supported by this agent."
+            ));
+        };
+        self.register_session(agent, &thread);
+        Ok(ResumedSession { thread, mode })
+    }
+
+    /// Ask the agent to forget a stored session — only if it advertised that it
+    /// can. Answers whether it was asked.
+    ///
+    /// Zed's archive-view delete (`threads_archive_view.rs:807-851`): the local
+    /// row is removed by the caller first and unconditionally, and this is the
+    /// best-effort second half. `session/delete` rides on the session-list
+    /// object, which exists only when the agent advertised
+    /// `sessionCapabilities.list` — so an agent with no listable history is
+    /// never sent one, whatever else it claims.
+    ///
+    /// Like Zed, this connects if the agent is not running: a conversation the
+    /// user deleted should not stay on the agent's disk until they happen to
+    /// start it again.
+    pub async fn delete_stored_session(
+        self: &Arc<Self>,
+        agent: Agent,
+        session_id: &acp::SessionId,
+    ) -> Result<bool> {
+        let connection = self.connection(agent).await?;
+        let Some(list) = connection.session_list().filter(|list| list.supports_delete()) else {
+            return Ok(false);
+        };
+        list.delete_session(session_id).await?;
+        Ok(true)
     }
 
     pub fn session(&self, session_id: &acp::SessionId) -> Option<SessionHandle> {

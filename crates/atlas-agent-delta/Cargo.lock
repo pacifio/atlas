@@ -205,6 +205,7 @@ dependencies = [
  "anyhow",
  "atlas-acp-thread",
  "atlas-terminal",
+ "chrono",
  "futures",
  "serde",
  "serde_json",

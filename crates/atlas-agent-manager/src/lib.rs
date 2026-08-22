@@ -34,5 +34,5 @@ pub mod manager;
 pub use catalog::AgentCatalog;
 pub use manager::{
     Agent, AgentConnectedState, AgentConnectionEntry, AgentConnectionStatus, AgentManager,
-    AgentManagerEvent, SessionHandle,
+    AgentManagerEvent, ResumeMode, ResumedSession, SessionHandle,
 };

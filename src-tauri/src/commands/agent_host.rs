@@ -36,7 +36,7 @@ use atlas_acp_thread::{
     TerminalAuthCommand,
 };
 use atlas_agent_delta::{project, DeltaProjector, DeltaSink, ThreadObserver};
-use atlas_agent_manager::{Agent, AgentManager};
+use atlas_agent_manager::{Agent, AgentManager, ResumeMode};
 use atlas_agent_servers::{AcpConnectionDefaults, ConnectOptions};
 use atlas_agent_store::{AgentRegistryStore, AgentServerStore, ExternalAgentSource};
 use atlas_agent_transcript::TranscriptKind;
@@ -45,7 +45,7 @@ use atlas_agent_wire::{
 };
 use atlas_native_agent::{CerseiAgentServer, CERSEI_AGENT_ID};
 use atlas_thread_metadata::{
-    affects_thread_metadata, ThreadMetadataStore, ThreadRecorder, ThreadSnapshot,
+    affects_thread_metadata, ThreadId, ThreadMetadataStore, ThreadRecorder, ThreadSnapshot,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -570,6 +570,12 @@ impl AgentHost {
     }
 
     /// Reopen a stored session, letting the agent replay it.
+    ///
+    /// Load only, with no resume fallback: this is the pre-history path the
+    /// chat panel still calls to rebind a session it already knows about
+    /// (`agents_load_session`). Opening a **history row** goes through
+    /// [`AgentHost::resume_thread`] instead, which picks load or resume by
+    /// capability. The two converge when #21 re-points the sidebar.
     pub async fn load_session(
         &self,
         agent_id: AgentId,
@@ -1026,6 +1032,135 @@ impl AgentHost {
         Ok(())
     }
 
+    // ---- history -----------------------------------------------------------
+
+    /// Turn a history row into a live session.
+    ///
+    /// One action, as Zed makes it (`sidebar.rs:3843-3883` →
+    /// `agent_panel.rs:4371+`): the agent is started if it is not running, the
+    /// session is reopened through whichever of `session/load` /
+    /// `session/resume` the agent advertised, and the row is unarchived. A row
+    /// whose thread never got a session id is a draft, and opens as a new
+    /// conversation — which is what Zed's `resume_session_id = None` does
+    /// (`agent_panel.rs:4464-4467`).
+    ///
+    /// A failure leaves the row exactly as it was, archived flag included:
+    /// nothing here runs before the session is open. Atlas never deletes a
+    /// history row because an agent could not reopen it — the user's record is
+    /// theirs to remove.
+    ///
+    /// An agent that rejects the reopen because the user is not signed in comes
+    /// back classified as `auth`, which is what routes the frontend into the
+    /// sign-in flow — Zed's `AuthRequired` branch
+    /// (`conversation_view.rs:1150-1157`) reached through the message
+    /// classification Atlas already has, rather than a typed downcast.
+    pub async fn resume_thread(&self, thread_id: ThreadId) -> Result<ResumedThread> {
+        let history = self.history_or_err()?;
+        let thread = history
+            .store()
+            .thread(thread_id)
+            .ok_or_else(|| HostError::new("no such thread", ErrorClass::Fatal))?;
+
+        // Already open in this process — the tab just needs focusing, and
+        // reopening would be a second session for one conversation.
+        if let Some(session_id) = thread.session_id.clone() {
+            if lock(&self.sessions).contains_key(session_id.0.as_ref()) {
+                history.store().unarchive(thread_id);
+                return Ok(ResumedThread {
+                    key: SessionKey {
+                        agent_id: self.handle_for(&self.agent_for(thread.agent_id.as_str())?),
+                        session_id: session_id.to_string(),
+                    },
+                    resumed_without_history: false,
+                });
+            }
+        }
+
+        let agent = self.spawn(thread.agent_id.as_str()).await?;
+        let record = self.record_for(agent.agent_id)?;
+        let work_dirs = thread.folder_paths().paths().to_vec();
+        let cwd = work_dirs.first().cloned().unwrap_or_default();
+
+        let (opened, resumed_without_history) = match thread.session_id.clone() {
+            // A draft: there is no stored conversation to reopen, so this is a
+            // new one. The row is bound to it first, or the live feed would
+            // mint a second row for the thread the user just clicked.
+            None => {
+                let opened = self
+                    .manager
+                    .new_session(record.agent.clone(), work_dirs)
+                    .await
+                    .map_err(HostError::from)?;
+                let session_id = lock_thread(&opened).session_id().clone();
+                history.adopt(session_id, thread_id);
+                (opened, false)
+            }
+            Some(session_id) => {
+                let resumed = self
+                    .manager
+                    .resume_stored_session(
+                        record.agent.clone(),
+                        session_id,
+                        work_dirs,
+                        thread.title(),
+                    )
+                    .await
+                    .map_err(HostError::from)?;
+                (resumed.thread, resumed.mode == ResumeMode::WithoutHistory)
+            }
+        };
+
+        let init = self.bind(agent.agent_id, &record, cwd, opened);
+        // After the session is open, and after `bind` — the live feed preserves
+        // whatever `archived` it finds, so unarchiving first would be undone by
+        // the row it writes (`agent_panel.rs:4382-4386` unarchives on open).
+        history.store().unarchive(thread_id);
+        Ok(ResumedThread {
+            key: init.key,
+            resumed_without_history,
+        })
+    }
+
+    /// Remove a history row, and ask the agent to forget its session if it can.
+    ///
+    /// Local first and unconditionally — deleting from Atlas's own history must
+    /// never depend on an agent being reachable, let alone on Atlas touching
+    /// the agent's files. The agent-side half is best effort and gated on
+    /// `sessionCapabilities.delete`; an agent that cannot do it is not an
+    /// error, and the row is gone either way (Zed's
+    /// `threads_archive_view.rs:807-851`).
+    ///
+    /// Deleting the row of a conversation that is **still open** removes it
+    /// now, and its next message puts it back under the same thread id — the
+    /// live feed keeps its binding on purpose. That is Zed's behaviour and it
+    /// is the honest one: history records conversations, and this one has not
+    /// finished. Archive is the action for "out of my way but keep it".
+    pub async fn delete_thread(&self, thread_id: ThreadId) -> Result<()> {
+        let history = self.history_or_err()?;
+        let Some(thread) = history.store().thread(thread_id) else {
+            return Ok(());
+        };
+        history.store().delete(thread_id);
+
+        let Some(session_id) = thread.session_id else {
+            return Ok(());
+        };
+        let Ok(agent) = self.agent_for(thread.agent_id.as_str()) else {
+            // The agent was uninstalled. Atlas's record is still the user's to
+            // delete, and it already is.
+            return Ok(());
+        };
+        if let Err(e) = self.manager.delete_stored_session(agent, &session_id).await {
+            tracing::warn!(error = %e, %session_id, "agent could not delete the session");
+        }
+        Ok(())
+    }
+
+    fn history_or_err(&self) -> Result<&ThreadRecorder> {
+        self.history()
+            .ok_or_else(|| HostError::new("session history is unavailable", ErrorClass::Fatal))
+    }
+
     // ---- the agent's own session store -----------------------------------
 
     pub async fn agent_sessions(
@@ -1196,6 +1331,17 @@ impl ThreadObserver for HistoryObserver {
             snapshot_of(thread),
         );
     }
+}
+
+/// A history row, now live.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumedThread {
+    pub key: SessionKey,
+    /// The agent could only continue the session, not replay it. The user is
+    /// told, in the app's existing notice styling — a conversation that comes
+    /// back empty with no explanation reads as data loss.
+    pub resumed_without_history: bool,
 }
 
 /// What a live connection advertises. All false before the handshake.
@@ -1491,6 +1637,63 @@ mod tests {
         // false for every agent rather than optimistically true.
         assert!(!caps.supports_fork);
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A history row is the user's record. An agent that cannot be reached,
+    /// cannot be started, or has forgotten the conversation must leave it
+    /// exactly as it found it — archived flag included.
+    #[tokio::test]
+    async fn a_resume_that_fails_changes_nothing_about_the_row() {
+        let (host, dir) = fresh_host();
+        let history = host.history().expect("a fresh host has history");
+        let thread = atlas_thread_metadata::ThreadMetadata {
+            session_id: Some(acp::SessionId::new("ses-1")),
+            ..atlas_thread_metadata::ThreadMetadata::new(
+                atlas_thread_metadata::ThreadId::new(),
+                // Not installed: `spawn` will refuse, which is the most basic
+                // way a resume fails.
+                "an-uninstalled-agent".into(),
+                atlas_thread_metadata::PathList::new(&[PathBuf::from("/tmp/atlas")]),
+            )
+        };
+        let thread_id = thread.thread_id;
+        history.store().save_all(vec![thread]);
+        history.store().archive(thread_id);
+
+        let error = host
+            .resume_thread(thread_id)
+            .await
+            .expect_err("an agent that is not installed cannot be resumed");
+        assert_eq!(error.class, ErrorClass::Fatal);
+
+        let after = history.store().thread(thread_id).expect("the row survives");
+        assert!(after.archived, "and it is still where the user left it");
+        assert_eq!(after.session_id, Some(acp::SessionId::new("ses-1")));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Deleting is Atlas's own record going away. It cannot depend on an agent
+    /// being installed, running, or willing.
+    #[tokio::test]
+    async fn deleting_a_row_never_depends_on_the_agent() {
+        let (host, dir) = fresh_host();
+        let history = host.history().expect("a fresh host has history");
+        let thread = atlas_thread_metadata::ThreadMetadata {
+            session_id: Some(acp::SessionId::new("ses-1")),
+            ..atlas_thread_metadata::ThreadMetadata::new(
+                atlas_thread_metadata::ThreadId::new(),
+                "an-uninstalled-agent".into(),
+                atlas_thread_metadata::PathList::new(&[PathBuf::from("/tmp/atlas")]),
+            )
+        };
+        let thread_id = thread.thread_id;
+        history.store().save_all(vec![thread]);
+
+        host.delete_thread(thread_id).await.expect("delete is local");
+
+        assert!(history.store().thread(thread_id).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

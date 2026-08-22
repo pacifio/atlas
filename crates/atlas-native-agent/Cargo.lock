@@ -204,6 +204,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
  "url",
  "uuid",
 ]
@@ -216,6 +217,7 @@ dependencies = [
  "anyhow",
  "atlas-acp-thread",
  "atlas-terminal",
+ "chrono",
  "futures",
  "serde",
  "serde_json",
