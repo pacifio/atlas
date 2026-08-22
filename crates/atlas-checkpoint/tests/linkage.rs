@@ -151,6 +151,7 @@ fn session_touched(
             FileWrite {
                 path: &resolved,
                 sha256_after: content.map(|c| hash_written_content(c.as_bytes())),
+                sketch_after: content.and_then(|c| atlas_checkpoint::sketch::sketch(c.as_bytes())),
                 existed_before,
                 deleted,
             },
@@ -234,11 +235,22 @@ fn a_human_tweak_to_agent_output_still_produces_a_checkpoint() {
 }
 
 #[test]
-fn the_same_tweak_is_dropped_when_the_touch_claims_the_agent_created_the_file() {
-    // The other side of the same coin, and why the fix belongs in the sampler
-    // rather than in the rule: when `existed_before` is false the strict arm
-    // demands a byte-identical blob, so one reworded word costs the link. The
-    // rule is right; feeding it a wrong answer is what broke.
+fn the_same_tweak_survives_even_when_the_touch_claims_the_agent_created_the_file() {
+    // The other side of the same coin. This used to assert the opposite: when
+    // `existed_before` is false the strict arm demanded a byte-identical blob,
+    // so one reworded word cost the link, and the stated fix was to sample
+    // `existed_before` more accurately.
+    //
+    // Accurate sampling is still worth having, but it cannot be the only
+    // defence — the strict arm governs genuinely-new files too, where no
+    // sampling fix applies and the same reworded word cost the Checkpoint just
+    // as silently. The arm now measures how much of the agent's content
+    // survived instead of demanding all of it, so a mis-sampled
+    // `existed_before` no longer costs the link either.
+    //
+    // What the arm still rejects is a wholesale replacement — see
+    // `a_new_file_the_human_replaced_produces_no_checkpoint`, which is the
+    // property this one must not be read as weakening.
     let fixture = Fixture::new();
     fixture.write("README.md", "intro\n");
     fixture.commit_all("initial");
@@ -251,13 +263,16 @@ fn the_same_tweak_is_dropped_when_the_touch_claims_the_agent_created_the_file() 
         session_wrote(&fixture, &mut store, "s1", "README.md", "intro\nagent sentence\n", false);
 
     fixture.write("README.md", "intro\nagent SENTENCE\n");
-    fixture.commit_all("README: agent sentence, reworded");
+    let commit = fixture.commit_all("README: agent sentence, reworded");
 
     fixture.walk(&store);
-    assert!(
-        store.checkpoints_for_session(&session).unwrap().is_empty(),
-        "the strict arm cannot forgive a content change — hence sampling must be accurate"
+    let checkpoints = store.checkpoints_for_session(&session).unwrap();
+    assert_eq!(
+        checkpoints.len(),
+        1,
+        "a reworded line should not cost the link, however `existed_before` was sampled"
     );
+    assert_eq!(checkpoints[0].commit_sha, commit);
 }
 
 #[test]

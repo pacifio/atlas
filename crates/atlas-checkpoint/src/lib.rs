@@ -61,6 +61,7 @@ mod error;
 mod lock;
 pub mod model;
 mod schema;
+pub mod sketch;
 mod store;
 pub mod sync;
 pub mod title;

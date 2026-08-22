@@ -58,6 +58,11 @@ pub struct FileWrite<'a> {
     pub path: &'a ResolvedPath,
     /// Hash of what the agent produced. `None` for a deletion.
     pub sha256_after: Option<String>,
+    /// Bounded fingerprint of the same content (see [`crate::sketch`]), which
+    /// lets the link rule ask "how much of this survived?" instead of demanding
+    /// an exact match. `None` for a deletion, or content with nothing to
+    /// sketch (empty, blank, binary) — those fall back to the hash comparison.
+    pub sketch_after: Option<String>,
     /// Whether the file existed beforehand — determined at write time, because
     /// afterwards it is unknowable.
     pub existed_before: bool,
@@ -325,6 +330,7 @@ impl<'a> Capture<'a> {
             turn_seq,
             path: &write.path.path,
             sha256_after: write.sha256_after.as_deref(),
+            sketch_after: write.sketch_after.as_deref(),
             existed_before: write.existed_before,
             deleted: write.deleted,
             out_of_repo: write.path.out_of_repo,

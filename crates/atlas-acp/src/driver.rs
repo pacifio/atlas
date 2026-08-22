@@ -4,8 +4,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    ClientCapabilities, InitializeRequest, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SessionId, SessionNotification,
+    ClientCapabilities, FileSystemCapabilities, InitializeRequest, ReadTextFileRequest,
+    ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SessionId, SessionNotification, WriteTextFileRequest,
+    WriteTextFileResponse,
 };
 use agent_client_protocol::{AcpAgent, Agent, ConnectionTo, LineDirection};
 use dashmap::DashMap;
@@ -349,9 +351,11 @@ async fn run_driver(
 
     let sink_notif = sink.clone();
     let sink_perm = sink.clone();
+    let sink_write = sink.clone();
     let pending_for_handler = pending.clone();
     let guards_for_notif = guards.clone();
     let guards_for_perm = guards.clone();
+    let guards_for_write = guards.clone();
 
     agent_client_protocol::Client
         .builder()
@@ -394,6 +398,105 @@ async fn run_driver(
                 Ok(())
             },
             agent_client_protocol::on_receive_notification!(),
+        )
+        .on_receive_request(
+            async move |request: WriteTextFileRequest, responder, _connection| {
+                // The ACP filesystem service. An agent that honours our
+                // advertised `fs.writeTextFile` sends the edit here instead of
+                // touching the disk itself, so this handler is BOTH the write
+                // and the capture signal.
+                //
+                // Surfaced as an ordinary `tool_call` session update rather
+                // than a bespoke event: everything downstream — the turn card's
+                // file chips, `canonical_name`, the write sampler, the file
+                // touch that becomes a Checkpoint — already understands that
+                // shape. A new event type would need re-teaching at every one
+                // of those layers.
+                let path = request.path.clone();
+                let display = path.file_name().map(|n| n.to_string_lossy().into_owned());
+                let existed = path.exists();
+                let result = std::fs::create_dir_all(
+                    path.parent().unwrap_or_else(|| std::path::Path::new("/")),
+                )
+                .and_then(|()| std::fs::write(&path, request.content.as_bytes()));
+
+                if let Err(e) = &result {
+                    tracing::warn!(
+                        target: "atlas_acp::driver",
+                        agent = ?agent_id,
+                        path = %path.display(),
+                        "fs/write_text_file failed: {e}"
+                    );
+                }
+
+                if result.is_ok() {
+                    let turn = guards_for_write
+                        .get(&request.session_id)
+                        .and_then(|g| g.current_turn());
+                    let update = fs_write_tool_call(
+                        &format!("atlas-fs-write-{}", Uuid::new_v4()),
+                        &path,
+                        &request.content,
+                        existed,
+                        display.as_deref(),
+                    );
+                    if let Ok(update) = serde_json::from_value(update) {
+                        sink_write.emit(
+                            agent_id,
+                            AcpEvent::SessionUpdate {
+                                session_id: request.session_id.clone(),
+                                update,
+                            },
+                            turn,
+                        );
+                    }
+                }
+
+                match result {
+                    Ok(()) => responder.respond(WriteTextFileResponse::default()),
+                    Err(e) => responder.respond_with_error(agent_client_protocol::Error::into_internal_error(e)),
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ReadTextFileRequest, responder, _connection| {
+                // The read half. Not a capture signal (reads never produce a
+                // Checkpoint), but it must exist: advertising `readTextFile`
+                // and then failing the call would break every agent that takes
+                // us at our word.
+                //
+                // `line`/`limit` are honoured — an agent asking for a slice of
+                // a large file must not be handed the whole thing.
+                let path = request.path.clone();
+                match std::fs::read_to_string(&path) {
+                    Ok(text) => {
+                        let content = match (request.line, request.limit) {
+                            (None, None) => text,
+                            (line, limit) => {
+                                // ACP line numbers are 1-based.
+                                let skip = line.unwrap_or(1).saturating_sub(1) as usize;
+                                let take = limit.map(|l| l as usize).unwrap_or(usize::MAX);
+                                text.lines()
+                                    .skip(skip)
+                                    .take(take)
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            }
+                        };
+                        responder.respond(ReadTextFileResponse::new(content))
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            target: "atlas_acp::driver",
+                            path = %path.display(),
+                            "fs/read_text_file failed: {e}"
+                        );
+                        responder.respond_with_error(agent_client_protocol::Error::into_internal_error(e))
+                    }
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
         )
         .on_receive_request(
             async move |request: RequestPermissionRequest, responder, connection| {
@@ -481,7 +584,23 @@ async fn run_driver(
             // it runs. Without the flag both adapters only deliver output
             // once the command has finished. (Underscore vs. dash matches
             // each adapter's key exactly — Zed advertises both spellings.)
+            // Advertise the ACP filesystem service, the way Zed does
+            // (`client_capabilities_for_agent`). Two reasons, and the second is
+            // the load-bearing one:
+            //
+            // 1. Agents that honour it stop touching the disk behind our back —
+            //    gemini-cli's `AcpFileSystemService` routes through the client
+            //    whenever the capability is advertised, and falls back to raw
+            //    `fs` when it is not.
+            // 2. It makes the write AUTHORITATIVE for session capture. Sniffing
+            //    tool-call deltas is inference — every agent announces edits
+            //    differently, and each new adapter is a fresh way to miss one.
+            //    An `fs/write_text_file` request is the agent telling us
+            //    exactly which path it is changing, with the content in hand.
             let mut caps = ClientCapabilities::default();
+            caps.fs = FileSystemCapabilities::new()
+                .read_text_file(true)
+                .write_text_file(true);
             let mut meta = Map::new();
             meta.insert("terminal-auth".into(), Value::Bool(true));
             meta.insert("terminal_output".into(), Value::Bool(true));
@@ -540,3 +659,96 @@ async fn run_driver(
     Ok(())
 }
 
+/// The `tool_call` session update that stands in for an `fs/write_text_file`.
+///
+/// Extracted so the shape can be tested: everything downstream keys off these
+/// exact fields. `locations` is what the write sampler reads to derive the file
+/// touch that becomes a Checkpoint; `rawInput.tool_name` is what
+/// `canonical_name` classifies as write-shaped; the diff `content` is what the
+/// turn card renders.
+///
+/// `Edit` vs `Write` follows whether the file already existed — the link rule
+/// is asymmetric on exactly that distinction, so reporting it honestly here is
+/// what lets a pre-existing file take the permissive arm.
+pub(crate) fn fs_write_tool_call(
+    call_id: &str,
+    path: &std::path::Path,
+    content: &str,
+    existed: bool,
+    display: Option<&str>,
+) -> Value {
+    let path_str = path.to_string_lossy();
+    serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": call_id,
+        "title": display.map(str::to_string).unwrap_or_else(|| path_str.to_string()),
+        "kind": "edit",
+        // The write already happened; there is no pending phase to report.
+        "status": "completed",
+        "locations": [{ "path": path_str }],
+        "rawInput": {
+            "tool_name": if existed { "Edit" } else { "Write" },
+            "file_path": path_str,
+            "content": content,
+        },
+        "content": [{
+            "type": "diff",
+            "path": path_str,
+            "newText": content,
+        }],
+    })
+}
+
+#[cfg(test)]
+mod fs_tests {
+    use super::*;
+
+    #[test]
+    fn a_write_becomes_a_write_shaped_tool_call() {
+        let v = fs_write_tool_call(
+            "c1",
+            std::path::Path::new("/tmp/project/greeting.txt"),
+            "hello\n",
+            false,
+            Some("greeting.txt"),
+        );
+        assert_eq!(v["sessionUpdate"], "tool_call");
+        assert_eq!(v["status"], "completed");
+        assert_eq!(v["kind"], "edit");
+        // The path must be in `locations` — that is the only field the write
+        // sampler reads, and a Checkpoint depends on it.
+        assert_eq!(v["locations"][0]["path"], "/tmp/project/greeting.txt");
+        // A new file must classify as Write, so the link rule takes its strict
+        // (content-checked) arm rather than crediting the agent on path alone.
+        assert_eq!(v["rawInput"]["tool_name"], "Write");
+        assert_eq!(v["rawInput"]["content"], "hello\n");
+    }
+
+    #[test]
+    fn an_overwrite_reports_edit_so_the_permissive_arm_applies() {
+        let v = fs_write_tool_call(
+            "c2",
+            std::path::Path::new("/tmp/project/existing.rs"),
+            "fn main() {}\n",
+            true,
+            None,
+        );
+        assert_eq!(v["rawInput"]["tool_name"], "Edit");
+        // No display name → the full path is the title.
+        assert_eq!(v["title"], "/tmp/project/existing.rs");
+    }
+
+    #[test]
+    fn the_diff_content_carries_the_written_text() {
+        let v = fs_write_tool_call(
+            "c3",
+            std::path::Path::new("/tmp/p/a.txt"),
+            "line one\nline two\n",
+            false,
+            Some("a.txt"),
+        );
+        assert_eq!(v["content"][0]["type"], "diff");
+        assert_eq!(v["content"][0]["path"], "/tmp/p/a.txt");
+        assert_eq!(v["content"][0]["newText"], "line one\nline two\n");
+    }
+}

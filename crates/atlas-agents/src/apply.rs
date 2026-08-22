@@ -82,12 +82,40 @@ pub fn apply_event(emitter: &Emitter, state: &Mutex<SessionState>, agent_id: Age
                     turn_seq,
                 },
             });
+            let tool_call_json = serde_json::to_value(&tool_call).unwrap_or_default();
+
+            // Register the pending call BEFORE the permission delta.
+            //
+            // A permission request carries the tool call it is asking about,
+            // and for some agents it is the ONLY place that call is ever
+            // announced: gemini-cli sends `session/update{tool_call}` only on
+            // the no-confirmation path — when a tool DOES need confirming, the
+            // call rides inside `session/request_permission` and the next thing
+            // on the wire is a `tool_call_update` for an id we never saw. That
+            // update is dropped as an unknown-id orphan, so the whole call is
+            // invisible: no file chips on the turn card, and no file touch, so
+            // no Checkpoint ever forms for an agent whose writes always prompt.
+            //
+            // Feeding it through the ordinary `tool_call` path (rather than
+            // constructing a `ToolCall` here) keeps one code path for tool-call
+            // bookkeeping, including the diff-content location lift.
+            if tool_call_json.get("toolCallId").is_some() {
+                let mut synthetic = tool_call_json.clone();
+                if let Some(obj) = synthetic.as_object_mut() {
+                    obj.insert("sessionUpdate".into(), serde_json::json!("tool_call"));
+                    // The call has not run yet; the post-approval update
+                    // carries the real terminal status.
+                    obj.entry("status").or_insert(serde_json::json!("pending"));
+                }
+                apply_tool_call(emitter, state, &synthetic, false);
+            }
+
             emitter.emit(SessionDeltaEnvelope {
                 agent_id,
                 session_id: sid,
                 delta: SessionDelta::PermissionRequest {
                     request_id,
-                    tool_call: serde_json::to_value(&tool_call).unwrap_or_default(),
+                    tool_call: tool_call_json,
                     options: serde_json::to_value(&options).unwrap_or_default(),
                 },
             });
@@ -466,6 +494,47 @@ fn apply_tool_call(
     let Some(tool_call_id) = v.get("toolCallId").and_then(|s| s.as_str()) else {
         return;
     };
+
+    /// Paths carried inside diff-shaped content blocks, shaped like `locations`
+    /// entries.
+    ///
+    /// Some adapters — codex-acp is the live example — report an edit with NO
+    /// `locations` and NO `rawInput`; the only place the touched path appears
+    /// is the tool call's `content: [{type:"diff", path, oldText, newText}]`.
+    /// Session capture derives file touches from `locations`, so without this
+    /// lift those agents' edits never record a touch and never produce a
+    /// Checkpoint, however cleanly the user commits.
+    fn diff_locations(content: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
+        fn walk(v: &serde_json::Value, out: &mut Vec<serde_json::Value>) {
+            match v {
+                serde_json::Value::Array(arr) => {
+                    for item in arr {
+                        walk(item, out);
+                    }
+                }
+                serde_json::Value::Object(o) => {
+                    if let Some(serde_json::Value::String(p)) = o.get("path") {
+                        if o.contains_key("oldText")
+                            || o.contains_key("newText")
+                            || o.get("type").and_then(|t| t.as_str()) == Some("diff")
+                        {
+                            out.push(serde_json::json!({ "path": p }));
+                            return;
+                        }
+                    }
+                    if let Some(inner) = o.get("content") {
+                        walk(inner, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(v) = content {
+            walk(v, &mut out);
+        }
+        out
+    }
     let raw_input_val = v.get("rawInput");
     let title = v.get("title").and_then(|s| s.as_str()).map(|s| s.to_string());
     let kind = v.get("kind").and_then(|s| s.as_str()).map(|s| s.to_string());
@@ -540,6 +609,15 @@ fn apply_tool_call(
                     tc.locations = locations.clone();
                 }
             }
+            // Same late-arrival treatment for paths that only exist inside diff
+            // content (codex-acp). Never overwrites real `locations`.
+            if tc.locations.is_empty() {
+                let from_diff = diff_locations(content_val.as_ref());
+                if !from_diff.is_empty() {
+                    tc.locations = from_diff;
+                    changed_beyond_chunk = true;
+                }
+            }
             if let Some(chunk) = live_output.as_deref() {
                 match tc.result.as_mut() {
                     Some(existing) => existing.push_str(chunk),
@@ -602,10 +680,17 @@ fn apply_tool_call(
         status: map_tool_status(status_raw, ToolCallStatus::Running),
         arguments: normalise_tool_input(raw_input_val),
         result: formatted,
-        locations: v
-            .get("locations")
-            .and_then(|l| l.as_array().cloned())
-            .unwrap_or_default(),
+        locations: {
+            let wire = v
+                .get("locations")
+                .and_then(|l| l.as_array().cloned())
+                .unwrap_or_default();
+            if wire.is_empty() {
+                diff_locations(content_val.as_ref())
+            } else {
+                wire
+            }
+        },
     };
     let mut msg = new_assistant_tool(tool_call.clone());
     msg.model = st.current_model.clone();
@@ -788,6 +873,238 @@ mod tests {
         assert_eq!(tc.status, ToolCallStatus::Completed);
         assert_eq!(tc.locations.len(), 1, "locations from the update were dropped");
         assert_eq!(tc.locations[0]["path"], "/tmp/project/src/lib.rs");
+    }
+
+    #[test]
+    fn diff_content_paths_become_locations_when_the_wire_has_none() {
+        // codex-acp's live shape, verified 2026-08-22 with the checkpoint
+        // probe: an edit call with NO `locations`, NO `rawInput`, and the
+        // touched path present ONLY inside diff-shaped `content`. Session
+        // capture derives file touches from `locations`, so before this lift
+        // those edits never recorded a touch and never produced a Checkpoint —
+        // the reported "Codex doesn't create checkpoints".
+        let (emitter, state) = session();
+
+        apply_session_update(
+            &emitter,
+            &state,
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tc-1",
+                "title": "Editing files",
+                "kind": "edit",
+                "status": "in_progress",
+            }))
+            .expect("tool_call decodes"),
+        );
+
+        apply_session_update(
+            &emitter,
+            &state,
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tc-1",
+                "status": "completed",
+                "content": [{
+                    "type": "diff",
+                    "path": "/tmp/project/greeting.txt",
+                    "oldText": null,
+                    "newText": "hello from the agent\n",
+                }],
+            }))
+            .expect("tool_call_update decodes"),
+        );
+
+        let tc = only_tool_call(&state);
+        assert_eq!(tc.locations.len(), 1, "diff path was not lifted into locations");
+        assert_eq!(tc.locations[0]["path"], "/tmp/project/greeting.txt");
+    }
+
+    #[test]
+    fn diff_content_never_overwrites_real_locations() {
+        // The lift is a fallback, not a source of truth: an agent that reports
+        // both keeps its own `locations` verbatim.
+        let (emitter, state) = session();
+
+        apply_session_update(
+            &emitter,
+            &state,
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tc-1",
+                "title": "Editing files",
+                "kind": "edit",
+                "status": "completed",
+                "locations": [{ "path": "/tmp/project/real.rs", "line": 3 }],
+                "content": [{
+                    "type": "diff",
+                    "path": "/tmp/project/other.rs",
+                    "newText": "x",
+                }],
+            }))
+            .expect("tool_call decodes"),
+        );
+
+        let tc = only_tool_call(&state);
+        assert_eq!(tc.locations.len(), 1);
+        assert_eq!(tc.locations[0]["path"], "/tmp/project/real.rs");
+    }
+
+    #[test]
+    fn diff_paths_on_the_create_event_are_lifted_too() {
+        // Some adapters send the whole call in one event.
+        let (emitter, state) = session();
+
+        apply_session_update(
+            &emitter,
+            &state,
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tc-1",
+                "title": "Editing files",
+                "kind": "edit",
+                "status": "completed",
+                "content": [{
+                    "type": "diff",
+                    "path": "/tmp/project/one.txt",
+                    "newText": "1",
+                }],
+            }))
+            .expect("tool_call decodes"),
+        );
+
+        let tc = only_tool_call(&state);
+        assert_eq!(tc.locations.len(), 1);
+        assert_eq!(tc.locations[0]["path"], "/tmp/project/one.txt");
+    }
+
+    #[test]
+    fn a_permission_request_registers_its_tool_call() {
+        // gemini-cli's confirm path, verified live 2026-08-22: a tool needing
+        // confirmation is announced ONLY inside `session/request_permission`
+        // (its no-confirmation path is the one that sends
+        // `session/update{tool_call}`). The post-approval `tool_call_update`
+        // then arrives for an id we would never have seen, and the
+        // unknown-id-orphan rule dropped it — so a gemini write produced no
+        // file chips and no file touch, hence no Checkpoint.
+        let (emitter, state) = session();
+
+        apply_event(
+            &emitter,
+            &state,
+            AgentId(uuid::Uuid::nil()),
+            AcpEvent::PermissionRequest {
+                request_id: uuid::Uuid::nil(),
+                session_id: acp_schema::SessionId::new("sess-1"),
+                tool_call: serde_json::from_value(serde_json::json!({
+                    "toolCallId": "tc-1",
+                    "status": "pending",
+                    "title": "WriteFile",
+                    "kind": "edit",
+                    "locations": [{ "path": "/tmp/project/greeting.txt" }],
+                }))
+                .expect("ToolCallUpdate decodes"),
+                options: Vec::new(),
+            },
+        );
+
+        let tc = only_tool_call(&state);
+        assert_eq!(tc.locations.len(), 1, "permission tool call was not registered");
+        assert_eq!(tc.locations[0]["path"], "/tmp/project/greeting.txt");
+
+        // And the post-approval update now lands on it instead of being
+        // dropped as an orphan.
+        apply_session_update(
+            &emitter,
+            &state,
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tc-1",
+                "status": "completed",
+            }))
+            .expect("tool_call_update decodes"),
+        );
+        assert_eq!(only_tool_call(&state).status, ToolCallStatus::Completed);
+    }
+
+    #[test]
+    fn a_permission_request_lifts_its_diff_paths_too() {
+        // Gemini attaches the edit as diff content on the permission request.
+        let (emitter, state) = session();
+
+        apply_event(
+            &emitter,
+            &state,
+            AgentId(uuid::Uuid::nil()),
+            AcpEvent::PermissionRequest {
+                request_id: uuid::Uuid::nil(),
+                session_id: acp_schema::SessionId::new("sess-1"),
+                tool_call: serde_json::from_value(serde_json::json!({
+                    "toolCallId": "tc-1",
+                    "status": "pending",
+                    "title": "WriteFile",
+                    "kind": "edit",
+                    "content": [{
+                        "type": "diff",
+                        "path": "/tmp/project/greeting.txt",
+                        "newText": "hello\n",
+                    }],
+                }))
+                .expect("ToolCallUpdate decodes"),
+                options: Vec::new(),
+            },
+        );
+
+        let tc = only_tool_call(&state);
+        assert_eq!(tc.locations.len(), 1, "diff path not lifted from permission request");
+        assert_eq!(tc.locations[0]["path"], "/tmp/project/greeting.txt");
+    }
+
+    #[test]
+    fn a_permission_request_for_an_announced_call_does_not_duplicate_it() {
+        // Claude Code and codex-acp announce the call AND then ask permission
+        // for it. Registering from the permission request must upsert the
+        // existing call, not create a second one — the upsert-by-id loop runs
+        // before the create branch, so this holds; the test pins it.
+        let (emitter, state) = session();
+
+        apply_session_update(
+            &emitter,
+            &state,
+            serde_json::from_value(serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tc-1",
+                "title": "Edit src/lib.rs",
+                "kind": "edit",
+                "status": "in_progress",
+                "locations": [{ "path": "/tmp/project/src/lib.rs" }],
+            }))
+            .expect("tool_call decodes"),
+        );
+
+        apply_event(
+            &emitter,
+            &state,
+            AgentId(uuid::Uuid::nil()),
+            AcpEvent::PermissionRequest {
+                request_id: uuid::Uuid::nil(),
+                session_id: acp_schema::SessionId::new("sess-1"),
+                tool_call: serde_json::from_value(serde_json::json!({
+                    "toolCallId": "tc-1",
+                    "status": "pending",
+                    "title": "Edit src/lib.rs",
+                    "kind": "edit",
+                }))
+                .expect("ToolCallUpdate decodes"),
+                options: Vec::new(),
+            },
+        );
+
+        let st = state.lock();
+        let calls: Vec<_> = st.messages.iter().flat_map(|m| m.tool_calls.iter()).collect();
+        assert_eq!(calls.len(), 1, "permission request duplicated the tool call");
+        // And it kept the locations the announcement carried.
+        assert_eq!(calls[0].locations.len(), 1);
     }
 
     #[test]
