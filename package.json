@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "clean:rust": "find crates vendor -maxdepth 2 -type d -name target -prune -exec sh -c 'test -f \"$1/CACHEDIR.TAG\" && du -sh \"$1\" && rm -rf \"$1\"' _ {} \\;",
     "prepare": "husky"
   },
   "dependencies": {

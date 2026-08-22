@@ -25,6 +25,8 @@ src-tauri/target/
 
 .claude/
 .atlas/
+.agents/
+skills-lock.json
 
 # Markdown docs (working notes, PRDs, comparison docs) — except the ones that
 # ship with the app. TELEMETRY.md is referenced from the telemetry module and
@@ -37,6 +39,8 @@ src-tauri/target/
 !ARCHITECTURE.md
 !SECURITY.md
 !CODE_OF_CONDUCT.md
+!CONTEXT.md
+!docs/adr/*.md
 graphify-out/
 # Local-only working folders (plans/specs + helper scripts)
 plans/
