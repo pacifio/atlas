@@ -22,6 +22,7 @@ use uuid::Uuid;
 use crate::backend::{AcpBackend, AgentBackend, CerseiBackend};
 use crate::error::{Error, Result};
 use crate::events::{DeltaSink, Emitter, SessionDeltaEnvelope};
+use crate::native_bridge::{to_acp_agent_info, NativeSink};
 use crate::plugin::{PluginSpec, TranscriptKind, builtin_plugins, find_plugin};
 use crate::session::{
     Message, SessionModeInfo, SessionSnapshot, SessionState, ToolCall,
@@ -136,8 +137,11 @@ impl AgentManager {
 
         let (info, backend): (AgentInfo, Arc<dyn AgentBackend>) =
             if plugin.plugin_id == atlas_cersei::CERSEI_PLUGIN_ID {
-                let info = self.inner.cersei.spawn(event_sink);
-                (info, Arc::new(CerseiBackend(self.inner.cersei.clone())))
+                let info = self.inner.cersei.spawn(Arc::new(NativeSink(event_sink)));
+                (
+                    to_acp_agent_info(info),
+                    Arc::new(CerseiBackend(self.inner.cersei.clone())),
+                )
             } else {
                 let info = self.inner.acp.spawn(&plugin.plugin_id, event_sink).await?;
                 (info, Arc::new(AcpBackend(self.inner.acp.clone())))

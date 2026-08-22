@@ -23,6 +23,11 @@ use atlas_acp::{AgentId, SessionId};
 use atlas_cersei::CerseiRuntime;
 use uuid::Uuid;
 
+use crate::native_bridge::{
+    to_acp_error, to_acp_new_session_info, to_native_agent_id, to_native_decision,
+    to_native_session_id,
+};
+
 /// The slice of agent-transport behaviour the manager + worker depend on.
 #[async_trait]
 pub trait AgentBackend: Send + Sync {
@@ -312,6 +317,10 @@ impl AgentBackend for AcpBackend {
 // ─── Cersei (in-process) backend ──────────────────────────────────────────────
 
 /// Wraps the native `CerseiRuntime`. Cloneable (`Arc`-backed).
+///
+/// The runtime speaks its own protocol-free ids and errors (see
+/// `atlas_cersei::events`), so this adapter converts at every call. The
+/// conversions are all one-field moves; see [`crate::native_bridge`].
 #[derive(Clone)]
 pub struct CerseiBackend(pub CerseiRuntime);
 
@@ -324,7 +333,10 @@ impl AgentBackend for CerseiBackend {
         // The native agent has a single root by construction.
         _additional_directories: Vec<PathBuf>,
     ) -> AcpResult<NewSessionInfo> {
-        self.0.new_session(agent_id, cwd)
+        self.0
+            .new_session(to_native_agent_id(agent_id), cwd)
+            .map(to_acp_new_session_info)
+            .map_err(to_acp_error)
     }
     async fn load_session(
         &self,
@@ -332,7 +344,13 @@ impl AgentBackend for CerseiBackend {
         session_id: SessionId,
         cwd: PathBuf,
     ) -> AcpResult<Option<serde_json::Value>> {
-        self.0.load_session(agent_id, session_id, cwd)
+        self.0
+            .load_session(
+                to_native_agent_id(agent_id),
+                to_native_session_id(&session_id),
+                cwd,
+            )
+            .map_err(to_acp_error)
     }
     async fn send_prompt(
         &self,
@@ -345,7 +363,14 @@ impl AgentBackend for CerseiBackend {
         // `prompt_image_supported() == false`, so the composer degrades images
         // to path mentions before they ever reach this seam.
         let text = atlas_acp::prompt::flatten_text(&content);
-        self.0.send_prompt(agent_id, session_id, text).await
+        self.0
+            .send_prompt(
+                to_native_agent_id(agent_id),
+                to_native_session_id(&session_id),
+                text,
+            )
+            .await
+            .map_err(to_acp_error)
     }
     async fn set_session_mode(
         &self,
@@ -353,7 +378,9 @@ impl AgentBackend for CerseiBackend {
         session_id: SessionId,
         mode_id: String,
     ) -> AcpResult<()> {
-        self.0.set_session_mode(agent_id, &session_id_str(&session_id), mode_id)
+        self.0
+            .set_session_mode(to_native_agent_id(agent_id), &session_id_str(&session_id), mode_id)
+            .map_err(to_acp_error)
     }
     async fn set_session_model(
         &self,
@@ -361,19 +388,29 @@ impl AgentBackend for CerseiBackend {
         session_id: SessionId,
         model_id: String,
     ) -> AcpResult<()> {
-        self.0.set_model(agent_id, &session_id_str(&session_id), model_id)
+        self.0
+            .set_model(to_native_agent_id(agent_id), &session_id_str(&session_id), model_id)
+            .map_err(to_acp_error)
     }
     fn set_effort(&self, agent_id: AgentId, session_id: &SessionId, effort: String) -> AcpResult<()> {
-        self.0.set_effort(agent_id, &session_id_str(session_id), effort)
+        self.0
+            .set_effort(to_native_agent_id(agent_id), &session_id_str(session_id), effort)
+            .map_err(to_acp_error)
     }
     fn set_compress(&self, agent_id: AgentId, session_id: &SessionId, on: bool) -> AcpResult<()> {
-        self.0.set_compress(agent_id, &session_id_str(session_id), on)
+        self.0
+            .set_compress(to_native_agent_id(agent_id), &session_id_str(session_id), on)
+            .map_err(to_acp_error)
     }
     fn mark_turn_started(&self, agent_id: AgentId, session_id: &SessionId) -> AcpResult<u64> {
-        self.0.mark_turn_started(agent_id, &session_id_str(session_id))
+        self.0
+            .mark_turn_started(to_native_agent_id(agent_id), &session_id_str(session_id))
+            .map_err(to_acp_error)
     }
     fn cancel_turn(&self, agent_id: AgentId, session_id: SessionId) -> AcpResult<()> {
-        self.0.cancel_turn(agent_id, &session_id_str(&session_id))
+        self.0
+            .cancel_turn(to_native_agent_id(agent_id), &session_id_str(&session_id))
+            .map_err(to_acp_error)
     }
     fn respond_permission(
         &self,
@@ -381,10 +418,17 @@ impl AgentBackend for CerseiBackend {
         request_id: Uuid,
         decision: PermissionDecision,
     ) -> AcpResult<()> {
-        self.0.respond_permission(agent_id, request_id, decision)
+        self.0
+            .respond_permission(
+                to_native_agent_id(agent_id),
+                request_id,
+                to_native_decision(decision),
+            )
+            .map_err(to_acp_error)
     }
     fn sweep_permissions(&self, agent_id: AgentId, session_id: &SessionId) -> Vec<Uuid> {
-        self.0.sweep_permissions(agent_id, &session_id_str(session_id))
+        self.0
+            .sweep_permissions(to_native_agent_id(agent_id), &session_id_str(session_id))
     }
     fn register_session(&self, _agent_id: AgentId, _session_id: SessionId) -> AcpResult<()> {
         // The runtime registers sessions itself in new_session / load_session.
@@ -400,7 +444,7 @@ impl AgentBackend for CerseiBackend {
         Ok(())
     }
     fn kill(&self, agent_id: AgentId) -> AcpResult<()> {
-        self.0.kill(agent_id)
+        self.0.kill(to_native_agent_id(agent_id)).map_err(to_acp_error)
     }
 }
 

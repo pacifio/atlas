@@ -252,9 +252,7 @@ dependencies = [
 name = "atlas-cersei"
 version = "0.1.0"
 dependencies = [
- "agent-client-protocol",
  "async-trait",
- "atlas-acp",
  "cersei",
  "cersei-agent",
  "cersei-compression",
@@ -265,6 +263,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
+ "thiserror 2.0.19",
  "tokio",
  "tokio-util",
  "tracing",

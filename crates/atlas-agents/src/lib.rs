@@ -21,6 +21,7 @@ pub mod error;
 pub mod events;
 pub mod handle;
 pub mod manager;
+pub mod native_bridge;
 pub mod plugin;
 pub mod session;
 pub mod transcript;

@@ -1,0 +1,22 @@
+[package]
+name = "atlas-agent-manager"
+version = "0.1.0"
+edition = "2021"
+description = "Owns the connections and sessions of the ported ACP stack."
+
+[lib]
+name = "atlas_agent_manager"
+
+[dependencies]
+# Same exact pin as the rest of the ported stack (`zed-ref/Cargo.toml:518`).
+agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
+atlas-acp-thread = { path = "../atlas-acp-thread" }
+atlas-agent-servers = { path = "../atlas-agent-servers" }
+atlas-agent-store = { path = "../atlas-agent-store" }
+anyhow = "1"
+futures = "0.3"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }

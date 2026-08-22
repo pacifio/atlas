@@ -1589,6 +1589,54 @@ impl AcpThread {
         self.emit(AcpThreadEvent::TokenUsageUpdated);
     }
 
+    /// Set the session's running cost.
+    ///
+    /// A `session/update` carries cost alongside context size, so an ACP agent
+    /// sets both at once through [`Self::handle_session_update`]. An in-process
+    /// agent reports cost without a context-window figure, and this is how it
+    /// says so without inventing one.
+    pub fn update_cost(&mut self, cost: Option<SessionCost>) {
+        self.cost = cost;
+        self.emit(AcpThreadEvent::TokenUsageUpdated);
+    }
+
+    /// Open a context-compaction entry, or move an open one to a new status.
+    ///
+    /// Zed's native agent drives these entries the same way — compaction is
+    /// something an agent *does*, not something the protocol reports, so it has
+    /// no `session/update` variant and reaches the timeline through here.
+    pub fn upsert_context_compaction(
+        &mut self,
+        id: ContextCompactionId,
+        status: ContextCompactionStatus,
+    ) {
+        let existing = self.entries.iter().position(|entry| {
+            matches!(entry, AgentThreadEntry::ContextCompaction(c) if c.id == id)
+        });
+        match existing {
+            Some(ix) => {
+                if let AgentThreadEntry::ContextCompaction(compaction) = &mut self.entries[ix] {
+                    compaction.status = status;
+                }
+                self.emit(AcpThreadEvent::EntryUpdated(ix));
+            }
+            None => {
+                self.push_entry(AgentThreadEntry::ContextCompaction(ContextCompaction {
+                    id,
+                    status,
+                }));
+            }
+        }
+    }
+
+    /// Report that a transient failure is being retried.
+    ///
+    /// Same reasoning as compaction: the retry is the agent's own, so it has no
+    /// protocol representation and is announced directly.
+    pub fn report_retry(&mut self, status: RetryStatus) {
+        self.emit(AcpThreadEvent::Retry(status));
+    }
+
     // ---- turns / cancel -------------------------------------------------
 
     /// Opens a new turn, cancelling any turn still running.

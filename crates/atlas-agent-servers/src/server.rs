@@ -43,8 +43,11 @@ pub trait ExternalAgentServer: Send + Sync {
 ///
 /// Zed's carries an `Entity<AgentServerStore>` and two `watch::Sender`s; the
 /// shape is the same with the store reduced to the one trait this layer needs.
+///
+/// `server` is optional because an in-process agent has no command to resolve —
+/// Zed's `NativeAgentServer::connect` ignores the delegate for the same reason.
 pub struct AgentServerDelegate {
-    pub server: Arc<dyn ExternalAgentServer>,
+    pub server: Option<Arc<dyn ExternalAgentServer>>,
     pub new_version_available: Option<tokio::sync::watch::Sender<Option<String>>>,
     pub loading_status: Option<tokio::sync::watch::Sender<Option<String>>>,
 }
@@ -52,7 +55,17 @@ pub struct AgentServerDelegate {
 impl AgentServerDelegate {
     pub fn new(server: Arc<dyn ExternalAgentServer>) -> Self {
         Self {
-            server,
+            server: Some(server),
+            new_version_available: None,
+            loading_status: None,
+        }
+    }
+
+    /// A delegate for an agent that runs in-process: no command to resolve, no
+    /// binary to download, so nothing to report on either channel.
+    pub fn native() -> Self {
+        Self {
+            server: None,
             new_version_available: None,
             loading_status: None,
         }
@@ -143,10 +156,10 @@ impl AgentServer for CustomAgentServer {
             let mut extra_env = load_proxy_env();
             extra_env.extend(env_quirks(&agent_id));
 
-            let command = delegate
-                .server
-                .get_command(Vec::new(), extra_env)
-                .await?;
+            let server = delegate.server.clone().ok_or_else(|| {
+                anyhow::anyhow!("no command resolver for agent `{agent_id}`")
+            })?;
+            let command = server.get_command(Vec::new(), extra_env).await?;
 
             let connection = AcpConnection::stdio(
                 agent_id,
