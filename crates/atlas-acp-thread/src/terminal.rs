@@ -53,6 +53,19 @@ pub enum TerminalProviderEvent {
     },
 }
 
+impl TerminalProviderEvent {
+    /// Which terminal this event is about. Every variant names one, and the
+    /// thread needs it to find the tool calls that render it.
+    pub fn terminal_id(&self) -> &acp::TerminalId {
+        match self {
+            Self::Created { terminal_id, .. }
+            | Self::Output { terminal_id, .. }
+            | Self::TitleChanged { terminal_id, .. }
+            | Self::Exit { terminal_id, .. } => terminal_id,
+        }
+    }
+}
+
 /// One terminal the agent created through `terminal/create`.
 pub struct AcpTerminal {
     id: acp::TerminalId,

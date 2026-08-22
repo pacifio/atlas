@@ -103,6 +103,9 @@ struct Inner {
     /// Signalled once when the child exits, so `wait_for_exit` can park instead
     /// of polling.
     exit_notify: tokio::sync::Notify,
+    /// Signalled every time the reader thread appends, and once more at exit,
+    /// so a watcher can follow the output without polling.
+    output_notify: tokio::sync::Notify,
 }
 
 /// A single command running on a PTY.
@@ -162,6 +165,7 @@ impl CommandTerminal {
             output: Mutex::new(OutputBuffer::new(output_byte_limit)),
             exit: Mutex::new(None),
             exit_notify: tokio::sync::Notify::new(),
+            output_notify: tokio::sync::Notify::new(),
         });
         let child = Arc::new(Mutex::new(child));
 
@@ -178,6 +182,7 @@ impl CommandTerminal {
                         if let Ok(mut out) = reader_inner.output.lock() {
                             out.push(&buf[..n]);
                         }
+                        reader_inner.output_notify.notify_waiters();
                     }
                 }
             }
@@ -188,6 +193,10 @@ impl CommandTerminal {
                 *slot = Some(exit_from(status));
             }
             reader_inner.exit_notify.notify_waiters();
+            // Wake output watchers too: the last append before EOF may have
+            // landed while nobody was registered, and this is their signal to
+            // read it and stop.
+            reader_inner.output_notify.notify_waiters();
         });
 
         Ok(Self { inner, child })
@@ -206,16 +215,42 @@ impl CommandTerminal {
         self.inner.exit.lock().ok().and_then(|s| s.clone())
     }
 
+    /// Park until the command appends output, or exits.
+    ///
+    /// Deliberately carries no payload and no cursor: a watcher re-reads the
+    /// whole retained buffer, so notifications COALESCE — a command printing in
+    /// a tight loop wakes its watcher as often as it happens to be registered,
+    /// not once per write. That is the behaviour wanted; the alternative is a
+    /// wake per byte for output nobody has rendered yet.
+    ///
+    /// Returns immediately once the command has exited, so a watcher loop that
+    /// checks `exit_status` terminates rather than parking forever.
+    ///
+    /// See [`Self::wait_for_exit`] for why `enable()` and not a bare `await`.
+    pub async fn output_changed(&self) {
+        let notified = self.inner.output_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if self.exit_status().is_some() {
+            return;
+        }
+        notified.await;
+    }
+
     /// Park until the command exits, then return how it ended.
     ///
-    /// Re-checks under the lock before awaiting: a command that finishes between
-    /// the caller's check and this call would otherwise wait for a notification
-    /// that has already fired.
+    /// `enable()` is what actually registers interest. A `Notified` future
+    /// created but not yet polled is NOT in the notify list, so
+    /// `notify_waiters()` firing between construction and the first `await`
+    /// would reach nobody — and since the reader thread signals exit exactly
+    /// once, the waiter would then park forever on a command that has already
+    /// finished. `tokio::pin!` + `enable()` moves that registration ahead of
+    /// the status check, which is the whole point of checking after it.
     pub async fn wait_for_exit(&self) -> CommandExit {
         loop {
-            // Register interest BEFORE re-reading the slot, so an exit landing
-            // in the gap still wakes us.
             let notified = self.inner.exit_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if let Some(status) = self.exit_status() {
                 return status;
             }
@@ -491,4 +526,41 @@ mod tests {
         let terminals = CommandTerminals::new();
         assert!(!terminals.release("term_does_not_exist"));
     }
+
+    /// The signal a watcher follows to stream a running command's output into
+    /// the UI. Without it the output only moves when something unrelated
+    /// happens to re-read the buffer.
+    #[tokio::test]
+    async fn output_changed_wakes_while_the_command_is_still_running() {
+        // Prints, then stays alive: a watcher must be woken by the print, not
+        // left parked until the process ends.
+        let term = run("/bin/sh", &["-c", "echo first; sleep 30"]);
+        let woke = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            async {
+                loop {
+                    term.output_changed().await;
+                    if term.output().0.contains("first") {
+                        return;
+                    }
+                }
+            },
+        )
+        .await;
+        let _ = term.kill();
+        assert!(woke.is_ok(), "output_changed never woke for a live command");
+    }
+
+    /// A watcher loop is written as `loop { output_changed().await; ...; if
+    /// exited { break } }`. If the await parked forever once the command was
+    /// gone, that loop would leak a task per terminal for the life of the app.
+    #[tokio::test]
+    async fn output_changed_returns_at_once_once_the_command_has_exited() {
+        let term = run("/bin/echo", &["done"]);
+        let _ = term.wait_for_exit().await;
+        let returned =
+            tokio::time::timeout(std::time::Duration::from_secs(5), term.output_changed()).await;
+        assert!(returned.is_ok(), "a finished command must not park its watcher");
+    }
+
 }

@@ -18,6 +18,7 @@ import { isBashToolCall, bashCommandOf } from "./tool-calls";
 import {
   getFilePathFromInput,
   classifyToolFileKind,
+  countChangedLines,
   countEditLines,
   isFileCreated,
 } from "./tool-files";
@@ -192,6 +193,66 @@ function isInternalTool(tc: ToolCallDisplay): boolean {
 
 // ── Marker labelling ───────────────────────────────────────────────────────
 
+/** What a tool call changed, however it reported it. */
+interface FileEdit {
+  /** The file the marker names — the first one the call touched. */
+  path: string;
+  added: number;
+  removed: number;
+  created: boolean;
+}
+
+/** The edit a tool call reported STRUCTURALLY, as ACP `diff` content blocks.
+ *
+ *  An ACP agent's tools are its own: `apply_patch(patch_id)` says nothing that
+ *  `classifyToolFileKind` can read, and the edit lives entirely in the blocks.
+ *  Without this the marker fell through to the generic branch — no file name,
+ *  no line counts, and a click that opened the output pane instead of the diff
+ *  viewer, even though the before/after text was right there.
+ *
+ *  Each block carries the WHOLE file either side, not the fragment that
+ *  changed, so blocks naming the SAME path collapse to first-before against
+ *  last-after — the state the call found the file in against the state it left
+ *  it in. Summing them instead would count intermediate states the reader
+ *  never sees: a line rewritten twice would read as two changed lines against
+ *  a diff showing one. This is the same fold `collectTurnEdits` does for the
+ *  viewer the marker opens, so the count and the diff agree.
+ *
+ *  A tool call is still exactly ONE marker (the row invariant), so a call that
+ *  changed several files is named by the first and sized by all of them. */
+function diffEditOf(tc: ToolCallDisplay): FileEdit | null {
+  const blocks = (tc.contentBlocks ?? []).filter((b) => b.type === "diff");
+  if (blocks.length === 0) return null;
+
+  const byPath = new Map<string, { old: string; new: string; created: boolean }>();
+  for (const b of blocks) {
+    const seen = byPath.get(b.path);
+    byPath.set(b.path, {
+      // The wire OMITS `oldText` for a file the call created; an empty string
+      // is a real file that happened to be empty.
+      old: seen ? seen.old : (b.oldText ?? ""),
+      new: b.newText,
+      created: seen ? seen.created : b.oldText === undefined,
+    });
+  }
+
+  let added = 0;
+  let removed = 0;
+  for (const file of byPath.values()) {
+    const counts = countChangedLines(file.old, file.new);
+    added += counts.added;
+    removed += counts.removed;
+  }
+  return {
+    path: blocks[0].path,
+    added,
+    removed,
+    // "Created" only when the call brought nothing into existence but new
+    // files — one edited file among them makes it an edit.
+    created: [...byPath.values()].every((file) => file.created),
+  };
+}
+
 /** Trim a path to something that reads in one line without the eye scanning. */
 function shortPath(p: string): string {
   const parts = p.split("/").filter(Boolean);
@@ -215,31 +276,48 @@ function markerFor(tc: ToolCallDisplay, turnId: string, first: boolean): MarkerR
           ? "running"
           : "pending";
 
+  // A tool call that ran a terminal always has an output pane worth opening,
+  // even before the command's first byte: watching it stream is the point.
+  const ranTerminal = (tc.contentBlocks ?? []).some((b) => b.type === "terminal");
+
   let verb = tc.toolName;
   let detail = "";
-  let opens: MarkerDetail = tc.result ? "output" : "none";
+  let opens: MarkerDetail = tc.result || ranTerminal ? "output" : "none";
   let added = 0;
   let removed = 0;
 
   const args = tc.arguments ?? {};
   const fileKind = classifyToolFileKind(tc.kind, tc.toolName);
-  const path = getFilePathFromInput(args);
+  const argsPath = getFilePathFromInput(args);
+  // Two ways an edit is reported, one shape. Recognisable arguments win: a
+  // tool Atlas already understands must not read differently just because the
+  // agent also attached the structural blocks.
+  const edit: FileEdit | null =
+    fileKind === "edit" && argsPath
+      ? {
+          path: argsPath,
+          created: isFileCreated(tc.toolName, args),
+          ...countEditLines(tc.toolName, args),
+        }
+      : diffEditOf(tc);
+  // The path the marker reports: whatever the arguments named, else whatever
+  // the diff blocks did. It is what the diff viewer lands on.
+  const path = argsPath ?? edit?.path ?? null;
 
   if (isBashToolCall(tc)) {
     verb = "Ran";
     detail = bashCommandOf(args);
     opens = "output";
-  } else if (fileKind === "edit" && path) {
-    verb = isFileCreated(tc.toolName, args) ? "Created" : "Edited";
-    detail = shortPath(path);
-    const counts = countEditLines(tc.toolName, args);
-    added = counts.added;
-    removed = counts.removed;
+  } else if (edit) {
+    verb = edit.created ? "Created" : "Edited";
+    detail = shortPath(edit.path);
+    added = edit.added;
+    removed = edit.removed;
     opens = "diff";
   } else if (fileKind === "read" && path) {
     verb = "Read";
     detail = shortPath(path);
-    opens = tc.result ? "output" : "none";
+    opens = tc.result || ranTerminal ? "output" : "none";
   } else if (typeof args.pattern === "string") {
     verb = "Searched";
     detail = args.pattern;

@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::v1 as acp;
 use agent_client_protocol::{JsonRpcResponse, Responder};
 use atlas_acp_thread::{
-    AcpThread, AuthorizationKind, ElicitationStoreHandle, PermissionOptions,
+    AcpThread, AcpThreadHandle, AuthorizationKind, ElicitationStoreHandle, PermissionOptions,
     TerminalProviderEvent,
 };
 use atlas_terminal::command::{CommandTerminal, DEFAULT_OUTPUT_BYTE_LIMIT};
@@ -341,10 +341,68 @@ pub async fn handle_create_terminal(
         label,
         cwd,
         output_byte_limit: args.output_byte_limit,
-        terminal,
+        terminal: terminal.clone(),
     });
+    follow_terminal_output(thread, terminal, terminal_id.clone());
 
     let _ = responder.respond(acp::CreateTerminalResponse::new(terminal_id));
+}
+
+/// Turn a running command's output into thread events for as long as it runs.
+///
+/// A terminal's output grows on the PTY reader thread; nothing about the thread
+/// changes, so nothing re-projects the tool call that renders it, and the
+/// output pane would show only what happened to be buffered when some unrelated
+/// event last touched the entry.
+///
+/// Zed needs no such pump: its terminal is an entity the inline terminal view
+/// holds, so `write_output` → `cx.notify()` re-renders the tool call directly
+/// (`acp_thread.rs:4679-4687`). Atlas has no inline terminal view — output
+/// reaches the UI through the tool call's own projection — so the link that
+/// GPUI gives Zed for free is made here instead.
+///
+/// # What keeps this from leaking
+///
+/// The task holds the terminal STRONGLY — it has to read the buffer it is
+/// reporting — and the thread only weakly, so a session that goes away does not
+/// stay alive for its own terminal. It ends on any of three things, which
+/// between them cover every way a terminal stops mattering:
+///
+/// - the command exits (checked after each wake);
+/// - the thread is gone (the upgrade fails, checked before parking again);
+/// - the terminal is released or the session torn down, both of which kill the
+///   command — which is an exit, so the first condition fires.
+pub fn follow_terminal_output(
+    thread: AcpThreadHandle,
+    terminal: Arc<CommandTerminal>,
+    terminal_id: acp::TerminalId,
+) {
+    let thread = Arc::downgrade(&thread);
+    tokio::spawn(async move {
+        loop {
+            // Nothing left to report to: stop before parking on a command whose
+            // output no longer has a reader.
+            let Some(alive) = thread.upgrade() else { return };
+            drop(alive);
+
+            terminal.output_changed().await;
+
+            let Some(alive) = thread.upgrade() else { return };
+            lock(&alive).note_terminal_output(&terminal_id);
+            drop(alive);
+
+            if terminal.exit_status().is_some() {
+                // One last report AFTER the exit was observed: the final append
+                // and the exit signal can arrive together, and the wake above
+                // may have read the buffer a moment before the last write
+                // landed.
+                if let Some(alive) = thread.upgrade() {
+                    lock(&alive).note_terminal_output(&terminal_id);
+                }
+                return;
+            }
+        }
+    });
 }
 
 pub async fn handle_kill_terminal(

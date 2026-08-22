@@ -812,7 +812,7 @@ impl AgentHost {
             prompt_image_supported: thread.prompt_capabilities().image,
             plan: project::plan_entries(&thread.plan().entries),
             messages: if with_messages {
-                project::snapshot_messages(thread.entries(), current_model.as_deref())
+                project::snapshot_messages(&thread, current_model.as_deref())
             } else {
                 Vec::new()
             },

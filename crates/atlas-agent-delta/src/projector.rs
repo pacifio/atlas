@@ -575,7 +575,7 @@ impl SessionProjection {
             }
             AgentThreadEntry::ToolCall(call) => {
                 let message_id = new_message_id();
-                let snapshot = project::tool_call(call);
+                let snapshot = project::tool_call(call, thread);
                 let delta = SessionDelta::ToolCallUpserted {
                     message_id: message_id.clone(),
                     tool_call: snapshot.clone(),
@@ -674,7 +674,7 @@ impl SessionProjection {
                 },
                 AgentThreadEntry::ToolCall(call),
             ) => {
-                let current = project::tool_call(call);
+                let current = project::tool_call(call, &thread);
                 let delta = tool_call_delta(message_id, snapshot, &current);
                 **snapshot = current;
                 delta.into_iter().collect()

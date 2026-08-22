@@ -1765,10 +1765,67 @@ impl AcpThread {
     // ---- terminals ------------------------------------------------------
 
     pub fn on_terminal_provider_event(&mut self, event: TerminalProviderEvent) {
+        let terminal_id = event.terminal_id().clone();
         self.terminals.handle_event(event);
+        // The terminal's state is what a referencing tool call renders, so a
+        // change to it is a change to that entry. Zed does not need this step:
+        // its terminal is an entity a view holds directly, so `cx.notify()` on
+        // the terminal re-renders the tool call for free. Atlas's terminals
+        // reach the UI only THROUGH the tool call's projection, so the link has
+        // to be made explicitly or the output never moves.
+        self.note_terminal_output(&terminal_id);
+    }
+
+    /// Announce that a terminal's output or exit status changed.
+    ///
+    /// Emits `EntryUpdated` for every tool call whose content references the
+    /// terminal, which is what makes the projection re-read it. Called both by
+    /// [`Self::on_terminal_provider_event`] and by the pump that follows a
+    /// running command's output.
+    ///
+    /// Silent when nothing references the terminal — the agent is allowed to
+    /// create one and never mention it in a tool call.
+    pub fn note_terminal_output(&mut self, id: &acp::TerminalId) {
+        let updated: Vec<usize> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| match entry {
+                AgentThreadEntry::ToolCall(call) => call
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, ToolCallContent::Terminal(other) if other == id)),
+                _ => false,
+            })
+            .map(|(ix, _)| ix)
+            .collect();
+        for ix in updated {
+            self.emit(AcpThreadEvent::EntryUpdated(ix));
+        }
     }
 
     pub fn terminal(&self, id: &acp::TerminalId) -> Option<&AcpTerminal> {
         self.terminals.get(id)
+    }
+
+    /// A terminal's output as text, for the projection that flattens a tool
+    /// call's content. `None` when the id names no terminal this thread holds.
+    ///
+    /// Truncation is stated in the text because the text is all the reader
+    /// gets: a buffer that dropped its front otherwise reads as a command that
+    /// started mid-sentence. The exit status is deliberately NOT in here — the
+    /// agent reports how its own tool call ended through `tool_call_update`,
+    /// and the tool call's status is where the UI shows it. Zed's
+    /// `Terminal::to_markdown` (`terminal.rs:604-609`) is content-only for the
+    /// same reason.
+    pub fn terminal_output(&self, id: &acp::TerminalId) -> Option<String> {
+        self.terminals.get(id).map(|terminal| {
+            let response = terminal.current_output();
+            if response.truncated {
+                format!("[earlier output dropped]\n{}", response.output)
+            } else {
+                response.output
+            }
+        })
     }
 }

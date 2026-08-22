@@ -189,6 +189,7 @@ dependencies = [
  "atlas-agent-servers",
  "atlas-agent-wire",
  "atlas-bus",
+ "atlas-terminal",
  "chrono",
  "futures",
  "serde_json",

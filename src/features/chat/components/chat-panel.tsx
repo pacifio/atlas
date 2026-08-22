@@ -7,7 +7,6 @@ import { agents, ensureAgent, CODEX_PLUGIN_ID, codexStatus } from "../lib/agents
 import { loadCachedAcpModes } from "../lib/acp-modes-cache";
 import { warmAcpModels, otherAcpAgents } from "../lib/warm-acp-models";
 import type { ImageAttachment, SessionKey } from "@/types/agents";
-import type { ChatMessage } from "@/types/agent";
 import {
   hasInFlightToolCalls,
   isBusyAgentStatus,
@@ -52,8 +51,8 @@ import { openAgentSession, openNewAgentChat } from "../lib/open-agent-session";
 import { workspacePathForTab } from "../lib/tab-workspace";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchTextDiff } from "@/features/git/lib/git-diff-api";
-import { getEditParts, getFilePathFromInput } from "../lib/tool-files";
-import { OPEN_TURN_DIFF_EVENT, toRepoRelative, type TurnDiffRequest } from "../lib/open-turn-diff";
+import { OPEN_TURN_DIFF_EVENT, type TurnDiffRequest } from "../lib/open-turn-diff";
+import { collectTurnEdits } from "../lib/turn-edits";
 
 /** Height the floating header occupies — the transcript pads its content by
  *  this much so the first row clears the bar. Must match `ChatHeader`'s bar. */
@@ -148,81 +147,6 @@ async function rebindDisconnectedSession(tabId: string): Promise<boolean> {
     console.warn("agent restart failed:", err);
     return false;
   }
-}
-
-/**
- * The before/after text a single turn produced, per file.
- *
- * Walks the turn's assistant run — `turnId` is `t:<first assistant message id>`,
- * the same formula the row projection uses — and folds every edit tool call into
- * one before/after pair per path. Multiple edits to the same file concatenate in
- * order, so a turn that touched a file three times reads as one diff rather than
- * three competing ones.
- *
- * A `Write` carries whole content (`old` empty), which is why a file CREATED by
- * the turn renders in full. An `Edit` carries only the replaced fragment, so its
- * diff covers that fragment — honest about what the record holds. A file the
- * turn only deleted contributes no edit parts and simply does not appear, which
- * is the correct answer: there is nothing to browse.
- */
-function collectTurnEdits(
-  messages: ChatMessage[],
-  turnId: string,
-  repoPath: string,
-  preferredFile?: string,
-): {
-  files: string[];
-  initial: string;
-  sources: Record<string, { old: string; new: string }>;
-} {
-  const firstId = turnId.startsWith("t:") ? turnId.slice(2) : turnId;
-  const start = messages.findIndex((m) => m.id === firstId);
-  const sources: Record<string, { old: string; new: string }> = {};
-  const order: string[] = [];
-
-  if (start >= 0) {
-    // The turn is the consecutive assistant run beginning at that message.
-    for (let i = start; i < messages.length && messages[i].role === "assistant"; i++) {
-      for (const tc of messages[i].toolCalls) {
-        // P1.4: an ACP agent may report its edit as a `diff` content block
-        // instead of as recognisable Write/Edit arguments. Those carry the
-        // before/after text outright, so they fold in the same way — and this
-        // is the ONLY record of an edit that is not on disk yet (plan mode,
-        // preview), where a git-backed diff has nothing to compare against.
-        for (const block of tc.contentBlocks ?? []) {
-          if (block.type !== "diff") continue;
-          const path = toRepoRelative(block.path, repoPath);
-          if (!sources[path]) {
-            sources[path] = { old: "", new: "" };
-            order.push(path);
-          }
-          sources[path].old += block.oldText ?? "";
-          sources[path].new += block.newText;
-        }
-        const args = tc.arguments ?? {};
-        const parts = getEditParts(tc.toolName, args);
-        if (parts.length === 0) continue;
-        const abs = getFilePathFromInput(args);
-        if (!abs) continue;
-        const path = toRepoRelative(abs, repoPath);
-        if (!sources[path]) {
-          sources[path] = { old: "", new: "" };
-          order.push(path);
-        }
-        for (const p of parts) {
-          sources[path].old += p.old;
-          sources[path].new += p.neu;
-        }
-      }
-    }
-  }
-
-  const wanted = preferredFile ? toRepoRelative(preferredFile, repoPath) : "";
-  return {
-    files: order,
-    initial: wanted && sources[wanted] ? wanted : (order[0] ?? ""),
-    sources,
-  };
 }
 
 export function ChatPanel({ tabId }: ChatPanelProps) {

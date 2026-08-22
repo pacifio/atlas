@@ -305,3 +305,125 @@ fn advertised_capabilities_match_what_the_handlers_serve() {
     assert!(elicitation.form.is_some());
     assert!(elicitation.url.is_some());
 }
+
+// ── the terminal-output pump ────────────────────────────────────────────────
+//
+// `follow_terminal_output` is the link Zed gets from GPUI for free: a running
+// command's output has to become thread events, or the tool call that renders
+// it is never re-projected and the output pane stays frozen. These drive the
+// real spawned task against a real PTY.
+
+/// A thread plus the receiver its events land on, so a test can watch them.
+fn thread_with_events(id: &str) -> (Arc<Mutex<AcpThread>>, atlas_acp_thread::EventStream<atlas_acp_thread::AcpThreadEvent>) {
+    let (tx, rx) = event_channel();
+    let thread = Arc::new(Mutex::new(AcpThread::new(
+        session_id(id),
+        stub_connection(),
+        vec![PathBuf::from("/tmp")],
+        None,
+        tx,
+    )));
+    (thread, rx)
+}
+
+/// Register `terminal` under `terminal_id` and announce a tool call that
+/// references it — the shape `terminal/create` plus a `session/update` produce.
+fn tool_call_running(
+    thread: &Arc<Mutex<AcpThread>>,
+    terminal_id: &acp::TerminalId,
+    terminal: Arc<atlas_terminal::command::CommandTerminal>,
+) {
+    thread
+        .lock()
+        .unwrap()
+        .on_terminal_provider_event(atlas_acp_thread::TerminalProviderEvent::Created {
+            terminal_id: terminal_id.clone(),
+            label: "cmd".into(),
+            cwd: None,
+            output_byte_limit: Some(4096),
+            terminal,
+        });
+    let update: acp::SessionUpdate = serde_json::from_value(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Run a command",
+        "kind": "execute",
+        "status": "in_progress",
+        "content": [{ "type": "terminal", "terminalId": terminal_id.to_string() }],
+    }))
+    .expect("the update parses");
+    thread
+        .lock()
+        .unwrap()
+        .handle_session_update(update)
+        .expect("the thread accepts it");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_pump_turns_a_running_command_into_thread_events() {
+    let (thread, mut events) = thread_with_events("sess-pump");
+    let terminal_id = acp::TerminalId::new("term-pump");
+    // Prints, then lingers: the event must arrive while the command still runs,
+    // not only once it has exited.
+    let terminal = Arc::new(
+        atlas_terminal::command::CommandTerminal::spawn(
+            "/bin/sh",
+            &["-c".to_string(), "echo streaming; sleep 30".to_string()],
+            &[],
+            None,
+            4096,
+        )
+        .expect("spawn"),
+    );
+    tool_call_running(&thread, &terminal_id, terminal.clone());
+    // Drain what announcing the tool call already emitted.
+    while events.try_recv().is_ok() {}
+
+    handlers::follow_terminal_output(thread.clone(), terminal.clone(), terminal_id.clone());
+
+    let saw = tokio::time::timeout(std::time::Duration::from_secs(10), events.recv()).await;
+    let _ = terminal.kill();
+    assert!(
+        saw.is_ok(),
+        "the pump produced no thread event for a command that printed"
+    );
+    assert!(thread
+        .lock()
+        .unwrap()
+        .terminal_output(&terminal_id)
+        .unwrap_or_default()
+        .contains("streaming"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_pump_stops_when_the_thread_is_gone() {
+    // A session torn down while its command still runs must not be kept alive
+    // by its own terminal — the task holds the thread weakly and gives up.
+    let (thread, events) = thread_with_events("sess-dropped");
+    let terminal_id = acp::TerminalId::new("term-dropped");
+    let terminal = Arc::new(
+        atlas_terminal::command::CommandTerminal::spawn(
+            "/bin/sh",
+            &["-c".to_string(), "sleep 30".to_string()],
+            &[],
+            None,
+            4096,
+        )
+        .expect("spawn"),
+    );
+    let weak = Arc::downgrade(&thread);
+    handlers::follow_terminal_output(thread.clone(), terminal.clone(), terminal_id);
+
+    drop(events);
+    drop(thread);
+    let _ = terminal.kill();
+    // The kill wakes the pump, which finds nothing to report to and returns —
+    // releasing the last handle it held.
+    for _ in 0..100 {
+        if weak.upgrade().is_none() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("the pump kept the thread alive after its session went away");
+}

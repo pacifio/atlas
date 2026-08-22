@@ -681,7 +681,7 @@ fn a_snapshot_carries_the_whole_conversation_including_the_user() {
 
     let thread = lock(&harness.thread);
     let messages =
-        atlas_agent_delta::project::snapshot_messages(thread.entries(), Some("claude-opus-5"));
+        atlas_agent_delta::project::snapshot_messages(&thread, Some("claude-opus-5"));
     drop(thread);
 
     let shape: Vec<(&str, &str)> = messages
@@ -723,4 +723,156 @@ fn a_snapshot_carries_the_whole_conversation_including_the_user() {
     // Message ids are unique — the frontend keys its mirror on them.
     let ids: std::collections::HashSet<_> = messages.iter().map(|m| &m.id).collect();
     assert_eq!(ids.len(), messages.len());
+}
+
+// ------------------------------------------------------- terminal tool calls
+
+/// `echo`, wherever this platform keeps it.
+fn echo_binary() -> &'static str {
+    ["/bin/echo", "/usr/bin/echo"]
+        .into_iter()
+        .find(|path| std::path::Path::new(path).exists())
+        .unwrap_or("echo")
+}
+
+/// Announce a tool call whose content is a terminal the agent created. This is
+/// the exact shape `terminal/create` + `session/update` produce: the block
+/// carries an id and nothing else — the output lives on the client's side.
+fn terminal_tool_call(id: &str, terminal_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": id,
+        "title": "Run a command",
+        "kind": "execute",
+        "status": "in_progress",
+        "content": [{ "type": "terminal", "terminalId": terminal_id }],
+    })
+}
+
+/// Register a real PTY-backed command as `terminal_id`, the way
+/// `handle_create_terminal` does, and wait for it to finish.
+async fn create_terminal(harness: &Harness, terminal_id: &str, args: &[&str]) {
+    let terminal = std::sync::Arc::new(
+        atlas_terminal::command::CommandTerminal::spawn(
+            echo_binary(),
+            &args.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+            &[],
+            None,
+            4096,
+        )
+        .expect("failed to spawn echo(1)"),
+    );
+    terminal.wait_for_exit().await;
+    lock(&harness.thread).on_terminal_provider_event(
+        atlas_acp_thread::TerminalProviderEvent::Created {
+            terminal_id: acp::TerminalId::new(terminal_id),
+            label: "echo".into(),
+            cwd: None,
+            output_byte_limit: Some(4096),
+            terminal,
+        },
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_tool_call_carries_its_output_to_the_wire() {
+    // The regression: a terminal block contributed NOTHING to the tool call —
+    // it was skipped when flattening the result — so a command the agent ran
+    // through `terminal/create` showed an empty output pane forever, however
+    // much it printed.
+    let harness = Harness::start();
+
+    create_terminal(&harness, "term-1", &["hello from the pty"]).await;
+    harness.update(terminal_tool_call("call-1", "term-1"));
+    lock(&harness.thread).note_terminal_output(&acp::TerminalId::new("term-1"));
+    harness.expect(1);
+
+    let result = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|d| match d {
+            SessionDelta::ToolCallUpserted { tool_call, .. } => tool_call.result,
+            _ => None,
+        })
+        .next_back()
+        .expect("the tool call reached the wire");
+    assert!(
+        result.contains("hello from the pty"),
+        "the terminal's output is missing from the tool call result: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn terminal_output_still_names_its_block_on_the_wire() {
+    // The block itself must survive alongside the flattened text: it is what
+    // tells the UI this tool call ran a terminal rather than returned a string.
+    let harness = Harness::start();
+
+    create_terminal(&harness, "term-2", &["x"]).await;
+    harness.update(terminal_tool_call("call-2", "term-2"));
+    harness.expect(1);
+
+    let blocks = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|d| match d {
+            SessionDelta::ToolCallUpserted { tool_call, .. } => Some(tool_call.content_blocks),
+            _ => None,
+        })
+        .next_back()
+        .expect("the tool call reached the wire");
+    let json = serde_json::to_value(&blocks).expect("blocks serialize");
+    assert_eq!(json[0]["type"], "terminal");
+    assert_eq!(json[0]["terminalId"], "term-2");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn growing_terminal_output_re_projects_the_tool_call() {
+    // Live streaming. A terminal's output grows on its own, long after the
+    // tool call that references it was announced — nothing else about the
+    // thread changes. Zed gets this free: its terminal is an entity the view
+    // holds, so notifying it re-renders the tool call. Atlas's terminals reach
+    // the UI only through the tool call's projection, so without an explicit
+    // link the output pane shows whatever happened to be buffered when some
+    // unrelated event last re-projected the entry.
+    let harness = Harness::start();
+
+    // The terminal must exist before the agent can reference it: the id comes
+    // from `terminal/create`, and the thread rejects a block naming an unknown
+    // one (as Zed's `ToolCallContent::from_acp` does).
+    create_terminal(&harness, "term-3", &["first"]).await;
+    harness.update(terminal_tool_call("call-3", "term-3"));
+    harness.expect(1);
+    let before = harness.recorder.len();
+
+    lock(&harness.thread).on_terminal_provider_event(
+        atlas_acp_thread::TerminalProviderEvent::Output {
+            terminal_id: acp::TerminalId::new("term-3"),
+            data: b"and then more".to_vec(),
+        },
+    );
+    harness.pump();
+
+    assert!(
+        harness.recorder.len() > before,
+        "the terminal's growth produced no delta: {:?}",
+        harness.recorder.kinds()
+    );
+    let last = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|d| match d {
+            SessionDelta::ToolCallOutputChunk { delta, .. } => Some(delta),
+            SessionDelta::ToolCallUpserted { tool_call, .. } => tool_call.result,
+            _ => None,
+        })
+        .next_back()
+        .expect("the tool call reached the wire");
+    assert!(
+        last.contains("and then more"),
+        "the new output never reached the wire: {last:?}"
+    );
 }

@@ -98,7 +98,7 @@ pub fn tool_message(id: String, tool_call: ToolCall, model: Option<String>) -> M
 /// inputs travel (touchpoint #10). The thread carries the agent's real tool
 /// name when it sent one; when it did not, this falls back to the display title
 /// and then the kind, which is what the old stack always did.
-pub fn tool_call(call: &ThreadToolCall) -> ToolCall {
+pub fn tool_call(call: &ThreadToolCall, thread: &atlas_acp_thread::AcpThread) -> ToolCall {
     let title = call.label.clone();
     let kind = tool_kind_token(call.kind).to_string();
     ToolCall {
@@ -118,7 +118,7 @@ pub fn tool_call(call: &ThreadToolCall) -> ToolCall {
         kind: Some(kind),
         status: tool_status(&call.status),
         arguments: call.raw_input.clone().unwrap_or(serde_json::Value::Null),
-        result: tool_result(&call.content),
+        result: tool_result(&call.content, thread),
         locations: call
             .locations
             .iter()
@@ -134,7 +134,17 @@ pub fn tool_call(call: &ThreadToolCall) -> ToolCall {
 /// `None` rather than an empty string when there is nothing text-shaped yet, so
 /// a tool call that has only announced itself does not look like one that
 /// returned nothing.
-pub fn tool_result(content: &[ToolCallContent]) -> Option<String> {
+///
+/// Takes the whole thread because a terminal block carries only an id — that is
+/// all the protocol sends — and the output it names lives on the client side,
+/// growing after the block was announced. Both the delta stream and the
+/// snapshot resolve it the same way, because a snapshot that flattened
+/// terminals differently from the deltas applied on top of it is exactly the
+/// disagreement [`snapshot_messages`] exists to avoid.
+pub fn tool_result(
+    content: &[ToolCallContent],
+    thread: &atlas_acp_thread::AcpThread,
+) -> Option<String> {
     let mut out = String::new();
     for block in content {
         let piece = match block {
@@ -142,9 +152,12 @@ pub fn tool_result(content: &[ToolCallContent]) -> Option<String> {
             // A diff's own text rides in `content_blocks`; the flattening names
             // the file, matching what the old stack put in `result`.
             ToolCallContent::Diff(diff) => diff.path.to_string_lossy().into_owned(),
-            // Terminal output streams separately and is appended to `result` as
-            // it arrives; the block itself contributes only its id.
-            ToolCallContent::Terminal(_) => continue,
+            // A terminal's output IS this tool call's result — it is what the
+            // agent ran the command for. Flattening it here is what puts it in
+            // the output pane, and what makes its growth stream as
+            // `tool_call_output_chunk` (`tool_call_delta`) rather than
+            // re-shipping the whole buffer per tick.
+            ToolCallContent::Terminal(id) => thread.terminal_output(id).unwrap_or_default(),
         };
         if piece.is_empty() {
             continue;
@@ -299,13 +312,13 @@ pub fn stop_reason_token(reason: acp::StopReason) -> String {
 /// convention that user messages never arrive as *deltas* is about the live
 /// stream, where the frontend already added them optimistically.
 pub fn snapshot_messages(
-    entries: &[atlas_acp_thread::AgentThreadEntry],
+    thread: &atlas_acp_thread::AcpThread,
     model: Option<&str>,
 ) -> Vec<Message> {
     use atlas_acp_thread::AgentThreadEntry;
 
     let mut out = Vec::new();
-    for (ix, entry) in entries.iter().enumerate() {
+    for (ix, entry) in thread.entries().iter().enumerate() {
         match entry {
             AgentThreadEntry::UserMessage(message) => out.push(Message {
                 id: format!("msg-{ix}"),
@@ -332,7 +345,7 @@ pub fn snapshot_messages(
             }
             AgentThreadEntry::ToolCall(call) => out.push(tool_message(
                 format!("msg-{ix}"),
-                tool_call(call),
+                tool_call(call, thread),
                 model.map(str::to_string),
             )),
             // Elicitations are their own UI, driven by `elicitation_requested`;
