@@ -86,7 +86,7 @@ pub(crate) fn projects_dir() -> Result<PathBuf, String> {
 // `encode_cwd` (Claude's cwd→folder encoding) and `is_injected_user_text` live
 // in the canonical transcript module in `atlas-agents` — reused here so the
 // history reader and the live transcript parser agree.
-use atlas_agents::transcript::{encode_cwd, is_injected_user_text, strip_injected_context};
+use atlas_agent_transcript::{encode_cwd, is_injected_user_text, strip_injected_context};
 
 fn extract_first_user_text(line: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(line).ok()?;

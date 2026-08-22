@@ -584,3 +584,143 @@ async fn every_delta_ships_with_its_routing_keys() {
     assert!(value["agent_id"].is_string());
     assert_eq!(value["kind"], "message_appended");
 }
+
+/// The elicitation counterpart of the permission round-trip.
+///
+/// The wire names an elicitation by a fresh uuid, and `agents_respond_elicitation`
+/// answers by that uuid — so the projector has to remember which thread entry it
+/// stood for. Without the mapping the id the frontend was handed resolves to
+/// nothing and the dialog can never be answered.
+#[test]
+fn an_elicitation_can_be_answered_by_the_id_the_wire_carried() {
+    let harness = Harness::start();
+
+    // The 1.5 wire shape: `mode` discriminates, the scope is flattened in.
+    let request: acp::CreateElicitationRequest = serde_json::from_value(serde_json::json!({
+        "mode": "form",
+        "sessionId": "sess-1",
+        "message": "Which environment?",
+        "requestedSchema": {
+            "type": "object",
+            "properties": { "env": { "type": "string" } },
+        },
+    }))
+    .expect("a request this schema understands");
+
+    let (entry_id, _response) = lock(&harness.thread)
+        .request_elicitation(request)
+        .expect("the thread accepts it");
+    harness.pump();
+
+    let request_id = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .find_map(|delta| match delta {
+            SessionDelta::ElicitationRequested {
+                request_id,
+                mode,
+                message,
+                requested_schema,
+                url,
+            } => {
+                // A schema and no url is the form shape; the frontend narrows
+                // `mode` to exactly these two.
+                assert_eq!(mode, "form");
+                assert_eq!(message, "Which environment?");
+                assert!(requested_schema.is_some());
+                assert!(url.is_none());
+                Some(request_id)
+            }
+            _ => None,
+        })
+        .expect("an elicitation request");
+
+    let key = harness
+        .projector
+        .elicitation_key(&request_id)
+        .expect("the uuid resolves to the entry waiting on it");
+    assert_eq!(key.session_id, harness.session_id);
+    assert_eq!(key.entry_id, entry_id);
+
+    // An id that was never announced resolves to nothing rather than to some
+    // other session's dialog.
+    assert!(harness
+        .projector
+        .elicitation_key(&uuid::Uuid::new_v4())
+        .is_none());
+}
+
+/// A snapshot is what the frontend paints before any delta arrives, so it has
+/// to describe the same conversation the deltas do — including the user's half,
+/// which the live stream deliberately omits.
+#[test]
+fn a_snapshot_carries_the_whole_conversation_including_the_user() {
+    let harness = Harness::start();
+
+    lock(&harness.thread).push_user_content_block(
+        None,
+        acp::ContentBlock::Text(acp::TextContent::new("fix the bug".to_string())),
+    );
+    harness.update(serde_json::json!({
+        "sessionUpdate": "agent_thought_chunk",
+        "content": { "type": "text", "text": "let me look" },
+    }));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "found it" },
+    }));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Edit main.rs",
+        "kind": "edit",
+        "status": "completed",
+        "rawInput": { "path": "main.rs" },
+    }));
+
+    let thread = lock(&harness.thread);
+    let messages =
+        atlas_agent_delta::project::snapshot_messages(thread.entries(), Some("claude-opus-5"));
+    drop(thread);
+
+    let shape: Vec<(&str, &str)> = messages
+        .iter()
+        .map(|m| {
+            let role = match m.role {
+                atlas_agent_delta::MessageRole::User => "user",
+                atlas_agent_delta::MessageRole::Assistant => "assistant",
+                atlas_agent_delta::MessageRole::System => "system",
+            };
+            let mode = match m.mode {
+                atlas_agent_delta::MessageMode::Text => "text",
+                atlas_agent_delta::MessageMode::Thinking => "thinking",
+                atlas_agent_delta::MessageMode::Tool => "tool",
+            };
+            (role, mode)
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            ("user", "text"),
+            // The thought and the prose are separate runs, so they are separate
+            // bubbles — the same split the delta stream makes.
+            ("assistant", "thinking"),
+            ("assistant", "text"),
+            ("assistant", "tool"),
+        ]
+    );
+    assert_eq!(messages[0].content, "fix the bug");
+    assert_eq!(messages[1].thinking, "let me look");
+    assert_eq!(messages[2].content, "found it");
+    assert_eq!(messages[3].tool_calls[0].id, "call-1");
+
+    // The user never gets a model attribution; the agent's messages do.
+    assert!(messages[0].model.is_none());
+    assert_eq!(messages[2].model.as_deref(), Some("claude-opus-5"));
+
+    // Message ids are unique — the frontend keys its mirror on them.
+    let ids: std::collections::HashSet<_> = messages.iter().map(|m| &m.id).collect();
+    assert_eq!(ids.len(), messages.len());
+}

@@ -44,9 +44,8 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use atlas_agents::{
-    MessageRole, OutboundMiddleware, SessionDelta, SessionDeltaEnvelope, ToolCallStatus,
-};
+use atlas_agent_wire::{MessageRole, SessionDelta, SessionDeltaEnvelope, ToolCallStatus};
+use atlas_bus::OutboundMiddleware;
 use atlas_checkpoint::model::DrainGate;
 use atlas_checkpoint::tools::{extract_paths, resolve_path, ResolvedPath, ToolName};
 use atlas_checkpoint::{
@@ -1854,7 +1853,7 @@ fn open_reader_raw(project_path: &str) -> Result<Option<Store>, atlas_checkpoint
 /// input/output token split where ACP agents only surface a context gauge, and
 /// the importer needs to tell an in-app Session from one it read off disk.
 fn source_for(plugin_id: &str) -> Source {
-    if plugin_id == atlas_agents::CERSEI_PLUGIN_ID {
+    if plugin_id == atlas_native_agent::CERSEI_AGENT_ID {
         Source::Cersei
     } else {
         Source::Acp
@@ -2497,7 +2496,7 @@ fn warn_once_unregistered(root: &std::path::Path) {
 /// is reused rather than reproduced.
 fn transcript_source_for(root: &std::path::Path) -> Option<atlas_checkpoint::TranscriptSource> {
     let projects = dirs::home_dir()?.join(".claude").join("projects");
-    let encoded = atlas_agents::transcript::encode_cwd(&root.to_string_lossy());
+    let encoded = atlas_agent_transcript::encode_cwd(&root.to_string_lossy());
     Some(atlas_checkpoint::TranscriptSource::new(projects.join(encoded)))
 }
 
@@ -2635,11 +2634,11 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                     return;
                 }
                 let (mode, body) = match message.mode {
-                    atlas_agents::MessageMode::Thinking => {
+                    atlas_agent_wire::MessageMode::Thinking => {
                         (Mode::Thinking, message.thinking.clone())
                     }
-                    atlas_agents::MessageMode::Tool => (Mode::Tool, message.content.clone()),
-                    atlas_agents::MessageMode::Text => (Mode::Text, message.content.clone()),
+                    atlas_agent_wire::MessageMode::Tool => (Mode::Tool, message.content.clone()),
+                    atlas_agent_wire::MessageMode::Text => (Mode::Text, message.content.clone()),
                 };
                 // Started even when the first chunk is empty: the body arrives
                 // as later chunks, and entries that stay empty are skipped at

@@ -16,7 +16,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use atlas_agents::transcript::encode_cwd;
+use atlas_agent_transcript::encode_cwd;
 use notify::RecursiveMode;
 use notify_debouncer_full::{new_debouncer, Debouncer, RecommendedCache};
 use parking_lot::Mutex;

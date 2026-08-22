@@ -1,0 +1,1489 @@
+//! The seam between the ported ACP stack and the `agents_*` command surface.
+//!
+//! [`AgentHost`] is what `commands/agents.rs` talks to. It owns the ported
+//! [`AgentManager`], the [`DeltaProjector`] that turns thread events into the
+//! frozen wire, and the two pieces of bookkeeping the ported stack deliberately
+//! does not do:
+//!
+//! 1. **Identity.** The frontend has always addressed an agent by a per-spawn
+//!    `AgentId` (a uuid) and a session by `SessionKey { agent_id, session_id }`.
+//!    The ported manager keys connections by [`Agent`] (`Native` or a stable
+//!    string id) and sessions by `acp::SessionId`. This module holds the map
+//!    between the two, so the whole TS surface keeps working unchanged.
+//! 2. **Session metadata.** `snapshot_meta` has to answer
+//!    `{plugin_id, cwd, current_model}` cheaply on the send path — checkpoint
+//!    touchpoint #3 depends on it — and turn identity is stamped here, at send
+//!    time, not by the thread (touchpoint #6).
+//!
+//! # No default agents
+//!
+//! There is no builtin table, no auto-acquire, and no spawn ladder (research
+//! §D12-3, locked). The native agent is always present because it is
+//! in-process; every other agent exists only because the installed map says so.
+//! [`AgentHost::agent_for`] is the whole of that policy, and it is four lines.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use agent_client_protocol::schema::v1 as acp;
+use atlas_acp_thread::{
+    AcpThread, AcpThreadHandle, AgentConnection, AgentModelId, SelectedPermissionOutcome,
+    TerminalAuthCommand,
+};
+use atlas_agent_delta::{project, DeltaProjector, DeltaSink};
+use atlas_agent_manager::{Agent, AgentManager};
+use atlas_agent_servers::{AcpConnectionDefaults, ConnectOptions};
+use atlas_agent_store::{AgentRegistryStore, AgentServerStore, ExternalAgentSource};
+use atlas_agent_transcript::TranscriptKind;
+use atlas_agent_wire::{
+    classify_message, AgentId, ErrorClass, Message, PlanEntry, SessionStatus, Usage,
+};
+use atlas_native_agent::{CerseiAgentServer, CERSEI_AGENT_ID};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+// ── The IPC wire shapes ─────────────────────────────────────────────────────
+//
+// These moved out of `atlas-agents` with the port. Field names and serde
+// attributes are unchanged: the frontend's `src/types/agents.ts` describes
+// exactly these, and Stage 3 does not touch the frontend.
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct SessionKey {
+    pub agent_id: AgentId,
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentInfo {
+    pub agent_id: AgentId,
+    pub spec_id: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionModeInfo {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionInit {
+    pub key: SessionKey,
+    pub current_mode: Option<String>,
+    pub available_modes: Vec<SessionModeInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PluginSpec {
+    pub plugin_id: String,
+    pub display_name: String,
+    /// Informational only — spawning resolves the command through the store.
+    pub command: String,
+    pub transcript: TranscriptKind,
+    pub supports_modes: bool,
+    pub supports_models: bool,
+    /// Everything except the native agent.
+    pub external: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionSnapshot {
+    pub agent_id: AgentId,
+    pub session_id: String,
+    pub cwd: String,
+    pub plugin_id: String,
+    pub status: SessionStatus,
+    pub current_mode: Option<String>,
+    pub current_model: Option<String>,
+    pub available_modes: Vec<SessionModeInfo>,
+    pub available_models: Vec<SessionModeInfo>,
+    pub available_commands: Vec<serde_json::Value>,
+    pub config_options: Vec<serde_json::Value>,
+    pub prompt_image_supported: bool,
+    pub plan: Vec<PlanEntry>,
+    pub messages: Vec<Message>,
+    pub usage: Usage,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Frontend-friendly permission outcome. Struct variant, not tuple: serde's
+/// internal tagging only supports struct or unit variants, and a tuple variant
+/// would silently lose the inner value across the Tauri boundary.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum PermissionDecision {
+    Selected { option_id: String },
+    Cancelled,
+}
+
+// ── Errors ──────────────────────────────────────────────────────────────────
+
+/// A host failure that carries its classification.
+///
+/// Everything the commands reject with funnels through here so `CmdError.kind`
+/// keeps meaning what it meant: `auth` routes the frontend into sign-in, which
+/// is the only signal it gets when an agent rejects `session/new` before any
+/// turn exists.
+#[derive(Debug)]
+pub struct HostError {
+    pub message: String,
+    pub class: ErrorClass,
+}
+
+impl HostError {
+    pub fn new(message: impl Into<String>, class: ErrorClass) -> Self {
+        Self {
+            message: message.into(),
+            class,
+        }
+    }
+
+    /// Classify a message we did not raise ourselves — an agent's rejection, a
+    /// transport failure, an install error.
+    pub fn classified(message: impl Into<String>) -> Self {
+        let message = message.into();
+        let class = classify_message(&message);
+        Self { message, class }
+    }
+
+    pub fn unknown_session() -> Self {
+        Self::new("unknown session id", ErrorClass::ProcessDead)
+    }
+
+    pub fn unknown_agent() -> Self {
+        Self::new("unknown agent id", ErrorClass::ProcessDead)
+    }
+}
+
+impl std::fmt::Display for HostError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl From<anyhow::Error> for HostError {
+    fn from(e: anyhow::Error) -> Self {
+        // `{:#}` so the whole context chain survives — an agent's own rejection
+        // is usually the innermost link, and it is the one worth classifying.
+        Self::classified(format!("{e:#}"))
+    }
+}
+
+pub type Result<T> = std::result::Result<T, HostError>;
+
+// ── Bookkeeping ─────────────────────────────────────────────────────────────
+
+#[derive(Clone)]
+struct AgentRecord {
+    agent: Agent,
+    plugin_id: String,
+}
+
+struct SessionRecord {
+    agent: Agent,
+    plugin_id: String,
+    cwd: String,
+    current_model: Option<String>,
+    /// Stamped at send time; the deltas of a turn carry it so the frontend can
+    /// drop a terminal that belongs to a superseded turn (touchpoint #6).
+    turn_seq: u64,
+    created_at: DateTime<Utc>,
+}
+
+pub struct AgentHost {
+    manager: Arc<AgentManager>,
+    projector: Arc<DeltaProjector>,
+    store: Arc<AgentServerStore>,
+    registry: Arc<AgentRegistryStore>,
+    agents: Mutex<HashMap<AgentId, AgentRecord>>,
+    /// One uuid per plugin id, for the life of the process. The frontend spawns
+    /// per tab and expects a stable handle back; the ported manager keeps one
+    /// connection per agent, so minting a fresh uuid per spawn would hand out
+    /// several names for one thing.
+    by_plugin: Mutex<HashMap<String, AgentId>>,
+    sessions: Mutex<HashMap<String, SessionRecord>>,
+    /// Registry agents found on the user's `PATH`, from the last probe.
+    ///
+    /// Cached because the catalog is a sync, instant read and a probe walks
+    /// every `PATH` directory. Detection is an install *affordance* only —
+    /// finding a binary never makes an agent runnable and never auto-spawns
+    /// anything (§D12-3). Refreshed by `agents_catalog_refresh`.
+    detected: Mutex<Vec<atlas_agent_store::DetectedAgent>>,
+    /// The native agent's runtime, for the reads that do not go through a
+    /// session: its own stored-session list, replay and delete, which the chat
+    /// sidebar calls with no agent connected.
+    native_runtime: atlas_cersei::CerseiRuntime,
+}
+
+impl AgentHost {
+    pub fn new(
+        sink: Arc<dyn DeltaSink>,
+        config_dir: PathBuf,
+        store: Arc<AgentServerStore>,
+        registry: Arc<AgentRegistryStore>,
+    ) -> Arc<Self> {
+        let projector = DeltaProjector::new(sink);
+        let native_server = CerseiAgentServer::new(config_dir);
+        let native_runtime = native_server.runtime().clone();
+        let native: Arc<dyn atlas_agent_servers::AgentServer> = Arc::new(native_server);
+        let options = ConnectOptions {
+            root_dir: None,
+            defaults: AcpConnectionDefaults::default(),
+            thread_events: projector.thread_events(),
+            client_name: "atlas",
+            client_version: env!("CARGO_PKG_VERSION").to_string(),
+        };
+        let manager = AgentManager::new(store.clone(), native, options);
+        Arc::new(Self {
+            manager,
+            projector,
+            store,
+            registry,
+            agents: Mutex::new(HashMap::new()),
+            by_plugin: Mutex::new(HashMap::new()),
+            sessions: Mutex::new(HashMap::new()),
+            detected: Mutex::new(Vec::new()),
+            native_runtime,
+        })
+    }
+
+    pub fn manager(&self) -> &Arc<AgentManager> {
+        &self.manager
+    }
+
+    pub fn store(&self) -> &Arc<AgentServerStore> {
+        &self.store
+    }
+
+    pub fn registry(&self) -> &Arc<AgentRegistryStore> {
+        &self.registry
+    }
+
+    /// The native agent's stored sessions for `cwd`, newest first.
+    ///
+    /// Previews are stripped of Atlas's own injected memory blocks: the agent
+    /// recorded the prompt it received, and a sidebar row titled after a
+    /// `--- SHARED MEMORY ---` block would be nonsense.
+    pub fn native_sessions(&self, cwd: &str) -> Vec<atlas_cersei::SessionMeta> {
+        let mut metas = self.native_runtime.list_sessions(cwd);
+        for meta in &mut metas {
+            let cleaned = atlas_agent_transcript::strip_injected_context(&meta.preview);
+            let cleaned = cleaned.trim();
+            meta.preview = if cleaned.is_empty() {
+                // Nothing but scaffolding — keep a sane truncation of the raw
+                // text rather than an empty title.
+                meta.preview.chars().take(80).collect()
+            } else {
+                cleaned.chars().take(80).collect()
+            };
+        }
+        metas
+    }
+
+    pub fn native_transcript(&self, cwd: &str, session_id: &str) -> Vec<atlas_cersei::ReplayItem> {
+        self.native_runtime.replay_session(cwd, session_id)
+    }
+
+    pub fn native_delete_session(
+        &self,
+        cwd: &str,
+        session_id: &str,
+    ) -> std::result::Result<(), String> {
+        self.native_runtime.delete_session(cwd, session_id)
+    }
+
+    /// Re-probe `PATH` for registry agents the user already has.
+    pub fn probe_detected(&self) {
+        let agents = self.registry().agents();
+        let found = atlas_agent_store::detection::detect_on_current_path(&agents);
+        *lock(&self.detected) = found;
+    }
+
+    pub fn detected(&self) -> Vec<atlas_agent_store::DetectedAgent> {
+        lock(&self.detected).clone()
+    }
+
+    /// Tear every agent process down before the app exits.
+    ///
+    /// `process::exit` skips `Drop`, so without this the ACP children outlive
+    /// Atlas. Dropping a connection closes the child's stdin, which is how the
+    /// transport asks it to leave; the caller gives that a bounded moment.
+    pub fn shutdown(&self) {
+        for (agent, _) in self.manager.connections() {
+            self.manager.drop_connection(&agent);
+        }
+        lock(&self.sessions).clear();
+    }
+
+    // ---- identity --------------------------------------------------------
+
+    /// Which agent a plugin id names, if Atlas can run it at all.
+    ///
+    /// This is the whole of the no-default-agents rule: the native agent is
+    /// always available because it is in-process, and any other id must appear
+    /// in the installed map. Nothing is downloaded, discovered or guessed here.
+    pub fn agent_for(&self, plugin_id: &str) -> Result<Agent> {
+        if plugin_id == CERSEI_AGENT_ID {
+            return Ok(Agent::Native);
+        }
+        let id = atlas_acp_thread::AgentId::new(plugin_id);
+        if self.store.entry(&id).is_none() {
+            return Err(HostError::new(
+                format!("{plugin_id} is not installed. Install it from the Agent Marketplace."),
+                ErrorClass::Fatal,
+            ));
+        }
+        Ok(Agent::Custom { id })
+    }
+
+    fn plugin_id_of(agent: &Agent) -> String {
+        match agent {
+            Agent::Native => CERSEI_AGENT_ID.to_string(),
+            Agent::Custom { id } => id.as_str().to_string(),
+        }
+    }
+
+    /// The uuid the frontend uses for this plugin, minting it on first sight.
+    fn handle_for(&self, agent: &Agent) -> AgentId {
+        let plugin_id = Self::plugin_id_of(agent);
+        let mut by_plugin = lock(&self.by_plugin);
+        if let Some(existing) = by_plugin.get(&plugin_id) {
+            return *existing;
+        }
+        let handle = AgentId::new();
+        by_plugin.insert(plugin_id.clone(), handle);
+        lock(&self.agents).insert(
+            handle,
+            AgentRecord {
+                agent: agent.clone(),
+                plugin_id,
+            },
+        );
+        handle
+    }
+
+    fn record_for(&self, agent_id: AgentId) -> Result<AgentRecord> {
+        lock(&self.agents)
+            .get(&agent_id)
+            .cloned()
+            .ok_or_else(HostError::unknown_agent)
+    }
+
+    /// The plugin this agent handle was spawned from. On the delta hot path
+    /// (analytics), so it stays a single map lookup.
+    pub fn plugin_id_for_agent(&self, agent_id: AgentId) -> Option<String> {
+        lock(&self.agents)
+            .get(&agent_id)
+            .map(|record| record.plugin_id.clone())
+    }
+
+    pub fn display_name(&self, plugin_id: &str) -> String {
+        if plugin_id == CERSEI_AGENT_ID {
+            return "Cersei".to_string();
+        }
+        self.store
+            .agent_display_name(&atlas_acp_thread::AgentId::new(plugin_id))
+            .unwrap_or_else(|| plugin_id.to_string())
+    }
+
+    // ---- the agent catalog ----------------------------------------------
+
+    /// Every agent Atlas can run: the native one, plus the installed map.
+    pub fn list_plugins(&self) -> Vec<PluginSpec> {
+        let mut out = vec![self.plugin_spec(&Agent::Native)];
+        out.extend(
+            self.store
+                .external_agents()
+                .into_iter()
+                .map(|id| self.plugin_spec(&Agent::Custom { id })),
+        );
+        out
+    }
+
+    fn plugin_spec(&self, agent: &Agent) -> PluginSpec {
+        let plugin_id = Self::plugin_id_of(agent);
+        let connection = self.connected(agent);
+        // Modes and models are per-SESSION in ACP, so there is no session-free
+        // answer for an external agent — the authoritative one is the
+        // snapshot's `available_modes` / `available_models`, which come back
+        // empty for an agent that offers neither. These flags are the pre-session
+        // hint only: the native agent always has both, and a connected external
+        // agent is worth asking. Nothing in the UI gates on them today.
+        let supports_modes = agent.is_native() || connection.is_some();
+        let supports_models = agent.is_native() || connection.is_some();
+        let command = match agent {
+            Agent::Native => String::new(),
+            Agent::Custom { id } => match self.store.agent_source(id) {
+                Some(ExternalAgentSource::Registry) => "registry".to_string(),
+                _ => String::new(),
+            },
+        };
+        PluginSpec {
+            transcript: transcript_kind_for(&plugin_id),
+            display_name: self.display_name(&plugin_id),
+            command,
+            supports_modes,
+            supports_models,
+            external: !agent.is_native(),
+            plugin_id,
+        }
+    }
+
+    fn connected(&self, agent: &Agent) -> Option<Arc<dyn AgentConnection>> {
+        self.manager
+            .connections()
+            .into_iter()
+            .find(|(key, _)| key == agent)
+            .map(|(_, connection)| connection)
+    }
+
+    /// Every agent with a live connection, in the frontend's shape.
+    pub fn list_agents(&self) -> Vec<AgentInfo> {
+        self.manager
+            .connections()
+            .into_iter()
+            .map(|(agent, _)| {
+                let plugin_id = Self::plugin_id_of(&agent);
+                AgentInfo {
+                    agent_id: self.handle_for(&agent),
+                    display_name: self.display_name(&plugin_id),
+                    spec_id: plugin_id,
+                }
+            })
+            .collect()
+    }
+
+    /// Capability answers for the catalog, read from the LIVE connection.
+    ///
+    /// ACP capabilities only exist after `initialize`, so every one of these is
+    /// false until the agent has been connected at least once. The catalog
+    /// documents that; the frontend falls back to other fields in that window.
+    pub fn capabilities(&self, plugin_id: &str) -> PluginCapabilities {
+        let Ok(agent) = self.agent_for(plugin_id) else {
+            return PluginCapabilities::default();
+        };
+        let Some(connection) = self.connected(&agent) else {
+            return PluginCapabilities::default();
+        };
+        PluginCapabilities {
+            auth_kinds: connection
+                .auth_methods()
+                .iter()
+                .map(|method| auth_kind_token(method).to_string())
+                .collect(),
+            supports_logout: connection.supports_logout(),
+            supports_load_session: connection.supports_load_session(),
+            supports_session_list: connection.session_list().is_some(),
+            // `session/fork` has no equivalent on the ported seam — Zed does not
+            // implement it — so this is honestly false rather than optimistic.
+            supports_fork: false,
+        }
+    }
+
+    // ---- lifecycle -------------------------------------------------------
+
+    /// Connect to an agent, or join the connection already in flight.
+    pub async fn spawn(&self, plugin_id: &str) -> Result<AgentInfo> {
+        let agent = self.agent_for(plugin_id)?;
+        self.manager
+            .connection(agent.clone())
+            .await
+            .map_err(HostError::from)?;
+        Ok(AgentInfo {
+            agent_id: self.handle_for(&agent),
+            display_name: self.display_name(plugin_id),
+            spec_id: plugin_id.to_string(),
+        })
+    }
+
+    /// Drop an agent's connection. The next spawn starts a fresh one.
+    pub fn kill(&self, agent_id: AgentId) -> Result<()> {
+        let record = self.record_for(agent_id)?;
+        self.manager.drop_connection(&record.agent);
+        lock(&self.sessions).retain(|_, session| session.agent != record.agent);
+        Ok(())
+    }
+
+    pub async fn new_session(
+        &self,
+        agent_id: AgentId,
+        cwd: PathBuf,
+        additional_directories: Vec<PathBuf>,
+    ) -> Result<SessionInit> {
+        let record = self.record_for(agent_id)?;
+        let mut work_dirs = vec![cwd.clone()];
+        work_dirs.extend(additional_directories);
+        let thread = self
+            .manager
+            .new_session(record.agent.clone(), work_dirs)
+            .await
+            .map_err(HostError::from)?;
+        Ok(self.bind(agent_id, &record, cwd, thread))
+    }
+
+    /// Reopen a stored session, letting the agent replay it.
+    pub async fn load_session(
+        &self,
+        agent_id: AgentId,
+        session_id: String,
+        cwd: PathBuf,
+    ) -> Result<SessionKey> {
+        let record = self.record_for(agent_id)?;
+        let key = SessionKey {
+            agent_id,
+            session_id: session_id.clone(),
+        };
+        if lock(&self.sessions).contains_key(&session_id) {
+            return Ok(key);
+        }
+        let acp_id = acp::SessionId::new(session_id.as_str());
+        let thread = self
+            .manager
+            .load_session(record.agent.clone(), acp_id, vec![cwd.clone()], None)
+            .await
+            .map_err(HostError::from)?;
+        self.bind(agent_id, &record, cwd, thread);
+        Ok(key)
+    }
+
+    /// Register a thread with the projector and the session table.
+    ///
+    /// Order matters: the projector is attached before anything else can touch
+    /// the thread, because it drains the events buffered while `session/new`
+    /// was still in flight — the replay that `session/load` produces lands
+    /// there, and dropping it is the replay-loss bug the port fixes.
+    fn bind(
+        &self,
+        agent_id: AgentId,
+        record: &AgentRecord,
+        cwd: PathBuf,
+        thread: AcpThreadHandle,
+    ) -> SessionInit {
+        let session_id = lock_thread(&thread).session_id().clone();
+        self.projector.attach(agent_id, thread.clone());
+
+        let (current_mode, available_modes) = self.modes_of(&thread, &session_id);
+        lock(&self.sessions).insert(
+            session_id.to_string(),
+            SessionRecord {
+                agent: record.agent.clone(),
+                plugin_id: record.plugin_id.clone(),
+                cwd: cwd.to_string_lossy().into_owned(),
+                current_model: None,
+                turn_seq: 0,
+                created_at: Utc::now(),
+            },
+        );
+        SessionInit {
+            key: SessionKey {
+                agent_id,
+                session_id: session_id.to_string(),
+            },
+            current_mode,
+            available_modes,
+        }
+    }
+
+    fn modes_of(
+        &self,
+        thread: &AcpThreadHandle,
+        session_id: &acp::SessionId,
+    ) -> (Option<String>, Vec<SessionModeInfo>) {
+        let connection = lock_thread(thread).connection().clone();
+        let Some(modes) = connection.session_modes(session_id) else {
+            return (None, Vec::new());
+        };
+        (
+            Some(modes.current_mode().to_string()),
+            modes
+                .all_modes()
+                .into_iter()
+                .map(|mode| SessionModeInfo {
+                    id: mode.id.to_string(),
+                    name: mode.name.clone(),
+                    description: mode.description.clone(),
+                })
+                .collect(),
+        )
+    }
+
+    /// Tear down a session. Idempotent — a tab can close twice.
+    pub async fn drop_session(&self, session_id: &str) -> Result<()> {
+        let removed = lock(&self.sessions).remove(session_id).is_some();
+        if !removed {
+            return Ok(());
+        }
+        self.manager
+            .close_session(&acp::SessionId::new(session_id))
+            .await
+            .map_err(HostError::from)
+    }
+
+    // ---- session reads ---------------------------------------------------
+
+    fn thread(&self, session_id: &str) -> Result<AcpThreadHandle> {
+        self.manager
+            .session(&acp::SessionId::new(session_id))
+            .map(|handle| handle.thread)
+            .ok_or_else(HostError::unknown_session)
+    }
+
+    /// The cheap metadata the send path needs (touchpoint #3).
+    ///
+    /// Same wire shape as [`Self::snapshot`] with `messages` empty: five
+    /// frontend call sites only read these fields, and serializing a long
+    /// session's whole transcript for them costs megabytes per call.
+    pub fn snapshot_meta(&self, key: &SessionKey) -> Result<SessionSnapshot> {
+        self.build_snapshot(key, false)
+    }
+
+    pub fn snapshot(&self, key: &SessionKey) -> Result<SessionSnapshot> {
+        self.build_snapshot(key, true)
+    }
+
+    fn build_snapshot(&self, key: &SessionKey, with_messages: bool) -> Result<SessionSnapshot> {
+        let (plugin_id, cwd, current_model, created_at) = {
+            let sessions = lock(&self.sessions);
+            let record = sessions
+                .get(&key.session_id)
+                .ok_or_else(HostError::unknown_session)?;
+            (
+                record.plugin_id.clone(),
+                record.cwd.clone(),
+                record.current_model.clone(),
+                record.created_at,
+            )
+        };
+        let handle = self.thread(&key.session_id)?;
+        let session_id = acp::SessionId::new(key.session_id.as_str());
+        let connection = lock_thread(&handle).connection().clone();
+
+        let (current_mode, available_modes) = self.modes_of(&handle, &session_id);
+        let available_models = connection
+            .model_selector(&session_id)
+            .and_then(|selector| {
+                // The selector's list is async; the snapshot is a sync read on
+                // the send path. Anything not already known is left empty and
+                // arrives as a `config_options_updated` delta instead.
+                futures::executor::block_on(async { selector.list_models().await.ok() })
+            })
+            .map(|list| {
+                // Grouped lists flatten: the composer's picker is one list, and
+                // the group is cosmetic in a dropdown Atlas does not render.
+                let models = match list {
+                    atlas_acp_thread::AgentModelList::Flat(models) => models,
+                    atlas_acp_thread::AgentModelList::Grouped(groups) => {
+                        groups.into_iter().flat_map(|(_, models)| models).collect()
+                    }
+                };
+                models
+                    .into_iter()
+                    .map(|model| SessionModeInfo {
+                        id: model.id.as_str().to_string(),
+                        name: model.name.to_string(),
+                        description: model.description.map(|d| d.to_string()),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let thread = lock_thread(&handle);
+        let status = if thread.had_error() {
+            SessionStatus::Error
+        } else if thread.is_generating() {
+            SessionStatus::Running
+        } else {
+            SessionStatus::Idle
+        };
+        let usage = thread
+            .token_usage()
+            .map(|usage| Usage {
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                // The ported thread carries no cache split — ACP's usage report
+                // has none, and only the native agent ever populated these.
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                cost: thread.cost().map(|cost| cost.amount).unwrap_or(0.0),
+            })
+            .unwrap_or_default();
+        let snapshot = SessionSnapshot {
+            agent_id: key.agent_id,
+            session_id: key.session_id.clone(),
+            cwd,
+            plugin_id,
+            status,
+            current_mode,
+            current_model: current_model.clone(),
+            available_modes,
+            available_models,
+            available_commands: thread
+                .available_commands()
+                .iter()
+                .map(|command| serde_json::to_value(command).unwrap_or(serde_json::Value::Null))
+                .collect(),
+            config_options: connection
+                .session_config_options(&session_id)
+                .map(|options| {
+                    options
+                        .config_options()
+                        .iter()
+                        .map(|option| {
+                            serde_json::to_value(option).unwrap_or(serde_json::Value::Null)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            prompt_image_supported: thread.prompt_capabilities().image,
+            plan: project::plan_entries(&thread.plan().entries),
+            messages: if with_messages {
+                project::snapshot_messages(thread.entries(), current_model.as_deref())
+            } else {
+                Vec::new()
+            },
+            usage,
+            created_at,
+            updated_at: Utc::now(),
+        };
+        Ok(snapshot)
+    }
+
+    // ---- turns -----------------------------------------------------------
+
+    /// Start a turn, and return as soon as it is running.
+    ///
+    /// The command must not await the whole turn: the frontend awaits this
+    /// invoke before it stops showing the composer as busy, and a turn runs for
+    /// minutes. The turn is driven on its own task, and its failure is
+    /// announced on the wire rather than returned here — by then the caller is
+    /// long gone.
+    pub fn send(self: &Arc<Self>, key: &SessionKey, content: Vec<acp::ContentBlock>) -> Result<()> {
+        let session_id = acp::SessionId::new(key.session_id.as_str());
+        let turn_seq = {
+            let mut sessions = lock(&self.sessions);
+            let record = sessions
+                .get_mut(&key.session_id)
+                .ok_or_else(HostError::unknown_session)?;
+            record.turn_seq = record.turn_seq.wrapping_add(1);
+            record.turn_seq
+        };
+        // Before the turn opens, so the `status: running` that `begin_turn`
+        // emits already carries this turn's identity.
+        self.projector.set_turn_seq(&session_id, turn_seq);
+
+        let this = self.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = this.manager.send(&session_id, content).await {
+                let message = format!("{e:#}");
+                let class = classify_message(&message);
+                this.projector.note_turn_failed(
+                    &session_id,
+                    message,
+                    Some(class.wire_token().to_string()),
+                );
+            }
+        });
+        Ok(())
+    }
+
+    pub fn cancel(&self, key: &SessionKey) -> Result<()> {
+        self.manager
+            .cancel(&acp::SessionId::new(key.session_id.as_str()));
+        Ok(())
+    }
+
+    // ---- per-session settings -------------------------------------------
+
+    pub async fn set_mode(&self, key: &SessionKey, mode_id: String) -> Result<()> {
+        let session_id = acp::SessionId::new(key.session_id.as_str());
+        let connection = lock_thread(&self.thread(&key.session_id)?).connection().clone();
+        let modes = connection
+            .session_modes(&session_id)
+            .ok_or_else(|| HostError::new("this agent has no session modes", ErrorClass::Fatal))?;
+        modes
+            .set_mode(acp::SessionModeId::new(mode_id))
+            .await
+            .map_err(HostError::from)
+    }
+
+    pub async fn set_model(&self, key: &SessionKey, model_id: String) -> Result<()> {
+        let session_id = acp::SessionId::new(key.session_id.as_str());
+        let connection = lock_thread(&self.thread(&key.session_id)?).connection().clone();
+        let selector = connection.model_selector(&session_id).ok_or_else(|| {
+            HostError::new("this agent has no model selection", ErrorClass::Fatal)
+        })?;
+        selector
+            .select_model(AgentModelId::new(model_id.clone()))
+            .await
+            .map_err(HostError::from)?;
+        if let Some(record) = lock(&self.sessions).get_mut(&key.session_id) {
+            record.current_model = Some(model_id.clone());
+        }
+        // The thread has no event for this, so the host announces it.
+        self.projector.note_model_changed(&session_id, model_id);
+        Ok(())
+    }
+
+    pub async fn set_config_option(
+        &self,
+        key: &SessionKey,
+        config_id: String,
+        value: serde_json::Value,
+    ) -> Result<()> {
+        let session_id = acp::SessionId::new(key.session_id.as_str());
+        let connection = lock_thread(&self.thread(&key.session_id)?).connection().clone();
+        let options = connection
+            .session_config_options(&session_id)
+            .ok_or_else(|| HostError::new("this agent has no config options", ErrorClass::Fatal))?;
+        // A bool maps to the wire's boolean form, anything else to the select
+        // form — the same mapping the old stack made.
+        let value = match value {
+            serde_json::Value::Bool(on) => acp::SessionConfigOptionValue::boolean(on),
+            // A string rides as-is; anything else is re-serialized so an agent
+            // that advertised, say, a numeric option still gets its own value
+            // back rather than a quoted JSON blob.
+            other => acp::SessionConfigOptionValue::value_id(
+                other
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| other.to_string()),
+            ),
+        };
+        options
+            .set_config_option(acp::SessionConfigId::new(config_id), value)
+            .await
+            .map(|_| ())
+            .map_err(HostError::from)
+    }
+
+    /// Reasoning effort — a native-agent-only knob, as in Zed.
+    pub fn set_effort(&self, key: &SessionKey, effort: String) -> Result<()> {
+        let session_id = acp::SessionId::new(key.session_id.as_str());
+        let cersei = self.native_connection(&key.session_id)?;
+        let control = cersei.session_effort(&session_id).ok_or_else(|| {
+            HostError::new("this session has no effort control", ErrorClass::Fatal)
+        })?;
+        control
+            .set_effort(Some(effort))
+            .map_err(|e| HostError::classified(e.to_string()))
+    }
+
+    /// Tool-output compression — likewise native-only.
+    pub fn set_compress(&self, key: &SessionKey, on: bool) -> Result<()> {
+        let session_id = acp::SessionId::new(key.session_id.as_str());
+        let cersei = self.native_connection(&key.session_id)?;
+        let control = cersei.session_compression(&session_id).ok_or_else(|| {
+            HostError::new("this session has no compression control", ErrorClass::Fatal)
+        })?;
+        control
+            .set_compress(on)
+            .map_err(|e| HostError::classified(e.to_string()))
+    }
+
+    fn native_connection(&self, session_id: &str) -> Result<Arc<atlas_native_agent::CerseiConnection>> {
+        let connection = lock_thread(&self.thread(session_id)?).connection().clone();
+        connection
+            .downcast::<atlas_native_agent::CerseiConnection>()
+            .ok_or_else(|| {
+                HostError::new(
+                    "this control is only available on the native agent",
+                    ErrorClass::Fatal,
+                )
+            })
+    }
+
+    // ---- permissions and elicitations ------------------------------------
+
+    pub fn respond_permission(
+        &self,
+        session_id: &str,
+        request_id: Uuid,
+        decision: PermissionDecision,
+    ) -> Result<()> {
+        let key = self
+            .projector
+            .permission_key(&request_id)
+            .ok_or_else(|| HostError::new("permission request is not pending", ErrorClass::Fatal))?;
+        let handle = self.thread(session_id)?;
+        match decision {
+            PermissionDecision::Selected { option_id } => {
+                // The option's kind decides what the thread does with the tool
+                // call, so it is read back off the pending request rather than
+                // trusted from the frontend.
+                let kind = pending_option_kind(&handle, &key.tool_call_id, &option_id)
+                    .ok_or_else(|| {
+                        HostError::new("permission option is not offered", ErrorClass::Fatal)
+                    })?;
+                lock_thread(&handle).authorize_tool_call(
+                    key.tool_call_id,
+                    SelectedPermissionOutcome::new(acp::PermissionOptionId::new(option_id), kind),
+                );
+            }
+            PermissionDecision::Cancelled => {
+                lock_thread(&handle).cancel_tool_call_authorization(&key.tool_call_id);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn respond_elicitation(
+        &self,
+        request_id: Uuid,
+        action: &str,
+        content: Option<serde_json::Value>,
+    ) -> Result<()> {
+        // An unknown id is a no-op, not an error: the user can answer a dialog
+        // whose agent already died.
+        let Some(key) = self.projector.elicitation_key(&request_id) else {
+            return Ok(());
+        };
+        let handle = self.thread(&key.session_id.to_string())?;
+        let mut thread = lock_thread(&handle);
+        match action {
+            "accept" => {
+                let response = serde_json::from_value(serde_json::json!({
+                    "outcome": "accepted",
+                    "content": content.unwrap_or(serde_json::json!({})),
+                }))
+                .map_err(|e| HostError::new(e.to_string(), ErrorClass::Fatal))?;
+                thread.respond_to_elicitation(&key.entry_id, response);
+            }
+            "decline" => {
+                let response = serde_json::from_value(serde_json::json!({ "outcome": "declined" }))
+                    .map_err(|e| HostError::new(e.to_string(), ErrorClass::Fatal))?;
+                thread.respond_to_elicitation(&key.entry_id, response);
+            }
+            _ => thread.cancel_elicitation(&key.entry_id),
+        }
+        Ok(())
+    }
+
+    // ---- the agent's own session store -----------------------------------
+
+    pub async fn agent_sessions(
+        &self,
+        plugin_id: &str,
+        cwd: &str,
+    ) -> Result<Option<Vec<serde_json::Value>>> {
+        let agent = self.agent_for(plugin_id)?;
+        let Some(connection) = self.connected(&agent) else {
+            return Ok(None);
+        };
+        let Some(list) = connection.session_list() else {
+            return Ok(None);
+        };
+        let request = atlas_acp_thread::AgentSessionListRequest {
+            cwd: Some(PathBuf::from(cwd)),
+            cursor: None,
+            meta: None,
+        };
+        let response = list.list_sessions(request).await.map_err(HostError::from)?;
+        Ok(Some(
+            response.sessions.iter().map(session_info_json).collect(),
+        ))
+    }
+
+    pub async fn delete_agent_session(&self, plugin_id: &str, session_id: &str) -> Result<bool> {
+        let agent = self.agent_for(plugin_id)?;
+        let Some(connection) = self.connected(&agent) else {
+            return Ok(false);
+        };
+        let Some(list) = connection.session_list() else {
+            return Ok(false);
+        };
+        if !list.supports_delete() {
+            return Ok(false);
+        }
+        list.delete_session(&acp::SessionId::new(session_id))
+            .await
+            .map_err(HostError::from)?;
+        Ok(true)
+    }
+
+    /// The agent's own on-disk transcript, read without spawning it.
+    ///
+    /// Empty means "this agent keeps no transcript Atlas can read", not an
+    /// error — the caller falls back to the copy Atlas recorded itself.
+    pub async fn replay_transcript(
+        &self,
+        plugin_id: &str,
+        cwd: &str,
+        session_id: &str,
+    ) -> Vec<Message> {
+        atlas_agent_transcript::replay(transcript_kind_for(plugin_id), cwd, session_id).await
+    }
+
+    // ---- auth ------------------------------------------------------------
+
+    pub fn auth_methods(&self, agent_id: AgentId) -> Result<Vec<AuthMethodWire>> {
+        let record = self.record_for(agent_id)?;
+        let Some(connection) = self.connected(&record.agent) else {
+            return Ok(Vec::new());
+        };
+        Ok(connection
+            .auth_methods()
+            .iter()
+            .filter_map(AuthMethodWire::from_acp)
+            .collect())
+    }
+
+    /// The login command the agent named for a method, if it named one.
+    pub async fn terminal_auth_command(
+        &self,
+        agent_id: AgentId,
+        method_id: &str,
+    ) -> Result<Option<TerminalAuthCommand>> {
+        let record = self.record_for(agent_id)?;
+        let Some(connection) = self.connected(&record.agent) else {
+            return Ok(None);
+        };
+        let Some(task) = connection.terminal_auth_command(&acp::AuthMethodId::new(method_id)) else {
+            return Ok(None);
+        };
+        task.await.map(Some).map_err(HostError::from)
+    }
+
+    pub async fn authenticate(&self, agent_id: AgentId, method_id: String) -> Result<()> {
+        let record = self.record_for(agent_id)?;
+        let connection = self
+            .manager
+            .connection(record.agent.clone())
+            .await
+            .map_err(HostError::from)?;
+        connection
+            .authenticate(acp::AuthMethodId::new(method_id))
+            .await
+            .map_err(HostError::from)
+    }
+
+    pub async fn logout(&self, agent_id: AgentId) -> Result<()> {
+        let record = self.record_for(agent_id)?;
+        let connection = self
+            .connected(&record.agent)
+            .ok_or_else(HostError::unknown_agent)?;
+        if !connection.supports_logout() {
+            return Err(HostError::new(
+                "this agent does not support signing out",
+                ErrorClass::Fatal,
+            ));
+        }
+        connection.logout().await.map_err(HostError::from)
+    }
+}
+
+/// What a live connection advertises. All false before the handshake.
+#[derive(Debug, Clone, Default)]
+pub struct PluginCapabilities {
+    pub auth_kinds: Vec<String>,
+    pub supports_logout: bool,
+    pub supports_load_session: bool,
+    pub supports_session_list: bool,
+    pub supports_fork: bool,
+}
+
+/// Where an agent keeps its own transcript.
+///
+/// This is not a default-agent table: nothing here makes an agent available,
+/// and an id that is not listed simply gets Atlas's own recording. It exists
+/// because checkpoint touchpoint #11 requires the port to keep reading the
+/// transcripts agents write for themselves, and knowing where those are is
+/// per-agent knowledge no protocol advertises.
+pub fn transcript_kind_for(plugin_id: &str) -> TranscriptKind {
+    if plugin_id == CERSEI_AGENT_ID {
+        return TranscriptKind::CerseiJson;
+    }
+    if plugin_id.starts_with("claude-code") {
+        return TranscriptKind::ClaudeJsonl;
+    }
+    TranscriptKind::None
+}
+
+/// One auth method, as the frontend reads it.
+///
+/// Moved from `atlas-acp/src/driver.rs` with the port, still built by reading
+/// the method's SERIALIZED form rather than matching the typed enum: the
+/// `Terminal` / `EnvVar` variants are unstable-gated, and without the feature a
+/// wire-level `type` silently deserializes as `Agent` with its extra fields
+/// dropped. Reading the raw object is immune to that.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthMethodWire {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    /// Which branch of the flow this method drives.
+    pub kind: String,
+    /// `env_var` methods: the variables the client must set.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env_vars: Vec<AuthEnvVar>,
+    /// `env_var` methods: where the user obtains the credential.
+    pub link: Option<String>,
+    /// Typed `terminal.args`, relative to the agent's own binary.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// `_meta.terminal-auth.command` — the resolved binary to actually exec.
+    pub terminal_command: Option<String>,
+    pub terminal_args: Option<Vec<String>>,
+    pub terminal_label: Option<String>,
+    /// `_meta["api-key"].provider` — a proprietary hint that this method is
+    /// satisfied by that provider's API key. Lets the UI show the same env-var
+    /// checklist a typed `env_var` method would get.
+    pub api_key_provider: Option<String>,
+}
+
+/// One environment variable an `env_var` method wants set.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthEnvVar {
+    pub name: String,
+    pub label: Option<String>,
+    /// Schema defaults: `secret` is true, `optional` is false. Both default to
+    /// the SAFER reading when absent — treat an unlabelled var as a secret that
+    /// is required, rather than leaking it or silently skipping it.
+    pub secret: bool,
+    pub optional: bool,
+}
+
+impl AuthMethodWire {
+    fn from_acp(method: &acp::AuthMethod) -> Option<Self> {
+        let value = serde_json::to_value(method).ok()?;
+        let obj = value.as_object()?;
+        let id = obj.get("id")?.as_str()?.to_string();
+        let meta = obj.get("_meta").and_then(|m| m.as_object());
+        let terminal = meta
+            .and_then(|m| m.get("terminal-auth"))
+            .and_then(|t| t.as_object());
+        Some(Self {
+            name: obj
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or(&id)
+                .to_string(),
+            description: obj
+                .get("description")
+                .and_then(|d| d.as_str())
+                .map(str::to_string),
+            kind: auth_kind_token(method).to_string(),
+            env_vars: obj
+                .get("vars")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(parse_env_var).collect())
+                .unwrap_or_default(),
+            link: obj.get("link").and_then(|l| l.as_str()).map(str::to_string),
+            args: obj
+                .get("args")
+                .and_then(|a| a.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            terminal_command: terminal
+                .and_then(|t| t.get("command"))
+                .and_then(|c| c.as_str())
+                .map(str::to_string),
+            terminal_args: terminal.and_then(|t| t.get("args")).and_then(|a| {
+                a.as_array()
+                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            }),
+            terminal_label: terminal
+                .and_then(|t| t.get("label"))
+                .and_then(|l| l.as_str())
+                .map(str::to_string),
+            api_key_provider: meta
+                .and_then(|m| m.get("api-key"))
+                .and_then(|k| k.get("provider"))
+                .and_then(|p| p.as_str())
+                .map(str::to_string),
+            id,
+        })
+    }
+}
+
+/// One `vars[]` entry. Skips a malformed item rather than failing the method —
+/// the schema itself does the same, so a bad entry must not discard the good
+/// ones alongside it.
+fn parse_env_var(v: &serde_json::Value) -> Option<AuthEnvVar> {
+    let obj = v.as_object()?;
+    Some(AuthEnvVar {
+        name: obj.get("name")?.as_str()?.to_string(),
+        label: obj.get("label").and_then(|l| l.as_str()).map(str::to_string),
+        secret: obj.get("secret").and_then(|s| s.as_bool()).unwrap_or(true),
+        optional: obj.get("optional").and_then(|o| o.as_bool()).unwrap_or(false),
+    })
+}
+
+/// One of the agent's own stored sessions, as the sidebar reads it.
+///
+/// Hand-built rather than derived: `AgentSessionInfo` is the ported thread's
+/// type and carries no `Serialize`, and the frontend has always read these
+/// four fields.
+fn session_info_json(session: &atlas_acp_thread::AgentSessionInfo) -> serde_json::Value {
+    serde_json::json!({
+        "sessionId": session.session_id.to_string(),
+        "title": session.title.as_ref().map(|t| t.to_string()),
+        "cwd": session
+            .work_dirs
+            .as_ref()
+            .and_then(|dirs| dirs.first())
+            .map(|dir| dir.to_string_lossy().into_owned()),
+        "updatedAt": session.updated_at.map(|t| t.to_rfc3339()),
+        "createdAt": session.created_at.map(|t| t.to_rfc3339()),
+    })
+}
+
+/// The wire token for an auth method's kind (`agent` | `env_var` | `terminal`).
+///
+/// Read off the serialized form rather than matched on the enum: the typed
+/// variants are unstable-gated, and without the feature a `terminal` method
+/// deserializes as `agent` with its extra fields dropped.
+fn auth_kind_token(method: &acp::AuthMethod) -> &'static str {
+    match serde_json::to_value(method)
+        .ok()
+        .as_ref()
+        .and_then(|v| v.get("type"))
+        .and_then(|t| t.as_str())
+    {
+        Some("env_var") => "env_var",
+        Some("terminal") => "terminal",
+        _ => "agent",
+    }
+}
+
+/// The kind of a permission option the thread is currently offering.
+fn pending_option_kind(
+    handle: &AcpThreadHandle,
+    tool_call_id: &acp::ToolCallId,
+    option_id: &str,
+) -> Option<acp::PermissionOptionKind> {
+    let thread = lock_thread(handle);
+    let (_, call) = thread.tool_call(tool_call_id)?;
+    let atlas_acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } = &call.status
+    else {
+        return None;
+    };
+    options.option_by_id(option_id).map(|option| option.kind)
+}
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+fn lock_thread(thread: &AcpThreadHandle) -> std::sync::MutexGuard<'_, AcpThread> {
+    thread.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+// ── The installed map on disk ───────────────────────────────────────────────
+//
+// Zed keeps this in `settings.json` under `agent_servers`. Atlas keeps the same
+// JSON in a file of its own so a hand edit is possible without touching app
+// settings, and so uninstalling an agent is one atomic write.
+
+/// Where the installed map lives. Beside the agents it describes.
+pub fn installed_map_path(data_dir: &std::path::Path) -> PathBuf {
+    atlas_agent_store::external_agents_dir(data_dir).join("installed.json")
+}
+
+/// Read the installed map. A missing or unreadable file is an empty map — a
+/// fresh install has no external agents, which is the whole point.
+pub fn load_installed(data_dir: &std::path::Path) -> atlas_agent_store::AllAgentServersSettings {
+    let path = installed_map_path(data_dir);
+    match std::fs::read_to_string(&path) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
+            tracing::warn!(
+                target: "atlas::agents",
+                path = %path.display(),
+                "installed map is unreadable ({e}); treating it as empty"
+            );
+            Default::default()
+        }),
+        Err(_) => Default::default(),
+    }
+}
+
+/// Write the installed map, creating its directory if needed.
+pub fn save_installed(
+    data_dir: &std::path::Path,
+    settings: &atlas_agent_store::AllAgentServersSettings,
+) -> std::io::Result<()> {
+    let path = installed_map_path(data_dir);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(settings)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    std::fs::write(path, json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A host with an empty installed map — a fresh install.
+    fn fresh_host() -> (Arc<AgentHost>, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("atlas-host-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        struct Discard;
+        impl DeltaSink for Discard {
+            fn emit(&self, _envelope: atlas_agent_wire::SessionDeltaEnvelope) {}
+        }
+        let http: Arc<dyn atlas_agent_store::HttpClient> = Arc::new(
+            atlas_agent_store::ReqwestClient::new("atlas-test").expect("client"),
+        );
+        let registry = Arc::new(atlas_agent_store::AgentRegistryStore::new(
+            dir.clone(),
+            http.clone(),
+        ));
+        let store = Arc::new(AgentServerStore::new(
+            dir.clone(),
+            http,
+            atlas_agent_store::NodeRuntime::unavailable("not needed in this test"),
+            Arc::new(atlas_agent_store::InheritedProjectEnvironment),
+            Some(registry.clone()),
+        ));
+        let host = AgentHost::new(Arc::new(Discard), dir.clone(), store, registry);
+        (host, dir)
+    }
+
+    /// The whole no-default-agents rule, checked at the only place that
+    /// enforces it. A fresh install must offer exactly one agent, and every
+    /// other id — including the ones the deleted `BUILTIN_AGENTS` table used to
+    /// name — must be refused rather than downloaded, discovered or guessed.
+    #[tokio::test]
+    async fn a_fresh_install_can_run_only_the_native_agent() {
+        let (host, dir) = fresh_host();
+
+        let plugins = host.list_plugins();
+        assert_eq!(plugins.len(), 1, "one agent, and it is the native one");
+        assert_eq!(plugins[0].plugin_id, CERSEI_AGENT_ID);
+        assert!(!plugins[0].external);
+
+        assert!(matches!(host.agent_for(CERSEI_AGENT_ID), Ok(Agent::Native)));
+        for id in ["claude-code-ts", "codex", "opencode", "cursor", "kilo"] {
+            let err = host.agent_for(id).expect_err("{id} must not be runnable");
+            // Fatal, not auth: signing in or retrying changes nothing, only
+            // installing does.
+            assert_eq!(err.class, ErrorClass::Fatal, "for {id}");
+            assert!(err.message.contains("not installed"), "for {id}: {err}");
+        }
+
+        // Nothing has connected, so nothing is running and no capability is
+        // claimed — capabilities only exist after `initialize`.
+        assert!(host.list_agents().is_empty());
+        let caps = host.capabilities(CERSEI_AGENT_ID);
+        assert!(caps.auth_kinds.is_empty());
+        assert!(!caps.supports_logout);
+        // `session/fork` has no equivalent on the ported seam, so this is
+        // false for every agent rather than optimistically true.
+        assert!(!caps.supports_fork);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Installing is writing one map entry — and that entry is the whole
+    /// difference between "not there" and "runnable".
+    #[tokio::test]
+    async fn an_installed_map_entry_is_what_makes_an_agent_runnable() {
+        let (host, dir) = fresh_host();
+        assert!(host.agent_for("some-agent").is_err());
+
+        let mut settings = atlas_agent_store::AllAgentServersSettings::default();
+        settings.0.insert(
+            "some-agent".to_string(),
+            atlas_agent_store::AgentServerSettings::custom("/bin/echo", vec!["acp".into()]),
+        );
+        host.store().set_settings(settings).await;
+
+        assert!(matches!(
+            host.agent_for("some-agent"),
+            Ok(Agent::Custom { .. })
+        ));
+        let ids: Vec<String> = host
+            .list_plugins()
+            .into_iter()
+            .map(|plugin| plugin.plugin_id)
+            .collect();
+        assert_eq!(ids, [CERSEI_AGENT_ID, "some-agent"]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every session command has to reject an id it never bound, rather than
+    /// answering about some other session.
+    #[tokio::test]
+    async fn commands_reject_a_session_that_was_never_opened() {
+        let (host, dir) = fresh_host();
+        let key = SessionKey {
+            agent_id: AgentId::new(),
+            session_id: "no-such-session".to_string(),
+        };
+        assert_eq!(
+            host.snapshot_meta(&key).unwrap_err().class,
+            ErrorClass::ProcessDead
+        );
+        assert!(host.snapshot(&key).is_err());
+        assert!(host.send(&key, Vec::new()).is_err());
+        // Cancel and drop are idempotent by design: a tab can close twice, and
+        // a stop pressed after a turn ended must not raise.
+        assert!(host.cancel(&key).is_ok());
+        assert!(host.drop_session(&key.session_id).await.is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The one place the no-default-agents rule is enforced. A fresh install
+    /// has an empty map, so every id except the native agent must be refused —
+    /// nothing is downloaded, discovered, or guessed on the way to a spawn.
+    #[test]
+    fn transcript_kinds_are_per_agent_not_a_default_list() {
+        assert_eq!(transcript_kind_for(CERSEI_AGENT_ID), TranscriptKind::CerseiJson);
+        assert_eq!(
+            transcript_kind_for("claude-code-ts"),
+            TranscriptKind::ClaudeJsonl
+        );
+        assert_eq!(transcript_kind_for("claude-code"), TranscriptKind::ClaudeJsonl);
+        // An agent Atlas knows nothing about gets Atlas's own recording rather
+        // than being treated as unavailable.
+        for id in ["codex", "opencode", "some-registry-agent"] {
+            assert_eq!(transcript_kind_for(id), TranscriptKind::None);
+        }
+    }
+
+    #[test]
+    fn an_absent_installed_map_reads_as_empty() {
+        let dir = std::env::temp_dir().join(format!("atlas-installed-{}", Uuid::new_v4()));
+        assert!(load_installed(&dir).0.is_empty());
+    }
+
+    #[test]
+    fn the_installed_map_round_trips_through_disk() {
+        let dir = std::env::temp_dir().join(format!("atlas-installed-{}", Uuid::new_v4()));
+        let mut settings = atlas_agent_store::AllAgentServersSettings::default();
+        settings.0.insert(
+            "some-agent".to_string(),
+            atlas_agent_store::AgentServerSettings::registry(),
+        );
+        save_installed(&dir, &settings).expect("the map is written");
+        assert_eq!(load_installed(&dir), settings);
+
+        // A corrupt file is an empty map, not a panic: a half-written install
+        // must not make the app unable to list agents.
+        std::fs::write(installed_map_path(&dir), "{ not json").unwrap();
+        assert!(load_installed(&dir).0.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The wire shape is Zed's, verbatim — a map written by Zed reads here.
+    #[test]
+    fn the_installed_map_is_zeds_json() {
+        let settings: atlas_agent_store::AllAgentServersSettings = serde_json::from_str(
+            r#"{ "my-agent": { "type": "custom", "command": "~/bin/agent", "args": ["--acp"] },
+                 "some-cli": { "type": "registry" } }"#,
+        )
+        .expect("Zed's shape");
+        assert_eq!(settings.0.len(), 2);
+        assert!(settings.has_registry_agents());
+    }
+}

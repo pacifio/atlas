@@ -285,3 +285,63 @@ pub fn stop_reason_token(reason: acp::StopReason) -> String {
         .and_then(|value| value.as_str().map(str::to_owned))
         .unwrap_or_else(|| "end_turn".to_string())
 }
+
+/// Every entry in a thread, as the wire's message list.
+///
+/// This is what `agents_snapshot` answers with, and it is deliberately built
+/// from the same functions the delta stream uses. A snapshot assembled any
+/// other way could disagree with the deltas that follow it — the frontend
+/// paints the snapshot and then applies deltas on top, so a disagreement shows
+/// up as a duplicated or missing message rather than as an error.
+///
+/// User messages DO appear here, unlike on the delta stream: a snapshot is the
+/// conversation, and one with the user's half missing is not one. The wire
+/// convention that user messages never arrive as *deltas* is about the live
+/// stream, where the frontend already added them optimistically.
+pub fn snapshot_messages(
+    entries: &[atlas_acp_thread::AgentThreadEntry],
+    model: Option<&str>,
+) -> Vec<Message> {
+    use atlas_acp_thread::AgentThreadEntry;
+
+    let mut out = Vec::new();
+    for (ix, entry) in entries.iter().enumerate() {
+        match entry {
+            AgentThreadEntry::UserMessage(message) => out.push(Message {
+                id: format!("msg-{ix}"),
+                role: MessageRole::User,
+                mode: MessageMode::Text,
+                content: block_text(&message.content),
+                thinking: String::new(),
+                tool_calls: Vec::new(),
+                plan: None,
+                model: None,
+                timestamp: chrono::Utc::now(),
+            }),
+            AgentThreadEntry::AssistantMessage(message) => {
+                for (run_ix, run) in runs(&message.chunks).iter().enumerate() {
+                    if run.text.is_empty() {
+                        continue;
+                    }
+                    out.push(run_message(
+                        format!("msg-{ix}-{run_ix}"),
+                        run,
+                        model.map(str::to_string),
+                    ));
+                }
+            }
+            AgentThreadEntry::ToolCall(call) => out.push(tool_message(
+                format!("msg-{ix}"),
+                tool_call(call),
+                model.map(str::to_string),
+            )),
+            // Elicitations are their own UI, driven by `elicitation_requested`;
+            // a compaction is a status, not conversation; a completed plan is
+            // carried by the snapshot's `plan` field, not as a message.
+            AgentThreadEntry::Elicitation(_)
+            | AgentThreadEntry::CompletedPlan(_)
+            | AgentThreadEntry::ContextCompaction(_) => {}
+        }
+    }
+    out
+}

@@ -297,8 +297,8 @@ impl AnalyticsState {
 impl TurnAcc {
     /// Fold one tool-call snapshot in. Idempotent per tool-call id — the same
     /// call arrives many times as its status advances.
-    pub fn note_tool_call(&mut self, salt: u64, tc: &atlas_agents::session::ToolCall) {
-        use atlas_agents::session::ToolCallStatus;
+    pub fn note_tool_call(&mut self, salt: u64, tc: &atlas_agent_wire::ToolCall) {
+        use atlas_agent_wire::ToolCallStatus;
 
         let first_sighting = self.seen.insert(tc.id.clone());
         if first_sighting {
@@ -358,7 +358,7 @@ impl TurnAcc {
         }
     }
 
-    pub fn note_usage(&mut self, usage: &atlas_agents::session::Usage) {
+    pub fn note_usage(&mut self, usage: &atlas_agent_wire::Usage) {
         self.usage_latest = Some(UsageSnap {
             input: usage.input_tokens,
             output: usage.output_tokens,
@@ -404,7 +404,7 @@ impl TurnAcc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use atlas_agents::session::{ToolCall, ToolCallStatus, Usage};
+    use atlas_agent_wire::{ToolCall, ToolCallStatus, Usage};
 
     fn tool(id: &str, name: &str, kind: &str, status: ToolCallStatus, args: Value) -> ToolCall {
         ToolCall {

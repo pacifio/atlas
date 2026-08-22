@@ -503,7 +503,8 @@ async fn extract_one(
     agent: &str,
     session: &str,
 ) -> Result<(), String> {
-    use atlas_agents::{AgentId, AgentManager, MessageRole, SessionKey};
+    use super::agent_host::{AgentHost, SessionKey};
+    use atlas_agent_wire::{AgentId, MessageRole};
 
     use super::memory_sharing::MemorySharingState;
 
@@ -525,8 +526,8 @@ async fn extract_one(
         agent_id: AgentId(agent_uuid),
         session_id: session.to_string(),
     };
-    let manager = app.state::<AgentManager>();
-    let snapshot = manager.snapshot(&key).map_err(|e| format!("snapshot: {e}"))?;
+    let host = app.state::<std::sync::Arc<AgentHost>>();
+    let snapshot = host.snapshot(&key).map_err(|e| format!("snapshot: {e}"))?;
 
     let turns: Vec<atlas_memory::TranscriptTurn> = snapshot
         .messages

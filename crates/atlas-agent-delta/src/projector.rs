@@ -26,6 +26,17 @@ pub struct PermissionKey {
     pub tool_call_id: acp::ToolCallId,
 }
 
+/// Ties a wire elicitation request back to the thread entry waiting on it.
+///
+/// Same shape and same reason as [`PermissionKey`]: the wire names an
+/// elicitation by a `Uuid` and the thread by an [`ElicitationEntryId`], and the
+/// host answers with the former.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElicitationKey {
+    pub session_id: acp::SessionId,
+    pub entry_id: ElicitationEntryId,
+}
+
 /// Projects every attached thread's events onto the frozen wire.
 ///
 /// One projector serves every session: it hands out the per-session event sink
@@ -42,6 +53,7 @@ pub struct DeltaProjector {
     /// from being dropped — the same pre-registration the transport does.
     pending: Mutex<HashMap<acp::SessionId, EventStream<AcpThreadEvent>>>,
     permissions: Mutex<HashMap<Uuid, PermissionKey>>,
+    elicitations: Mutex<HashMap<Uuid, ElicitationKey>>,
 }
 
 impl DeltaProjector {
@@ -51,6 +63,7 @@ impl DeltaProjector {
             sessions: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
             permissions: Mutex::new(HashMap::new()),
+            elicitations: Mutex::new(HashMap::new()),
         })
     }
 
@@ -165,6 +178,19 @@ impl DeltaProjector {
             .cloned()
     }
 
+    /// Which thread entry a wire elicitation request is about.
+    ///
+    /// The host answers an elicitation by the `request_id` it saw on the wire,
+    /// so without this the id it was given resolves to nothing and the dialog
+    /// can never be answered.
+    pub fn elicitation_key(&self, request_id: &Uuid) -> Option<ElicitationKey> {
+        self.elicitations
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(request_id)
+            .cloned()
+    }
+
     // ---- host-announced deltas ------------------------------------------
     //
     // Four deltas have no thread event behind them; see the crate docs.
@@ -216,15 +242,25 @@ impl DeltaProjector {
         let Some(projection) = self.session(session_id) else {
             return;
         };
-        let (envelopes, permissions) = {
+        let (envelopes, permissions, elicitations) = {
             let mut projection = projection.lock().unwrap_or_else(|p| p.into_inner());
             let deltas = projection.apply(event);
             let envelopes = projection.wrap(deltas);
-            (envelopes, std::mem::take(&mut projection.new_permissions))
+            (
+                envelopes,
+                std::mem::take(&mut projection.new_permissions),
+                std::mem::take(&mut projection.new_elicitations),
+            )
         };
         if !permissions.is_empty() {
             let mut table = self.permissions.lock().unwrap_or_else(|p| p.into_inner());
             for (request_id, key) in permissions {
+                table.insert(request_id, key);
+            }
+        }
+        if !elicitations.is_empty() {
+            let mut table = self.elicitations.lock().unwrap_or_else(|p| p.into_inner());
+            for (request_id, key) in elicitations {
                 table.insert(request_id, key);
             }
         }
@@ -309,6 +345,7 @@ struct SessionProjection {
     open_permissions: HashMap<acp::ToolCallId, Uuid>,
     new_permissions: Vec<(Uuid, PermissionKey)>,
     announced_elicitations: Vec<ElicitationEntryId>,
+    new_elicitations: Vec<(Uuid, ElicitationKey)>,
 }
 
 impl SessionProjection {
@@ -325,6 +362,7 @@ impl SessionProjection {
             open_permissions: HashMap::new(),
             new_permissions: Vec::new(),
             announced_elicitations: Vec::new(),
+            new_elicitations: Vec::new(),
         }
     }
 
@@ -659,9 +697,17 @@ impl SessionProjection {
             .to_string();
         let mode = if url.is_some() { "url" } else { "form" };
 
+        let request_id = Uuid::new_v4();
+        self.new_elicitations.push((
+            request_id,
+            ElicitationKey {
+                session_id: self.session_id.clone(),
+                entry_id: id.clone(),
+            },
+        ));
         self.announced_elicitations.push(id);
         vec![SessionDelta::ElicitationRequested {
-            request_id: Uuid::new_v4(),
+            request_id,
             mode: mode.to_string(),
             message,
             requested_schema,

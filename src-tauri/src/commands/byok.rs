@@ -422,8 +422,8 @@ fn builtin_agent_env(store: &Store) -> std::collections::HashMap<String, String>
 /// drive (it spawns login subprocesses with stdin closed). Called at boot and
 /// after every key add/remove; live agents keep their env until respawned.
 pub fn sync_builtin_agent_env(app: &AppHandle) {
-    if let Some(registry) = app.try_state::<atlas_registry::RegistryStore>() {
-        registry.set_builtin_env(builtin_agent_env(&read_store(app)));
+    if let Some(host) = app.try_state::<std::sync::Arc<super::agent_host::AgentHost>>() {
+        host.store().set_byok_env(builtin_agent_env(&read_store(app)));
     }
 }
 

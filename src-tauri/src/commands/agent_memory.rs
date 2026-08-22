@@ -402,7 +402,7 @@ fn capture_covered_agent(agent: &str) -> bool {
 /// No-op when capture is disabled for the project — those agents then
 /// contribute only via the promoted shared-memory events, same as before.
 fn read_capture_docs(project_path: &str) -> Vec<MemoryDoc> {
-    use atlas_agents::transcript::strip_injected_context;
+    use atlas_agent_transcript::strip_injected_context;
     const TEXT_CAP: usize = 12 * 1024;
 
     let store = match crate::commands::capture::open_reader(project_path) {
@@ -524,12 +524,12 @@ fn read_knowledge_docs(project_path: &str) -> Vec<MemoryDoc> {
 /// Codex threads. Atlas-injected context (memory blocks, mention bodies) is
 /// stripped so the index holds the user's actual words, not the scaffolding.
 fn read_cersei_docs(project_path: &str) -> Vec<MemoryDoc> {
-    use atlas_agents::transcript::strip_injected_context;
+    use atlas_agent_transcript::strip_injected_context;
     let Some(config_dir) = CERSEI_CONFIG_DIR.get() else {
         return Vec::new();
     };
     let mut out: Vec<MemoryDoc> = Vec::new();
-    for s in atlas_agents::cersei_corpus_sessions(config_dir, project_path) {
+    for s in atlas_cersei::corpus_sessions(config_dir, project_path) {
         let title_raw = strip_injected_context(&s.first_user);
         let title_raw = title_raw.trim();
         if title_raw.is_empty() {
@@ -979,7 +979,7 @@ async fn query_codex_threads(db: &Path, project_path: &str) -> Vec<CodexThread> 
     // they never surface as a session preview/title (mirrors the Claude reader).
     for t in &mut threads {
         t.first_user_message =
-            atlas_agents::transcript::strip_injected_context(&t.first_user_message);
+            atlas_agent_transcript::strip_injected_context(&t.first_user_message);
     }
     threads
 }

@@ -217,6 +217,20 @@ impl AgentManager {
         }
     }
 
+    /// Drop `key`'s connection and forget its sessions.
+    ///
+    /// Zed does this implicitly — the entry goes when the last view holding it
+    /// does. Atlas's UI can close an agent explicitly (`agents_kill`), and the
+    /// next request has to start a fresh process rather than hand back a
+    /// connection to one that is gone.
+    pub fn drop_connection(&self, key: &Agent) {
+        if self.lock_entries().remove(key).is_none() {
+            return;
+        }
+        self.lock_sessions().retain(|_, handle| &handle.agent != key);
+        self.emit(AgentManagerEvent::ConnectionsChanged);
+    }
+
     /// Restart `key`, resolving its server the way [`Self::connect_to`] does.
     pub fn restart(self: &Arc<Self>, key: Agent) -> Entry {
         match self.server_for(&key) {

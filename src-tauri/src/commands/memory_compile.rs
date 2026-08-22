@@ -15,7 +15,8 @@
 
 use std::time::Duration;
 
-use atlas_agents::{AgentId, AgentManager, MessageRole, SessionKey};
+use super::agent_host::{AgentHost, SessionKey};
+use atlas_agent_wire::{AgentId, MessageRole};
 use tauri::{AppHandle, Manager};
 
 use super::memory_delta::redact;
@@ -53,12 +54,12 @@ pub async fn compile_finished_turn(app: &AppHandle, agent_id: AgentId, session_i
     }
 
     // Pull the last assistant message text from the session snapshot.
-    let manager = app.state::<AgentManager>();
+    let host = app.state::<std::sync::Arc<AgentHost>>();
     let key = SessionKey {
         agent_id,
         session_id: session_id.clone(),
     };
-    let Ok(snapshot) = manager.snapshot(&key) else {
+    let Ok(snapshot) = host.snapshot(&key) else {
         return;
     };
     let Some(text) = snapshot

@@ -394,30 +394,16 @@ pub struct AppSettings {
     /// regardless of this setting. See `src/features/chat/components/chat-input.tsx`.
     #[serde(default = "default_true")]
     pub enter_to_send: bool,
-    /// Built-in agents the user has turned OFF — plugin ids drawn from the
-    /// `optional` entries of `atlas_acp::BUILTIN_AGENTS` (cursor / opencode /
-    /// kilo). Empty by default: every built-in ships enabled.
+    /// Was: built-in agents the user had turned OFF.
     ///
-    /// Only those three are optional. Claude, Codex and Cersei are the agents
-    /// Atlas is built around and are always available, so an entry naming one
-    /// is ignored rather than honoured — see [`AppSettings::builtin_disabled`].
+    /// Inert since the Zed port (§D12-3, locked). There are no built-in
+    /// external agents left to disable — an agent exists because the user
+    /// installed it, and the way to remove one is to uninstall it. The field is
+    /// kept so an existing `state.json` still deserializes and so the value the
+    /// user set is not silently discarded from their settings file; nothing
+    /// reads it.
     #[serde(default)]
     pub disabled_builtin_agents: Vec<String>,
-}
-
-impl AppSettings {
-    /// Whether `plugin_id` is a built-in the user turned off.
-    ///
-    /// The `optional` test against the builtin table is the guard that makes
-    /// this safe to call from the spawn path: a hand-edited `state.json`
-    /// listing `claude-code-ts` cannot disable Claude.
-    pub fn builtin_disabled(&self, plugin_id: &str) -> bool {
-        atlas_acp::builtin_agent(plugin_id).is_some_and(|b| b.optional)
-            && self
-                .disabled_builtin_agents
-                .iter()
-                .any(|id| id == plugin_id)
-    }
 }
 
 fn default_true() -> bool {
@@ -595,68 +581,26 @@ mod tests {
         assert_eq!(state.version, SCHEMA_VERSION);
     }
 
-    fn settings_disabling(ids: &[&str]) -> AppSettings {
-        AppSettings {
-            disabled_builtin_agents: ids.iter().map(|s| s.to_string()).collect(),
-            ..AppSettings::default()
-        }
-    }
-
+    /// The setting is inert since the Zed port, but it must still round-trip:
+    /// a payload from a frontend that still sends it has to survive
+    /// `apply_patch` rather than being dropped from the user's settings file.
     #[test]
-    fn every_builtin_is_enabled_by_default() {
-        let s = AppSettings::default();
-        assert!(s.disabled_builtin_agents.is_empty());
-        for b in atlas_acp::BUILTIN_AGENTS.iter().filter(|b| b.optional) {
-            assert!(!s.builtin_disabled(b.spec_id), "{} must ship enabled", b.spec_id);
-        }
-    }
-
-    #[test]
-    fn a_disabled_builtin_is_reported_disabled() {
-        let s = settings_disabling(&["cursor"]);
-        assert!(s.builtin_disabled("cursor"));
-        // ...and only that one.
-        assert!(!s.builtin_disabled("kilo"));
-        assert!(!s.builtin_disabled("opencode"));
-    }
-
-    #[test]
-    fn the_core_agents_can_never_be_disabled() {
-        // A hand-edited state.json naming Claude/Codex/Cersei must not be able
-        // to switch off the agents Atlas is built around — the spawn path calls
-        // straight into this.
-        let s = settings_disabling(&["claude-code-ts", "claude-code-rs", "codex", "cersei"]);
-        for id in ["claude-code-ts", "claude-code-rs", "codex", "cersei"] {
-            assert!(!s.builtin_disabled(id), "{id} must stay available");
-        }
-    }
-
-    #[test]
-    fn an_unknown_id_is_not_disabled() {
-        // External/registry agents are uninstalled, never "disabled" — this
-        // setting has no say over them.
-        assert!(!settings_disabling(&["amp-acp"]).builtin_disabled("amp-acp"));
-    }
-
-    #[test]
-    fn the_toggle_survives_a_settings_round_trip() {
-        // The frontend sends `settings` wholesale, so the field has to make it
-        // through `apply_patch` — otherwise the switch silently forgets itself
-        // on the next save, which is exactly how `adaptiveSuggestions` is lost.
+    fn the_retired_toggle_still_round_trips() {
         let patch: AppStatePatch = serde_json::from_value(serde_json::json!({
             "settings": { "disabledBuiltinAgents": ["kilo", "opencode"] }
         }))
         .expect("patch parses");
         let mut state = AppState::default();
         state.apply_patch(patch);
-        assert!(state.settings.builtin_disabled("kilo"));
-        assert!(state.settings.builtin_disabled("opencode"));
-        assert!(!state.settings.builtin_disabled("cursor"));
+        assert_eq!(state.settings.disabled_builtin_agents, ["kilo", "opencode"]);
 
-        // And a payload from an OLDER frontend (no such key) leaves everything on.
+        // `apply_patch` replaces `settings` wholesale, so a payload that omits
+        // the key clears it. That is the existing behaviour for every setting,
+        // and it is the safe direction for this one: an empty list means
+        // nothing is switched off.
         let old: AppStatePatch =
             serde_json::from_value(serde_json::json!({ "settings": {} })).expect("old patch");
         state.apply_patch(old);
-        assert!(!state.settings.builtin_disabled("kilo"));
+        assert!(state.settings.disabled_builtin_agents.is_empty());
     }
 }

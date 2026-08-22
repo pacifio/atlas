@@ -18,6 +18,7 @@ use anyhow::{anyhow, Context as _, Result};
 use atlas_acp_thread::{
     AcpThread, AcpThreadEvent, AcpThreadHandle, AgentConnection, AgentId, AgentSessionConfigOptions,
     AgentSessionModes, AuthRequired, ElicitationStore, ElicitationStoreHandle, EventSink, LoadError,
+    TerminalAuthCommand, build_terminal_auth_command,
 };
 use futures::future::BoxFuture;
 use futures::{AsyncBufReadExt, FutureExt, StreamExt};
@@ -736,6 +737,31 @@ impl AgentConnection for AcpConnection {
         &self.auth_methods
     }
 
+    /// The login command to run for an auth method, if the agent named one.
+    ///
+    /// Ported from Zed's `terminal_auth_task` (`acp.rs:1887-1920`) minus the
+    /// `Terminal`-variant branch, which resolves the agent's own binary behind a
+    /// beta flag Atlas has no equivalent of. What is left is Zed's
+    /// `meta_terminal_auth_task`: read `_meta["terminal-auth"]`, which is what
+    /// every adapter shipping a runnable login actually sends today
+    /// (claude-agent-acp among them).
+    ///
+    /// Returning `None` means the agent did not tell us how to sign in. The
+    /// host says exactly that rather than guessing a command — guessing is what
+    /// the deleted `BUILTIN_AGENTS` login table did, and it could only ever
+    /// know about a hardcoded list.
+    fn terminal_auth_command(
+        &self,
+        method_id: &acp::AuthMethodId,
+    ) -> Option<BoxFuture<'static, Result<TerminalAuthCommand>>> {
+        let method = self
+            .auth_methods
+            .iter()
+            .find(|method| method.id() == method_id)?;
+        let command = meta_terminal_auth_command(&self.id, method_id, method)?;
+        Some(async move { Ok(command) }.boxed())
+    }
+
     fn authenticate(&self, method: acp::AuthMethodId) -> BoxFuture<'static, Result<()>> {
         let conn = self.connection.clone();
         async move {
@@ -1012,5 +1038,120 @@ impl AgentSessionConfigOptions for AcpSessionConfigOptions {
 
     fn watch(&self) -> Option<tokio::sync::watch::Receiver<()>> {
         Some(self.options.subscribe())
+    }
+}
+
+
+/// `_meta["terminal-auth"]` — the pre-stabilization way an adapter says how to
+/// run its login CLI. Ported from Zed's `meta_terminal_auth_task`
+/// (`acp.rs:1555-1586`).
+fn meta_terminal_auth_command(
+    agent_id: &AgentId,
+    method_id: &acp::AuthMethodId,
+    method: &acp::AuthMethod,
+) -> Option<TerminalAuthCommand> {
+    #[derive(serde::Deserialize)]
+    struct MetaTerminalAuth {
+        label: String,
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        env: HashMap<String, String>,
+    }
+
+    let meta = match method {
+        acp::AuthMethod::EnvVar(env_var) => env_var.meta.as_ref(),
+        acp::AuthMethod::Terminal(terminal) => terminal.meta.as_ref(),
+        acp::AuthMethod::Agent(agent) => agent.meta.as_ref(),
+        _ => None,
+    }?;
+    let terminal_auth =
+        serde_json::from_value::<MetaTerminalAuth>(meta.get("terminal-auth")?.clone()).ok()?;
+
+    Some(build_terminal_auth_command(
+        format!("external-agent-{}-{}-login", agent_id.as_str(), method_id.0),
+        terminal_auth.label,
+        terminal_auth.command,
+        terminal_auth.args,
+        terminal_auth.env.into_iter().collect(),
+    ))
+}
+
+#[cfg(test)]
+mod terminal_auth_tests {
+    use super::*;
+
+    fn method(meta: serde_json::Value) -> acp::AuthMethod {
+        serde_json::from_value(serde_json::json!({
+            "id": "claude-login",
+            "name": "Subscription",
+            "_meta": meta,
+        }))
+        .expect("an auth method this schema understands")
+    }
+
+    /// The shape claude-agent-acp actually ships: a fully resolved command the
+    /// host can exec as-is. This is what replaces the deleted builtin login
+    /// table — the agent names its own binary, so no hardcoded list is needed.
+    #[test]
+    fn a_meta_terminal_auth_spec_becomes_a_runnable_command() {
+        let m = method(serde_json::json!({
+            "terminal-auth": {
+                "label": "Sign in",
+                "command": "/usr/local/bin/node",
+                "args": ["cli.js", "auth", "login"],
+                "env": { "NO_COLOR": "1" },
+            }
+        }));
+        let cmd = meta_terminal_auth_command(
+            &AgentId::new("claude-code"),
+            &acp::AuthMethodId::new("claude-login"),
+            &m,
+        )
+        .expect("a runnable command");
+        assert_eq!(cmd.command, "/usr/local/bin/node");
+        assert_eq!(cmd.args, ["cli.js", "auth", "login"]);
+        assert_eq!(cmd.label, "Sign in");
+        assert_eq!(cmd.env, [("NO_COLOR".to_string(), "1".to_string())]);
+        // The id scopes the run to this agent+method, so two agents signing in
+        // at once cannot be confused for one another.
+        assert_eq!(cmd.id, "external-agent-claude-code-claude-login-login");
+    }
+
+    /// `args` and `env` are optional; a spec with only a command still runs.
+    #[test]
+    fn a_bare_command_needs_no_args_or_env() {
+        let m = method(serde_json::json!({
+            "terminal-auth": { "label": "Log in", "command": "cursor-agent" }
+        }));
+        let cmd = meta_terminal_auth_command(
+            &AgentId::new("cursor"),
+            &acp::AuthMethodId::new("claude-login"),
+            &m,
+        )
+        .expect("a runnable command");
+        assert!(cmd.args.is_empty());
+        assert!(cmd.env.is_empty());
+    }
+
+    /// No spec means the agent never told us how to sign in. The honest answer
+    /// is nothing — the old stack guessed here from a hardcoded table, which
+    /// could only ever cover agents someone had written down.
+    #[test]
+    fn an_agent_that_names_no_login_command_yields_none() {
+        for meta in [
+            serde_json::json!({}),
+            serde_json::json!({ "api-key": { "provider": "openai" } }),
+            // Malformed: no `command`, so there is nothing to exec.
+            serde_json::json!({ "terminal-auth": { "label": "Sign in" } }),
+        ] {
+            assert!(meta_terminal_auth_command(
+                &AgentId::new("a"),
+                &acp::AuthMethodId::new("claude-login"),
+                &method(meta),
+            )
+            .is_none());
+        }
     }
 }

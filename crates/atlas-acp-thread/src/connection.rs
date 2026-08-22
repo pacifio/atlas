@@ -655,6 +655,29 @@ impl PermissionOptions {
         }
     }
 
+    /// Every option, whatever shape they were offered in.
+    ///
+    /// The wire flattens dropdown choices into a single list, so the host has
+    /// to look one up the same way or an option the user was shown could not be
+    /// answered.
+    pub fn flattened(&self) -> Vec<&acp::PermissionOption> {
+        match self {
+            PermissionOptions::Flat(options) => options.iter().collect(),
+            PermissionOptions::Dropdown(choices)
+            | PermissionOptions::DropdownWithPatterns { choices, .. } => choices
+                .iter()
+                .flat_map(|choice| [&choice.allow, &choice.deny])
+                .collect(),
+        }
+    }
+
+    /// The option with this id, if it is one of the ones being offered.
+    pub fn option_by_id(&self, option_id: &str) -> Option<&acp::PermissionOption> {
+        self.flattened()
+            .into_iter()
+            .find(|option| option.option_id.0.as_ref() == option_id)
+    }
+
     pub fn allow_once_option_id(&self) -> Option<acp::PermissionOptionId> {
         self.first_option_of_kind(acp::PermissionOptionKind::AllowOnce)
             .map(|option| option.option_id.clone())

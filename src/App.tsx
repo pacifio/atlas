@@ -50,7 +50,6 @@ import {
 } from "@/features/agents/stores/agent-registry-store";
 import { AgentOAuthModalHost } from "@/features/agents/components/agent-oauth-modal";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
-import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
 import {
   isPermissionGranted,
   requestPermission,
@@ -102,10 +101,6 @@ export function App() {
   // when the CLI isn't ready. Fast — two parallel subprocesses, totals
   // <100ms on a warm machine.
   useEffect(() => {
-    // Probe the Node runtime first (the ACP agents launch via `npx`). If it's
-    // missing or too old, the store auto-installs the latest LTS via the
-    // bundled nvm in the background and re-runs ACP discovery when ready.
-    void useNodeSetupStore.getState().actions.check();
     void useClaudeSetupStore.getState().actions.refreshStatus();
     // Agent identity registry (first-party + registry-installed externals):
     // hydrate once so pickers/glyphs/memory dropdown resolve external

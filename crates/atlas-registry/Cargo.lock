@@ -180,11 +180,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 
 [[package]]
+name = "async-trait"
+version = "0.1.92"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
 name = "atlas-acp"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
  "agent-client-protocol-schema",
+ "atlas-agent-wire",
  "atlas-terminal",
  "dashmap",
  "serde",
@@ -193,6 +205,27 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "atlas-agent-wire"
+version = "0.1.0"
+dependencies = [
+ "atlas-bus",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "atlas-bus"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

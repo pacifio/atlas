@@ -7,7 +7,6 @@ mod telemetry;
 
 use std::sync::Arc;
 
-use atlas_acp::AgentRegistry;
 use commands::claude::ClaudeSessionIndex;
 use commands::cli::CliLaunchState;
 use commands::fileindex::FileIndexState;
@@ -43,7 +42,7 @@ pub fn run() {
 
     // Strip CLAUDECODE so child ACP agents (canonical claude-code-acp) don't
     // refuse to start when Atlas was launched from a parent Claude Code shell.
-    atlas_acp::sanitize_host_env();
+    atlas_agent_servers::sanitize_host_env();
 
     // Parse argv for an initial project path BEFORE tauri::Builder starts
     // so the webview boot path can read it via `cli_take_initial_project_path`.
@@ -261,7 +260,6 @@ pub fn run() {
         .manage(TerminalState::new())
         .manage(commands::modelchat::ModelChatState::new())
         .manage(commands::review::ReviewState::new())
-        .manage(AgentRegistry::new())
         .manage(FileIndexState::new())
         .manage(GitWatcherState::new())
         .manage(RecentFilesState::new())
@@ -532,8 +530,6 @@ pub fn run() {
             commands::cli::cli_take_initial_project_path,
             commands::claude_setup::claude_status,
             commands::claude_setup::claude_install,
-            commands::node_setup::node_check,
-            commands::node_setup::node_install,
             commands::registry::acp_registry_list,
             commands::registry::acp_registry_refresh,
             commands::registry::acp_registry_install,
@@ -702,10 +698,10 @@ pub fn run() {
                     // child's stdin; the SDK reaps it). `process::exit` skips
                     // Drop impls, so this must happen before the exit — with a
                     // short bounded grace for the async teardown to run.
-                    if let Some(manager) =
-                        app_handle.try_state::<atlas_agents::AgentManager>()
+                    if let Some(host) = app_handle
+                        .try_state::<Arc<commands::agent_host::AgentHost>>()
                     {
-                        manager.shutdown();
+                        host.shutdown();
                         std::thread::sleep(std::time::Duration::from_millis(500));
                     }
                 }

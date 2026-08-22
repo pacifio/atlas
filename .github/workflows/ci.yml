@@ -111,6 +111,8 @@ jobs:
             clippy: true
           - crate: atlas-agent-servers
             clippy: true
+          - crate: atlas-agent-transcript
+            clippy: true
           - crate: atlas-agent-store
             clippy: true
           - crate: atlas-agent-wire

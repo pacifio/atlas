@@ -13,7 +13,7 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use atlas_agents::AgentManager;
+use super::agent_host::AgentHost;
 
 use super::agent_memory::{collect_codex_sessions, collect_corpus};
 use super::claude::{list_claude_sessions, ClaudeSessionIndex};
@@ -72,7 +72,7 @@ pub struct MemoryTimeline {
 pub async fn memory_timeline(
     project_path: String,
     claude_index: State<'_, ClaudeSessionIndex>,
-    manager: State<'_, AgentManager>,
+    host: State<'_, std::sync::Arc<AgentHost>>,
 ) -> Result<MemoryTimeline, String> {
     let pp = project_path.trim_end_matches('/').to_string();
 
@@ -120,7 +120,7 @@ pub async fn memory_timeline(
     }
     // Native Atlas (cersei) sessions — time-only, like Claude. The preview is
     // already injected-context-stripped by `cersei_list_sessions`.
-    for s in manager.cersei_list_sessions(&pp) {
+    for s in host.native_sessions(&pp) {
         let ts = parse_iso_ms(s.started_at.as_deref().or(s.last_modified.as_deref()));
         let end = parse_iso_ms(s.last_modified.as_deref()).max(ts);
         let detail = if s.total_tokens > 0 {
@@ -160,7 +160,7 @@ pub async fn memory_timeline(
         let title = s
             .title
             .as_deref()
-            .map(|t| collapse(&atlas_agents::transcript::strip_injected_context(t)))
+            .map(|t| collapse(&atlas_agent_transcript::strip_injected_context(t)))
             .unwrap_or_default();
         sessions.push(TimelineSession {
             id: s.native_session_id,

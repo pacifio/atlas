@@ -61,8 +61,6 @@ const HEADER_INSET = 46;
 import { PermissionModal } from "./permission-modal";
 import { ElicitationModal } from "./elicitation-modal";
 import { ClaudeSetupBanner } from "@/features/claude-setup/components/claude-setup-banner";
-import { NodeSetupBanner } from "@/features/node-setup/components/node-setup-banner";
-import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 
 // Both panels are modal-style and never visible on first paint. Lazy so
@@ -1288,12 +1286,7 @@ const ChatComposer = memo(function ChatComposer({
   const disabled = (isClaude && phase !== "ready") || codexNeedsAuth;
 
   const setupVisible = (isClaude && phase !== "ready") || codexNeedsAuth;
-  // Node install pill (bundled-nvm). Non-blocking — informs only, doesn't
-  // disable the composer. Shown for both agents since `npx` powers both.
-  const nodePhase = useNodeSetupStore.use.phase();
-  const nodeBusy =
-    nodePhase === "installing" || nodePhase === "installed" || nodePhase === "failed";
-  const showRow = setupVisible || nodeBusy || showJumpToBottom;
+  const showRow = setupVisible || showJumpToBottom;
 
   return (
     <>
@@ -1305,11 +1298,6 @@ const ChatComposer = memo(function ChatComposer({
         {showRow && (
           <div className="pointer-events-none absolute bottom-full inset-x-0 mb-2 z-20 flex justify-center">
             <div className="pointer-events-auto flex items-center gap-2">
-              {nodeBusy && (
-                <span key={`node-${nodePhase}`} className="atlas-pill-in">
-                  <NodeSetupBanner />
-                </span>
-              )}
               {setupVisible && isClaude && (
                 <span key={`setup-${phase}`} className="atlas-pill-in">
                   <ClaudeSetupBanner />

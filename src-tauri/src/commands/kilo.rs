@@ -101,7 +101,7 @@ pub async fn list_kilo_sessions(project_path: String) -> Vec<ClaudeSessionMeta> 
             started_at: iso(r.created_ms),
             last_modified: iso(r.updated_ms),
             message_count: r.message_count.max(0) as usize,
-            preview: atlas_agents::transcript::strip_injected_context(&r.title),
+            preview: atlas_agent_transcript::strip_injected_context(&r.title),
         })
         .collect()
 }

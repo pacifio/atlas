@@ -55,6 +55,7 @@
 pub mod connection;
 pub mod debug_log;
 pub mod handlers;
+pub mod host_env;
 pub mod server;
 pub mod session;
 
@@ -66,6 +67,7 @@ pub use debug_log::{
     AcpDebugLog, AcpDebugMessage, AcpDebugMessageContent, AcpDebugMessageDirection,
 };
 pub use handlers::ClientContext;
+pub use host_env::sanitize_host_env;
 pub use server::{
     env_quirks, load_proxy_env, AgentServer, AgentServerDelegate, ConnectOptions,
     CustomAgentServer, ExternalAgentServer,

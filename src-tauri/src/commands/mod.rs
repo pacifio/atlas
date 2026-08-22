@@ -1,3 +1,4 @@
+pub mod agent_host;
 pub mod agent_analytics;
 pub mod agent_memory;
 pub mod auth;
@@ -8,7 +9,6 @@ pub mod browser;
 pub mod byok;
 pub mod cersei;
 pub mod claude_setup;
-pub mod node_setup;
 pub mod cli;
 pub mod modelchat;
 pub mod modelchat_sessions;

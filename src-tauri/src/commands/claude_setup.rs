@@ -37,7 +37,7 @@ use tokio::time::timeout;
 /// when this process has a real controlling terminal attached (e.g. any
 /// dev-mode launch from a terminal, vs. a Finder/Dock-launched build).
 /// Falls back to the bare name (relying on the process-wide PATH enrichment
-/// in `atlas_acp::sanitize_host_env`) if the shell probe fails or times out.
+/// by the login-shell probe) if the shell probe fails or times out.
 async fn resolve_cli(name: &str) -> String {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     // `-lic`, not `-lc`: zsh only reads ~/.zshrc in interactive shells, and
