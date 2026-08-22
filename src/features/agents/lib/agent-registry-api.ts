@@ -13,8 +13,6 @@ export interface AcpRegistryEntry {
   /** base64 `data:image/svg+xml` URL — asset protocol can't serve hidden dirs. */
   iconDataUrl: string | null;
   installed: boolean;
-  /** Duplicates a first-party Atlas agent — shown as "Built-in", not installable. */
-  builtin: boolean;
   platformSupported: boolean;
   /** "" when unsupported; else "binary" | "npx". */
   distributionKind: string;
@@ -39,6 +37,10 @@ export const acpRegistry = {
   list: () => invoke<AcpRegistryListing>("acp_registry_list"),
   refresh: () => invoke<AcpRegistryListing>("acp_registry_refresh"),
   install: (agentId: string) => invoke<void>("acp_registry_install", { agentId }),
+  /** Accept a detection: install the copy of the agent the user already has,
+   *  as a `custom` entry pointing at the found binary. The only non-registry
+   *  install path — see `acp_registry_install_detected`. */
+  installDetected: (agentId: string) => invoke<void>("acp_registry_install_detected", { agentId }),
   uninstall: (agentId: string, purgeCache = true) =>
     invoke<void>("acp_registry_uninstall", { agentId, purgeCache }),
   metadata: (agentId: string) =>

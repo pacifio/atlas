@@ -394,16 +394,6 @@ pub struct AppSettings {
     /// regardless of this setting. See `src/features/chat/components/chat-input.tsx`.
     #[serde(default = "default_true")]
     pub enter_to_send: bool,
-    /// Was: built-in agents the user had turned OFF.
-    ///
-    /// Inert since the Zed port (§D12-3, locked). There are no built-in
-    /// external agents left to disable — an agent exists because the user
-    /// installed it, and the way to remove one is to uninstall it. The field is
-    /// kept so an existing `state.json` still deserializes and so the value the
-    /// user set is not silently discarded from their settings file; nothing
-    /// reads it.
-    #[serde(default)]
-    pub disabled_builtin_agents: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -452,7 +442,6 @@ impl Default for AppSettings {
             auto_update: true,
             updater_ignored_version: None,
             enter_to_send: true,
-            disabled_builtin_agents: Vec::new(),
         }
     }
 }
@@ -581,26 +570,20 @@ mod tests {
         assert_eq!(state.version, SCHEMA_VERSION);
     }
 
-    /// The setting is inert since the Zed port, but it must still round-trip:
-    /// a payload from a frontend that still sends it has to survive
-    /// `apply_patch` rather than being dropped from the user's settings file.
+    /// The retired built-in toggle is gone from `AppSettings` (ADR-0002:
+    /// nothing ships that can be switched off), but a user's `state.json` may
+    /// still carry the key. Their OTHER settings must survive it.
+    ///
+    /// `enter_to_send` is the probe precisely because its default is `true`:
+    /// reading `false` back proves the file was parsed, not that `load` fell
+    /// through to `AppState::default()` — which is what a strict deserializer
+    /// would have done, silently resetting every setting the user had.
     #[test]
-    fn the_retired_toggle_still_round_trips() {
-        let patch: AppStatePatch = serde_json::from_value(serde_json::json!({
-            "settings": { "disabledBuiltinAgents": ["kilo", "opencode"] }
+    fn a_retired_key_in_state_json_does_not_reset_the_other_settings() {
+        let state: AppState = serde_json::from_value(serde_json::json!({
+            "settings": { "disabledBuiltinAgents": ["kilo"], "enterToSend": false }
         }))
-        .expect("patch parses");
-        let mut state = AppState::default();
-        state.apply_patch(patch);
-        assert_eq!(state.settings.disabled_builtin_agents, ["kilo", "opencode"]);
-
-        // `apply_patch` replaces `settings` wholesale, so a payload that omits
-        // the key clears it. That is the existing behaviour for every setting,
-        // and it is the safe direction for this one: an empty list means
-        // nothing is switched off.
-        let old: AppStatePatch =
-            serde_json::from_value(serde_json::json!({ "settings": {} })).expect("old patch");
-        state.apply_patch(old);
-        assert!(state.settings.disabled_builtin_agents.is_empty());
+        .expect("an older state file parses");
+        assert!(!state.settings.enter_to_send);
     }
 }

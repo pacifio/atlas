@@ -18,7 +18,7 @@ import {
 import {
   agentMeta,
   catalogEntry as agentCatalogEntry,
-  isAgentDisabled,
+  installedExternals,
 } from "@/features/agents/lib/agent-meta";
 import { bindFailureAction, errInfo, promptSignIn } from "../lib/agent-signin";
 import { toast } from "sonner";
@@ -736,21 +736,26 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   // Pre-warm secondary ACP agents in the background. The ~3-4s a fresh switch
   // pays is dominated by spawning the adapter (npx / CLI) + the ACP initialize
   // handshake; `ensureAgent` does exactly that (deduped/cached, no session, no
-  // auth), so paying it ahead of time makes the actual switch fast. Gated per
-  // agent on the user having used it before (a persisted modes cache exists) so
-  // we never spawn agents someone only ever ignores. Runs once per app session,
-  // deferred and staggered so it never competes with the primary (Claude) bind.
+  // auth), so paying it ahead of time makes the actual switch fast. Runs once
+  // per app session, deferred and staggered so it never competes with the
+  // primary bind.
+  //
+  // Two gates, and both matter. The agent must be INSTALLED — a hardcoded list
+  // of agent names here would have spawned agents the user never asked for,
+  // which is exactly what ADR-0002 forbids — and the user must have used it
+  // before (a persisted modes cache exists), so we never spawn one they only
+  // ever ignore.
   useEffect(() => {
     if (acpPrewarmStarted) return;
     acpPrewarmStarted = true;
     const timers: ReturnType<typeof setTimeout>[] = [];
-    (["codex", "opencode", "cursor", "kilo"] as const).forEach((at, i) => {
+    installedExternals().forEach((agent, i) => {
+      const at = agent.agentType;
       if (!loadCachedAcpModes(at)) return; // never used → skip
-      if (isAgentDisabled(at)) return; // turned off → never spawn, even to pre-warm
       timers.push(
         setTimeout(
           () => {
-            void ensureAgent(pluginIdForAgent(at)).catch(() => {
+            void ensureAgent(agent.id).catch(() => {
               // Not installed / not ready — the real switch surfaces a proper
               // error; allow a later retry by clearing the once-flag.
               acpPrewarmStarted = false;

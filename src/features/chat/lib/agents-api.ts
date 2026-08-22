@@ -12,7 +12,6 @@ import type { AgentCatalog, CatalogChangeReason } from "@/types/agent-catalog";
 import type {
   AgentDelta,
   ImageAttachment,
-  PluginSpec,
   SessionKey,
   SessionInit,
   SessionMessage,
@@ -85,10 +84,9 @@ export interface AuthRunProgress {
 }
 
 export const agents = {
-  listPlugins: () => invoke<PluginSpec[]>("agents_list_plugins"),
   /** The unified agent catalog — identity, availability and login for every
    *  agent, from one backend answer. Instant (served from memory); supersedes
-   *  assembling identity from `listPlugins` + the registry listing + static
+   *  assembling identity from a plugin list + the registry listing + static
    *  tables. Subscribe to `atlas:agent-catalog:changed` to know when to
    *  re-invoke. */
   catalog: () => invoke<AgentCatalog>("agents_catalog"),

@@ -42,7 +42,7 @@ import { CaptureSessionsView } from "./capture-sessions-view";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useMemoryStore } from "../stores/memory-store";
-import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { agentMeta, installedExternals } from "@/features/agents/lib/agent-meta";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
 import type { ClaudeMemory, CodexMemory, CodexThread } from "../lib/memory-types";
 
@@ -316,11 +316,7 @@ function CodingAgentMenu({
   // signature subscription — the useShallow Record trap does not apply).
   const registrySignature = useAgentRegistryStore((s) => s.signature);
   const installedExternalIds = useMemo(
-    () =>
-      useAgentRegistryStore
-        .getState()
-        .plugins.filter((p) => p.external)
-        .map((p) => p.plugin_id),
+    () => installedExternals().map((e) => e.id),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [registrySignature],
   );

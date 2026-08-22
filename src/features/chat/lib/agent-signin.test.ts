@@ -19,7 +19,9 @@ vi.mock("./agents-api", () => ({
 /** The catalog fields `canSignIn` reads. Partial because a test only sets the
  *  ones its assertion depends on. */
 type CatalogStub = Partial<{
-  kind: "native" | "builtin" | "external";
+  kind: "native" | "external";
+  installed: boolean;
+  source: import("@/types/agent-catalog").AgentSource;
   login: { program: string; args: string[] } | null;
   authKinds: ("agent" | "env_var" | "terminal")[];
 }>;
@@ -135,35 +137,13 @@ describe("AUTH token parity with Rust", () => {
 });
 
 describe("canSignIn", () => {
-  it("is true for the agents Atlas can drive a CLI login for", () => {
-    // Pre-hydration: the static optional-builtin fallback.
-    expect(canSignIn("cursor")).toBe(true);
-    expect(canSignIn("opencode")).toBe(true);
-    expect(canSignIn("kilo")).toBe(true);
-  });
-
-  it("is false for agents that own their sign-in elsewhere", () => {
-    // Claude has its login dialog, Codex its pill; cersei is in-process, and
-    // externals aren't ours to log in.
-    expect(canSignIn("claude-code")).toBe(false);
-    expect(canSignIn("codex")).toBe(false);
-    expect(canSignIn("cersei")).toBe(false);
-    expect(canSignIn("amp-acp")).toBe(false);
-    expect(canSignIn(undefined)).toBe(false);
-  });
-
-  it("follows the catalog once it has landed", () => {
-    // A built-in with NO resolved binary can't be signed in yet, whatever the
-    // static list says.
-    catalog = { cursor: { kind: "builtin", login: null } };
-    expect(canSignIn("cursor")).toBe(false);
-    catalog = {
-      cursor: {
-        kind: "builtin",
-        login: { program: "/usr/local/bin/cursor-agent", args: ["login"] },
-      },
-    };
-    expect(canSignIn("cursor")).toBe(true);
+  it("is false before the catalog lands", () => {
+    // There is no static table of agents to guess from any more (ADR-0002): an
+    // agent exists because the user installed it, and an installed agent has a
+    // catalog entry. No entry, nothing to sign in to.
+    for (const id of ["cursor", "opencode", "kilo", "amp-acp", undefined]) {
+      expect(canSignIn(id)).toBe(false);
+    }
   });
 
   it("offers the dialog to EVERY external agent, catalog login or not", () => {
@@ -172,8 +152,23 @@ describe("canSignIn", () => {
     // login method over ACP. The catalog can't know that — auth methods only
     // exist in the live `initialize` response — so gating on catalog.login left
     // installed agents with a raw protocol error and no way to sign in.
-    catalog = { autohand: { kind: "external", login: null } };
+    catalog = { autohand: { kind: "external", login: null, installed: true } };
     expect(canSignIn("autohand")).toBe(true);
+  });
+
+  it("never offers it for an agent that is only DETECTED", () => {
+    // Found on PATH but not installed: the backend refuses to spawn it
+    // (ADR-0002), so sign-in is a dead end. Installing is the action that is
+    // actually available.
+    catalog = { cursor: { kind: "external", login: null, installed: false, source: "detected" } };
+    expect(canSignIn("cursor")).toBe(false);
+  });
+
+  it("offers it to an installed agent that advertises no login yet", () => {
+    // `login` is filled from the agent's own advertisement and stays null
+    // until it has connected once. That window must not hide `/login`.
+    catalog = { cursor: { kind: "external", login: null, installed: true } };
+    expect(canSignIn("cursor")).toBe(true);
   });
 
   it("never offers it for the native in-process agent", () => {
@@ -186,7 +181,7 @@ describe("bindFailureAction", () => {
   const authErr = { message: "Authentication required", kind: "auth" };
 
   beforeEach(() => {
-    catalog = { autohand: { kind: "external", login: null } };
+    catalog = { autohand: { kind: "external", login: null, installed: true } };
   });
 
   it("offers sign-in on the FIRST auth failure", () => {
@@ -231,33 +226,31 @@ describe("bindFailureAction", () => {
 
 describe("canSignIn is catalog-first (R6)", () => {
   it("trusts what the agent actually advertised over the static login field", () => {
-    // Claude has no `login_args` in the builtin table, so the old rule said
-    // "cannot sign in" — yet it advertises two terminal methods. Gating on
-    // advertised data is what removed the per-agent special cases in TS.
-    catalog["claude-code"] = { kind: "builtin", login: null, authKinds: ["terminal"] };
+    // Claude has no login argv Atlas knows of, so the old rule said "cannot
+    // sign in" — yet it advertises two terminal methods. Gating on advertised
+    // data is what removed the per-agent special cases in TS.
+    catalog["claude-code"] = {
+      kind: "external",
+      login: null,
+      installed: true,
+      authKinds: ["terminal"],
+    };
     expect(canSignIn("claude-code")).toBe(true);
   });
 
   it("treats an agent-kind method as signable too", () => {
     // Codex advertises only `agent` methods (no `type` on the wire).
-    catalog["codex"] = { kind: "builtin", login: null, authKinds: ["agent"] };
+    catalog["codex"] = { kind: "external", login: null, installed: true, authKinds: ["agent"] };
     expect(canSignIn("codex")).toBe(true);
   });
 
-  it("falls back to the static signals before the agent has ever been spawned", () => {
+  it("still offers sign-in before the agent has ever been spawned", () => {
     // `authKinds` is empty until `initialize` has run. Empty must mean
     // "unknown", NOT "cannot sign in" — otherwise `/login` disappears for an
     // agent the user has simply never started, which is exactly when they
     // need it.
-    catalog["cursor"] = {
-      kind: "builtin",
-      login: { program: "/x", args: ["login"] },
-      authKinds: [],
-    };
+    catalog["cursor"] = { kind: "external", login: null, installed: true, authKinds: [] };
     expect(canSignIn("cursor")).toBe(true);
-
-    catalog["nologin"] = { kind: "builtin", login: null, authKinds: [] };
-    expect(canSignIn("nologin")).toBe(false);
   });
 
   it("never offers sign-in for the native agent, whatever it reports", () => {
@@ -266,7 +259,7 @@ describe("canSignIn is catalog-first (R6)", () => {
   });
 
   it("still offers sign-in for externals with nothing advertised", () => {
-    catalog["some-external"] = { kind: "external", login: null, authKinds: [] };
+    catalog["some-external"] = { kind: "external", login: null, installed: true, authKinds: [] };
     expect(canSignIn("some-external")).toBe(true);
   });
 });

@@ -17,7 +17,6 @@
 
 import { agents, ensureAgent } from "./agents-api";
 import { ACP_AGENTS, pluginIdForAgent, type SwitchableAgent } from "@/types/agent";
-import { isAgentDisabled } from "@/features/agents/lib/agent-meta";
 import {
   loadCachedAcpModels,
   saveCachedAcpModels,
@@ -36,15 +35,11 @@ function asAcpAgent(agentType: string): SwitchableAgent | null {
 
 /** The ACP agents to prefetch when `agentType` is active: every other ACP
  *  agent the user has used before (has a persisted model cache). Warming
- *  never-touched agents would spawn CLIs the user may not even have installed.
- *  Agents the user turned off are skipped too — a disabled agent must not be
- *  spawned in the background (and a previously-used one still has a cache, so
- *  the `loadCachedAcpModels` test alone would let it through). */
+ *  never-touched agents would spawn CLIs the user may not even have installed. */
 export function otherAcpAgents(agentType: string): SwitchableAgent[] {
-  if (!asAcpAgent(agentType)) return [];
-  return ACP_AGENTS.filter(
-    (a) => a !== agentType && !isAgentDisabled(a) && loadCachedAcpModels(a) !== null,
-  );
+  return asAcpAgent(agentType)
+    ? ACP_AGENTS.filter((a) => a !== agentType && loadCachedAcpModels(a) !== null)
+    : [];
 }
 
 // Warm at most once per agent per app session (a model list is static per
@@ -59,10 +54,6 @@ const warmed = new Set<string>();
 export async function warmAcpModels(agentType: string, cwd: string): Promise<void> {
   const at = asAcpAgent(agentType);
   if (!at) return;
-  // Turned off in Settings → Agents: never spawn it, not even for a throwaway
-  // model-harvest session. (Also guarded in Rust — this just avoids the
-  // pointless round-trip and its rejection.)
-  if (isAgentDisabled(at)) return;
   if (warmed.has(at)) return;
   // TTL gate: if we already have a fresh cached list, DON'T spawn a throwaway
   // session to re-fetch a static catalog — the cache drives the picker and any

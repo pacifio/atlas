@@ -6,13 +6,11 @@
 
 import {
   AGENT_LABEL,
+  NATIVE_AGENT_ID,
   PLUGIN_ID_BY_AGENT,
-  SWITCHABLE_AGENTS,
-  isOptionalBuiltinAgent,
   type AgentType,
   type FirstPartyAgent,
 } from "@/types/agent";
-import { useProjectStore } from "@/features/project/stores/project-store";
 import {
   availabilityOf,
   type AgentAvailability,
@@ -71,13 +69,15 @@ function firstPartyOf(id: string): FirstPartyAgent | null {
  *  (glyphs, pills, sidebar, memory, timeline) funnels through, and a single
  *  non-string slipping in crashed the whole tree ("id.startsWith is not a
  *  function" inside AgentMark, caught only by the app-level error boundary).
- *  A missing id resolves to the Claude default instead of throwing — the same
- *  fallback the rest of the app uses for absent agent identity. */
+ *  A missing id resolves to the NATIVE agent instead of throwing. It used to
+ *  resolve to Claude Code; since the port there are no default ACP agents
+ *  (ADR-0002), so naming one here would claim an agent the user may
+ *  never have installed. The native agent is the only one always present. */
 export function agentMeta(agentTypeOrPluginId: string | null | undefined): AgentMeta {
   const id =
     typeof agentTypeOrPluginId === "string" && agentTypeOrPluginId.length > 0
       ? agentTypeOrPluginId
-      : "claude-code";
+      : NATIVE_AGENT_ID;
   const catalog = catalogEntry(id);
   const firstParty = firstPartyOf(id);
   if (firstParty) {
@@ -96,15 +96,14 @@ export function agentMeta(agentTypeOrPluginId: string | null | undefined): Agent
       availability: catalog ? availabilityOf(catalog) : null,
     };
   }
-  const { plugins, registryEntries } = useAgentRegistryStore.getState();
+  const { registryEntries } = useAgentRegistryStore.getState();
   const entry = registryEntries.find((e) => e.id === id) ?? null;
-  const plugin = plugins.find((p) => p.plugin_id === id) ?? null;
   return {
     pluginId: id,
     agentType: id,
     // Catalog first (it already merged manifest + install + discovery), then
-    // the older sources, then a last-resort prettified id.
-    label: catalog?.name ?? entry?.name ?? plugin?.display_name ?? prettifyId(id),
+    // the registry listing, then a last-resort prettified id.
+    label: catalog?.name ?? entry?.name ?? prettifyId(id),
     firstPartyIcon: null,
     iconDataUrl: catalog?.iconDataUrl ?? entry?.iconDataUrl ?? null,
     cssClass: "",
@@ -117,8 +116,15 @@ export function agentMeta(agentTypeOrPluginId: string | null | undefined): Agent
 /** Normalise a session's stored `agentType` to the switchable identity the
  *  composer / transcript / sidebar key off.
  *
- *  The ONLY collapsing this does is legacy and Claude aliasing: `undefined`,
- *  the retired `"custom"`, and any `claude*` spec id all become `"claude-code"`.
+ *  Two different jobs, deliberately kept apart:
+ *
+ *  - **Aliasing.** Any `claude*` spec id becomes `"claude-code"` — one agent
+ *    under two names, so both must resolve to the identity sessions persist.
+ *  - **Defaulting.** No identity at all (absent, or the retired `"custom"`)
+ *    resolves to the NATIVE agent. It used to resolve to Claude Code, which
+ *    since the port would name an ACP agent the user may never have installed
+ *    (ADR-0002) — and this value is what the composer's picker highlights.
+ *
  *  **Everything else passes through** — a registry-installed agent's plugin id
  *  IS its identity, and collapsing it loses that permanently.
  *
@@ -127,9 +133,8 @@ export function agentMeta(agentTypeOrPluginId: string | null | undefined): Agent
  *  rendered as "Claude Code" in the agent pill — wrong name, wrong icon, and
  *  the switcher highlighted the wrong row. One implementation, one behaviour. */
 export function switchableAgentOf(agentType: string | undefined): AgentType {
-  if (!agentType || agentType === "custom" || agentType.startsWith("claude")) {
-    return "claude-code";
-  }
+  if (!agentType || agentType === "custom") return NATIVE_AGENT_ID;
+  if (agentType.startsWith("claude")) return "claude-code";
   return agentType;
 }
 
@@ -143,77 +148,51 @@ function prettifyId(id: string): string {
     .join(" ");
 }
 
-/** Whether this agent can be turned off in Settings → Agents. Catalog-first
- *  (the backend's builtin table is the source of truth), falling back to the
- *  static list before hydration. */
-export function isOptionalBuiltin(agentTypeOrPluginId: string): boolean {
-  const catalog = catalogEntry(agentTypeOrPluginId);
-  if (catalog) return catalog.optional;
-  return isOptionalBuiltinAgent(agentTypeOrPluginId);
+/** Every external agent the user has installed AND that is runnable.
+ *
+ *  The single derivation of "an agent the user actually has" — the agent
+ *  picker, the memory dropdown and the background pre-warm all read it, so
+ *  they cannot disagree about what is installed. Excluded by construction:
+ *  the native agent (it is not a Marketplace agent), an agent merely detected
+ *  on `PATH` (an offer to install, never a spawn candidate), and one whose
+ *  install resolves to nothing runnable. */
+export function installedExternals(): AgentCatalogEntry[] {
+  return useAgentRegistryStore
+    .getState()
+    .catalog.filter((e) => e.kind !== "native" && e.installed && e.source !== "unavailable");
 }
 
-/** Whether the user turned this optional built-in off in Settings → Agents.
- *  Always false for Claude / Codex / Cersei and for external agents (which are
- *  uninstalled rather than disabled). Rust enforces the same rule at spawn —
- *  see `AppSettings::builtin_disabled`. */
-export function isAgentDisabled(agentTypeOrPluginId: string): boolean {
-  if (!isOptionalBuiltin(agentTypeOrPluginId)) return false;
-  // `?? []`: settings hydrate async — a pre-hydration read must mean
-  // "nothing disabled", never a crash.
-  return (useProjectStore.getState().settings.disabledBuiltinAgents ?? []).includes(
-    agentTypeOrPluginId,
-  );
-}
-
-/** The dynamic switch list, in three bands:
+/** The agents the user can switch between: the native agent, then everything
+ *  they installed from the Marketplace, A–Z by label.
  *
- *  1. First-party agents in their fixed order (Atlas's own, curated).
- *  2. Marketplace-installed externals, A–Z.
- *  3. Agents merely DISCOVERED on the user's system, A–Z — they're runnable,
- *     but they're not something the user asked Atlas to add, so they rank last.
+ *  Drives option+/ cycling and the composer "+" agent picker. What is NOT here
+ *  is the point: an agent merely DETECTED on the user's PATH is an offer to
+ *  install, not a spawn candidate (`catalog.rs`), and Atlas ships no ACP
+ *  agents of its own (ADR-0002) — so a fresh profile offers exactly the
+ *  native agent, and Claude Code appears the moment it is installed and
+ *  disappears when it is removed.
  *
- *  Drives option+/ cycling and the composer "+" agent picker. Omitted: agents
- *  the user turned off (that is what "off" means everywhere the user picks an
- *  agent) and agents with nothing runnable behind them.
- *
- *  Pre-hydration (empty catalog) this degrades to exactly the previous
- *  behaviour: first-party order plus `plugins`-derived externals. */
+ *  Returns `agentType`s, not spec ids: that is the identity sessions persist
+ *  and every picker compares against ("claude-code", not "claude-code-ts"). */
 export function switchableAgentIds(): string[] {
-  const { plugins, catalog } = useAgentRegistryStore.getState();
+  const { catalog } = useAgentRegistryStore.getState();
+  // Pre-hydration (boot paths run before any catalog exists): the native agent
+  // is in-process and needs no install, so it is always a truthful answer.
+  if (catalog.length === 0) return [NATIVE_AGENT_ID];
+
   const byLabel = (a: string, b: string) => agentMeta(a).label.localeCompare(agentMeta(b).label);
-
-  if (catalog.length === 0) {
-    const externals = plugins
-      .filter((p) => p.external)
-      .map((p) => p.plugin_id)
-      .sort(byLabel);
-    return [...SWITCHABLE_AGENTS, ...externals].filter((id) => !isAgentDisabled(id));
-  }
-
-  const firstPartyIds = new Set<string>(SWITCHABLE_AGENTS);
-  const externals = catalog.filter((e) => e.kind === "external" && !firstPartyIds.has(e.agentType));
-  const installed = externals
-    .filter((e) => e.installed)
-    .map((e) => e.id)
+  const native = catalog
+    .filter((e) => e.kind === "native" && e.source !== "unavailable")
+    .map((e) => e.agentType);
+  const installed = installedExternals()
+    .map((e) => e.agentType)
     .sort(byLabel);
-  const discovered = externals
-    .filter((e) => !e.installed)
-    .map((e) => e.id)
-    .sort(byLabel);
-
-  return [...SWITCHABLE_AGENTS, ...installed, ...discovered].filter((id) => {
-    if (isAgentDisabled(id)) return false;
-    // A first-party agent with no catalog entry yet is still offered — the
-    // pre-hydration contract. Only an entry that says "unavailable" excludes.
-    return catalogEntry(id)?.source !== "unavailable";
-  });
+  return [...native, ...installed];
 }
 
 /** Reactive variant for components that must re-render when agents are
- *  installed/uninstalled — or turned on/off, hence the settings subscription
- *  alongside the registry signature. */
+ *  installed or uninstalled. */
 export function useSwitchableAgents(): string[] {
   useAgentRegistryStore((s) => s.signature);
-  useProjectStore((s) => s.settings.disabledBuiltinAgents);
   return switchableAgentIds();
 }

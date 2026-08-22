@@ -1,7 +1,10 @@
 // Settings → Agents. The ACP Registry marketplace (modeled on Zed's): every
 // agent published to the official ACP registry, searchable, with
-// All/Installed/Not-Installed pills and per-card Install/Remove. The five
-// entries that duplicate first-party Atlas agents render a "Built-in" badge.
+// All/Installed/Not-Installed pills and per-card Install/Remove.
+//
+// This is the ONLY way an ACP agent comes to exist (ADR-0002): Atlas
+// ships none, so no card can say "built-in" and there is nothing to switch
+// off. An agent is installed, merely detected on the user's PATH, or an offer.
 //
 // Install state machine mirrors skills-marketplace.tsx: in-flight ids live at
 // MODULE scope behind useSyncExternalStore so a mid-install unmount (switching
@@ -26,10 +29,7 @@ import {
   hydrateAgentRegistry,
   useAgentRegistryStore,
 } from "@/features/agents/stores/agent-registry-store";
-import { useProjectStore } from "@/features/project/stores/project-store";
-import { isOptionalBuiltin } from "@/features/agents/lib/agent-meta";
 import type { AgentCatalogEntry } from "@/types/agent-catalog";
-import { Toggle } from "../settings-panel";
 import { downloadTrend, fmtDownloads } from "@/features/agents/lib/download-trends";
 import { TrendSparkline } from "@/components/trend-sparkline";
 
@@ -42,16 +42,25 @@ import { TrendSparkline } from "@/components/trend-sparkline";
 export function cardState(
   entry: AcpRegistryEntry,
   catalog: AgentCatalogEntry | undefined,
-): "builtin" | "installed" | "detected" | "install" {
-  if (entry.builtin) return "builtin";
+): "installed" | "detected" | "install" {
   if (entry.installed) return "installed";
   if (catalog?.source === "detected") return "detected";
   return "install";
 }
 
-/** A card for an agent found on the user's system that the registry listing
- *  doesn't cover (or covers under a different id). Deduped by id against the
- *  real listing by the caller — an agent must never render twice. */
+/** Which install a card's action performs.
+ *
+ *  A detection is ACCEPTED — the installed-agents map gets a `custom` entry pointing
+ *  at the binary already on the user's machine, so Atlas runs their copy. Every
+ *  other card downloads Atlas's own. Both write the same map; only the entry
+ *  differs, and that difference is the whole point of a detection. */
+export function installKind(state: ReturnType<typeof cardState>): "detected" | "registry" {
+  return state === "detected" ? "detected" : "registry";
+}
+
+/** A card for an agent the registry listing doesn't cover — one found on the
+ *  user's PATH, or one they installed that was never published. Deduped by id
+ *  against the real listing by [`marketplaceCards`]. */
 function syntheticCard(entry: AgentCatalogEntry): AcpRegistryEntry {
   return {
     id: entry.id,
@@ -61,14 +70,41 @@ function syntheticCard(entry: AgentCatalogEntry): AcpRegistryEntry {
     repository: entry.repository,
     website: entry.website,
     iconDataUrl: entry.iconDataUrl,
-    installed: false,
-    builtin: entry.kind === "builtin" || entry.kind === "native",
-    // It is demonstrably runnable here — it was found on this machine.
-    platformSupported: true,
+    installed: entry.installed,
+    // Not a platform claim from a manifest: this agent is on THIS machine, so
+    // the only way it is unsupported here is the catalog saying its install
+    // resolves to nothing runnable.
+    platformSupported: entry.source !== "unavailable",
     distributionKind: entry.distributionKind,
     unverified: entry.unverified,
     unsupportedReason: null,
   };
+}
+
+/** Every card the marketplace shows: the registry's own listing, plus one
+ *  synthesized card per agent Atlas knows about that the listing has never
+ *  heard of.
+ *
+ *  That second group is both halves of "off the registry": an agent merely
+ *  found on the user's PATH, and one they have already installed from there.
+ *  Dropping the installed half is what once made a hand-installed agent
+ *  disappear from Settings the moment it was accepted — taking its only
+ *  Remove button with it.
+ *
+ *  The native agent is never a card: it is in-process, so there is nothing to
+ *  install and nothing to remove. */
+export function marketplaceCards(
+  listed: AcpRegistryEntry[],
+  catalogById: Record<string, AgentCatalogEntry>,
+): AcpRegistryEntry[] {
+  const listedIds = new Set(listed.map((e) => e.id));
+  const offRegistry = Object.values(catalogById)
+    .filter((e) => e.kind !== "native" && !listedIds.has(e.id))
+    // catalogById is keyed by BOTH id and agentType, so one entry can appear
+    // twice — dedupe before synthesizing cards.
+    .filter((e, i, all) => all.findIndex((o) => o.id === e.id) === i)
+    .map(syntheticCard);
+  return [...listed, ...offRegistry];
 }
 
 // ── Module-scope install tracking (survives unmount) ─────────────────────────
@@ -134,12 +170,13 @@ export function AgentsMarketplace() {
   }, []);
 
   const install = useCallback(
-    async (entry: AcpRegistryEntry) => {
+    async (entry: AcpRegistryEntry, kind: "detected" | "registry") => {
       if (installingIds.has(entry.id)) return;
       installingIds.add(entry.id);
       notifyInstalling();
       try {
-        await acpRegistry.install(entry.id);
+        if (kind === "detected") await acpRegistry.installDetected(entry.id);
+        else await acpRegistry.install(entry.id);
         toast.success(`${entry.name} installed`);
       } catch (e) {
         toast.error(`Couldn't install ${entry.name}: ${String(e)}`);
@@ -175,24 +212,13 @@ export function AgentsMarketplace() {
   const catalogById = useAgentRegistryStore.getState().catalogById;
 
   const entries = useMemo(() => {
-    const listed = listing?.entries ?? [];
-    // Agents discovered on this machine that the listing doesn't already
-    // cover, so a hand-installed CLI still shows up here.
-    const listedIds = new Set(listed.map((e) => e.id));
-    const detectedOnly = Object.values(catalogById)
-      .filter((e) => e.source === "detected" && !e.installed && !listedIds.has(e.id))
-      // catalogById is keyed by BOTH id and agentType, so one entry can appear
-      // twice — dedupe before synthesizing cards.
-      .filter((e, i, all) => all.findIndex((o) => o.id === e.id) === i)
-      .map(syntheticCard);
-    const all = [...listed, ...detectedOnly];
-
+    const all = marketplaceCards(listing?.entries ?? [], catalogById);
     const q = query.trim().toLowerCase();
     return all.filter((e) => {
       const state = cardState(e, catalogById[e.id]);
       // "Installed" means "already available to you", which a detected agent
       // is — it just wasn't Atlas that put it there.
-      const have = e.installed || e.builtin || state === "detected";
+      const have = e.installed || state === "detected";
       if (filter === "installed" && !have) return false;
       if (filter === "not-installed" && have) return false;
       if (!q) return true;
@@ -349,7 +375,7 @@ const AgentCard = memo(function AgentCard({
   catalog: AgentCatalogEntry | undefined;
   installing: boolean;
   progress: RegistryInstallProgress | null;
-  onInstall: (entry: AcpRegistryEntry) => void;
+  onInstall: (entry: AcpRegistryEntry, kind: "detected" | "registry") => void;
   onUninstall: (entry: AcpRegistryEntry) => void;
 }) {
   const pct =
@@ -445,42 +471,6 @@ const AgentCard = memo(function AgentCard({
   );
 });
 
-/** On/off switch for an optional built-in (cursor / opencode / kilo).
- *
- *  "Off" means hidden from every agent picker and never spawned — including
- *  the background pre-warms, and including a resume of an old session recorded
- *  against it (Rust rejects that spawn). Chat history is untouched either way,
- *  and turning it back on reuses the already-downloaded binary. */
-function BuiltinToggle({ entry }: { entry: AcpRegistryEntry }) {
-  const disabledIds = useProjectStore((s) => s.settings.disabledBuiltinAgents);
-  const { updateSettings } = useProjectStore.use.actions();
-  const enabled = !disabledIds.includes(entry.id);
-  return (
-    <span
-      className="flex items-center gap-2"
-      title={
-        enabled
-          ? `${entry.name} is available in the agent picker. Turn it off to hide it.`
-          : `${entry.name} is hidden. Your chat history with it is kept.`
-      }
-    >
-      <span className="text-[10.5px] font-medium text-[var(--text-tertiary)] w-5 text-right">
-        {enabled ? "On" : "Off"}
-      </span>
-      <Toggle
-        checked={enabled}
-        onChange={(next) =>
-          updateSettings({
-            disabledBuiltinAgents: next
-              ? disabledIds.filter((id) => id !== entry.id)
-              : [...disabledIds, entry.id],
-          })
-        }
-      />
-    </span>
-  );
-}
-
 function CardAction({
   entry,
   catalog,
@@ -493,25 +483,11 @@ function CardAction({
   catalog: AgentCatalogEntry | undefined;
   installing: boolean;
   pct: number | null;
-  onInstall: (entry: AcpRegistryEntry) => void;
+  onInstall: (entry: AcpRegistryEntry, kind: "detected" | "registry") => void;
   onUninstall: (entry: AcpRegistryEntry) => void;
 }) {
   const state = cardState(entry, catalog);
-  if (state === "builtin") {
-    // Cursor / OpenCode / Kilo are optional built-ins: they ship with Atlas but
-    // the user can hide them. Claude and Codex are what Atlas is built around
-    // and only ever show the badge — there is nothing to switch off.
-    if (isOptionalBuiltin(entry.id)) return <BuiltinToggle entry={entry} />;
-    return (
-      <span
-        className="flex items-center gap-1 h-6 px-2 rounded-md text-[10.5px] font-medium text-[var(--text-tertiary)] border border-[var(--border-default)]"
-        title="This agent ships with Atlas."
-      >
-        <Check size={10} />
-        Built-in
-      </span>
-    );
-  }
+  const kind = installKind(state);
   if (installing) {
     return (
       <span className="flex items-center gap-1.5 h-6 px-2 rounded-md text-[10.5px] font-medium text-[var(--text-secondary)] border border-[var(--border-default)] tabular-nums">
@@ -535,38 +511,39 @@ function CardAction({
     );
   }
   if (state === "detected") {
-    // Atlas found this on the user's PATH and spawns it from there. Nothing to
-    // install and nothing to remove — Atlas doesn't own it. Installing a
-    // managed copy stays available when the registry publishes one, for the
-    // user who wants Atlas to track versions instead.
+    // Atlas found this on the user's PATH but has NOT installed it, and a
+    // detection alone never makes an agent spawnable (ADR-0002). The
+    // badge says why the card is here; the button is the user accepting it,
+    // which writes an installed-agents-map entry pointing at the copy they already
+    // have — no download, and their binary is what runs.
     return (
       <span className="flex items-center gap-1.5">
         <span
           className="flex items-center gap-1 h-6 px-2 rounded-md text-[10.5px] font-medium text-[var(--text-tertiary)] border border-[var(--border-default)]"
           title={
-            catalog?.resolvedPath
-              ? `Found at ${catalog.resolvedPath}. Atlas runs your install.`
-              : "Found on your system. Atlas runs your install."
+            catalog?.resolvedPath ? `Found at ${catalog.resolvedPath}` : "Found on your system"
           }
         >
           <Check size={10} />
           Detected
         </span>
-        {entry.platformSupported && entry.distributionKind !== "" && (
-          <button
-            onClick={() => onInstall(entry)}
-            title="Download a copy Atlas manages and updates. Your own install still takes precedence."
-            className="h-6 px-2 rounded-md text-[10.5px] font-medium text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-          >
-            Install copy
-          </button>
-        )}
+        <button
+          onClick={() => onInstall(entry, kind)}
+          title={
+            catalog?.resolvedPath
+              ? `Add it, running your own copy at ${catalog.resolvedPath}. Nothing is downloaded.`
+              : "Add it, running the copy already on your system. Nothing is downloaded."
+          }
+          className="flex items-center gap-1 h-6 px-2.5 rounded-md text-[10.5px] font-medium text-[var(--text-primary)] border border-[var(--border-default)] bg-[var(--bg-elevated,var(--bg-primary))] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+        >
+          Install
+        </button>
       </span>
     );
   }
   return (
     <button
-      onClick={() => onInstall(entry)}
+      onClick={() => onInstall(entry, kind)}
       disabled={!entry.platformSupported}
       className={cn(
         "flex items-center gap-1 h-6 px-2.5 rounded-md text-[10.5px] font-medium border transition-colors",

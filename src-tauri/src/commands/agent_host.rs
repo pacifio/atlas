@@ -22,7 +22,7 @@
 //! # No default agents
 //!
 //! There is no builtin table, no auto-acquire, and no spawn ladder (research
-//! §D12-3, locked). The native agent is always present because it is
+//! ADR-0002). The native agent is always present because it is
 //! in-process; every other agent exists only because the installed map says so.
 //! [`AgentHost::agent_for`] is the whole of that policy, and it is four lines.
 
@@ -220,7 +220,7 @@ pub struct AgentHost {
     /// Cached because the catalog is a sync, instant read and a probe walks
     /// every `PATH` directory. Detection is an install *affordance* only —
     /// finding a binary never makes an agent runnable and never auto-spawns
-    /// anything (§D12-3). Refreshed by `agents_catalog_refresh`.
+    /// anything (ADR-0002). Refreshed by `agents_catalog_refresh`.
     detected: Mutex<Vec<atlas_agent_store::DetectedAgent>>,
     /// The native agent's runtime, for the reads that do not go through a
     /// session: its own stored-session list, replay and delete, which the chat

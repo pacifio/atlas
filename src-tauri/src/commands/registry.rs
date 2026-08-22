@@ -11,7 +11,7 @@
 //! lazily by the first connect. The old store downloaded eagerly here and kept
 //! a parallel install ledger; that produced two sources of truth about whether
 //! an agent existed, and the ladder that reconciled them is exactly what
-//! §D12-3 removed. Progress events still fire so the marketplace's UI is
+//! ADR-0002 removed. Progress events still fire so the marketplace's UI is
 //! unchanged, but for a registry install there is nothing to download yet — the
 //! `:done` event lands immediately.
 //!
@@ -38,9 +38,6 @@ pub struct RegistryEntryView {
     pub website: Option<String>,
     pub icon_data_url: Option<String>,
     pub installed: bool,
-    /// Kept for wire compatibility; always false now. Atlas ships no built-in
-    /// external agents, so no registry entry can duplicate one (§D12-3).
-    pub builtin: bool,
     pub platform_supported: bool,
     /// "" when unsupported; else "binary" | "npx".
     pub distribution_kind: String,
@@ -96,7 +93,6 @@ fn entry_view(agent: &RegistryAgent, store: &AgentServerStore) -> RegistryEntryV
         website: metadata.website.clone(),
         icon_data_url: icon_data_url(agent),
         installed,
-        builtin: false,
         platform_supported,
         distribution_kind: if platform_supported {
             distribution_kind.to_string()
@@ -209,7 +205,7 @@ async fn install(host: &Arc<AgentHost>, app: &AppHandle, agent_id: &str) -> Resu
 /// Note what it is not: finding a binary never installs anything by itself, and
 /// never makes an agent spawnable. Only this command, invoked by the user, does
 /// — which is what keeps PATH discovery an affordance rather than the spawn
-/// ladder rung it used to be (§D12-3, locked).
+/// ladder rung it used to be (ADR-0002).
 #[tauri::command]
 pub async fn acp_registry_install_detected(
     agent_id: String,

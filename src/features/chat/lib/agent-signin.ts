@@ -12,7 +12,6 @@
 // new credentials up without a respawn.
 
 import { agents, listenAuthRunDone } from "./agents-api";
-import { isOptionalBuiltinAgent } from "@/types/agent";
 import { catalogEntry } from "@/features/agents/lib/agent-meta";
 
 /** Resolves when the login subprocess exits. `agents.runAuthMethod` returns as
@@ -133,35 +132,29 @@ export function isAuthError(err: unknown): boolean {
  *  Deliberately NOT "the catalog has a login command for it". An external
  *  agent's sign-in is only knowable at RUNTIME, from the `authMethods` it
  *  advertises in its `initialize` response — the backend can't put it in the
- *  catalog. Restricting this to the catalog's `login` field (which is built
- *  from the built-in table alone) is what left every registry-installed agent
- *  with no way to sign in: e.g. `autohand` rejects `session/new` with
- *  "Please log in to use Autohand" while advertising a perfectly runnable
- *  `npm install -g autohand-cli` method that `runSignInMethod` can execute.
- *  The user just saw a raw protocol error.
+ *  catalog. Gating on the catalog's `login` field is what left every
+ *  registry-installed agent with no way to sign in: e.g. `autohand` rejects
+ *  `session/new` with "Please log in to use Autohand" while advertising a
+ *  perfectly runnable `npm install -g autohand-cli` method that
+ *  `runSignInMethod` can execute. The user just saw a raw protocol error.
  *
- *  So: externals always get the dialog, which lists whatever they advertise
- *  and has its own empty state when they advertise nothing. Built-ins go by
- *  whether Atlas has a login argv for them; Claude and Codex are excluded
- *  because they own bespoke sign-in surfaces, and the native agent has no
- *  sign-in at all (it uses BYOK keys). */
+ *  So: every INSTALLED external agent gets the dialog, which lists whatever it
+ *  advertises (`authKinds`) and has its own empty state when it advertises
+ *  nothing. Three things are excluded, none of them by name:
+ *
+ *  - the native agent — BYOK keys, no sign-in at all;
+ *  - an agent with no catalog entry — Atlas cannot run it, so there is nothing
+ *    to sign in to. Before the catalog hydrates that is everything, which is
+ *    the honest answer for the boot window: the catalog lands at startup;
+ *  - a DETECTION — found on `PATH` but not installed, so the backend will
+ *    refuse to spawn it (ADR-0002). Offering sign-in for an agent that cannot
+ *    start is a dead end; installing it is the action that is actually
+ *    available. */
 export function canSignIn(agentType: string | undefined): boolean {
   if (!agentType) return false;
   const entry = catalogEntry(agentType);
-  if (entry) {
-    // The native agent has no sign-in at all — it uses BYOK keys.
-    if (entry.kind === "native") return false;
-    // R6: what the agent ACTUALLY advertised, once it has been spawned. This
-    // is the answer that replaced hardcoding agent names in TS.
-    if (entry.authKinds && entry.authKinds.length > 0) return true;
-    // `authKinds` is empty before the first spawn (auth methods only exist
-    // after `initialize`), so empty means "unknown", NOT "cannot sign in" —
-    // fall back to the static signals rather than hiding `/login` from an
-    // agent that has simply never been started.
-    if (entry.kind === "external") return true;
-    return entry.login !== null;
-  }
-  return isOptionalBuiltinAgent(agentType);
+  if (!entry || entry.kind === "native") return false;
+  return entry.installed;
 }
 
 /** What a failed session bind should do about it. Pure, so the loop-prevention

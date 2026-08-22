@@ -1,10 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentCatalogEntry } from "@/types/agent-catalog";
 
-// Stub the whole IPC layer: these tests are about how the store folds three
-// backend answers together, not about Tauri.
+// Stub the whole IPC layer: these tests are about how the store folds the
+// backend's two answers together, not about Tauri.
 const api = {
-  plugins: [] as { plugin_id: string; display_name: string; external: boolean }[],
   entries: [] as { id: string; installed: boolean; version: string }[],
   catalog: [] as AgentCatalogEntry[],
   catalogThrows: false,
@@ -14,7 +13,6 @@ const unlisten = vi.fn();
 
 vi.mock("@/features/chat/lib/agents-api", () => ({
   agents: {
-    listPlugins: () => Promise.resolve(api.plugins),
     catalog: () =>
       api.catalogThrows
         ? Promise.reject(new Error("backend down"))
@@ -44,14 +42,13 @@ function entry(e: Partial<AgentCatalogEntry> & Pick<AgentCatalogEntry, "id">): A
     agentType: e.id,
     name: e.id,
     source: "installed",
-    disabled: false,
+    installed: true,
     resolvedPath: null,
     ...e,
   } as AgentCatalogEntry;
 }
 
 beforeEach(() => {
-  api.plugins = [];
   api.entries = [];
   api.catalog = [];
   api.catalogThrows = false;
@@ -59,7 +56,6 @@ beforeEach(() => {
   unlisten.mockClear();
   stopCatalogListener();
   useAgentRegistryStore.setState({
-    plugins: [],
     registryEntries: [],
     catalog: [],
     catalogById: {},
@@ -80,15 +76,27 @@ describe("hydrateAgentRegistry", () => {
     });
   });
 
-  it("still hydrates the rest when the catalog call fails", async () => {
-    // An older backend, or a boot race — the other surfaces must still work.
+  it("still hydrates the registry listing when the catalog call fails", async () => {
+    // An older backend, or a boot race — the Marketplace must still render.
     api.catalogThrows = true;
-    api.plugins = [{ plugin_id: "codex", display_name: "Codex", external: false }];
+    api.entries = [{ id: "amp-acp", installed: false, version: "1.0.0" }];
     await hydrateAgentRegistry();
     const s = useAgentRegistryStore.getState();
     expect(s.hydrated).toBe(true);
-    expect(s.plugins).toHaveLength(1);
+    expect(s.registryEntries).toHaveLength(1);
     expect(s.catalog).toEqual([]);
+  });
+
+  it("keeps the last good catalog when a later call fails", async () => {
+    // The agent picker is derived from the catalog, so emptying it on a
+    // transient failure reads as "you have no agents installed" — every agent
+    // the user installed would vanish from the switcher until the next
+    // successful hydrate. Stale beats wrong.
+    api.catalog = [entry({ id: "amp-acp" })];
+    await hydrateAgentRegistry();
+    api.catalogThrows = true;
+    await hydrateAgentRegistry();
+    expect(useAgentRegistryStore.getState().catalog.map((e) => e.id)).toEqual(["amp-acp"]);
   });
 });
 
@@ -109,14 +117,22 @@ describe("signature", () => {
     expect(a).toBe(b);
   });
 
-  it("changes when an agent's source or disabled state changes", async () => {
+  it("changes when an agent's source changes", async () => {
     const base = await signatureFor([entry({ id: "opencode", source: "detected" })]);
     // A detection becoming a real install changes how it would launch, so the
     // signature has to move — that is what makes the UI re-render.
     expect(await signatureFor([entry({ id: "opencode", source: "installed" })])).not.toBe(base);
+  });
+
+  it("changes when an agent is installed or uninstalled", async () => {
+    // What the agent picker is keyed off: an agent joins it on install and
+    // leaves on uninstall, so this is the re-render that has to happen.
+    const detected = await signatureFor([
+      entry({ id: "cursor", source: "detected", installed: false }),
+    ]);
     expect(
-      await signatureFor([entry({ id: "opencode", source: "detected", disabled: true })]),
-    ).not.toBe(base);
+      await signatureFor([entry({ id: "cursor", source: "installed", installed: true })]),
+    ).not.toBe(detected);
   });
 });
 

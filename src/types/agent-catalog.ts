@@ -5,7 +5,7 @@
 
 /** How a spawn of this agent would launch it right now.
  *
- *  The spawn ladder is gone (Zed port, §D12-3): an agent is the native one, it
+ *  The spawn ladder is gone (Zed port, ADR-0002): an agent is the native one, it
  *  is in the installed map, or it is not runnable. `system-path`,
  *  `managed-binary`, `auto-acquire` and `uvx` were rungs of that ladder and are
  *  never emitted any more. */
@@ -23,7 +23,9 @@ export type AgentSource =
   /** Nothing runnable — no install, no runner. */
   | "unavailable";
 
-export type AgentKind = "native" | "builtin" | "external";
+/** `"builtin"` is deliberately absent: Atlas ships no external agents of its
+ *  own (ADR-0002), so every agent is either the native one or external. */
+export type AgentKind = "native" | "external";
 
 export type AgentTranscript = "none" | "claude_jsonl" | "cersei_json";
 
@@ -59,10 +61,6 @@ export interface AgentCatalogEntry {
    *  `installed: false, source: "detected"` — the user installed it, not
    *  Atlas. */
   installed: boolean;
-  autoManaged: boolean;
-  /** Can be turned off in Settings → Agents. */
-  optional: boolean;
-  disabled: boolean;
   supportsModes: boolean;
   supportsModels: boolean;
   transcript: AgentTranscript;
@@ -91,8 +89,8 @@ export type CatalogChangeReason =
   | "refresh"
   | "install"
   | "uninstall"
+  /** The installed map landed at boot. */
   | "settings"
-  | "acquire"
   /** An agent finished `initialize`, so its advertised capabilities
    *  (`authKinds`, `supportsFork`, …) are known for the first time. */
   | "spawn";

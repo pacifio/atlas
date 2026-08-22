@@ -1,46 +1,43 @@
-// Dynamic agent identity registry: which agents exist (first-party + installed
-// externals + agents discovered on the user's PATH) and their metadata.
+// Dynamic agent identity registry: which agents exist (the native agent,
+// installed externals, and agents discovered on the user's PATH) and their
+// metadata.
 // Hydrated at startup and on every `atlas:agent-catalog:changed`; `agentMeta()`
 // (lib/agent-meta) is the read surface every UI consumer goes through.
 //
-// The `catalog` is the authoritative source; `plugins` / `registryEntries` are
-// retained because several boot-path callers run before the catalog lands and
-// because the marketplace still renders from the registry listing.
+// Two answers, one authority: the `catalog` says which agents exist and how
+// each would launch; `registryEntries` is the Marketplace's browse list (every
+// published agent, installed or not) and nothing else reads it. The old
+// `plugins` list was a third answer to the same question and is gone.
 //
 // Selector discipline: Record-of-objects selectors infinite-loop under
 // useShallow (known Atlas trap) — components subscribe to the primitive
 // `signature` string and read the arrays via `getState()`.
 
 import { create } from "zustand";
-import type { PluginSpec } from "@/types/agents";
 import type { AgentCatalogEntry } from "@/types/agent-catalog";
 import { agents, listenCatalogChanged } from "@/features/chat/lib/agents-api";
 import { acpRegistry, type AcpRegistryEntry } from "../lib/agent-registry-api";
 
 interface AgentRegistryState {
-  plugins: PluginSpec[];
   registryEntries: AcpRegistryEntry[];
   catalog: AgentCatalogEntry[];
   /** Catalog entries keyed by BOTH `id` and `agentType`, so a lookup by either
    *  identity shape hits without the caller knowing which it holds. */
   catalogById: Record<string, AgentCatalogEntry>;
-  /** Bumps whenever plugins/registryEntries/catalog change — the primitive
-   *  selector components subscribe to instead of the arrays themselves. */
+  /** Bumps whenever registryEntries/catalog change — the primitive selector
+   *  components subscribe to instead of the arrays themselves. */
   signature: string;
   hydrated: boolean;
 }
 
-function signatureOf(
-  plugins: PluginSpec[],
-  entries: AcpRegistryEntry[],
-  catalog: AgentCatalogEntry[],
-): string {
-  const p = plugins.map((s) => s.plugin_id).join(",");
+function signatureOf(entries: AcpRegistryEntry[], catalog: AgentCatalogEntry[]): string {
   const e = entries.map((s) => `${s.id}:${s.installed ? 1 : 0}:${s.version}`).join(",");
   // Kinds only, never resolved paths: a discovery scan that re-resolves the
   // same binary to the same place must not re-render every agent surface.
-  const c = catalog.map((s) => `${s.id}:${s.source}:${s.disabled ? 1 : 0}`).join(",");
-  return `${p}|${e}|${c}`;
+  // `installed` is in here because it is what the agent picker is keyed off —
+  // an agent joins it on install and leaves on uninstall.
+  const c = catalog.map((s) => `${s.id}:${s.source}:${s.installed ? 1 : 0}`).join(",");
+  return `${e}|${c}`;
 }
 
 function indexCatalog(catalog: AgentCatalogEntry[]): Record<string, AgentCatalogEntry> {
@@ -53,7 +50,6 @@ function indexCatalog(catalog: AgentCatalogEntry[]): Record<string, AgentCatalog
 }
 
 export const useAgentRegistryStore = create<AgentRegistryState>(() => ({
-  plugins: [],
   registryEntries: [],
   catalog: [],
   catalogById: {},
@@ -61,23 +57,26 @@ export const useAgentRegistryStore = create<AgentRegistryState>(() => ({
   hydrated: false,
 }));
 
-/** Re-fetch the agent catalog, the plugin list and the registry listing.
+/** Re-fetch the agent catalog and the registry listing.
  *  Safe to call repeatedly; failures leave the previous state in place. */
 export async function hydrateAgentRegistry(): Promise<void> {
   try {
-    const [plugins, listing, catalog] = await Promise.all([
-      agents.listPlugins(),
+    const [listing, catalog] = await Promise.all([
       acpRegistry.list().catch(() => null),
       agents.catalog().catch(() => null),
     ]);
-    const registryEntries = listing?.entries ?? [];
-    const entries = catalog?.entries ?? [];
+    const previous = useAgentRegistryStore.getState();
+    const registryEntries = listing?.entries ?? previous.registryEntries;
+    // A failed catalog call must KEEP the last good one. Emptying it would
+    // read as "you have no agents installed", and every surface that lists
+    // agents — the picker above all — would silently lose them until the next
+    // successful hydrate.
+    const entries = catalog?.entries ?? previous.catalog;
     useAgentRegistryStore.setState({
-      plugins,
       registryEntries,
       catalog: entries,
       catalogById: indexCatalog(entries),
-      signature: signatureOf(plugins, registryEntries, entries),
+      signature: signatureOf(registryEntries, entries),
       hydrated: true,
     });
   } catch {

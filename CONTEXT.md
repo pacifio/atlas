@@ -23,3 +23,5 @@ Glossary of domain terms as this project uses them. Decisions with lasting conse
 - **Cersei** — Atlas's native agent. Its threads live in the same thread-metadata store as external agents', distinguished only by agent id.
 - **Timeline / checkpoint** — the per-workspace observational record (`atlas-checkpoint`). Separate from the thread-metadata store; its importer may read CLIs' transcript files under its own contract, which the history model explicitly preserves.
 - **Marketplace / registry** — where agents are installed from; the installed-agents map is what import enumerates.
+- **Installed-agents map** — the one record of which ACP agents exist. Installing writes an entry, uninstalling removes it, and nothing else makes an agent runnable. A fresh install has an empty map and offers only Cersei. See ADR-0002.
+- **Detection** — an agent found on the user's `PATH` that Atlas has *not* installed. An offer, never a spawn candidate: **accepting a detection** is a user action that writes an installed-agents-map entry pointing at their own binary, downloading nothing. Finding a binary installs nothing by itself.

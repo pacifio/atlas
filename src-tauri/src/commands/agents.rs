@@ -28,7 +28,7 @@
 //! start an agent: a disabled-builtin guard, a self-heal re-download, a
 //! system-PATH probe, a managed-binary download with its own progress events,
 //! and a stale-CLI fallback that retried the whole thing. All of it is gone
-//! (§D12-3, locked). Spawning is now: look the id up in the installed map,
+//! (ADR-0002). Spawning is now: look the id up in the installed map,
 //! connect. An agent nobody installed is not there.
 
 use std::path::PathBuf;
@@ -660,7 +660,7 @@ impl From<HostError> for CmdError {
 /// Connect to an agent.
 ///
 /// No acquisition, no ladder, no retry: the id is either in the installed map
-/// or it is not (§D12-3). The catalog is re-emitted on success because an
+/// or it is not (ADR-0002). The catalog is re-emitted on success because an
 /// agent's capability fields — `authKinds`, `supportsLogout`,
 /// `supportsLoadSession`, `supportsSessionList` — only exist after
 /// `initialize`, and nothing else tells the frontend they just appeared.

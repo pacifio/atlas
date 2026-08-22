@@ -10,7 +10,7 @@
 //! The old catalog described a five-rung spawn ladder — a discovered binary
 //! beat an Atlas download, which beat a marketplace install, which beat an
 //! `npx -y` fallback — and it had to describe that ladder's *outcome* without
-//! being a second opinion about it. That ladder is gone (§D12-3, locked), and
+//! being a second opinion about it. That ladder is gone (ADR-0002), and
 //! with it `auto-acquire`, `managed-binary`, the `builtin` kind, and the
 //! `optional`/`disabled` pair that let a first-party agent be switched off.
 //! An agent is now in exactly one of three states: it is the native agent, it
@@ -87,11 +87,6 @@ pub struct AgentCatalogEntry {
     /// `installed: false, source: "detected"` — Atlas didn't install it and
     /// will not run it until the user says so.
     pub installed: bool,
-    /// Always false — nothing is Atlas-managed on a spawn any more.
-    pub auto_managed: bool,
-    /// Always false — there are no optional built-ins to switch off.
-    pub optional: bool,
-    pub disabled: bool,
     pub supports_modes: bool,
     pub supports_models: bool,
     /// "none" | "claude_jsonl" | "cersei_json".
@@ -205,9 +200,6 @@ fn build(host: &AgentHost) -> AgentCatalog {
                 source: source.to_string(),
                 resolved_path,
                 installed: !is_native,
-                auto_managed: false,
-                optional: false,
-                disabled: false,
                 supports_modes: plugin.supports_modes,
                 supports_models: plugin.supports_models,
                 transcript: transcript_token(plugin.transcript).to_string(),
@@ -266,9 +258,6 @@ fn build(host: &AgentHost) -> AgentCatalog {
             source: source::DETECTED.to_string(),
             resolved_path: Some(found.program.to_string_lossy().into_owned()),
             installed: false,
-            auto_managed: false,
-            optional: false,
-            disabled: false,
             supports_modes: false,
             supports_models: false,
             transcript: transcript_token(super::agent_host::transcript_kind_for(&found.id))
@@ -373,7 +362,7 @@ mod tests {
         let (host, dir) = fresh_host();
 
         // Fresh profile: the native agent, and nothing else. No builtin table,
-        // no auto-acquire, nothing pre-seeded (§D12-3).
+        // no auto-acquire, nothing pre-seeded (ADR-0002).
         let fresh = build(&host);
         assert_eq!(ids(&fresh), [atlas_native_agent::CERSEI_AGENT_ID]);
         let native = entry(&fresh, atlas_native_agent::CERSEI_AGENT_ID);
@@ -395,10 +384,13 @@ mod tests {
         assert_eq!(installed.kind, "external");
         assert_eq!(installed.source, source::INSTALLED);
         assert!(installed.installed);
-        // The ladder's fields are gone, not merely unset for this agent.
-        assert!(!installed.auto_managed);
-        assert!(!installed.optional);
-        assert!(!installed.disabled);
+        // The ladder's flags are off the WIRE, not merely false: the frontend
+        // used to branch on them, and a field that is always false is a
+        // question the UI should stop asking.
+        let wire = serde_json::to_value(installed).expect("entry serializes");
+        for gone in ["autoManaged", "optional", "disabled", "builtin"] {
+            assert!(wire.get(gone).is_none(), "{gone} is still on the wire");
+        }
         // …and it is genuinely runnable, which is the half a catalog entry
         // cannot prove on its own.
         assert!(host.agent_for("some-agent").is_ok());

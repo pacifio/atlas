@@ -1,7 +1,11 @@
 import type { SessionModeInfo } from "./agents";
 
-/** The six agents Atlas ships. External (registry-installed) agents extend
- *  this set at runtime — their agent type IS their plugin id. */
+/** The agents Atlas has first-party BRANDING for — labels, brand icons and
+ *  `.agent-*` CSS tokens, which are Atlas's own design rather than registry
+ *  metadata. It is not a list of agents that exist: apart from `cersei` (the
+ *  native agent) every one of these must be installed from the Marketplace
+ *  before it can run (ADR-0002), and an installed agent with no entry here
+ *  simply renders from its registry metadata. */
 export type FirstPartyAgent = "claude-code" | "codex" | "opencode" | "cursor" | "kilo" | "cersei";
 
 /** Agent identity is plugin-id-first and OPEN (Paseo-style): the first-party
@@ -10,21 +14,19 @@ export type FirstPartyAgent = "claude-code" | "codex" | "opencode" | "cursor" | 
 export type AgentType = FirstPartyAgent | "custom" | (string & {});
 
 /** Open alias — kept for call-site readability where "switchable" intent
- *  matters. The actual switchable list is dynamic: `useSwitchableAgents()`
- *  in features/agents (first-party + installed externals). */
+ *  matters. The actual switchable list is dynamic and entirely catalog-derived:
+ *  `useSwitchableAgents()` in features/agents (the native agent + whatever the
+ *  user installed). */
 export type SwitchableAgent = FirstPartyAgent | (string & {});
 
-/** First-party agents in switch order (for option+/). Installed externals are
- *  appended dynamically by `switchableAgentIds()` — never index UI state off
- *  this array alone. */
-export const SWITCHABLE_AGENTS: FirstPartyAgent[] = [
-  "claude-code",
-  "codex",
-  "opencode",
-  "cursor",
-  "kilo",
-  "cersei",
-];
+/** The native, in-process agent. The one id that is always runnable: it needs
+ *  no install, cannot be uninstalled, and is what a fresh profile offers on its
+ *  own (ADR-0002 — Atlas ships no ACP agents).
+ *
+ *  This is NOT a default ACP agent and must never be used as a stand-in for
+ *  one; it is the identity of "Atlas itself". The switchable list is otherwise
+ *  entirely catalog-derived — see `switchableAgentIds()` in features/agents. */
+export const NATIVE_AGENT_ID = "cersei";
 
 /** First-party labels. For externals use `agentMeta(id).label`
  *  (features/agents/lib/agent-meta). */
@@ -70,23 +72,6 @@ export function pluginIdForAgent(agentType: AgentType | undefined): string {
  *  every launch to fill a cache the user may never open. Consumers that need
  *  the full set use the catalog (`useAgentRegistryStore`). */
 export const ACP_AGENTS: FirstPartyAgent[] = ["claude-code", "codex", "opencode", "cursor", "kilo"];
-
-/** The built-ins a user may turn off in Settings → Agents: the three with no
- *  npx distribution, which Atlas downloads on demand when the user hasn't
- *  installed them. Mirrors the `optional` entries of `atlas_acp::BUILTIN_AGENTS`
- *  (their agentType and plugin id are the same string). Claude, Codex and
- *  Cersei are the agents Atlas is built around — they are always available and
- *  never appear here.
- *
- *  This is the PRE-HYDRATION fallback: once the catalog lands, prefer
- *  `isOptionalBuiltin(id)` from features/agents/lib/agent-meta, which reads the
- *  backend's own answer. Kept here (rather than moved) to avoid an import cycle
- *  — agent-meta imports this module. */
-export const OPTIONAL_BUILTIN_AGENTS: FirstPartyAgent[] = ["cursor", "opencode", "kilo"];
-
-export function isOptionalBuiltinAgent(id: string): boolean {
-  return (OPTIONAL_BUILTIN_AGENTS as string[]).includes(id);
-}
 
 /** Derive the display agent type from a spawnable plugin id. Unknown ids pass
  *  through unchanged — an external agent's identity is its plugin id, and
