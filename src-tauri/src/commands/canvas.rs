@@ -32,49 +32,6 @@ pub async fn save_canvas(project_path: String, payload: String) -> Result<(), St
     .map_err(|e| e.to_string())?
 }
 
-/// Compact codebase-structure summary for the canvas AI copilot's architecture
-/// prompts — top files by import-rank with their imports + a few defined symbols.
-/// Reads the existing tree-sitter index (`atlas_codeindex`); empty string if the
-/// codebase index hasn't been built.
-#[tauri::command]
-pub async fn canvas_codebase_context(
-    project_path: String,
-    max_files: Option<usize>,
-) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || -> Result<String, String> {
-        let cap = max_files.unwrap_or(60).clamp(1, 200);
-        let index = atlas_codeindex::load_index(&project_path);
-        if index.docs.is_empty() {
-            return Ok(String::new());
-        }
-        let mut docs = index.docs;
-        // Most-depended-on files first (the architectural hubs).
-        docs.sort_by(|a, b| b.import_rank.cmp(&a.import_rank));
-        docs.truncate(cap);
-
-        let mut out = String::from("# Codebase structure (top files by dependency rank)\n");
-        for d in &docs {
-            out.push_str(&format!("\n{} ({}) [rank {}]\n", d.rel, d.language, d.import_rank));
-            if !d.imports.is_empty() {
-                let imports: Vec<&str> = d.imports.iter().take(12).map(|s| s.as_str()).collect();
-                out.push_str(&format!("  imports: {}\n", imports.join(", ")));
-            }
-            if !d.symbols.is_empty() {
-                let defs: Vec<String> = d
-                    .symbols
-                    .iter()
-                    .take(8)
-                    .map(|s| format!("{} {}", s.kind, s.name))
-                    .collect();
-                out.push_str(&format!("  defines: {}\n", defs.join(", ")));
-            }
-        }
-        Ok(out)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 /// Copy a user-picked image/video into `.atlas/canvas-media/` and return its
 /// relative filename (stored on the media node). Mirrors `knowledge_cover_upload`.
 #[tauri::command]

@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn claude_code_display_titles_reduce_to_their_leading_token() {
         for (title, kind, expected) in [
-            ("Bash(cargo test --package atlas-review)", "execute", ToolName::Bash),
+            ("Bash(cargo test --package atlas-codeindex)", "execute", ToolName::Bash),
             ("Read /Users/nafiz/dev/atlas/src/lib.rs", "read", ToolName::Read),
             ("Edit src/rate_limit.rs", "edit", ToolName::Edit),
         ] {

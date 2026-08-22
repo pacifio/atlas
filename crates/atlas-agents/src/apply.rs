@@ -939,7 +939,7 @@ mod tests {
             serde_json::from_value(serde_json::json!({
                 "sessionUpdate": "tool_call_update",
                 "toolCallId": "tc-1",
-                "title": "Bash(cargo test --package atlas-review)",
+                "title": "Bash(cargo test --package atlas-codeindex)",
                 "status": "completed",
             }))
             .unwrap(),
@@ -949,7 +949,7 @@ mod tests {
         assert_eq!(tc.tool_name, "Bash", "the name must not churn with the title");
         assert_eq!(
             tc.title.as_deref(),
-            Some("Bash(cargo test --package atlas-review)"),
+            Some("Bash(cargo test --package atlas-codeindex)"),
             "the display title must still refresh"
         );
     }

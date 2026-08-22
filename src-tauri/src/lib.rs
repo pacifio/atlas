@@ -260,7 +260,6 @@ pub fn run() {
         .manage(commands::browser::BrowserState::new())
         .manage(TerminalState::new())
         .manage(commands::modelchat::ModelChatState::new())
-        .manage(commands::review::ReviewState::new())
         .manage(AgentRegistry::new())
         .manage(FileIndexState::new())
         .manage(GitWatcherState::new())
@@ -507,7 +506,6 @@ pub fn run() {
             commands::canvas::save_canvas,
             commands::canvas::canvas_media_upload,
             commands::canvas::canvas_media_data_url,
-            commands::canvas::canvas_codebase_context,
             commands::log::load_pinned_log,
             commands::log::append_pinned_log,
             commands::log::clear_pinned_log,
@@ -575,16 +573,6 @@ pub fn run() {
             commands::modelchat::modelchat_models,
             commands::modelchat::modelchat_stream,
             commands::modelchat::modelchat_cancel,
-            commands::review::review_providers,
-            commands::review::review_base_branches,
-            commands::review::review_start,
-            commands::review::review_cancel,
-            commands::review::review_list,
-            commands::review::review_get,
-            commands::modelchat_sessions::modelchat_sessions_list,
-            commands::modelchat_sessions::modelchat_session_get,
-            commands::modelchat_sessions::modelchat_session_save,
-            commands::modelchat_sessions::modelchat_session_delete,
             commands::fileindex::fileindex_open_project,
             commands::fileindex::fileindex_close_project,
             commands::fileindex::fileindex_search,

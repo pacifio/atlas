@@ -4,7 +4,6 @@ import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { ProviderLogo } from "@/components/provider-logo";
-import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { jumpToSession } from "@/features/chat/lib/tab-workspace";
 import { useNotificationsStore, type AppNotification } from "../stores/notifications-store";
 
@@ -173,31 +172,11 @@ function NotificationIcon({ n }: { n: AppNotification }) {
 
 /** Best-effort: bring the originating chat into view. */
 function focusNotification(n: AppNotification) {
-  const layout = useLayoutStore.getState();
   if (n.source === "agent" && n.tabId) {
     // Workspace-aware: a bare setActiveTab on a tab from ANOTHER workspace
     // falls back to tabs[0] of the current one — jumpToSession switches to the
     // owning workspace first.
     void jumpToSession(n.tabId);
     return;
-  }
-  if (n.source === "chat" && n.sessionId) {
-    void import("@/features/model-chat/stores/model-chat-store").then(({ useModelChatStore }) => {
-      void useModelChatStore.getState().actions.selectSession(n.sessionId!);
-    });
-    // Focus an existing model-chat tab, else open one.
-    const existing = layout.tabs.find((t) => t.type === "model-chat");
-    if (existing) {
-      layout.actions.setActiveTab(existing.id);
-    } else {
-      layout.actions.addTab({
-        id: `model-chat-${Date.now()}`,
-        type: "model-chat",
-        title: "Chat",
-        closable: true,
-        dirty: false,
-        data: {},
-      });
-    }
   }
 }

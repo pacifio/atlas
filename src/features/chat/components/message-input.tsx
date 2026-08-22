@@ -70,7 +70,7 @@ import { PlanTasksPill } from "./plan-tasks-pill";
 import { RetryPill } from "./retry-pill";
 import { ComposerAddMenu } from "./composer-add-menu";
 import type { GithubRepo } from "@/features/github/types";
-import { imageMimeFromPath } from "@/features/model-chat/lib/model-capabilities";
+import { imageMimeFromPath } from "@/lib/byok/model-capabilities";
 import type { ImageAttachment } from "@/types/agents";
 import type {
   MentionFile,

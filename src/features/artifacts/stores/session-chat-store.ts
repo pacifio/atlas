@@ -23,7 +23,7 @@ import {
   modelchat as providerChat,
   listenModelChat,
   type ModelChatEvent,
-} from "@/features/model-chat/lib/model-chat-api";
+} from "@/lib/byok/byok-chat";
 import type { ChatMessage } from "@/types/agent";
 
 import {

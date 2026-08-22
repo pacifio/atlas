@@ -6,8 +6,6 @@ import { useProjectStore } from "@/features/project/stores/project-store";
 import { KbdCombo } from "@/ui/kbd";
 import { AtlasIcon } from "@/components/atlas-icon";
 import {
-  MessageSquare,
-  Map,
   Globe,
   CheckSquare,
   Terminal,
@@ -16,6 +14,7 @@ import {
   PanelRight,
   PanelBottom,
   PanelTop,
+  Map,
   Sidebar,
   Columns2,
   Maximize2,
@@ -61,7 +60,6 @@ export function CommandPalette({
     toggleRightPanel,
     toggleBottomPanel,
     toggleChatSidebar,
-    toggleModelChatSidebar,
     toggleTabBar,
     toggleZenMode,
     toggleUsagePanel,
@@ -136,11 +134,11 @@ export function CommandPalette({
         action: () => openTab("chat", "Agents"),
       },
       {
-        id: "new-model-chat",
-        label: "New Chat",
-        icon: MessageSquare,
+        id: "new-canvas",
+        label: "New Spaces",
+        icon: Map,
         category: "Open",
-        action: () => openTab("model-chat", "Chat"),
+        action: () => openTab("canvas", "Spaces"),
       },
       {
         id: "new-terminal",
@@ -157,13 +155,6 @@ export function CommandPalette({
         icon: Code,
         category: "Open",
         action: () => openTab("editor", "Untitled"),
-      },
-      {
-        id: "new-canvas",
-        label: "New Spaces",
-        icon: Map,
-        category: "Open",
-        action: () => openTab("canvas", "Spaces"),
       },
       {
         id: "new-browser",
@@ -254,14 +245,6 @@ export function CommandPalette({
         icon: Sidebar,
         category: "Layout",
         action: toggleChatSidebar,
-      },
-      {
-        id: "toggle-model-chat-sidebar",
-        label: "Toggle Chat History Sidebar",
-        shortcut: "⌘⌥K",
-        icon: Sidebar,
-        category: "Layout",
-        action: toggleModelChatSidebar,
       },
       {
         id: "toggle-tab-bar",
@@ -367,7 +350,6 @@ export function CommandPalette({
       toggleRightPanel,
       toggleBottomPanel,
       toggleChatSidebar,
-      toggleModelChatSidebar,
       toggleTabBar,
       toggleZenMode,
       toggleUsagePanel,

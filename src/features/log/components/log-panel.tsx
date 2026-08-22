@@ -31,10 +31,10 @@ const SOURCES: LogSource[] = [
   "atlas",
   "agent",
   "chat",
+  "canvas",
   "git",
   "knowledge",
   "github",
-  "canvas",
   "editor",
   "research",
   "project",
@@ -46,6 +46,11 @@ const SOURCE_COLOR: Record<LogSource, { text: string; bg: string; border: string
     text: "text-[var(--accent-primary)]",
     bg: "bg-[var(--accent-primary-muted)]",
     border: "border-[var(--accent-primary)]/30",
+  },
+  canvas: {
+    text: "text-[var(--accent-secondary)]",
+    bg: "bg-[var(--accent-secondary)]/15",
+    border: "border-[var(--accent-secondary)]/30",
   },
   chat: {
     text: "text-[var(--accent-primary)]",
@@ -66,11 +71,6 @@ const SOURCE_COLOR: Record<LogSource, { text: string; bg: string; border: string
     text: "text-[var(--text-primary)]",
     bg: "bg-[var(--bg-elevated)]",
     border: "border-[var(--border-default)]",
-  },
-  canvas: {
-    text: "text-[var(--accent-secondary)]",
-    bg: "bg-[var(--accent-secondary)]/15",
-    border: "border-[var(--accent-secondary)]/30",
   },
   editor: {
     text: "text-[var(--status-success)]",

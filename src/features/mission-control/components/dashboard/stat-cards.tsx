@@ -21,7 +21,7 @@ export function StatCards({ data }: { data: MissionControlUsage }) {
       <StatCard
         label="Total Cost"
         value={fmtCost(t.totalCostUsd)}
-        sub="Claude + Review + BYOK"
+        sub="Claude + BYOK"
         accent={AGENT_COLOR.output}
       />
       <StatCard
@@ -35,12 +35,6 @@ export function StatCards({ data }: { data: MissionControlUsage }) {
         value={fmtTokens(t.codexTokens)}
         sub={`${t.codexSessions} threads · total only`}
         accent={AGENT_COLOR.codex}
-      />
-      <StatCard
-        label="Review Agents"
-        value={fmtTokens(t.reviewInput + t.reviewOutput)}
-        sub={`${t.reviewRuns} runs · ${fmtCost(t.reviewCost)}`}
-        accent={AGENT_COLOR.review}
       />
       <StatCard
         label="BYOK"

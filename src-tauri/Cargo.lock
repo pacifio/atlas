@@ -375,7 +375,6 @@ dependencies = [
  "atlas-gitdiff",
  "atlas-memory",
  "atlas-registry",
- "atlas-review",
  "atlas-terminal",
  "base64 0.21.7",
  "cersei-provider",
@@ -513,11 +512,15 @@ name = "atlas-codeindex"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cersei",
  "ignore",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tree-sitter",
+ "tree-sitter-go",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
 ]
 
 [[package]]
@@ -557,15 +560,15 @@ dependencies = [
  "anyhow",
  "async-trait",
  "atlas-embed",
- "cersei-agent",
- "cersei-embeddings",
- "cersei-memory",
+ "chrono",
  "grafeo",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "usearch",
+ "uuid",
 ]
 
 [[package]]
@@ -597,17 +600,6 @@ dependencies = [
  "tokio",
  "tracing",
  "zip",
-]
-
-[[package]]
-name = "atlas-review"
-version = "0.1.0"
-dependencies = [
- "cersei",
- "futures",
- "serde",
- "serde_json",
- "tokio-util",
 ]
 
 [[package]]
@@ -1216,7 +1208,6 @@ dependencies = [
  "cersei-types",
  "chrono",
  "dirs 5.0.1",
- "grafeo",
  "parking_lot",
  "serde",
  "serde_json",

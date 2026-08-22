@@ -21,7 +21,6 @@ const TYPE_ICON: Partial<Record<TabType, LucideIcon>> = {
   browser: Globe,
   "mission-control": LayoutDashboard,
   research: BookOpen,
-  "model-chat": MessageSquare,
 };
 
 function ColIcon({ type }: { type: TabType }) {

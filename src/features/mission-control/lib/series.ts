@@ -1,8 +1,8 @@
 import type { DailyBucket, MissionControlUsage } from "../types";
 
-/** Total tokens a daily bucket represents (claude in+out + codex + review). */
+/** Total tokens a daily bucket represents (claude in+out + codex). */
 export function bucketTokens(d: DailyBucket): number {
-  return d.claudeInput + d.claudeOutput + d.codexTokens + d.reviewTokens;
+  return d.claudeInput + d.claudeOutput + d.codexTokens;
 }
 
 /** Filter the daily series to the last `rangeDays` (null = all time). */

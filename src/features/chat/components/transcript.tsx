@@ -42,7 +42,7 @@ import { AtlasIcon } from "@/components/atlas-icon";
 import { projectRows, RowKind, type Projection, type Row } from "../lib/turn-rows";
 import { useTranscriptScroll } from "../lib/use-transcript-scroll";
 import { useChatStore } from "../stores/chat-store";
-import { saveThreadToKb, drawDiagram } from "../lib/turn-actions";
+import { saveThreadToKb } from "../lib/turn-actions";
 import { cn } from "@/lib/utils";
 import { isScrollHot } from "@/lib/scroll-hot";
 import { GradualBlur } from "@/components/gradual-blur";
@@ -632,14 +632,6 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
 
   // ── Turn-footer actions ──────────────────────────────────────────────
   const onSaveKb = useCallback(() => void saveThreadToKb(tabId), [tabId]);
-  const onDiagram = useCallback(
-    (messageId: string) => {
-      const session = useChatStore.getState().sessions[tabId];
-      const msg = session?.messages.find((m) => m.id === messageId);
-      if (msg) drawDiagram(msg, msg.turnSummary?.files ?? []);
-    },
-    [tabId],
-  );
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -678,7 +670,6 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
                 priority={safeStart + i}
                 onToggleExpand={toggleExpand}
                 onSaveKb={onSaveKb}
-                onDiagram={onDiagram}
               />
             </div>
           ))}
@@ -742,7 +733,6 @@ function RowView({
   onToggleExpand,
   onExpandTurn,
   onSaveKb,
-  onDiagram,
 }: {
   row: Row;
   justSentMessageId?: string;
@@ -753,7 +743,6 @@ function RowView({
   onToggleExpand: (id: string) => void;
   onExpandTurn: (turnId: string) => void;
   onSaveKb: () => void;
-  onDiagram: (messageId: string) => void;
 }) {
   switch (row.kind) {
     case RowKind.User:
@@ -781,9 +770,8 @@ function RowView({
     case RowKind.Separator:
       return <SeparatorRowView row={row} />;
     case RowKind.TurnFooter:
-      // `onDiagram` is passed through untouched — binding `row.messageId` here
       // made a fresh closure per render and defeated the memo on footer rows.
-      return <TurnFooterRowView row={row} onSaveKb={onSaveKb} onDiagram={onDiagram} />;
+      return <TurnFooterRowView row={row} onSaveKb={onSaveKb} />;
     default:
       return null;
   }

@@ -1,6 +1,5 @@
 const TAB_TYPES = [
   "chat",
-  "model-chat",
   "canvas",
   "browser",
   "tasks",

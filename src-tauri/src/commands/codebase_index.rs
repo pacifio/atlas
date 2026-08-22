@@ -173,10 +173,11 @@ async fn provider_summaries(
     if opts.provider.is_empty() || opts.model.is_empty() {
         return;
     }
-    let key = match byok_get(app.clone(), opts.provider.clone()) {
-        Ok(Some(k)) => k,
-        _ => return,
-    };
+    // Guard only: `run_completion` resolves the key itself, but bail before
+    // fanning out rather than firing N calls that each fail on a missing key.
+    if !matches!(byok_get(app.clone(), opts.provider.clone()), Ok(Some(_))) {
+        return;
+    }
 
     let targets = top_targets(docs, to_summarize, PROVIDER_SUMMARY_CAP);
     if targets.is_empty() {
@@ -187,20 +188,19 @@ async fn provider_summaries(
 
     use futures::stream::{self, StreamExt};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let cancel = atlas_review::CancellationToken::new();
     let done = Arc::new(AtomicUsize::new(0));
     // Concurrent API calls; emit progress live as each completes so the
     // parallelism is visible.
     let results: Vec<(usize, String)> = stream::iter(targets.into_iter().map(|i| {
-        let user = build_summary_user(&docs[i]);
+        // `run_completion` sends a single user turn, so the system prompt is
+        // folded into it (same shape `memory_summarize::summarize` uses).
+        let prompt = format!("{SUMMARY_SYSTEM}\n\n{}", build_summary_user(&docs[i]));
         let provider = opts.provider.clone();
         let model = opts.model.clone();
-        let key = key.clone();
-        let cancel = cancel.clone();
         let app = app.clone();
         let done = done.clone();
         async move {
-            let out = atlas_review::complete(&provider, &model, &key, SUMMARY_SYSTEM, &user, &cancel)
+            let out = super::memory_summarize::run_completion(&app, prompt, &provider, &model)
                 .await
                 .unwrap_or_default();
             let n = done.fetch_add(1, Ordering::Relaxed) + 1;

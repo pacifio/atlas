@@ -56,7 +56,7 @@ src/features/<feature>/
   lib/          — pure helpers, and the invoke()/listen() wrappers (<domain>-api.ts)
 ```
 
-`src/features/` holds ~30 slices: chat, editor, terminal, browser, git, github, explorer, knowledge, canvas, layout, log, monitor, research, review-agents, settings, memory, mission-control, model-chat, organisations, packs, skills, telemetry, updater, workspaces, and more.
+`src/features/` holds ~30 slices: chat, editor, terminal, browser, git, github, explorer, knowledge, canvas, layout, log, monitor, research, settings, memory, mission-control, model-chat, organisations, packs, skills, telemetry, updater, workspaces, and more.
 
 - **Cross-feature widgets** live in `src/components/`.
 - **UI primitives** live in `src/ui/`.
@@ -209,10 +209,9 @@ All wired in as `path` dependencies from `src-tauri/Cargo.toml`.
 | `atlas-bus` | Global event broadcaster + middleware pipeline: a cloneable `tokio::sync::broadcast`-backed `EventBus` fan-out (lagging subscribers drop rather than block the producer), plus `OutboundPipeline`/`InboundPipeline` middleware chains. |
 | `atlas-cersei` | Atlas's native, in-process coding agent, built on the Cersei agent SDK. Read `crates/atlas-cersei/ARCHITECTURE.md` before touching agent lifecycle, tools, permissions, providers, or persistence. |
 | `atlas-terminal` | Wraps `portable-pty`, manages `TerminalSession`s, bridges PTY bytes to Tauri events. |
-| `atlas-memory` | On-device RAG/memory engine: MiniLM → usearch HNSW plus Cersei graph memory, behind a `MemorySearchFn` seam. Read its `README.md` and `MIGRATION.md` before changing on-disk index formats. |
+| `atlas-memory` | On-device RAG/memory engine: MiniLM → usearch HNSW plus grafeo graph memory, behind a `MemorySearchFn` seam. Read its `README.md` and `MIGRATION.md` before changing on-disk index formats. |
 | `atlas-embed` | On-device text embeddings and a small vector store, isolated so `candle`'s heavy dependency tree doesn't slow incremental builds of everything else. Also hosts a quantized Qwen2.5-Instruct decoder for local RAG answers. |
-| `atlas-codeindex` | Deterministic codebase scanner: turns live source into structural, embeddable docs via Cersei's tree-sitter code intelligence. |
-| `atlas-review` | Native code-review engine, built on the Cersei agent SDK. |
+| `atlas-codeindex` | Deterministic codebase scanner: turns live source into structural, embeddable docs via its own tree-sitter code intelligence (Rust/TS/TSX/JS/Python/Go). |
 | `atlas-gitdiff` | Structured side-by-side git diff engine: parses unified diffs, computes word-level intra-line change spans (word-diff algorithm vendored from `dandavison/delta`, MIT). |
 | `atlas-kb-server` | Standalone static-server binary produced by the knowledge base's "Export server" action. Embeds the exported HTML/CSS via `include_dir!`, serves it on `localhost:4747`. |
 
@@ -301,7 +300,6 @@ atlas/
 │   ├── atlas-memory                 on-device RAG/memory engine
 │   ├── atlas-embed                  on-device embeddings + local LLM (candle)
 │   ├── atlas-codeindex               tree-sitter codebase scanner
-│   ├── atlas-review                  native code-review engine
 │   ├── atlas-gitdiff                 structured diff engine
 │   └── atlas-kb-server                self-contained KB static-server binary
 │

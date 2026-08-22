@@ -328,7 +328,6 @@ export function App() {
     toggleRightPanel,
     toggleBottomPanel,
     toggleChatSidebar,
-    toggleModelChatSidebar,
     toggleTabBar,
     addTab,
     setActiveTab,
@@ -1258,11 +1257,6 @@ export function App() {
     {
       combo: { key: "j", meta: true, alt: true },
       action: toggleChatSidebar,
-    },
-    {
-      // ⌘⌥K — toggle the Model-Chat history sidebar (mirror of ⌘⌥J).
-      combo: { key: "k", meta: true, alt: true },
-      action: toggleModelChatSidebar,
     },
     {
       // ⌥J — open the Knowledge Base, or jump to it if already open. Placed

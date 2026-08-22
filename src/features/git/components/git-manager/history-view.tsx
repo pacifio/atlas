@@ -1,22 +1,11 @@
 import { useEffect, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  ArrowLeft,
-  Copy,
-  Undo2,
-  GitGraph,
-  RotateCcw,
-  Sparkles,
-  Tag,
-  Check,
-  ShieldCheck,
-} from "lucide-react";
+import { ArrowLeft, Copy, Undo2, GitGraph, RotateCcw, Sparkles, Tag, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
 import { useArtifactsStore } from "@/features/artifacts/stores/artifacts-store";
-import { useReviewStore } from "@/features/review-agents/stores/review-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { DiffView } from "../diff-view";
 
@@ -82,18 +71,6 @@ export function HistoryView() {
                 <Undo2 size={12} />
               </button>
               <ResetMenu onReset={(mode) => run(() => actions.reset(selected.hash, mode))} />
-              <button
-                onClick={() => {
-                  useReviewStore.getState().actions.requestReview("commit", selected.hash);
-                  const layout = useLayoutStore.getState();
-                  layout.actions.setRightSection("review-agents");
-                  if (!layout.rightPanel.visible) layout.actions.toggleRightPanel();
-                }}
-                className="p-1 rounded text-text-tertiary hover:text-text-primary hover:bg-bg-hover"
-                title="Review this commit with AI"
-              >
-                <ShieldCheck size={12} />
-              </button>
               <button
                 onClick={() => setTagging((v) => !v)}
                 className="p-1 rounded text-text-tertiary hover:text-text-primary hover:bg-bg-hover"

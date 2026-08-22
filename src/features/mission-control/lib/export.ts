@@ -118,9 +118,7 @@ function buildMarkdown(data: MissionControlUsage): string {
   lines.push(`| Claude cache | ${fmtTokens(t.claudeCache)} |`);
   lines.push(`| Requests / sessions | ${fmtTokens(t.claudeRequests)} / ${t.claudeSessions} |`);
   lines.push(`| Codex tokens | ${fmtTokens(t.codexTokens)} (${t.codexSessions} threads) |`);
-  lines.push(
-    `| Review tokens / runs | ${fmtTokens(t.reviewInput + t.reviewOutput)} / ${t.reviewRuns} |`,
-  );
+  lines.push();
   lines.push(
     `| BYOK tokens / calls | ${fmtTokens(t.byokInput + t.byokOutput)} / ${t.byokRequests} |`,
   );
@@ -128,11 +126,11 @@ function buildMarkdown(data: MissionControlUsage): string {
   lines.push("");
   lines.push(`## Per project`);
   lines.push("");
-  lines.push(`| Project | Claude (in/out) | Cost | Requests | Codex | Review |`);
-  lines.push(`| --- | --- | --- | --- | --- | --- |`);
+  lines.push(`| Project | Claude (in/out) | Cost | Requests | Codex |`);
+  lines.push(`| --- | --- | --- | --- | --- |`);
   for (const p of [...data.projects].sort((a, b) => b.totalTokens - a.totalTokens)) {
     lines.push(
-      `| ${p.projectName} | ${fmtTokens(p.claude.inputTokens)} / ${fmtTokens(p.claude.outputTokens)} | ${fmtCost(p.claude.costUsd)} | ${fmtTokens(p.claude.requests)} | ${fmtTokens(p.codex.tokens)} | ${fmtTokens(p.review.inputTokens + p.review.outputTokens)} |`,
+      `| ${p.projectName} | ${fmtTokens(p.claude.inputTokens)} / ${fmtTokens(p.claude.outputTokens)} | ${fmtCost(p.claude.costUsd)} | ${fmtTokens(p.claude.requests)} | ${fmtTokens(p.codex.tokens)} |`,
     );
   }
   lines.push("");

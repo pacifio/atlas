@@ -49,9 +49,6 @@ const PdfViewer = lazy(() =>
 const GitDiffPanel = lazy(() =>
   import("@/features/git/components/git-diff-panel").then((m) => ({ default: m.GitDiffPanel })),
 );
-const CanvasPanel = lazy(() =>
-  import("@/features/canvas/components/canvas-panel").then((m) => ({ default: m.CanvasPanel })),
-);
 const KnowledgePanel = lazy(() =>
   import("@/features/knowledge/components/knowledge-panel").then((m) => ({
     default: m.KnowledgePanel,
@@ -90,10 +87,8 @@ const ArtifactsPanel = lazy(() =>
     default: m.ArtifactsPanel,
   })),
 );
-const ModelChatPanel = lazy(() =>
-  import("@/features/model-chat/components/model-chat-panel").then((m) => ({
-    default: m.ModelChatPanel,
-  })),
+const CanvasPanel = lazy(() =>
+  import("@/features/canvas/components/canvas-panel").then((m) => ({ default: m.CanvasPanel })),
 );
 const MemoryPanel = lazy(() =>
   import("@/features/memory/components/memory-panel").then((m) => ({ default: m.MemoryPanel })),
@@ -132,7 +127,6 @@ import type { TabType } from "@/lib/constants";
 
 const tabIcons: Record<TabType, React.ElementType> = {
   chat: AtlasIcon,
-  "model-chat": MessageSquare,
   canvas: Map,
   browser: Globe,
   tasks: CheckSquare,
@@ -633,8 +627,6 @@ function TabContent({ tab }: { tab: Tab }) {
   switch (tab.type) {
     case "chat":
       return <ChatPanel tabId={tab.id} />;
-    case "model-chat":
-      return <ModelChatPanel tabId={tab.id} />;
     case "canvas":
       return <CanvasPanel />;
     case "knowledge":
@@ -698,10 +690,9 @@ function PlaceholderContent({ tab }: { tab: Tab }) {
 
 const NEW_TAB_OPTIONS: Array<{ type: TabType; label: string; icon: React.ElementType }> = [
   { type: "chat", label: "Agents", icon: AtlasIcon },
-  { type: "model-chat", label: "Chat", icon: MessageSquare },
+  { type: "canvas", label: "Spaces", icon: Map },
   { type: "terminal", label: "Terminal", icon: Terminal },
   { type: "diff", label: "Git Diff", icon: GitCompare },
-  { type: "canvas", label: "Spaces", icon: Map },
   { type: "browser", label: "Browser", icon: Globe },
   { type: "research", label: "Research", icon: BookOpen },
   { type: "knowledge", label: "Knowledge", icon: Brain },

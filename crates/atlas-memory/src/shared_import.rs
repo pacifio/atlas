@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use cersei_memory::memdir::MemoryType;
+use crate::graph::MemoryType;
 
 use crate::MemoryEngine;
 

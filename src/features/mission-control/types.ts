@@ -15,19 +15,11 @@ export interface CodexMetrics {
   sessions: number;
 }
 
-export interface ReviewMetrics {
-  inputTokens: number;
-  outputTokens: number;
-  costUsd: number;
-  runs: number;
-}
-
 export interface ProjectMetrics {
   projectPath: string;
   projectName: string;
   claude: ClaudeMetrics;
   codex: CodexMetrics;
-  review: ReviewMetrics;
   firstActivityMs: number | null;
   lastActivityMs: number | null;
   totalTokens: number;
@@ -41,7 +33,6 @@ export interface DailyBucket {
   claudeCost: number;
   claudeRequests: number;
   codexTokens: number;
-  reviewTokens: number;
 }
 
 export interface ByokDay {
@@ -60,10 +51,6 @@ export interface GrandTotals {
   claudeSessions: number;
   codexTokens: number;
   codexSessions: number;
-  reviewInput: number;
-  reviewOutput: number;
-  reviewCost: number;
-  reviewRuns: number;
   byokInput: number;
   byokOutput: number;
   byokCost: number;

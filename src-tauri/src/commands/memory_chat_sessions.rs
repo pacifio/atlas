@@ -2,7 +2,7 @@
 //! indexed memory).
 //!
 //! Like model-chat, sessions are stored GLOBALLY as one JSON file per session
-//! under `app_config_dir/memory-chat/<id>.json`. Mirrors `modelchat_sessions`
+//! under `app_config_dir/memory-chat/<id>.json`. Mirrors the session-chat store
 //! minus the provider/model fields (the model is always the local quantized one).
 
 use std::fs;

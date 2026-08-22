@@ -6,7 +6,7 @@ import type { MissionControlUsage } from "../../types";
 import { ChartCard } from "./chart-card";
 import { ChartTooltip } from "./chart-tooltip";
 
-/** Per-project stacked bars broken down by source (Claude/Codex/Review/BYOK). */
+/** Per-project stacked bars broken down by source (Claude/Codex). */
 export function UsageBarChart({ data }: { data: MissionControlUsage }) {
   const rows = useMemo(
     () =>
@@ -15,10 +15,9 @@ export function UsageBarChart({ data }: { data: MissionControlUsage }) {
           name: p.projectName,
           Claude: p.claude.inputTokens + p.claude.outputTokens,
           Codex: Math.max(0, p.codex.tokens),
-          Review: p.review.inputTokens + p.review.outputTokens,
         }))
-        .filter((r) => r.Claude + r.Codex + r.Review > 0)
-        .sort((a, b) => b.Claude + b.Codex + b.Review - (a.Claude + a.Codex + a.Review))
+        .filter((r) => r.Claude + r.Codex > 0)
+        .sort((a, b) => b.Claude + b.Codex - (a.Claude + a.Codex))
         .slice(0, 12),
     [data.projects],
   );
@@ -56,11 +55,10 @@ export function UsageBarChart({ data }: { data: MissionControlUsage }) {
                 fill={AGENT_COLOR.claude}
                 isAnimationActive={false}
               />
-              <Bar dataKey="Codex" stackId="a" fill={AGENT_COLOR.codex} isAnimationActive={false} />
               <Bar
-                dataKey="Review"
+                dataKey="Codex"
                 stackId="a"
-                fill={AGENT_COLOR.review}
+                fill={AGENT_COLOR.codex}
                 radius={[2, 2, 0, 0]}
                 isAnimationActive={false}
               />

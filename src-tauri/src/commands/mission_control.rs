@@ -7,7 +7,6 @@
 //! Data sources (honest about granularity):
 //!  - Claude: rich (input/output/cache, real cost, per-message day series).
 //!  - Codex: total tokens only (no in/out, no cost) attributed to a thread's day.
-//!  - Review: persisted per-run input/output tokens + optional cost.
 //!  - BYOK: appended to `byok-usage.jsonl` going forward (see modelchat.rs).
 
 use serde::{Deserialize, Serialize};
@@ -17,7 +16,6 @@ use tauri::{AppHandle, Manager};
 
 use super::agent_memory::collect_codex_sessions;
 use super::claude;
-use super::review;
 
 // ── Wire shapes (camelCase to the frontend) ───────────────────────────────
 
@@ -40,15 +38,6 @@ pub struct CodexMetrics {
     pub sessions: u32,
 }
 
-#[derive(Serialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewMetrics {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cost_usd: f64,
-    pub runs: u32,
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectMetrics {
@@ -56,10 +45,9 @@ pub struct ProjectMetrics {
     pub project_name: String,
     pub claude: ClaudeMetrics,
     pub codex: CodexMetrics,
-    pub review: ReviewMetrics,
     pub first_activity_ms: Option<i64>,
     pub last_activity_ms: Option<i64>,
-    /// claude(in+out) + codex + review(in+out) — drives the consumption pie.
+    /// claude(in+out) + codex — drives the consumption pie.
     pub total_tokens: u64,
 }
 
@@ -73,7 +61,6 @@ pub struct DailyBucket {
     pub claude_cost: f64,
     pub claude_requests: u64,
     pub codex_tokens: u64,
-    pub review_tokens: u64,
 }
 
 #[derive(Serialize, Default)]
@@ -96,10 +83,6 @@ pub struct GrandTotals {
     pub claude_sessions: u64,
     pub codex_tokens: i64,
     pub codex_sessions: u32,
-    pub review_input: u64,
-    pub review_output: u64,
-    pub review_cost: f64,
-    pub review_runs: u32,
     pub byok_input: u64,
     pub byok_output: u64,
     pub byok_cost: f64,
@@ -119,7 +102,7 @@ pub struct MissionControlUsage {
     pub generated_at: String,
 }
 
-// ── Per-project day accumulator (claude + codex + review on one date) ──────
+// ── Per-project day accumulator (claude + codex on one date) ───────────────
 
 #[derive(Default)]
 struct DayAll {
@@ -128,7 +111,6 @@ struct DayAll {
     c_cost: f64,
     c_req: u64,
     codex: u64,
-    review: u64,
 }
 
 #[derive(Deserialize)]
@@ -186,9 +168,8 @@ pub async fn mission_control_usage(
             let name = path.rsplit('/').find(|s| !s.is_empty()).unwrap_or(path).to_string();
             let cagg = claude::claude_project_agg(path);
             let codex_sessions = &codex_by_project[i];
-            let reviews = review::review_list(path.clone());
 
-            // Per-day map combining all three sources for this project.
+            // Per-day map combining both sources for this project.
             let mut days: BTreeMap<String, DayAll> = BTreeMap::new();
             for (date, d) in &cagg.days {
                 let e = days.entry(date.clone()).or_default();
@@ -208,25 +189,6 @@ pub async fn mission_control_usage(
                     days.entry(ms_local_day(s.updated_at_ms)).or_default().codex += s.tokens as u64;
                 }
             }
-            // Review — attribute per-run tokens to its created day.
-            let mut r_in = 0u64;
-            let mut r_out = 0u64;
-            let mut r_cost = 0f64;
-            let (mut review_first, mut review_last): (Option<i64>, Option<i64>) = (None, None);
-            for r in &reviews {
-                r_in += r.report.input_tokens;
-                r_out += r.report.output_tokens;
-                r_cost += r.report.cost_usd.unwrap_or(0.0);
-                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&r.created_at) {
-                    let ms = dt.timestamp_millis();
-                    review_first = Some(review_first.map_or(ms, |f: i64| f.min(ms)));
-                    review_last = Some(review_last.map_or(ms, |l: i64| l.max(ms)));
-                }
-                if let Some(day) = iso_local_day(&r.created_at) {
-                    days.entry(day).or_default().review +=
-                        r.report.input_tokens + r.report.output_tokens;
-                }
-            }
 
             // Emit this project's day buckets.
             for (date, d) in days {
@@ -238,7 +200,6 @@ pub async fn mission_control_usage(
                     claude_cost: d.c_cost,
                     claude_requests: d.c_req,
                     codex_tokens: d.codex,
-                    review_tokens: d.review,
                 });
             }
 
@@ -255,26 +216,17 @@ pub async fn mission_control_usage(
                 tokens: codex_tokens_total,
                 sessions: codex_sessions.len() as u32,
             };
-            let review_m = ReviewMetrics {
-                input_tokens: r_in,
-                output_tokens: r_out,
-                cost_usd: r_cost,
-                runs: reviews.len() as u32,
-            };
-
-            let first_activity_ms = [cagg.first_ms, codex_first, review_first]
+            let first_activity_ms = [cagg.first_ms, codex_first]
                 .into_iter()
                 .flatten()
                 .min();
-            let last_activity_ms = [cagg.last_ms, codex_last, review_last]
+            let last_activity_ms = [cagg.last_ms, codex_last]
                 .into_iter()
                 .flatten()
                 .max();
             let total_tokens = claude.input_tokens
                 + claude.output_tokens
-                + codex.tokens.max(0) as u64
-                + review_m.input_tokens
-                + review_m.output_tokens;
+                + codex.tokens.max(0) as u64;
 
             // Grand totals.
             totals.claude_input += claude.input_tokens;
@@ -285,19 +237,14 @@ pub async fn mission_control_usage(
             totals.claude_sessions += claude.sessions;
             totals.codex_tokens += codex.tokens;
             totals.codex_sessions += codex.sessions;
-            totals.review_input += review_m.input_tokens;
-            totals.review_output += review_m.output_tokens;
-            totals.review_cost += review_m.cost_usd;
-            totals.review_runs += review_m.runs;
             totals.total_tokens += total_tokens;
-            totals.total_cost_usd += claude.cost_usd + review_m.cost_usd;
+            totals.total_cost_usd += claude.cost_usd;
 
             projects.push(ProjectMetrics {
                 project_path: path.clone(),
                 project_name: name,
                 claude,
                 codex,
-                review: review_m,
                 first_activity_ms,
                 last_activity_ms,
                 total_tokens,

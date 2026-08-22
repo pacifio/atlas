@@ -4,7 +4,7 @@
 //! surface (spawn / new_session / send / set_mode / set_model / …). The only
 //! extra surface it needs is listing its own persisted sessions for the chat
 //! session sidebar — model/provider selection reuses the frontend's existing
-//! BYOK catalog (`review-agents/lib/model-catalog.ts`) + `agents_set_model`
+//! BYOK catalog (`settings/lib/model-catalog.ts`) + `agents_set_model`
 //! with a `"provider/model"` value.
 
 use atlas_agents::{AgentManager, ReplayItem, SessionMeta};

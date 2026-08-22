@@ -1,30 +1,18 @@
+// Shared BYOK provider-chat binding.
+//
+// Rust owns the network/LLM work (Atlas's "Rust owns business logic" rule):
+// callers send `(provider, model, messages)` and Rust streams token deltas back
+// over the `atlas:modelchat` event, tagged by `streamId` so concurrent streams
+// don't cross.
+//
+// This used to be the Model-Chat tab's private API. That tab is gone; the
+// engine underneath it is not — it's the one BYOK streaming path shared by
+// session chat, memory chat, the canvas AI copilot, and AI commit messages.
+// It lives here rather than in a feature slice because it belongs to none of
+// them.
+
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-
-export interface SessionMeta {
-  id: string;
-  title: string;
-  provider: string;
-  model: string;
-  updatedAt: string;
-}
-
-export interface StoredMessage {
-  id: string;
-  role: string;
-  content: string;
-  timestamp: string;
-}
-
-export interface ModelChatSessionWire {
-  id: string;
-  title: string;
-  provider: string;
-  model: string;
-  messages: StoredMessage[];
-  createdAt: string;
-  updatedAt: string;
-}
 
 export interface WireImage {
   mime: string;
@@ -38,7 +26,7 @@ export interface WireMsg {
   images?: WireImage[];
 }
 
-/** Streaming events from Rust (Rig), tagged by `stream_id`. */
+/** Streaming events from Rust, tagged by `stream_id`. */
 export type ModelChatEvent =
   | { stream_id: string; kind: "text_delta"; delta: string }
   | { stream_id: string; kind: "usage"; input_tokens: number; output_tokens: number }
@@ -50,12 +38,6 @@ export const modelchat = {
   stream: (streamId: string, provider: string, model: string, messages: WireMsg[]) =>
     invoke<void>("modelchat_stream", { streamId, provider, model, messages }),
   cancel: (streamId: string) => invoke<void>("modelchat_cancel", { streamId }),
-
-  sessionsList: () => invoke<SessionMeta[]>("modelchat_sessions_list"),
-  sessionGet: (id: string) => invoke<ModelChatSessionWire>("modelchat_session_get", { id }),
-  sessionSave: (session: ModelChatSessionWire) =>
-    invoke<void>("modelchat_session_save", { session }),
-  sessionDelete: (id: string) => invoke<void>("modelchat_session_delete", { id }),
 };
 
 export const listenModelChat = (handler: (e: ModelChatEvent) => void): Promise<UnlistenFn> =>

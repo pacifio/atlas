@@ -1,7 +1,7 @@
 import type { TabType } from "@/lib/constants";
 
 type LeftSection = "files" | "knowledge";
-type RightSection = "review-agents" | "changes" | "github" | "git-graph";
+type RightSection = "changes" | "github" | "git-graph";
 
 /** A predefined panel/split/tab arrangement applied via the layout switcher
  *  (⌘⌥L) or Settings → Layouts. Applied to the ACTIVE workspace. */
@@ -68,7 +68,7 @@ export const LAYOUT_TEMPLATES: LayoutTemplate[] = [
     name: "Review",
     description: "Agent with the code-review panel open.",
     panels: { right: true },
-    rightSection: "review-agents",
+    rightSection: "changes",
     columns: [{ type: "chat", title: "Agents" }],
   },
   {

@@ -19,13 +19,13 @@ import {
 } from "@/features/settings/stores/model-pricing-store";
 import { CHAT_PROVIDERS, providerById } from "@/features/settings/lib/providers";
 import { useByokStore } from "@/features/settings/stores/byok-store";
-import { modelchat } from "@/features/model-chat/lib/model-chat-api";
+import { modelchat } from "@/lib/byok/byok-chat";
 import {
   curateModels,
   defaultModelFor,
   isPreferredModel,
   preferredModels,
-} from "@/features/review-agents/lib/model-catalog";
+} from "@/features/settings/lib/model-catalog";
 import { loadCerseiModelPref } from "../lib/cersei-model-pref";
 import { cn } from "@/lib/utils";
 

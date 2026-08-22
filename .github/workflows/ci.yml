@@ -118,7 +118,6 @@ jobs:
           - crate: atlas-redact
             clippy: true
           - crate: atlas-registry
-          - crate: atlas-review
           - crate: atlas-terminal
     steps:
       - uses: actions/checkout@v4

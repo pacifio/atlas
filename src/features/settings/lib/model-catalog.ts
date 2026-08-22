@@ -1,10 +1,11 @@
-// Curated coding-model catalog for the reviewer.
+// Curated coding-model catalog for BYOK model pickers.
 //
-// PR review is a coding-agent task, so we don't dump every model a provider's
-// `/models` endpoint returns (embeddings, TTS, image, etc.). Instead we keep a
-// per-provider preference list of strong coding models — these rank first and
-// double as the offline fallback when the live list is unavailable — then
-// append any other genuinely coding-capable live models, capped.
+// Picking a model for a coding task means we don't dump every model a
+// provider's `/models` endpoint returns (embeddings, TTS, image, etc.).
+// Instead we keep a per-provider preference list of strong coding models —
+// these rank first and double as the offline fallback when the live list is
+// unavailable — then append any other genuinely coding-capable live models,
+// capped.
 //
 // This also fixes a class of 404s: model selection is now per-provider, so a
 // model id chosen for one provider can never leak into a request to another

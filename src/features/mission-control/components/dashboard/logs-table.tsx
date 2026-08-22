@@ -15,6 +15,7 @@ const SOURCES = [
   "atlas",
   "agent",
   "chat",
+  "canvas",
   "git",
   "knowledge",
   "github",
@@ -22,7 +23,6 @@ const SOURCES = [
   "system",
   "editor",
   "research",
-  "canvas",
 ] as const;
 
 function parseJsonl(raw: string): LogEntry[] {
@@ -47,7 +47,6 @@ const SOURCE_COLOR: Record<string, string> = {
   git: "#7aa7e8",
   knowledge: "#b8a3df",
   github: "#d68aae",
-  review: "#d9b56e",
 };
 
 /** Full-width, remaining-height activity log table (Atlas logs across all

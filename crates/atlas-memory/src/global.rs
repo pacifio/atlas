@@ -41,8 +41,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use cersei_memory::graph::GraphMemory;
-use cersei_memory::memdir::MemoryType;
+use crate::graph::GraphMemory;
+use crate::graph::MemoryType;
 
 /// Minimum confidence for a memory to be eligible for global promotion.
 pub const PROMOTION_MIN_CONFIDENCE: f32 = 0.8;

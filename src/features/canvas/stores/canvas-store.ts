@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { createSelectors } from "@/lib/create-selectors";
 import { logEvent } from "@/features/log/lib/log";
-import { forceLayout } from "@/lib/graph-layout";
 import { loadCanvas, saveCanvas } from "../lib/canvas-api";
 
 /** What a canvas node is. `note` = rich card (title/body/icon), `text` = chrome-
@@ -17,14 +16,7 @@ export type ShapeType = "rectangle" | "rounded" | "ellipse" | "diamond";
 /** Active canvas tool. Create-tools drop a node on the next pane click, then
  *  revert to `select`. `connector` is a hint; connections are made by dragging
  *  between node handles (Loose mode). `shape:*` drops that geometry. */
-export type CanvasTool =
-  | "select"
-  | "note"
-  | "text"
-  | "media"
-  | "connector"
-  | "ai"
-  | `shape:${ShapeType}`;
+export type CanvasTool = "select" | "note" | "text" | "media" | "connector" | `shape:${ShapeType}`;
 
 export interface CanvasNode {
   id: string;
@@ -46,8 +38,6 @@ export interface CanvasNode {
   /** Relative path under `.atlas/canvas-media/` (served via canvas_media_data_url). */
   src?: string;
   mediaKind?: MediaKind;
-  /** Set when this node belongs to an AI-generated group (see `CanvasAiGroup`). */
-  groupId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,30 +49,6 @@ export interface CanvasEdge {
   /** Which side of each node the connector attaches to (t/r/b/l). */
   sourceHandle?: string | null;
   targetHandle?: string | null;
-  /** Set when this edge belongs to an AI-generated group. */
-  groupId?: string;
-}
-
-/** A chat message in an AI group's thread. */
-export interface AiGroupMessage {
-  role: "user" | "assistant";
-  content: string;
-  ts: number;
-}
-
-/** An AI-generated group of nodes/edges + the chat thread that produced/edits it.
- *  Members are tagged with `groupId`; this record holds the conversation so the
- *  user can reopen the ✨ pin and keep modifying the same diagram. */
-export interface CanvasAiGroup {
-  id: string;
-  /** Flow-space point the group was seeded at (marker anchor fallback). */
-  anchor: { x: number; y: number };
-  title: string;
-  messages: AiGroupMessage[];
-  provider?: string;
-  model?: string;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface CanvasViewport {
@@ -91,43 +57,11 @@ export interface CanvasViewport {
   zoom: number;
 }
 
-/** One operation from the AI diagram protocol (see `lib/canvas-ai.ts`). Node
- *  coordinates are RELATIVE to the group anchor; omitted coords get auto-laid-out.
- *  `connect` endpoints are either an add_node `tempId` or an existing node id. */
-export type AiOp =
-  | {
-      op: "add_node";
-      tempId: string;
-      kind: "shape" | "note" | "text";
-      shapeType?: ShapeType;
-      text?: string;
-      title?: string;
-      body?: string;
-      x?: number;
-      y?: number;
-      width?: number;
-      height?: number;
-      icon?: string;
-    }
-  | {
-      op: "update_node";
-      id: string;
-      text?: string;
-      title?: string;
-      body?: string;
-      shapeType?: ShapeType;
-    }
-  | { op: "delete_node"; id: string }
-  | { op: "connect"; from: string; to: string }
-  | { op: "delete_edge"; id: string };
-
-/** One page's canvas data (Figma-style pages). Name/icon live in the tree entry. */
 export interface CanvasPage {
   id: string;
   viewport: CanvasViewport;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
-  aiGroups: Record<string, CanvasAiGroup>;
 }
 
 /** An entry in the pages file tree — a page (has canvas data) or an organizing
@@ -152,13 +86,11 @@ interface CanvasFile {
 interface CanvasState {
   projectPath: string | null;
   loaded: boolean;
-  // The top-level nodes/edges/aiGroups/viewport are the ACTIVE page's live working
+  // The top-level nodes/edges/viewport are the ACTIVE page's live working
   // copy — every action + selector reads/writes these. Inactive pages live in
   // `pages`; `syncActiveIntoPages` folds the working copy back before save/switch.
   nodes: CanvasNode[];
   edges: CanvasEdge[];
-  /** AI-generated groups (member nodes carry `groupId`), keyed by group id. */
-  aiGroups: Record<string, CanvasAiGroup>;
   viewport: CanvasViewport;
   /** All pages' persisted data, keyed by id (active page is also mirrored above). */
   pages: Record<string, CanvasPage>;
@@ -167,10 +99,6 @@ interface CanvasState {
   activePageId: string | null;
   /** Ids of currently-selected nodes (multi-select via marquee / shift-click). */
   selectedIds: string[];
-  /** A group whose AI thread the canvas panel should auto-open on mount — set by
-   *  external callers (e.g. "Draw diagram" from a chat turn) so the user sees the
-   *  generation loading state and can keep chatting. Consumed once. */
-  pendingAiThreadGroupId: string | null;
   fullscreen: boolean;
   activeTool: CanvasTool;
   /** Mirrors the module-level undo/redo stacks for toolbar button state. */
@@ -235,25 +163,6 @@ interface CanvasActions {
     /** Delete a page or folder (folders cascade to descendant pages). Never
      *  removes the last remaining page. */
     deleteTreeEntry: (id: string) => void;
-    // ── AI groups ──
-    /** Create an empty AI group anchored at `at`; returns its id. */
-    createAiGroup: (at: { x: number; y: number }, provider?: string, model?: string) => string;
-    /** Append a message to a group's thread. */
-    appendGroupMessage: (groupId: string, msg: AiGroupMessage) => void;
-    /** Apply a batch of AI ops to a group (one undo step). New nodes are placed at
-     *  `anchor` + their relative coords; missing coords get force-laid-out. */
-    applyAiOps: (groupId: string, ops: AiOp[], anchor: { x: number; y: number }) => void;
-    /** Delete a group: its member nodes + edges + the thread. */
-    deleteGroup: (groupId: string) => void;
-    /** Translate all of a group's member nodes by (dx, dy). */
-    moveGroup: (groupId: string, dx: number, dy: number) => void;
-    /** Select all member nodes of a group. */
-    selectGroup: (groupId: string) => void;
-    /** Ask the canvas panel to open a group's AI thread popover (surfaces the
-     *  loading state after an externally-triggered generation). */
-    requestOpenAiThread: (groupId: string) => void;
-    /** Clear a pending auto-open request (called once the panel has opened it). */
-    consumePendingAiThread: () => void;
   };
 }
 
@@ -268,7 +177,7 @@ function nowIso(): string {
 const emptyViewport: CanvasViewport = { x: 0, y: 0, zoom: 1 };
 
 function emptyPage(id: string): CanvasPage {
-  return { id, viewport: { ...emptyViewport }, nodes: [], edges: [], aiGroups: {} };
+  return { id, viewport: { ...emptyViewport }, nodes: [], edges: [] };
 }
 
 /** Fold the active page's live working copy (top-level fields) back into `pages`
@@ -280,7 +189,6 @@ function activePageSnapshot(s: CanvasState): CanvasPage | null {
     viewport: s.viewport,
     nodes: s.nodes,
     edges: s.edges,
-    aiGroups: s.aiGroups,
   };
 }
 
@@ -363,7 +271,6 @@ function parseFile(raw: string): CanvasFile {
         viewport: p.viewport ?? { ...emptyViewport },
         nodes: normalizeNodes(p.nodes),
         edges: Array.isArray(p.edges) ? p.edges : [],
-        aiGroups: p.aiGroups && typeof p.aiGroups === "object" ? p.aiGroups : {},
       }));
       if (pages.length === 0) return freshFile();
       const tree = Array.isArray(parsed.tree) ? (parsed.tree as PageTreeEntry[]) : [];
@@ -381,10 +288,6 @@ function parseFile(raw: string): CanvasFile {
       viewport: (parsed.viewport as CanvasViewport) ?? { ...emptyViewport },
       nodes: normalizeNodes(parsed.nodes),
       edges: Array.isArray(parsed.edges) ? (parsed.edges as CanvasEdge[]) : [],
-      aiGroups:
-        parsed.aiGroups && typeof parsed.aiGroups === "object"
-          ? (parsed.aiGroups as Record<string, CanvasAiGroup>)
-          : {},
     };
     return {
       version: 4,
@@ -417,13 +320,11 @@ export const useCanvasStore = createSelectors(
         loaded: false,
         nodes: [],
         edges: [],
-        aiGroups: {},
         viewport: emptyViewport,
         pages: {},
         tree: [],
         activePageId: null,
         selectedIds: [],
-        pendingAiThreadGroupId: null,
         fullscreen: false,
         activeTool: "select",
         canUndo: false,
@@ -439,7 +340,6 @@ export const useCanvasStore = createSelectors(
               s.loaded = false;
               s.nodes = [];
               s.edges = [];
-              s.aiGroups = {};
               s.pages = {};
               s.tree = [];
               s.activePageId = null;
@@ -461,7 +361,6 @@ export const useCanvasStore = createSelectors(
                 const active = pagesMap[parsed.activePageId];
                 s.nodes = active?.nodes ?? [];
                 s.edges = active?.edges ?? [];
-                s.aiGroups = active?.aiGroups ?? {};
                 s.viewport = active?.viewport ?? { ...emptyViewport };
                 s.loaded = true;
                 s.canUndo = false;
@@ -714,7 +613,6 @@ export const useCanvasStore = createSelectors(
               s.activePageId = id;
               s.nodes = [];
               s.edges = [];
-              s.aiGroups = {};
               s.viewport = { ...emptyViewport };
               s.selectedIds = [];
             });
@@ -749,7 +647,6 @@ export const useCanvasStore = createSelectors(
               s.activePageId = id;
               s.nodes = target.nodes;
               s.edges = target.edges;
-              s.aiGroups = target.aiGroups;
               s.viewport = target.viewport;
               s.selectedIds = [];
             });
@@ -808,212 +705,14 @@ export const useCanvasStore = createSelectors(
                 s.activePageId = next.id;
                 s.nodes = target?.nodes ?? [];
                 s.edges = target?.edges ?? [];
-                s.aiGroups = target?.aiGroups ?? {};
                 s.viewport = target?.viewport ?? { ...emptyViewport };
                 s.selectedIds = [];
               }
               scheduleSave();
             });
           },
-
-          // ── AI groups ──────────────────────────────────────────────────────
-          createAiGroup: (at, provider, model) => {
-            const id = genId("g");
-            const stamp = nowIso();
-            set((s) => {
-              s.aiGroups[id] = {
-                id,
-                anchor: { x: at.x, y: at.y },
-                title: "AI diagram",
-                messages: [],
-                provider,
-                model,
-                createdAt: stamp,
-                updatedAt: stamp,
-              };
-            });
-            scheduleSave();
-            return id;
-          },
-
-          appendGroupMessage: (groupId, msg) =>
-            set((s) => {
-              const g = s.aiGroups[groupId];
-              if (!g) return;
-              g.messages.push(msg);
-              g.updatedAt = nowIso();
-              scheduleSave();
-            }),
-
-          applyAiOps: (groupId, ops, anchor) => {
-            takeSnapshot(); // whole batch = one undo step
-            const stamp = nowIso();
-            set((s) => {
-              const temp = new Map<string, string>(); // tempId → real node id
-              const addedIds: string[] = [];
-              let allHaveCoords = true;
-
-              for (const op of ops) {
-                if (op.op !== "add_node") continue;
-                const id = genId("n");
-                temp.set(op.tempId, id);
-                addedIds.push(id);
-                if (op.x === undefined || op.y === undefined) allHaveCoords = false;
-                const [dw, dh] =
-                  op.kind === "shape" && (op.shapeType === "ellipse" || op.shapeType === "diamond")
-                    ? [130, 130]
-                    : op.kind === "shape"
-                      ? [160, 90]
-                      : op.kind === "note"
-                        ? [320, undefined as number | undefined]
-                        : [200, undefined as number | undefined];
-                s.nodes.push({
-                  id,
-                  kind: op.kind,
-                  groupId,
-                  x: anchor.x + (op.x ?? 0),
-                  y: anchor.y + (op.y ?? 0),
-                  width: op.width ?? dw,
-                  height: op.height ?? dh,
-                  title: op.title ?? (op.kind === "note" ? "Untitled" : ""),
-                  body: op.body ?? "",
-                  text:
-                    op.text ??
-                    (op.kind === "text" ? "Text" : op.kind === "shape" ? (op.title ?? "") : ""),
-                  shapeType: op.kind === "shape" ? (op.shapeType ?? "rectangle") : undefined,
-                  icon: op.icon,
-                  createdAt: stamp,
-                  updatedAt: stamp,
-                });
-              }
-
-              const resolve = (ref: string) => temp.get(ref) ?? ref;
-              const nodeExists = (nid: string) => s.nodes.some((n) => n.id === nid);
-
-              for (const op of ops) {
-                if (op.op === "connect") {
-                  const from = resolve(op.from);
-                  const to = resolve(op.to);
-                  if (from === to || !nodeExists(from) || !nodeExists(to)) continue;
-                  const dup = s.edges.some(
-                    (e) =>
-                      (e.source === from && e.target === to) ||
-                      (e.source === to && e.target === from),
-                  );
-                  if (dup) continue;
-                  s.edges.push({ id: genId("e"), source: from, target: to, groupId });
-                } else if (op.op === "update_node") {
-                  const n = s.nodes.find((x) => x.id === op.id);
-                  if (!n) continue;
-                  if (op.text !== undefined) n.text = op.text;
-                  if (op.title !== undefined) n.title = op.title;
-                  if (op.body !== undefined) n.body = op.body;
-                  if (op.shapeType !== undefined) n.shapeType = op.shapeType;
-                  n.updatedAt = stamp;
-                } else if (op.op === "delete_node") {
-                  s.nodes = s.nodes.filter((n) => n.id !== op.id);
-                  s.edges = s.edges.filter((e) => e.source !== op.id && e.target !== op.id);
-                } else if (op.op === "delete_edge") {
-                  s.edges = s.edges.filter((e) => e.id !== op.id);
-                }
-              }
-
-              // If the model didn't give coordinates for every new node, force-lay
-              // them out (over the group's own edges) in a box seeded at the anchor.
-              if (addedIds.length > 1 && !allHaveCoords) {
-                const deg = new Map<string, number>();
-                for (const e of s.edges) {
-                  if (e.groupId !== groupId) continue;
-                  deg.set(e.source, (deg.get(e.source) ?? 0) + 1);
-                  deg.set(e.target, (deg.get(e.target) ?? 0) + 1);
-                }
-                const layoutNodes = addedIds.map((nid) => ({ id: nid, degree: deg.get(nid) ?? 0 }));
-                const layoutEdges = s.edges
-                  .filter((e) => e.groupId === groupId)
-                  .map((e) => ({ from: e.source, to: e.target }));
-                const pos = forceLayout(layoutNodes, layoutEdges, 720, 480, { spacing: 1.1 });
-                for (const nid of addedIds) {
-                  const p = pos[nid];
-                  const n = s.nodes.find((x) => x.id === nid);
-                  if (p && n) {
-                    n.x = anchor.x + p.x;
-                    n.y = anchor.y + p.y;
-                  }
-                }
-              }
-
-              const g = s.aiGroups[groupId];
-              if (g) g.updatedAt = stamp;
-              scheduleSave();
-            });
-          },
-
-          deleteGroup: (groupId) => {
-            takeSnapshot();
-            set((s) => {
-              s.nodes = s.nodes.filter((n) => n.groupId !== groupId);
-              s.edges = s.edges.filter((e) => e.groupId !== groupId);
-              delete s.aiGroups[groupId];
-              s.selectedIds = [];
-              scheduleSave();
-            });
-          },
-
-          moveGroup: (groupId, dx, dy) =>
-            set((s) => {
-              for (const n of s.nodes) {
-                if (n.groupId === groupId) {
-                  n.x += dx;
-                  n.y += dy;
-                }
-              }
-              const g = s.aiGroups[groupId];
-              if (g) {
-                g.anchor.x += dx;
-                g.anchor.y += dy;
-              }
-              scheduleSave();
-            }),
-
-          selectGroup: (groupId) =>
-            set((s) => {
-              s.selectedIds = s.nodes.filter((n) => n.groupId === groupId).map((n) => n.id);
-            }),
-
-          requestOpenAiThread: (groupId) =>
-            set((s) => {
-              s.pendingAiThreadGroupId = groupId;
-            }),
-
-          consumePendingAiThread: () =>
-            set((s) => {
-              s.pendingAiThreadGroupId = null;
-            }),
         },
       };
     }),
   ),
 );
-
-/** Bounding box (flow space) of a group's member nodes, or null if none. Used to
- *  place the ✨ marker pin and frame. */
-export function groupBounds(
-  nodes: CanvasNode[],
-  groupId: string,
-): { x: number; y: number; width: number; height: number } | null {
-  const members = nodes.filter((n) => n.groupId === groupId);
-  if (members.length === 0) return null;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const n of members) {
-    const w = n.width ?? 160;
-    const h = n.height ?? 90;
-    minX = Math.min(minX, n.x);
-    minY = Math.min(minY, n.y);
-    maxX = Math.max(maxX, n.x + w);
-    maxY = Math.max(maxY, n.y + h);
-  }
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
-}
