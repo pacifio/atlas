@@ -113,13 +113,23 @@ struct Inner {
 enum DbOperation {
     Upsert(Box<ThreadMetadata>),
     Delete(ThreadId),
+    /// The one-time backfill has run for this agent and must not run again.
+    MarkBackfilled(AgentId),
+}
+
+/// What a queued write is *about*, so a burst about the same thing collapses.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum OpKey {
+    Thread(ThreadId),
+    Backfill(AgentId),
 }
 
 impl DbOperation {
-    fn thread_id(&self) -> ThreadId {
+    fn key(&self) -> OpKey {
         match self {
-            DbOperation::Upsert(thread) => thread.thread_id,
-            DbOperation::Delete(thread_id) => *thread_id,
+            DbOperation::Upsert(thread) => OpKey::Thread(thread.thread_id),
+            DbOperation::Delete(thread_id) => OpKey::Thread(*thread_id),
+            DbOperation::MarkBackfilled(agent_id) => OpKey::Backfill(agent_id.clone()),
         }
     }
 }
@@ -130,6 +140,8 @@ struct Cache {
     by_paths: HashMap<PathList, HashSet<ThreadId>>,
     by_main_paths: HashMap<PathList, HashSet<ThreadId>>,
     by_session: HashMap<acp::SessionId, ThreadId>,
+    /// Agents the one-time first-run backfill has already run for.
+    backfilled: HashSet<AgentId>,
 }
 
 /// Lets a caller wait for the queue to reach the disk, and reports what failed
@@ -165,6 +177,11 @@ impl ThreadMetadataStore {
         for row in rows {
             cache.insert(row);
         }
+        cache.backfilled = db
+            .backfilled_agents()?
+            .into_iter()
+            .map(AgentId::new)
+            .collect();
 
         let (ops_tx, ops_rx) = mpsc::channel::<DbOperation>();
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
@@ -198,6 +215,9 @@ impl ThreadMetadataStore {
                         let outcome = match &op {
                             DbOperation::Upsert(row) => db.save(row),
                             DbOperation::Delete(id) => db.delete(*id),
+                            DbOperation::MarkBackfilled(agent_id) => {
+                                db.mark_backfilled(agent_id.as_str())
+                            }
                         };
                         if let Err(e) = outcome {
                             tracing::warn!(error = %e, "thread-metadata write failed");
@@ -275,6 +295,26 @@ impl ThreadMetadataStore {
         let cache = read(&self.inner.cache);
         let thread_id = cache.by_session.get(session_id)?;
         cache.threads.get(thread_id).cloned()
+    }
+
+    /// Has the one-time first-run backfill already run for this agent?
+    ///
+    /// "Once" has to survive a restart, so this is read from the store rather
+    /// than from anything the process remembers.
+    pub fn has_backfilled(&self, agent_id: &AgentId) -> bool {
+        read(&self.inner.cache).backfilled.contains(agent_id)
+    }
+
+    /// Record that the backfill has run for this agent.
+    ///
+    /// Written even when the agent contributed nothing: "we asked and it had
+    /// nothing" and "we never asked" must not look the same, or an agent with
+    /// no history is re-probed — and re-spawned — on every launch.
+    pub fn mark_backfilled(&self, agent_id: &AgentId) {
+        if !write(&self.inner.cache).backfilled.insert(agent_id.clone()) {
+            return;
+        }
+        self.enqueue(DbOperation::MarkBackfilled(agent_id.clone()));
     }
 
     /// Every session id the store knows. Import dedupes against this.
@@ -591,9 +631,9 @@ impl ThreadMetadataStore {
 /// thread, in no particular order across threads. Zed's `dedup_db_operations`
 /// (`:1254-1263`).
 fn dedup_operations(operations: Vec<DbOperation>) -> Vec<DbOperation> {
-    let mut seen: HashMap<ThreadId, DbOperation> = HashMap::new();
+    let mut seen: HashMap<OpKey, DbOperation> = HashMap::new();
     for operation in operations.into_iter().rev() {
-        seen.entry(operation.thread_id()).or_insert(operation);
+        seen.entry(operation.key()).or_insert(operation);
     }
     seen.into_values().collect()
 }

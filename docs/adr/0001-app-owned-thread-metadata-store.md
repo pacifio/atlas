@@ -14,6 +14,7 @@ Port Zed's `ThreadMetadataStore` mechanism same-to-same; render it in Atlas's ex
 
 - History is an **app-level SQLite store of thread metadata only** (app-minted thread id, nullable ACP session id for drafts, agent id, title + user override, timestamps, worktree paths, archived flag, remote-connection slot). Transcripts are never stored; replay comes from the agent via `session/load`.
 - The store is fed by **live in-app conversation events** and by **ACP `session/list` import** (user-initiated, plus a one-time automatic first-run backfill). Nothing else feeds it.
+- The store also records which agents the **first-run backfill** has already run for. It is app state rather than thread metadata, and it lives here because it must be as durable as the rows it produced.
 - **Resume** selects `session/load` vs `session/resume` by advertised capability; **delete** is local-first with agent-side `session/delete` only when advertised. **No agent-identity checks anywhere** — capability flags only.
 - All scrape readers, the Claude-dir file watcher, and the live `session/list` sidebar source are deleted. The checkpoint importer's contract (do not relocate or disable the CLIs' own files) is preserved — Atlas stops *reading* CLI storage for UI; it does not touch those files.
 - Cost/usage surfaces and past-session mentions re-source from Atlas-recorded data (checkpoint usage records, Atlas transcripts).

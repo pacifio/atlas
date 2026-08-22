@@ -46,6 +46,7 @@
 
 mod db;
 mod error;
+mod import;
 mod model;
 mod paths;
 mod recorder;
@@ -53,6 +54,7 @@ mod schema;
 mod store;
 
 pub use error::{Error, Result};
+pub use import::{collect_all_sessions, importable_threads};
 pub use model::{ThreadFilter, ThreadId, ThreadMetadata, DEFAULT_THREAD_TITLE};
 pub use paths::{LengthMismatch, PathList, SerializedPathList, WorktreePaths};
 pub use recorder::{affects_thread_metadata, ThreadRecorder, ThreadSnapshot};

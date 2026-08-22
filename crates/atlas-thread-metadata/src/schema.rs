@@ -8,17 +8,22 @@
 //! (`thread_metadata_store.rs:1373-1465`) because it re-keyed a shipped table
 //! from `session_id` to `thread_id` and grew columns over releases. Atlas has
 //! no shipped predecessor, so V1 below *is* Zed's end state — the same columns,
-//! the same nullability, one `CREATE TABLE`. Two of Zed's migrations are
+//! the same nullability, in one `CREATE TABLE`. Two of Zed's migrations are
 //! deliberately absent: the `archived_git_worktrees` side tables (out of scope
 //! per the spec — they serve a worktree lifecycle Atlas does not have), and the
-//! session-less-row prune (nothing to prune).
+//! session-less-row prune, which Atlas does on every open instead (see
+//! `Db::prune_drafts`).
+//!
+//! V2 adds `backfilled_agents`, which Zed has no equivalent of: the one-time
+//! import pass is Atlas's own (spec #15) and needs somewhere durable to
+//! remember it already ran.
 
 use rusqlite::Connection;
 
 use crate::error::{Error, Result};
 
 /// Bump when adding a migration, and add the matching arm in [`migrate`].
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     // Fast path, outside any transaction: the common case is a database
@@ -45,6 +50,9 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         }
         if found < 1 {
             conn.execute_batch(V1)?;
+        }
+        if found < 2 {
+            conn.execute_batch(V2)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
@@ -90,4 +98,18 @@ CREATE TABLE IF NOT EXISTS threads(
 
 CREATE INDEX IF NOT EXISTS idx_threads_updated_at
     ON threads(updated_at DESC);
+";
+
+/// Which agents the one-time first-run backfill has already run for.
+///
+/// In the store rather than in a settings file so it is written in the same
+/// transaction-scoped place as the rows it produced: a backfill that inserted
+/// rows and then failed to record itself would run again and (thanks to the
+/// session-id dedup) do nothing — but a marker written where the rows are not
+/// could claim a backfill that never happened.
+const V2: &str = "
+CREATE TABLE IF NOT EXISTS backfilled_agents(
+    agent_id TEXT PRIMARY KEY,
+    at       TEXT NOT NULL
+) STRICT;
 ";

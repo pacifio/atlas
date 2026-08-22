@@ -45,7 +45,8 @@ use atlas_agent_wire::{
 };
 use atlas_native_agent::{CerseiAgentServer, CERSEI_AGENT_ID};
 use atlas_thread_metadata::{
-    affects_thread_metadata, ThreadId, ThreadMetadataStore, ThreadRecorder, ThreadSnapshot,
+    affects_thread_metadata, collect_all_sessions, importable_threads, ThreadId,
+    ThreadMetadataStore, ThreadRecorder, ThreadSnapshot,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -1156,6 +1157,126 @@ impl AgentHost {
         Ok(())
     }
 
+    /// Which installed agents can be imported from, and how much they have.
+    ///
+    /// Connecting to every installed agent is the price of the answer, and Zed
+    /// pays it too (`thread_import.rs:689-792`): whether an agent has listable
+    /// history is something only the agent can say, at `initialize`. The native
+    /// agent is absent because its threads are already Atlas's.
+    ///
+    /// An agent that cannot be imported from is *reported*, not hidden. A user
+    /// who does not see their agent has no way to tell a missing feature from a
+    /// missing agent.
+    pub async fn import_candidates(&self) -> Result<Vec<ImportCandidate>> {
+        let known = self.history_or_err()?.store().known_session_ids();
+        let mut out = Vec::new();
+        for plugin_id in self.store.external_agents() {
+            let plugin_id = plugin_id.to_string();
+            let status = match self.list_sessions_of(&plugin_id).await {
+                Ok(None) => ImportStatus::Unsupported,
+                Ok(Some(sessions)) => ImportStatus::Ready {
+                    importable: importable_threads(sessions, &plugin_id.as_str().into(), &known)
+                        .len(),
+                },
+                Err(e) => ImportStatus::Error { message: e.message },
+            };
+            out.push(ImportCandidate {
+                plugin_id: plugin_id.clone(),
+                display_name: self.display_name(&plugin_id),
+                status,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Pull the chosen agents' sessions into history. Answers how many rows
+    /// were added.
+    pub async fn import_threads(&self, plugin_ids: Vec<String>) -> Result<usize> {
+        let mut imported = 0;
+        for plugin_id in plugin_ids {
+            imported += self.import_from(&plugin_id).await?;
+        }
+        Ok(imported)
+    }
+
+    /// The one-time import pass, so an existing user's history is not empty
+    /// after the update.
+    ///
+    /// Once per agent, ever, recorded in the store so it survives a restart —
+    /// and recorded whatever the outcome, including a failure. "Once" is what
+    /// the spec asks for, and the alternative is re-spawning every installed
+    /// agent on every launch to retry a convenience; a user whose agent was
+    /// signed out that morning can import by hand, which is one action away in
+    /// the history view.
+    ///
+    /// A fresh install has no installed agents, so this does nothing at all,
+    /// which is the point: it must never be a reason for an agent to exist.
+    pub async fn backfill_history(&self) {
+        let Some(history) = self.history() else {
+            return;
+        };
+        for plugin_id in self.store.external_agents() {
+            let plugin_id = plugin_id.to_string();
+            let agent_id: atlas_acp_thread::AgentId = plugin_id.as_str().into();
+            if history.store().has_backfilled(&agent_id) {
+                continue;
+            }
+            match self.import_from(&plugin_id).await {
+                Ok(rows) => tracing::info!(%plugin_id, rows, "backfilled history"),
+                Err(e) => tracing::warn!(error = %e.message, %plugin_id, "backfill found nothing"),
+            }
+            history.store().mark_backfilled(&agent_id);
+        }
+    }
+
+    /// Fetch one agent's sessions and write the new ones. Answers how many.
+    ///
+    /// The single place import happens, so the manual flow and the backfill
+    /// cannot drift apart on what "importable" means.
+    async fn import_from(&self, plugin_id: &str) -> Result<usize> {
+        let history = self.history_or_err()?;
+        let Some(sessions) = self.list_sessions_of(plugin_id).await? else {
+            return Ok(0);
+        };
+        // Read what is known *now*, not when the modal was opened: two imports
+        // racing, or a conversation started since, must not produce a second
+        // row for one session.
+        let rows = importable_threads(
+            sessions,
+            &plugin_id.into(),
+            &history.store().known_session_ids(),
+        );
+        let imported = rows.len();
+        history.store().save_all(rows);
+        Ok(imported)
+    }
+
+    /// Every session an agent will list, or `None` when it has no listable
+    /// history — which is to say, when it did not advertise
+    /// `sessionCapabilities.list`.
+    async fn list_sessions_of(
+        &self,
+        plugin_id: &str,
+    ) -> Result<Option<Vec<atlas_acp_thread::AgentSessionInfo>>> {
+        let agent = self.agent_for(plugin_id)?;
+        let connection = self
+            .manager
+            .connection(agent)
+            .await
+            .map_err(HostError::from)?;
+        let Some(list) = connection.session_list() else {
+            return Ok(None);
+        };
+        // No cwd filter. Zed scopes its import to a workspace because its
+        // connections are per-workspace; Atlas has one connection per agent and
+        // an app-level store whose rows carry their own paths, so "everything
+        // this agent knows" is both simpler and more useful.
+        collect_all_sessions(list.as_ref(), None)
+            .await
+            .map(Some)
+            .map_err(HostError::from)
+    }
+
     fn history_or_err(&self) -> Result<&ThreadRecorder> {
         self.history()
             .ok_or_else(|| HostError::new("session history is unavailable", ErrorClass::Fatal))
@@ -1331,6 +1452,30 @@ impl ThreadObserver for HistoryObserver {
             snapshot_of(thread),
         );
     }
+}
+
+/// One installed agent, as the import flow lists it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportCandidate {
+    pub plugin_id: String,
+    pub display_name: String,
+    pub status: ImportStatus,
+}
+
+/// Whether an agent can be imported from, and why not when it cannot.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ImportStatus {
+    /// It listed its sessions, and this many are new to Atlas.
+    Ready { importable: usize },
+    /// It did not advertise `sessionCapabilities.list`. Named, not guessed —
+    /// the user is told which capability is missing rather than that the agent
+    /// "doesn't work".
+    Unsupported,
+    /// It was asked and something went wrong. Shown, because a silent failure
+    /// is indistinguishable from an agent with no history.
+    Error { message: String },
 }
 
 /// A history row, now live.

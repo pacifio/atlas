@@ -562,6 +562,19 @@ pub fn install_manager(app: &AppHandle) {
             store.set_settings(installed).await;
             emit_catalog_changed(&app, "settings");
 
+            // Once the installed map is live, pull each installed agent's own
+            // sessions in — once ever, per agent. A fresh install has none, so
+            // this does nothing; an existing user's history does not arrive
+            // empty (#20).
+            //
+            // On a task of its own: it starts every installed agent and waits
+            // for each handshake, and an agent that hangs must not take the
+            // catalog refresh and PATH detection down with it.
+            {
+                let host = host.clone();
+                tauri::async_runtime::spawn(async move { host.backfill_history().await });
+            }
+
             let _ = registry.refresh().await;
             store.registry_updated();
             // Detection runs after the refresh: it probes for the programs the
@@ -952,6 +965,28 @@ pub async fn threads_delete(
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<(), CmdError> {
     host.delete_thread(parse_thread_id(&thread_id)?)
+        .await
+        .map_err(CmdError::from)
+}
+
+/// Which installed agents can be imported from, and how much they have.
+///
+/// Spawns each installed agent to ask — the capability only exists after
+/// `initialize`, so there is no cheaper honest answer (#20).
+#[tauri::command]
+pub async fn threads_import_candidates(
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<Vec<super::agent_host::ImportCandidate>, CmdError> {
+    host.import_candidates().await.map_err(CmdError::from)
+}
+
+/// Pull the chosen agents' sessions into history. Answers how many rows landed.
+#[tauri::command]
+pub async fn threads_import(
+    plugin_ids: Vec<String>,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<usize, CmdError> {
+    host.import_threads(plugin_ids)
         .await
         .map_err(CmdError::from)
 }

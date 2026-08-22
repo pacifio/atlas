@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { X, MessageSquare, Search, PanelLeft, Plus } from "lucide-react";
+import { X, MessageSquare, Search, PanelLeft, Plus, Download } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
@@ -21,6 +21,7 @@ import { pluginIdForAgent, type SwitchableAgent } from "@/types/agent";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { timeAgo } from "@/lib/time-ago";
+import { ImportThreadsModal } from "./import-threads-modal";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
@@ -265,6 +266,7 @@ export const SessionSidebar = memo(function SessionSidebar({
     useLayoutStore.use.actions();
 
   const [search, setSearch] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
 
   const queryKey = ["claude-sessions", cwd] as const;
 
@@ -1038,7 +1040,21 @@ export const SessionSidebar = memo(function SessionSidebar({
           placeholder="Search…"
           className="flex-1 bg-transparent outline-none text-[11px] text-text-primary placeholder:text-text-tertiary min-w-0"
         />
+        {/* Import sessions an agent kept for itself. Lives here until #21's
+            history view gives it a permanent home. */}
+        {!asDropdown && (
+          <button
+            type="button"
+            onClick={() => setImportOpen(true)}
+            aria-label="Import sessions"
+            title="Import sessions from your agents"
+            className="shrink-0 flex h-5 w-5 items-center justify-center rounded text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors cursor-pointer"
+          >
+            <Download size={11} />
+          </button>
+        )}
       </div>
+      <ImportThreadsModal open={importOpen} onOpenChange={setImportOpen} />
 
       {/* List */}
       <div className="flex-1 overflow-y-auto hide-scrollbar">

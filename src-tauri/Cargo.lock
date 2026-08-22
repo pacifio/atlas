@@ -694,6 +694,7 @@ name = "atlas-thread-metadata"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
+ "anyhow",
  "atlas-acp-thread",
  "chrono",
  "rusqlite",

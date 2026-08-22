@@ -126,6 +126,26 @@ impl Db {
         Ok(())
     }
 
+    /// Which agents the first-run backfill has already run for.
+    pub(crate) fn backfilled_agents(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("SELECT agent_id FROM backfilled_agents")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn mark_backfilled(&self, agent_id: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO backfilled_agents(agent_id, at) VALUES (?1, ?2) \
+             ON CONFLICT(agent_id) DO NOTHING",
+            rusqlite::params![agent_id, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn delete(&self, thread_id: ThreadId) -> Result<()> {
         self.conn.execute(
             "DELETE FROM threads WHERE thread_id = ?1",

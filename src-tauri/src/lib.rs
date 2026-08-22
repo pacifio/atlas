@@ -554,6 +554,8 @@ pub fn run() {
             commands::agents::agent_transcripts_read,
             commands::agents::threads_resume,
             commands::agents::threads_delete,
+            commands::agents::threads_import_candidates,
+            commands::agents::threads_import,
             commands::agents::agent_transcripts_delete,
             commands::agents::agents_snapshot,
             commands::agents::agents_snapshot_meta,
