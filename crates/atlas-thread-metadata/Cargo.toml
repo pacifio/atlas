@@ -1,0 +1,29 @@
+[package]
+name = "atlas-thread-metadata"
+version = "0.1.0"
+edition = "2021"
+description = "The app-owned thread-metadata store: Atlas's only source for the session sidebar and history. Metadata only — never transcript content. Ported from Zed's `ThreadMetadataStore`."
+
+[lib]
+name = "atlas_thread_metadata"
+
+[dependencies]
+# Bundled for the same reason atlas-checkpoint bundles it: the store must not
+# depend on whatever sqlite the host machine happens to ship.
+rusqlite = { version = "0.32", features = ["bundled"] }
+# For `AgentId`, `acp::SessionId` and `AgentSessionInfo` — the row is presented
+# to the import/resume paths in exactly those types, as in Zed.
+atlas-acp-thread = { path = "../atlas-acp-thread" }
+agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
+chrono = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+chrono = "0.4"
+rusqlite = { version = "0.32", features = ["bundled"] }
