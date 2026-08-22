@@ -25,7 +25,7 @@ use atlas_agent_store::{AgentServerSettings, AgentServerStore, RegistryAgent};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use super::agent_host::AgentHost;
+use super::agent_host::{icon_data_url, AgentHost};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,18 +72,6 @@ struct InstallDone {
     agent_id: String,
     success: bool,
     error: Option<String>,
-}
-
-/// Read a cached icon as a data URL. Icons are SVG on disk; a missing or
-/// unreadable one is simply absent rather than an error.
-fn icon_data_url(agent: &RegistryAgent) -> Option<String> {
-    let path = agent.icon_path()?;
-    let bytes = std::fs::read(path).ok()?;
-    use base64::Engine;
-    Some(format!(
-        "data:image/svg+xml;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    ))
 }
 
 fn entry_view(agent: &RegistryAgent, store: &AgentServerStore) -> RegistryEntryView {
@@ -205,11 +193,72 @@ async fn install(host: &Arc<AgentHost>, app: &AppHandle, agent_id: &str) -> Resu
             total: None,
         },
     );
+    let entry = AgentServerSettings::registry();
+    let settings = with_entry(host, agent_id, entry);
+    persist(host, &app_data_dir(app), settings).await
+}
+
+/// Accept a detection: install the copy of the agent the user already has.
+///
+/// This is the only non-registry install path, and it is what a "Detected on
+/// your system" card does. It writes a `custom` entry pointing at the binary
+/// that was found, NOT a `registry` one — the point of accepting a detection is
+/// to run that copy rather than download our own
+/// (`DetectedAgent::install_entry`).
+///
+/// Note what it is not: finding a binary never installs anything by itself, and
+/// never makes an agent spawnable. Only this command, invoked by the user, does
+/// — which is what keeps PATH discovery an affordance rather than the spawn
+/// ladder rung it used to be (§D12-3, locked).
+#[tauri::command]
+pub async fn acp_registry_install_detected(
+    agent_id: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    let host = app.state::<Arc<AgentHost>>().inner().clone();
+    let result = install_detected(&host, &app, &agent_id).await;
+
+    let _ = app.emit(
+        "atlas:registry-install:done",
+        InstallDone {
+            agent_id: agent_id.clone(),
+            success: result.is_ok(),
+            error: result.as_ref().err().cloned(),
+        },
+    );
+    if result.is_ok() {
+        app.state::<Arc<crate::telemetry::TelemetryClient>>().capture(
+            "acp_agent_installed",
+            serde_json::json!({ "agent_id": agent_id, "from": "detected" }),
+        );
+        super::catalog::emit_catalog_changed(&app, "install");
+    }
+    result
+}
+
+async fn install_detected(
+    host: &Arc<AgentHost>,
+    app: &AppHandle,
+    agent_id: &str,
+) -> Result<(), String> {
+    let found = host
+        .detected()
+        .into_iter()
+        .find(|agent| agent.id == agent_id)
+        .ok_or_else(|| format!("{agent_id} was not found on your PATH"))?;
+    let settings = with_entry(host, agent_id, found.install_entry());
+    persist(host, &app_data_dir(app), settings).await
+}
+
+/// The installed map with one entry added or replaced.
+fn with_entry(
+    host: &Arc<AgentHost>,
+    agent_id: &str,
+    entry: AgentServerSettings,
+) -> atlas_agent_store::AllAgentServersSettings {
     let mut settings = host.store().settings();
+    settings.0.insert(agent_id.to_string(), entry);
     settings
-        .0
-        .insert(agent_id.to_string(), AgentServerSettings::registry());
-    persist(host, app, settings).await
 }
 
 /// Uninstall: drop the entry, and drop any live connection to it.
@@ -228,7 +277,7 @@ pub async fn acp_registry_uninstall(
     if settings.0.remove(&agent_id).is_none() {
         return Ok(());
     }
-    persist(&host, &app, settings).await?;
+    persist(&host, &app_data_dir(&app), settings).await?;
 
     // A connection to an agent that is no longer installed must not survive the
     // uninstall — the next spawn would otherwise reach a process the user
@@ -274,10 +323,10 @@ pub fn acp_registry_metadata(
 /// failed to install at all.
 async fn persist(
     host: &Arc<AgentHost>,
-    app: &AppHandle,
+    data_dir: &std::path::Path,
     settings: atlas_agent_store::AllAgentServersSettings,
 ) -> Result<(), String> {
-    super::agent_host::save_installed(&app_data_dir(app), &settings)
+    super::agent_host::save_installed(data_dir, &settings)
         .map_err(|e| format!("writing the installed map: {e}"))?;
     host.store().set_settings(settings).await;
     Ok(())
@@ -287,4 +336,118 @@ fn app_data_dir(app: &AppHandle) -> std::path::PathBuf {
     app.path()
         .app_data_dir()
         .unwrap_or_else(|_| std::env::temp_dir())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::agent_host::{load_installed, test_support::fresh_host};
+
+    fn detected(id: &str, program: &str) -> atlas_agent_store::DetectedAgent {
+        atlas_agent_store::DetectedAgent {
+            id: id.into(),
+            name: id.into(),
+            program: std::path::PathBuf::from(program),
+            args: vec!["acp".into()],
+        }
+    }
+
+    /// Accepting a detection installs THE COPY THE USER ALREADY HAS. A
+    /// `registry` entry here would ignore the find and download our own, which
+    /// is the opposite of what the card offered.
+    #[tokio::test]
+    async fn accepting_a_detection_installs_the_users_own_copy() {
+        let (host, dir) = fresh_host();
+        host.set_detected_for_tests(vec![detected("found-agent", "/usr/local/bin/found-agent")]);
+
+        let settings = with_entry(
+            &host,
+            "found-agent",
+            host.detected()[0].install_entry(),
+        );
+        persist(&host, &dir, settings).await.expect("it installs");
+
+        match host.store().settings().0.get("found-agent") {
+            Some(atlas_agent_store::AgentServerSettings::Custom { path, args, .. }) => {
+                assert_eq!(path.to_string_lossy(), "/usr/local/bin/found-agent");
+                assert_eq!(args, &["acp"]);
+            }
+            other => panic!("expected a custom entry, got {other:?}"),
+        }
+        // …and it is spawnable now, which is the whole point of accepting.
+        assert!(host.agent_for("found-agent").is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The map has to survive a restart: an agent that is spawnable now but
+    /// gone after a relaunch is worse than one that failed to install.
+    #[tokio::test]
+    async fn an_install_is_written_to_disk_not_just_to_memory() {
+        let (host, dir) = fresh_host();
+        assert!(load_installed(&dir).0.is_empty(), "a fresh profile has none");
+
+        let settings = with_entry(&host, "some-agent", AgentServerSettings::registry());
+        persist(&host, &dir, settings).await.expect("it installs");
+
+        let on_disk = load_installed(&dir);
+        assert!(on_disk.0.contains_key("some-agent"));
+        assert!(on_disk.has_registry_agents());
+
+        // Uninstall is the same write with the entry gone.
+        let mut settings = host.store().settings();
+        settings.0.remove("some-agent");
+        persist(&host, &dir, settings).await.expect("it uninstalls");
+        assert!(load_installed(&dir).0.is_empty());
+        assert!(host.agent_for("some-agent").is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Installing an id twice replaces the entry rather than duplicating it,
+    /// and re-installing a detected agent over a registry one keeps the newer
+    /// answer.
+    #[tokio::test]
+    async fn installing_twice_replaces_the_entry() {
+        let (host, dir) = fresh_host();
+        let settings = with_entry(&host, "some-agent", AgentServerSettings::registry());
+        persist(&host, &dir, settings).await.unwrap();
+
+        let settings = with_entry(
+            &host,
+            "some-agent",
+            AgentServerSettings::custom("/opt/some-agent", vec![]),
+        );
+        persist(&host, &dir, settings).await.unwrap();
+
+        let map = load_installed(&dir);
+        assert_eq!(map.0.len(), 1);
+        assert!(matches!(
+            map.0.get("some-agent"),
+            Some(AgentServerSettings::Custom { .. })
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A detection that is no longer there is refused rather than installed as
+    /// a broken entry — the probe may be minutes old.
+    #[tokio::test]
+    async fn a_detection_that_vanished_is_not_installed() {
+        let (host, dir) = fresh_host();
+        assert!(host
+            .detected()
+            .iter()
+            .all(|agent| agent.id != "found-agent"));
+        // `install_detected` needs an AppHandle, so this asserts the same guard
+        // it applies: nothing detected under that id means nothing to install.
+        let found = host
+            .detected()
+            .into_iter()
+            .find(|agent| agent.id == "found-agent");
+        assert!(found.is_none());
+        assert!(host.agent_for("found-agent").is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

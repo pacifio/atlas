@@ -69,9 +69,9 @@ function setCatalog(entries: Entry[]) {
 const FIRST_PARTY: Entry[] = [
   { id: "claude-code-ts", agentType: "claude-code", kind: "builtin", source: "npx" },
   { id: "codex", agentType: "codex", kind: "builtin", source: "npx" },
-  { id: "opencode", agentType: "opencode", kind: "builtin", source: "system-path", optional: true },
-  { id: "cursor", agentType: "cursor", kind: "builtin", source: "managed-binary", optional: true },
-  { id: "kilo", agentType: "kilo", kind: "builtin", source: "auto-acquire", optional: true },
+  { id: "opencode", agentType: "opencode", kind: "builtin", source: "detected", optional: true },
+  { id: "cursor", agentType: "cursor", kind: "builtin", source: "installed", optional: true },
+  { id: "kilo", agentType: "kilo", kind: "builtin", source: "detected", optional: true },
   { id: "cersei", agentType: "cersei", kind: "native", source: "in-process" },
 ];
 
@@ -140,7 +140,7 @@ describe("switchableAgentIds", () => {
     setCatalog([
       ...FIRST_PARTY,
       { id: "amp-acp", name: "Amp", installed: true },
-      { id: "aaa-acp", name: "Aaa", installed: false, source: "system-path" },
+      { id: "aaa-acp", name: "Aaa", installed: false, source: "detected" },
       { id: "zed-acp", name: "Zed", installed: true },
     ]);
     expect(switchableAgentIds()).toEqual([
@@ -188,7 +188,7 @@ describe("switchableAgentIds", () => {
 describe("agentMeta", () => {
   it("reports source and availability once the catalog has landed", () => {
     setCatalog(FIRST_PARTY);
-    expect(agentMeta("cursor").source).toBe("managed-binary");
+    expect(agentMeta("cursor").source).toBe("installed");
     expect(agentMeta("cursor").availability).toBe("ready");
     // An auto-managed built-in with nothing resolved downloads on first use.
     expect(agentMeta("kilo").availability).toBe("needs-download");

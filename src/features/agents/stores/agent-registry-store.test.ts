@@ -110,10 +110,12 @@ describe("signature", () => {
   });
 
   it("changes when an agent's source or disabled state changes", async () => {
-    const base = await signatureFor([entry({ id: "opencode", source: "auto-acquire" })]);
-    expect(await signatureFor([entry({ id: "opencode", source: "system-path" })])).not.toBe(base);
+    const base = await signatureFor([entry({ id: "opencode", source: "detected" })]);
+    // A detection becoming a real install changes how it would launch, so the
+    // signature has to move — that is what makes the UI re-render.
+    expect(await signatureFor([entry({ id: "opencode", source: "installed" })])).not.toBe(base);
     expect(
-      await signatureFor([entry({ id: "opencode", source: "auto-acquire", disabled: true })]),
+      await signatureFor([entry({ id: "opencode", source: "detected", disabled: true })]),
     ).not.toBe(base);
   });
 });
@@ -125,10 +127,10 @@ describe("startCatalogListener", () => {
   it("re-hydrates when the backend says the catalog changed", async () => {
     startCatalogListener();
     await flush();
-    api.catalog = [entry({ id: "cursor", source: "system-path" })];
+    api.catalog = [entry({ id: "cursor", source: "detected" })];
     catalogHandler?.();
     await flush();
-    expect(useAgentRegistryStore.getState().catalogById["cursor"]?.source).toBe("system-path");
+    expect(useAgentRegistryStore.getState().catalogById["cursor"]?.source).toBe("detected");
   });
 
   it("installs exactly one listener however many times it is called", async () => {

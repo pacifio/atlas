@@ -3,24 +3,24 @@
 //
 // Keep in sync with the Rust structs; the wire shape is camelCase serde.
 
-/** How a spawn of this agent would launch it right now. */
+/** How a spawn of this agent would launch it right now.
+ *
+ *  The spawn ladder is gone (Zed port, §D12-3): an agent is the native one, it
+ *  is in the installed map, or it is not runnable. `system-path`,
+ *  `managed-binary`, `auto-acquire` and `uvx` were rungs of that ladder and are
+ *  never emitted any more. */
 export type AgentSource =
   /** The native in-process agent — no subprocess at all. */
   | "in-process"
-  /** A system install found on the user's PATH (system-first, rung 1). */
-  | "system-path"
-  /** A binary Atlas downloaded into its app-data dir (rung 2). */
-  | "managed-binary"
-  /** A marketplace install record (rung 3). */
+  /** Has an installed-map entry, so it is runnable. */
   | "installed"
-  /** Launches via `npx -y <package>` — npm fetches it on first run. */
+  /** Installed and launched through `npx` — npm fetches it on first run. */
   | "npx"
-  /** Launches via `uvx <package>` — needs uv on the machine. */
-  | "uvx"
-  /** An auto-managed built-in with nothing resolved yet: the next spawn
-   *  downloads its official binary. */
-  | "auto-acquire"
-  /** Nothing runnable — no install, no download path, no runner. */
+  /** Found on the user's PATH but NOT installed. An offer to install, not a
+   *  spawn candidate: accepting it writes a `custom` entry pointing at the
+   *  copy the user already has. */
+  | "detected"
+  /** Nothing runnable — no install, no runner. */
   | "unavailable";
 
 export type AgentKind = "native" | "builtin" | "external";
@@ -55,8 +55,8 @@ export interface AgentCatalogEntry {
   kind: AgentKind;
   source: AgentSource;
   resolvedPath: string | null;
-  /** Has a marketplace install record. A discovered-on-PATH agent is
-   *  `installed: false, source: "system-path"` — the user installed it, not
+  /** Has an installed-map entry. A detected-on-PATH agent is
+   *  `installed: false, source: "detected"` — the user installed it, not
    *  Atlas. */
   installed: boolean;
   autoManaged: boolean;
@@ -72,7 +72,7 @@ export interface AgentCatalogEntry {
   repository: string | null;
   website: string | null;
   platformSupported: boolean;
-  /** "" when unsupported; else "binary" | "npx" | "uvx". */
+  /** "" when unsupported; else "binary" | "npx". */
   distributionKind: string;
   unverified: boolean;
   unsupportedReason: string | null;
@@ -108,7 +108,9 @@ export type AgentAvailability =
   | "unavailable";
 
 export function availabilityOf(entry: AgentCatalogEntry): AgentAvailability {
-  if (entry.source === "auto-acquire") return "needs-download";
+  // A detection is not runnable until the user installs it, and an npx agent
+  // pays npm's fetch on its first spawn.
+  if (entry.source === "detected") return "needs-download";
   if (entry.source === "unavailable") return "unavailable";
   return "ready";
 }

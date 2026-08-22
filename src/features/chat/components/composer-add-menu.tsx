@@ -240,7 +240,7 @@ export function ComposerAddMenu({
                 // expectations. The spawn-time download itself is already
                 // covered by the composer's `useAgentAcquire` progress pill.
                 const needsDownload = meta.availability === "needs-download";
-                const detected = meta.source === "system-path" && meta.external;
+                const detected = meta.source === "detected" && meta.external;
                 const hint = needsDownload
                   ? " — downloads on first use"
                   : detected

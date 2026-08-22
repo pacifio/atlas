@@ -38,24 +38,24 @@ function catalog(source: Catalog["source"], installed = false): Catalog {
 
 describe("cardState", () => {
   it("puts built-in above everything — it is never installable", () => {
-    expect(cardState(listed({ builtin: true }), catalog("system-path"))).toBe("builtin");
+    expect(cardState(listed({ builtin: true }), catalog("detected"))).toBe("builtin");
     expect(cardState(listed({ builtin: true, installed: true }), undefined)).toBe("builtin");
   });
 
   it("reports an Atlas-installed agent as installed even when also on PATH", () => {
     // Both can be true; "installed" is the one with a Remove action behind it.
-    expect(cardState(listed({ installed: true }), catalog("system-path", true))).toBe("installed");
+    expect(cardState(listed({ installed: true }), catalog("detected", true))).toBe("installed");
   });
 
   it("reports a PATH-only agent as detected, not installable", () => {
     // The system-first case: it already works, but Atlas didn't put it there,
     // so neither Install nor Remove is the honest action.
-    expect(cardState(listed(), catalog("system-path"))).toBe("detected");
+    expect(cardState(listed(), catalog("detected"))).toBe("detected");
   });
 
   it("offers Install for everything else", () => {
     expect(cardState(listed(), undefined)).toBe("install");
-    expect(cardState(listed(), catalog("auto-acquire"))).toBe("install");
+    expect(cardState(listed(), catalog("npx"))).toBe("install");
     expect(cardState(listed(), catalog("unavailable"))).toBe("install");
   });
 
@@ -69,7 +69,7 @@ describe("cardState", () => {
   // `listed()`/typed stubs rather than `as never`: spreading a `never` is an
   // error under the test tsconfig, and the cast hid which fields cardState
   // actually reads.
-  const onPath = { source: "system-path" } as Catalog;
+  const onPath = { source: "detected" } as Catalog;
   it("offers Install for a normal not-installed registry agent", () => {
     // The catalog only lists spawnable agents, so a not-installed registry
     // entry has NO catalog entry — this must still be installable.

@@ -16,10 +16,10 @@
 //! An agent is now in exactly one of three states: it is the native agent, it
 //! is in the installed map, or it is not runnable.
 //!
-//! `source` values that survive: `in-process`, `installed`, `npx`,
-//! `system-path` (a detection, i.e. an install *affordance* — see below), and
-//! `unavailable`. The removed tokens are simply never emitted; the frontend's
-//! grouping is re-pointed in Stage 4.
+//! `source` is now one of `in-process`, `installed`, `npx`, `detected` (an
+//! install *affordance*, not a spawn rung — see below), and `unavailable`.
+//! `system-path`, `managed-binary`, `auto-acquire` and `uvx` are gone with the
+//! ladder and are never emitted.
 //!
 //! Deliberately **instant and sync**: everything it reads is already in memory.
 //! Nothing here probes the shell or touches the network —
@@ -47,7 +47,7 @@ mod source {
     /// Found on the user's `PATH` but NOT installed. Not runnable: it is an
     /// offer to install, and installing writes a `custom` entry pointing at
     /// the copy the user already has.
-    pub const SYSTEM_PATH: &str = "system-path";
+    pub const DETECTED: &str = "detected";
     /// Nothing runnable.
     pub const UNAVAILABLE: &str = "unavailable";
 }
@@ -84,7 +84,7 @@ pub struct AgentCatalogEntry {
     /// Absolute path to the executable behind `source`, when there is one.
     pub resolved_path: Option<String>,
     /// Has an installed-map entry. A detected-on-PATH agent is
-    /// `installed: false, source: "system-path"` — Atlas didn't install it and
+    /// `installed: false, source: "detected"` — Atlas didn't install it and
     /// will not run it until the user says so.
     pub installed: bool,
     /// Always false — nothing is Atlas-managed on a spawn any more.
@@ -219,7 +219,7 @@ fn build(host: &AgentHost) -> AgentCatalog {
                 supports_load_session: capabilities.supports_load_session,
                 supports_session_list: capabilities.supports_session_list,
                 supports_fork: capabilities.supports_fork,
-                icon_data_url: None,
+                icon_data_url: market.as_ref().and_then(super::agent_host::icon_data_url),
                 help_url: market.as_ref().and_then(|agent| {
                     agent
                         .repository()
@@ -263,7 +263,7 @@ fn build(host: &AgentHost) -> AgentCatalog {
                 .filter(|d| !d.is_empty()),
             version: market.as_ref().map(|agent| agent.version().to_string()),
             kind: "external".to_string(),
-            source: source::SYSTEM_PATH.to_string(),
+            source: source::DETECTED.to_string(),
             resolved_path: Some(found.program.to_string_lossy().into_owned()),
             installed: false,
             auto_managed: false,
@@ -279,7 +279,7 @@ fn build(host: &AgentHost) -> AgentCatalog {
             supports_load_session: false,
             supports_session_list: false,
             supports_fork: false,
-            icon_data_url: None,
+            icon_data_url: market.as_ref().and_then(super::agent_host::icon_data_url),
             help_url: market.as_ref().and_then(|a| a.repository().map(str::to_string)),
             repository: market.as_ref().and_then(|a| a.repository().map(str::to_string)),
             website: market.as_ref().and_then(|a| a.website().map(str::to_string)),
@@ -345,4 +345,144 @@ pub async fn agents_catalog_refresh(force: bool, app: AppHandle) -> Result<Agent
     let _ = tauri::async_runtime::spawn_blocking(move || probe.probe_detected()).await;
     emit_catalog_changed(&app, "refresh");
     Ok(build(&host))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::agent_host::test_support::fresh_host;
+    use atlas_agent_store::{AgentServerSettings, AllAgentServersSettings};
+
+    fn ids(catalog: &AgentCatalog) -> Vec<&str> {
+        catalog.entries.iter().map(|e| e.id.as_str()).collect()
+    }
+
+    fn entry<'a>(catalog: &'a AgentCatalog, id: &str) -> &'a AgentCatalogEntry {
+        catalog
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .unwrap_or_else(|| panic!("{id} is in the catalog"))
+    }
+
+    /// The acceptance criterion, end to end: a fresh profile offers exactly one
+    /// agent, an install makes a second one appear as runnable, and an uninstall
+    /// takes it away again.
+    #[tokio::test]
+    async fn install_then_uninstall_moves_an_agent_in_and_out_of_the_catalog() {
+        let (host, dir) = fresh_host();
+
+        // Fresh profile: the native agent, and nothing else. No builtin table,
+        // no auto-acquire, nothing pre-seeded (§D12-3).
+        let fresh = build(&host);
+        assert_eq!(ids(&fresh), [atlas_native_agent::CERSEI_AGENT_ID]);
+        let native = entry(&fresh, atlas_native_agent::CERSEI_AGENT_ID);
+        assert_eq!(native.kind, "native");
+        assert_eq!(native.source, source::IN_PROCESS);
+        assert_eq!(native.transcript, "cersei_json");
+
+        // Installing is writing one map entry.
+        let mut settings = AllAgentServersSettings::default();
+        settings.0.insert(
+            "some-agent".to_string(),
+            AgentServerSettings::custom("/bin/echo", vec!["acp".into()]),
+        );
+        host.store().set_settings(settings).await;
+
+        let after = build(&host);
+        assert!(ids(&after).contains(&"some-agent"));
+        let installed = entry(&after, "some-agent");
+        assert_eq!(installed.kind, "external");
+        assert_eq!(installed.source, source::INSTALLED);
+        assert!(installed.installed);
+        // The ladder's fields are gone, not merely unset for this agent.
+        assert!(!installed.auto_managed);
+        assert!(!installed.optional);
+        assert!(!installed.disabled);
+        // …and it is genuinely runnable, which is the half a catalog entry
+        // cannot prove on its own.
+        assert!(host.agent_for("some-agent").is_ok());
+
+        // Uninstalling removes it from both.
+        host.store()
+            .set_settings(AllAgentServersSettings::default())
+            .await;
+        assert_eq!(ids(&build(&host)), [atlas_native_agent::CERSEI_AGENT_ID]);
+        assert!(host.agent_for("some-agent").is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A detected agent is DATA, not a spawn candidate. It appears so the
+    /// marketplace can offer to install it, and nothing else: the ladder that
+    /// used to spawn a PATH binary directly is gone.
+    #[tokio::test]
+    async fn a_detected_agent_is_an_offer_rather_than_a_runnable_one() {
+        let (host, dir) = fresh_host();
+        host.set_detected_for_tests(vec![atlas_agent_store::DetectedAgent {
+            id: "found-agent".into(),
+            name: "Found Agent".into(),
+            program: std::path::PathBuf::from("/usr/local/bin/found-agent"),
+            args: vec!["acp".into()],
+        }]);
+
+        let catalog = build(&host);
+        let found = entry(&catalog, "found-agent");
+        assert_eq!(found.source, source::DETECTED);
+        assert!(!found.installed, "Atlas did not install it — the user did");
+        assert_eq!(
+            found.resolved_path.as_deref(),
+            Some("/usr/local/bin/found-agent")
+        );
+        // Demonstrably runnable on this machine: the binary is right there.
+        assert!(found.platform_supported);
+        // But not runnable BY ATLAS until the user installs it.
+        assert!(host.agent_for("found-agent").is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Once installed, the detection must not produce a second card for the
+    /// same agent — the marketplace renders one row per id.
+    #[tokio::test]
+    async fn an_installed_agent_is_not_listed_twice_when_it_is_also_on_path() {
+        let (host, dir) = fresh_host();
+        host.set_detected_for_tests(vec![atlas_agent_store::DetectedAgent {
+            id: "found-agent".into(),
+            name: "Found Agent".into(),
+            program: std::path::PathBuf::from("/usr/local/bin/found-agent"),
+            args: vec!["acp".into()],
+        }]);
+        let mut settings = AllAgentServersSettings::default();
+        settings.0.insert(
+            "found-agent".to_string(),
+            AgentServerSettings::custom("/usr/local/bin/found-agent", vec!["acp".into()]),
+        );
+        host.store().set_settings(settings).await;
+
+        let catalog = build(&host);
+        assert_eq!(
+            catalog
+                .entries
+                .iter()
+                .filter(|e| e.id == "found-agent")
+                .count(),
+            1
+        );
+        // The installed entry wins: it is the one that can actually spawn.
+        assert_eq!(entry(&catalog, "found-agent").source, source::INSTALLED);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Claude keeps its display alias, because the frontend has persisted
+    /// `"claude-code"` against stored sessions since before the spec id gained
+    /// its `-ts` suffix.
+    #[test]
+    fn only_claude_has_a_display_alias() {
+        assert_eq!(agent_type_for("claude-code-ts"), "claude-code");
+        for id in ["codex", "cersei", "some-agent"] {
+            assert_eq!(agent_type_for(id), id);
+        }
+    }
 }

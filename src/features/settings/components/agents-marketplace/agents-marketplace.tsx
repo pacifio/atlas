@@ -45,7 +45,7 @@ export function cardState(
 ): "builtin" | "installed" | "detected" | "install" {
   if (entry.builtin) return "builtin";
   if (entry.installed) return "installed";
-  if (catalog?.source === "system-path") return "detected";
+  if (catalog?.source === "detected") return "detected";
   return "install";
 }
 
@@ -180,7 +180,7 @@ export function AgentsMarketplace() {
     // cover, so a hand-installed CLI still shows up here.
     const listedIds = new Set(listed.map((e) => e.id));
     const detectedOnly = Object.values(catalogById)
-      .filter((e) => e.source === "system-path" && !e.installed && !listedIds.has(e.id))
+      .filter((e) => e.source === "detected" && !e.installed && !listedIds.has(e.id))
       // catalogById is keyed by BOTH id and agentType, so one entry can appear
       // twice — dedupe before synthesizing cards.
       .filter((e, i, all) => all.findIndex((o) => o.id === e.id) === i)

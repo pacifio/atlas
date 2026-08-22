@@ -308,6 +308,13 @@ impl AgentHost {
         lock(&self.detected).clone()
     }
 
+    /// Stand in a detection result instead of probing the machine running the
+    /// test — what is on the developer's `PATH` is not the subject.
+    #[cfg(test)]
+    pub(crate) fn set_detected_for_tests(&self, found: Vec<atlas_agent_store::DetectedAgent>) {
+        *lock(&self.detected) = found;
+    }
+
     /// Tear every agent process down before the app exits.
     ///
     /// `process::exit` skips `Drop`, so without this the ACP children outlive
@@ -1086,6 +1093,21 @@ pub struct PluginCapabilities {
     pub supports_fork: bool,
 }
 
+/// A registry agent's cached icon, as a data URL.
+///
+/// Data URL rather than a path because the asset protocol 403s files under
+/// hidden directories, so a path is useless to the webview (the same
+/// constraint `canvas.rs` works around). Icons are SVG on disk; a missing or
+/// unreadable one is simply absent rather than an error.
+pub fn icon_data_url(agent: &atlas_agent_store::RegistryAgent) -> Option<String> {
+    let bytes = std::fs::read(agent.icon_path()?).ok()?;
+    use base64::Engine;
+    Some(format!(
+        "data:image/svg+xml;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
 /// Where an agent keeps its own transcript.
 ///
 /// This is not a default-agent table: nothing here makes an agent available,
@@ -1320,32 +1342,7 @@ pub fn save_installed(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A host with an empty installed map — a fresh install.
-    fn fresh_host() -> (Arc<AgentHost>, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("atlas-host-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        struct Discard;
-        impl DeltaSink for Discard {
-            fn emit(&self, _envelope: atlas_agent_wire::SessionDeltaEnvelope) {}
-        }
-        let http: Arc<dyn atlas_agent_store::HttpClient> = Arc::new(
-            atlas_agent_store::ReqwestClient::new("atlas-test").expect("client"),
-        );
-        let registry = Arc::new(atlas_agent_store::AgentRegistryStore::new(
-            dir.clone(),
-            http.clone(),
-        ));
-        let store = Arc::new(AgentServerStore::new(
-            dir.clone(),
-            http,
-            atlas_agent_store::NodeRuntime::unavailable("not needed in this test"),
-            Arc::new(atlas_agent_store::InheritedProjectEnvironment),
-            Some(registry.clone()),
-        ));
-        let host = AgentHost::new(Arc::new(Discard), dir.clone(), store, registry);
-        (host, dir)
-    }
+    use super::test_support::fresh_host;
 
     /// The whole no-default-agents rule, checked at the only place that
     /// enforces it. A fresh install must offer exactly one agent, and every
@@ -1486,4 +1483,55 @@ mod tests {
         assert_eq!(settings.0.len(), 2);
         assert!(settings.has_registry_agents());
     }
+}
+
+/// A real host wired to a temp data dir, for tests that need one.
+///
+/// Shared with `commands::catalog` and `commands::registry`: those answer
+/// questions *about* a host, and standing up the real thing is what makes the
+/// answers worth anything — an empty installed map really is what a fresh
+/// profile has.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+
+    /// A host with an empty installed map — a fresh install.
+    pub(crate) fn fresh_host() -> (Arc<AgentHost>, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("atlas-host-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        struct Discard;
+        impl DeltaSink for Discard {
+            fn emit(&self, _envelope: atlas_agent_wire::SessionDeltaEnvelope) {}
+        }
+        // Offline by construction. A test must never depend on the registry
+        // being reachable — `set_settings` refreshes the catalogue whenever the
+        // map names a registry agent, and that would put a network round-trip
+        // on the critical path of every assertion here.
+        struct Offline;
+        impl atlas_agent_store::HttpClient for Offline {
+            fn get(
+                &self,
+                _url: &str,
+            ) -> futures::future::BoxFuture<'static, anyhow::Result<atlas_agent_store::HttpResponse>>
+            {
+                use futures::FutureExt;
+                async { Err(anyhow::anyhow!("offline in tests")) }.boxed()
+            }
+        }
+        let http: Arc<dyn atlas_agent_store::HttpClient> = Arc::new(Offline);
+        let registry = Arc::new(atlas_agent_store::AgentRegistryStore::new(
+            dir.clone(),
+            http.clone(),
+        ));
+        let store = Arc::new(AgentServerStore::new(
+            dir.clone(),
+            http,
+            atlas_agent_store::NodeRuntime::unavailable("not needed in this test"),
+            Arc::new(atlas_agent_store::InheritedProjectEnvironment),
+            Some(registry.clone()),
+        ));
+        let host = AgentHost::new(Arc::new(Discard), dir.clone(), store, registry);
+        (host, dir)
+    }
+
 }

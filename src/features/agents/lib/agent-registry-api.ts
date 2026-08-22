@@ -16,7 +16,7 @@ export interface AcpRegistryEntry {
   /** Duplicates a first-party Atlas agent — shown as "Built-in", not installable. */
   builtin: boolean;
   platformSupported: boolean;
-  /** "" when unsupported; else "binary" | "npx" | "uvx". */
+  /** "" when unsupported; else "binary" | "npx". */
   distributionKind: string;
   /** Binary distribution with no published sha256. */
   unverified: boolean;
