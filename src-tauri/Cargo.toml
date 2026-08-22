@@ -145,7 +145,7 @@ posthog-rs = "0.14"
 # performZoom:), which Tauri's cross-platform maximize API doesn't cover.
 # Already in the tree transitively; pinned here for the direct msg_send.
 objc2 = "0.6"
-# Turn on atlas-embed's Metal backend so the local memory-chat model runs on the
+# Turn on atlas-embed's Metal backend so the on-device embedder runs on the
 # Apple-Silicon GPU. Feature is additive over the base path dep in `[dependencies]`.
 atlas-embed = { path = "../crates/atlas-embed", features = ["metal"] }
 
@@ -169,10 +169,17 @@ codegen-units = 1   # Single codegen unit → better cross-function inlining
 lto = "fat"         # Fat LTO: maximum cross-crate dead-code elimination +
                     # inlining (smaller binary; ~2× link time vs thin)
 strip = "symbols"   # Smaller .app bundle, faster dyld load
-panic = "unwind"    # REQUIRED: the local-LLM loader (memory_chat / atlas-embed)
-                    # `catch_unwind`s candle's Metal kernel-compile panic to fall
-                    # back to CPU. `abort` would crash the app instead of degrading
-                    # gracefully. Costs a little binary size for unwind tables.
+panic = "unwind"    # REQUIRED — three independent `catch_unwind` guards depend on
+                    # it, so this survived the local-LLM removal:
+                    #  1. atlas-embed's EMBEDDER catches candle's Metal
+                    #     kernel-compile panic (at load AND per forward) to fall
+                    #     back to CPU rather than crash.
+                    #  2. commands/capture.rs guards its worker threads — a
+                    #     panicking worker is silent capture loss.
+                    #  3. atlas-checkpoint wraps atlas-redact, so a redaction
+                    #     panic can never leak unredacted text.
+                    # `abort` would turn each of these into an app crash. Costs a
+                    # little binary size for unwind tables.
 opt-level = 3       # Default for release, restated for clarity
 
 # Dev profile — Atlas's own app crate is small (~170 LOC + a handful of

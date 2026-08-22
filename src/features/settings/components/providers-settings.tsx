@@ -10,12 +10,14 @@ import {
   ExternalLink,
   Trash2,
   MoreHorizontal,
-  AlertTriangle,
+  Eye,
+  EyeOff,
+  Lock,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { SecretInput } from "@/ui/secret-input";
 import { cn } from "@/lib/utils";
-import { timeAgo } from "@/lib/time-ago";
+import { copyText } from "@/lib/clipboard";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { ProviderLogo } from "@/components/provider-logo";
 import {
@@ -25,14 +27,16 @@ import {
   type ProviderDef,
 } from "../lib/providers";
 import { useByokStore } from "../stores/byok-store";
-import type { EnvKeyMeta, ProviderKeyMeta } from "../lib/byok-api";
+import { byok, type EnvEntry } from "../lib/byok-api";
 
 /**
- * BYOK provider/key manager — a full-bleed, monochromatic data table inspired
- * by the Vercel AI Gateway model browser: category tabs + search + sort in a
- * top toolbar, then a dense table of every supported provider. Each row expands
- * inline to add / replace / remove its key. Secrets live in the OS keychain
- * (Rust `byok.rs`); this UI only ever shows metadata (last-4 + added-at).
+ * API keys — an editor for the provider keys in the user's shell profile.
+ *
+ * Atlas stores nothing. Every row here is an `export VAR=...` line in a real
+ * file, and editing one rewrites that line. A key set somewhere Atlas can see
+ * but not edit (launchd, `/etc/profile`, a wrapper script) is shown read-only
+ * rather than duplicated — there is deliberately no Atlas-owned copy that could
+ * drift from the environment the user's other tools read.
  */
 
 type SortKey = "name" | "category" | "configured";
@@ -40,7 +44,7 @@ type SortKey = "name" | "category" | "configured";
 const SORT_LABELS: Record<SortKey, string> = {
   name: "Name (A–Z)",
   category: "Category",
-  configured: "Configured first",
+  configured: "Set first",
 };
 
 // Column widths shared by the header + every row so cells line up. Fixed
@@ -49,19 +53,23 @@ const SORT_LABELS: Record<SortKey, string> = {
 const COL = {
   provider: "flex-1 min-w-[200px]",
   env: "w-[200px] shrink-0",
-  category: "w-[130px] shrink-0",
-  key: "w-[110px] shrink-0",
-  added: "w-[100px] shrink-0",
-  status: "w-[120px] shrink-0",
+  category: "w-[120px] shrink-0",
+  key: "w-[100px] shrink-0",
+  source: "w-[200px] shrink-0",
   chevron: "w-[32px] shrink-0",
 } as const;
 
-// Sum of the fixed columns (+ Provider's min) — the horizontal scroll track.
-const TABLE_MIN_W = 200 + 200 + 130 + 110 + 100 + 120 + 32; // 892
+const TABLE_MIN_W = 200 + 200 + 120 + 100 + 200 + 32; // 852
+
+/** `/Users/x/.zshrc` → `~/.zshrc`, for a path that fits in a table cell. */
+function tildePath(p: string): string {
+  const m = /^\/(?:Users|home)\/[^/]+\/(.*)$/.exec(p);
+  return m ? `~/${m[1]}` : p;
+}
 
 export function ProvidersSettings() {
-  const keys = useByokStore.use.keys();
-  const envKeys = useByokStore.use.envKeys();
+  const entries = useByokStore.use.entries();
+  const profile = useByokStore.use.profile();
   const loaded = useByokStore.use.loaded();
   const { load } = useByokStore.use.actions();
 
@@ -75,11 +83,18 @@ export function ProvidersSettings() {
     if (!loaded) void load();
   }, [loaded, load]);
 
+  /** provider id → the entry Atlas resolved for it (any recognised spelling). */
+  const byProvider = useMemo(() => {
+    const m: Record<string, EnvEntry> = {};
+    for (const e of entries) if (!m[e.provider]) m[e.provider] = e;
+    return m;
+  }, [entries]);
+
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = PROVIDERS.filter((p) => {
       if (category !== "All" && p.category !== category) return false;
-      if (configuredOnly && !keys[p.id] && !envKeys[p.id]) return false;
+      if (configuredOnly && !byProvider[p.id]) return false;
       if (
         q &&
         !p.name.toLowerCase().includes(q) &&
@@ -92,8 +107,8 @@ export function ProvidersSettings() {
 
     list = [...list].sort((a, b) => {
       if (sortKey === "configured") {
-        const ca = keys[a.id] || envKeys[a.id] ? 0 : 1;
-        const cb = keys[b.id] || envKeys[b.id] ? 0 : 1;
+        const ca = byProvider[a.id] ? 0 : 1;
+        const cb = byProvider[b.id] ? 0 : 1;
         if (ca !== cb) return ca - cb;
       } else if (sortKey === "category" && a.category !== b.category) {
         return PROVIDER_CATEGORIES.indexOf(a.category) - PROVIDER_CATEGORIES.indexOf(b.category);
@@ -101,20 +116,9 @@ export function ProvidersSettings() {
       return a.name.localeCompare(b.name);
     });
     return list;
-  }, [category, query, sortKey, configuredOnly, keys, envKeys]);
+  }, [category, query, sortKey, configuredOnly, byProvider]);
 
-  // Providers configured BOTH in Atlas and in the user's environment — the env
-  // key wins everywhere (agent spawns, model chat), so the saved one is inert.
-  const conflicts = useMemo(
-    () => PROVIDERS.filter((p) => keys[p.id] && envKeys[p.id]),
-    [keys, envKeys],
-  );
-
-  const tabs: Array<{
-    id: ProviderCategory | "All";
-    label: string;
-    count: number;
-  }> = useMemo(
+  const tabs: Array<{ id: ProviderCategory | "All"; label: string; count: number }> = useMemo(
     () => [
       { id: "All", label: "All", count: PROVIDERS.length },
       ...PROVIDER_CATEGORIES.map((c) => ({
@@ -148,7 +152,6 @@ export function ProvidersSettings() {
 
         <div className="flex-1" />
 
-        {/* Search */}
         <div className="flex items-center gap-1.5 h-6 rounded-md border border-border-default bg-bg-elevated px-2 min-w-[200px] focus-within:border-[var(--border-focus)]">
           <Search size={11} className="text-text-tertiary shrink-0" />
           <input
@@ -160,8 +163,6 @@ export function ProvidersSettings() {
           />
         </div>
 
-        {/* Filters + sort — collapsed into a dotted menu next to the search,
-            so the toolbar never overflows in the narrow settings pane. */}
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
             <button
@@ -186,7 +187,7 @@ export function ProvidersSettings() {
                 <span className="inline-flex w-3.5 justify-center">
                   {configuredOnly && <Check size={11} className="text-text-primary" />}
                 </span>
-                Configured only
+                Set only
               </DropdownMenu.CheckboxItem>
 
               <DropdownMenu.Separator className="my-1 h-px bg-[var(--border-subtle)]" />
@@ -209,30 +210,14 @@ export function ProvidersSettings() {
         </DropdownMenu.Root>
       </div>
 
-      {conflicts.length > 0 && (
-        <div className="flex items-start gap-2 px-3 py-2 border-b border-border-default bg-[var(--bg-elevated)]/50 text-[11px] text-[var(--status-warning)]">
-          <AlertTriangle size={12} className="shrink-0 mt-0.5" />
-          <span>
-            {conflicts.map((p) => p.name).join(", ")} {conflicts.length === 1 ? "has" : "have"} a
-            key both in Atlas and in your environment (
-            {conflicts.map((p) => envKeys[p.id]!.envVar).join(", ")}). The environment key takes
-            priority; the key saved here is ignored until the env var is removed.
-          </span>
-        </div>
-      )}
-
-      {/* Table — both-axis scroll. The min-width track keeps columns from
-          collapsing/overlapping when the panel is narrow; the header sticks. */}
       <div className="flex-1 min-h-0 overflow-auto hide-scrollbar">
         <div style={{ minWidth: TABLE_MIN_W }}>
-          {/* Header row (sticky) */}
           <div className="sticky top-0 z-10 flex items-center h-[28px] border-b border-border-default bg-bg-base px-3 text-[10px] uppercase tracking-wider text-text-tertiary">
             <span className={COL.provider}>Provider</span>
             <span className={COL.env}>Env Var</span>
             <span className={COL.category}>Category</span>
             <span className={COL.key}>Key</span>
-            <span className={COL.added}>Added</span>
-            <span className={COL.status}>Status</span>
+            <span className={COL.source}>Source</span>
             <span className={COL.chevron} />
           </div>
 
@@ -245,8 +230,8 @@ export function ProvidersSettings() {
               <ProviderTableRow
                 key={p.id}
                 provider={p}
-                meta={keys[p.id]}
-                envKey={envKeys[p.id]}
+                entry={byProvider[p.id]}
+                targetFile={profile?.target ?? null}
                 expanded={expandedId === p.id}
                 onToggle={() => setExpandedId((cur) => (cur === p.id ? null : p.id))}
               />
@@ -260,21 +245,17 @@ export function ProvidersSettings() {
 
 function ProviderTableRow({
   provider,
-  meta,
-  envKey,
+  entry,
+  targetFile,
   expanded,
   onToggle,
 }: {
   provider: ProviderDef;
-  meta: ProviderKeyMeta | undefined;
-  envKey: EnvKeyMeta | undefined;
+  entry: EnvEntry | undefined;
+  targetFile: string | null;
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const configured = !!meta;
-  const fromEnv = !!envKey;
-  const conflict = configured && fromEnv;
-
   return (
     <div className="border-b border-border-subtle">
       <button
@@ -284,94 +265,84 @@ function ProviderTableRow({
           expanded ? "bg-[var(--bg-elevated)]/40" : "hover:bg-bg-hover",
         )}
       >
-        {/* Provider */}
         <span className={cn(COL.provider, "flex items-center gap-2 min-w-0")}>
           <ProviderLogo id={provider.id} size={18} />
           <span className="truncate text-[12px] text-text-primary">{provider.name}</span>
         </span>
-        {/* Env var */}
+        {/* The var it was actually found as — which may be an alias spelling. */}
         <span className={cn(COL.env, "truncate font-mono text-[10px] text-text-tertiary")}>
-          {provider.env}
+          {entry?.envVar ?? provider.env}
         </span>
-        {/* Category */}
         <span className={cn(COL.category, "truncate text-[11px] text-text-secondary")}>
           {provider.category}
         </span>
-        {/* Key — the env key is the effective one when both exist. */}
         <span className={cn(COL.key, "font-mono text-[11px]")}>
-          {fromEnv ? (
-            <span className="text-text-secondary">••••{envKey!.last4}</span>
-          ) : configured ? (
-            <span className="text-text-secondary">••••{meta!.last4}</span>
+          {entry ? (
+            <span className="text-text-secondary">••••{entry.last4}</span>
           ) : (
             <span className="text-text-muted">—</span>
           )}
         </span>
-        {/* Added */}
-        <span className={cn(COL.added, "text-[10px] text-text-tertiary")}>
-          {configured ? timeAgo(meta!.addedAt, { suffix: true }) : fromEnv ? "env" : "—"}
-        </span>
-        {/* Status */}
-        <span className={cn(COL.status, "flex items-center gap-1.5")}>
-          {conflict ? (
-            <span
-              className="flex items-center gap-1 text-[10px] font-medium text-[var(--status-warning)] border border-[var(--status-warning)]/40 rounded-full px-1.5 h-[18px]"
-              title={`${envKey!.envVar} in your environment overrides the key saved in Atlas.`}
-            >
-              <AlertTriangle size={10} />
-              env overrides
-            </span>
-          ) : fromEnv ? (
-            <span
-              className="flex items-center gap-1 text-[10px] font-medium text-text-secondary border border-border-default rounded-full px-1.5 h-[18px]"
-              title={`Imported from ${envKey!.envVar} in your environment.`}
-            >
-              <Check size={10} />
-              from env
-            </span>
-          ) : configured ? (
+        <span className={cn(COL.source, "flex items-center gap-1.5 min-w-0")}>
+          {!entry ? (
             <>
-              <Check size={12} className="text-text-primary" />
-              <span className="text-[11px] text-text-primary">Configured</span>
-            </>
-          ) : (
-            <>
-              <Minus size={12} className="text-text-tertiary" />
+              <Minus size={12} className="text-text-tertiary shrink-0" />
               <span className="text-[11px] text-text-tertiary">Not set</span>
             </>
+          ) : entry.editable ? (
+            <span
+              className="truncate font-mono text-[10px] text-text-secondary"
+              title={`${entry.file}${entry.line ? `:${entry.line}` : ""}`}
+            >
+              {tildePath(entry.file!)}
+              {entry.line ? `:${entry.line}` : ""}
+            </span>
+          ) : (
+            <span
+              className="flex items-center gap-1 text-[10px] font-medium text-text-tertiary border border-border-default rounded-full px-1.5 h-[18px]"
+              title="Set outside your shell profile — Atlas can read it but not edit it."
+            >
+              <Lock size={9} />
+              environment
+            </span>
           )}
         </span>
-        {/* Chevron */}
         <span className={cn(COL.chevron, "flex items-center justify-end text-text-tertiary")}>
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
       </button>
 
-      {expanded && <ProviderEditor provider={provider} meta={meta} envKey={envKey} />}
+      {expanded && <ProviderEditor provider={provider} entry={entry} targetFile={targetFile} />}
     </div>
   );
 }
 
 function ProviderEditor({
   provider,
-  meta,
-  envKey,
+  entry,
+  targetFile,
 }: {
   provider: ProviderDef;
-  meta: ProviderKeyMeta | undefined;
-  envKey: EnvKeyMeta | undefined;
+  entry: EnvEntry | undefined;
+  targetFile: string | null;
 }) {
   const pending = useByokStore.use.pending();
   const { save, remove } = useByokStore.use.actions();
   const [draft, setDraft] = useState("");
-  const busy = pending === provider.id;
-  const configured = !!meta;
+  const [revealed, setRevealed] = useState<string | null>(null);
+
+  // The var an edit writes: whatever it was found as, else the canonical one.
+  const envVar = entry?.envVar ?? provider.env;
+  const busy = pending === envVar;
+  const readOnly = !!entry && !entry.editable;
+  const writesTo = entry?.file ?? targetFile;
 
   const onSave = async () => {
     try {
-      await save(provider.id, draft);
+      const file = await save(envVar, draft);
       setDraft("");
-      toast.success(`${provider.name} key saved`);
+      setRevealed(null);
+      toast.success(`${provider.name} key written to ${tildePath(file)}`);
     } catch (e) {
       toast.error(`Couldn't save key: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -379,82 +350,122 @@ function ProviderEditor({
 
   const onRemove = async () => {
     try {
-      await remove(provider.id);
-      toast.success(`${provider.name} key removed`);
+      await remove(envVar);
+      setRevealed(null);
+      toast.success(`Removed ${envVar} from your shell profile`);
     } catch (e) {
       toast.error(`Couldn't remove key: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
+  const onReveal = async () => {
+    if (revealed !== null) {
+      setRevealed(null);
+      return;
+    }
+    try {
+      setRevealed((await byok.reveal(envVar)) ?? "");
+    } catch {
+      toast.error("Couldn't read that value.");
+    }
+  };
+
   return (
     <div className="bg-[var(--bg-elevated)]/40 border-t border-border-subtle px-3 py-3">
-      {envKey && (
-        <p
-          className={cn(
-            "mb-2.5 max-w-[640px] text-[10.5px] leading-snug",
-            configured ? "text-[var(--status-warning)]" : "text-text-tertiary",
-          )}
-        >
-          {configured
-            ? `${envKey.envVar} is set in your environment and takes priority — the key saved here is ignored until you unset it.`
-            : `Imported from ${envKey.envVar} in your environment. Saving a key here keeps it as a fallback; the environment key stays in charge.`}
+      {readOnly && (
+        <p className="mb-2.5 max-w-[640px] text-[10.5px] leading-snug text-text-tertiary">
+          <span className="font-mono">{envVar}</span> is set outside your shell profile — Atlas
+          found it in the environment but not in any file it reads, so it can&apos;t edit or remove
+          it here. Change it wherever it&apos;s exported (a login script, launchd, or a wrapper).
         </p>
       )}
-      <div className="flex items-start gap-3 max-w-[640px]">
-        <div className="flex-1 min-w-0 space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-[11px] font-medium text-text-primary">
-              {configured ? "Replace key" : "API key"}
-            </label>
-            {provider.docsUrl && (
-              <button
-                type="button"
-                onClick={() => void openUrl(provider.docsUrl!)}
-                className="flex items-center gap-1 text-[10px] text-text-tertiary hover:text-text-primary transition-colors"
-              >
-                Get key
-                <ExternalLink size={10} />
-              </button>
-            )}
-          </div>
-          <SecretInput
-            value={draft}
-            onValueChange={setDraft}
-            onSubmit={() => void onSave()}
-            placeholder={provider.placeholder ?? "Paste your API key"}
-            disabled={busy}
-            autoFocus
-          />
-          <div className="flex items-center gap-2 pt-0.5">
+
+      {entry && (
+        <div className="mb-2.5 flex items-center gap-2">
+          <code className="flex-1 min-w-0 truncate rounded bg-[var(--bg-base)] border border-border-subtle px-2 py-1 font-mono text-[10.5px] text-text-secondary">
+            {revealed !== null ? revealed || "(empty)" : `${envVar}=••••${entry.last4}`}
+          </code>
+          <button
+            type="button"
+            onClick={() => void onReveal()}
+            title={revealed !== null ? "Hide" : "Reveal"}
+            className="flex items-center justify-center h-6 w-6 rounded text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
+          >
+            {revealed !== null ? <EyeOff size={12} /> : <Eye size={12} />}
+          </button>
+          {revealed !== null && revealed && (
             <button
               type="button"
-              onClick={() => void onSave()}
-              disabled={busy || !draft.trim()}
-              className={cn(
-                "flex items-center gap-1.5 h-7 rounded-md px-3 text-[11px] font-medium",
-                "bg-[var(--accent-primary)] text-[var(--bg-base)]",
-                "hover:opacity-90 transition-opacity",
-                "disabled:opacity-40 disabled:cursor-not-allowed",
-              )}
+              onClick={() => void copyText(revealed)}
+              className="h-6 rounded-md px-2 text-[10.5px] text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
             >
-              {busy && <AtlasLoader size={11} />}
-              {configured ? "Update" : "Save"}
+              Copy
             </button>
-            {configured && (
+          )}
+        </div>
+      )}
+
+      {!readOnly && (
+        <div className="flex items-start gap-3 max-w-[640px]">
+          <div className="flex-1 min-w-0 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-medium text-text-primary">
+                {entry ? "Replace key" : "API key"}
+              </label>
+              {provider.docsUrl && (
+                <button
+                  type="button"
+                  onClick={() => void openUrl(provider.docsUrl!)}
+                  className="flex items-center gap-1 text-[10px] text-text-tertiary hover:text-text-primary transition-colors"
+                >
+                  Get key
+                  <ExternalLink size={10} />
+                </button>
+              )}
+            </div>
+            <SecretInput
+              value={draft}
+              onValueChange={setDraft}
+              onSubmit={() => void onSave()}
+              placeholder={provider.placeholder ?? "Paste your API key"}
+              disabled={busy}
+              autoFocus
+            />
+            <div className="flex items-center gap-2 pt-0.5">
               <button
                 type="button"
-                onClick={() => void onRemove()}
-                disabled={busy}
-                className="flex items-center gap-1 h-7 rounded-md px-2.5 text-[11px] text-text-tertiary hover:text-[var(--danger,#e5484d)] hover:bg-bg-hover transition-colors disabled:opacity-50"
+                onClick={() => void onSave()}
+                disabled={busy || !draft.trim()}
+                className={cn(
+                  "flex items-center gap-1.5 h-7 rounded-md px-3 text-[11px] font-medium",
+                  "bg-[var(--accent-primary)] text-[var(--bg-base)]",
+                  "hover:opacity-90 transition-opacity",
+                  "disabled:opacity-40 disabled:cursor-not-allowed",
+                )}
               >
-                <Trash2 size={12} />
-                Remove
+                {busy && <AtlasLoader size={11} />}
+                {entry ? "Update" : "Save"}
               </button>
-            )}
-            <span className="text-[10px] text-text-tertiary font-mono pl-1">{provider.env}</span>
+              {entry && (
+                <button
+                  type="button"
+                  onClick={() => void onRemove()}
+                  disabled={busy}
+                  className="flex items-center gap-1 h-7 rounded-md px-2.5 text-[11px] text-text-tertiary hover:text-[var(--danger,#e5484d)] hover:bg-bg-hover transition-colors disabled:opacity-50"
+                >
+                  <Trash2 size={12} />
+                  Remove
+                </button>
+              )}
+            </div>
+            <p className="pt-0.5 font-mono text-[10px] text-text-tertiary">
+              {entry ? "Rewrites" : "Appends"}{" "}
+              <span className="text-text-secondary">export {envVar}=…</span>
+              {writesTo ? ` in ${tildePath(writesTo)}` : ""}
+            </p>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

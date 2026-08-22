@@ -16,7 +16,6 @@ use commands::knowledge_links::KnowledgeLinksState;
 use commands::knowledge_meta::KnowledgeMetaState;
 use commands::mention_search::MentionCacheState;
 use commands::recent_files::RecentFilesState;
-use commands::papers::SavedPapersIndex;
 use commands::sessions_watch::SessionsWatchState;
 use commands::terminal::TerminalState;
 use parking_lot::Mutex;
@@ -270,8 +269,6 @@ pub fn run() {
         .manage(CliLaunchState::new(initial_project))
         .manage(SessionsWatchState::new())
         .manage(ClaudeSessionIndex::new())
-        .manage(SavedPapersIndex::new())
-        .manage(commands::memory_chat::MemoryChatState::new())
         .manage(commands::memory_sharing::MemorySharingState::new())
         .manage(commands::shared_memory::SharedMemoryStore::new())
         // Owns the per-Workspace session stores and the capture worker
@@ -432,7 +429,6 @@ pub fn run() {
             commands::capture::capture_retry_failed,
             commands::capture::capture_retry_watcher,
             commands::capture::artifacts_sessions,
-            commands::capture::capture_agent_session_counts,
             commands::capture::artifacts_session,
             commands::capture::artifacts_payload,
             commands::capture::capture_commit_sessions,
@@ -465,13 +461,8 @@ pub fn run() {
             commands::claude::claude_session_stats,
             commands::claude::project_usage_stats,
             commands::search::search_in_files,
-            commands::research::search_arxiv,
-            commands::research::search_semantic_scholar,
-            commands::research::download_paper,
-            commands::research::save_paper_to_knowledge,
-            commands::research::fetch_trending_papers,
-            commands::research::save_project_session,
-            commands::research::load_project_session,
+            commands::project_session::save_project_session,
+            commands::project_session::load_project_session,
             commands::knowledge::list_knowledge,
             commands::knowledge::save_knowledge_note,
             commands::knowledge::import_into_knowledge,
@@ -563,13 +554,14 @@ pub fn run() {
             commands::agents::agents_authenticate,
             commands::agents::agents_drop_session,
             commands::cersei::cersei_list_sessions,
-            commands::cersei::cersei_session_transcript,
             commands::cersei::cersei_delete_session,
-            commands::byok::byok_list,
-            commands::byok::byok_set,
-            commands::byok::byok_delete,
             commands::byok::byok_get,
             commands::byok::byok_env_list,
+            commands::byok::byok_env_entries,
+            commands::byok::byok_env_reveal,
+            commands::byok::byok_env_set,
+            commands::byok::byok_env_unset,
+            commands::byok::byok_profile_info,
             commands::modelchat::modelchat_models,
             commands::modelchat::modelchat_stream,
             commands::modelchat::modelchat_cancel,
@@ -581,12 +573,10 @@ pub fn run() {
             commands::sessions_watch::sessions_watch_open,
             commands::sessions_watch::sessions_watch_close,
             commands::sessions_watch::sessions_watch_status,
-            commands::papers::list_saved_papers,
             commands::pomodoro::pomodoro_load,
             commands::pomodoro::pomodoro_save,
             commands::plans::plans_load,
             commands::plans::plans_append,
-            commands::agent_memory::agent_memory_read,
             commands::agent_memory::list_codex_sessions,
             commands::agent_memory::codex_delete_session,
             commands::kilo::list_kilo_sessions,
@@ -610,13 +600,6 @@ pub fn run() {
             commands::shared_memory::memory_append_event,
             commands::memory_timeline::memory_timeline,
             commands::memory_timeline::memory_timeline_cached,
-            commands::memory_chat::memory_chat_model_status,
-            commands::memory_chat::memory_chat_model_download,
-            commands::memory_chat::memory_chat_model_load,
-            commands::memory_chat::memory_chat_backend,
-            commands::memory_chat::memory_chat_send,
-            commands::memory_chat::memory_chat_cancel,
-            commands::memory_chat::memory_chat_retrieve,
             commands::memory_indexer::force_reindex,
             commands::memory_indexer::memory_indexer_close_project,
             commands::models::models_list,
@@ -625,10 +608,6 @@ pub fn run() {
             commands::models::model_select,
             commands::codebase_index::codebase_index_status,
             commands::codebase_index::codebase_index_build,
-            commands::memory_chat_sessions::memory_chat_sessions_list,
-            commands::memory_chat_sessions::memory_chat_session_get,
-            commands::memory_chat_sessions::memory_chat_session_save,
-            commands::memory_chat_sessions::memory_chat_session_delete,
             commands::session_chat::session_chat_retrieve,
             commands::session_chat_sessions::session_chat_threads_list,
             commands::session_chat_sessions::session_chat_thread_get,

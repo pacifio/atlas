@@ -59,11 +59,6 @@ const KnowledgeGraph = lazy(() =>
     default: m.KnowledgeGraph,
   })),
 );
-const ResearchPanel = lazy(() =>
-  import("@/features/research/components/research-panel").then((m) => ({
-    default: m.ResearchPanel,
-  })),
-);
 const SettingsPanel = lazy(() =>
   import("@/features/settings/components/settings-panel").then((m) => ({
     default: m.SettingsPanel,
@@ -104,7 +99,6 @@ import {
   Globe,
   Loader2,
   Code,
-  BookOpen,
   Brain,
   BrainCircuit,
   Network,
@@ -131,7 +125,6 @@ const tabIcons: Record<TabType, React.ElementType> = {
   browser: Globe,
   tasks: CheckSquare,
   editor: Code,
-  research: BookOpen,
   knowledge: Brain,
   "knowledge-graph": Network,
   memory: BrainCircuit,
@@ -635,8 +628,6 @@ function TabContent({ tab }: { tab: Tab }) {
       return <KnowledgeGraph />;
     case "memory":
       return <MemoryPanel />;
-    case "research":
-      return <ResearchPanel />;
     case "browser":
       return <BrowserPanel initialUrl={tab.data.url as string | undefined} />;
     case "settings":
@@ -694,7 +685,6 @@ const NEW_TAB_OPTIONS: Array<{ type: TabType; label: string; icon: React.Element
   { type: "terminal", label: "Terminal", icon: Terminal },
   { type: "diff", label: "Git Diff", icon: GitCompare },
   { type: "browser", label: "Browser", icon: Globe },
-  { type: "research", label: "Research", icon: BookOpen },
   { type: "knowledge", label: "Knowledge", icon: Brain },
   { type: "memory", label: "Memory", icon: BrainCircuit },
   { type: "log", label: "Log", icon: ScrollText },

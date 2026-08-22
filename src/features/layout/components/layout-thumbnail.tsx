@@ -4,7 +4,6 @@ import {
   Brain,
   Globe,
   LayoutDashboard,
-  BookOpen,
   MessageSquare,
   Network,
   type LucideIcon,
@@ -20,7 +19,6 @@ const TYPE_ICON: Partial<Record<TabType, LucideIcon>> = {
   "knowledge-graph": Network,
   browser: Globe,
   "mission-control": LayoutDashboard,
-  research: BookOpen,
 };
 
 function ColIcon({ type }: { type: TabType }) {

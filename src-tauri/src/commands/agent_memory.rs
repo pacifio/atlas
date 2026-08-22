@@ -1,4 +1,4 @@
-//! `agent_memory_read` — surface what each ACP agent persists for the
+//! Agent memory on disk — what each ACP agent persists for the
 //! current project, read-only.
 //!
 //! Claude Code keeps a per-project *markdown* memory folder at
@@ -93,11 +93,6 @@ pub struct CodexMemory {
     threads: Vec<CodexThread>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct AgentMemory {
-    claude: ClaudeMemory,
-    codex: CodexMemory,
-}
 
 /// History-list row for a Codex session, shaped to match `ClaudeSessionMeta`
 /// so the chat sidebar can merge both agents' sessions uniformly. `id` is the
@@ -178,22 +173,6 @@ pub async fn codex_delete_session(session_id: String) -> Result<(), String> {
         ));
     }
     Ok(())
-}
-
-#[tauri::command]
-pub async fn agent_memory_read(project_path: String) -> Result<AgentMemory, String> {
-    let project_path = project_path.trim_end_matches('/').to_string();
-
-    // Claude side is pure filesystem — run it on the blocking pool.
-    let pp = project_path.clone();
-    let claude = tokio::task::spawn_blocking(move || read_claude(&pp))
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Codex side needs an out-of-process sqlite read; keep it async.
-    let codex = read_codex(&project_path).await;
-
-    Ok(AgentMemory { claude, codex })
 }
 
 // ── Corpus collection (for the Graph / embeddings feature) ──────────────────

@@ -27,7 +27,6 @@ import {
   GitBranch,
   ArrowLeftToLine,
   ArrowRightToLine,
-  BookOpen,
   Brain,
   Search,
   FolderOpen,
@@ -169,13 +168,6 @@ export function CommandPalette({
         icon: CheckSquare,
         category: "Open",
         action: () => openTab("tasks", "Tasks"),
-      },
-      {
-        id: "new-research",
-        label: "Research",
-        icon: BookOpen,
-        category: "Open",
-        action: () => openTab("research", "Research"),
       },
       {
         id: "new-knowledge",

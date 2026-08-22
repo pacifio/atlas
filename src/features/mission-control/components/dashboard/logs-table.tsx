@@ -22,7 +22,6 @@ const SOURCES = [
   "project",
   "system",
   "editor",
-  "research",
 ] as const;
 
 function parseJsonl(raw: string): LogEntry[] {

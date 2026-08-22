@@ -7,7 +7,7 @@ interface EditorTopbarProps {
   title: string;
   /** Icon emoji or null. Falls back to a doc glyph. */
   icon?: string | null;
-  /** Tag pill on the right ("NOTE", "PAPER", "REPO" etc.). */
+  /** Tag pill on the right ("NOTE", "REPO" etc.). */
   kind?: string;
   /** Show a small dirty dot before the inspector toggle. */
   isDirty?: boolean;

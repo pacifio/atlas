@@ -360,10 +360,6 @@ pub struct AppSettings {
     /// See `crate::commands::models`.
     #[serde(default = "default_embedding_model")]
     pub embedding_model_id: String,
-    /// Selected on-device **LLM** model id (== its dir name). Drives
-    /// `memory_chat::chat_model_dir` (RAG chat generation + code-index summaries).
-    #[serde(default = "default_llm_model")]
-    pub llm_model_id: String,
     /// Code-editor color theme id (see `src/features/editor/themes`). Drives the
     /// CodeMirror editor, the diff viewer and the source-control diff views on
     /// the frontend; persisted so it survives relaunch.
@@ -416,11 +412,6 @@ pub fn default_embedding_model() -> String {
     "all-MiniLM-L6-v2".to_string()
 }
 
-/// Default local LLM — the historical `qwen3-0.6b` dir.
-pub fn default_llm_model() -> String {
-    "qwen3-0.6b".to_string()
-}
-
 fn default_ui_scale() -> f32 {
     1.0
 }
@@ -435,7 +426,6 @@ impl Default for AppSettings {
             share_telemetry: true,
             link_telemetry_to_account: true,
             embedding_model_id: default_embedding_model(),
-            llm_model_id: default_llm_model(),
             code_editor_theme: default_code_editor_theme(),
             atlas_theme: default_atlas_theme(),
             git_blame_inline: true,

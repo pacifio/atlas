@@ -830,7 +830,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     updateSessionStatus(tabId, "running");
 
     // Expand mentions into a trailing context block. composePrompt fetches
-    // file/note/paper bodies via Tauri and appends them under a fenced
+    // file/note bodies via Tauri and appends them under a fenced
     // `## @ref` section — see `mentions.ts::composePrompt`.
     let wirePrompt: string;
     try {

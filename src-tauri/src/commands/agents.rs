@@ -21,7 +21,6 @@ use atlas_agents::{
 };
 
 use super::agent_analytics::AnalyticsState;
-use super::memory_chat::MemoryChatState;
 use super::memory_indexer::MemoryRegistry;
 use super::memory_inject;
 use super::memory_pack;
@@ -369,7 +368,7 @@ pub fn install_manager(app: &AppHandle) {
     // resolves this state on its first delta.
     app.manage(Arc::new(AnalyticsState::new()));
     let sink: Arc<dyn DeltaSink> = Arc::new(TauriDeltaSink::new(app.clone()));
-    // App config dir holds `byok-keys.json` (BYOK keys the native agent reads)
+    // App config dir holds the native agent's own state
     // and `cersei-sessions/` (its persisted transcripts). Best-effort: fall
     // back to a temp dir if the platform path is unavailable.
     let config_dir = app
@@ -403,14 +402,12 @@ pub fn install_manager(app: &AppHandle) {
     });
 
     // Wire the native agent's `search_memory` tool to Atlas's on-device memory
-    // retrieval. The closure resolves `MemoryChatState` lazily (it's managed
-    // after this call) and maps the retrieved docs into the agent's shape.
+    // retrieval, mapping the retrieved docs into the agent's shape.
     let app_for_search = app.clone();
     atlas_agents::register_memory_search(std::sync::Arc::new(move |cwd, query, k| {
         let app = app_for_search.clone();
         Box::pin(async move {
-            let state = app.state::<crate::commands::memory_chat::MemoryChatState>();
-            crate::commands::memory_retrieve::retrieve(&app, state.inner(), &cwd, &query, k)
+            crate::commands::memory_retrieve::retrieve(&app, &cwd, &query, k)
                 .await
                 .into_iter()
                 .map(|d| atlas_agents::MemDoc {
@@ -648,10 +645,8 @@ pub async fn agents_send(
     // model / unbuilt index yields nothing, so this is a no-op until the index
     // exists.
     const INDEX_TOP_K: usize = 3;
-    let chat_state = app.state::<MemoryChatState>();
     let t_retrieve = std::time::Instant::now();
-    let mut index_docs =
-        memory_retrieve::retrieve(&app, chat_state.inner(), &cwd, &text, INDEX_TOP_K).await;
+    let mut index_docs = memory_retrieve::retrieve(&app, &cwd, &text, INDEX_TOP_K).await;
     // Every millisecond here is silent "agent is thinking" to the user — a
     // slow stage must name itself, or the next latency report is undiagnosable
     // (this one presented as "the ACP port made Claude slower").

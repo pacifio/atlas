@@ -1,7 +1,7 @@
 //! On-disk credential storage.
 //!
 //! The session token lives in `atlas-session.json` in the app's private config
-//! directory, mode `0600`, in **its own file** separate from `byok-keys.json`
+//! directory, mode `0600`, in **its own file**
 //! so that signing out is a single unlink.
 //!
 //! ## Why not the OS keychain

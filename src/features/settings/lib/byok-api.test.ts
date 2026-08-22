@@ -8,6 +8,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * not prove the command exists — `tests/ipc-contract.test.ts` does that for
  * every command in the app at once. Together the two cover the seam without
  * either needing a running Tauri process.
+ *
+ * Since 2026-08-22 this seam edits the user's shell profile instead of a
+ * private key store, so the argument names below (`envVar`, `value`) are what
+ * `byok_env_set` / `byok_env_unset` destructure — a rename on either side is a
+ * silent no-op at runtime, which is exactly what these catch.
  */
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -19,97 +24,122 @@ beforeEach(() => {
   invoke.mockResolvedValue(undefined);
 });
 
-describe("byok.list", () => {
-  it("calls byok_list with no payload", async () => {
+describe("byok.envList", () => {
+  it("calls byok_env_list with no payload", async () => {
     invoke.mockResolvedValue([]);
-    await byok.list();
-    expect(invoke).toHaveBeenCalledExactlyOnceWith("byok_list");
+    await byok.envList();
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("byok_env_list");
   });
 
-  it("returns the metadata rows untouched", async () => {
-    const rows = [{ provider: "openai", last4: "sk-1", addedAt: "2026-01-01T00:00:00.000Z" }];
+  it("returns the rows untouched", async () => {
+    const rows = [{ provider: "openai", envVar: "OPENAI_API_KEY", last4: "1234" }];
     invoke.mockResolvedValue(rows);
-    await expect(byok.list()).resolves.toEqual(rows);
+    await expect(byok.envList()).resolves.toEqual(rows);
+  });
+});
+
+describe("byok.entries", () => {
+  it("calls byok_env_entries with no payload", async () => {
+    invoke.mockResolvedValue([]);
+    await byok.entries();
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("byok_env_entries");
+  });
+
+  it("preserves the file/line/editable fields the editor renders", async () => {
+    const rows = [
+      {
+        provider: "google",
+        envVar: "GEMINI_API_KEY",
+        last4: "9876",
+        file: "/Users/a/.zshrc",
+        line: 42,
+        editable: true,
+      },
+      {
+        provider: "openai",
+        envVar: "OPENAI_API_KEY",
+        last4: "4321",
+        file: null,
+        line: null,
+        editable: false,
+      },
+    ];
+    invoke.mockResolvedValue(rows);
+    await expect(byok.entries()).resolves.toEqual(rows);
   });
 
   it("propagates a rejection rather than swallowing it", async () => {
-    // Keychain reads fail when the user denies the OS prompt; the settings
-    // panel needs to see that, not an empty list.
-    invoke.mockRejectedValue("keychain access denied");
-    await expect(byok.list()).rejects.toBe("keychain access denied");
+    invoke.mockRejectedValue("no home directory");
+    await expect(byok.entries()).rejects.toBe("no home directory");
+  });
+});
+
+describe("byok.profileInfo", () => {
+  it("calls byok_profile_info with no payload", async () => {
+    invoke.mockResolvedValue({ shell: "/bin/zsh", target: "/Users/a/.zshrc", scanned: [] });
+    await byok.profileInfo();
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("byok_profile_info");
+  });
+});
+
+describe("byok.reveal", () => {
+  it("sends the variable name under `envVar`", async () => {
+    invoke.mockResolvedValue("sk-secret");
+    await byok.reveal("ANTHROPIC_API_KEY");
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("byok_env_reveal", {
+      envVar: "ANTHROPIC_API_KEY",
+    });
+  });
+
+  it("passes through a null for an unset variable", async () => {
+    invoke.mockResolvedValue(null);
+    await expect(byok.reveal("NOPE")).resolves.toBeNull();
   });
 });
 
 describe("byok.set", () => {
-  it("sends the provider, the raw key, and derived metadata", async () => {
-    await byok.set("anthropic", "sk-ant-abcd1234");
-    expect(invoke).toHaveBeenCalledExactlyOnceWith("byok_set", {
-      provider: "anthropic",
-      key: "sk-ant-abcd1234",
-      last4: "1234",
-      addedAt: expect.any(String),
+  it("sends the variable and the raw value", async () => {
+    invoke.mockResolvedValue("/Users/a/.zshrc");
+    await byok.set("ANTHROPIC_API_KEY", "sk-ant-abcd1234");
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("byok_env_set", {
+      envVar: "ANTHROPIC_API_KEY",
+      value: "sk-ant-abcd1234",
     });
   });
 
-  it("stamps addedAt as a parseable ISO-8601 instant", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-06-15T12:00:00.000Z"));
-    try {
-      await byok.set("openai", "sk-openai-wxyz9876");
-      const { addedAt } = invoke.mock.calls[0][1];
-      expect(addedAt).toBe("2026-06-15T12:00:00.000Z");
-      expect(Number.isNaN(Date.parse(addedAt))).toBe(false);
-    } finally {
-      vi.useRealTimers();
-    }
+  it("does NOT derive metadata — Rust owns what lands in the file", async () => {
+    // The old store took `last4`/`addedAt` from here. The profile editor writes
+    // one `export` line and nothing else, so sending extras would be a lie.
+    invoke.mockResolvedValue("/Users/a/.zshrc");
+    await byok.set("OPENAI_API_KEY", "sk-openai-wxyz9876");
+    expect(Object.keys(invoke.mock.calls[0][1])).toEqual(["envVar", "value"]);
   });
 
-  describe("last4 derivation", () => {
-    async function last4For(key: string): Promise<string> {
-      invoke.mockReset();
-      invoke.mockResolvedValue(undefined);
-      await byok.set("openai", key);
-      return invoke.mock.calls[0][1].last4;
-    }
-
-    it("takes the final four characters of a normal key", async () => {
-      await expect(last4For("sk-proj-0000abcd")).resolves.toBe("abcd");
-    });
-
-    it("handles a key of exactly four characters", async () => {
-      await expect(last4For("wxyz")).resolves.toBe("wxyz");
-    });
-
-    it("returns the whole key when it is shorter than four characters", async () => {
-      // `String.slice(-4)` cannot truncate here, so the "non-secret" metadata
-      // becomes the entire secret. Harmless for real credentials (no provider
-      // issues 3-character keys) but worth pinning: if `last4` ever moves
-      // somewhere less trusted than the settings panel, this is the case that
-      // makes it a leak.
-      await expect(last4For("abc")).resolves.toBe("abc");
-    });
-
-    it("returns an empty string for an empty key", async () => {
-      // The panel is expected to reject this before calling; nothing here does.
-      await expect(last4For("")).resolves.toBe("");
-    });
-
-    it("counts UTF-16 code units, not glyphs", async () => {
-      // Keys are ASCII in practice; this pins what happens if one is not,
-      // since slicing mid-surrogate would otherwise silently corrupt display.
-      await expect(last4For("key-🔑")).resolves.toHaveLength(4);
-    });
-  });
-});
-
-describe("byok.delete", () => {
-  it("calls byok_delete with just the provider", async () => {
-    await byok.delete("anthropic");
-    expect(invoke).toHaveBeenCalledExactlyOnceWith("byok_delete", { provider: "anthropic" });
+  it("resolves to the file that was written", async () => {
+    invoke.mockResolvedValue("/Users/a/.zshrc");
+    await expect(byok.set("GROQ_API_KEY", "gsk-1")).resolves.toBe("/Users/a/.zshrc");
   });
 
   it("propagates a rejection", async () => {
-    invoke.mockRejectedValue("no such entry");
-    await expect(byok.delete("ghost")).rejects.toBe("no such entry");
+    invoke.mockRejectedValue("read-only file system");
+    await expect(byok.set("GROQ_API_KEY", "gsk-1")).rejects.toBe("read-only file system");
+  });
+});
+
+describe("byok.unset", () => {
+  it("calls byok_env_unset with just the variable", async () => {
+    await byok.unset("ANTHROPIC_API_KEY");
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("byok_env_unset", {
+      envVar: "ANTHROPIC_API_KEY",
+    });
+  });
+
+  it("propagates the refusal for an env-only key", async () => {
+    // Rust refuses rather than guessing at a file it never found the value in;
+    // the UI turns this into a message, so it must not be swallowed here.
+    invoke.mockRejectedValue("This key is set outside your shell profile");
+    await expect(byok.unset("OPENAI_API_KEY")).rejects.toBe(
+      "This key is set outside your shell profile",
+    );
   });
 });

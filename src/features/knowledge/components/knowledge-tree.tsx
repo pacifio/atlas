@@ -41,7 +41,7 @@ interface KnowledgeTreeProps {
 
 /**
  * Mirror of FileTree for the knowledge base. Entries arrive flat from
- * `list_knowledge` with slash-delimited ids ("research/foo/note-123"),
+ * `list_knowledge` with slash-delimited ids ("notes/foo/note-123"),
  * so the tree is reconstructed client-side rather than via a new
  * Tauri command — knowledge dirs are small.
  *
@@ -66,8 +66,8 @@ export const KnowledgeTree = forwardRef<KnowledgeTreeHandle, KnowledgeTreeProps>
 
     // Build directory map: folder path → { dirs: Set, files: entries[] }.
     // Dedupe entries by id — `list_knowledge` can occasionally surface
-    // the same paper/note twice (e.g. when a research import races with
-    // a manual save) and React keys must be unique.
+    // the same note twice (e.g. when an import races a manual save) and
+    // React keys must be unique.
     const dirMap = useMemo(() => {
       const map = new Map<string, { dirs: Set<string>; files: KnowledgeTreeEntry[] }>();
       const ensure = (path: string) => {

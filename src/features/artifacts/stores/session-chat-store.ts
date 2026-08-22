@@ -1,7 +1,7 @@
 /**
  * Session-Chat store — chat threads about one recorded Session.
  *
- * Modelled on `memory-chat-store`, with two differences that follow from the
+ * Modelled on the former memory-chat store, with two differences that follow from the
  * feature rather than from taste:
  *
  * * **Provider-only.** There is no local-model branch, so no `mode`, no model

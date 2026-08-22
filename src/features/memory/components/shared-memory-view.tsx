@@ -21,7 +21,8 @@ import {
   Check,
 } from "lucide-react";
 import { PanelSkeleton } from "@/components/panel-skeleton";
-import { ClaudeIcon, CodexIcon } from "@/components/agent-icons";
+import { AgentMark } from "@/components/agent-mark";
+import { agentMetaForSource, pluginIdForSource } from "../lib/memory-agent";
 import { timeAgo } from "@/lib/time-ago";
 import { cn } from "@/lib/utils";
 import { useSharedMemoryStore } from "../stores/shared-memory-store";
@@ -55,19 +56,10 @@ const PLAN_COL = {
 } as const;
 const PLAN_MIN_W = 56 + 92 + 128 + 110 + 280 + 30;
 
-/* Per-agent identity — the one place DESIGN_PRINCIPLES sanctions color (§2.3). */
-function agentMeta(agent: string): {
-  Icon: typeof ClaudeIcon | null;
-  tint: string;
-  label: string;
-} {
-  const a = agent.toLowerCase();
-  if (a.includes("codex"))
-    return { Icon: CodexIcon, tint: "var(--agent-codex-chip-bg)", label: "Codex" };
-  if (a.includes("claude"))
-    return { Icon: ClaudeIcon, tint: "var(--agent-claude-chip-bg)", label: "Claude" };
-  return { Icon: null, tint: "var(--bg-elevated)", label: agent.split(/[-_]/)[0] || agent };
-}
+/* Agent identity resolves through the registry chokepoint (`agentMeta`), so an
+ * agent installed from the ACP registry gets its real name and manifest icon
+ * instead of a truncated id. The local resolver this replaced knew only Claude
+ * and Codex, which is how one agent could render twice under two identities. */
 
 const str = (v: unknown): string => (v == null ? "" : String(v));
 
@@ -156,7 +148,7 @@ export function SharedMemoryView({ projectPath, className }: Props) {
           value={agentFilter}
           options={agentOptions}
           onChange={setAgentFilter}
-          format={(a) => agentMeta(a).label}
+          format={(a) => agentMetaForSource(a).label}
         />
         {tab === "events" && (
           <FilterMenu
@@ -267,7 +259,7 @@ function EventRow({
           {eventTime(e.ts)}
         </span>
         <span className={EVENT_COL.agent}>
-          <AgentMark agent={e.agent} />
+          <AgentTag agent={e.agent} />
         </span>
         <span className={EVENT_COL.kind}>
           <KindChip kind={e.kind} />
@@ -298,7 +290,7 @@ function EventDetail({ event: e }: { event: MemoryEvent }) {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
         <MetaChip label="Seq" value={`#${e.seq}`} mono />
         <MetaChip label="Kind" value={e.kind.replace(/_/g, " ")} />
-        <MetaChip label="Agent" value={agentMeta(e.agent).label} />
+        <MetaChip label="Agent" value={agentMetaForSource(e.agent).label} />
         {e.key && <MetaChip label="Key" value={e.key} mono />}
         <MetaChip label="When" value={fmtDateTime(e.ts)} />
         {e.sessionId && <MetaChip label="Session" value={e.sessionId.slice(0, 8)} mono />}
@@ -379,7 +371,7 @@ function PlanRow({
           {eventTime(e.ts)}
         </span>
         <span className={PLAN_COL.agent}>
-          <AgentMark agent={e.agent} />
+          <AgentTag agent={e.agent} />
         </span>
         <span className={PLAN_COL.status}>
           <StatusChip status={status} />
@@ -403,7 +395,7 @@ function PlanRow({
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
             <MetaChip label="Seq" value={`#${e.seq}`} mono />
             <MetaChip label="Status" value={status} />
-            <MetaChip label="Agent" value={agentMeta(e.agent).label} />
+            <MetaChip label="Agent" value={agentMetaForSource(e.agent).label} />
             <MetaChip label="When" value={fmtDateTime(e.ts)} />
           </div>
           <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-base)] px-3 py-2">
@@ -574,23 +566,14 @@ function FilterOption({
   );
 }
 
-/** Tinted identity mark: agent logo on its sanctioned chip tint + short name. */
-function AgentMark({ agent }: { agent: string }) {
-  const { Icon, tint, label } = agentMeta(agent);
+/** Identity mark: the agent's badge (brand glyph, registry icon, or monogram)
+ *  plus its resolved name. */
+function AgentTag({ agent }: { agent: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 min-w-0">
-      <span
-        className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-[var(--border-default)]"
-        style={{ background: tint }}
-      >
-        {Icon ? (
-          <Icon className="size-2.5" />
-        ) : (
-          <span className="h-1.5 w-1.5 rounded-full bg-[var(--text-tertiary)]" />
-        )}
-      </span>
+      <AgentMark agentType={pluginIdForSource(agent)} />
       <span className="truncate font-mono text-[10px] uppercase tracking-wider text-[var(--text-tertiary)]">
-        {label}
+        {agentMetaForSource(agent).label}
       </span>
     </span>
   );

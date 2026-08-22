@@ -4,7 +4,6 @@ const TAB_TYPES = [
   "browser",
   "tasks",
   "editor",
-  "research",
   "knowledge",
   "knowledge-graph",
   "memory",

@@ -7,14 +7,9 @@
 //! `config.json`, `tokenizer.json`, `model.safetensors` — and produces
 //! L2-normalized mean-pooled sentence vectors. Because vectors are unit-length,
 //! cosine similarity is just a dot product.
-//!
-//! The crate also hosts a small generative counterpart in [`chat`]: a quantized
-//! Qwen2.5-Instruct decoder for local RAG answers, sharing the same candle stack.
 
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
-
-pub mod chat;
 
 use anyhow::{anyhow, Context, Result};
 use candle_core::{Device, Tensor};
@@ -27,8 +22,7 @@ const MAX_TOKENS: usize = 512;
 
 /// Marker file written next to a model when its GPU backend failed on this
 /// machine — subsequent loads skip the GPU attempt and go straight to CPU.
-/// Same name/convention as the chat model's marker (`memory_chat.rs` reads it
-/// for the LLM); per-model-dir, so switching or re-downloading a model retries.
+/// Per-model-dir, so switching or re-downloading a model retries the GPU.
 pub const GPU_INCOMPATIBLE_MARKER: &str = ".metal_incompatible";
 
 /// Longer warm-up text: candle compiles GPU compute pipelines lazily PER
@@ -75,7 +69,7 @@ pub struct Embedder {
 /// `None` when the platform's GPU feature is off or device init fails (e.g.
 /// headless CI). A successful device does NOT guarantee candle's GPU kernels
 /// compile/run on this machine — hence the guarded load + request-time
-/// fallback. Shared with `chat`.
+/// fallback.
 pub(crate) fn gpu_device() -> Option<Device> {
     #[cfg(all(target_os = "macos", feature = "metal"))]
     {

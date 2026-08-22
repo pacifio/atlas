@@ -60,7 +60,6 @@ export function MemoryTimelineCalendar({
   memoryIds,
   dayCount = 7,
   onSelect,
-  onActivate,
 }: {
   data: MemoryTimeline;
   selectedId: string | null;
@@ -70,7 +69,6 @@ export function MemoryTimelineCalendar({
   /** Visible columns; 7 aligns to the calendar week, 3/4 are rolling ranges. */
   dayCount?: number;
   onSelect: (id: string | null) => void;
-  onActivate: (id: string) => void;
 }) {
   const model = useMemo(() => {
     const branchSet = new Set(data.branches.map((b) => b.name));
@@ -360,10 +358,7 @@ export function MemoryTimelineCalendar({
                         if (el) cardRefs.current.set(c.id, el);
                         else cardRefs.current.delete(c.id);
                       }}
-                      onClick={(e) => {
-                        if ((e.metaKey || e.ctrlKey) && c.kind === "session") onActivate(c.id);
-                        else onSelect(sel ? null : c.id);
-                      }}
+                      onClick={() => onSelect(sel ? null : c.id)}
                       onMouseEnter={() => setHoverBranch(c.branch)}
                       onMouseLeave={() => setHoverBranch((h) => (h === c.branch ? null : h))}
                       title={c.title}

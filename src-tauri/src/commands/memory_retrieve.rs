@@ -20,7 +20,6 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
 
-use super::memory_chat::MemoryChatState;
 use super::memory_delta::redact;
 use super::memory_indexer::MemoryRegistry;
 
@@ -46,13 +45,10 @@ pub struct RetrievedDoc {
 /// — the Cersei `search_memory` pull tool (`agents.rs` closure) and the
 /// Claude/Codex push (site C) — so it improves all three agents at once.
 ///
-/// `_chat_state` is unused now (the engine owns its own provider via the registry)
-/// but kept in the signature so the two call sites compile byte-for-byte unchanged.
 /// Empty on any failure (no model, no engine, timeout) — callers treat empty as
 /// "skip". Still time-bounded so it can never stall a turn.
 pub async fn retrieve(
     app: &AppHandle,
-    _chat_state: &MemoryChatState,
     project_path: &str,
     query: &str,
     top_k: usize,

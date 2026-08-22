@@ -2,7 +2,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
-import { MessageSquare, Terminal, Globe, BookOpen, Settings, Copy, RefreshCw } from "lucide-react";
+import { MessageSquare, Terminal, Globe, Settings, Copy, RefreshCw } from "lucide-react";
 
 export function AppContextMenu({ children }: { children: React.ReactNode }) {
   const { addTab } = useLayoutStore.use.actions();
@@ -47,20 +47,6 @@ export function AppContextMenu({ children }: { children: React.ReactNode }) {
                     id: `browser-${Date.now()}`,
                     type: "browser",
                     title: "Browser",
-                    closable: true,
-                    dirty: false,
-                    data: {},
-                  })
-                }
-              />
-              <MenuItem
-                icon={<BookOpen size={12} />}
-                label="Research"
-                onClick={() =>
-                  addTab({
-                    id: `research-${Date.now()}`,
-                    type: "research",
-                    title: "Research",
                     closable: true,
                     dirty: false,
                     data: {},

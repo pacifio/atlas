@@ -39,7 +39,6 @@ import {
   GitBranch,
   Hash,
   MessageSquare,
-  Newspaper,
   Scale,
   SquareSlash,
   Zap,
@@ -869,8 +868,6 @@ function CategoryIcon({ kind }: { kind: MentionKind }) {
       return <FolderGit2 size={size} />;
     case "workspace":
       return <Boxes size={size} />;
-    case "paper":
-      return <Newspaper size={size} />;
     case "branch":
       return <GitBranch size={size} />;
     case "past_message":
@@ -908,8 +905,6 @@ function secondaryLabel(m: MentionData): string {
       return m.hasReadme ? "cloned · README" : "cloned";
     case "workspace":
       return m.orgName ? `${m.orgName} · ${shortPath(m.absPath)}` : shortPath(m.absPath);
-    case "paper":
-      return m.authors[0] ?? "";
     case "branch":
       return m.refKind + (m.isCurrent ? " · HEAD" : "");
     case "past_message":
@@ -973,8 +968,6 @@ function mentionTitle(m: MentionData): string {
       return m.absPath;
     case "workspace":
       return m.absPath;
-    case "paper":
-      return m.metadataPath;
     case "branch":
       return `${m.refKind} ${m.id} (${m.sha.slice(0, 7)})`;
     case "past_message":

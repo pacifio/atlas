@@ -94,7 +94,7 @@ export function MemoryTimelineView() {
   const isRepo = useGitStore.use.isRepo();
   const timeline = useMemoryStore.use.timeline();
   const loading = useMemoryStore.use.timelineLoading();
-  const { ensureProject, loadTimeline, navigateToMemory } = useMemoryStore.use.actions();
+  const { ensureProject, loadTimeline } = useMemoryStore.use.actions();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -126,44 +126,6 @@ export function MemoryTimelineView() {
     }
     return s;
   }, [timeline, chain]);
-
-  const onActivate = useCallback(
-    (id: string) => {
-      // A session card → its source view (Codex thread / Claude / Atlas session).
-      if (id.startsWith("session:")) {
-        const s = timeline?.sessions.find((x) => x.id === id.slice(8));
-        if (s) {
-          const sub =
-            s.agent === "codex" ||
-            s.agent === "cersei" ||
-            s.agent === "opencode" ||
-            s.agent === "cursor" ||
-            s.agent === "kilo"
-              ? s.agent
-              : !s.agent || s.agent.startsWith("claude")
-                ? "claude"
-                : // Registry-installed external agent — its plugin id is its sub.
-                  s.agent;
-          navigateToMemory(sub, s.id);
-        }
-        return;
-      }
-      // A memory-doc id from a panel row ("memory:" prefix is optional).
-      const doc = id.startsWith("memory:") ? id.slice(7) : id;
-      if (doc.startsWith("codex:")) navigateToMemory("codex", doc);
-      else if (doc.startsWith("claude:")) navigateToMemory("claude", doc);
-      else if (doc.startsWith("cersei:")) navigateToMemory("cersei", doc);
-      else if (doc.startsWith("opencode:")) navigateToMemory("opencode", doc);
-      else if (doc.startsWith("cursor:")) navigateToMemory("cursor", doc);
-      else if (doc.startsWith("kilo:")) navigateToMemory("kilo", doc);
-      else {
-        // External agents: "<plugin-id>:<doc>" routes to their capture view.
-        const prefix = doc.split(":")[0];
-        if (prefix && prefix.length < doc.length) navigateToMemory(prefix, doc);
-      }
-    },
-    [timeline, navigateToMemory],
-  );
 
   const runSearch = useCallback(async () => {
     const q = query.trim();
@@ -326,7 +288,6 @@ export function MemoryTimelineView() {
             setSelectedId(id);
             if (id) clearSearch();
           }}
-          onActivate={onActivate}
         />
         <MemoryTimelinePanel
           open={panelOpen}
@@ -337,7 +298,6 @@ export function MemoryTimelineView() {
             setSelectedId(null);
             clearSearch();
           }}
-          onActivate={onActivate}
         />
 
         {/* Floating semantic search pill — overlaid on the chart, no box. */}

@@ -3,13 +3,13 @@
 //!
 //! Previously: each keystroke in the picker triggered N parallel JS
 //! providers (`Promise.allSettled([files, folders, symbols, knowledge,
-//! repos, papers, branches])`), each invoking its own Tauri command
+//! repos, branches])`), each invoking its own Tauri command
 //! and returning results, then JS ran `rankMention` to blend + sort.
 //! That's per-keystroke N+1 IPCs + JS-side fuzzy scoring across all
 //! results.
 //!
 //! Now: one Tauri command. Rust reads the data sources it already
-//! owns (file/folder via the live `FileIndexState`, repo/paper via
+//! owns (file/folder via the live `FileIndexState`, repo via
 //! existing computes, branch via `git_refs_compute`). Knowledge +
 //! symbols are passed in from the frontend caches that already
 //! mirror Rust state — the input is small (a few hundred entries)
@@ -34,7 +34,6 @@ use super::fileindex::FileIndexState;
 use super::git::{GitRef, GitRefs};
 use super::git_watcher::GitWatcherState;
 use super::github::{list_cloned_repos, ClonedRepo};
-use super::papers::{list_saved_papers, SavedPaper, SavedPapersIndex};
 
 const PER_KIND_LIMIT: usize = 30;
 /// Unscoped blend: cap any one kind so files can't crowd every other
@@ -243,12 +242,6 @@ pub enum MentionResult {
         abs_path: String,
         has_readme: bool,
     },
-    Paper {
-        id: String,
-        display_name: String,
-        authors: Vec<String>,
-        metadata_path: String,
-    },
     Branch {
         id: String,
         display_name: String,
@@ -270,7 +263,6 @@ pub async fn mention_search(
     workspace_id: Option<String>,
     webview: WebviewWindow,
     fileindex: State<'_, FileIndexState>,
-    papers: State<'_, SavedPapersIndex>,
     git_watcher: State<'_, GitWatcherState>,
     cache: State<'_, MentionCacheState>,
 ) -> Result<Vec<MentionResult>, String> {
@@ -281,7 +273,6 @@ pub async fn mention_search(
     let want_file = matches_scope(scope_ref, "file");
     let want_folder = matches_scope(scope_ref, "folder");
     let want_repo = matches_scope(scope_ref, "repo");
-    let want_paper = matches_scope(scope_ref, "paper");
     let want_branch = matches_scope(scope_ref, "branch");
     let want_symbol = matches_scope(scope_ref, "symbol");
     let want_knowledge = matches_scope(scope_ref, "knowledge");
@@ -302,13 +293,11 @@ pub async fn mention_search(
     };
 
     let project_for_repo = project_path.clone();
-    let project_for_paper = project_path.clone();
     let project_for_branch = project_path.clone();
 
     let trimmed_for_file = trimmed.clone();
     let trimmed_for_folder = trimmed.clone();
     let trimmed_for_repo = trimmed.clone();
-    let trimmed_for_paper = trimmed.clone();
     let trimmed_for_branch = trimmed.clone();
     let trimmed_for_symbol = trimmed.clone();
     let trimmed_for_knowledge = trimmed.clone();
@@ -336,20 +325,6 @@ pub async fn mention_search(
         };
         match list_cloned_repos(project_path).await {
             Ok(rows) => rank_repos(&trimmed_for_repo, rows),
-            Err(_) => Vec::new(),
-        }
-    };
-
-    let papers_state = papers.clone();
-    let paper_fut = async move {
-        if !want_paper {
-            return Vec::new();
-        }
-        let Some(project_path) = project_for_paper else {
-            return Vec::new();
-        };
-        match list_saved_papers(project_path, papers_state).await {
-            Ok(rows) => rank_papers(&trimmed_for_paper, rows),
             Err(_) => Vec::new(),
         }
     };
@@ -420,14 +395,13 @@ pub async fn mention_search(
         rank_knowledge(&trimmed_for_knowledge, knowledge_data)
     };
 
-    let (files, folders, repos, papers_res, branches, symbols_res, knowledge_res) = tokio::join!(
-        file_fut, folder_fut, repo_fut, paper_fut, branch_fut, symbol_fut, knowledge_fut
-    );
+    let (files, folders, repos, branches, symbols_res, knowledge_res) =
+        tokio::join!(file_fut, folder_fut, repo_fut, branch_fut, symbol_fut, knowledge_fut);
 
     if scope_ref.is_some() {
         // Scoped view: only one kind is populated — flatten and cap.
         let mut all: Vec<MentionResult> = Vec::new();
-        for scored in [files, folders, symbols_res, knowledge_res, repos, papers_res, branches] {
+        for scored in [files, folders, symbols_res, knowledge_res, repos, branches] {
             all.extend(scored.into_iter().map(|(_, m)| m));
         }
         return Ok(all.into_iter().take(PER_KIND_LIMIT).collect());
@@ -444,7 +418,6 @@ pub async fn mention_search(
             (knowledge_res, 4),
             (repos, 3),
             (branches, 3),
-            (papers_res, 3),
         ] {
             all.extend(scored.into_iter().take(cap).map(|(_, m)| m));
         }
@@ -455,7 +428,7 @@ pub async fn mention_search(
     // score (stable sort keeps per-kind order on ties), with a per-kind
     // cap so no single kind can push the rest below the fold.
     let mut all: Vec<(u32, MentionResult)> = Vec::new();
-    for scored in [files, folders, symbols_res, knowledge_res, repos, papers_res, branches] {
+    for scored in [files, folders, symbols_res, knowledge_res, repos, branches] {
         all.extend(scored);
     }
     all.sort_by(|a, b| b.0.cmp(&a.0));
@@ -482,7 +455,6 @@ fn kind_key(m: &MentionResult) -> &'static str {
         MentionResult::Symbol { .. } => "symbol",
         MentionResult::Knowledge { .. } => "knowledge",
         MentionResult::Repo { .. } => "repo",
-        MentionResult::Paper { .. } => "paper",
         MentionResult::Branch { .. } => "branch",
     }
 }
@@ -604,46 +576,6 @@ fn rank_repos(query: &str, rows: Vec<ClonedRepo>) -> Vec<(u32, MentionResult)> {
                 display_name: r.name,
                 abs_path: r.path,
                 has_readme: r.has_readme,
-            })
-        })
-        .collect()
-}
-
-fn rank_papers(query: &str, rows: Vec<SavedPaper>) -> Vec<(u32, MentionResult)> {
-    if query.is_empty() {
-        return rows
-            .into_iter()
-            .take(PER_KIND_LIMIT)
-            .map(|p| {
-                (0, MentionResult::Paper {
-                    id: p.id,
-                    display_name: p.title,
-                    authors: p.authors,
-                    metadata_path: p.metadata_path,
-                })
-            })
-            .collect();
-    }
-    let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
-    let mut matcher = Matcher::default();
-    let mut scored: Vec<(u32, SavedPaper)> = rows
-        .into_iter()
-        .filter_map(|p| {
-            let mut buf = Vec::new();
-            let utf = Utf32Str::new(&p.title, &mut buf);
-            pattern.score(utf, &mut matcher).map(|s| (s, p))
-        })
-        .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
-    scored
-        .into_iter()
-        .take(PER_KIND_LIMIT)
-        .map(|(s, p)| {
-            (s, MentionResult::Paper {
-                id: p.id,
-                display_name: p.title,
-                authors: p.authors,
-                metadata_path: p.metadata_path,
             })
         })
         .collect()

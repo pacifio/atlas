@@ -1172,32 +1172,6 @@ pub async fn artifacts_sessions(
     .map_err(|e| e.to_string())?
 }
 
-/// Per-agent session counts for this Workspace — one GROUP BY, no session
-/// bodies. Feeds the Memory panel's agent dropdown badges for the
-/// capture-backed agents (opencode/cursor/kilo) without loading full lists.
-#[tauri::command]
-pub async fn capture_agent_session_counts(
-    project_path: String,
-) -> Result<std::collections::HashMap<String, i64>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let Some(store) = open_reader(&project_path)? else {
-            return Ok(std::collections::HashMap::new());
-        };
-        let mut counts = std::collections::HashMap::new();
-        for s in store
-            .sessions_for_workspace(&project_path)
-            .map_err(|e| e.to_string())?
-        {
-            if let Some(agent) = s.agent {
-                *counts.entry(agent).or_insert(0i64) += 1;
-            }
-        }
-        Ok(counts)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 /// One Session as an ordered timeline.
 ///
 /// Commit subjects are resolved from git here rather than in the crate: this is

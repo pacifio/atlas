@@ -38,7 +38,7 @@ src/features/<feature>/components  →  stores (Zustand)  →  lib/*-api.ts (inv
 │  Persistence:                                                          │
 │  • Per-project: <project>/.atlas/ (knowledge, canvas.json,             │
 │    editor-state.json, logs.jsonl, memory index, codebase-index,        │
-│    cloned repos, skills, packs, papers)                                │
+│    cloned repos, skills, packs)                                        │
 │  • Global:      ~/.atlas/ (pinned log rows)                            │
 │  • Claude Code: ~/.claude/projects/<slug>/*.jsonl (read directly,      │
 │    never mirrored)                                                     │
@@ -56,7 +56,7 @@ src/features/<feature>/
   lib/          — pure helpers, and the invoke()/listen() wrappers (<domain>-api.ts)
 ```
 
-`src/features/` holds ~30 slices: chat, editor, terminal, browser, git, github, explorer, knowledge, canvas, layout, log, monitor, research, settings, memory, mission-control, model-chat, organisations, packs, skills, telemetry, updater, workspaces, and more.
+`src/features/` holds ~30 slices: chat, editor, terminal, browser, git, github, explorer, knowledge, canvas, layout, log, monitor, settings, memory, mission-control, model-chat, organisations, packs, skills, telemetry, updater, workspaces, and more.
 
 - **Cross-feature widgets** live in `src/components/`.
 - **UI primitives** live in `src/ui/`.
@@ -111,7 +111,7 @@ One Rust module per IPC domain under `src-tauri/src/commands/`. `commands/mod.rs
 | Model chat | modelchat, modelchat_sessions |
 | Shared memory | agent_memory, shared_memory |
 | Analytics & feedback | agent_analytics, tool_stats, feedback |
-| Other | mission_control, papers, pdf_annotations, plans, research, review, search, sessions_watch, skills, telemetry, updater, window, byok, auth, node_setup, mcp, cersei, codebase_index, clipboard, fileindex, mention_search, recent_files, app_state, cli, compose_prompt, git_ops, knowledge_graph_layout |
+| Other | mission_control, pdf_annotations, plans, project_session, search, sessions_watch, skills, telemetry, updater, window, byok, auth, node_setup, mcp, cersei, codebase_index, clipboard, fileindex, mention_search, recent_files, app_state, cli, compose_prompt, git_ops, knowledge_graph_layout |
 
 Adding a command is a three-edit rule:
 
@@ -142,7 +142,7 @@ Streaming from Rust to the UI runs on Tauri events, `atlas:*` channels, most pay
 | `atlas:explorer:changed`, `atlas:fileindex:updated` | file-tree and file-index invalidation |
 | `atlas:knowledge:links-changed`, `atlas:knowledge:meta-changed` | knowledge-base backlink and metadata updates |
 | `atlas:claude-install:*`, `atlas:node-install:*` | `claude` CLI and Node bootstrap progress |
-| `atlas:model-download:*`, `atlas:memory-chat-model:*`, `atlas:memory-embed:*` | local model download and embedding progress |
+| `atlas:model-download:*`, `atlas:memory-embed:*` | local model download and embedding progress |
 
 ## Agent runtime
 
@@ -210,7 +210,7 @@ All wired in as `path` dependencies from `src-tauri/Cargo.toml`.
 | `atlas-cersei` | Atlas's native, in-process coding agent, built on the Cersei agent SDK. Read `crates/atlas-cersei/ARCHITECTURE.md` before touching agent lifecycle, tools, permissions, providers, or persistence. |
 | `atlas-terminal` | Wraps `portable-pty`, manages `TerminalSession`s, bridges PTY bytes to Tauri events. |
 | `atlas-memory` | On-device RAG/memory engine: MiniLM → usearch HNSW plus grafeo graph memory, behind a `MemorySearchFn` seam. Read its `README.md` and `MIGRATION.md` before changing on-disk index formats. |
-| `atlas-embed` | On-device text embeddings and a small vector store, isolated so `candle`'s heavy dependency tree doesn't slow incremental builds of everything else. Also hosts a quantized Qwen2.5-Instruct decoder for local RAG answers. |
+| `atlas-embed` | On-device text embeddings (BERT-family sentence-transformers) and a small vector store, isolated so `candle`'s heavy dependency tree doesn't slow incremental builds of everything else. Embedding only — on-device generation was removed 2026-08-22. |
 | `atlas-codeindex` | Deterministic codebase scanner: turns live source into structural, embeddable docs via its own tree-sitter code intelligence (Rust/TS/TSX/JS/Python/Go). |
 | `atlas-gitdiff` | Structured side-by-side git diff engine: parses unified diffs, computes word-level intra-line change spans (word-diff algorithm vendored from `dandavison/delta`, MIT). |
 | `atlas-kb-server` | Standalone static-server binary produced by the knowledge base's "Export server" action. Embeds the exported HTML/CSS via `include_dir!`, serves it on `localhost:4747`. |
@@ -242,7 +242,6 @@ Almost everything is per-project. `~/.atlas/` holds one file.
 ├── repos/                    repos cloned via the GitHub panel
 ├── skills/                   project-scoped SKILL.md files
 ├── packs/                    installed packs
-├── papers/                   papers pulled in from Research
 ├── logs.jsonl                per-project activity log
 ├── interactions.jsonl        knowledge-base interaction history
 ├── canvas.json               ReactFlow node/edge state (Canvas / Spaces)
@@ -298,7 +297,7 @@ atlas/
 │   ├── atlas-cersei                 native in-process agent (Cersei SDK)
 │   ├── atlas-terminal               PTY (portable-pty)
 │   ├── atlas-memory                 on-device RAG/memory engine
-│   ├── atlas-embed                  on-device embeddings + local LLM (candle)
+│   ├── atlas-embed                  on-device embeddings (candle)
 │   ├── atlas-codeindex               tree-sitter codebase scanner
 │   ├── atlas-gitdiff                 structured diff engine
 │   └── atlas-kb-server                self-contained KB static-server binary

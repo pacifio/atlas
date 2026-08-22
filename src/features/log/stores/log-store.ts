@@ -14,7 +14,6 @@ export type LogSource =
   | "knowledge"
   | "github"
   | "editor"
-  | "research"
   | "project"
   | "system";
 

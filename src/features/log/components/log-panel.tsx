@@ -36,7 +36,6 @@ const SOURCES: LogSource[] = [
   "knowledge",
   "github",
   "editor",
-  "research",
   "project",
   "system",
 ];
@@ -76,11 +75,6 @@ const SOURCE_COLOR: Record<LogSource, { text: string; bg: string; border: string
     text: "text-[var(--status-success)]",
     bg: "bg-[var(--status-success)]/15",
     border: "border-[var(--status-success)]/30",
-  },
-  research: {
-    text: "text-[var(--text-secondary)]",
-    bg: "bg-[var(--bg-elevated)]",
-    border: "border-[var(--border-default)]",
   },
   project: {
     text: "text-[var(--text-secondary)]",
