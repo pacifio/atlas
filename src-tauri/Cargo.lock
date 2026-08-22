@@ -420,6 +420,7 @@ version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
  "agent-client-protocol-schema",
+ "atlas-agent-wire",
  "atlas-terminal",
  "dashmap",
  "serde",
@@ -427,6 +428,18 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "atlas-agent-wire"
+version = "0.1.0"
+dependencies = [
+ "atlas-bus",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
  "uuid",
 ]
 
@@ -447,6 +460,7 @@ dependencies = [
  "agent-client-protocol",
  "async-trait",
  "atlas-acp",
+ "atlas-agent-wire",
  "atlas-agentkit",
  "atlas-bus",
  "atlas-cersei",

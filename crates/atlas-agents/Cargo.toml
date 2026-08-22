@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+atlas-agent-wire = { path = "../atlas-agent-wire" }
 atlas-acp = { path = "../atlas-acp" }
 atlas-cersei = { path = "../atlas-cersei" }
 atlas-bus = { path = "../atlas-bus" }

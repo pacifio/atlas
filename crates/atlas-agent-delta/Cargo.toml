@@ -1,0 +1,29 @@
+[package]
+name = "atlas-agent-delta"
+version = "0.1.0"
+edition = "2021"
+description = "Projects ported-thread events into the frozen SessionDelta wire."
+
+[lib]
+name = "atlas_agent_delta"
+
+[dependencies]
+# Same exact pin as the rest of the ported stack (`zed-ref/Cargo.toml:518`).
+agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
+atlas-acp-thread = { path = "../atlas-acp-thread" }
+# For `ThreadEventSink`, the shape `ConnectOptions` wants.
+atlas-agent-servers = { path = "../atlas-agent-servers" }
+# The frozen wire. Names no protocol version, which is what lets this crate and
+# the old stack produce the same types.
+atlas-agent-wire = { path = "../atlas-agent-wire" }
+chrono = { version = "0.4", features = ["serde"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "sync"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+atlas-bus = { path = "../atlas-bus" }
+anyhow = "1"
+futures = "0.3"
+tokio = { version = "1", features = ["full", "test-util"] }

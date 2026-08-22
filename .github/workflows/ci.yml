@@ -105,11 +105,15 @@ jobs:
           - crate: atlas-acp
           - crate: atlas-acp-thread
             clippy: true
+          - crate: atlas-agent-delta
+            clippy: true
           - crate: atlas-agent-manager
             clippy: true
           - crate: atlas-agent-servers
             clippy: true
           - crate: atlas-agent-store
+            clippy: true
+          - crate: atlas-agent-wire
             clippy: true
           - crate: atlas-agentkit
           - crate: atlas-agents

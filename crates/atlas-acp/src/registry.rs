@@ -21,20 +21,12 @@ use crate::events::EventSink;
 use crate::schema::NewSessionInfo;
 use crate::spawn::{explain_spawn_failure, resolve_command};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AgentId(pub Uuid);
-
-impl AgentId {
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl Default for AgentId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// Re-exported so the whole app names one `AgentId`.
+///
+/// It is defined in `atlas-agent-wire` because it is a routing key on
+/// `SessionDeltaEnvelope`, which both ACP stacks have to produce and neither
+/// can own (see that crate's `types` module).
+pub use atlas_agent_wire::AgentId;
 
 /// One session the AGENT reports it has stored (P2.3), flattened for the wire.
 #[derive(Debug, Clone, Serialize, Deserialize)]

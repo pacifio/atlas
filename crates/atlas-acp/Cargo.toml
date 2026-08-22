@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+atlas-agent-wire = { path = "../atlas-agent-wire" }
 # Enable every `unstable_*` schema feature — claude-agent-acp's SDK
 # emits notifications gated on these (e.g. `usage_update`, `current_model_update`).
 # Without them turned on, the strongly-typed `SessionNotification` deserializer
