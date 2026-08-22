@@ -13,6 +13,8 @@ Glossary of domain terms as this project uses them. Decisions with lasting conse
 - **Backfill** — the one-time automatic import pass per installed agent on first launch after the history model shipped.
 - **Resume** — turning a history row into a live session through the protocol: `session/load` (replays transcript) or `session/resume` (no replay, user notified), selected by advertised capability.
 - **Capability gating** — every per-agent behavior is decided by the capabilities the agent advertised at `initialize`; agent-identity checks are forbidden. ("No ACP agent gets special treatment.")
+- **Atlas-recorded usage** — the token totals Atlas's own recorder wrote for a session (`atlas-checkpoint`), priced from the models.dev map Atlas caches. The only source for the usage widget, the usage panel and Mission Control; covers sessions run through Atlas and no others.
+- **Turn / message** — a *turn* is one prompt and the answer to it; a *message* is one user or assistant row within it. Usage surfaces count messages, because that is what Atlas records per session.
 - **Scrape readers** *(deprecated)* — the deleted per-agent readers of CLI private storage (Claude JSONL, Kilo DB, Codex state DB). Do not reintroduce.
 
 ## Adjacent subsystems

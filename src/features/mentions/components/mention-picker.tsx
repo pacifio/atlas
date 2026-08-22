@@ -789,7 +789,7 @@ const PickerRow = memo(function PickerRow({
   }
   if (row.type === "session") {
     return (
-      <button {...common} title={row.session.filePath}>
+      <button {...common} title={row.session.title}>
         <span className="opacity-75 w-4 flex items-center justify-center">
           <MessageSquare size={11} />
         </span>

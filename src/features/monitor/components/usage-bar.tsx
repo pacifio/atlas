@@ -6,7 +6,7 @@ import { useChatStore } from "@/features/chat/stores/chat-store";
 import { useShallow } from "zustand/react/shallow";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
-import { getClaudeSessionStats } from "@/features/chat/lib/claude-api";
+import { getSessionUsage } from "../lib/usage-api";
 import { listen } from "@tauri-apps/api/event";
 
 function formatCount(n: number): string {
@@ -48,18 +48,16 @@ export function UsageBar() {
   const cwd = project?.path ?? "";
 
   const queryClient = useQueryClient();
-  const queryKey = ["claude-session-stats", cwd, acpSessionId] as const;
+  const queryKey = ["agent-session-usage", cwd, acpSessionId] as const;
 
   const { data: stats } = useQuery({
     queryKey,
-    queryFn: () => getClaudeSessionStats(cwd, acpSessionId as string),
+    queryFn: () => getSessionUsage(cwd, acpSessionId as string),
     enabled: !!acpSessionId && cwd.length > 0,
     staleTime: 30_000,
-    // Polling killed: the Rust file watcher (started by SessionSidebar) emits
-    // `atlas:sessions-changed` whenever any JSONL in the project rewrites,
-    // and the effect below invalidates this query in response. That means
-    // we re-read the stats file exactly when Claude flushes — not every
-    // 1.5s while we're guessing it might have.
+    // No polling. Atlas writes the usage record itself, at turn boundaries, so
+    // the turn-end effect below is the exact moment there is something new to
+    // read — guessing on an interval would only re-read the same numbers.
     refetchInterval: false,
     // Keep the previously-rendered totals visible while a new query (after
     // a tab switch / session change) is in flight. Without this the bar
@@ -67,7 +65,8 @@ export function UsageBar() {
     placeholderData: keepPreviousData,
   });
 
-  // Push refresh on file-watch + on turn-end status transitions.
+  // Refresh when the session list changes, and at every turn end — the two
+  // moments Atlas's own usage record can have gained something.
   useEffect(() => {
     if (!acpSessionId) return;
     const unlistenPromise = listen<{ cwd: string }>("atlas:sessions-changed", (e) => {
@@ -85,6 +84,8 @@ export function UsageBar() {
   }, [acpSessionId, isStreaming, queryClient, queryKey]);
 
   const display = useMemo(() => {
+    // Atlas's own record, when this session reached it. A session Atlas never
+    // recorded gets the live per-turn counters instead of a confident zero.
     if (acpSessionId && stats) {
       return {
         inputTokens: stats.input_tokens,
@@ -92,9 +93,10 @@ export function UsageBar() {
         cacheCreation: stats.cache_creation_tokens,
         cacheRead: stats.cache_read_tokens,
         totalCost: stats.total_cost_usd,
-        requestCount: stats.request_count,
+        activity: { label: "Messages", short: "msgs", value: stats.messages },
         model: stats.model,
-        source: "claude" as const,
+        agent: stats.agent,
+        source: "recorded" as const,
       };
     }
     return {
@@ -103,9 +105,12 @@ export function UsageBar() {
       cacheCreation: 0,
       cacheRead: 0,
       totalCost: totalCostFallback,
-      requestCount: requestCountFallback,
+      // A request count, not a message count — this branch is the live BYOK
+      // counter, and calling it anything else would be a relabelled lie.
+      activity: { label: "Requests", short: "calls", value: requestCountFallback },
       model: null as string | null,
-      source: "provider" as const,
+      agent: null as string | null,
+      source: "live" as const,
     };
   }, [
     acpSessionId,
@@ -129,7 +134,9 @@ export function UsageBar() {
         <Zap size={10} className="text-accent" />
         <span>{formatCount(totalTokens)} tokens</span>
         <span>·</span>
-        <span>{display.requestCount} calls</span>
+        <span>
+          {display.activity.value} {display.activity.short}
+        </span>
         <span>·</span>
         <span>${display.totalCost.toFixed(4)}</span>
         {display.model && (
@@ -150,19 +157,21 @@ export function UsageBar() {
         >
           <div className="flex items-center gap-1.5 text-[11px] font-semibold text-text-secondary">
             <BarChart3 size={12} />
-            {display.source === "claude" ? "Claude Code Session" : "Session Usage"}
+            {display.source === "recorded" && display.agent
+              ? `${display.agent} session`
+              : "Session Usage"}
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <UsageStat label="Input" value={display.inputTokens.toLocaleString()} />
             <UsageStat label="Output" value={display.outputTokens.toLocaleString()} />
-            {display.source === "claude" && (
+            {display.source === "recorded" && (
               <>
                 <UsageStat label="Cache write" value={display.cacheCreation.toLocaleString()} />
                 <UsageStat label="Cache read" value={display.cacheRead.toLocaleString()} />
               </>
             )}
-            <UsageStat label="Requests" value={String(display.requestCount)} />
+            <UsageStat label={display.activity.label} value={String(display.activity.value)} />
             <UsageStat label="Cost" value={`$${display.totalCost.toFixed(4)}`} />
           </div>
 
@@ -174,7 +183,7 @@ export function UsageBar() {
 
           <div className="flex items-center gap-1 text-[9px] text-text-tertiary pt-1 border-t border-border-subtle">
             <Clock size={9} />
-            {display.source === "claude" ? "Live from .jsonl" : `Session: ${elapsed}m`}
+            {display.source === "recorded" ? "Recorded by Atlas" : `Session: ${elapsed}m`}
           </div>
         </div>
       )}

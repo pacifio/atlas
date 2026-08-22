@@ -282,9 +282,13 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for AnalyticsMiddleware {
 /// Records assistant output into Atlas's own transcript store, and persists at
 /// each turn boundary.
 ///
-/// Only for agents with `TranscriptKind::None` — Claude, the native agent and
-/// Kilo already have readable stores, and a second copy would put two rows in
-/// the sidebar for one conversation with two competing titles.
+/// For **every** agent. It used to skip the agents that keep a readable store
+/// of their own — Claude, the native agent — because Atlas read those stores
+/// for the sidebar and a second copy meant two rows for one conversation. Atlas
+/// no longer reads anyone's store (ADR-0001), so that reason is gone and the
+/// exception was the last agent-identity branch feeding Atlas's own record:
+/// past-session `@`-mentions read these transcripts, and gating them by agent
+/// id is exactly what "no ACP agent gets special treatment" forbids (#17).
 ///
 /// Writes are debounced to `TurnFinished`/`TurnFailed` rather than per delta:
 /// streaming emits hundreds of `MessageAppended`s per turn and a file write on
@@ -847,6 +851,28 @@ pub async fn agent_transcripts_list(
         .unwrap_or_default()
 }
 
+/// One Atlas-recorded transcript's messages, oldest first.
+///
+/// The read side of the store `agent_transcripts_list` enumerates. Past-session
+/// `@`-mentions inline this at send time, for any agent that ran through Atlas
+/// — which is why it is keyed by `(cwd, session_id)` rather than by a path into
+/// some CLI's private directory.
+#[tauri::command]
+pub async fn agent_transcripts_read(
+    cwd: String,
+    session_id: String,
+    app: AppHandle,
+) -> Vec<super::agent_transcript::StoredMessage> {
+    let dir = app.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir());
+    tauri::async_runtime::spawn_blocking(move || {
+        super::agent_transcript::read(&dir, &cwd, &session_id)
+            .map(|t| t.messages)
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// Delete one Atlas-recorded transcript (sidebar delete). Idempotent.
 #[tauri::command]
 pub async fn agent_transcripts_delete(
@@ -974,25 +1000,21 @@ pub async fn agents_send(
         &text,
     );
 
-    // Atlas's own transcript, for agents that keep none of their own. Recorded
-    // here for the same reason capture is: the user's prompt is never emitted
-    // as a delta, so a delta-only recorder produces transcripts that start
-    // mid-answer and have no title. Uses `text`, not the memory-prefixed
-    // string composed below — injected context is machinery, not what the user
-    // said, and a history row titled after it would be nonsense.
+    // Atlas's own transcript, for every agent. Recorded here for the same
+    // reason capture is: the user's prompt is never emitted as a delta, so a
+    // delta-only recorder produces transcripts that start mid-answer and have
+    // no title. Uses `text`, not the memory-prefixed string composed below —
+    // injected context is machinery, not what the user said, and a history row
+    // titled after it would be nonsense.
     if !cwd.is_empty() {
-        let transcripts = app.state::<Arc<super::agent_transcript::TranscriptState>>();
-        let records = super::agent_host::transcript_kind_for(&plugin_id)
-            == atlas_agent_transcript::TranscriptKind::None;
-        if records {
-            transcripts.note_prompt(
+        app.state::<Arc<super::agent_transcript::TranscriptState>>()
+            .note_prompt(
                 &key.session_id,
                 &cwd,
                 &plugin_id,
                 &text,
                 chrono::Utc::now().to_rfc3339(),
             );
-        }
     }
 
     // No cwd or sharing disabled → bare send (no injection).

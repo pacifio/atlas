@@ -308,6 +308,20 @@ pub async fn delete_claude_session(file_path: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+// ── The cost scrape, orphaned ─────────────────────────────────────────────
+//
+// Everything from here to the end of this file — `pricing_for`,
+// `compute_session_stats`, the `claude_session_stats` and
+// `project_usage_stats` commands, and `claude_project_agg` — lost its last
+// consumer in #17. The usage widget, the usage panel and Mission Control now
+// read Atlas's own record (`commands::usage`), priced from the models.dev map
+// Atlas already caches, so they work for every agent rather than for Claude.
+//
+// The two commands are still registered in `lib.rs` and nothing invokes them.
+// That is deliberate: the scrape readers are deleted as one staged change in
+// #14, and keeping them compiling until then is what makes that a deletion
+// rather than a rescue.
+
 // Pricing per 1M tokens: (input, output, cache_write, cache_read)
 // Approximate Anthropic public pricing.
 pub(crate) fn pricing_for(model: &str) -> (f64, f64, f64, f64) {
@@ -526,6 +540,7 @@ pub(crate) struct ClaudeAgg {
 
 /// Parse a top-level message `timestamp` (ISO-8601) into (local "YYYY-MM-DD",
 /// epoch ms). Returns None if absent/unparseable.
+#[allow(dead_code)] // orphaned in #17, deleted in #14 — see the note above
 fn day_and_ms(ts: &str) -> Option<(String, i64)> {
     let dt = chrono::DateTime::parse_from_rfc3339(ts).ok()?;
     let local = dt.with_timezone(&chrono::Local);
@@ -533,6 +548,7 @@ fn day_and_ms(ts: &str) -> Option<(String, i64)> {
 }
 
 /// Walk every session JSONL under a project and fold per-day Claude usage.
+#[allow(dead_code)] // orphaned in #17, deleted in #14 — see the note above
 pub(crate) fn claude_project_agg(cwd: &str) -> ClaudeAgg {
     let mut agg = ClaudeAgg {
         totals: UsageTotals::default(),
@@ -624,6 +640,7 @@ pub(crate) fn claude_project_agg(cwd: &str) -> ClaudeAgg {
     agg
 }
 
+#[allow(dead_code)] // orphaned in #17, deleted in #14 — see the note above
 fn ms_to_local_day(ms: i64) -> String {
     chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms)
         .map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string())

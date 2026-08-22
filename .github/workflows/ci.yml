@@ -136,6 +136,8 @@ jobs:
           - crate: atlas-registry
           - crate: atlas-review
           - crate: atlas-terminal
+          - crate: atlas-thread-metadata
+            clippy: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

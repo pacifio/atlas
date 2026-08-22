@@ -1,17 +1,20 @@
 // Wire shapes from `commands/mission_control.rs::MissionControlUsage` (camelCase).
 
-export interface ClaudeMetrics {
+/**
+ * What Atlas's agents cost in one project — every agent, folded together.
+ *
+ * One bucket rather than one per agent: which agent ran a session is data on
+ * the session, so a dashboard column per agent would need Atlas code for each
+ * new one (ADR-0001, issue #17). Was `claude` + `codex`.
+ */
+export interface AgentMetrics {
   inputTokens: number;
   outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
-  requests: number;
+  /** Recorded messages — user and assistant rows in Atlas's own record. */
+  messages: number;
   costUsd: number;
-  sessions: number;
-}
-
-export interface CodexMetrics {
-  tokens: number;
   sessions: number;
 }
 
@@ -25,8 +28,7 @@ export interface ReviewMetrics {
 export interface ProjectMetrics {
   projectPath: string;
   projectName: string;
-  claude: ClaudeMetrics;
-  codex: CodexMetrics;
+  agents: AgentMetrics;
   review: ReviewMetrics;
   firstActivityMs: number | null;
   lastActivityMs: number | null;
@@ -36,11 +38,10 @@ export interface ProjectMetrics {
 export interface DailyBucket {
   date: string; // "YYYY-MM-DD"
   projectPath: string;
-  claudeInput: number;
-  claudeOutput: number;
-  claudeCost: number;
-  claudeRequests: number;
-  codexTokens: number;
+  agentInput: number;
+  agentOutput: number;
+  agentCost: number;
+  agentMessages: number;
   reviewTokens: number;
 }
 
@@ -52,14 +53,12 @@ export interface ByokDay {
 }
 
 export interface GrandTotals {
-  claudeInput: number;
-  claudeOutput: number;
-  claudeCache: number;
-  claudeCost: number;
-  claudeRequests: number;
-  claudeSessions: number;
-  codexTokens: number;
-  codexSessions: number;
+  agentInput: number;
+  agentOutput: number;
+  agentCache: number;
+  agentCost: number;
+  agentMessages: number;
+  agentSessions: number;
   reviewInput: number;
   reviewOutput: number;
   reviewCost: number;

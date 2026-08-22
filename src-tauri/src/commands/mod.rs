@@ -40,6 +40,7 @@ pub mod knowledge_meta;
 pub mod log;
 pub mod mcp;
 pub mod models_pricing;
+pub mod usage;
 pub mod memory_chat;
 pub mod memory_chat_sessions;
 pub mod memory_graph;

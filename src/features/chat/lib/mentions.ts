@@ -12,7 +12,11 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { useKnowledgeStore } from "@/features/knowledge/stores/knowledge-store";
 import { useKnowledgeMetaStore } from "@/features/knowledge/stores/knowledge-meta-store";
-import { listClaudeSessions, readClaudeSession, type ChatMessageDump } from "./claude-api";
+import {
+  listAtlasTranscripts,
+  readAtlasTranscript,
+  type AtlasTranscriptMessage,
+} from "./claude-api";
 import { ensureFileIndex } from "@/features/file-picker/lib/file-picker-api";
 import { activeWorkspaceId } from "@/features/workspaces/lib/active-workspace";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
@@ -140,11 +144,12 @@ export interface MentionPastMessage {
 
 export interface MentionPastSession {
   kind: "past_session";
-  id: string; // the session id (JSONL stem = acpSessionId)
+  id: string; // the agent's session id
   displayName: string; // session title/preview
   sessionId: string;
   sessionTitle: string;
-  filePath: string; // JSONL transcript path — read + formatted at send time
+  /** Which project's transcripts to read it from, at send time. */
+  cwd: string;
 }
 
 export type MentionData =
@@ -236,19 +241,26 @@ export interface MentionContext {
 export interface PastSessionRef {
   id: string;
   title: string;
-  filePath: string;
+  /** Which project's transcripts hold it. */
+  cwd: string;
   lastModified: string | null;
   messageCount: number;
 }
 
+/**
+ * Past sessions come from Atlas's own transcripts, so the feature works for
+ * every agent that ran through Atlas rather than only for the one whose JSONL
+ * Atlas used to parse (ADR-0001, issue #17).
+ */
 export async function listPastSessions(ctx: MentionContext): Promise<PastSessionRef[]> {
   if (!ctx.projectPath) return [];
+  const cwd = ctx.projectPath;
   try {
-    const sessions = await listClaudeSessions(ctx.projectPath);
+    const sessions = await listAtlasTranscripts(cwd);
     return sessions.map((s) => ({
       id: s.id,
       title: s.preview && s.preview !== "(no user message)" ? s.preview : "Untitled session",
-      filePath: s.file_path,
+      cwd,
       lastModified: s.last_modified,
       messageCount: s.message_count,
     }));
@@ -264,7 +276,7 @@ export async function listMessagesInPastSession(
 ): Promise<MentionPastMessage[]> {
   let dump;
   try {
-    dump = await readClaudeSession(session.filePath);
+    dump = await readAtlasTranscript(session.cwd, session.id);
   } catch {
     return [];
   }
@@ -366,7 +378,7 @@ export async function searchMentions(
   ctx: MentionContext,
 ): Promise<MentionData[]> {
   if (scope === "past_message") return [];
-  // Past sessions: list the project's Claude transcripts, filtered by title.
+  // Past sessions: list the project's Atlas-recorded transcripts, by title.
   // (This category used to be a dead row — locked scope returned nothing.)
   if (scope === "past_session") {
     const q = stripCategoryAlias(query, "past_session").trim().toLowerCase();
@@ -380,7 +392,7 @@ export async function searchMentions(
         displayName: s.title,
         sessionId: s.id,
         sessionTitle: s.title,
-        filePath: s.filePath,
+        cwd: s.cwd,
       }));
   }
   if (scope === "component") {
@@ -591,10 +603,10 @@ export async function ensureKnowledgeMentionCache(projectPath: string): Promise<
  *
  *  Knowledge entries pre-fill `inlineBody` from the in-memory store so
  *  Rust doesn't re-read them from disk. */
-/** Render a Claude session's message dump as a plain-text transcript for the
+/** Render an Atlas-recorded session's messages as a plain-text transcript for the
  *  `@session:` context block. Roles are labelled; empty turns are skipped. The
  *  Rust side clips the final size to the mention body budget. */
-function formatSessionTranscript(dump: ChatMessageDump[]): string {
+function formatSessionTranscript(dump: AtlasTranscriptMessage[]): string {
   const parts: string[] = [];
   for (const m of dump) {
     const content = m.content?.trim();
@@ -636,17 +648,17 @@ export async function composePrompt(
             useKnowledgeStore.getState().entries.find((e) => e.id === m.id)?.content ?? null,
         };
       }
-      // Past session: read the JSONL transcript now and format it into a
+      // Past session: read Atlas's own transcript now and format it into a
       // plain-text conversation the agent can reference. Kept lightweight in
-      // the chip (just filePath); the (potentially large) body only
-      // materializes here, at send time.
+      // the chip (just the project and the session id); the (potentially
+      // large) body only materializes here, at send time.
       if (m.kind === "past_session") {
         let inlineBody: string | null = null;
         try {
-          const dump = await readClaudeSession(m.filePath);
+          const dump = await readAtlasTranscript(m.cwd, m.sessionId);
           inlineBody = formatSessionTranscript(dump);
         } catch (e) {
-          console.warn("readClaudeSession for compose failed:", e);
+          console.warn("readAtlasTranscript for compose failed:", e);
         }
         return { ...m, inlineBody };
       }

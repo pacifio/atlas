@@ -1383,7 +1383,7 @@ export function MessageInput({
       displayName: session.title,
       sessionId: session.id,
       sessionTitle: session.title,
-      filePath: session.filePath,
+      cwd: session.cwd,
     };
     inputRef.current?.insertMention(mention);
     requestAnimationFrame(() => inputRef.current?.focus());

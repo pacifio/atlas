@@ -92,6 +92,27 @@ export function listAtlasTranscripts(cwd: string): Promise<AtlasTranscriptMeta[]
   return invoke<AtlasTranscriptMeta[]>("agent_transcripts_list", { cwd });
 }
 
+/** One recorded turn in an Atlas-owned transcript. */
+export interface AtlasTranscriptMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+  timestamp: string;
+  model?: string | null;
+}
+
+/**
+ * One Atlas-recorded transcript's messages, oldest first.
+ *
+ * Keyed by `(cwd, sessionId)` rather than a path, because these are Atlas's
+ * own files — nothing here reaches into an agent CLI's private directory.
+ */
+export function readAtlasTranscript(
+  cwd: string,
+  sessionId: string,
+): Promise<AtlasTranscriptMessage[]> {
+  return invoke<AtlasTranscriptMessage[]>("agent_transcripts_read", { cwd, sessionId });
+}
+
 /** One session an AGENT reports it has stored (P2.3, ACP `session/list`). */
 export interface AgentSessionInfo {
   sessionId: string;
@@ -157,45 +178,4 @@ export function cerseiDeleteSession(cwd: string, sessionId: string): Promise<voi
  */
 export function codexDeleteSession(sessionId: string): Promise<void> {
   return invoke<void>("codex_delete_session", { sessionId });
-}
-
-export interface ClaudeSessionStats {
-  session_id: string;
-  model: string | null;
-  input_tokens: number;
-  output_tokens: number;
-  cache_creation_tokens: number;
-  cache_read_tokens: number;
-  request_count: number;
-  total_cost_usd: number;
-}
-
-export function getClaudeSessionStats(cwd: string, sessionId: string): Promise<ClaudeSessionStats> {
-  return invoke<ClaudeSessionStats>("claude_session_stats", { cwd, sessionId });
-}
-
-export interface SessionUsage extends ClaudeSessionStats {
-  /** File mtime in epoch milliseconds. */
-  last_modified: number | null;
-  preview: string;
-}
-
-export interface UsageTotals {
-  input_tokens: number;
-  output_tokens: number;
-  cache_creation_tokens: number;
-  cache_read_tokens: number;
-  request_count: number;
-  total_cost_usd: number;
-  session_count: number;
-}
-
-export interface ProjectUsage {
-  totals: UsageTotals;
-  sessions: SessionUsage[];
-}
-
-/** Aggregate token/cost usage across all Claude Code sessions of `cwd`. */
-export function getProjectUsage(cwd: string): Promise<ProjectUsage> {
-  return invoke<ProjectUsage>("project_usage_stats", { cwd });
 }
