@@ -49,7 +49,7 @@
 pub mod project;
 pub mod projector;
 
-pub use projector::{DeltaProjector, ElicitationKey, PermissionKey};
+pub use projector::{DeltaProjector, ElicitationKey, PermissionKey, ThreadObserver};
 
 pub use atlas_agent_wire::{
     AgentId, DeltaSink, Message, MessageMode, MessageRole, PlanEntry, SessionDelta,

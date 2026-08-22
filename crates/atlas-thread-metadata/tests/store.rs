@@ -30,7 +30,16 @@ impl SaveOne for ThreadMetadataStore {
     }
 }
 
+/// A thread that has been sent to — the ordinary case, and the only kind that
+/// survives a restart (a draft has no session id to be re-found by).
 fn thread(agent: &str, paths: &[&str]) -> ThreadMetadata {
+    let mut thread = draft(agent, paths);
+    thread.session_id = Some(acp::SessionId::new(thread.thread_id.to_key_string()));
+    thread
+}
+
+/// A thread before its first send.
+fn draft(agent: &str, paths: &[&str]) -> ThreadMetadata {
     ThreadMetadata::new(
         ThreadId::new(),
         agent.into(),
@@ -64,7 +73,7 @@ fn a_saved_thread_is_still_there_after_reopening_the_store() {
 fn a_thread_is_a_draft_until_it_has_a_session_id_and_the_draft_is_never_persisted_with_one() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);
-    let draft = thread("cersei", &["/tmp/atlas"]);
+    let draft = draft("cersei", &["/tmp/atlas"]);
     assert!(draft.is_draft(), "a new thread starts as a draft");
 
     store.save_one(draft.clone());
@@ -251,8 +260,8 @@ fn a_thread_with_no_project_is_archived_so_it_is_never_lost() {
     let orphan = ThreadId::new();
     store.record_live_update(LiveThreadUpdate {
         thread_id: orphan,
-        is_draft: true,
-        session_id: None,
+        is_draft: false,
+        session_id: Some(acp::SessionId::new("ses-orphan")),
         agent_id: "cersei".into(),
         title: None,
         worktree_paths: WorktreePaths::default(),

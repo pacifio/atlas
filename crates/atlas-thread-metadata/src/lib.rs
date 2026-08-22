@@ -48,12 +48,14 @@ mod db;
 mod error;
 mod model;
 mod paths;
+mod recorder;
 mod schema;
 mod store;
 
 pub use error::{Error, Result};
 pub use model::{ThreadFilter, ThreadId, ThreadMetadata, DEFAULT_THREAD_TITLE};
 pub use paths::{LengthMismatch, PathList, SerializedPathList, WorktreePaths};
+pub use recorder::{affects_thread_metadata, ThreadRecorder, ThreadSnapshot};
 pub use schema::SCHEMA_VERSION;
 pub use store::{LiveThreadUpdate, ThreadMetadataStore, ThreadStoreEvent};
 

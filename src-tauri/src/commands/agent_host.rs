@@ -10,7 +10,11 @@
 //!    The ported manager keys connections by [`Agent`] (`Native` or a stable
 //!    string id) and sessions by `acp::SessionId`. This module holds the map
 //!    between the two, so the whole TS surface keeps working unchanged.
-//! 2. **Session metadata.** `snapshot_meta` has to answer
+//! 2. **History.** Every conversation's metadata row in the app-owned
+//!    thread-metadata store is kept current from the same thread events the
+//!    wire projection reads (ADR-0001). The row is metadata only; the
+//!    transcript stays with the agent.
+//! 3. **Session metadata.** `snapshot_meta` has to answer
 //!    `{plugin_id, cwd, current_model}` cheaply on the send path — checkpoint
 //!    touchpoint #3 depends on it — and turn identity is stamped here, at send
 //!    time, not by the thread (touchpoint #6).
@@ -31,7 +35,7 @@ use atlas_acp_thread::{
     AcpThread, AcpThreadHandle, AgentConnection, AgentModelId, SelectedPermissionOutcome,
     TerminalAuthCommand,
 };
-use atlas_agent_delta::{project, DeltaProjector, DeltaSink};
+use atlas_agent_delta::{project, DeltaProjector, DeltaSink, ThreadObserver};
 use atlas_agent_manager::{Agent, AgentManager};
 use atlas_agent_servers::{AcpConnectionDefaults, ConnectOptions};
 use atlas_agent_store::{AgentRegistryStore, AgentServerStore, ExternalAgentSource};
@@ -40,6 +44,9 @@ use atlas_agent_wire::{
     classify_message, AgentId, ErrorClass, Message, PlanEntry, SessionStatus, Usage,
 };
 use atlas_native_agent::{CerseiAgentServer, CERSEI_AGENT_ID};
+use atlas_thread_metadata::{
+    affects_thread_metadata, ThreadMetadataStore, ThreadRecorder, ThreadSnapshot,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -218,6 +225,14 @@ pub struct AgentHost {
     /// session: its own stored-session list, replay and delete, which the chat
     /// sidebar calls with no agent connected.
     native_runtime: atlas_cersei::CerseiRuntime,
+    /// Atlas's session history.
+    ///
+    /// `None` only when the store could not be opened — a corrupt or
+    /// newer-schema database. The failure is logged, history is unavailable,
+    /// and the app still runs: losing the sidebar must not lose the agent.
+    /// Nothing surfaces this in the UI yet; the sidebar re-point (#21) is where
+    /// an empty history gets a reason attached to it.
+    history: Option<ThreadRecorder>,
 }
 
 impl AgentHost {
@@ -228,6 +243,13 @@ impl AgentHost {
         registry: Arc<AgentRegistryStore>,
     ) -> Arc<Self> {
         let projector = DeltaProjector::new(sink);
+        let history = match ThreadMetadataStore::open(atlas_thread_metadata::db_path(&config_dir)) {
+            Ok(store) => Some(ThreadRecorder::new(store)),
+            Err(e) => {
+                tracing::error!(error = %e, "session history unavailable");
+                None
+            }
+        };
         let native_server = CerseiAgentServer::new(config_dir);
         let native_runtime = native_server.runtime().clone();
         let native: Arc<dyn atlas_agent_servers::AgentServer> = Arc::new(native_server);
@@ -239,7 +261,7 @@ impl AgentHost {
             client_version: env!("CARGO_PKG_VERSION").to_string(),
         };
         let manager = AgentManager::new(store.clone(), native, options);
-        Arc::new(Self {
+        let host = Arc::new(Self {
             manager,
             projector,
             store,
@@ -249,7 +271,21 @@ impl AgentHost {
             sessions: Mutex::new(HashMap::new()),
             detected: Mutex::new(Vec::new()),
             native_runtime,
-        })
+            history,
+        });
+        // Weak, and installed after the host exists: the observer needs the
+        // host to name the agent a session belongs to, and a strong reference
+        // here would be a cycle that never drops.
+        if host.history.is_some() {
+            host.projector
+                .observe_threads(Arc::new(HistoryObserver(Arc::downgrade(&host))));
+        }
+        host
+    }
+
+    /// Atlas's session history, or `None` when the store could not be opened.
+    pub fn history(&self) -> Option<&ThreadRecorder> {
+        self.history.as_ref()
     }
 
     pub fn manager(&self) -> &Arc<AgentManager> {
@@ -572,6 +608,21 @@ impl AgentHost {
         thread: AcpThreadHandle,
     ) -> SessionInit {
         let session_id = lock_thread(&thread).session_id().clone();
+
+        // History first, then the projector. The conversation exists, so
+        // history knows about it before anything has been typed into it —
+        // Zed's store writes on the same trigger (`conversation_view.rs:917-919`),
+        // and a chat that emits no thread event would otherwise never appear at
+        // all. Before `attach` because `attach` starts draining events: a
+        // `NewEntry` that lands first would be followed by this draft write and
+        // pushed back to "nothing sent yet".
+        if let Some(history) = self.history() {
+            history.record_connected(
+                &record.plugin_id.as_str().into(),
+                &session_id,
+                snapshot_of(&thread),
+            );
+        }
         self.projector.attach(agent_id, thread.clone());
 
         let (current_mode, available_modes) = self.modes_of(&thread, &session_id);
@@ -624,6 +675,11 @@ impl AgentHost {
         let removed = lock(&self.sessions).remove(session_id).is_some();
         if !removed {
             return Ok(());
+        }
+        // Only the live binding goes. The history row is the record of the
+        // conversation and outlives the tab that showed it.
+        if let Some(history) = self.history() {
+            history.forget(&acp::SessionId::new(session_id));
         }
         self.manager
             .close_session(&acp::SessionId::new(session_id))
@@ -1080,6 +1136,65 @@ impl AgentHost {
             ));
         }
         connection.logout().await.map_err(HostError::from)
+    }
+}
+
+/// What a thread currently is, as history records it.
+///
+/// Read under the thread's own lock and nothing else's: the caller must not be
+/// holding the projection lock, or the history store would queue behind the
+/// wire projection.
+fn snapshot_of(thread: &AcpThreadHandle) -> ThreadSnapshot {
+    let thread = lock_thread(thread);
+    ThreadSnapshot {
+        is_draft: thread.is_draft(),
+        title: thread.title().cloned(),
+        work_dirs: thread.work_dirs().to_vec(),
+    }
+}
+
+/// Keeps every live conversation's history row current.
+///
+/// Zed's `ThreadMetadataStore` subscribes to each `ConversationView`
+/// (`thread_metadata_store.rs:1188-1212`); Atlas has no views, so the projector
+/// forwards the same events here and this reads the thread the way Zed's
+/// handler reads its own.
+///
+/// Weak on purpose: the host owns the projector that owns this.
+struct HistoryObserver(std::sync::Weak<AgentHost>);
+
+impl ThreadObserver for HistoryObserver {
+    fn on_thread_event(
+        &self,
+        agent_id: AgentId,
+        session_id: &acp::SessionId,
+        event: &atlas_acp_thread::AcpThreadEvent,
+        thread: &AcpThreadHandle,
+    ) {
+        // Cheapest check first: this runs on every streamed chunk, and the
+        // work below — a map lookup, the thread's lock, a path clone — is worth
+        // doing only for the events that can change a row.
+        if !affects_thread_metadata(event) {
+            return;
+        }
+        let Some(host) = self.0.upgrade() else {
+            return;
+        };
+        let Some(history) = host.history() else {
+            return;
+        };
+        // The store keeps the agent's durable id, not this process's handle for
+        // it: a row outlives the spawn that made it.
+        let Some(plugin_id) = host.plugin_id_for_agent(agent_id) else {
+            tracing::warn!(%agent_id, %session_id, "no plugin for agent; history not recorded");
+            return;
+        };
+        history.record(
+            &plugin_id.as_str().into(),
+            session_id,
+            event,
+            snapshot_of(thread),
+        );
     }
 }
 

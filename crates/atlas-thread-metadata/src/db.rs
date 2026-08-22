@@ -63,7 +63,9 @@ impl Db {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         schema::migrate(&conn)?;
-        Ok(Self { conn })
+        let db = Self { conn };
+        db.prune_drafts()?;
+        Ok(db)
     }
 
     /// Every row, newest first.
@@ -106,6 +108,21 @@ impl Db {
                 row.archived,
             ],
         )?;
+        Ok(())
+    }
+
+    /// Drop every row that never got a session id.
+    ///
+    /// A draft row is only reachable through the in-memory binding its process
+    /// held: with no session id there is nothing to re-find it by, so one left
+    /// behind by a crash is an empty row the user can never open and never
+    /// clear. Zed prunes session-less rows in a migration for the same reason
+    /// (`thread_metadata_store.rs:1446-1458`); Atlas does it on every open,
+    /// because Atlas mints a fresh session per chat tab and so produces them
+    /// routinely rather than once.
+    fn prune_drafts(&self) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM threads WHERE session_id IS NULL", [])?;
         Ok(())
     }
 

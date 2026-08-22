@@ -42,8 +42,31 @@ pub struct ElicitationKey {
 /// One projector serves every session: it hands out the per-session event sink
 /// that `ConnectOptions` wants, and each attached thread gets a task that
 /// applies its events in order.
+/// Something that wants to see thread events besides the wire projection.
+///
+/// One observer, set once at startup: Atlas's history store, which keeps a
+/// metadata row per conversation current from the same events (Zed's
+/// `ThreadMetadataStore` subscribes to its `ConversationView`s the same way,
+/// `thread_metadata_store.rs:1188-1212`).
+///
+/// It is handed the thread as well as the event because the row records what
+/// the thread *is* — its title, its working directories, whether anything has
+/// been sent — not what the event said.
+pub trait ThreadObserver: Send + Sync {
+    fn on_thread_event(
+        &self,
+        agent_id: AgentId,
+        session_id: &acp::SessionId,
+        event: &AcpThreadEvent,
+        thread: &AcpThreadHandle,
+    );
+}
+
 pub struct DeltaProjector {
     emitter: Emitter,
+    /// Set once, before any session exists. Not a list: there is one history
+    /// store, and a second observer would be a second thing to keep correct.
+    observer: Mutex<Option<Arc<dyn ThreadObserver>>>,
     sessions: Mutex<HashMap<acp::SessionId, Arc<Mutex<SessionProjection>>>>,
     /// Event streams for sessions whose thread does not exist yet.
     ///
@@ -60,11 +83,18 @@ impl DeltaProjector {
     pub fn new(sink: Arc<dyn DeltaSink>) -> Arc<Self> {
         Arc::new(Self {
             emitter: Emitter::new(sink),
+            observer: Mutex::new(None),
             sessions: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
             permissions: Mutex::new(HashMap::new()),
             elicitations: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Install the thread observer. Call before any session is created;
+    /// events emitted before this are not replayed to it.
+    pub fn observe_threads(&self, observer: Arc<dyn ThreadObserver>) {
+        *self.observer.lock().unwrap_or_else(|p| p.into_inner()) = Some(observer);
     }
 
     /// The sink factory to hand to `ConnectOptions`.
@@ -155,6 +185,30 @@ impl DeltaProjector {
         self.emitter.subscribe()
     }
 
+    fn notify_observer(
+        &self,
+        session_id: &acp::SessionId,
+        event: &AcpThreadEvent,
+        projection: &Arc<Mutex<SessionProjection>>,
+    ) {
+        let observer = self
+            .observer
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let Some(observer) = observer else {
+            return;
+        };
+        // Read the identity and the handle out first: the observer reads the
+        // thread itself, and holding the projection's lock across that call
+        // would put the history store behind the wire projection's lock.
+        let (agent_id, thread) = {
+            let projection = projection.lock().unwrap_or_else(|p| p.into_inner());
+            (projection.agent_id, projection.thread.clone())
+        };
+        observer.on_thread_event(agent_id, session_id, event, &thread);
+    }
+
     /// Stamp this session's deltas with the turn identity the host assigned.
     ///
     /// Turn identity belongs to the send path, not to the thread: capture reads
@@ -242,6 +296,7 @@ impl DeltaProjector {
         let Some(projection) = self.session(session_id) else {
             return;
         };
+        self.notify_observer(session_id, &event, &projection);
         let (envelopes, permissions, elicitations) = {
             let mut projection = projection.lock().unwrap_or_else(|p| p.into_inner());
             let deltas = projection.apply(event);

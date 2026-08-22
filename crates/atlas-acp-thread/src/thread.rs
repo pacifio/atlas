@@ -924,6 +924,16 @@ impl AcpThread {
         self.title.as_ref()
     }
 
+    /// A thread is a draft until its first message is sent.
+    ///
+    /// Zed's `is_draft_thread` (`acp_thread.rs:2346-2348`). Note what it is
+    /// *not*: an ACP session may already exist for a draft — Atlas opens one
+    /// when the tab mounts — but that session is re-created on reload, so its
+    /// id is worth nothing to history until a message has gone through it.
+    pub fn is_draft(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn entries(&self) -> &[AgentThreadEntry] {
         &self.entries
     }

@@ -60,6 +60,7 @@ use super::memory_retrieve;
 use super::memory_sharing::{MemorySharingState, SummarizerPref};
 use super::memory_summarize;
 use super::shared_memory::SharedMemoryStore;
+use agent_client_protocol::schema::v1 as acp;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -468,6 +469,10 @@ fn native_extraction_enabled() -> bool {
     )
 }
 
+/// Emitted whenever Atlas's session history changes. Carries no payload: a
+/// listener re-reads the store, which is the correct response to any change.
+pub const THREADS_CHANGED_EVENT: &str = "atlas:threads-changed";
+
 /// Initialise the agent stack once the Tauri app is up so the sink has a real
 /// `AppHandle` to emit through. Called from `setup`.
 ///
@@ -515,6 +520,28 @@ pub fn install_manager(app: &AppHandle) {
         AgentHost::new(sink, config_dir, store.clone(), registry.clone())
     };
     app.manage(host.clone());
+
+    // The sidebar refreshes from store changes, not from watching anyone's
+    // files (ADR-0001). One task forwards them to the webview.
+    if let Some(history) = host.history() {
+        let app = app.clone();
+        let mut changes = history.store().subscribe();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                match changes.recv().await {
+                    Ok(_) => {
+                        let _ = app.emit(THREADS_CHANGED_EVENT, ());
+                    }
+                    // Lagged means several changes collapsed into one, which is
+                    // exactly what a listener that re-reads the store wants.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        let _ = app.emit(THREADS_CHANGED_EVENT, ());
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+    }
 
     // Seed the installed agents' spawn env from the BYOK keys on disk plus any
     // keys the user already exports in their shell — several agents read
@@ -999,6 +1026,16 @@ pub async fn agents_send(
         current_model.as_deref(),
         &text,
     );
+
+    // The user just sent something. `interacted_at` is the only field the
+    // thread's own events cannot supply — a queued message never reaches the
+    // agent (Zed's `update_interacted_at`, `thread_metadata_store.rs:843-856`).
+    if let Some(history) = host.history() {
+        history.note_interaction(
+            &acp::SessionId::new(key.session_id.as_str()),
+            chrono::Utc::now(),
+        );
+    }
 
     // Atlas's own transcript, for every agent. Recorded here for the same
     // reason capture is: the user's prompt is never emitted as a delta, so a

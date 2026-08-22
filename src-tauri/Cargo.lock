@@ -385,6 +385,7 @@ dependencies = [
  "atlas-native-agent",
  "atlas-review",
  "atlas-terminal",
+ "atlas-thread-metadata",
  "base64 0.21.7",
  "cersei-provider",
  "chrono",
@@ -684,6 +685,21 @@ dependencies = [
  "portable-pty",
  "serde",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "atlas-thread-metadata"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "atlas-acp-thread",
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 

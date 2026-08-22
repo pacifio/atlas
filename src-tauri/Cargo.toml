@@ -69,6 +69,8 @@ atlas-agent-delta = { path = "../crates/atlas-agent-delta" }
 atlas-agent-wire = { path = "../crates/atlas-agent-wire" }
 atlas-agent-transcript = { path = "../crates/atlas-agent-transcript" }
 atlas-native-agent = { path = "../crates/atlas-native-agent" }
+# Atlas's session history — the only source for the sidebar (ADR-0001).
+atlas-thread-metadata = { path = "../crates/atlas-thread-metadata" }
 atlas-cersei = { path = "../crates/atlas-cersei" }
 atlas-bus = { path = "../crates/atlas-bus" }
 agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
