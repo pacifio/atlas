@@ -3,7 +3,7 @@ import { useChatStore } from "../stores/chat-store";
 import { useDetailPanelStore } from "../stores/detail-panel-store";
 import { appendNextStepsDirective } from "../lib/next-steps";
 import { stripInjectedContext } from "../lib/atlas-context";
-import { agents, ensureAgent, CODEX_PLUGIN_ID, codexStatus } from "../lib/agents-api";
+import { agents, ensureAgent } from "../lib/agents-api";
 import { loadCachedAcpModes } from "../lib/acp-modes-cache";
 import { warmAcpModels, otherAcpAgents } from "../lib/warm-acp-models";
 import type { ImageAttachment, SessionKey } from "@/types/agents";
@@ -90,16 +90,7 @@ const GitDiffModal = lazy(() =>
     default: m.GitDiffModal,
   })),
 );
-import {
-  Sparkles,
-  Search,
-  Loader2,
-  ChevronDown,
-  ArrowRight,
-  LogIn,
-  GitCompare,
-  FlaskConical,
-} from "lucide-react";
+import { Sparkles, Search, ChevronDown, ArrowRight, GitCompare, FlaskConical } from "lucide-react";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { PanelSkeleton } from "@/components/panel-skeleton";
 import { logEvent } from "@/features/log/lib/log";
@@ -1145,44 +1136,15 @@ const ChatComposer = memo(function ChatComposer({
   jumpCount: number;
   onScrollToBottom: () => void;
 }) {
-  // The Claude install/auth gating only applies to Claude sessions. A Codex
-  // chat must not be blocked by Claude's status (Codex inherits its own
-  // ~/.codex / OPENAI auth); it surfaces its own errors from the spawn path.
+  // Codex used to keep a bespoke sign-in surface here: a probe of
+  // `~/.codex/auth.json` and a "Sign in to Codex with ChatGPT" pill wired to a
+  // hardcoded `"chatgpt"` method id. It is gone. An auth-classified failure
+  // raises `atlas:auth-required` and `MessageInput` routes it through
+  // `canSignIn`, which asks the CATALOG whether this agent has a sign-in —
+  // never which agent it is.
   const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
   const isClaude = agentType === "claude-code";
-  const isCodex = agentType === "codex";
   const phase = useClaudeSetupStore.use.phase();
-
-  // Codex sign-in state (Codex sessions ONLY — probing ~/.codex/auth.json for
-  // any other agent both wastes a call and, worse, blocks that agent's
-  // composer on Codex's auth state). `null` = still probing.
-  const [codexAuthed, setCodexAuthed] = useState<boolean | null>(null);
-  // Auth-classified turn failure on a Codex session → surface the sign-in
-  // pill (the probe state below) instead of a generic error banner.
-  useEffect(() => {
-    if (!isCodex) return;
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
-      if (detail?.agentType !== "codex") return;
-      const sess = useChatStore.getState().sessions[tabId];
-      if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;
-      setCodexAuthed(false);
-    };
-    window.addEventListener("atlas:auth-required", handler);
-    return () => window.removeEventListener("atlas:auth-required", handler);
-  }, [isCodex, tabId]);
-  const [codexSigningIn, setCodexSigningIn] = useState(false);
-  useEffect(() => {
-    if (!isCodex) return;
-    let cancelled = false;
-    codexStatus()
-      .then((a) => !cancelled && setCodexAuthed(a))
-      .catch(() => !cancelled && setCodexAuthed(true)); // probe failure → don't block
-    return () => {
-      cancelled = true;
-    };
-  }, [isCodex]);
-  const codexNeedsAuth = isCodex && codexAuthed === false;
 
   // OpenCode / Cursor / Kilo auth used to raise a "copy `cursor-agent login`"
   // pill here. It is gone: `atlas:auth-required` now routes ONLY to the
@@ -1192,30 +1154,9 @@ const ChatComposer = memo(function ChatComposer({
   // downloaded the CLI into its app-data dir, there was no such command on the
   // user's PATH to run. The dialog's error phase now shows the real absolute
   // path as a manual fallback.
-  const signInCodex = async () => {
-    setCodexSigningIn(true);
-    try {
-      const agent = await ensureAgent(CODEX_PLUGIN_ID);
-      // Blocks while codex-acp runs the OpenAI browser OAuth.
-      await agents.authenticate(agent.agent_id, "chatgpt");
-      setCodexAuthed(await codexStatus());
-    } catch (err) {
-      logEvent({
-        source: "atlas",
-        kind: "codex-auth",
-        summary: "Codex sign-in failed",
-        status: "failure",
-        payload: { error: String(err) },
-      });
-    } finally {
-      setCodexSigningIn(false);
-    }
-  };
-
-  const disabled = (isClaude && phase !== "ready") || codexNeedsAuth;
-
-  const setupVisible = (isClaude && phase !== "ready") || codexNeedsAuth;
-  const showRow = setupVisible || showJumpToBottom;
+  // Claude's install/setup gating. #10 removes it from the chat path entirely.
+  const claudeNotReady = isClaude && phase !== "ready";
+  const showRow = claudeNotReady || showJumpToBottom;
 
   return (
     <>
@@ -1227,25 +1168,10 @@ const ChatComposer = memo(function ChatComposer({
         {showRow && (
           <div className="pointer-events-none absolute bottom-full inset-x-0 mb-2 z-20 flex justify-center">
             <div className="pointer-events-auto flex items-center gap-2">
-              {setupVisible && isClaude && (
+              {claudeNotReady && (
                 <span key={`setup-${phase}`} className="atlas-pill-in">
                   <ClaudeSetupBanner />
                 </span>
-              )}
-              {codexNeedsAuth && (
-                <button
-                  key="codex-signin"
-                  onClick={signInCodex}
-                  disabled={codexSigningIn}
-                  className="atlas-pill-in inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[11px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer disabled:opacity-60"
-                >
-                  {codexSigningIn ? (
-                    <Loader2 size={11} className="animate-spin" />
-                  ) : (
-                    <LogIn size={11} />
-                  )}
-                  {codexSigningIn ? "Opening OpenAI sign-in…" : "Sign in to Codex with ChatGPT"}
-                </button>
               )}
               {showJumpToBottom && (
                 <button
@@ -1279,7 +1205,7 @@ const ChatComposer = memo(function ChatComposer({
           onStop={onStop}
           running={running}
           stopping={stopping}
-          disabled={disabled}
+          disabled={claudeNotReady}
           placeholder="Ask Atlas what to do…"
         />
       </div>

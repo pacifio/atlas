@@ -199,9 +199,6 @@ export const agents = {
   logout: (agentId: AgentId) => invoke<void>("agents_logout", { agentId }),
 };
 
-/** Whether Codex has stored credentials (`~/.codex/auth.json`). */
-export const codexStatus = (): Promise<boolean> => invoke<boolean>("codex_status");
-
 /** `runId` scopes the subscription; omit it only for diagnostics. */
 export const listenAuthRunDone = (
   handler: (p: AuthRunDone) => void,
@@ -239,6 +236,38 @@ export const listenCatalogChanged = (
 ): Promise<UnlistenFn> =>
   listen<{ reason: CatalogChangeReason }>("atlas:agent-catalog:changed", (e) =>
     handler(e.payload.reason),
+  );
+
+/** An elicitation raised by a CONNECTION rather than a session.
+ *
+ *  Same payload as the session-scoped `elicitation_requested` delta, and
+ *  answered by the same `agents.respondElicitation`. It arrives on its own
+ *  channel because it has no session to be routed by — these are the questions
+ *  asked during sign-in, before the agent has a session at all. */
+export interface RequestElicitation {
+  agentId: string;
+  requestId: string;
+  mode: "form" | "url";
+  message: string;
+  requestedSchema?: unknown;
+  url?: string | null;
+}
+
+/** Fires when an agent asks the user something outside any session. */
+export const listenAgentElicitation = (
+  handler: (elicitation: RequestElicitation) => void,
+): Promise<UnlistenFn> =>
+  listen<RequestElicitation>("atlas:agent-elicitation", (e) => handler(e.payload));
+
+/** Fires when such a question no longer needs answering — the agent ended it
+ *  itself, which is what happens when the user finishes a device-code login in
+ *  their browser. The dialog has to come down, or it asks for something that
+ *  already happened. */
+export const listenAgentElicitationResolved = (
+  handler: (requestId: string) => void,
+): Promise<UnlistenFn> =>
+  listen<{ requestId: string }>("atlas:agent-elicitation-resolved", (e) =>
+    handler(e.payload.requestId),
   );
 
 // ── Lazy per-agent registry ─────────────────────────────────────────────────

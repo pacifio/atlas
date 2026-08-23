@@ -473,6 +473,35 @@ fn native_extraction_enabled() -> bool {
 /// listener re-reads the store, which is the correct response to any change.
 pub const THREADS_CHANGED_EVENT: &str = "atlas:threads-changed";
 
+/// A connection asked the user something outside any session.
+///
+/// The session-scoped counterpart rides `atlas:agents` as an
+/// `elicitation_requested` delta, keyed by session. These cannot: they are
+/// raised during sign-in, before the agent has a session at all, which is
+/// exactly when a device-code prompt or a login URL arrives. Same payload
+/// fields, same dialog, answered by the same `agents_respond_elicitation`.
+pub const AGENT_ELICITATION_EVENT: &str = "atlas:agent-elicitation";
+
+/// A request-scoped question the user no longer has to answer.
+///
+/// The agent ends one out of band when the user completes a device-code login
+/// in their browser (`session/complete_elicitation`). Without this the dialog
+/// stays up, asking for something that already happened.
+pub const AGENT_ELICITATION_RESOLVED_EVENT: &str = "atlas:agent-elicitation-resolved";
+
+/// One request-scoped elicitation, as the webview reads it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RequestElicitation {
+    agent_id: String,
+    request_id: Uuid,
+    /// `"url"` or `"form"`.
+    mode: String,
+    message: String,
+    requested_schema: Option<serde_json::Value>,
+    url: Option<String>,
+}
+
 /// Initialise the agent stack once the Tauri app is up so the sink has a real
 /// `AppHandle` to emit through. Called from `setup`.
 ///
@@ -539,6 +568,54 @@ pub fn install_manager(app: &AppHandle) {
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
                 }
+            }
+        });
+    }
+
+    // Elicitations a connection raises outside any session — the sign-in ones.
+    // Without this the agent asks, nobody is shown the question, and the
+    // sign-in hangs on an answer that can never come.
+    if let Some(mut elicitations) = host.take_request_elicitations() {
+        let app = app.clone();
+        let host = host.clone();
+        tauri::async_runtime::spawn(async move {
+            while let Some((agent_id, event)) = elicitations.recv().await {
+                // A new question opens a dialog; an update may CLOSE one — the
+                // agent ends a device-code elicitation itself once the user
+                // finishes in their browser.
+                let entry_id = match event {
+                    atlas_acp_thread::ElicitationStoreEvent::ElicitationRequested(entry_id) => {
+                        entry_id
+                    }
+                    atlas_acp_thread::ElicitationStoreEvent::ElicitationUpdated(entry_id)
+                    | atlas_acp_thread::ElicitationStoreEvent::ElicitationResponded(entry_id) => {
+                        if let Some(request_id) =
+                            host.resolve_request_elicitation(&agent_id, &entry_id)
+                        {
+                            let _ = app.emit(
+                                AGENT_ELICITATION_RESOLVED_EVENT,
+                                serde_json::json!({ "requestId": request_id }),
+                            );
+                        }
+                        continue;
+                    }
+                };
+                let Some((request_id, wire)) =
+                    host.announce_request_elicitation(&agent_id, &entry_id)
+                else {
+                    continue;
+                };
+                let _ = app.emit(
+                    AGENT_ELICITATION_EVENT,
+                    RequestElicitation {
+                        agent_id: agent_id.as_str().to_string(),
+                        request_id,
+                        mode: wire.mode,
+                        message: wire.message,
+                        requested_schema: wire.requested_schema,
+                        url: wire.url,
+                    },
+                );
             }
         });
     }
@@ -699,15 +776,6 @@ pub async fn agents_new_session(
     host.new_session(agent_id, cwd, additional_directories.unwrap_or_default())
         .await
         .map_err(CmdError::from)
-}
-
-/// Whether Codex has stored credentials (`~/.codex/auth.json` exists). Drives
-/// the "Sign in with ChatGPT" prompt on a Codex chat. Cheap file check.
-#[tauri::command]
-pub fn codex_status() -> bool {
-    dirs::home_dir()
-        .map(|h| h.join(".codex").join("auth.json").is_file())
-        .unwrap_or(false)
 }
 
 /// Run an agent's ACP `authenticate` flow. Awaits until the agent reports
@@ -1377,12 +1445,18 @@ pub fn agents_respond_permission(
 // the loopback OAuth flow, opens the browser, catches the callback, and writes
 // credentials. The host's only job is to run the spec and stream its output.
 //
+// Two shapes of "run this to sign in", both from the agent itself: a typed
+// `Terminal` method naming the ARGUMENTS to re-run the agent's own binary
+// with, and `_meta["terminal-auth"]` naming a whole command. Zed's
+// `terminal_auth_task` reads both; so does `terminal_auth_command_for`.
+//
 // The old `enrich_auth_methods` is gone with `BUILTIN_AGENTS`: it filled in a
 // login command for agents that advertised none, from a hardcoded per-agent
 // table of login argv. An agent that names no login command now says so,
 // which is the honest answer and the only one that generalises past a list
-// someone wrote down. Re-deriving the full flow from Zed's `terminal_auth_task`
-// is the Stage 4 auth ticket.
+// someone wrote down. Codex's `~/.codex/auth.json` probe and its bespoke
+// "Sign in with ChatGPT" pill went the same way — sign-in is capability-gated
+// for every agent, and no agent's private storage is read to decide it.
 
 /// One environment variable an agent's auth method wants, and whether the
 /// system already provides it.

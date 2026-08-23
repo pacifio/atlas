@@ -29,11 +29,12 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
 
 use agent_client_protocol::schema::v1 as acp;
 use atlas_acp_thread::{
-    AcpThread, AcpThreadHandle, AgentConnection, AgentModelId, SelectedPermissionOutcome,
-    TerminalAuthCommand,
+    AcpThread, AcpThreadHandle, AgentConnection, AgentId as ThreadAgentId, AgentModelId,
+    ElicitationEntryId, ElicitationStoreEvent, SelectedPermissionOutcome, TerminalAuthCommand,
 };
 use atlas_agent_delta::{project, DeltaProjector, DeltaSink, ThreadObserver};
 use atlas_agent_manager::{Agent, AgentManager, ResumeMode};
@@ -203,6 +204,31 @@ struct SessionRecord {
     created_at: DateTime<Utc>,
 }
 
+/// Build an elicitation response, or `None` for the answers that cancel.
+///
+/// Shared by both elicitation paths — a session's dialog and a connection's
+/// sign-in dialog — so the same answer means the same thing in both.
+fn elicitation_response(
+    action: &str,
+    content: Option<serde_json::Value>,
+) -> Result<Option<acp::CreateElicitationResponse>> {
+    let value = match action {
+        "accept" => serde_json::json!({
+            "outcome": "accepted",
+            "content": content.unwrap_or(serde_json::json!({})),
+        }),
+        "decline" => serde_json::json!({ "outcome": "declined" }),
+        // Anything else cancels. That is the caller's intent, not a failure.
+        _ => return Ok(None),
+    };
+    // A malformed `accept` is a real error and says so. Cancelling silently
+    // would answer the agent something the user did not choose, and leave the
+    // caller believing their answer went through.
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(|e| HostError::new(e.to_string(), ErrorClass::Fatal))
+}
+
 pub struct AgentHost {
     manager: Arc<AgentManager>,
     projector: Arc<DeltaProjector>,
@@ -234,6 +260,24 @@ pub struct AgentHost {
     /// Nothing surfaces this in the UI yet; the sidebar re-point (#21) is where
     /// an empty history gets a reason attached to it.
     history: Option<ThreadRecorder>,
+    /// Request-scoped elicitations, announced by every connection.
+    ///
+    /// These belong to no session — they are the ones raised during sign-in,
+    /// before any session exists — so they cannot ride the session delta
+    /// stream. The receiver is taken once, by the forwarder that turns them
+    /// into `atlas:agent-elicitation`.
+    request_elicitations: RequestElicitations,
+}
+
+/// The plumbing for elicitations that belong to a connection, not a session.
+struct RequestElicitations {
+    /// Handed to each connection at connect time, tagged with its agent id.
+    sink: mpsc::UnboundedSender<(ThreadAgentId, ElicitationStoreEvent)>,
+    /// Taken once, by [`AgentHost::take_request_elicitations`].
+    stream: Mutex<Option<mpsc::UnboundedReceiver<(ThreadAgentId, ElicitationStoreEvent)>>>,
+    /// Which agent + entry a wire request id refers to, so an answer can find
+    /// its way back. The session-scoped counterpart lives on the projector.
+    answered_by: Mutex<HashMap<Uuid, (ThreadAgentId, ElicitationEntryId)>>,
 }
 
 impl AgentHost {
@@ -254,10 +298,30 @@ impl AgentHost {
         let native_server = CerseiAgentServer::new(config_dir);
         let native_runtime = native_server.runtime().clone();
         let native: Arc<dyn atlas_agent_servers::AgentServer> = Arc::new(native_server);
+        let (elicitation_tx, elicitation_rx) = mpsc::unbounded_channel();
         let options = ConnectOptions {
             root_dir: None,
             defaults: AcpConnectionDefaults::default(),
             thread_events: projector.thread_events(),
+            // Tag each connection's events with its agent id on the way out:
+            // the store itself only knows entry ids, and the forwarder has to
+            // know which connection to read the elicitation back from.
+            request_elicitation_events: {
+                let tx = elicitation_tx.clone();
+                Arc::new(move |agent_id: &ThreadAgentId| {
+                    let (agent_tx, mut agent_rx) = mpsc::unbounded_channel();
+                    let tx = tx.clone();
+                    let agent_id = agent_id.clone();
+                    tokio::spawn(async move {
+                        while let Some(event) = agent_rx.recv().await {
+                            if tx.send((agent_id.clone(), event)).is_err() {
+                                return;
+                            }
+                        }
+                    });
+                    agent_tx
+                })
+            },
             client_name: "atlas",
             client_version: env!("CARGO_PKG_VERSION").to_string(),
         };
@@ -273,6 +337,11 @@ impl AgentHost {
             detected: Mutex::new(Vec::new()),
             native_runtime,
             history,
+            request_elicitations: RequestElicitations {
+                sink: elicitation_tx,
+                stream: Mutex::new(Some(elicitation_rx)),
+                answered_by: Mutex::new(HashMap::new()),
+            },
         });
         // Weak, and installed after the host exists: the observer needs the
         // host to name the agent a session belongs to, and a strong reference
@@ -479,11 +548,7 @@ impl AgentHost {
     }
 
     fn connected(&self, agent: &Agent) -> Option<Arc<dyn AgentConnection>> {
-        self.manager
-            .connections()
-            .into_iter()
-            .find(|(key, _)| key == agent)
-            .map(|(_, connection)| connection)
+        self.manager.connected(agent)
     }
 
     /// Every agent with a live connection, in the frontend's shape.
@@ -548,6 +613,7 @@ impl AgentHost {
     /// Drop an agent's connection. The next spawn starts a fresh one.
     pub fn kill(&self, agent_id: AgentId) -> Result<()> {
         let record = self.record_for(agent_id)?;
+        self.forget_request_elicitations(&ThreadAgentId::new(record.plugin_id.as_str()));
         self.manager.drop_connection(&record.agent);
         lock(&self.sessions).retain(|_, session| session.agent != record.agent);
         Ok(())
@@ -1001,12 +1067,135 @@ impl AgentHost {
         Ok(())
     }
 
+    /// The stream of request-scoped elicitations, taken once.
+    ///
+    /// `None` on a second call — the forwarder owns it for the life of the
+    /// process, and two drainers would each see half the events.
+    pub fn take_request_elicitations(
+        &self,
+    ) -> Option<mpsc::UnboundedReceiver<(ThreadAgentId, ElicitationStoreEvent)>> {
+        self.request_elicitations
+            .stream
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+    }
+
+    /// Read a connection-level elicitation and mint the wire id that answers it.
+    ///
+    /// `None` when the entry is already gone. Announcing twice is not guarded
+    /// against here and does not need to be: the caller forwards only
+    /// `ElicitationRequested`, which the store emits exactly once per entry.
+    pub fn announce_request_elicitation(
+        &self,
+        agent_id: &ThreadAgentId,
+        entry_id: &ElicitationEntryId,
+    ) -> Option<(Uuid, atlas_agent_delta::ElicitationWire)> {
+        let connection = self.manager.connection_by_agent_id(agent_id)?;
+        let store = connection.request_elicitations()?;
+        let wire = {
+            let store = store.lock().unwrap_or_else(|p| p.into_inner());
+            let (_, elicitation) = store.elicitation(entry_id)?;
+            atlas_agent_delta::elicitation_wire(elicitation)
+        };
+        let request_id = Uuid::new_v4();
+        self.request_elicitations
+            .answered_by
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(request_id, (agent_id.clone(), entry_id.clone()));
+        Some((request_id, wire))
+    }
+
+    /// A question the user no longer has to answer.
+    ///
+    /// The agent can end one out of band — `session/complete_elicitation`, sent
+    /// when the user finished a device-code login in their browser. The store
+    /// marks the entry resolved and the dialog on screen becomes a prompt for
+    /// something that already happened, stacked over the sign-in modal's live
+    /// tail. Returns the wire id to dismiss, and forgets it.
+    ///
+    /// `None` while the entry is still pending, which is what an ordinary
+    /// update means.
+    pub fn resolve_request_elicitation(
+        &self,
+        agent_id: &ThreadAgentId,
+        entry_id: &ElicitationEntryId,
+    ) -> Option<Uuid> {
+        let connection = self.manager.connection_by_agent_id(agent_id)?;
+        let store = connection.request_elicitations()?;
+        let still_pending = {
+            let store = store.lock().unwrap_or_else(|p| p.into_inner());
+            let (_, elicitation) = store.elicitation(entry_id)?;
+            matches!(
+                elicitation.status,
+                atlas_acp_thread::ElicitationStatus::Pending { .. }
+            )
+        };
+        if still_pending {
+            return None;
+        }
+        let mut answered_by = self
+            .request_elicitations
+            .answered_by
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let request_id = answered_by
+            .iter()
+            .find(|(_, (agent, entry))| agent == agent_id && entry == entry_id)
+            .map(|(request_id, _)| *request_id)?;
+        answered_by.remove(&request_id);
+        Some(request_id)
+    }
+
+    /// Forget an agent's outstanding questions.
+    ///
+    /// Called when its connection goes: a dialog whose agent has died can no
+    /// longer be answered, and without this the entry lives for the rest of the
+    /// process. Small, but it is a map that only ever grew — every abandoned
+    /// sign-in left one behind.
+    pub fn forget_request_elicitations(&self, agent_id: &ThreadAgentId) {
+        self.request_elicitations
+            .answered_by
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|_, (agent, _)| agent != agent_id);
+    }
+
     pub fn respond_elicitation(
         &self,
         request_id: Uuid,
         action: &str,
         content: Option<serde_json::Value>,
     ) -> Result<()> {
+        // Connection-level first: these belong to no session, so the
+        // projector has never heard of them.
+        //
+        // The lookup is its own statement so the `answered_by` guard is
+        // DROPPED before anything else is locked. As an `if let` scrutinee it
+        // would live to the end of the block, held across the manager's entry
+        // mutexes and the elicitation store's — a lock order nothing else
+        // takes, and one that would only ever be discovered by deadlocking.
+        let request_scoped = self
+            .request_elicitations
+            .answered_by
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&request_id);
+        if let Some((agent_id, entry_id)) = request_scoped {
+            let Some(connection) = self.manager.connection_by_agent_id(&agent_id) else {
+                return Ok(());
+            };
+            let Some(store) = connection.request_elicitations() else {
+                return Ok(());
+            };
+            let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
+            match elicitation_response(action, content)? {
+                Some(response) => store.respond_to_elicitation(&entry_id, response),
+                None => store.cancel_elicitation(&entry_id),
+            }
+            return Ok(());
+        }
         // An unknown id is a no-op, not an error: the user can answer a dialog
         // whose agent already died.
         let Some(key) = self.projector.elicitation_key(&request_id) else {
@@ -1014,21 +1203,9 @@ impl AgentHost {
         };
         let handle = self.thread(&key.session_id.to_string())?;
         let mut thread = lock_thread(&handle);
-        match action {
-            "accept" => {
-                let response = serde_json::from_value(serde_json::json!({
-                    "outcome": "accepted",
-                    "content": content.unwrap_or(serde_json::json!({})),
-                }))
-                .map_err(|e| HostError::new(e.to_string(), ErrorClass::Fatal))?;
-                thread.respond_to_elicitation(&key.entry_id, response);
-            }
-            "decline" => {
-                let response = serde_json::from_value(serde_json::json!({ "outcome": "declined" }))
-                    .map_err(|e| HostError::new(e.to_string(), ErrorClass::Fatal))?;
-                thread.respond_to_elicitation(&key.entry_id, response);
-            }
-            _ => thread.cancel_elicitation(&key.entry_id),
+        match elicitation_response(action, content)? {
+            Some(response) => thread.respond_to_elicitation(&key.entry_id, response),
+            None => thread.cancel_elicitation(&key.entry_id),
         }
         Ok(())
     }

@@ -37,6 +37,43 @@ pub struct ElicitationKey {
     pub entry_id: ElicitationEntryId,
 }
 
+/// One elicitation, in the four fields the frontend's dialog renders from.
+#[derive(Debug, Clone)]
+pub struct ElicitationWire {
+    /// `"url"` or `"form"`.
+    pub mode: String,
+    pub message: String,
+    pub requested_schema: Option<serde_json::Value>,
+    pub url: Option<String>,
+}
+
+/// Flatten an elicitation for the wire.
+///
+/// Read as JSON, not by field: the request type is `#[non_exhaustive]` and
+/// unstable-gated, and the frontend renders a form generated from the schema
+/// rather than matching variants. Same reason the old stack carried it raw.
+///
+/// Shared by the two places elicitations come from — a session's thread and a
+/// connection's request-scoped store — so the sign-in dialog and the chat
+/// dialog cannot disagree about how the same payload reads.
+pub fn elicitation_wire(elicitation: &atlas_acp_thread::Elicitation) -> ElicitationWire {
+    let request = serde_json::to_value(&elicitation.request).unwrap_or(serde_json::Value::Null);
+    let url = request
+        .get("url")
+        .and_then(|url| url.as_str())
+        .map(str::to_owned);
+    ElicitationWire {
+        mode: if url.is_some() { "url" } else { "form" }.to_string(),
+        message: request
+            .get("message")
+            .and_then(|message| message.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        requested_schema: request.get("requestedSchema").cloned(),
+        url,
+    }
+}
+
 /// Projects every attached thread's events onto the frozen wire.
 ///
 /// One projector serves every session: it hands out the per-session event sink
@@ -733,24 +770,8 @@ impl SessionProjection {
         let Some((_, elicitation)) = thread.elicitations().elicitation(&id) else {
             return Vec::new();
         };
-        // Read as JSON, not by field: the request type is `#[non_exhaustive]`
-        // and unstable-gated, and the frontend renders a form generated from
-        // the schema rather than matching variants. Same reason the old stack
-        // carried it raw.
-        let request = serde_json::to_value(&elicitation.request).unwrap_or(serde_json::Value::Null);
+        let wire = elicitation_wire(elicitation);
         drop(thread);
-
-        let url = request
-            .get("url")
-            .and_then(|url| url.as_str())
-            .map(str::to_owned);
-        let requested_schema = request.get("requestedSchema").cloned();
-        let message = request
-            .get("message")
-            .and_then(|message| message.as_str())
-            .unwrap_or_default()
-            .to_string();
-        let mode = if url.is_some() { "url" } else { "form" };
 
         let request_id = Uuid::new_v4();
         self.new_elicitations.push((
@@ -763,10 +784,10 @@ impl SessionProjection {
         self.announced_elicitations.push(id);
         vec![SessionDelta::ElicitationRequested {
             request_id,
-            mode: mode.to_string(),
-            message,
-            requested_schema,
-            url,
+            mode: wire.mode,
+            message: wire.message,
+            requested_schema: wire.requested_schema,
+            url: wire.url,
         }]
     }
 

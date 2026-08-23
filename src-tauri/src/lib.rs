@@ -584,7 +584,6 @@ pub fn run() {
             commands::agents::agents_run_auth_method,
             commands::agents::agents_authenticate,
             commands::agents::agents_drop_session,
-            commands::agents::codex_status,
             commands::cersei::cersei_list_sessions,
             commands::cersei::cersei_session_transcript,
             commands::cersei::cersei_delete_session,

@@ -19,7 +19,7 @@ use anyhow::Result;
 use atlas_acp_thread::{AgentConnection, AgentId};
 use futures::future::BoxFuture;
 
-use crate::connection::{AcpConnection, AcpConnectionDefaults, AgentServerCommand, ThreadEventSink};
+use crate::connection::{AcpConnection, AcpConnectionDefaults, AgentServerCommand, ThreadEventSink, RequestElicitationSink};
 
 /// Resolves the command for one installed agent.
 ///
@@ -95,6 +95,14 @@ pub struct ConnectOptions {
     pub root_dir: Option<PathBuf>,
     pub defaults: AcpConnectionDefaults,
     pub thread_events: ThreadEventSink,
+    /// Where a connection's REQUEST-scoped elicitations are announced.
+    ///
+    /// The counterpart to `thread_events` for the elicitations that belong to
+    /// no session. They are the ones that arrive during sign-in — a device
+    /// code to enter, a URL to visit — so they can predate every session the
+    /// connection will ever have, and without a sink they are raised into
+    /// silence and the agent waits for an answer nobody was shown.
+    pub request_elicitation_events: RequestElicitationSink,
     pub client_name: &'static str,
     pub client_version: String,
 }
@@ -167,6 +175,7 @@ impl AgentServer for CustomAgentServer {
                 options.root_dir,
                 options.defaults,
                 options.thread_events,
+                options.request_elicitation_events,
                 options.client_name,
                 options.client_version,
             )

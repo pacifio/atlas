@@ -203,6 +203,32 @@ impl AgentManager {
             .collect()
     }
 
+    /// The live connection for one key, or `None` if it is not connected.
+    ///
+    /// The synchronous counterpart to [`Self::connection`], which waits for one:
+    /// this answers about the connection that exists right now. The map is keyed
+    /// by [`Agent`], so it is a lookup rather than the scan
+    /// [`Self::connections`] would make the caller write.
+    pub fn connected(&self, key: &Agent) -> Option<Arc<dyn AgentConnection>> {
+        match &*lock(&self.entry(key)?) {
+            AgentConnectionEntry::Connected(state) => Some(state.connection.clone()),
+            _ => None,
+        }
+    }
+
+    /// The live connection an ACP agent id names.
+    ///
+    /// By id rather than by key, for the callers that only have one: a
+    /// connection-level event names the agent that raised it and nothing else.
+    /// A scan, because the id is not the key — the native agent's key carries
+    /// no id at all.
+    pub fn connection_by_agent_id(&self, agent_id: &AgentId) -> Option<Arc<dyn AgentConnection>> {
+        self.connections()
+            .into_iter()
+            .find(|(_, connection)| &connection.agent_id() == agent_id)
+            .map(|(_, connection)| connection)
+    }
+
     /// Ported from `restart_connection` (`:127-141`).
     ///
     /// A restart while a connect is already in flight is a no-op: that attempt

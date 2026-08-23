@@ -56,6 +56,14 @@ fn thread_events() -> ThreadEventSink {
     })
 }
 
+fn request_elicitation_events() -> RequestElicitationSink {
+    Arc::new(|_agent_id: &AgentId| {
+        let (tx, rx) = event_channel();
+        Box::leak(Box::new(rx));
+        tx
+    })
+}
+
 fn command(path: &str, args: &[&str]) -> AgentServerCommand {
     AgentServerCommand {
         path: PathBuf::from(path),
@@ -71,6 +79,7 @@ async fn connect(command: AgentServerCommand) -> anyhow::Result<AcpConnection> {
         None,
         AcpConnectionDefaults::default(),
         thread_events(),
+        request_elicitation_events(),
         "atlas",
         "0.0.0-test".to_string(),
     )

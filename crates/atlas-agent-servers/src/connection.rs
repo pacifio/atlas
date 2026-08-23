@@ -17,7 +17,8 @@ use agent_client_protocol::{Agent, Client, ConnectionTo, Lines};
 use anyhow::{anyhow, Context as _, Result};
 use atlas_acp_thread::{
     AcpThread, AcpThreadEvent, AcpThreadHandle, AgentConnection, AgentId, AgentSessionConfigOptions,
-    AgentSessionModes, AuthRequired, ElicitationStore, ElicitationStoreHandle, EventSink, LoadError,
+    AgentSessionModes, AuthRequired, ElicitationStore, ElicitationStoreEvent,
+    ElicitationStoreHandle, EventSink, LoadError,
     TerminalAuthCommand, build_terminal_auth_command,
 };
 use futures::future::BoxFuture;
@@ -48,6 +49,11 @@ const INITIALIZE_EXIT_GRACE: Duration = Duration::from_millis(250);
 pub type ThreadEventSink =
     Arc<dyn Fn(&acp::SessionId) -> EventSink<AcpThreadEvent> + Send + Sync>;
 
+/// Where a connection's request-scoped elicitations are announced, supplied by
+/// the host the same way [`ThreadEventSink`] is. See `ConnectOptions`.
+pub type RequestElicitationSink =
+    Arc<dyn Fn(&AgentId) -> EventSink<ElicitationStoreEvent> + Send + Sync>;
+
 /// Defaults applied to every new session on this connection.
 ///
 /// Zed reads these from its `SettingsStore` and re-reads them on every settings
@@ -70,6 +76,10 @@ pub struct AcpConnection {
     /// Present only when the agent advertised `sessionCapabilities.list`. Its
     /// absence is what "this agent has no listable history" means, everywhere.
     session_list: Option<Arc<AcpSessionList>>,
+    /// The command this connection was launched with. Kept because a typed
+    /// `Terminal` auth method names only the ARGUMENTS that sign the agent in —
+    /// the binary is the one Atlas already spawned.
+    command: AgentServerCommand,
     request_elicitations: ElicitationStoreHandle,
     defaults: AcpConnectionDefaults,
     thread_events: ThreadEventSink,
@@ -104,6 +114,7 @@ impl AcpConnection {
         root_dir: Option<PathBuf>,
         defaults: AcpConnectionDefaults,
         thread_events: ThreadEventSink,
+        request_elicitation_events: RequestElicitationSink,
         client_name: &'static str,
         client_version: String,
     ) -> Result<Self> {
@@ -133,8 +144,9 @@ impl AcpConnection {
 
         let debug_log = AcpDebugLog::new();
         let sessions = Arc::new(SessionRegistry::new());
-        let request_elicitations: ElicitationStoreHandle =
-            Arc::new(Mutex::new(ElicitationStore::default()));
+        let request_elicitations: ElicitationStoreHandle = Arc::new(Mutex::new(
+            ElicitationStore::new(request_elicitation_events(&agent_id)),
+        ));
 
         // Both directions are tee'd into the debug log before they reach the
         // codec, so the log shows the bytes as they went over the wire.
@@ -275,6 +287,7 @@ impl AcpConnection {
             auth_methods: response.auth_methods,
             session_list,
             agent_capabilities: response.agent_capabilities,
+            command,
             request_elicitations,
             defaults,
             thread_events,
@@ -755,17 +768,7 @@ impl AgentConnection for AcpConnection {
 
     /// The login command to run for an auth method, if the agent named one.
     ///
-    /// Ported from Zed's `terminal_auth_task` (`acp.rs:1887-1920`) minus the
-    /// `Terminal`-variant branch, which resolves the agent's own binary behind a
-    /// beta flag Atlas has no equivalent of. What is left is Zed's
-    /// `meta_terminal_auth_task`: read `_meta["terminal-auth"]`, which is what
-    /// every adapter shipping a runnable login actually sends today
-    /// (claude-agent-acp among them).
-    ///
-    /// Returning `None` means the agent did not tell us how to sign in. The
-    /// host says exactly that rather than guessing a command — guessing is what
-    /// the deleted `BUILTIN_AGENTS` login table did, and it could only ever
-    /// know about a hardcoded list.
+    /// Both of Zed's shapes — see [`terminal_auth_command_for`].
     fn terminal_auth_command(
         &self,
         method_id: &acp::AuthMethodId,
@@ -774,7 +777,7 @@ impl AgentConnection for AcpConnection {
             .auth_methods
             .iter()
             .find(|method| method.id() == method_id)?;
-        let command = meta_terminal_auth_command(&self.id, method_id, method)?;
+        let command = terminal_auth_command_for(&self.id, method_id, method, &self.command)?;
         Some(async move { Ok(command) }.boxed())
     }
 
@@ -1058,6 +1061,53 @@ impl AgentSessionConfigOptions for AcpSessionConfigOptions {
 }
 
 
+/// The login command for an auth method, from whichever of the two shapes the
+/// agent used. Ported from Zed's `terminal_auth_task` (`acp.rs:1887-1921`).
+///
+/// A typed `Terminal` method first, as Zed orders it: it names only the
+/// ARGUMENTS that sign this agent in, because the program is the agent's own.
+/// Atlas re-runs the binary it already spawned — same path, launch args then
+/// auth args, and the SAME ENVIRONMENT with the method's own vars layered on
+/// top. That env matters: it carries the proxy configuration and the spawn
+/// quirks (`env_quirks`, which deliberately blanks `ANTHROPIC_API_KEY`), so a
+/// login subprocess started without it reaches the network differently from
+/// the agent it is signing in.
+///
+/// `_meta["terminal-auth"]` is the fallback — the pre-stabilization shape. It
+/// names a whole command, which need not be the binary Atlas launched, so it
+/// brings its own environment and nothing is layered under it.
+///
+/// `None` means the agent never said how to sign in. The honest answer is to
+/// report that, not to guess: guessing is what the deleted `BUILTIN_AGENTS`
+/// login table did, and it could only ever know a hardcoded list.
+fn terminal_auth_command_for(
+    agent_id: &AgentId,
+    method_id: &acp::AuthMethodId,
+    method: &acp::AuthMethod,
+    own_command: &AgentServerCommand,
+) -> Option<TerminalAuthCommand> {
+    if let acp::AuthMethod::Terminal(terminal) = method {
+        let mut args = own_command.args.clone();
+        args.extend(terminal.args.iter().cloned());
+        let mut env: HashMap<String, String> = own_command.env.clone().unwrap_or_default();
+        env.extend(terminal.env.iter().map(|(k, v)| (k.clone(), v.clone())));
+        return Some(build_terminal_auth_command(
+            terminal_auth_id(agent_id, method_id),
+            method.name().to_string(),
+            own_command.path.to_string_lossy().into_owned(),
+            args,
+            env.into_iter().collect(),
+        ));
+    }
+    meta_terminal_auth_command(agent_id, method_id, method)
+}
+
+/// Scopes a run to one agent+method, so two agents signing in at once cannot be
+/// confused for one another.
+fn terminal_auth_id(agent_id: &AgentId, method_id: &acp::AuthMethodId) -> String {
+    format!("external-agent-{}-{}-login", agent_id.as_str(), method_id.0)
+}
+
 /// `_meta["terminal-auth"]` — the pre-stabilization way an adapter says how to
 /// run its login CLI. Ported from Zed's `meta_terminal_auth_task`
 /// (`acp.rs:1555-1586`).
@@ -1086,7 +1136,7 @@ fn meta_terminal_auth_command(
         serde_json::from_value::<MetaTerminalAuth>(meta.get("terminal-auth")?.clone()).ok()?;
 
     Some(build_terminal_auth_command(
-        format!("external-agent-{}-{}-login", agent_id.as_str(), method_id.0),
+        terminal_auth_id(agent_id, method_id),
         terminal_auth.label,
         terminal_auth.command,
         terminal_auth.args,
@@ -1149,6 +1199,104 @@ mod terminal_auth_tests {
         .expect("a runnable command");
         assert!(cmd.args.is_empty());
         assert!(cmd.env.is_empty());
+    }
+
+    fn own_command() -> AgentServerCommand {
+        AgentServerCommand {
+            path: PathBuf::from("/usr/local/bin/some-agent"),
+            args: vec!["acp".to_string()],
+            env: None,
+        }
+    }
+
+    /// Zed's other branch (`acp.rs:1897-1918`): a typed `Terminal` method says
+    /// only WHICH ARGUMENTS sign this agent in. The binary is the agent's own,
+    /// so the host runs the same program it already launched — the agent never
+    /// has to know or repeat its own path.
+    #[test]
+    fn a_typed_terminal_method_runs_the_agents_own_binary() {
+        let m: acp::AuthMethod = serde_json::from_value(serde_json::json!({
+            "id": "login",
+            "name": "Log in",
+            "type": "terminal",
+            "args": ["auth", "login"],
+            "env": { "NO_COLOR": "1" },
+        }))
+        .expect("a terminal auth method");
+        let cmd = terminal_auth_command_for(
+            &AgentId::new("some-agent"),
+            &acp::AuthMethodId::new("login"),
+            &m,
+            &own_command(),
+        )
+        .expect("a runnable command");
+        assert_eq!(cmd.command, "/usr/local/bin/some-agent");
+        // The agent's own launch args come FIRST — dropping them would run a
+        // different program than the one Atlas spawned.
+        assert_eq!(cmd.args, ["acp", "auth", "login"]);
+        assert_eq!(cmd.env, [("NO_COLOR".to_string(), "1".to_string())]);
+    }
+
+    /// The typed variant wins, as it does in Zed (`acp.rs:1897-1920`): an
+    /// agent that advertises the stabilized shape should not be pinned to the
+    /// pre-stabilization one forever just because it also ships `_meta` for
+    /// older clients.
+    #[test]
+    fn the_typed_variant_beats_an_explicit_meta_spec() {
+        let m: acp::AuthMethod = serde_json::from_value(serde_json::json!({
+            "id": "login",
+            "name": "Log in",
+            "type": "terminal",
+            "args": ["auth", "login"],
+            "_meta": {
+                "terminal-auth": { "label": "Sign in", "command": "/opt/login-helper" }
+            },
+        }))
+        .expect("a terminal auth method with a meta spec");
+        let cmd = terminal_auth_command_for(
+            &AgentId::new("some-agent"),
+            &acp::AuthMethodId::new("login"),
+            &m,
+            &own_command(),
+        )
+        .expect("a runnable command");
+        assert_eq!(cmd.command, "/usr/local/bin/some-agent");
+        assert_eq!(cmd.args, ["acp", "auth", "login"]);
+    }
+
+    /// The login subprocess inherits the agent's OWN environment, with the
+    /// method's vars on top. Without it the login runs with no proxy config
+    /// and with the API key `env_quirks` exists to blank — reaching the network
+    /// differently from the agent it is signing in.
+    #[test]
+    fn a_typed_terminal_method_inherits_the_agents_environment() {
+        let m: acp::AuthMethod = serde_json::from_value(serde_json::json!({
+            "id": "login",
+            "name": "Log in",
+            "type": "terminal",
+            "args": ["auth", "login"],
+            "env": { "NO_COLOR": "1", "HTTPS_PROXY": "http://method" },
+        }))
+        .expect("a terminal auth method");
+        let mut spawn_env = HashMap::new();
+        spawn_env.insert("HTTPS_PROXY".to_string(), "http://spawn".to_string());
+        spawn_env.insert("ANTHROPIC_API_KEY".to_string(), String::new());
+        let cmd = terminal_auth_command_for(
+            &AgentId::new("some-agent"),
+            &acp::AuthMethodId::new("login"),
+            &m,
+            &AgentServerCommand {
+                path: PathBuf::from("/usr/local/bin/some-agent"),
+                args: vec!["acp".to_string()],
+                env: Some(spawn_env),
+            },
+        )
+        .expect("a runnable command");
+        let env: HashMap<String, String> = cmd.env.into_iter().collect();
+        assert_eq!(env.get("ANTHROPIC_API_KEY"), Some(&String::new()));
+        assert_eq!(env.get("NO_COLOR"), Some(&"1".to_string()));
+        // The method's own value wins where the two name the same var.
+        assert_eq!(env.get("HTTPS_PROXY"), Some(&"http://method".to_string()));
     }
 
     /// No spec means the agent never told us how to sign in. The honest answer

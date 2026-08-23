@@ -267,6 +267,7 @@ fn connect_options() -> ConnectOptions {
         root_dir: None,
         defaults: AcpConnectionDefaults::default(),
         thread_events,
+        request_elicitation_events: Arc::new(|_agent_id| atlas_acp_thread::event_channel().0),
         client_name: "atlas-test",
         client_version: "0.0.0".to_string(),
     }

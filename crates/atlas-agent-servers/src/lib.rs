@@ -62,7 +62,7 @@ pub mod session_list;
 
 pub use connection::{
     client_capabilities_for_agent, map_acp_error, AcpConnection, AcpConnectionDefaults,
-    AgentServerCommand, ThreadEventSink,
+    AgentServerCommand, RequestElicitationSink, ThreadEventSink,
 };
 pub use debug_log::{
     AcpDebugLog, AcpDebugMessage, AcpDebugMessageContent, AcpDebugMessageDirection,

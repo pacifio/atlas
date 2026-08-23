@@ -49,6 +49,7 @@ import {
   startCatalogListener,
 } from "@/features/agents/stores/agent-registry-store";
 import { AgentOAuthModalHost } from "@/features/agents/components/agent-oauth-modal";
+import { AgentElicitationHost } from "@/features/chat/components/agent-elicitation-host";
 import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import {
   isPermissionGranted,
@@ -1440,6 +1441,9 @@ export function App() {
       <FilePicker open={filePickerOpen} onOpenChange={setFilePickerOpen} />
       <HintOverlay />
       <AgentOAuthModalHost />
+      {/* Sign-in asks questions of its own (device codes, login URLs), and they
+          arrive before the agent has any session to route them by. */}
+      <AgentElicitationHost />
       <NotificationPanel />
       <FeedbackPanel />
       <UpdateAvailableModal />
