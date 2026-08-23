@@ -43,7 +43,6 @@ const reportedBindFailures = new Set<string>();
 const signInAttempted = new Set<string>();
 import { composePrompt, type MentionData } from "../lib/mentions";
 import { usePaneFind } from "../lib/use-pane-find";
-import { useDefaultAgentType } from "../hooks/use-default-agent";
 import { MessageInput } from "./message-input";
 import { SessionSidebar } from "./session-sidebar";
 import { ChatHeader } from "./chat-header";
@@ -59,8 +58,6 @@ import { collectTurnEdits } from "../lib/turn-edits";
 const HEADER_INSET = 46;
 import { PermissionModal } from "./permission-modal";
 import { ElicitationModal } from "./elicitation-modal";
-import { ClaudeSetupBanner } from "@/features/claude-setup/components/claude-setup-banner";
-import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 
 // Both panels are modal-style and never visible on first paint. Lazy so
 // they don't add to the initial chunk.
@@ -288,19 +285,12 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
 
   const acpSessionId = session?.acpSessionId ?? "";
 
-  // Which agent a fresh chat starts on — Claude Code when it's installed +
-  // authed, otherwise the native Atlas agent. `null` while the Claude probe is
-  // still deciding on a first-ever launch: creating the session then would pin
-  // it to the wrong agent (and, for Claude, to a disabled composer), so we wait
-  // the few hundred ms it takes. The transcript already renders its skeleton
-  // for a session-less tab.
-  const defaultAgentType = useDefaultAgentType();
-
+  // A fresh chat starts on the native agent and starts immediately: the
+  // default needs no probe, so there is no window in which the tab has to sit
+  // session-less waiting to find out which agent it is.
   useEffect(() => {
-    if (!session && defaultAgentType) {
-      createSession(tabId, defaultAgentType);
-    }
-  }, [tabId, session, createSession, defaultAgentType]);
+    if (!session) createSession(tabId);
+  }, [tabId, session, createSession]);
 
   // Bind an ACP agent + session to this tab as soon as the panel mounts.
   // The agent spawn takes 1–3 s warm and up to 30 s on a cold `npx` cache,
@@ -1109,10 +1099,16 @@ function LoadingTranscriptState() {
 }
 
 /**
- * Composer wrapper: the setup banner + login dialog + the real `MessageInput`.
- * Subscribes to the Claude-Code setup phase from `useClaudeSetupStore` and
- * hard-disables the input when Claude isn't installed/authed so we don't
- * surface confusing failures from inside the ACP spawn path.
+ * Composer wrapper: the login dialog + the real `MessageInput`.
+ *
+ * It no longer gates on anything. Two agent-specific surfaces used to live
+ * here: a Claude setup banner that hard-disabled the input until Claude Code
+ * was installed and authed, and a Codex sign-in pill driven by a probe of
+ * `~/.codex/auth.json`. Both are gone (ADR-0002). A composer disabled by one
+ * agent's readiness was a trap, because the agent switcher lives INSIDE it —
+ * the user could not switch to an agent that WAS ready. Failures now arrive as
+ * `atlas:auth-required` and route through `canSignIn`, which asks the catalog
+ * whether an agent has a sign-in, never which agent it is.
  */
 // Memoized: with the parent passing stable callbacks + value props, this heavy
 // subtree (input, mode/agent pickers, attach menu) skips re-render on every
@@ -1136,16 +1132,6 @@ const ChatComposer = memo(function ChatComposer({
   jumpCount: number;
   onScrollToBottom: () => void;
 }) {
-  // Codex used to keep a bespoke sign-in surface here: a probe of
-  // `~/.codex/auth.json` and a "Sign in to Codex with ChatGPT" pill wired to a
-  // hardcoded `"chatgpt"` method id. It is gone. An auth-classified failure
-  // raises `atlas:auth-required` and `MessageInput` routes it through
-  // `canSignIn`, which asks the CATALOG whether this agent has a sign-in —
-  // never which agent it is.
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
-  const isClaude = agentType === "claude-code";
-  const phase = useClaudeSetupStore.use.phase();
-
   // OpenCode / Cursor / Kilo auth used to raise a "copy `cursor-agent login`"
   // pill here. It is gone: `atlas:auth-required` now routes ONLY to the
   // AgentLoginDialog (see message-input.tsx), which runs the login for the
@@ -1154,9 +1140,6 @@ const ChatComposer = memo(function ChatComposer({
   // downloaded the CLI into its app-data dir, there was no such command on the
   // user's PATH to run. The dialog's error phase now shows the real absolute
   // path as a manual fallback.
-  // Claude's install/setup gating. #10 removes it from the chat path entirely.
-  const claudeNotReady = isClaude && phase !== "ready";
-  const showRow = claudeNotReady || showJumpToBottom;
 
   return (
     <>
@@ -1165,14 +1148,9 @@ const ChatComposer = memo(function ChatComposer({
             rendered (each gets its own slide-up + fade-in animation
             via `.atlas-pill-in`); when the row is empty it doesn't
             paint at all so it never blocks pointer events. */}
-        {showRow && (
+        {showJumpToBottom && (
           <div className="pointer-events-none absolute bottom-full inset-x-0 mb-2 z-20 flex justify-center">
             <div className="pointer-events-auto flex items-center gap-2">
-              {claudeNotReady && (
-                <span key={`setup-${phase}`} className="atlas-pill-in">
-                  <ClaudeSetupBanner />
-                </span>
-              )}
               {showJumpToBottom && (
                 <button
                   key="jump-to-bottom"
@@ -1205,7 +1183,6 @@ const ChatComposer = memo(function ChatComposer({
           onStop={onStop}
           running={running}
           stopping={stopping}
-          disabled={claudeNotReady}
           placeholder="Ask Atlas what to do…"
         />
       </div>

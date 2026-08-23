@@ -21,7 +21,7 @@ import { createSelectors } from "@/lib/create-selectors";
 import { useDevFlagsStore } from "@/features/settings/stores/dev-flags-store";
 import {
   agents,
-  ensureDefaultAgent,
+  ensureAgent,
   listenAuthRunDone,
   type AuthMethodWire,
 } from "@/features/chat/lib/agents-api";
@@ -32,6 +32,9 @@ import {
   type ClaudeStatus,
 } from "../lib/claude-setup-api";
 import { logEvent } from "@/features/log/lib/log";
+// This store is ABOUT Claude Code, so it names it. That is not a default agent
+// (ADR-0002) — it is the one agent this feature exists to install and sign in.
+import { pluginIdForAgent } from "@/types/agent";
 
 export type ClaudeSetupPhase =
   | "checking"
@@ -275,7 +278,7 @@ export const useClaudeSetupStore = createSelectors(
         return;
       }
       try {
-        const agent = await ensureDefaultAgent();
+        const agent = await ensureAgent(pluginIdForAgent("claude-code"));
         const methods = await agents.listAuthMethods(agent.agent_id);
         set({ authMethods: methods });
       } catch (e) {
@@ -423,7 +426,7 @@ export const useClaudeSetupStore = createSelectors(
       authUnlistens = [doneUnlisten];
 
       try {
-        const agent = await ensureDefaultAgent();
+        const agent = await ensureAgent(pluginIdForAgent("claude-code"));
         await agents.runAuthMethod(agent.agent_id, methodId);
       } catch (e) {
         clearAuthListeners();

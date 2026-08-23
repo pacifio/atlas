@@ -55,8 +55,17 @@ function isFirstPartyAgent(agentType: string): agentType is FirstPartyAgent {
   return Object.prototype.hasOwnProperty.call(PLUGIN_ID_BY_AGENT, agentType);
 }
 
+/** The spawnable spec id for an agent type.
+ *
+ *  No identity at all — absent, or the retired `"custom"` — routes to the
+ *  NATIVE agent. It used to route to Claude Code, the last hardcoded default
+ *  plugin id: on a fresh profile that silently aimed at an agent nobody had
+ *  installed, and it is reached for real by resuming a history row that
+ *  recorded no agent type. `switchableAgentOf` already resolves the same
+ *  inputs to the native agent, and the two must not disagree about one
+ *  session (ADR-0002). */
 export function pluginIdForAgent(agentType: AgentType | undefined): string {
-  if (!agentType || agentType === "custom") return PLUGIN_ID_BY_AGENT["claude-code"];
+  if (!agentType || agentType === "custom") return PLUGIN_ID_BY_AGENT[NATIVE_AGENT_ID];
   if (isFirstPartyAgent(agentType)) return PLUGIN_ID_BY_AGENT[agentType];
   // External agents: the agent type IS the plugin id.
   return agentType;

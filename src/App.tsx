@@ -50,7 +50,6 @@ import {
 } from "@/features/agents/stores/agent-registry-store";
 import { AgentOAuthModalHost } from "@/features/agents/components/agent-oauth-modal";
 import { AgentElicitationHost } from "@/features/chat/components/agent-elicitation-host";
-import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import {
   isPermissionGranted,
   requestPermission,
@@ -97,13 +96,14 @@ const zoomReset = () =>
   useProjectStore.getState().actions.updateSettings({ uiScale: DEFAULT_SCALE });
 
 export function App() {
-  // Probe Claude Code (installed? authed?) on mount. Drives the banner
-  // above the message composer and the hard-disabled state of the input
-  // when the CLI isn't ready. Fast — two parallel subprocesses, totals
-  // <100ms on a warm machine.
+  // No Claude probe here any more. It used to run at boot to drive a banner
+  // above the composer and hard-disable the input; both are gone, and probing
+  // meant a fresh install spawned subprocesses for an agent it does not have
+  // (ADR-0002). The one caller that still needs the answer — the post-auth
+  // re-check in `agent-auth-hooks` — asks for it itself.
   useEffect(() => {
-    void useClaudeSetupStore.getState().actions.refreshStatus();
-    // Agent identity registry (first-party + registry-installed externals):
+    // Agent identity registry (the native agent + registry-installed
+    // externals):
     // hydrate once so pickers/glyphs/memory dropdown resolve external
     // metadata; the marketplace re-hydrates after installs.
     void hydrateAgentRegistry();

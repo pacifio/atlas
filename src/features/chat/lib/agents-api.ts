@@ -275,37 +275,35 @@ export const listenAgentElicitationResolved = (
 // first prompt doesn't pay npx/node cold-start (10–30s); a chat bound to a
 // different agent (e.g. Codex) spawns that agent the first time it's used.
 
-/** The coding agents Atlas ships. claude is the default for new chats.
- *  Kept in sync with `PLUGIN_ID_BY_AGENT` in `src/types/agent.ts` — prefer
- *  `pluginIdForAgent(agentType)` over these constants for routing. */
-export const DEFAULT_PLUGIN_ID = "claude-code-ts";
-export const CODEX_PLUGIN_ID = "codex";
 /** Atlas's native in-process agent (atlas-cersei). */
 export const CERSEI_PLUGIN_ID = "cersei";
 
-const agentPromises = new Map<string, Promise<AgentInfo>>();
+// Route with `pluginIdForAgent(agentType)` — the agent the SESSION carries.
+// New chats get theirs from `defaultAgentForNewSession`.
+
+/** Live agents, by plugin id. Populated by [`ensureAgent`] and read
+ *  synchronously by the optimistic bindings.
+ *
+ *  There is no in-flight promise cache beside it any more. It existed to stop
+ *  two callers racing two spawns of one agent — which the backend now
+ *  guarantees on its own: `AgentManager` keeps one connection per agent and a
+ *  second request joins the first's shared connect future rather than starting
+ *  a second process. Deduping again here only added a second thing that could
+ *  disagree about whether an agent was running. */
 const cachedAgents = new Map<string, AgentInfo>();
 
-/** Spawn (or reuse) the live agent process for `pluginId`. */
+/** Spawn (or reuse) the live agent process for `pluginId`.
+ *
+ *  Cheap to call repeatedly: an already-connected agent returns without
+ *  spawning anything, and concurrent callers join one connect rather than
+ *  racing. A failure is never cached — the next call retries. */
 export function ensureAgent(pluginId: string): Promise<AgentInfo> {
   const cached = cachedAgents.get(pluginId);
   if (cached) return Promise.resolve(cached);
-  let p = agentPromises.get(pluginId);
-  if (!p) {
-    p = agents
-      .spawn(pluginId)
-      .then((info) => {
-        cachedAgents.set(pluginId, info);
-        return info;
-      })
-      .catch((e) => {
-        // Reset so the next call can retry rather than caching a failure.
-        agentPromises.delete(pluginId);
-        throw e;
-      });
-    agentPromises.set(pluginId, p);
-  }
-  return p;
+  return agents.spawn(pluginId).then((info) => {
+    cachedAgents.set(pluginId, info);
+    return info;
+  });
 }
 
 /** Synchronous accessor — `null` until that agent's spawn resolves. Used for
@@ -314,7 +312,6 @@ export function getAgentSync(pluginId: string): AgentInfo | null {
   return cachedAgents.get(pluginId) ?? null;
 }
 
-/** Drop a cached agent (or all) so the next ensure re-spawns. */
 /** Reset the spawn cache for whichever plugin owns `agentId` — used when THAT
  *  agent's process dies, so only the dead agent respawns (the old code reset
  *  the default plugin regardless of which agent crashed, leaving a crashed
@@ -323,22 +320,15 @@ export function resetAgentByAgentId(agentId: string): void {
   for (const [pluginId, info] of cachedAgents) {
     if (info.agent_id === agentId) {
       cachedAgents.delete(pluginId);
-      agentPromises.delete(pluginId);
       return;
     }
   }
 }
 
+/** Drop a cached agent (or all) so the next ensure re-spawns. */
 export function resetAgent(pluginId?: string): void {
-  if (pluginId) {
-    agentPromises.delete(pluginId);
-    cachedAgents.delete(pluginId);
-  } else {
-    agentPromises.clear();
-    cachedAgents.clear();
-  }
+  if (pluginId) cachedAgents.delete(pluginId);
+  else cachedAgents.clear();
 }
 
 // Back-compat thin wrappers (default = Claude) for existing callers.
-export const ensureDefaultAgent = (): Promise<AgentInfo> => ensureAgent(DEFAULT_PLUGIN_ID);
-export const getDefaultAgentSync = (): AgentInfo | null => getAgentSync(DEFAULT_PLUGIN_ID);
