@@ -25,7 +25,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { ChevronRight, Loader2, Info, Check, ExternalLink, LogOut } from "lucide-react";
+import {
+  Check,
+  ChevronRight,
+  Copy,
+  ExternalLink,
+  Info,
+  Loader2,
+  LogOut,
+  Terminal as TerminalIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { cn } from "@/lib/utils";
@@ -48,6 +57,7 @@ import { copyText } from "@/lib/clipboard";
 import { pluginIdForAgent } from "@/types/agent";
 import { agentMeta, catalogEntry } from "@/features/agents/lib/agent-meta";
 import { logEvent } from "@/features/log/lib/log";
+import { openCommandTerminal, shellLine } from "@/features/terminal/lib/open-command-terminal";
 
 /** Lifted verbatim from `agent-login-dialog.tsx` — one machine for all agents. */
 type Phase =
@@ -62,18 +72,22 @@ type Phase =
    *  command, so it is correct even when the binary lives in Atlas's app-data
    *  dir rather than on the user's PATH. */
   | { kind: "error"; message: string; manualCommand?: string }
+  /** The login was handed to a real terminal because it needs to be typed
+   *  into. Atlas cannot see when the user finishes in there, so this phase
+   *  waits for them to say so. */
+  | { kind: "terminal"; method: AuthMethodWire; command: string }
   | { kind: "done" };
 
-/** POSIX-quote a token so a path with spaces survives a paste into a shell. */
-function shellQuote(token: string): string {
-  return /^[A-Za-z0-9_./:@%+=-]+$/.test(token) ? token : `'${token.replace(/'/g, `'\\''`)}'`;
-}
-
-/** The command a user can run by hand to finish this sign-in, or null when the
- *  method has no terminal spec to offer. */
+/** The command that finishes this sign-in, or null when the method has no
+ *  terminal spec to offer.
+ *
+ *  Used both for the run-it-yourself escape hatch and for the terminal
+ *  hand-off, so the two cannot drift. Includes the method's environment: it
+ *  carries the proxy configuration and the spawn quirks, and a login run
+ *  without it reaches the network differently from the agent it signs in. */
 export function manualCommandFor(method: AuthMethodWire): string | null {
   if (!method.terminalCommand) return null;
-  return [method.terminalCommand, ...(method.terminalArgs ?? [])].map(shellQuote).join(" ");
+  return shellLine(method.terminalCommand, method.terminalArgs ?? [], method.terminalEnv ?? []);
 }
 
 /** Which method the agent's own complaint points at, if any.
@@ -163,6 +177,15 @@ function AgentOAuthModal({
   const [nonce, setNonce] = useState(0); // "Try again" re-runs discovery
   /** Live tail of the login CLI, and the first URL it printed. */
   const [tail, setTail] = useState<string[]>([]);
+  /** Which method the running phase belongs to, so its output can be handed to
+   *  a terminal mid-run without re-choosing it. */
+  const [runningMethod, setRunningMethod] = useState<AuthMethodWire | null>(null);
+  /** Set the moment a run is handed to a terminal. The headless run it came
+   *  from is still in flight — the hung login is exactly why the user reached
+   *  for the terminal — and when it finally exits it must not overwrite the
+   *  hand-off phase with an error, or close the dialog by "succeeding". A ref,
+   *  not state: the in-flight `run()` closure has to see the current value. */
+  const handedOffRef = useRef(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   /** A2: only agents that advertised `auth.logout` get a sign-out action. */
   const supportsLogout = catalogEntry(request.agentType)?.supportsLogout ?? false;
@@ -213,6 +236,7 @@ function AgentOAuthModal({
   }, [agentId, refreshEnv]);
 
   const finish = () => {
+    setRunningMethod(null);
     setPhase({ kind: "done" });
     takeSignInCallback(request.requestId)?.onSignedIn?.();
     // Brief success frame before closing, matching the dialogs this replaces.
@@ -226,6 +250,8 @@ function AgentOAuthModal({
       setPhase({ kind: "error", message: blocked, manualCommand: undefined });
       return;
     }
+    setRunningMethod(method);
+    handedOffRef.current = false;
     setTail([]);
     setAuthUrl(null);
     setPhase({ kind: "running", label: `Signing in to ${label}…` });
@@ -240,6 +266,7 @@ function AgentOAuthModal({
         if (p.url) setAuthUrl((u) => u ?? p.url);
       });
       await runSignInMethod(agentId, method, label);
+      if (handedOffRef.current) return;
       logEvent({
         source: "atlas",
         kind: "agent-auth",
@@ -249,6 +276,7 @@ function AgentOAuthModal({
       });
       finish();
     } catch (err) {
+      if (handedOffRef.current) return;
       setPhase({
         kind: "error",
         message: errInfo(err).message,
@@ -266,11 +294,62 @@ function AgentOAuthModal({
     }
   };
 
+  /** Hand the login to a real terminal.
+   *
+   *  The headless run pipes stdio, so a login that ASKS something — a provider
+   *  picker, a device code, a y/n — can never be answered and simply hangs
+   *  (#24). Zed does not spawn these itself either: it hands them to the
+   *  workspace terminal. Offered for any method with a runnable command rather
+   *  than for particular agents, because whether a login is interactive is not
+   *  something the protocol says. */
+  const handOffToTerminal = (method: AuthMethodWire) => {
+    const command = manualCommandFor(method);
+    if (!command) return;
+    handedOffRef.current = true;
+    openCommandTerminal(command, `Sign in — ${label}`);
+    setPhase({ kind: "terminal", method, command });
+    logEvent({
+      source: "atlas",
+      kind: "agent-auth",
+      summary: `${label} sign-in handed to a terminal (${method.id})`,
+      status: "success",
+      payload: { agent: request.agentType, method: method.id },
+    });
+  };
+
+  /** After the user says they finished in the terminal: the credentials are on
+   *  disk now, so the live agent is told to re-read them — the same call the
+   *  headless path makes after its login exits.
+   *
+   *  Not a verification, and it must not be described as one. ACP does not
+   *  require an agent to fail `authenticate` when it is still signed out, and
+   *  adapters commonly answer `Ok` regardless; what this reliably does is give
+   *  the running agent a chance to pick the new credentials up without a
+   *  respawn. A failure IS surfaced when one comes, but silence is not proof. */
+  const confirmTerminalSignIn = async (method: AuthMethodWire) => {
+    if (!agentId) return;
+    setRunningMethod(null);
+    setPhase({ kind: "running", label: `Checking ${label}…` });
+    try {
+      await agents.authenticate(agentId, method.id);
+      finish();
+    } catch (err) {
+      setPhase({
+        kind: "error",
+        message: errInfo(err).message,
+        manualCommand: manualCommandFor(method) ?? undefined,
+      });
+    }
+  };
+
   /** ACP `logout` (A2) — the agent drops its own credentials; Atlas holds none
    *  to clear. Offered only when the agent advertised the capability, so this
    *  never presents an action that would 404 on the wire. */
   const signOut = async () => {
     if (!agentId) return;
+    // Not a login run: leaving the previous method set would offer "Open in
+    // terminal" during a sign-OUT, and opening a login terminal from there.
+    setRunningMethod(null);
     setPhase({ kind: "running", label: `Signing out of ${label}…` });
     try {
       await agents.logout(agentId);
@@ -301,11 +380,23 @@ function AgentOAuthModal({
     onClose();
   };
 
+  // The one phase that asks the user to go and use the app: the login is
+  // running in a terminal they have to type into. A modal dialog would make
+  // that impossible — the overlay eats the click, focus is trapped, and the
+  // first attempt to reach the terminal dismisses the dialog, taking the
+  // "I've finished" button with it.
+  const handingOff = phase.kind === "terminal";
+
   return (
-    <Dialog.Root open onOpenChange={(o) => !o && dismiss()}>
+    <Dialog.Root open modal={!handingOff} onOpenChange={(o) => !o && dismiss()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[var(--z-overlay)] bg-black/60 backdrop-blur-sm" />
+        {!handingOff && (
+          <Dialog.Overlay className="fixed inset-0 z-[var(--z-overlay)] bg-black/60 backdrop-blur-sm" />
+        )}
         <Dialog.Content
+          onInteractOutside={(e) => {
+            if (handingOff) e.preventDefault();
+          }}
           className={cn(
             "fixed left-1/2 top-[24%] z-[var(--z-modal)] -translate-x-1/2",
             "w-[480px] max-w-[92vw] rounded-lg border border-border-default bg-bg-elevated",
@@ -330,7 +421,28 @@ function AgentOAuthModal({
             )}
 
             {phase.kind === "running" && (
-              <RunningPhase label={phase.label} tail={tail} url={authUrl} />
+              <RunningPhase
+                label={phase.label}
+                tail={tail}
+                url={authUrl}
+                // The escape hatch for the failure this cannot show: a login
+                // waiting on an answer looks exactly like one that is slow,
+                // because its prompt arrives in the tail and nothing can be
+                // typed back (#24).
+                onOpenTerminal={
+                  runningMethod && manualCommandFor(runningMethod)
+                    ? () => handOffToTerminal(runningMethod)
+                    : undefined
+                }
+              />
+            )}
+
+            {phase.kind === "terminal" && (
+              <TerminalHandoffPhase
+                label={label}
+                command={phase.command}
+                onDone={() => void confirmTerminalSignIn(phase.method)}
+              />
             )}
 
             {phase.kind === "done" && (
@@ -391,25 +503,41 @@ function AgentOAuthModal({
                   </p>
                 )}
                 {phase.methods.map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={() =>
-                      m.kind === "env_var"
-                        ? setPhase({ kind: "env", method: m, methods: phase.methods })
-                        : void run(m)
-                    }
-                    className="group flex items-center gap-3 rounded-sm border border-border-default bg-bg-base px-3 py-2.5 text-left transition-colors hover:bg-bg-hover"
-                  >
-                    <span className="flex-1 min-w-0">
-                      <span className="block text-xs font-medium text-text-primary">{m.name}</span>
-                      {m.description && (
-                        <span className="mt-0.5 block text-[11px] text-text-secondary">
-                          {m.description}
+                  <div key={m.id} className="flex flex-col gap-1">
+                    <button
+                      onClick={() =>
+                        m.kind === "env_var"
+                          ? setPhase({ kind: "env", method: m, methods: phase.methods })
+                          : void run(m)
+                      }
+                      className="group flex items-center gap-3 rounded-sm border border-border-default bg-bg-base px-3 py-2.5 text-left transition-colors hover:bg-bg-hover"
+                    >
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-xs font-medium text-text-primary">
+                          {m.name}
                         </span>
-                      )}
-                    </span>
-                    <ChevronRight className="size-3.5 shrink-0 text-text-tertiary group-hover:text-text-primary transition-colors" />
-                  </button>
+                        {m.description && (
+                          <span className="mt-0.5 block text-[11px] text-text-secondary">
+                            {m.description}
+                          </span>
+                        )}
+                      </span>
+                      <ChevronRight className="size-3.5 shrink-0 text-text-tertiary group-hover:text-text-primary transition-colors" />
+                    </button>
+                    {/* The second way in. The running phase offers this too,
+                        but only after the login has already hung — which is
+                        the whole complaint. Someone who knows their agent's
+                        login asks questions should not have to sit through
+                        that first. */}
+                    {manualCommandFor(m) && (
+                      <button
+                        onClick={() => handOffToTerminal(m)}
+                        className="flex items-center gap-2 self-start rounded-sm px-2 py-1 text-[11px] text-text-tertiary transition-colors hover:text-text-primary"
+                      >
+                        <TerminalIcon className="size-3.5" /> Run this in a terminal
+                      </button>
+                    )}
+                  </div>
                 ))}
                 {supportsLogout && (
                   <button
@@ -433,7 +561,17 @@ function AgentOAuthModal({
  *  The tail matters more than it looks: a CLI that fails to open the browser is
  *  otherwise indistinguishable from one that is simply slow, and the user has
  *  no signal at all. The URL button is the fallback for exactly that case. */
-function RunningPhase({ label, tail, url }: { label: string; tail: string[]; url: string | null }) {
+function RunningPhase({
+  label,
+  tail,
+  url,
+  onOpenTerminal,
+}: {
+  label: string;
+  tail: string[];
+  url: string | null;
+  onOpenTerminal?: () => void;
+}) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -463,6 +601,55 @@ function RunningPhase({ label, tail, url }: { label: string; tail: string[]; url
           <div ref={endRef} />
         </div>
       )}
+      {onOpenTerminal && (
+        <button
+          onClick={onOpenTerminal}
+          className="flex w-full items-center gap-2 rounded-sm border border-border-default bg-bg-base px-2.5 py-1.5 text-left text-[11px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+        >
+          <TerminalIcon className="size-3.5 shrink-0 text-text-tertiary" />
+          <span className="min-w-0 flex-1 truncate">Waiting for an answer? Open in terminal</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** The login is running in a real terminal, because it needs to be typed into.
+ *
+ *  Atlas deliberately does not guess when it is finished. The command runs in
+ *  the user's own shell, not a process Atlas is waiting on, and a browser
+ *  hand-off can complete long after the CLI exits — so the user says when, and
+ *  the agent's own `authenticate` is what actually verifies it. */
+function TerminalHandoffPhase({
+  label,
+  command,
+  onDone,
+}: {
+  label: string;
+  command: string;
+  onDone: () => void;
+}) {
+  return (
+    <div className="space-y-2.5 px-2 py-3">
+      <p className="text-xs text-text-secondary">
+        Finish signing in to {label} in the terminal that just opened, then come back.
+      </p>
+      <button
+        onClick={() => {
+          void copyText(command);
+          toast.success("Command copied.");
+        }}
+        className="flex w-full items-center gap-2 rounded-sm border border-border-default bg-bg-base px-2.5 py-1.5 text-left font-mono text-[11px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary"
+      >
+        <span className="min-w-0 flex-1 truncate">{command}</span>
+        <Copy className="size-3.5 shrink-0" />
+      </button>
+      <button
+        onClick={onDone}
+        className="h-7 rounded-sm border border-border-default px-2.5 text-xs text-text-primary hover:bg-bg-hover"
+      >
+        I've finished signing in
+      </button>
     </div>
   );
 }

@@ -94,6 +94,18 @@ export class BlockStreamParser {
   private current: TerminalBlock | null = null;
   private preambleId = 0;
   private integrated = false;
+
+  /** Whether the shell has drawn a prompt through OSC 133.
+   *
+   *  The one honest "the shell is ready for input" signal available: the marker
+   *  is emitted by the integration rc AFTER the user's own profile has been
+   *  sourced. Anything sent before it races whatever the profile is doing, and
+   *  a profile that reads stdin or calls `stty` will swallow it. Always false
+   *  for a shell with no integration (anything but zsh here), so a caller must
+   *  have a fallback rather than waiting forever. */
+  get hasDrawnPrompt(): boolean {
+    return this.integrated;
+  }
   // Render coalescing: pushes mark dirty and schedule a single flush instead of
   // calling onChange synchronously per batch. A firehose block flushes slowly.
   private flushTimer: ReturnType<typeof setTimeout> | null = null;

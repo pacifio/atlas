@@ -1563,16 +1563,40 @@ impl AgentHost {
 
     // ---- auth ------------------------------------------------------------
 
-    pub fn auth_methods(&self, agent_id: AgentId) -> Result<Vec<AuthMethodWire>> {
+    pub async fn auth_methods(&self, agent_id: AgentId) -> Result<Vec<AuthMethodWire>> {
         let record = self.record_for(agent_id)?;
         let Some(connection) = self.connected(&record.agent) else {
             return Ok(Vec::new());
         };
-        Ok(connection
-            .auth_methods()
-            .iter()
-            .filter_map(AuthMethodWire::from_acp)
-            .collect())
+        let mut out = Vec::new();
+        for method in connection.auth_methods() {
+            let Some(wire) = AuthMethodWire::from_acp(method) else {
+                continue;
+            };
+            // Ask the connection what it would actually run, rather than
+            // re-deriving it from `_meta` here. That keeps the client's idea of
+            // "can this method be started" identical to the backend's.
+            let resolved = match connection.terminal_auth_command(method.id()) {
+                Some(task) => match task.await {
+                    Ok(command) => Some(command),
+                    // Not the same as "this agent named no login". Collapsing
+                    // the two makes the UI say "Atlas could not find this
+                    // agent's CLI" — the exact wrong answer this resolution
+                    // exists to stop — so the real reason goes in the log.
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "atlas::agents",
+                            "resolving the login command for `{}` failed: {err}",
+                            method.id()
+                        );
+                        None
+                    }
+                },
+                None => None,
+            };
+            out.push(wire.with_runnable(resolved.as_ref()));
+        }
+        Ok(out)
     }
 
     /// The login command the agent named for a method, if it named one.
@@ -1852,10 +1876,22 @@ pub struct AuthMethodWire {
     /// Typed `terminal.args`, relative to the agent's own binary.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
-    /// `_meta.terminal-auth.command` — the resolved binary to actually exec.
+    /// The binary to actually exec, and what to run it with.
+    ///
+    /// Resolved through the same path `agents_run_auth_method` uses, NOT read
+    /// off `_meta` alone: the stabilised typed `Terminal` variant names only
+    /// the arguments, because the program is the agent's own binary and only
+    /// the backend knows where that is. Reading `_meta` alone reported no
+    /// command for those methods, and the UI blocks a terminal method with no
+    /// command — so a login the backend could run was refused by the client.
     pub terminal_command: Option<String>,
     pub terminal_args: Option<Vec<String>>,
     pub terminal_label: Option<String>,
+    /// The environment that login must run with. It carries the proxy
+    /// configuration and the spawn quirks, so a command shown or run without it
+    /// reaches the network differently from the agent it is signing in.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub terminal_env: Vec<(String, String)>,
     /// `_meta["api-key"].provider` — a proprietary hint that this method is
     /// satisfied by that provider's API key. Lets the UI show the same env-var
     /// checklist a typed `env_var` method would get.
@@ -1923,8 +1959,31 @@ impl AuthMethodWire {
                 .and_then(|k| k.get("provider"))
                 .and_then(|p| p.as_str())
                 .map(str::to_string),
+            terminal_env: Vec::new(),
             id,
         })
+    }
+
+    /// Overlay what the backend would actually run for this method.
+    ///
+    /// One source of truth: `terminal_auth_command_for` prefers the typed
+    /// `Terminal` variant and falls back to `_meta`, so whatever it resolves is
+    /// exactly what `agents_run_auth_method` executes and exactly what the user
+    /// can be told to run by hand.
+    fn with_runnable(mut self, resolved: Option<&TerminalAuthCommand>) -> Self {
+        if let Some(resolved) = resolved {
+            self.terminal_command = Some(resolved.command.clone());
+            self.terminal_args = Some(resolved.args.clone());
+            // `declared_env`, NOT `env`. The spawn environment is the agent's
+            // whole inherited one — the user's environment plus the BYOK keys
+            // from the keychain — and this field is displayed, copied and typed
+            // into a shell. Only what the agent declared belongs on the wire.
+            self.terminal_env = resolved.declared_env.clone();
+            if self.terminal_label.is_none() {
+                self.terminal_label = Some(resolved.label.clone());
+            }
+        }
+        self
     }
 }
 
@@ -2041,6 +2100,85 @@ pub fn save_installed(
     let json = serde_json::to_string_pretty(settings)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     std::fs::write(path, json)
+}
+
+#[cfg(test)]
+mod auth_method_wire_tests {
+    use super::*;
+
+    fn method(value: serde_json::Value) -> acp::AuthMethod {
+        serde_json::from_value(value).expect("an auth method this schema understands")
+    }
+
+    /// The typed `Terminal` variant is the STABILISED way an agent says how to
+    /// sign in, and it names only the arguments — the binary is the agent's own,
+    /// which only the backend knows. Reading `_meta` alone left the wire saying
+    /// this method has no command, so the UI blocked it with "Atlas could not
+    /// find this agent's CLI" for a login the backend could run perfectly well.
+    #[test]
+    fn a_typed_terminal_method_reports_the_command_the_backend_would_run() {
+        let wire = AuthMethodWire::from_acp(&method(serde_json::json!({
+            "id": "login",
+            "name": "Log in",
+            "type": "terminal",
+            "args": ["login"],
+        })))
+        .expect("a wire method");
+        assert_eq!(
+            wire.terminal_command, None,
+            "precondition: the method itself names no binary"
+        );
+
+        let resolved = atlas_acp_thread::build_terminal_auth_command(
+            "run-1".to_string(),
+            "Log in".to_string(),
+            "/opt/atlas/agents/cursor-agent".to_string(),
+            vec!["acp".to_string(), "login".to_string()],
+            // The SPAWN environment — the agent's whole inherited one, keychain
+            // keys included. It must not reach the wire.
+            vec![
+                ("ANTHROPIC_API_KEY".to_string(), "sk-secret".to_string()),
+                ("HTTPS_PROXY".to_string(), "http://proxy".to_string()),
+            ],
+            // What the agent DECLARED, which is all that may be shown.
+            vec![("HTTPS_PROXY".to_string(), "http://proxy".to_string())],
+        );
+        let wire = wire.with_runnable(Some(&resolved));
+
+        assert_eq!(
+            wire.terminal_command.as_deref(),
+            Some("/opt/atlas/agents/cursor-agent")
+        );
+        assert_eq!(
+            wire.terminal_args.as_deref(),
+            Some(["acp".to_string(), "login".to_string()].as_slice())
+        );
+        assert_eq!(
+            wire.terminal_env,
+            vec![("HTTPS_PROXY".to_string(), "http://proxy".to_string())],
+            "what the agent declared goes with it — it carries the proxy config"
+        );
+        assert!(
+            !wire.terminal_env.iter().any(|(name, _)| name == "ANTHROPIC_API_KEY"),
+            "the spawn environment must not reach a field that is displayed, \
+             copied to the clipboard and typed into a shell that keeps history"
+        );
+    }
+
+    /// An agent that named no login at all still reports none. Guessing is what
+    /// the deleted builtin login table did.
+    #[test]
+    fn a_method_with_no_runnable_command_stays_empty() {
+        let wire = AuthMethodWire::from_acp(&method(serde_json::json!({
+            "id": "api-key",
+            "name": "API key",
+        })))
+        .expect("a wire method")
+        .with_runnable(None);
+
+        assert_eq!(wire.terminal_command, None);
+        assert!(wire.terminal_env.is_empty());
+    }
 }
 
 #[cfg(test)]

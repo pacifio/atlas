@@ -47,6 +47,10 @@ export interface AuthMethodWire {
   terminalCommand: string | null;
   terminalArgs: string[] | null;
   terminalLabel: string | null;
+  /** The environment the login must run with. Carries the proxy configuration
+   *  and the spawn quirks, so a command run without it reaches the network
+   *  differently from the agent it is signing in. Absent when empty. */
+  terminalEnv?: [string, string][];
   /** Codex's proprietary `_meta["api-key"].provider` hint — the only api-key
    *  signal any adapter ships today, so it drives the same env checklist a
    *  typed `env_var` method would. */

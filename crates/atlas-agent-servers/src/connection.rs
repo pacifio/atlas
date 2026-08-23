@@ -1260,14 +1260,23 @@ fn terminal_auth_command_for(
     if let acp::AuthMethod::Terminal(terminal) = method {
         let mut args = own_command.args.clone();
         args.extend(terminal.args.iter().cloned());
+        // Sorted: the source is a `HashMap`, and an unsorted list means the
+        // command Atlas shows and copies is spelled differently on every call.
+        let mut declared: Vec<(String, String)> = terminal
+            .env
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        declared.sort();
         let mut env: HashMap<String, String> = own_command.env.clone().unwrap_or_default();
-        env.extend(terminal.env.iter().map(|(k, v)| (k.clone(), v.clone())));
+        env.extend(declared.iter().cloned());
         return Some(build_terminal_auth_command(
             terminal_auth_id(agent_id, method_id),
             method.name().to_string(),
             own_command.path.to_string_lossy().into_owned(),
             args,
             env.into_iter().collect(),
+            declared,
         ));
     }
     meta_terminal_auth_command(agent_id, method_id, method)
@@ -1306,12 +1315,17 @@ fn meta_terminal_auth_command(
     let terminal_auth =
         serde_json::from_value::<MetaTerminalAuth>(meta.get("terminal-auth")?.clone()).ok()?;
 
+    // The `_meta` spec names its own environment and nothing is layered under
+    // it, so what it declared IS what the login runs with.
+    let mut env: Vec<(String, String)> = terminal_auth.env.into_iter().collect();
+    env.sort();
     Some(build_terminal_auth_command(
         terminal_auth_id(agent_id, method_id),
         terminal_auth.label,
         terminal_auth.command,
         terminal_auth.args,
-        terminal_auth.env.into_iter().collect(),
+        env.clone(),
+        env,
     ))
 }
 
@@ -1468,6 +1482,78 @@ mod terminal_auth_tests {
         assert_eq!(env.get("NO_COLOR"), Some(&"1".to_string()));
         // The method's own value wins where the two name the same var.
         assert_eq!(env.get("HTTPS_PROXY"), Some(&"http://method".to_string()));
+    }
+
+    /// The split that keeps the user's keys off their screen.
+    ///
+    /// `env` is what the login is SPAWNED with — the agent's whole inherited
+    /// environment, which for Atlas carries the BYOK keys read out of the
+    /// keychain. `declared_env` is only what the agent asked for. The wire
+    /// carries the second, because it is displayed, copied to the clipboard and
+    /// typed into a shell that records its history.
+    #[test]
+    fn only_what_the_agent_declared_is_safe_to_show() {
+        let mut own = own_command();
+        own.env = Some(HashMap::from([
+            ("ANTHROPIC_API_KEY".to_string(), "sk-secret".to_string()),
+            ("HTTPS_PROXY".to_string(), "http://proxy".to_string()),
+        ]));
+        let method: acp::AuthMethod = serde_json::from_value(serde_json::json!({
+            "id": "login",
+            "name": "Log in",
+            "type": "terminal",
+            "args": ["login"],
+            "env": { "AGENT_LOGIN_MODE": "browser" },
+        }))
+        .expect("a typed terminal method");
+
+        let cmd = terminal_auth_command_for(
+            &AgentId::new("a"),
+            &acp::AuthMethodId::new("login"),
+            &method,
+            &own,
+        )
+        .expect("a command");
+
+        let spawn: HashMap<_, _> = cmd.env.iter().cloned().collect();
+        assert_eq!(
+            spawn.get("ANTHROPIC_API_KEY"),
+            Some(&"sk-secret".to_string()),
+            "the subprocess still gets the agent's real environment"
+        );
+        assert_eq!(spawn.get("AGENT_LOGIN_MODE"), Some(&"browser".to_string()));
+
+        assert_eq!(
+            cmd.declared_env,
+            vec![("AGENT_LOGIN_MODE".to_string(), "browser".to_string())],
+            "but only the agent's own declaration may be shown"
+        );
+    }
+
+    /// The `_meta` spec brings its own environment and nothing is layered under
+    /// it, so there is nothing inherited to withhold.
+    #[test]
+    fn a_meta_spec_declares_everything_it_runs_with() {
+        let m = method(serde_json::json!({
+            "terminal-auth": {
+                "label": "Sign in",
+                "command": "/bin/agent",
+                "args": ["login"],
+                "env": { "NO_COLOR": "1" },
+            }
+        }));
+        let cmd = meta_terminal_auth_command(
+            &AgentId::new("a"),
+            &acp::AuthMethodId::new("claude-login"),
+            &m,
+        )
+        .expect("a command");
+
+        assert_eq!(cmd.env, cmd.declared_env);
+        assert_eq!(
+            cmd.declared_env,
+            vec![("NO_COLOR".to_string(), "1".to_string())]
+        );
     }
 
     /// No spec means the agent never told us how to sign in. The honest answer

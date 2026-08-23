@@ -1484,11 +1484,11 @@ pub struct AuthEnvStatus {
 /// adapter actually ships today — mapping it through the BYOK provider table
 /// gives those methods the same checklist a typed method would get.
 #[tauri::command]
-pub fn agents_auth_env_status(
+pub async fn agents_auth_env_status(
     agent_id: AgentId,
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<Vec<AuthEnvStatus>, String> {
-    let methods = host.auth_methods(agent_id).map_err(|e| e.to_string())?;
+    let methods = host.auth_methods(agent_id).await.map_err(|e| e.to_string())?;
 
     let mut wanted: Vec<(String, String, Option<String>, bool)> = Vec::new();
     for method in &methods {
@@ -1535,11 +1535,11 @@ pub fn agents_auth_env_status(
 /// `agent` and drops its extra fields. The frontend already reads these by
 /// field name.
 #[tauri::command]
-pub fn agents_list_auth_methods(
+pub async fn agents_list_auth_methods(
     agent_id: AgentId,
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<Vec<AuthMethodWire>, String> {
-    host.auth_methods(agent_id).map_err(|e| e.to_string())
+    host.auth_methods(agent_id).await.map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1603,6 +1603,14 @@ pub async fn agents_run_auth_method(
     let mut cmd = AsyncCommand::new(&command);
     cmd.args(&args);
     cmd.envs(spec.env.iter().cloned());
+    // Closed deliberately, and this run is NOT the answer for a login that asks
+    // a question (#24). A pipe is not a tty: a provider picker or a password
+    // prompt would neither render nor respond even if stdin were connected, so
+    // giving it one would replace a visible hang with a subtler one. An
+    // interactive login is handed to a real terminal instead — see
+    // `openCommandTerminal`, offered by the sign-in dialog for any method with
+    // a runnable command. What stays here is the headless run: a login that
+    // asks nothing and reports itself through stdout/stderr.
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());

@@ -131,19 +131,17 @@ describe("the model pill's live path", () => {
   it("leaves the picker empty for an agent that advertises no model select", () => {
     const session = boundSession();
 
-    useChatStore
-      .getState()
-      .actions.applyAgentDelta(
-        configOptionsDelta([
-          {
-            id: "t",
-            name: "Thinking",
-            category: "thought_level",
-            type: "boolean",
-            currentValue: true,
-          },
-        ]),
-      );
+    useChatStore.getState().actions.applyAgentDelta(
+      configOptionsDelta([
+        {
+          id: "t",
+          name: "Thinking",
+          category: "thought_level",
+          type: "boolean",
+          currentValue: true,
+        },
+      ]),
+    );
 
     expect(session().acpAvailableModels ?? []).toEqual([]);
     expect(session().acpCurrentModel).toBeUndefined();

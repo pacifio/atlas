@@ -131,7 +131,20 @@ pub struct TerminalAuthCommand {
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
+    /// The full environment to SPAWN this login with — the agent's own, so the
+    /// login reaches the network the way the agent does. Inherited variables
+    /// included, which for Atlas means the user's whole environment plus the
+    /// BYOK keys read out of the keychain.
+    ///
+    /// Never show this to anyone. It is what a subprocess gets, not what a
+    /// human should see: rendered into a shell line it would put the user's
+    /// API keys on screen, on the clipboard, and in `~/.zsh_history`.
     pub env: Vec<(String, String)>,
+    /// Only what the AGENT declared for this login — its `terminal.env`, or the
+    /// `_meta` spec's `env`. Safe to display, and the only part a user running
+    /// the command themselves actually needs: their own shell already carries
+    /// the rest.
+    pub declared_env: Vec<(String, String)>,
 }
 
 /// Ported from `build_terminal_auth_task` (`connection.rs:69-89`).
@@ -141,12 +154,14 @@ pub fn build_terminal_auth_command(
     command: String,
     args: Vec<String>,
     env: Vec<(String, String)>,
+    declared_env: Vec<(String, String)>,
 ) -> TerminalAuthCommand {
     TerminalAuthCommand {
         id,
         label,
         command,
         args,
+        declared_env,
         env,
     }
 }
