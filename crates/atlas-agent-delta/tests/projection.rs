@@ -769,7 +769,7 @@ async fn create_terminal(harness: &Harness, terminal_id: &str, args: &[&str]) {
             label: "echo".into(),
             cwd: None,
             output_byte_limit: Some(4096),
-            terminal,
+            terminal: Some(terminal),
         },
     );
 }

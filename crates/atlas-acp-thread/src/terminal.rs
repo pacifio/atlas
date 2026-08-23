@@ -37,7 +37,12 @@ pub enum TerminalProviderEvent {
         label: String,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
-        terminal: Arc<CommandTerminal>,
+        /// `None` for a DISPLAY-ONLY terminal: the agent runs the command
+        /// itself and streams everything through `terminal_output` /
+        /// `terminal_exit` meta, so there is no PTY on our side — only the
+        /// buffer those events fill. `Some` for a terminal created through
+        /// `terminal/create`, whose PTY we own.
+        terminal: Option<Arc<CommandTerminal>>,
     },
     Output {
         terminal_id: acp::TerminalId,
@@ -66,14 +71,18 @@ impl TerminalProviderEvent {
     }
 }
 
-/// One terminal the agent created through `terminal/create`.
+/// One terminal the agent references — created through `terminal/create` (we
+/// own the PTY) or announced through `terminal_info` meta (display-only: the
+/// agent owns the process and streams output/exit as meta events).
 pub struct AcpTerminal {
     id: acp::TerminalId,
     command_label: String,
     working_dir: Option<PathBuf>,
     output_byte_limit: Option<u64>,
     started_at: Instant,
-    inner: Arc<CommandTerminal>,
+    /// `None` for a display-only terminal. Everything it shows arrived as
+    /// provider events into `replayed_output`.
+    inner: Option<Arc<CommandTerminal>>,
     /// Output that arrived as provider events before/alongside the PTY's own
     /// capture. Held separately so replaying a pre-`Created` buffer cannot
     /// interleave into the middle of what the PTY reader collected.
@@ -98,7 +107,7 @@ impl AcpTerminal {
         command_label: String,
         working_dir: Option<PathBuf>,
         output_byte_limit: Option<u64>,
-        inner: Arc<CommandTerminal>,
+        inner: Option<Arc<CommandTerminal>>,
     ) -> Self {
         Self {
             id,
@@ -137,8 +146,11 @@ impl AcpTerminal {
         self.started_at
     }
 
-    pub fn inner(&self) -> &Arc<CommandTerminal> {
-        &self.inner
+    /// The PTY, when this terminal is one WE created. A display-only terminal
+    /// (announced through `terminal_info` meta) has none — the agent owns the
+    /// process, and asking us to kill or await it has no meaning.
+    pub fn inner(&self) -> Option<&Arc<CommandTerminal>> {
+        self.inner.as_ref()
     }
 
     pub fn was_stopped_by_user(&self) -> bool {
@@ -158,7 +170,11 @@ impl AcpTerminal {
     /// Replayed pre-`Created` bytes are prefixed, because they are by definition
     /// the earliest output of the command.
     pub fn current_output(&self) -> acp::TerminalOutputResponse {
-        let (captured, truncated) = self.inner.output();
+        let (captured, truncated) = match &self.inner {
+            Some(inner) => inner.output(),
+            // Display-only: the meta events ARE the capture.
+            None => (String::new(), false),
+        };
         let output = if self.replayed_output.is_empty() {
             captured
         } else {
@@ -167,10 +183,11 @@ impl AcpTerminal {
             out
         };
 
-        let exit_status = self
-            .exit_status
-            .clone()
-            .or_else(|| self.inner.exit_status().map(exit_status_from_command));
+        let exit_status = self.exit_status.clone().or_else(|| {
+            self.inner
+                .as_ref()
+                .and_then(|inner| inner.exit_status().map(exit_status_from_command))
+        });
 
         let mut response = acp::TerminalOutputResponse::new(output, truncated);
         response.exit_status = exit_status;
@@ -181,18 +198,32 @@ impl AcpTerminal {
     /// a cancel apart from a command that failed on its own.
     pub fn stop_by_user(&mut self) -> anyhow::Result<()> {
         self.stopped_by_user = true;
-        self.inner.kill()
+        self.kill()
     }
 
     pub fn kill(&self) -> anyhow::Result<()> {
-        self.inner.kill()
+        match &self.inner {
+            Some(inner) => inner.kill(),
+            None => Err(anyhow::anyhow!(
+                "terminal {} is agent-owned (display-only); there is no process to kill",
+                self.id
+            )),
+        }
     }
 
     pub async fn wait_for_exit(&self) -> acp::TerminalExitStatus {
         if let Some(status) = &self.exit_status {
             return status.clone();
         }
-        exit_status_from_command(self.inner.wait_for_exit().await)
+        match &self.inner {
+            Some(inner) => exit_status_from_command(inner.wait_for_exit().await),
+            // Display-only with no exit yet: the exit arrives as a meta event,
+            // and nothing here can await it. Unreachable in production today —
+            // the `terminal/wait_for_exit` handler awaits the PTY directly and
+            // refuses display-only terminals before it would get here — so an
+            // empty status is the honest answer for a test or future caller.
+            None => acp::TerminalExitStatus::new(),
+        }
     }
 }
 

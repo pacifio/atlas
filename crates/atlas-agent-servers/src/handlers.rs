@@ -442,9 +442,69 @@ pub fn handle_session_notification(
         _ => {}
     }
 
-    let applied = lock(&thread).handle_session_update(notification.update);
+    // Pre-handle: a `ToolCall` whose meta carries `terminal_info` announces a
+    // terminal the AGENT is running itself. Registered before the update is
+    // applied, so the call's own `Terminal` content resolves on first render.
+    // Ported from zed-ref `acp.rs:4869-4904`; gated purely on the meta key —
+    // the same key we advertise in `client_capabilities_for_agent`. Unlike in
+    // Zed the order is a nicety, not load-bearing: the registry parks
+    // out-of-order events and unknown terminal references, so no test pins it.
+    if let acp::SessionUpdate::ToolCall(tool_call) = &notification.update {
+        if let Some(info) = tool_call
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("terminal_info"))
+        {
+            if let Some(terminal_id) = info.get("terminal_id").and_then(|v| v.as_str()) {
+                let cwd = info.get("cwd").and_then(|v| v.as_str()).map(PathBuf::from);
+                lock(&thread).on_terminal_provider_event(TerminalProviderEvent::Created {
+                    terminal_id: acp::TerminalId::new(terminal_id),
+                    label: tool_call.title.clone(),
+                    cwd,
+                    output_byte_limit: None,
+                    terminal: None,
+                });
+            }
+        }
+    }
+
+    let applied = lock(&thread).handle_session_update(notification.update.clone());
     if let Err(err) = applied {
         tracing::warn!("failed to apply session update: {err:?}");
+    }
+
+    // Post-handle: `terminal_output` / `terminal_exit` on a `ToolCallUpdate`'s
+    // meta stream into that terminal. After the update, so a first update that
+    // both names the call and carries output renders the call before the
+    // output lands. Out-of-order arrivals park in the registry's side-tables,
+    // exactly as for client-created terminals. Ported from `acp.rs:4919-4969`.
+    if let acp::SessionUpdate::ToolCallUpdate(update) = &notification.update {
+        let meta = update.meta.as_ref();
+        if let Some(output) = meta.and_then(|meta| meta.get("terminal_output")) {
+            if let (Some(terminal_id), Some(data)) = (
+                output.get("terminal_id").and_then(|v| v.as_str()),
+                output.get("data").and_then(|v| v.as_str()),
+            ) {
+                lock(&thread).on_terminal_provider_event(TerminalProviderEvent::Output {
+                    terminal_id: acp::TerminalId::new(terminal_id),
+                    data: data.as_bytes().to_vec(),
+                });
+            }
+        }
+        if let Some(exit) = meta.and_then(|meta| meta.get("terminal_exit")) {
+            if let Some(terminal_id) = exit.get("terminal_id").and_then(|v| v.as_str()) {
+                let mut status = acp::TerminalExitStatus::new();
+                status.exit_code = exit.get("exit_code").and_then(|v| v.as_u64()).map(|c| c as u32);
+                status.signal = exit
+                    .get("signal")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                lock(&thread).on_terminal_provider_event(TerminalProviderEvent::Exit {
+                    terminal_id: acp::TerminalId::new(terminal_id),
+                    status,
+                });
+            }
+        }
     }
 }
 
@@ -496,7 +556,7 @@ pub fn handle_create_terminal(
         label,
         cwd,
         output_byte_limit: args.output_byte_limit,
-        terminal: terminal.clone(),
+        terminal: Some(terminal.clone()),
     });
     follow_terminal_output(thread, terminal, terminal_id.clone());
 
@@ -566,6 +626,13 @@ pub fn handle_kill_terminal(
     ctx: &ClientContext,
 ) {
     match with_terminal(ctx, &args.session_id, &args.terminal_id, |terminal| {
+        // A display-only terminal has no process of ours to kill; Zed answers
+        // this with a soft no-op rather than an error, and error-for-error
+        // parity matters less than an agent not seeing a failure for a kill
+        // that is, in effect, already done from the client's side.
+        if terminal.inner().is_none() {
+            return Ok(());
+        }
         terminal
             .kill()
             .map_err(|err| acp::Error::internal_error().data(err.to_string()))
@@ -625,9 +692,21 @@ pub fn handle_wait_for_terminal_exit(
     // poll `terminal/output` WHILE waiting for the exit, and those polls
     // arrive on the same wire this wait used to block.
     let inner = match with_terminal(ctx, &args.session_id, &args.terminal_id, |terminal| {
-        terminal.inner().clone()
+        terminal.inner().cloned()
     }) {
-        Ok(inner) => inner,
+        Ok(Some(inner)) => inner,
+        // Display-only: the agent owns the process — it announced this
+        // terminal through `terminal_info` meta and reports the exit the same
+        // way. There is nothing on our side to await.
+        Ok(None) => {
+            return respond_err(
+                responder,
+                acp::Error::invalid_params().data(format!(
+                    "terminal {} is agent-owned (display-only); its exit arrives as terminal_exit meta",
+                    args.terminal_id
+                )),
+            )
+        }
         Err(err) => return respond_err(responder, err),
     };
 

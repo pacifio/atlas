@@ -341,7 +341,7 @@ fn tool_call_running(
             label: "cmd".into(),
             cwd: None,
             output_byte_limit: Some(4096),
-            terminal,
+            terminal: Some(terminal),
         });
     let update: acp::SessionUpdate = serde_json::from_value(serde_json::json!({
         "sessionUpdate": "tool_call",

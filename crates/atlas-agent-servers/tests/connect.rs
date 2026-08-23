@@ -584,3 +584,115 @@ async fn a_pending_permission_does_not_block_the_messages_behind_it() {
         .expect("prompt failed");
     assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
 }
+
+/// A fake agent that runs its command ITSELF and embeds the terminal in
+/// tool-call meta — the `terminal_info` / `terminal_output` / `terminal_exit`
+/// extension Atlas advertises in its client capabilities. No `terminal/create`
+/// is ever called: the id is the agent's own, and everything about the
+/// terminal arrives through `session/update` meta.
+const EMBEDDED_TERMINAL_AGENT: &str = r#"
+import sys, json
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+def update(u):
+    send({"jsonrpc": "2.0", "method": "session/update",
+          "params": {"sessionId": "session-1", "update": u}})
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": msg["id"], "result": {
+            "protocolVersion": 1, "agentCapabilities": {}, "authMethods": [],
+            "agentInfo": {"name": "fake-agent", "version": "9.9.9"}}})
+    elif method == "session/new":
+        send({"jsonrpc": "2.0", "id": msg["id"], "result": {"sessionId": "session-1"}})
+    elif method == "session/prompt":
+        update({"sessionUpdate": "tool_call", "toolCallId": "call-1",
+                "title": "cargo test", "kind": "execute", "status": "in_progress",
+                "content": [{"type": "terminal", "terminalId": "emb-1"}],
+                "_meta": {"terminal_info": {"terminal_id": "emb-1", "cwd": "/tmp"}}})
+        update({"sessionUpdate": "tool_call_update", "toolCallId": "call-1",
+                "_meta": {"terminal_output": {"terminal_id": "emb-1",
+                                              "data": "hello from the embedded terminal"}}})
+        update({"sessionUpdate": "tool_call_update", "toolCallId": "call-1",
+                "status": "completed",
+                "_meta": {"terminal_exit": {"terminal_id": "emb-1", "exit_code": 0}}})
+        send({"jsonrpc": "2.0", "id": msg["id"], "result": {"stopReason": "end_turn"}})
+"#;
+
+/// The port omission behind #29: Atlas advertises the embedded-terminal meta
+/// extension but never consumed it, so a tool call carrying one hard-failed
+/// its upsert — a stuck or missing tool call, no output, and (through the same
+/// error) dropped permission requests and starved shell attribution.
+#[tokio::test]
+async fn an_embedded_terminal_in_tool_call_meta_is_created_and_streams() {
+    use atlas_acp_thread::{AgentConnection as _, AgentThreadEntry, ToolCallStatus};
+
+    let Some(python) = python() else {
+        eprintln!("skipping: no python3 on this machine");
+        return;
+    };
+    let command = AgentServerCommand {
+        path: PathBuf::from(python),
+        args: vec!["-c".to_string(), EMBEDDED_TERMINAL_AGENT.to_string()],
+        env: Some(HashMap::new()),
+    };
+    let connection = Arc::new(connect(command).await.expect("handshake failed"));
+    let thread = connection
+        .clone()
+        .new_session(vec![std::env::temp_dir()])
+        .await
+        .expect("session/new failed");
+    let session_id = thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .session_id()
+        .clone();
+
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        connection.clone().prompt(acp::PromptRequest::new(
+            session_id,
+            vec![acp::ContentBlock::from("run the tests")],
+        )),
+    )
+    .await
+    .expect("the turn must end")
+    .expect("prompt failed");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+    let thread = thread.lock().unwrap_or_else(|p| p.into_inner());
+    let call = thread
+        .entries()
+        .iter()
+        .find_map(|entry| match entry {
+            AgentThreadEntry::ToolCall(call) if call.id.0.as_ref() == "call-1" => Some(call),
+            _ => None,
+        })
+        .expect("the tool call must exist — its embedded terminal must not fail the upsert");
+    assert!(
+        matches!(call.status, ToolCallStatus::Completed),
+        "status must have followed the updates, got {:?}",
+        call.status
+    );
+
+    let output = thread
+        .terminal_output(&acp::TerminalId::new("emb-1"))
+        .expect("the embedded terminal must exist in the registry");
+    assert!(
+        output.contains("hello from the embedded terminal"),
+        "meta output must stream into the terminal: {output:?}"
+    );
+    let terminal = thread
+        .terminal(&acp::TerminalId::new("emb-1"))
+        .expect("registered");
+    assert_eq!(
+        terminal.current_output().exit_status.and_then(|s| s.exit_code),
+        Some(0),
+        "the meta exit must land"
+    );
+}

@@ -275,34 +275,28 @@ pub enum ToolCallContent {
 }
 
 impl ToolCallContent {
-    pub fn from_acp(
-        content: acp::ToolCallContent,
-        terminals: &TerminalRegistry,
-    ) -> Result<Option<Self>> {
+    pub fn from_acp(content: acp::ToolCallContent) -> Result<Option<Self>> {
         match content {
             acp::ToolCallContent::Content(acp::Content { content, .. }) => Ok(Some(
                 Self::ContentBlock(ContentBlock::new_tool_call_content(content)),
             )),
             acp::ToolCallContent::Diff(diff) => Ok(Some(Self::Diff(Diff::from_acp(diff)))),
             acp::ToolCallContent::Terminal(acp::Terminal { terminal_id, .. }) => {
-                if terminals.contains(&terminal_id) {
-                    Ok(Some(Self::Terminal(terminal_id)))
-                } else {
-                    Err(anyhow::anyhow!(
-                        "Terminal with id `{}` not found",
-                        terminal_id
-                    ))
-                }
+                // The id is stored whether or not the registry knows it yet. A
+                // reference can legally precede the terminal — `terminal_info`
+                // meta on the same notification, a raced `terminal/create` —
+                // and rendering already resolves through the registry, showing
+                // nothing until the terminal exists. Failing the whole update
+                // here is what dropped tool calls (and the permission requests
+                // whose tool_call carried them) for every agent that embeds
+                // its own terminals (#29).
+                Ok(Some(Self::Terminal(terminal_id)))
             }
             _ => Ok(None),
         }
     }
 
-    pub fn update_from_acp(
-        &mut self,
-        new: acp::ToolCallContent,
-        terminals: &TerminalRegistry,
-    ) -> Result<bool> {
+    pub fn update_from_acp(&mut self, new: acp::ToolCallContent) -> Result<bool> {
         let needs_update = match (&self, &new) {
             (Self::Diff(old_diff), acp::ToolCallContent::Diff(new_diff)) => old_diff.needs_update(
                 new_diff.old_text.as_deref().unwrap_or(""),
@@ -311,7 +305,7 @@ impl ToolCallContent {
             _ => true,
         };
 
-        if let Some(update) = Self::from_acp(new, terminals)? {
+        if let Some(update) = Self::from_acp(new)? {
             if needs_update {
                 *self = update;
             }
@@ -519,15 +513,11 @@ pub struct ToolCall {
 }
 
 impl ToolCall {
-    pub fn from_acp(
-        tool_call: acp::ToolCall,
-        status: ToolCallStatus,
-        terminals: &TerminalRegistry,
-    ) -> Result<Self> {
+    pub fn from_acp(tool_call: acp::ToolCall, status: ToolCallStatus) -> Result<Self> {
         let label = Self::label_for(&tool_call.kind, tool_call.title);
         let mut content = Vec::with_capacity(tool_call.content.len());
         for item in tool_call.content {
-            if let Some(item) = ToolCallContent::from_acp(item, terminals)? {
+            if let Some(item) = ToolCallContent::from_acp(item)? {
                 content.push(item);
             }
         }
@@ -563,7 +553,6 @@ impl ToolCall {
         &mut self,
         fields: acp::ToolCallUpdateFields,
         meta: Option<acp::Meta>,
-        terminals: &TerminalRegistry,
     ) -> Result<()> {
         let acp::ToolCallUpdateFields {
             kind,
@@ -599,12 +588,12 @@ impl ToolCall {
             // Reuse existing content where we can, so a streaming update does
             // not churn the whole list.
             for (old, new) in self.content.iter_mut().zip(content.by_ref()) {
-                if !old.update_from_acp(new, terminals)? {
+                if !old.update_from_acp(new)? {
                     new_content_len -= 1;
                 }
             }
             for new in content {
-                if let Some(new) = ToolCallContent::from_acp(new, terminals)? {
+                if let Some(new) = ToolCallContent::from_acp(new)? {
                     self.content.push(new);
                 } else {
                     new_content_len -= 1;
@@ -1323,20 +1312,16 @@ impl AcpThread {
         let id = update.tool_call_id.clone();
 
         if let Some(ix) = self.index_for_tool_call(&id) {
-            // Split the borrow: `update_fields` needs `&TerminalRegistry` while
-            // the entry is borrowed mutably.
-            let terminals = mem::take(&mut self.terminals);
             let result = {
                 let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
                     unreachable!()
                 };
-                let result = call.update_fields(update.fields, update.meta, &terminals);
+                let result = call.update_fields(update.fields, update.meta);
                 if result.is_ok() {
                     call.update_status(status);
                 }
                 result
             };
-            self.terminals = terminals;
             result.map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
 
             self.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -1344,7 +1329,7 @@ impl AcpThread {
             let tool_call: acp::ToolCall = update
                 .try_into()
                 .map_err(|_| acp::Error::invalid_params().data("tool call update is not a full tool call"))?;
-            let call = ToolCall::from_acp(tool_call, status, &self.terminals)
+            let call = ToolCall::from_acp(tool_call, status)
                 .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
             self.push_entry(AgentThreadEntry::ToolCall(call));
         }
@@ -1381,14 +1366,13 @@ impl AcpThread {
             }
         };
 
-        let terminals = mem::take(&mut self.terminals);
         let result = {
             let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
                 unreachable!()
             };
             match update {
                 ToolCallUpdate::UpdateFields(update) => {
-                    call.update_fields(update.fields, update.meta, &terminals)
+                    call.update_fields(update.fields, update.meta)
                 }
                 ToolCallUpdate::UpdateDiff(update) => {
                     call.content.clear();
@@ -1402,7 +1386,6 @@ impl AcpThread {
                 }
             }
         };
-        self.terminals = terminals;
         result?;
 
         self.emit(AcpThreadEvent::EntryUpdated(ix));

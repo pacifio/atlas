@@ -44,7 +44,7 @@ fn created(id: &acp::TerminalId) -> TerminalProviderEvent {
         label: "true".into(),
         cwd: None,
         output_byte_limit: Some(1024),
-        terminal: spawn_true(),
+        terminal: Some(spawn_true()),
     }
 }
 
@@ -211,4 +211,83 @@ fn removing_a_terminal_drops_its_parked_state() {
 
     assert_eq!(registry.pending_output_len(&id), 0);
     assert!(!registry.has_pending_exit(&id));
+}
+
+// ── Display-only terminals (#29) ───────────────────────────────────────────
+
+/// A terminal announced through `terminal_info` meta has no PTY on our side —
+/// the agent owns the process. Everything it shows arrives as provider events.
+fn display_only(id: &acp::TerminalId) -> TerminalProviderEvent {
+    TerminalProviderEvent::Created {
+        terminal_id: id.clone(),
+        label: "cargo test".into(),
+        cwd: None,
+        output_byte_limit: None,
+        terminal: None,
+    }
+}
+
+#[test]
+fn a_display_only_terminal_shows_exactly_what_the_meta_events_carried() {
+    let mut registry = TerminalRegistry::new();
+    let id = terminal_id("emb");
+
+    registry.handle_event(display_only(&id));
+    registry.handle_event(TerminalProviderEvent::Output {
+        terminal_id: id.clone(),
+        data: b"line one\n".to_vec(),
+    });
+    registry.handle_event(TerminalProviderEvent::Output {
+        terminal_id: id.clone(),
+        data: b"line two\n".to_vec(),
+    });
+    registry.handle_event(TerminalProviderEvent::Exit {
+        terminal_id: id.clone(),
+        status: exit_status(0),
+    });
+
+    let output = registry.get(&id).expect("registered").current_output();
+    assert_eq!(output.output, "line one\nline two\n");
+    assert_eq!(output.exit_status.and_then(|s| s.exit_code), Some(0));
+}
+
+/// The parking side-tables serve display-only terminals too: output racing
+/// ahead of the `terminal_info` that announces the terminal must not be lost —
+/// it is by definition the command's earliest output.
+#[test]
+fn output_arriving_before_a_display_only_terminal_is_replayed() {
+    let mut registry = TerminalRegistry::new();
+    let id = terminal_id("emb");
+
+    registry.handle_event(TerminalProviderEvent::Output {
+        terminal_id: id.clone(),
+        data: b"early\n".to_vec(),
+    });
+    registry.handle_event(display_only(&id));
+
+    assert_eq!(
+        registry.get(&id).expect("registered").current_output().output,
+        "early\n"
+    );
+}
+
+/// There is no process on our side to kill or await: killing errors honestly,
+/// and a known exit is still answered.
+#[test]
+fn a_display_only_terminal_refuses_a_kill_and_reports_a_known_exit() {
+    let mut registry = TerminalRegistry::new();
+    let id = terminal_id("emb");
+    registry.handle_event(display_only(&id));
+    registry.handle_event(TerminalProviderEvent::Exit {
+        terminal_id: id.clone(),
+        status: exit_status(2),
+    });
+
+    let terminal = registry.get(&id).expect("registered");
+    assert!(terminal.kill().is_err(), "no process of ours to kill");
+    assert!(terminal.inner().is_none());
+    assert_eq!(
+        futures::executor::block_on(terminal.wait_for_exit()).exit_code,
+        Some(2)
+    );
 }
