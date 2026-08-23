@@ -442,3 +442,145 @@ async fn an_agent_advertising_no_model_select_gets_no_model_selector() {
         "its other knobs still reach the composer"
     );
 }
+
+/// A fake agent for driving the inbound dispatch: on `session/prompt` it
+/// announces a tool call, asks permission for it with a BARE update (id only —
+/// legal: `title` is optional on updates), and then KEEPS TALKING while the
+/// question is open. It ends the turn only once the permission answer arrives.
+///
+/// That last part is the point. An agent blocked on `session/request_permission`
+/// still streams — other tool results, text, other sessions' work — and a
+/// client that processes inbound messages inline stalls all of it behind the
+/// open prompt.
+const PERMISSION_AGENT: &str = r#"
+import sys, json
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+def update(u):
+    send({"jsonrpc": "2.0", "method": "session/update",
+          "params": {"sessionId": "session-1", "update": u}})
+prompt_id = None
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": msg["id"], "result": {
+            "protocolVersion": 1, "agentCapabilities": {}, "authMethods": [],
+            "agentInfo": {"name": "fake-agent", "version": "9.9.9"}}})
+    elif method == "session/new":
+        send({"jsonrpc": "2.0", "id": msg["id"], "result": {"sessionId": "session-1"}})
+    elif method == "session/prompt":
+        prompt_id = msg["id"]
+        update({"sessionUpdate": "tool_call", "toolCallId": "call-1",
+                "title": "Run tests", "kind": "execute", "status": "pending"})
+        send({"jsonrpc": "2.0", "id": 100, "method": "session/request_permission",
+              "params": {"sessionId": "session-1",
+                         "toolCall": {"toolCallId": "call-1"},
+                         "options": [
+                             {"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+                             {"optionId": "deny", "name": "Deny", "kind": "reject_once"}]}})
+        update({"sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": "still streaming"}})
+    elif msg.get("id") == 100 and "result" in msg:
+        send({"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}})
+"#;
+
+fn permission_agent_command() -> Option<AgentServerCommand> {
+    Some(AgentServerCommand {
+        path: PathBuf::from(python()?),
+        args: vec!["-c".to_string(), PERMISSION_AGENT.to_string()],
+        env: Some(HashMap::new()),
+    })
+}
+
+/// The blocking regression (#28). Inbound messages are dispatched serially and
+/// our handlers used to be awaited INLINE — so an open permission prompt
+/// blocked every message behind it: no text, no tool results, and no way for
+/// the cancellation to ever arrive. Zed's handlers enqueue-and-return, and the
+/// drain defers every long await; this pins the ported shape.
+#[tokio::test]
+async fn a_pending_permission_does_not_block_the_messages_behind_it() {
+    use atlas_acp_thread::{AgentConnection as _, AgentThreadEntry, ToolCallStatus};
+
+    let Some(command) = permission_agent_command() else {
+        eprintln!("skipping: no python3 on this machine");
+        return;
+    };
+    let connection = Arc::new(connect(command).await.expect("handshake failed"));
+    let thread = connection
+        .clone()
+        .new_session(vec![std::env::temp_dir()])
+        .await
+        .expect("session/new failed");
+    let session_id = thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .session_id()
+        .clone();
+
+    let prompt = tokio::spawn(connection.clone().prompt(acp::PromptRequest::new(
+        session_id,
+        vec![acp::ContentBlock::from("run the tests")],
+    )));
+
+    // The chunk was sent AFTER the permission request. It must land while the
+    // question is still open — that is the whole regression.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let (mut saw_chunk, mut saw_prompt) = (false, false);
+    while std::time::Instant::now() < deadline && !(saw_chunk && saw_prompt) {
+        {
+            let thread = thread.lock().unwrap_or_else(|p| p.into_inner());
+            for entry in thread.entries() {
+                match entry {
+                    AgentThreadEntry::AssistantMessage(message) => {
+                        if message
+                            .chunks
+                            .iter()
+                            .any(|chunk| chunk.block().to_text().contains("still streaming"))
+                        {
+                            saw_chunk = true;
+                        }
+                    }
+                    AgentThreadEntry::ToolCall(call) => {
+                        if matches!(call.status, ToolCallStatus::WaitingForConfirmation { .. }) {
+                            saw_prompt = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(
+        saw_prompt,
+        "the permission request must surface as an open prompt"
+    );
+    assert!(
+        saw_chunk,
+        "the chunk behind the open prompt must render while it is still open"
+    );
+
+    // Answer it; the agent then ends the turn.
+    thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .authorize_tool_call(
+            acp::ToolCallId::new("call-1"),
+            atlas_acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+        );
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(5), prompt)
+        .await
+        .expect("the turn must end once the permission is answered")
+        .expect("prompt task panicked")
+        .expect("prompt failed");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+}

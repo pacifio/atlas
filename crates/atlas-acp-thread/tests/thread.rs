@@ -566,3 +566,43 @@ async fn token_usage_warns_at_the_threshold_and_never_without_a_maximum() {
     };
     assert_eq!(exceeded.ratio(), TokenUsageRatio::Exceeded);
 }
+
+/// A permission request whose `tool_call` is a BARE update — id only, nothing
+/// announced beforehand. The protocol makes every field but the id optional on
+/// an update, and some adapters ask permission without a prior `tool_call`
+/// notification. Refusing the request over a missing display string strands
+/// the agent on an error and the user never sees a prompt (#28).
+#[tokio::test]
+async fn a_bare_permission_request_for_an_unknown_call_still_yields_a_prompt() {
+    let (mut thread, _events, _conn) = new_thread();
+
+    let _waiter = thread
+        .request_tool_call_authorization(
+            tool_call_update("never-announced", None),
+            PermissionOptions::Flat(Vec::new()),
+            AuthorizationKind::PermissionGrant,
+        )
+        .expect("a bare update must not be refused");
+
+    assert_eq!(status_of(&thread, "never-announced"), "Waiting for confirmation");
+}
+
+/// The synthesized placeholder takes whatever the update DID carry — an agent
+/// that sent a title without a prior announcement keeps it.
+#[tokio::test]
+async fn a_titled_permission_request_for_an_unknown_call_keeps_its_title() {
+    let (mut thread, _events, _conn) = new_thread();
+
+    let mut fields = acp::ToolCallUpdateFields::new();
+    fields.title = Some("Delete the database".to_string());
+    let _waiter = thread
+        .request_tool_call_authorization(
+            acp::ToolCallUpdate::new(acp::ToolCallId::new("t9"), fields),
+            PermissionOptions::Flat(Vec::new()),
+            AuthorizationKind::PermissionGrant,
+        )
+        .unwrap();
+
+    let (_, call) = thread.tool_call(&acp::ToolCallId::new("t9")).expect("the call exists");
+    assert_eq!(call.label, "Delete the database");
+}

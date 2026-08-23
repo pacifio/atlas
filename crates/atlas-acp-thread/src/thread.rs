@@ -1438,6 +1438,18 @@ impl AcpThread {
         };
 
         let tool_call_id = tool_call.tool_call_id.clone();
+        // A permission request may reference a call nothing announced, with a
+        // BARE update — the id is the only required field on an update, and
+        // some adapters ask without a prior `tool_call` notification. Refusing
+        // it over a missing display string strands the agent on an error and
+        // the user never sees a prompt, so synthesize the title the schema
+        // made optional. Only here: an ordinary update for an unknown id still
+        // becomes a failed entry (see `update_tool_call`), because there the
+        // agent believes the tool RAN — nobody is waiting on an answer.
+        let mut tool_call = tool_call;
+        if self.index_for_tool_call(&tool_call_id).is_none() && tool_call.fields.title.is_none() {
+            tool_call.fields.title = Some("Tool call".to_string());
+        }
         self.upsert_tool_call_inner(tool_call, status)?;
         self.emit(AcpThreadEvent::ToolAuthorizationRequested(
             tool_call_id.clone(),

@@ -23,19 +23,19 @@
 //! Nothing links this crate yet. It is stage 1 of
 //! `plans/atlas-acp-zed-port-plan.md`.
 //!
-//! # The dispatch queue is not ported
+//! # The dispatch queue IS ported — the first cut of this crate got that wrong
 //!
 //! Zed's `acp.rs` carries a substantial machine — `ForegroundWork`,
 //! `ClientContext` behind an `mpsc`, `enqueue_request` / `enqueue_notification`,
-//! a foreground dispatch task, and a dedicated OS thread with extra stack for
-//! polling the connection future. All of it exists for one reason: the SDK
-//! requires handler closures to be `Send`, and GPUI entities are not, so every
-//! inbound message has to be handed across to the foreground thread.
-//!
-//! Atlas has no such constraint. The session table is a mutex and the threads
-//! are ordinary `Send` values, so handlers run directly on the tokio worker that
-//! received the message. This is a deliberate omission of a workaround, not of a
-//! mechanism — no behaviour is lost with it.
+//! a foreground dispatch task. This crate originally dismissed it as a GPUI
+//! `!Send` workaround and awaited handlers inline. That reading was wrong: the
+//! SDK dispatches inbound messages serially and awaits each registered closure
+//! to completion before parsing the next, so an inline-awaited permission
+//! prompt froze every message behind it — tool results, text, other sessions'
+//! work, and the `$/cancel` that would have ended the wait. The queue is what
+//! keeps a handler's WAIT out of the pipeline while keeping its state mutation
+//! in wire order; only GPUI's threading was the workaround. Ported shape and
+//! the full account: [`handlers`] module docs (#28).
 //!
 //! # Other divergences
 //!

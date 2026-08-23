@@ -441,31 +441,34 @@ async fn wait_for_exit(
 
 /// Builds the client with the full agent→client handler set.
 ///
-/// Zed's equivalent forwards every handler onto a foreground dispatch queue and
-/// polls the connection on a dedicated thread with extra stack, because GPUI
-/// entities are `!Send` and the SDK requires `Send` handlers. Neither applies
-/// here: the session table is a mutex and the handlers are ordinary async fns,
-/// so they run directly on the tokio worker that received the message.
+/// The registered closures ENQUEUE AND RETURN — they never await handler work.
+/// The RPC crate dispatches inbound messages serially and awaits each
+/// registered closure inline, so anything a closure waits on blocks every
+/// message behind it: Zed's dispatch queue is not a GPUI artifact but the
+/// mechanism that keeps an open permission prompt (or a running command's
+/// `wait_for_exit`) from freezing the whole inbound side of the connection.
+/// See the module docs on [`handlers`] and #28.
 fn connect_client_future(
     name: &'static str,
     transport: impl agent_client_protocol::ConnectTo<Client> + 'static,
     ctx: ClientContext,
     connection_tx: futures::channel::oneshot::Sender<ConnectionTo<Agent>>,
 ) -> impl std::future::Future<Output = std::result::Result<(), acp::Error>> {
+    let dispatch_tx = handlers::spawn_dispatch_queue(ctx);
     macro_rules! on_request {
         ($handler:path) => {{
-            let ctx = ctx.clone();
+            let dispatch_tx = dispatch_tx.clone();
             async move |req, responder, _connection| {
-                $handler(req, responder, ctx.clone()).await;
+                handlers::enqueue_request(&dispatch_tx, req, responder, $handler);
                 Ok(())
             }
         }};
     }
     macro_rules! on_notification {
         ($handler:path) => {{
-            let ctx = ctx.clone();
+            let dispatch_tx = dispatch_tx.clone();
             async move |notif, _connection| {
-                $handler(notif, ctx.clone()).await;
+                handlers::enqueue_notification(&dispatch_tx, notif, $handler);
                 Ok(())
             }
         }};
