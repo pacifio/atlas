@@ -544,8 +544,8 @@ impl SessionProjection {
                         .collect(),
                 }]
             }
-            AcpThreadEvent::ToolAuthorizationRequested(tool_call_id) => {
-                self.permission_requested(tool_call_id)
+            AcpThreadEvent::ToolAuthorizationRequested { id, options } => {
+                self.permission_requested(id, options)
             }
             AcpThreadEvent::ToolAuthorizationReceived(tool_call_id) => {
                 let mut deltas = match self.open_permissions.remove(&tool_call_id) {
@@ -731,19 +731,26 @@ impl SessionProjection {
         }
     }
 
-    fn permission_requested(&mut self, tool_call_id: acp::ToolCallId) -> Vec<SessionDelta> {
+    fn permission_requested(
+        &mut self,
+        tool_call_id: acp::ToolCallId,
+        options: atlas_acp_thread::PermissionOptions,
+    ) -> Vec<SessionDelta> {
         let thread = lock_thread(&self.thread);
         let Some((_, call)) = thread.tool_call(&tool_call_id) else {
             return Vec::new();
         };
-        let ThreadToolCallStatus::WaitingForConfirmation { options, .. } = &call.status else {
-            return Vec::new();
-        };
+        // The options come from the EVENT, not from re-reading the call's live
+        // status: the drain lags the thread, and a call the agent finished in
+        // the meantime is no longer `WaitingForConfirmation` — which used to
+        // swallow the request entirely. Announcing from the event keeps the
+        // wire's account true to what happened: the prompt existed, then the
+        // `ToolAuthorizationReceived` that follows resolves it (#30).
         let request_id = Uuid::new_v4();
         let delta = SessionDelta::PermissionRequest {
             request_id,
             tool_call: project::permission_tool_call(call),
-            options: project::permission_options(options),
+            options: project::permission_options(&options),
         };
         drop(thread);
 

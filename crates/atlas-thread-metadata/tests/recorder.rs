@@ -328,7 +328,10 @@ fn everything_that_can_change_a_row_writes_one() {
         AcpThreadEvent::Error,
         AcpThreadEvent::Refusal,
         AcpThreadEvent::WorkingDirectoriesUpdated,
-        AcpThreadEvent::ToolAuthorizationRequested(acp::ToolCallId::new("call-1")),
+        AcpThreadEvent::ToolAuthorizationRequested {
+            id: acp::ToolCallId::new("call-1"),
+            options: atlas_acp_thread::PermissionOptions::Flat(Vec::new()),
+        },
         AcpThreadEvent::ElicitationRequested(atlas_acp_thread::ElicitationEntryId(
             "elicit-1".into(),
         )),

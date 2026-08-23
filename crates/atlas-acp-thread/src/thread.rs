@@ -815,7 +815,14 @@ pub enum AcpThreadEvent {
     TokenUsageUpdated,
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
-    ToolAuthorizationRequested(acp::ToolCallId),
+    /// Carries the options so the projection is a function of the EVENT, not
+    /// of live status re-read at drain time — the drain lags the thread, and a
+    /// call the agent finished in the meantime must still be announced (and
+    /// then resolved) rather than silently swallowed (#30).
+    ToolAuthorizationRequested {
+        id: acp::ToolCallId,
+        options: PermissionOptions,
+    },
     ToolAuthorizationReceived(acp::ToolCallId),
     ElicitationRequested(ElicitationEntryId),
     ElicitationResponded(ElicitationEntryId),
@@ -1408,6 +1415,7 @@ impl AcpThread {
     {
         let (tx, rx) = oneshot::channel();
 
+        let announced_options = options.clone();
         let current_status = self
             .tool_call(&tool_call.tool_call_id)
             .and_then(|(_, tool_call)| tool_call.status.as_acp_status())
@@ -1434,9 +1442,10 @@ impl AcpThread {
             tool_call.fields.title = Some("Tool call".to_string());
         }
         self.upsert_tool_call_inner(tool_call, status)?;
-        self.emit(AcpThreadEvent::ToolAuthorizationRequested(
-            tool_call_id.clone(),
-        ));
+        self.emit(AcpThreadEvent::ToolAuthorizationRequested {
+            id: tool_call_id.clone(),
+            options: announced_options,
+        });
 
         let events = self.events.clone();
         Ok(async move {
@@ -1451,6 +1460,14 @@ impl AcpThread {
             return;
         };
         if !matches!(call.status, ToolCallStatus::WaitingForConfirmation { .. }) {
+            // Still announce the resolution. The prompt this cancels can have
+            // been ANNOUNCED and then overtaken — the agent finishes the call
+            // (dropping the responder) and cancels its request, and when the
+            // cancellation wins the race the waiter future is dropped before
+            // it could emit. Without this, that pill stays open forever. An
+            // unmatched Received is a no-op in the projector, so emitting for
+            // a prompt that was never announced costs nothing.
+            self.emit(AcpThreadEvent::ToolAuthorizationReceived(id.clone()));
             return;
         }
 

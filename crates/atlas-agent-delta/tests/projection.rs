@@ -876,3 +876,75 @@ async fn growing_terminal_output_re_projects_the_tool_call() {
         "the new output never reached the wire: {last:?}"
     );
 }
+
+/// #30 — the projection must be a function of the EVENT STREAM, not of live
+/// state re-read at drain time. The drain lags the thread: an agent that gives
+/// up on its own request (a cancelled turn ends the call) can move the status
+/// past `WaitingForConfirmation` before the projector processes the
+/// `ToolAuthorizationRequested` that preceded it. Re-reading status at drain
+/// time made that window swallow the request entirely — no `permission_request`
+/// delta, so the host never learned the uuid, and nothing could ever resolve.
+///
+/// The correct account of that sequence on the wire is: the prompt existed,
+/// then it was resolved. Both deltas, in order. (The illustrative comment
+/// below exercises the completed path; a cancelled turn moves the status the
+/// same way.)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prompt_the_agent_abandoned_before_the_drain_is_still_announced_then_resolved() {
+    let harness = Harness::start();
+
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Run tests",
+        "kind": "execute",
+        "status": "pending",
+    }));
+    harness.pump();
+
+    // The prompt opens — but the projector does NOT get to drain yet.
+    let waiter = lock(&harness.thread)
+        .request_tool_call_authorization(
+            acp::ToolCallUpdate::new(
+                acp::ToolCallId::new("call-1"),
+                acp::ToolCallUpdateFields::default(),
+            ),
+            PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                "allow_once",
+                "Allow once",
+                acp::PermissionOptionKind::AllowOnce,
+            )]),
+            AuthorizationKind::PermissionGrant,
+        )
+        .expect("the prompt opens");
+
+    // The agent finishes the call before the drain runs (the same happens when
+    // a cancelled turn ends it) — the terminal status replaces the waiting
+    // state and drops the responder.
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-1",
+        "status": "completed",
+    }));
+    // The dropped responder resolves the waiter; polling it emits the
+    // `ToolAuthorizationReceived` the projector turns into the resolution.
+    let outcome = waiter.await;
+    assert!(matches!(
+        outcome,
+        atlas_acp_thread::RequestPermissionOutcome::Cancelled
+    ));
+    harness.pump();
+
+    let kinds = harness.recorder.kinds();
+    let request_at = kinds.iter().position(|k| k == "permission_request");
+    let resolved_at = kinds.iter().position(|k| k == "permission_resolved");
+    assert!(
+        request_at.is_some(),
+        "the prompt must reach the wire even though the status moved on: {kinds:?}"
+    );
+    assert!(
+        resolved_at.is_some(),
+        "and must be resolved so no pill is left open: {kinds:?}"
+    );
+    assert!(request_at < resolved_at, "announced before resolved: {kinds:?}");
+}
