@@ -44,7 +44,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use atlas_agent_wire::{MessageRole, SessionDelta, SessionDeltaEnvelope, ToolCallStatus};
+use atlas_agent_wire::{
+    MessageRole, SessionDelta, SessionDeltaEnvelope, ToolCall, ToolCallStatus, ToolContentBlock,
+};
 use atlas_bus::OutboundMiddleware;
 use atlas_checkpoint::model::DrainGate;
 use atlas_checkpoint::tools::{extract_paths, resolve_path, ResolvedPath, ToolName};
@@ -620,12 +622,11 @@ impl CaptureState {
     fn sample_writes(
         &self,
         session_id: &str,
-        call_id: &str,
         workspace_root: &std::path::Path,
-        locations: &[serde_json::Value],
-        arguments: &serde_json::Value,
+        call: &ToolCall,
         terminal: bool,
     ) -> (Vec<PendingWrite>, bool) {
+        let call_id = call.id.as_str();
         let mut pending = lock_ok(&self.pending_writes);
 
         let first_sighting = !pending.contains_key(call_id);
@@ -638,7 +639,11 @@ impl CaptureState {
         }
         let sample = pending.get_mut(call_id).expect("just ensured");
 
-        for raw in extract_paths(locations, arguments) {
+        // Derived here rather than passed in: a caller that computed this for
+        // the write-detection gate and then handed over a different slice is a
+        // bug with no symptom, and the call is a walk over a handful of blocks.
+        for raw in extract_paths(&call.locations, &diff_paths(&call.content_blocks), &call.arguments)
+        {
             let path = resolve_path(&raw, workspace_root);
             if sample.writes.iter().any(|w| w.path.path == path.path) {
                 continue;
@@ -2580,12 +2585,33 @@ fn serialize_arguments(arguments: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// The patch an edit-shaped call applied, from whatever shape its arguments use.
+/// The patch an edit-shaped call applied, from whatever shape it arrived in.
 ///
 /// Attribution's input, and unrecoverable once the Session ends and the file
 /// moves on — so a best-effort reconstruction from the before/after strings is
 /// worth more than nothing. Agents that hand over a real diff are preferred.
-fn edit_patch(arguments: &serde_json::Value) -> Option<String> {
+///
+/// The call's diff BLOCK is checked alongside its arguments, for the same
+/// reason the block feeds path extraction: an agent that sends no `rawInput`
+/// names its before/after only there, and reading arguments alone left exactly
+/// those agents with no attribution input at all while every other agent had it.
+///
+/// `target` is the path the patch will be stored against, so the right block is
+/// chosen when a call edits several files: the blocks carry one patch EACH, and
+/// `content_blocks[0]` is not necessarily the same file as the first recorded
+/// write (the write set may have come from `locations`, in its own order).
+/// Storing a patch under another file's name is a worse answer than storing
+/// none, because attribution consumes it as fact.
+///
+/// The two halves always come from ONE source. Splicing an `old` out of the
+/// arguments onto a `new` out of a block would synthesise a before/after that
+/// neither description ever claimed.
+fn edit_patch(
+    arguments: &serde_json::Value,
+    blocks: &[ToolContentBlock],
+    target: Option<&ResolvedPath>,
+    workspace_root: &std::path::Path,
+) -> Option<String> {
     for key in ["patch", "diff"] {
         if let Some(patch) = arguments.get(key).and_then(serde_json::Value::as_str) {
             if !patch.trim().is_empty() {
@@ -2594,12 +2620,33 @@ fn edit_patch(arguments: &serde_json::Value) -> Option<String> {
         }
     }
 
-    let old = ["old_string", "oldText", "old_str"]
+    let old_arg = ["old_string", "oldText", "old_str"]
         .iter()
         .find_map(|k| arguments.get(k).and_then(serde_json::Value::as_str));
-    let new = ["new_string", "newText", "new_str", "content"]
+    let new_arg = ["new_string", "newText", "new_str", "content"]
         .iter()
         .find_map(|k| arguments.get(k).and_then(serde_json::Value::as_str));
+
+    let (old, new) = if old_arg.is_some() || new_arg.is_some() {
+        (old_arg, new_arg)
+    } else {
+        let block = blocks.iter().find_map(|block| match block {
+            ToolContentBlock::Diff { path, old_text, new_text } => {
+                let same_file = match target {
+                    Some(target) => resolve_path(path, workspace_root).path == target.path,
+                    // Nothing to pair against — a lone block is unambiguous,
+                    // several are not, so only the lone one is trusted.
+                    None => blocks.len() == 1,
+                };
+                same_file.then_some((old_text.as_deref(), new_text.as_str()))
+            }
+            ToolContentBlock::Terminal { .. } => None,
+        });
+        match block {
+            Some((old, new)) => (old, Some(new)),
+            None => (None, None),
+        }
+    };
 
     match (old, new) {
         (None, None) => None,
@@ -2689,13 +2736,18 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                 // or not paths were extractable yet — the sampling *event* is
                 // what must be cached, or a late-locations agent gets its
                 // `existed_before` re-sampled after the write.
-                let (writes, already_recorded) = if tool_name.writes_files() {
+                // A diff block IS a write — the agent attached the before/after
+                // for a named file. That outranks the name derivation, which is
+                // a heuristic over a title and a `kind` token: an adapter that
+                // labels its edit `other` would otherwise have its diffs
+                // ignored, which is the same failure one step earlier.
+                let (writes, already_recorded) = if tool_name.writes_files()
+                    || !diff_paths(&tool_call.content_blocks).is_empty()
+                {
                     state.sample_writes(
                         &envelope.session_id,
-                        &tool_call.id,
                         &binding.workspace_root,
-                        &tool_call.locations,
-                        &tool_call.arguments,
+                        tool_call,
                         terminal,
                     )
                 } else {
@@ -2708,7 +2760,17 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                 // developer's later edits get hashed as the agent's — the exact
                 // false attribution the link rule exists to prevent. Only the
                 // first terminal sighting records; repeats carry nothing.
-                let completed: Vec<CompletedWrite> = if terminal && !already_recorded {
+                //
+                // A FAILED call records nothing. `failed` is also where a
+                // rejected edit lands, and such a call has still announced its
+                // content — so recording its paths claims the agent wrote a
+                // file the user refused to let it write. That claim is not
+                // harmless: for a file that already existed, the link rule's
+                // permissive arm links on paths alone, without consulting the
+                // hash, so the next human commit touching it would be credited
+                // to a Session whose only edit was declined.
+                let succeeded = matches!(status, ToolStatus::Completed);
+                let completed: Vec<CompletedWrite> = if terminal && succeeded && !already_recorded {
                     writes
                         .iter()
                         .map(|write| {
@@ -2731,6 +2793,15 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                     Vec::new()
                 };
 
+                // Before `completed` is moved into the job: the patch is
+                // stored against the first recorded write, so that is the file
+                // whose block it must come from.
+                let patch = edit_patch(
+                    &tool_call.arguments,
+                    &tool_call.content_blocks,
+                    completed.first().map(|write| &write.path),
+                    &binding.workspace_root,
+                );
                 state.submit(Job::ToolCall {
                     binding,
                     native_call_id: tool_call.id.clone(),
@@ -2742,7 +2813,7 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                     arguments: serialize_arguments(&tool_call.arguments),
                     result: tool_call.result.clone(),
                     writes: completed,
-                    patch: edit_patch(&tool_call.arguments),
+                    patch,
                 });
             }
 
@@ -2790,5 +2861,289 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
 
             _ => {}
         }
+    }
+}
+
+/// The files a tool call's diff blocks name.
+///
+/// ACP's `locations` are a SHOULD, and codex acp and cursor acp both skip them:
+/// their edits arrive with `locations: []` and no `rawInput`, naming the file
+/// only in the attached diff. That is still the agent being structural about
+/// which file the edit concerns — the same fact `locations` carries, in the
+/// other place the protocol allows it — so it feeds path extraction just as
+/// `locations` do. Reading only `locations` recorded no write for those calls,
+/// which left the Session nominating no paths and never earning a checkpoint.
+///
+/// "Concerns", not "wrote": a diff block is an edit the agent is PROPOSING or
+/// has made (`ToolContentBlock::Diff`), and in plan mode or behind a permission
+/// prompt it is announced before anything reaches disk. What separates the two
+/// is how the call ends, so the caller records writes only for a call that
+/// ended `completed` — see the note there.
+fn diff_paths(blocks: &[ToolContentBlock]) -> Vec<String> {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ToolContentBlock::Diff { path, .. } => Some(path.clone()),
+            // A terminal block names no file. Whatever the command wrote is
+            // invisible to capture either way — that is a separate gap, not
+            // one a path guessed from a command line should paper over.
+            ToolContentBlock::Terminal { .. } => None,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod diff_path_tests {
+    use super::*;
+
+    fn tool_call(locations: Vec<serde_json::Value>, blocks: Vec<ToolContentBlock>) -> ToolCall {
+        ToolCall {
+            id: "call-1".to_string(),
+            tool_name: "apply_patch".to_string(),
+            // The prose title these agents send — it names no file, which is
+            // why the diff block is the only path source.
+            title: Some("Editing files".to_string()),
+            kind: Some("edit".to_string()),
+            status: ToolCallStatus::Completed,
+            arguments: serde_json::Value::Null,
+            result: None,
+            locations,
+            raw_output: None,
+            content_blocks: blocks,
+        }
+    }
+
+    fn diff(path: &str) -> ToolContentBlock {
+        ToolContentBlock::Diff {
+            path: path.to_string(),
+            old_text: None,
+            new_text: "x".to_string(),
+        }
+    }
+
+    /// The codex acp / cursor acp shape: the diff is the only place the file is
+    /// named, so this is what has to reach `extract_paths`.
+    #[test]
+    fn a_diff_block_yields_the_file_it_edited() {
+        assert_eq!(
+            diff_paths(&[diff("/repo/index.html")]),
+            vec!["/repo/index.html".to_string()]
+        );
+    }
+
+    /// One call may edit several files; all of them must nominate the Session.
+    #[test]
+    fn every_diff_block_is_collected_in_order() {
+        assert_eq!(
+            diff_paths(&[diff("src/a.rs"), diff("src/b.rs")]),
+            vec!["src/a.rs".to_string(), "src/b.rs".to_string()]
+        );
+    }
+
+    /// A terminal block is not a file write — capture must not invent a path
+    /// for it.
+    #[test]
+    fn a_terminal_block_names_no_file() {
+        assert!(diff_paths(&[ToolContentBlock::Terminal {
+            terminal_id: "t1".to_string()
+        }])
+        .is_empty());
+        assert!(diff_paths(&[]).is_empty());
+    }
+
+    /// A directory of this test's own. The path feeds `existed_before`, which
+    /// reads the filesystem — a shared fixed path would make one test's leavings
+    /// another's input.
+    fn workspace(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("atlas-capture-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("test workspace");
+        root
+    }
+
+    /// The wiring, not just the helper. This is the regression: sampling a call
+    /// shaped like codex acp's — no locations, no arguments, one diff block —
+    /// must yield a write, because a Session that records no write nominates no
+    /// path and therefore never earns a checkpoint.
+    ///
+    /// Reverting `sample_writes` to read only `locations`/`arguments` fails
+    /// here, which a test of `diff_paths` or `extract_paths` alone would not.
+    #[test]
+    fn a_call_naming_its_file_only_in_a_diff_block_records_a_write() {
+        let root = workspace("diff-block-write");
+        let state = CaptureState::new();
+        let call = tool_call(Vec::new(), vec![diff(&root.join("index.html").to_string_lossy())]);
+
+        let (writes, _) = state.sample_writes("session-1", &root, &call, true);
+
+        assert_eq!(
+            writes.iter().map(|w| w.path.path.as_str()).collect::<Vec<_>>(),
+            vec!["index.html"],
+            "the diff block's absolute path resolves relative to the workspace"
+        );
+        assert!(!writes[0].path.out_of_repo, "it is inside the workspace");
+        assert!(
+            !writes[0].existed_before,
+            "the file is not in the workspace, and the workspace is no git repo"
+        );
+    }
+
+    /// The same call with its diff block removed records nothing — which is the
+    /// state every codex acp and cursor acp edit was in.
+    #[test]
+    fn the_same_call_without_a_diff_block_records_nothing() {
+        let root = workspace("no-diff-block");
+        let state = CaptureState::new();
+        let call = tool_call(Vec::new(), Vec::new());
+
+        let (writes, _) = state.sample_writes("session-1", &root, &call, true);
+
+        assert!(writes.is_empty());
+    }
+
+    /// `existed_before` decides which arm of the link rule can fire, so the
+    /// diff-block paths must be sampled the same way location paths are.
+    #[test]
+    fn a_file_already_on_disk_is_sampled_as_pre_existing() {
+        let root = workspace("diff-block-existing");
+        std::fs::write(root.join("index.html"), b"before").expect("fixture");
+        let state = CaptureState::new();
+        let call = tool_call(Vec::new(), vec![diff(&root.join("index.html").to_string_lossy())]);
+
+        // Not yet terminal, first sighting: the filesystem still answers
+        // truthfully, which is the branch that reads it.
+        let (writes, _) = state.sample_writes("session-1", &root, &call, false);
+
+        assert!(writes[0].existed_before);
+    }
+
+    // ── The write-detection gate ────────────────────────────────────────────
+
+    /// The gate the fix widened. `canonical_name` is a heuristic over a title
+    /// and a `kind` token; an adapter free to label its edit `other` would have
+    /// had its diffs ignored, which is the same failure one step earlier. A
+    /// diff block settles it on its own.
+    #[test]
+    fn a_diff_block_is_enough_even_when_the_name_says_nothing_about_writing() {
+        let mut call = tool_call(Vec::new(), vec![diff("/repo/index.html")]);
+        call.tool_name = "shell".to_string();
+        call.title = Some("Working".to_string());
+        call.kind = Some("other".to_string());
+
+        let tool_name = atlas_checkpoint::canonical_name(
+            Some(&call.tool_name),
+            call.title.as_deref(),
+            call.kind.as_deref(),
+            &call.arguments,
+        );
+        assert!(
+            !tool_name.writes_files(),
+            "precondition: this name is not write-shaped"
+        );
+        assert!(
+            !diff_paths(&call.content_blocks).is_empty(),
+            "but the call carries a diff, which is what opens the gate"
+        );
+    }
+
+    // ── The patch an edit applied ───────────────────────────────────────────
+
+    /// The agents this fix targets send no `rawInput`, so the block is the only
+    /// before/after there is. Without this their checkpoints formed while their
+    /// attribution input stayed empty.
+    #[test]
+    fn the_patch_comes_from_the_diff_block_when_the_arguments_carry_none() {
+        let patch = edit_patch(
+            &serde_json::Value::Null,
+            &[ToolContentBlock::Diff {
+                path: "/repo/a.rs".to_string(),
+                old_text: Some("one".to_string()),
+                new_text: "two".to_string(),
+            }],
+            None,
+            std::path::Path::new("/repo"),
+        )
+        .expect("a patch");
+        assert!(patch.contains("-one"), "{patch}");
+        assert!(patch.contains("+two"), "{patch}");
+    }
+
+    /// Both halves come from ONE description of the edit. Splicing an `old`
+    /// from the arguments onto a `new` from a block invents a before/after
+    /// neither of them claimed.
+    #[test]
+    fn the_two_halves_are_never_spliced_across_sources() {
+        let patch = edit_patch(
+            &serde_json::json!({ "old_string": "from-args" }),
+            &[ToolContentBlock::Diff {
+                path: "/repo/a.rs".to_string(),
+                old_text: Some("from-block".to_string()),
+                new_text: "block-new".to_string(),
+            }],
+            None,
+            std::path::Path::new("/repo"),
+        )
+        .expect("a patch");
+        assert!(patch.contains("-from-args"), "{patch}");
+        assert!(
+            !patch.contains("block-new"),
+            "the arguments won, so the block contributes nothing: {patch}"
+        );
+    }
+
+    /// A call editing several files carries one patch EACH, and the patch is
+    /// stored against the first recorded write — which need not be the first
+    /// block. Storing one file's patch under another's name is worse than
+    /// storing none.
+    #[test]
+    fn the_patch_is_taken_from_the_block_for_the_file_it_is_stored_against() {
+        let blocks = vec![
+            ToolContentBlock::Diff {
+                path: "/repo/a.rs".to_string(),
+                old_text: Some("a-old".to_string()),
+                new_text: "a-new".to_string(),
+            },
+            ToolContentBlock::Diff {
+                path: "/repo/b.rs".to_string(),
+                old_text: Some("b-old".to_string()),
+                new_text: "b-new".to_string(),
+            },
+        ];
+        let target = atlas_checkpoint::tools::resolve_path("/repo/b.rs", std::path::Path::new("/repo"));
+
+        let patch = edit_patch(
+            &serde_json::Value::Null,
+            &blocks,
+            Some(&target),
+            std::path::Path::new("/repo"),
+        )
+        .expect("a patch");
+
+        assert!(patch.contains("-b-old"), "{patch}");
+        assert!(!patch.contains("a-old"), "not the other file's patch: {patch}");
+    }
+
+    /// With several blocks and nothing to pair against, which one applies is
+    /// unknowable — and a wrong patch is worse than none.
+    #[test]
+    fn several_blocks_and_no_target_yields_no_patch() {
+        let blocks = vec![
+            ToolContentBlock::Diff {
+                path: "/repo/a.rs".to_string(),
+                old_text: None,
+                new_text: "a".to_string(),
+            },
+            ToolContentBlock::Diff {
+                path: "/repo/b.rs".to_string(),
+                old_text: None,
+                new_text: "b".to_string(),
+            },
+        ];
+        assert!(edit_patch(
+            &serde_json::Value::Null,
+            &blocks,
+            None,
+            std::path::Path::new("/repo")
+        )
+        .is_none());
     }
 }
