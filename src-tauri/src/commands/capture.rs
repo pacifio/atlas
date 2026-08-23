@@ -195,6 +195,23 @@ struct CompletedWrite {
     deleted: bool,
 }
 
+/// How long a shell command may run and still have its writes attributed.
+///
+/// The window is the whole weakness of this approach: git cannot tell the
+/// agent's write from the user's, so everything that changed while the command
+/// ran looks the same. A command that finishes in a moment barely overlaps the
+/// user at all; one that runs for minutes — a watch, a build, a server — is
+/// long enough that the developer plausibly edited something themselves, and
+/// crediting that to the agent would make every later commit on that file link
+/// to this Session. Past this, nothing is attributed.
+const SHELL_WINDOW_LIMIT: Duration = Duration::from_secs(60);
+
+/// What the tree looked like when a shell command started.
+struct ShellWindow {
+    before: std::collections::BTreeSet<String>,
+    started: Instant,
+}
+
 /// The sampling state for one tool call's writes.
 struct WriteSample {
     writes: Vec<PendingWrite>,
@@ -226,6 +243,8 @@ pub struct CaptureState {
     /// Write sampling per tool call id — `existed_before` answers and whether
     /// the call's writes have been recorded. Evicted when the session closes.
     pending_writes: Mutex<HashMap<String, WriteSample>>,
+    /// Open shell windows, keyed by tool-call id. See [`CaptureState::shell_window`].
+    shell_windows: Mutex<HashMap<String, ShellWindow>>,
     /// Tool-call ids seen per session, so the write caches above can be evicted
     /// when the session's agent disconnects.
     session_calls: Mutex<HashMap<String, Vec<String>>>,
@@ -335,6 +354,7 @@ impl CaptureState {
         Self {
             sessions: Mutex::new(HashMap::new()),
             pending_writes: Mutex::new(HashMap::new()),
+            shell_windows: Mutex::new(HashMap::new()),
             session_calls: Mutex::new(HashMap::new()),
             pending_turns: Mutex::new(HashMap::new()),
             token,
@@ -568,6 +588,7 @@ impl CaptureState {
         // `sample_writes` acquires the two locks in the opposite order.
         let calls = lock_ok(&self.session_calls).remove(session_id);
         if let Some(calls) = calls {
+            self.forget_shell_windows(&calls);
             let mut pending = lock_ok(&self.pending_writes);
             for call_id in calls {
                 pending.remove(&call_id);
@@ -667,6 +688,98 @@ impl CaptureState {
             sample.recorded = true;
         }
         (sample.writes.clone(), already_recorded)
+    }
+
+    /// Attribute the files a SHELL command wrote, by watching the tree around it.
+    ///
+    /// A shell command names no file anywhere in the protocol — not in
+    /// `locations`, not in a diff block, not in its arguments — so `sed -i`, a
+    /// redirect, a Makefile or a script left the Session nominating nothing and
+    /// therefore never earning a checkpoint (#27). The only evidence available
+    /// is the tree itself: what differed from HEAD before the command, and what
+    /// differs after.
+    ///
+    /// Deliberately silent when it cannot be sure, because a WRONG path is
+    /// worse than a missing one — it keeps linking the user's later commits to
+    /// this Session. Nothing is attributed when:
+    ///
+    /// - there is no "before" (the call's first sighting was already terminal,
+    ///   so the command had already run when we first heard of it),
+    /// - either snapshot failed or the workspace is not a repository,
+    /// - the command ran longer than [`SHELL_WINDOW_LIMIT`].
+    ///
+    /// What it still cannot see: an edit the developer made OUTSIDE Atlas while
+    /// the command ran. Within Atlas that is knowable; in another editor it is
+    /// not, and this deliberately does not guess.
+    fn shell_window(
+        &self,
+        session_id: &str,
+        call_id: &str,
+        workspace_root: &std::path::Path,
+        terminal: bool,
+    ) -> Vec<PendingWrite> {
+        if !terminal {
+            // Registered under the session so an open window is evicted when the
+            // session ends. Taken and released BEFORE `shell_windows`, matching
+            // the order `sample_writes` uses — the two must not interleave.
+            {
+                let mut calls = lock_ok(&self.session_calls);
+                let seen = calls.entry(session_id.to_string()).or_default();
+                if !seen.iter().any(|id| id == call_id) {
+                    seen.push(call_id.to_string());
+                }
+            }
+            // First sighting, still running: this is the only moment the tree
+            // is known to predate the command's writes.
+            let mut windows = lock_ok(&self.shell_windows);
+            if !windows.contains_key(call_id) {
+                if let Some(before) = atlas_checkpoint::git::worktree_changes(workspace_root) {
+                    windows.insert(
+                        call_id.to_string(),
+                        ShellWindow { before, started: Instant::now() },
+                    );
+                }
+            }
+            return Vec::new();
+        }
+
+        let Some(window) = lock_ok(&self.shell_windows).remove(call_id) else {
+            return Vec::new();
+        };
+        if window.started.elapsed() > SHELL_WINDOW_LIMIT {
+            tracing::debug!(
+                target: "atlas::capture",
+                "shell call {call_id} ran for {:?}; too long to attribute its writes",
+                window.started.elapsed()
+            );
+            return Vec::new();
+        }
+        let Some(after) = atlas_checkpoint::git::worktree_changes(workspace_root) else {
+            return Vec::new();
+        };
+
+        after
+            .difference(&window.before)
+            .map(|raw| {
+                let path = resolve_path(raw, workspace_root);
+                // Post-write by construction, so git's index is the only source
+                // that still distinguishes "created" from "edited" — the same
+                // reasoning as the late-locations arm above.
+                let existed_before =
+                    atlas_checkpoint::git::tracked_in_head(workspace_root, &path.path);
+                PendingWrite { path, existed_before }
+            })
+            .collect()
+    }
+
+    /// Drop any shell window still open for a session's calls. Called when the
+    /// session ends, so a command that never reported a terminal status does
+    /// not hold its snapshot for the life of the process.
+    fn forget_shell_windows(&self, call_ids: &[String]) {
+        let mut windows = lock_ok(&self.shell_windows);
+        for id in call_ids {
+            windows.remove(id);
+        }
     }
 
     fn submit(&self, job: Job) {
@@ -2750,6 +2863,19 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                         tool_call,
                         terminal,
                     )
+                } else if tool_name == ToolName::Bash {
+                    // A shell command names no file, so the tree around it is
+                    // the only evidence of what it wrote (#27). Gated on the
+                    // call being shell-SHAPED, never on which agent sent it.
+                    (
+                        state.shell_window(
+                            &envelope.session_id,
+                            &tool_call.id,
+                            &binding.workspace_root,
+                            terminal,
+                        ),
+                        false,
+                    )
                 } else {
                     (Vec::new(), true)
                 };
@@ -2938,6 +3064,143 @@ mod diff_path_tests {
             diff_paths(&[diff("src/a.rs"), diff("src/b.rs")]),
             vec!["src/a.rs".to_string(), "src/b.rs".to_string()]
         );
+    }
+
+    // ── Shell-written files (#27) ───────────────────────────────────────────
+
+    fn shell_call(id: &str) -> ToolCall {
+        ToolCall {
+            id: id.to_string(),
+            tool_name: "bash".to_string(),
+            title: Some("Bash".to_string()),
+            kind: Some("execute".to_string()),
+            status: ToolCallStatus::Completed,
+            arguments: serde_json::json!({ "command": "sed -i '' s/a/b/ index.html" }),
+            result: None,
+            locations: Vec::new(),
+            raw_output: None,
+            content_blocks: Vec::new(),
+        }
+    }
+
+    /// A git repository with one commit, so `worktree_changes` has a HEAD to
+    /// compare against.
+    fn repo(name: &str) -> std::path::PathBuf {
+        let root = workspace(name);
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .expect("git runs");
+        };
+        git(&["init", "--initial-branch=main"]);
+        git(&["config", "user.email", "dev@example.com"]);
+        git(&["config", "user.name", "Dev"]);
+        std::fs::write(root.join("seed.txt"), b"seed").expect("fixture");
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "initial"]);
+        root
+    }
+
+    /// The bug: a file written by a shell command is named nowhere in the
+    /// protocol, so the Session recorded no write and never earned a
+    /// checkpoint. The tree around the command is the only evidence there is.
+    #[test]
+    fn a_file_written_by_a_shell_command_is_attributed() {
+        let root = repo("shell-write");
+        let state = CaptureState::new();
+        let call = shell_call("call-1");
+
+        // Running: the tree is known to predate whatever the command writes.
+        assert!(state.shell_window("s1", &call.id, &root, false).is_empty());
+        std::fs::write(root.join("index.html"), b"written by sed").expect("the command's write");
+        let writes = state.shell_window("s1", &call.id, &root, true);
+
+        assert_eq!(
+            writes.iter().map(|w| w.path.path.as_str()).collect::<Vec<_>>(),
+            vec!["index.html"]
+        );
+        assert!(!writes[0].existed_before, "the command created it");
+    }
+
+    /// Only what changed DURING the command. A file the developer had already
+    /// left dirty before it started is theirs, and crediting it to the agent
+    /// would link their later commits to this Session.
+    #[test]
+    fn a_file_already_dirty_before_the_command_is_not_attributed() {
+        let root = repo("shell-pre-dirty");
+        let state = CaptureState::new();
+        let call = shell_call("call-1");
+
+        std::fs::write(root.join("mine.txt"), b"the developer's own edit").expect("fixture");
+        assert!(state.shell_window("s1", &call.id, &root, false).is_empty());
+        std::fs::write(root.join("theirs.txt"), b"the command's").expect("fixture");
+
+        let writes = state.shell_window("s1", &call.id, &root, true);
+        assert_eq!(
+            writes.iter().map(|w| w.path.path.as_str()).collect::<Vec<_>>(),
+            vec!["theirs.txt"]
+        );
+    }
+
+    /// No "before", no answer. A call whose first sighting is already terminal
+    /// had already run when we heard of it, so everything dirty in the tree
+    /// might predate it — and a wrong path is worse than a missing one.
+    #[test]
+    fn a_command_already_finished_when_first_seen_attributes_nothing() {
+        let root = repo("shell-no-before");
+        let state = CaptureState::new();
+        std::fs::write(root.join("whoknows.txt"), b"who wrote this?").expect("fixture");
+
+        assert!(state.shell_window("s1", "call-1", &root, true).is_empty());
+    }
+
+    /// A workspace that is not a repository has no tree to compare, and that is
+    /// not the same as "nothing changed".
+    #[test]
+    fn a_workspace_that_is_not_a_repository_attributes_nothing() {
+        let root = workspace("shell-no-repo");
+        let state = CaptureState::new();
+        std::fs::write(root.join("a.txt"), b"x").expect("fixture");
+
+        assert!(state.shell_window("s1", "call-1", &root, false).is_empty());
+        assert!(state.shell_window("s1", "call-1", &root, true).is_empty());
+    }
+
+    /// The window is the weakness: git cannot tell the agent's write from the
+    /// developer's, so a command that ran long enough for them to have edited
+    /// something themselves attributes nothing.
+    #[test]
+    fn a_command_that_ran_too_long_attributes_nothing() {
+        let root = repo("shell-too-long");
+        let state = CaptureState::new();
+
+        state.shell_window("s1", "call-1", &root, false);
+        // Age the window past the limit rather than sleeping through it.
+        {
+            let mut windows = lock_ok(&state.shell_windows);
+            let window = windows.get_mut("call-1").expect("an open window");
+            window.started = Instant::now() - (SHELL_WINDOW_LIMIT + Duration::from_secs(1));
+        }
+        std::fs::write(root.join("late.txt"), b"whose is this?").expect("fixture");
+
+        assert!(state.shell_window("s1", "call-1", &root, true).is_empty());
+    }
+
+    /// A window whose command never reported an ending must not hold its
+    /// snapshot for the life of the process.
+    #[test]
+    fn an_unfinished_window_is_dropped_with_its_session() {
+        let root = repo("shell-forget");
+        let state = CaptureState::new();
+
+        state.shell_window("s1", "call-1", &root, false);
+        assert_eq!(lock_ok(&state.shell_windows).len(), 1);
+
+        state.forget_shell_windows(&["call-1".to_string()]);
+        assert!(lock_ok(&state.shell_windows).is_empty());
     }
 
     /// A terminal block is not a file write — capture must not invent a path
