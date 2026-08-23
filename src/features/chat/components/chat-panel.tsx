@@ -5,6 +5,7 @@ import { appendNextStepsDirective } from "../lib/next-steps";
 import { stripInjectedContext } from "../lib/atlas-context";
 import { agents, ensureAgent } from "../lib/agents-api";
 import { loadCachedAcpModes } from "../lib/acp-modes-cache";
+import { configOptionPushes, loadConfigOptionPrefs } from "../lib/config-option-prefs";
 import type { ImageAttachment, SessionKey } from "@/types/agents";
 import {
   hasInFlightToolCalls,
@@ -437,6 +438,24 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             // `config_options_updated` emitted before the tab was bound is
             // re-covered by this snapshot, which is fetched after bind.
             useChatStore.getState().actions.setAcpConfigOptions(tabId, snap.config_options ?? []);
+            // Re-apply the user's remembered knob picks (#33) — the mode
+            // pref's discipline: only knobs this session advertises, only
+            // values it offers, nothing when it already sits there. Each push
+            // answers with the confirmed list as a delta, so the pills follow.
+            const at = useChatStore.getState().sessions[tabId]?.agentType;
+            if (at) {
+              for (const push of configOptionPushes(
+                snap.config_options ?? [],
+                loadConfigOptionPrefs(at),
+              )) {
+                try {
+                  await agents.setConfigOption(key, push.configId, push.value);
+                } catch (err) {
+                  console.warn("re-applying a config-option pref failed:", err);
+                }
+                if (cancelled) return;
+              }
+            }
             // Boot finished (with or without modes) — drop the loading state.
             useChatStore.getState().actions.setAcpModesPending(tabId, false);
           }

@@ -23,6 +23,7 @@ import { splitAtlasContext } from "../lib/atlas-context";
 import { loadCachedAcpModes, saveCachedAcpModes } from "../lib/acp-modes-cache";
 import { loadLastModePref, saveLastModePref } from "../lib/last-mode-pref";
 import { modelSelectOf } from "../lib/acp-config-options";
+import { saveConfigOptionPref } from "../lib/config-option-prefs";
 import { loadCachedAcpModels, saveCachedAcpModels } from "../lib/acp-models-cache";
 import { resolveModelLabel } from "../lib/model-label";
 import { defaultAgentForNewSession } from "../lib/default-agent";
@@ -1039,6 +1040,10 @@ export const useChatStore = createSelectors(
         setAcpConfigOption: async (sessionId, configId, value) => {
           const session = get().sessions[sessionId];
           if (!session?.acpAgentId || !session.acpSessionId) return;
+          // An explicit pick is worth remembering: the next session on this
+          // agent re-applies it at open, validated against what that session
+          // actually advertises (#33).
+          if (session.agentType) saveConfigOptionPref(session.agentType, configId, value);
           try {
             await agents.setConfigOption(
               { agent_id: session.acpAgentId, session_id: session.acpSessionId },
