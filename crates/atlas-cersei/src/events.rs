@@ -10,7 +10,7 @@
 //! So the runtime speaks neither. It emits [`NativeEvent`], and each consumer
 //! renders it in its own protocol version:
 //!
-//! - `atlas-agents` (the old stack) turns it back into `atlas_acp::AcpEvent`.
+//! - `atlas-native-agent` turns it into the ported stack's thread events.
 //! - `atlas-native-agent` (the ported stack) applies it to an
 //!   `atlas_acp_thread::AcpThread`.
 //!
@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 /// Identifies one spawned native agent.
 ///
-/// Same shape as the id the old stack keys agents by (`atlas_acp::AgentId`), so
+/// Same shape as the id the host keys agents by, so
 /// the adapter converts by moving the `Uuid` across.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AgentId(pub Uuid);
@@ -202,7 +202,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// What the runtime's fallible calls fail with.
 ///
-/// A subset of the old `atlas_acp::AcpError`: the variants that were about a
+/// A subset of the old stack's `AcpError`: the variants that were about a
 /// spawned process (`DriverDown`, `Timeout`, `InvalidCommand`, `Protocol`)
 /// cannot happen in-process and are not carried over.
 #[derive(Debug, thiserror::Error)]

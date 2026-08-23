@@ -302,7 +302,6 @@ fn agent_type_for(plugin_id: &str) -> String {
 fn transcript_token(kind: TranscriptKind) -> &'static str {
     match kind {
         TranscriptKind::None => "none",
-        TranscriptKind::ClaudeJsonl => "claude_jsonl",
         TranscriptKind::CerseiJson => "cersei_json",
     }
 }

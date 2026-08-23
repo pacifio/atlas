@@ -7,7 +7,7 @@
 //!
 //! # This crate names no protocol version
 //!
-//! It used to emit `atlas_acp::AcpEvent`, which put `agent-client-protocol` 1.3
+//! It used to emit the old ACP stack's `AcpEvent`, which put `agent-client-protocol` 1.3
 //! in its dependency graph. Because that crate pins its schema crate exactly
 //! (1.3 → `=1.4.0`, 2.0 → `=1.5.0`), no Cargo graph can hold both versions — so
 //! a runtime that speaks 1.3 can never be linked by the ported stack, which is
@@ -16,8 +16,8 @@
 //!
 //! Two consumers exist during the port:
 //!
-//! - `atlas-agents` (old stack) adapts [`NativeEvent`] back to
-//!   `atlas_acp::AcpEvent`, so its dispatch/state/UI path is unchanged.
+//! - `atlas-native-agent` adapts [`NativeEvent`] onto the ported
+//!   `AgentConnection` seam, so the host treats it like any other agent.
 //! - `atlas-native-agent` (ported stack) applies it to an
 //!   `atlas_acp_thread::AcpThread`; that crate is where Cersei implements the
 //!   ported `AgentConnection`. It is a separate crate only because this one
@@ -125,7 +125,7 @@ pub struct ModelChoice {
     pub model: String,
 }
 
-/// One historical conversation item, in a UI-neutral shape so `atlas-agents`
+/// One historical conversation item, in a UI-neutral shape so the host
 /// can rebuild its own `Message` type on resume without depending on Cersei.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

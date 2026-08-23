@@ -13,8 +13,9 @@
 //! one type for both, so `CaptureMiddleware` keeps matching on the same enum no
 //! matter which stack produced the event.
 //!
-//! `atlas-agents` re-exports everything here, so consumers that say
-//! `atlas_agents::SessionDelta` are unaffected (research §C9 touchpoint #2).
+//! These shapes are the FROZEN wire contract (`docs/agents/delta-wire-contract.md`
+//! and `src/types/agents.ts`). The old `atlas-agents` crate re-exported them;
+//! it is gone, and `atlas-agent-delta` is where they are projected now.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;

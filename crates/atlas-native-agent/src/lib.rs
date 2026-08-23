@@ -18,7 +18,7 @@
 //! single resolution containing both is impossible. Keeping the runtime
 //! protocol-free and putting *this* protocol's adapter in its own crate is what
 //! lets one Cersei serve both stacks during the port. When `atlas-acp` and
-//! `atlas-agents` go, this crate folds into `atlas-cersei`.
+//! the old stack went, this crate could fold into `atlas-cersei`.
 //!
 //! # What the native agent does not implement, and why
 //!

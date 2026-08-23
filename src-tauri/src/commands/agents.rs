@@ -894,19 +894,18 @@ pub async fn agents_logout(
 /// means "this plugin has no on-disk transcript" (Codex) — not an error.
 #[tauri::command]
 pub async fn agents_replay_transcript(
-    plugin_id: String,
     session_id: String,
     cwd: String,
     app: AppHandle,
-    host: State<'_, Arc<AgentHost>>,
 ) -> Result<Vec<Message>, String> {
-    let native = host.replay_transcript(&plugin_id, &cwd, &session_id).await;
-    if !native.is_empty() {
-        return Ok(native);
-    }
-    // Empty means this agent keeps no transcript of its own (opencode, cursor,
-    // every registry agent). Fall back to the one Atlas recorded, which is what
-    // makes their history rows actually reopen instead of painting blank.
+    // Atlas's own record, for every agent.
+    //
+    // There used to be a step before this one: for Claude, parse the JSONL the
+    // Claude Agent SDK writes under `~/.claude/projects`. That was Atlas
+    // reading another program's private storage to paint its own UI, which
+    // ADR-0001 ends — and it was reachable only through an agent-identity
+    // branch. Atlas has recorded every agent's transcript since the usage
+    // re-source, and `session/load` replays anything older from the agent.
     let dir = app.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir());
     let cwd_owned = cwd.clone();
     let sid = session_id.clone();

@@ -55,12 +55,15 @@ chrono = { version = "0.4", features = ["serde"] }
 # Step 7 session-extraction BYOK closure can return `anyhow::Result` into
 # `atlas_memory::extract::extract_and_store` (which is generic over the LLM seam).
 anyhow = "1"
-# The ported ACP stack (Zed port, Stage 3). `atlas-agents` / `atlas-acp` /
-# `atlas-registry` / `atlas-agentkit` are gone from this graph: they pin
-# `agent-client-protocol` 1.3, whose schema crate is pinned exactly (`=1.4.0`),
-# and the ported crates pin 2.0 / `=1.5.0`. Both pins are exact and 1.x, so no
-# single Cargo resolution can contain both — moving the host onto the new stack
-# is necessarily one change, not a gradual one.
+# The ported ACP stack (Zed port). It is the only one now: `atlas-agents`,
+# `atlas-acp`, `atlas-registry` and `atlas-agentkit` are deleted.
+#
+# They could never have coexisted with these crates anyway, which is why the
+# move had to be one change rather than a gradual one: the old stack pinned
+# `agent-client-protocol` 1.3 with its schema crate pinned EXACTLY (`=1.4.0`),
+# the ported one pins 2.0 / `=1.5.0`, and no single Cargo resolution can
+# contain two exact 1.x pins of the same crate. That collision is also why this
+# repo still has no `[workspace]`.
 atlas-acp-thread = { path = "../crates/atlas-acp-thread" }
 atlas-agent-servers = { path = "../crates/atlas-agent-servers" }
 atlas-agent-store = { path = "../crates/atlas-agent-store" }
@@ -199,7 +202,7 @@ opt-level = 3       # Default for release, restated for clarity
 [profile.dev]
 
 # Optimize ALL transitive dependencies in dev mode at `opt-level = 1`
-# (Tauri, wry, tao, atlas-acp, atlas-agents, atlas-terminal, tokio, serde,
+# (Tauri, wry, tao, the ported ACP crates, atlas-terminal, tokio, serde,
 # reqwest, etc.). First clean build pays a one-time ~3–5 minute cost;
 # subsequent rebuilds only recompile the app crate and are unaffected.
 # Net effect: `bunx tauri dev` startup drops noticeably because Tauri's

@@ -29,8 +29,8 @@ use std::path::{Path, PathBuf};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-/// One recorded message. Mirrors the subset of `atlas_agents::Message` that
-/// replay actually paints.
+/// One recorded message. Mirrors the subset of `atlas_agent_wire::Message`
+/// that replay actually paints.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredMessage {
     /// "user" | "assistant" | "system".

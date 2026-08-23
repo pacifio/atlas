@@ -27,7 +27,10 @@ export type AgentSource =
  *  own (ADR-0002), so every agent is either the native one or external. */
 export type AgentKind = "native" | "external";
 
-export type AgentTranscript = "none" | "claude_jsonl" | "cersei_json";
+/** Whether the agent keeps a record Atlas can read. `claude_jsonl` is gone:
+ *  Atlas no longer parses `~/.claude/projects` (ADR-0001), so the only agent
+ *  with a readable store of its own is the native one. */
+export type AgentTranscript = "none" | "cersei_json";
 
 /** The CLI login Atlas can run for this agent right now. Absent means "there
  *  is no command to offer" — NOT "this agent has no sign-in". */

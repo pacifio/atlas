@@ -149,7 +149,6 @@ export async function openAgentSession({
     // Two-stage: paint from disk in ~50ms, bind the agent concurrently. See
     // `resumeSessionFast` for why the old single-await chain felt slow.
     const { agent, snapshot } = await resumeSessionFast({
-      pluginId,
       sessionId: acpSessionId,
       cwd,
       ensure: () => ensureAgent(pluginId),

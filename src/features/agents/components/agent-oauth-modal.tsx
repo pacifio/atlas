@@ -48,7 +48,6 @@ import { copyText } from "@/lib/clipboard";
 import { pluginIdForAgent } from "@/types/agent";
 import { agentMeta, catalogEntry } from "@/features/agents/lib/agent-meta";
 import { logEvent } from "@/features/log/lib/log";
-import { onAuthenticatedFor } from "../lib/agent-auth-hooks";
 
 /** Lifted verbatim from `agent-login-dialog.tsx` — one machine for all agents. */
 type Phase =
@@ -241,7 +240,6 @@ function AgentOAuthModal({
         if (p.url) setAuthUrl((u) => u ?? p.url);
       });
       await runSignInMethod(agentId, method, label);
-      await onAuthenticatedFor(request.agentType);
       logEvent({
         source: "atlas",
         kind: "agent-auth",

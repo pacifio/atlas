@@ -459,7 +459,6 @@ export const SessionSidebar = memo(function SessionSidebar({
       try {
         resumed = await resumeThreadFast({
           threadId: item.threadId,
-          pluginId,
           cwd: threadCwd,
           sessionId: item.id || null,
           cb: {

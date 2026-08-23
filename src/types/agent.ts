@@ -71,17 +71,6 @@ export function pluginIdForAgent(agentType: AgentType | undefined): string {
   return agentType;
 }
 
-/** First-party ACP-transport agents (out-of-process adapters) — the ones with
- *  modes/models advertised over ACP and warmable caches. Excludes the native
- *  in-process agent.
- *
- *  Deliberately first-party-only, and NOT catalog-derived: its one consumer is
- *  the model pre-warm, which spawns each listed agent at boot. Widening it to
- *  every discovered/installed external would spawn a subprocess per agent on
- *  every launch to fill a cache the user may never open. Consumers that need
- *  the full set use the catalog (`useAgentRegistryStore`). */
-export const ACP_AGENTS: FirstPartyAgent[] = ["claude-code", "codex", "opencode", "cursor", "kilo"];
-
 /** Derive the display agent type from a spawnable plugin id. Unknown ids pass
  *  through unchanged — an external agent's identity is its plugin id, and
  *  collapsing it (the old `"custom"` fallback) lost it forever. */

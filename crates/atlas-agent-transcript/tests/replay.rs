@@ -7,9 +7,8 @@
 //! session's title.
 
 use atlas_agent_transcript::{
-    encode_cwd, is_injected_user_text, replay_claude_jsonl, strip_injected_context, TranscriptKind,
+    encode_cwd, is_injected_user_text, strip_injected_context,
 };
-use atlas_agent_wire::{MessageMode, MessageRole};
 
 #[test]
 fn cwd_encoding_collapses_every_non_alphanumeric() {
@@ -53,71 +52,4 @@ fn prose_with_horizontal_rules_is_left_alone() {
     // `---` fences are ordinary markdown; only the known block labels count.
     let text = "before\n--- NOT A MEMORY BLOCK ---\nafter";
     assert_eq!(strip_injected_context(text), text);
-}
-
-/// The parser is only ever pointed at `~/.claude/projects/…`, so the
-/// file-level behaviour that matters is: a path that isn't there yields
-/// nothing rather than an error. A fresh session hits this on every open.
-#[test]
-fn a_missing_transcript_replays_as_empty() {
-    assert!(replay_claude_jsonl("/nonexistent/project", "no-such-session").is_empty());
-}
-
-#[tokio::test]
-async fn agents_with_no_transcript_of_their_own_replay_nothing() {
-    assert!(atlas_agent_transcript::replay(TranscriptKind::None, "/tmp", "s").await.is_empty());
-    // The native agent replays its own JSON store, not through this module.
-    assert!(atlas_agent_transcript::replay(TranscriptKind::CerseiJson, "/tmp", "s").await.is_empty());
-}
-
-/// End-to-end over a real JSONL body, driven through a temp `$HOME` so the
-/// canonical path resolution is exercised too.
-#[test]
-fn a_transcript_replays_to_messages_in_order() {
-    let home = std::env::temp_dir().join(format!("atlas-transcript-{}", uuid::Uuid::new_v4()));
-    let cwd = "/tmp/proj";
-    let dir = home.join(".claude").join("projects").join(encode_cwd(cwd));
-    std::fs::create_dir_all(&dir).unwrap();
-    let lines = [
-        // Conversation.
-        r#"{"type":"user","timestamp":"2026-08-22T10:00:00Z","message":{"content":"add a test"}}"#,
-        // A tool call and prose in one assistant entry → two wire messages.
-        r#"{"type":"assistant","timestamp":"2026-08-22T10:00:01Z","message":{"model":"claude-opus-5","content":[{"type":"tool_use","id":"tc1","name":"Bash","input":{"command":"ls"}},{"type":"text","text":"done"}]}}"#,
-        // Everything below must be skipped.
-        r#"{"type":"user","isCompactSummary":true,"message":{"content":"This session is being continued…"}}"#,
-        r#"{"type":"user","isMeta":true,"message":{"content":"meta"}}"#,
-        r#"{"type":"user","isSidechain":true,"message":{"content":"sidechain"}}"#,
-        r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"x"}]}}"#,
-        r#"{"type":"user","message":{"content":"<system-reminder>hi</system-reminder>"}}"#,
-        "not json at all",
-    ];
-    std::fs::write(dir.join("sess.jsonl"), lines.join("\n")).unwrap();
-
-    // `set_var` is unsafe on 2024 edition; this crate is 2021 and the test is
-    // single-threaded, so the temp-HOME swap is sound here.
-    let previous = std::env::var("HOME").ok();
-    std::env::set_var("HOME", &home);
-    let out = replay_claude_jsonl(cwd, "sess");
-    match previous {
-        Some(h) => std::env::set_var("HOME", h),
-        None => std::env::remove_var("HOME"),
-    }
-    let _ = std::fs::remove_dir_all(&home);
-
-    assert_eq!(out.len(), 3, "prompt + tool call + prose, nothing else");
-    assert_eq!(out[0].role, MessageRole::User);
-    assert_eq!(out[0].content, "add a test");
-
-    // Tool calls come before the prose of the same entry, so the UI paints the
-    // work in the order it happened.
-    assert_eq!(out[1].mode, MessageMode::Tool);
-    let tc = &out[1].tool_calls[0];
-    assert_eq!(tc.id, "tc1");
-    assert_eq!(tc.tool_name, "Bash");
-    // The `kind` mapping is what makes a reloaded Bash call render as one.
-    assert_eq!(tc.kind.as_deref(), Some("execute"));
-    assert_eq!(out[1].model.as_deref(), Some("claude-opus-5"));
-
-    assert_eq!(out[2].mode, MessageMode::Text);
-    assert_eq!(out[2].content, "done");
 }

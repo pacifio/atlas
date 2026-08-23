@@ -103,13 +103,12 @@ export interface ResumeResult {
  * authoritative.
  */
 export async function resumeSessionFast(opts: {
-  pluginId: string;
   sessionId: string;
   cwd: string;
   ensure: () => Promise<AgentInfo>;
   cb: ResumeCallbacks;
 }): Promise<ResumeResult> {
-  const { pluginId, sessionId, cwd, ensure, cb } = opts;
+  const { sessionId, cwd, ensure, cb } = opts;
 
   // Kick off the SLOW chain first so it owns the full wall-clock window — the
   // fast replay must never sit in front of the agent spawn.
@@ -138,7 +137,7 @@ export async function resumeSessionFast(opts: {
   let fastMessages: SessionMessage[] = [];
   let fastPainted = false;
   try {
-    fastMessages = await agents.replayTranscript(pluginId, sessionId, cwd);
+    fastMessages = await agents.replayTranscript(sessionId, cwd);
     if (fastMessages.length > 0 && !cb.isStale()) {
       cb.paint(fastMessages.map(snapshotMessageToWire));
       cb.onPainted();
@@ -204,8 +203,6 @@ export interface ResumedThreadResult extends Omit<ResumeResult, "agent"> {
  */
 export async function resumeThreadFast(opts: {
   threadId: string;
-  /** The agent that ran it, for the disk replay only. */
-  pluginId: string;
   /** The thread's OWN working directory — not the open project's. A row from
    *  another worktree resumes into the worktree it belongs to. */
   cwd: string;
@@ -214,7 +211,7 @@ export async function resumeThreadFast(opts: {
   sessionId: string | null;
   cb: ResumeCallbacks;
 }): Promise<ResumedThreadResult> {
-  const { threadId, pluginId, cwd, sessionId, cb } = opts;
+  const { threadId, cwd, sessionId, cb } = opts;
 
   const slow = (async () => {
     try {
@@ -229,7 +226,7 @@ export async function resumeThreadFast(opts: {
   let fastPainted = false;
   if (sessionId) {
     try {
-      fastMessages = await agents.replayTranscript(pluginId, sessionId, cwd);
+      fastMessages = await agents.replayTranscript(sessionId, cwd);
       if (fastMessages.length > 0 && !cb.isStale()) {
         cb.paint(fastMessages.map(snapshotMessageToWire));
         cb.onPainted();

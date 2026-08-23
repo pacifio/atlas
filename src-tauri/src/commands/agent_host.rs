@@ -271,8 +271,6 @@ pub struct AgentHost {
 
 /// The plumbing for elicitations that belong to a connection, not a session.
 struct RequestElicitations {
-    /// Handed to each connection at connect time, tagged with its agent id.
-    sink: mpsc::UnboundedSender<(ThreadAgentId, ElicitationStoreEvent)>,
     /// Taken once, by [`AgentHost::take_request_elicitations`].
     stream: Mutex<Option<mpsc::UnboundedReceiver<(ThreadAgentId, ElicitationStoreEvent)>>>,
     /// Which agent + entry a wire request id refers to, so an answer can find
@@ -338,7 +336,6 @@ impl AgentHost {
             native_runtime,
             history,
             request_elicitations: RequestElicitations {
-                sink: elicitation_tx,
                 stream: Mutex::new(Some(elicitation_rx)),
                 answered_by: Mutex::new(HashMap::new()),
             },
@@ -1542,19 +1539,6 @@ impl AgentHost {
         Ok(true)
     }
 
-    /// The agent's own on-disk transcript, read without spawning it.
-    ///
-    /// Empty means "this agent keeps no transcript Atlas can read", not an
-    /// error — the caller falls back to the copy Atlas recorded itself.
-    pub async fn replay_transcript(
-        &self,
-        plugin_id: &str,
-        cwd: &str,
-        session_id: &str,
-    ) -> Vec<Message> {
-        atlas_agent_transcript::replay(transcript_kind_for(plugin_id), cwd, session_id).await
-    }
-
     // ---- auth ------------------------------------------------------------
 
     pub fn auth_methods(&self, agent_id: AgentId) -> Result<Vec<AuthMethodWire>> {
@@ -1819,9 +1803,6 @@ pub fn icon_data_url(agent: &atlas_agent_store::RegistryAgent) -> Option<String>
 pub fn transcript_kind_for(plugin_id: &str) -> TranscriptKind {
     if plugin_id == CERSEI_AGENT_ID {
         return TranscriptKind::CerseiJson;
-    }
-    if plugin_id.starts_with("claude-code") {
-        return TranscriptKind::ClaudeJsonl;
     }
     TranscriptKind::None
 }
@@ -2188,21 +2169,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The one place the no-default-agents rule is enforced. A fresh install
-    /// has an empty map, so every id except the native agent must be refused —
-    /// nothing is downloaded, discovered, or guessed on the way to a spawn.
+    /// Only the NATIVE agent keeps a record Atlas can read. Every external
+    /// one — Claude included, since Atlas stopped parsing `~/.claude/projects`
+    /// (ADR-0001) — gets Atlas's own recording, which is what makes its history
+    /// rows reopen at all.
     #[test]
-    fn transcript_kinds_are_per_agent_not_a_default_list() {
+    fn only_the_native_agent_keeps_its_own_readable_transcript() {
         assert_eq!(transcript_kind_for(CERSEI_AGENT_ID), TranscriptKind::CerseiJson);
-        assert_eq!(
-            transcript_kind_for("claude-code-ts"),
-            TranscriptKind::ClaudeJsonl
-        );
-        assert_eq!(transcript_kind_for("claude-code"), TranscriptKind::ClaudeJsonl);
-        // An agent Atlas knows nothing about gets Atlas's own recording rather
-        // than being treated as unavailable.
-        for id in ["codex", "opencode", "some-registry-agent"] {
-            assert_eq!(transcript_kind_for(id), TranscriptKind::None);
+        for id in [
+            "claude-code-ts",
+            "claude-code",
+            "codex",
+            "opencode",
+            "some-registry-agent",
+        ] {
+            assert_eq!(transcript_kind_for(id), TranscriptKind::None, "{id}");
         }
     }
 

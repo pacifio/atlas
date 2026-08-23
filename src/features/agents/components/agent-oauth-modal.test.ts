@@ -14,7 +14,6 @@ vi.mock("@/features/chat/lib/agent-signin", () => ({
 }));
 vi.mock("@/features/agents/lib/agent-meta", () => ({ agentMeta: (id: string) => ({ label: id }) }));
 vi.mock("@/features/log/lib/log", () => ({ logEvent: () => {} }));
-vi.mock("../lib/agent-auth-hooks", () => ({ onAuthenticatedFor: () => Promise.resolve() }));
 
 const { manualCommandFor, methodBlockedReason, methodForReason } =
   await import("./agent-oauth-modal");

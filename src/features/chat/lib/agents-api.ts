@@ -109,16 +109,16 @@ export const agents = {
   loadSession: (agentId: AgentId, sessionId: AcpSessionId, cwd: string) =>
     invoke<SessionKey>("agents_load_session", { agentId, sessionId, cwd }),
 
-  /** Read a saved session's transcript straight off disk — no agent spawn, no
-   *  `session/load` round-trip. Used to paint a resumed thread immediately
-   *  while the real (slow) bind runs concurrently. Resolves to `[]` for agents
-   *  with no on-disk transcript (Codex), meaning "no fast path available". */
-  replayTranscript: (pluginId: string, sessionId: AcpSessionId, cwd: string) =>
-    invoke<SessionMessage[]>("agents_replay_transcript", {
-      pluginId,
-      sessionId,
-      cwd,
-    }),
+  /** Atlas's own recording of a session — no agent spawn, no `session/load`
+   *  round-trip. Paints a resumed thread immediately while the real (slow)
+   *  bind runs concurrently. `[]` means Atlas has no record of it, so there is
+   *  no fast path; the bind's own replay fills the thread instead.
+   *
+   *  Agent-agnostic: it used to take a plugin id so the backend could pick a
+   *  per-agent reader, and for Claude that reader parsed `~/.claude/projects`.
+   *  There is one record now, and it is Atlas's. */
+  replayTranscript: (sessionId: AcpSessionId, cwd: string) =>
+    invoke<SessionMessage[]>("agents_replay_transcript", { sessionId, cwd }),
 
   snapshot: (key: SessionKey) => invoke<SessionSnapshot>("agents_snapshot", { key }),
 

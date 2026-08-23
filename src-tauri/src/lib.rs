@@ -7,7 +7,6 @@ mod telemetry;
 
 use std::sync::Arc;
 
-use commands::claude::ClaudeSessionIndex;
 use commands::cli::CliLaunchState;
 use commands::fileindex::FileIndexState;
 use commands::git_watcher::GitWatcherState;
@@ -16,7 +15,6 @@ use commands::knowledge_meta::KnowledgeMetaState;
 use commands::mention_search::MentionCacheState;
 use commands::recent_files::RecentFilesState;
 use commands::papers::SavedPapersIndex;
-use commands::sessions_watch::SessionsWatchState;
 use commands::terminal::TerminalState;
 use parking_lot::Mutex;
 use state::{AppState, AppStateHandle};
@@ -267,8 +265,6 @@ pub fn run() {
         .manage(Arc::new(KnowledgeMetaState::new()))
         .manage(Arc::new(KnowledgeLinksState::new()))
         .manage(CliLaunchState::new(initial_project))
-        .manage(SessionsWatchState::new())
-        .manage(ClaudeSessionIndex::new())
         .manage(SavedPapersIndex::new())
         .manage(commands::memory_chat::MemoryChatState::new())
         .manage(commands::memory_sharing::MemorySharingState::new())
@@ -456,15 +452,10 @@ pub fn run() {
             commands::github::delete_cloned_repo,
             // Legacy Claude-CLI subprocess commands (claude_run/stream/stop/check/version)
             // were replaced by ACP. Session-history readers below are still in use.
-            commands::claude::list_claude_sessions,
             commands::gitdiff::git_diff_structured,
             commands::gitdiff::diff_structured_text,
             commands::gitdiff::git_commit_changed_files,
             commands::gitdiff::git_diff_line_status,
-            commands::claude::delete_claude_session,
-            commands::claude::read_claude_session,
-            commands::claude::claude_session_stats,
-            commands::claude::project_usage_stats,
             commands::search::search_in_files,
             commands::research::search_arxiv,
             commands::research::search_semantic_scholar,
@@ -530,8 +521,6 @@ pub fn run() {
             commands::cli::cli_status,
             commands::cli::cli_install_helper,
             commands::cli::cli_take_initial_project_path,
-            commands::claude_setup::claude_status,
-            commands::claude_setup::claude_install,
             commands::registry::acp_registry_list,
             commands::registry::acp_registry_refresh,
             commands::registry::acp_registry_install,
@@ -610,19 +599,12 @@ pub fn run() {
             commands::fileindex::fileindex_search,
             commands::fileindex::fileindex_search_dirs,
             commands::fileindex::fileindex_status,
-            commands::sessions_watch::sessions_watch_open,
-            commands::sessions_watch::sessions_watch_close,
-            commands::sessions_watch::sessions_watch_status,
             commands::papers::list_saved_papers,
             commands::pomodoro::pomodoro_load,
             commands::pomodoro::pomodoro_save,
             commands::plans::plans_load,
             commands::plans::plans_append,
             commands::agent_memory::agent_memory_read,
-            commands::agent_memory::list_codex_sessions,
-            commands::agent_memory::codex_delete_session,
-            commands::kilo::list_kilo_sessions,
-            commands::kilo::kilo_delete_session,
             commands::memory_graph::memory_embed_status,
             commands::memory_graph::memory_embed_download,
             commands::memory_graph::memory_index_build,

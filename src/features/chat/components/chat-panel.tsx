@@ -5,7 +5,6 @@ import { appendNextStepsDirective } from "../lib/next-steps";
 import { stripInjectedContext } from "../lib/atlas-context";
 import { agents, ensureAgent } from "../lib/agents-api";
 import { loadCachedAcpModes } from "../lib/acp-modes-cache";
-import { warmAcpModels, otherAcpAgents } from "../lib/warm-acp-models";
 import type { ImageAttachment, SessionKey } from "@/types/agents";
 import {
   hasInFlightToolCalls,
@@ -592,17 +591,12 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     session?.acpAvailableModels?.length,
   ]);
 
-  // While a chat is active on one ACP agent, prefetch the other used agents'
-  // model lists in the background so switching is instant (cached). Fire-and-
-  // forget, once per app session per agent.
-  useEffect(() => {
-    const at = session?.agentType;
-    if (!at) return;
-    const others = otherAcpAgents(at);
-    if (others.length === 0) return;
-    const cwd = useProjectStore.getState().currentProject?.path ?? "/";
-    for (const other of others) void warmAcpModels(other, cwd);
-  }, [session?.agentType]);
+  // The other-agent model prefetch is gone with `warm-acp-models`. It iterated
+  // a STATIC list of five agent names to decide who to warm — the last such
+  // list on the chat path (ADR-0002) — and opened a throwaway session on each
+  // to harvest its model list. The persisted cache still drives the picker for
+  // any agent seen before; one that has not been opened this session fills its
+  // picker when it is.
 
   // Shift+Tab → cycle the agent permission mode. Registered on the window in
   // capture phase so the browser's default focus traversal never steals it.

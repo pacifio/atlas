@@ -16,7 +16,7 @@ import {
   listAtlasTranscripts,
   readAtlasTranscript,
   type AtlasTranscriptMessage,
-} from "./claude-api";
+} from "./atlas-transcripts";
 import { ensureFileIndex } from "@/features/file-picker/lib/file-picker-api";
 import { activeWorkspaceId } from "@/features/workspaces/lib/active-workspace";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";

@@ -124,7 +124,7 @@ describe("AUTH token parity with Rust", () => {
   it("matches the AUTH bucket of classify_message", () => {
     // The fallback path only works if it recognises what Rust recognises.
     // Parsed from the Rust source so a token added there fails here.
-    const rust = readFileSync("crates/atlas-acp/src/error.rs", "utf8");
+    const rust = readFileSync("crates/atlas-agent-wire/src/error.rs", "utf8");
     const block = rust.match(/const AUTH: &\[&str\] = &\[([\s\S]*?)\];/);
     expect(block, "AUTH bucket not found in error.rs").toBeTruthy();
     const rustTokens = [...block![1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);

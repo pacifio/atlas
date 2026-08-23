@@ -2492,8 +2492,12 @@ fn warn_once_unregistered(root: &std::path::Path) {
 /// Where this Workspace's agent transcripts live.
 ///
 /// Claude Code encodes the project directory into a folder name under
-/// `~/.claude/projects/`; the encoding already exists in `atlas-agents`, so it
+/// `~/.claude/projects/`; the encoding lives in `atlas-agent-transcript`, so it
 /// is reused rather than reproduced.
+///
+/// This is the checkpoint importer, whose contract (research §C9 touchpoint
+/// #11) explicitly survives the history port: Atlas stopped *reading* CLI
+/// storage for its UI, and never touches these files.
 fn transcript_source_for(root: &std::path::Path) -> Option<atlas_checkpoint::TranscriptSource> {
     let projects = dirs::home_dir()?.join(".claude").join("projects");
     let encoded = atlas_agent_transcript::encode_cwd(&root.to_string_lossy());

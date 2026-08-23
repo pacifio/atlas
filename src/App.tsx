@@ -41,7 +41,6 @@ import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { jumpToSession } from "@/features/chat/lib/tab-workspace";
-import { refreshCachedAcpModels } from "@/features/chat/lib/warm-acp-models";
 import { pruneContextUsageCache } from "@/features/chat/lib/context-usage-cache";
 import { isScrollHot } from "@/lib/scroll-hot";
 import {
@@ -391,18 +390,6 @@ export function App() {
     }
   };
   const currentProject = useProjectStore.use.currentProject();
-
-  // Silent startup refresh of cached ACP model lists (Claude Code / Codex) so
-  // the model picker stays fresh — optimistic UI: the cache drives the picker
-  // immediately, this updates it in the background. Only re-warms agents already
-  // cached (i.e. used before), so we never spawn an agent the user never touches.
-  // Deferred so it never competes with launch.
-  useEffect(() => {
-    const cwd = currentProject?.path;
-    if (!cwd) return;
-    const t = setTimeout(() => refreshCachedAcpModels(cwd), 4000);
-    return () => clearTimeout(t);
-  }, [currentProject?.path]);
 
   // Global agent event bus. One listener routes atlas-agents SessionDelta
   // events into the chat-store, queues permission requests for the

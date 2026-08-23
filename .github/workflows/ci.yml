@@ -102,7 +102,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - crate: atlas-acp
           - crate: atlas-acp-thread
             clippy: true
           - crate: atlas-agent-delta
@@ -117,8 +116,6 @@ jobs:
             clippy: true
           - crate: atlas-agent-wire
             clippy: true
-          - crate: atlas-agentkit
-          - crate: atlas-agents
           - crate: atlas-bus
           - crate: atlas-cersei
           - crate: atlas-checkpoint
@@ -133,7 +130,6 @@ jobs:
             clippy: true
           - crate: atlas-redact
             clippy: true
-          - crate: atlas-registry
           - crate: atlas-review
           - crate: atlas-terminal
           - crate: atlas-thread-metadata
