@@ -97,6 +97,12 @@ struct SessionBinding {
 }
 
 /// Work for the capture thread.
+///
+/// `ToolCall` dwarfs the other variants (its writes, arguments and now the
+/// settled-commit list all ride inline). Boxing it would buy back a few dozen
+/// bytes per QUEUED job on an unbounded queue that drains in milliseconds —
+/// the indirection costs more in reading than the memory ever will.
+#[allow(clippy::large_enum_variant)]
 enum Job {
     Prompt {
         binding: SessionBinding,
@@ -123,6 +129,10 @@ enum Job {
         /// only on the *first* terminal sighting, so repeated terminal upserts
         /// cannot duplicate `file_touch` / `agent_edit` rows.
         writes: Vec<CompletedWrite>,
+        /// Commits the shell window saw HEAD move across — a command that
+        /// committed its own writes. The worker evaluates exactly these after
+        /// the touches land; the walk's cursor has already gone past them.
+        settled_commits: Vec<String>,
         /// The patch an edit-shaped call applied, when the arguments carry one.
         /// Recorded once per call, not once per path.
         patch: Option<String>,
@@ -209,6 +219,9 @@ const SHELL_WINDOW_LIMIT: Duration = Duration::from_secs(60);
 /// What the tree looked like when a shell command started.
 struct ShellWindow {
     before: std::collections::BTreeSet<String>,
+    /// Where HEAD stood. A command that COMMITS its own writes leaves the tree
+    /// clean again, so a moved HEAD is the only evidence the window keeps.
+    head: Option<String>,
     started: Instant,
 }
 
@@ -245,6 +258,11 @@ pub struct CaptureState {
     pending_writes: Mutex<HashMap<String, WriteSample>>,
     /// Open shell windows, keyed by tool-call id. See [`CaptureState::shell_window`].
     shell_windows: Mutex<HashMap<String, ShellWindow>>,
+    /// Commits a closed shell window saw HEAD move across, keyed by tool-call
+    /// id, parked until the worker takes them with the call's job. They ride
+    /// separately because the ordinary walk's cursor has already consumed
+    /// them — the worker re-evaluates exactly these AFTER the touches land.
+    settled_commits: Mutex<HashMap<String, Vec<String>>>,
     /// Tool-call ids seen per session, so the write caches above can be evicted
     /// when the session's agent disconnects.
     session_calls: Mutex<HashMap<String, Vec<String>>>,
@@ -355,6 +373,7 @@ impl CaptureState {
             sessions: Mutex::new(HashMap::new()),
             pending_writes: Mutex::new(HashMap::new()),
             shell_windows: Mutex::new(HashMap::new()),
+            settled_commits: Mutex::new(HashMap::new()),
             session_calls: Mutex::new(HashMap::new()),
             pending_turns: Mutex::new(HashMap::new()),
             token,
@@ -736,7 +755,11 @@ impl CaptureState {
                 if let Some(before) = atlas_checkpoint::git::worktree_changes(workspace_root) {
                     windows.insert(
                         call_id.to_string(),
-                        ShellWindow { before, started: Instant::now() },
+                        ShellWindow {
+                            before,
+                            head: atlas_checkpoint::git::head_commit(workspace_root),
+                            started: Instant::now(),
+                        },
                     );
                 }
             }
@@ -758,7 +781,7 @@ impl CaptureState {
             return Vec::new();
         };
 
-        after
+        let mut writes: Vec<PendingWrite> = after
             .difference(&window.before)
             .map(|raw| {
                 let path = resolve_path(raw, workspace_root);
@@ -769,7 +792,65 @@ impl CaptureState {
                     atlas_checkpoint::git::tracked_in_head(workspace_root, &path.path);
                 PendingWrite { path, existed_before }
             })
-            .collect()
+            .collect();
+
+        // A command that COMMITTED its own writes leaves the tree clean, so
+        // the status difference above misses them entirely (#31). The moved
+        // HEAD is evidence, not absence: what `before_head..after_head`
+        // changed IS what the window can no longer see, with each path's
+        // `existed_before` taken from the range's change kind — the
+        // post-commit index would call every created file tracked. The
+        // commits themselves are parked for the worker, which re-evaluates
+        // exactly those after the touches land: the ordinary walk's cursor
+        // has already gone past them.
+        //
+        // A call that commits TWICE links its final commit, not the
+        // intermediate ones: the touch hashes the worktree at terminal time —
+        // the final state — so an intermediate commit's blob fails the strict
+        // arm, which deliberately does not consume the touch, leaving it live
+        // for the commit whose content it actually is. One checkpoint for the
+        // state the agent left is the honest summary of one call.
+        let after_head = atlas_checkpoint::git::head_commit(workspace_root);
+        if let (Some(before_head), Some(after_head)) = (&window.head, &after_head) {
+            if before_head != after_head {
+                if let Some(changes) = atlas_checkpoint::git::changed_between(
+                    workspace_root,
+                    before_head,
+                    after_head,
+                ) {
+                    for change in changes {
+                        let path = resolve_path(&change.path, workspace_root);
+                        if writes.iter().any(|w| w.path.path == path.path) {
+                            continue;
+                        }
+                        writes.push(PendingWrite {
+                            path,
+                            existed_before: change.kind.existed_in_parent(),
+                        });
+                    }
+                    if let Ok(commits) = atlas_checkpoint::git::commits_between(
+                        workspace_root,
+                        Some(before_head),
+                        after_head,
+                    ) {
+                        if !commits.is_empty() {
+                            lock_ok(&self.settled_commits)
+                                .insert(call_id.to_string(), commits);
+                        }
+                    }
+                }
+            }
+        }
+
+        writes
+    }
+
+    /// The commits a closed window saw HEAD move across, if any. Taken once —
+    /// by the worker, when it records the call's writes.
+    fn take_settled_commits(&self, call_id: &str) -> Vec<String> {
+        lock_ok(&self.settled_commits)
+            .remove(call_id)
+            .unwrap_or_default()
     }
 
     /// Drop any shell window still open for a session's calls. Called when the
@@ -777,8 +858,10 @@ impl CaptureState {
     /// not hold its snapshot for the life of the process.
     fn forget_shell_windows(&self, call_ids: &[String]) {
         let mut windows = lock_ok(&self.shell_windows);
+        let mut settled = lock_ok(&self.settled_commits);
         for id in call_ids {
             windows.remove(id);
+            settled.remove(id);
         }
     }
 
@@ -2318,6 +2401,12 @@ fn process_job(
     };
 
     let mut capture = Capture::new(store, mode);
+    // Commits a shell window saw HEAD move across, linked AFTER the touches
+    // land — on this same ordered worker, which is the whole ordering
+    // guarantee (#31). The ordinary walk cannot do it: the watcher fired the
+    // moment the agent's own `git commit` moved refs, and its walk consumed
+    // these commits before any touch existed, advancing the cursor past them.
+    let mut link_after: Vec<String> = Vec::new();
     let outcome = match job {
         // Already handled above; none of these needs a Session.
         Job::WalkCommits { .. }
@@ -2373,26 +2462,33 @@ fn process_job(
             arguments,
             result,
             writes,
+            settled_commits,
             patch,
             ..
         } => match session_ids.get(&binding.native_session_id) {
-            Some(session_id) => record_tool_call(
-                &mut capture,
-                session_id,
-                &binding,
-                ToolCallJob {
-                    native_call_id,
-                    tool_name,
-                    title,
-                    kind,
-                    status,
-                    locations,
-                    arguments,
-                    result,
-                    writes,
-                    patch,
-                },
-            ),
+            Some(session_id) => {
+                let recorded = record_tool_call(
+                    &mut capture,
+                    session_id,
+                    &binding,
+                    ToolCallJob {
+                        native_call_id,
+                        tool_name,
+                        title,
+                        kind,
+                        status,
+                        locations,
+                        arguments,
+                        result,
+                        writes,
+                        patch,
+                    },
+                );
+                if recorded.is_ok() {
+                    link_after = settled_commits;
+                }
+                recorded
+            }
             None => Ok(()),
         },
         Job::FinishTurn { .. } => match session_ids.get(&binding.native_session_id) {
@@ -2409,6 +2505,22 @@ fn process_job(
         // Already flagged on the Session row by the crate where it matters;
         // this is the operator-facing half.
         tracing::warn!(target: "atlas::capture", "capture failed: {e}");
+    }
+
+    if !link_after.is_empty() {
+        match atlas_checkpoint::link_commits(store, &key.workspace_id, &root, &link_after, mode) {
+            Ok(created) if created > 0 => tracing::info!(
+                target: "atlas::capture",
+                commits = link_after.len(),
+                created,
+                "linked the commits a shell call made itself"
+            ),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(
+                target: "atlas::capture",
+                "evaluating a shell call's own commits failed: {e}"
+            ),
+        }
     }
 }
 
@@ -2939,6 +3051,7 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                     arguments: serialize_arguments(&tool_call.arguments),
                     result: tool_call.result.clone(),
                     writes: completed,
+                    settled_commits: state.take_settled_commits(&tool_call.id),
                     patch,
                 });
             }
@@ -3187,6 +3300,75 @@ mod diff_path_tests {
         std::fs::write(root.join("late.txt"), b"whose is this?").expect("fixture");
 
         assert!(state.shell_window("s1", "call-1", &root, true).is_empty());
+    }
+
+    /// The user's exact report on #31: `write && git add && git commit` in ONE
+    /// shell call. HEAD has moved and the tree is clean again by the time the
+    /// after-snapshot runs, so the status difference is empty — the commits the
+    /// window saw HEAD move across are the only remaining evidence.
+    #[test]
+    fn a_command_that_commits_its_own_writes_is_still_attributed() {
+        let root = repo("shell-self-commit");
+        let state = CaptureState::new();
+        let call = shell_call("call-1");
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .expect("git runs");
+        };
+
+        assert!(state.shell_window("s1", &call.id, &root, false).is_empty());
+        // The command writes, edits, and commits — all inside the window.
+        std::fs::write(root.join("made.txt"), b"created by the agent").expect("write");
+        std::fs::write(root.join("seed.txt"), b"edited by the agent").expect("edit");
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "agent: work"]);
+
+        let writes = state.shell_window("s1", &call.id, &root, true);
+
+        let mut paths: Vec<(&str, bool)> = writes
+            .iter()
+            .map(|w| (w.path.path.as_str(), w.existed_before))
+            .collect();
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec![("made.txt", false), ("seed.txt", true)],
+            "the moved HEAD is evidence, not absence — with existed_before from \
+             the commit's own change kinds, not the post-commit index"
+        );
+    }
+
+    /// The commits the window saw HEAD move across ride along, so the caller
+    /// can evaluate exactly those after the touches land — the ordinary walk's
+    /// cursor has already gone past them.
+    #[test]
+    fn the_window_names_the_commits_it_saw_head_move_across() {
+        let root = repo("shell-commit-range");
+        let state = CaptureState::new();
+        let call = shell_call("call-1");
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .expect("git runs");
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+
+        state.shell_window("s1", &call.id, &root, false);
+        std::fs::write(root.join("a.txt"), b"x").expect("write");
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "agent: a"]);
+        let sha = git(&["rev-parse", "HEAD"]);
+
+        let _ = state.shell_window("s1", &call.id, &root, true);
+        let settled = state.take_settled_commits(&call.id);
+        assert_eq!(settled, vec![sha]);
     }
 
     /// A window whose command never reported an ending must not hold its

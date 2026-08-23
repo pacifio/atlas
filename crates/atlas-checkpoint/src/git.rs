@@ -193,6 +193,26 @@ pub fn worktree_changes(repo: &Path) -> Option<std::collections::BTreeSet<String
     Some(paths)
 }
 
+/// The paths a commit RANGE changed, with each path's change kind.
+///
+/// The shell-attribution input for a command that committed its own writes
+/// (#31): the tree is clean again by the time the after-snapshot runs, so the
+/// window's evidence is `before_head..after_head` — the commits the command
+/// itself made. The kind is what makes `existed_before` honest for these
+/// paths: an `Added` file did not exist when the command started, whatever
+/// the post-commit index now says.
+///
+/// `None` when the diff cannot be produced (not a repository, unknown shas);
+/// the caller must treat that as "no answer", not "nothing changed".
+pub fn changed_between(repo: &Path, from: &str, to: &str) -> Option<Vec<ChangedPath>> {
+    let out = run(
+        repo,
+        &["diff", "--name-status", "-z", "-M", &format!("{from}..{to}")],
+    )
+    .ok()?;
+    Some(parse_name_status(&out))
+}
+
 /// Is this directory a git repository?
 ///
 /// Git is optional: a Workspace that is not a repository captures Sessions
@@ -519,10 +539,16 @@ pub fn changed_paths(repo: &Path, sha: &str) -> Result<Vec<ChangedPath>> {
             sha,
         ],
     )?;
+    Ok(parse_name_status(&out))
+}
 
-    // `-z` output is NUL-separated, and a rename entry is three fields:
-    // status, old path, new path. Without it a path containing a quote or a
-    // newline is silently mangled.
+/// Parse `--name-status -z` output — shared by [`changed_paths`] and
+/// [`changed_between`].
+///
+/// `-z` output is NUL-separated, and a rename entry is three fields: status,
+/// old path, new path. Without it a path containing a quote or a newline is
+/// silently mangled.
+fn parse_name_status(out: &str) -> Vec<ChangedPath> {
     let mut fields = out.split('\0').filter(|f| !f.is_empty());
     let mut changes = Vec::new();
     while let Some(status) = fields.next() {
@@ -549,7 +575,7 @@ pub fn changed_paths(repo: &Path, sha: &str) -> Result<Vec<ChangedPath>> {
             }
         }
     }
-    Ok(changes)
+    changes
 }
 
 /// The content of a path as the commit recorded it.
@@ -874,6 +900,48 @@ mod tests {
     fn a_directory_that_is_not_a_repository_has_no_snapshot() {
         let dir = tempfile::tempdir().unwrap();
         assert!(worktree_changes(dir.path()).is_none());
+    }
+
+    /// The #31 input: what a commit RANGE changed, with kinds — the evidence
+    /// for a shell command that committed its own writes.
+    #[test]
+    fn a_range_diff_names_adds_edits_and_deletes_with_their_kinds() {
+        let repo = TestRepo::new();
+        repo.write("kept.txt", "one");
+        repo.write("gone.txt", "one");
+        let before = repo.commit_all("seed");
+
+        repo.write("kept.txt", "two");
+        repo.write("fresh.txt", "new");
+        std::fs::remove_file(repo.path().join("gone.txt")).unwrap();
+        repo.commit_all("first");
+        repo.write("fresh.txt", "newer");
+        let after = repo.commit_all("second");
+
+        let mut changes = changed_between(repo.path(), &before, &after).unwrap();
+        changes.sort_by(|a, b| a.path.cmp(&b.path));
+        let summary: Vec<(String, ChangeKind)> =
+            changes.into_iter().map(|c| (c.path, c.kind)).collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("fresh.txt".to_string(), ChangeKind::Added),
+                ("gone.txt".to_string(), ChangeKind::Deleted),
+                ("kept.txt".to_string(), ChangeKind::Modified),
+            ],
+            "the range collapses both commits into one honest delta"
+        );
+    }
+
+    /// Unknown shas are "no answer", which the caller must distinguish from
+    /// "nothing changed" — attributing on a failed diff would be a guess.
+    #[test]
+    fn a_range_diff_with_an_unknown_sha_has_no_answer() {
+        let repo = TestRepo::new();
+        repo.write("a.txt", "x");
+        let head = repo.commit_all("seed");
+        assert!(changed_between(repo.path(), "0000000000000000000000000000000000000000", &head)
+            .is_none());
     }
 
     #[test]
