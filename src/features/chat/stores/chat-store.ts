@@ -22,6 +22,7 @@ import type {
 import { splitAtlasContext } from "../lib/atlas-context";
 import { loadCachedAcpModes, saveCachedAcpModes } from "../lib/acp-modes-cache";
 import { loadLastModePref, saveLastModePref } from "../lib/last-mode-pref";
+import { modelSelectOf } from "../lib/acp-config-options";
 import { loadCachedAcpModels, saveCachedAcpModels } from "../lib/acp-models-cache";
 import { resolveModelLabel } from "../lib/model-label";
 import { defaultAgentForNewSession } from "../lib/default-agent";
@@ -685,8 +686,9 @@ export const useChatStore = createSelectors(
                 const m = loadCachedAcpModels(agentType);
                 return m
                   ? {
+                      // The list only — the current model belongs to a session,
+                      // not to the agent (see `acp-models-cache`).
                       acpAvailableModels: m.availableModels,
-                      acpCurrentModel: m.currentModel ?? undefined,
                     }
                   : {};
               })(),
@@ -747,7 +749,7 @@ export const useChatStore = createSelectors(
             // Models apply to both agents — seed from cache (empty for cersei).
             const cachedModels = loadCachedAcpModels(agentType);
             sess.acpAvailableModels = cachedModels?.availableModels ?? [];
-            sess.acpCurrentModel = cachedModels?.currentModel ?? undefined;
+            sess.acpCurrentModel = undefined;
           }),
         setSessionAgentType: (tabId, agentType) =>
           set((s) => {
@@ -784,7 +786,7 @@ export const useChatStore = createSelectors(
             sess.cerseiProvider = undefined;
             const cachedModels = loadCachedAcpModels(agentType);
             sess.acpAvailableModels = cachedModels?.availableModels ?? [];
-            sess.acpCurrentModel = cachedModels?.currentModel ?? undefined;
+            sess.acpCurrentModel = undefined;
           }),
         setActiveSession: (id) =>
           set((s) => {
@@ -1063,10 +1065,11 @@ export const useChatStore = createSelectors(
           set((s) => {
             const session = s.sessions[sessionId];
             if (!session) return;
-            // Never clobber a good list with an empty snapshot. ACP
-            // `session/load` doesn't re-advertise models, so a resume/re-bind
-            // snapshot can carry [] while the session already has the real
-            // list — and the picker hides itself whenever the list is empty.
+            // Never clobber a good list with an empty snapshot. A snapshot
+            // taken before the agent's config options landed — or from an
+            // agent that advertises no model select at all — carries [] while
+            // the session may already have the real list, and the picker hides
+            // itself whenever the list is empty.
             if (availableModels.length === 0 && (session.acpAvailableModels?.length ?? 0) > 0) {
               return;
             }
@@ -1081,10 +1084,7 @@ export const useChatStore = createSelectors(
           // `session/load` doesn't re-advertise models).
           const at = get().sessions[sessionId]?.agentType;
           if (availableModels.length > 0 && at) {
-            saveCachedAcpModels(at, {
-              currentModel: currentModel ?? null,
-              availableModels,
-            });
+            saveCachedAcpModels(at, { availableModels });
           }
         },
         setAcpModel: (sessionId, modelId) => {
@@ -1963,6 +1963,20 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       // Keeps the mode/model pickers honest when the change came from inside
       // the agent (its own `/model`, a thinking toggle) rather than from Atlas.
       session.acpConfigOptions = env.config_options;
+      // The model pill rides on this same blob — ACP has no separate model
+      // field, so a `category: "model"` select IS the model list. Without this
+      // the pill only ever saw the bind-time snapshot and went stale (or, for a
+      // session bound before the agent advertised, stayed empty and hid).
+      const models = modelSelectOf(env.config_options);
+      if (models) {
+        session.acpAvailableModels = models.availableModels;
+        if (models.currentModel) session.acpCurrentModel = models.currentModel;
+        if (session.agentType) {
+          saveCachedAcpModels(session.agentType, {
+            availableModels: models.availableModels,
+          });
+        }
+      }
       return;
     }
     case "context_usage": {

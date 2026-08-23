@@ -102,13 +102,15 @@ export interface SessionSnapshot {
   current_mode: string | null;
   current_model: string | null;
   available_modes: SessionModeInfo[];
-  /** Models the agent advertised (ACP `session/new` `models`). Drives the
-   *  Claude Code / Codex model picker; empty when unsupported. */
+  /** Models the agent advertised. ACP has no `models` field on a session: an
+   *  agent offering a choice says so with a `category: "model"` select among
+   *  its config options, which the host projects into this list. Drives the
+   *  composer's model pill; empty when the agent advertises no such option. */
   available_models: SessionModeInfo[];
   available_commands: unknown[];
-  /** Raw ACP `config_option_update` state — advertised config options and
-   *  their current values. No UI consumes this yet; mirrored so an in-agent
-   *  change (e.g. `/model`) is at least visible in the snapshot. */
+  /** Raw ACP config-option state — advertised config options and their current
+   *  values, kept current by the `config_options_updated` delta. The composer
+   *  renders these as generic knobs, minus the ones a dedicated picker owns. */
   config_options?: unknown[];
   /** Whether the agent's transport accepts image content blocks in prompts
    *  (`promptCapabilities.image`). Drives the composer's attach routing:

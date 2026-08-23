@@ -408,8 +408,10 @@ function ComposerGroupsMenu({
     };
   }, [openGroup]);
 
-  // Self-heal exactly like the old model picker: `session/load` doesn't
-  // re-advertise models, so fall back to the persisted per-agent cache.
+  // Self-heal: the store is fed by the bind-time snapshot and the
+  // `config_options_updated` delta, and a tab can render before either has
+  // landed. Fall back to the persisted per-agent cache so the pill does not
+  // flicker away in that gap.
   const models = useMemo(() => {
     if (availableModels && availableModels.length > 0) return availableModels;
     return loadCachedAcpModels(agentType)?.availableModels ?? [];

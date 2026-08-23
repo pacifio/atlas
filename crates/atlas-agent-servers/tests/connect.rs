@@ -276,3 +276,169 @@ fn process_is_alive(pid: i32) -> bool {
         .map(|status| status.success())
         .unwrap_or(false)
 }
+
+/// A fake agent that also answers `session/new`, with whatever config options
+/// the test hands it. This is the shape model selection actually arrives in:
+/// ACP has no `models` field, so an agent offering a choice of model says so
+/// with a `category: "model"` select among its session config options.
+const SESSION_AGENT: &str = r#"
+import sys, json
+CONFIG = CONFIG_OPTIONS
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        result = {
+            "protocolVersion": 1,
+            "agentCapabilities": {},
+            "authMethods": [],
+            "agentInfo": {"name": "fake-agent", "version": "9.9.9"},
+        }
+    elif method == "session/new":
+        result = {"sessionId": "session-1", "configOptions": CONFIG}
+    elif method == "session/set_config_option":
+        # The request flattens its value: `{sessionId, configId, value}`.
+        picked = msg["params"]["value"]
+        for option in CONFIG:
+            if option.get("category") == "model":
+                option["currentValue"] = picked
+        result = {"configOptions": CONFIG}
+    else:
+        continue
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}) + "\n")
+    sys.stdout.flush()
+"#;
+
+fn session_agent_command(config_options: serde_json::Value) -> Option<AgentServerCommand> {
+    let python = python()?;
+    let script = SESSION_AGENT.replace("CONFIG_OPTIONS", &config_options.to_string());
+    Some(AgentServerCommand {
+        path: PathBuf::from(python),
+        args: vec!["-c".to_string(), script],
+        env: Some(HashMap::new()),
+    })
+}
+
+fn model_config_options() -> serde_json::Value {
+    serde_json::json!([
+        {
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "select",
+            "currentValue": "sonnet",
+            "options": [
+                { "value": "sonnet", "name": "Sonnet" },
+                { "value": "opus", "name": "Opus" },
+            ],
+        },
+    ])
+}
+
+async fn session_on(config_options: serde_json::Value) -> Option<(Arc<AcpConnection>, acp::SessionId)> {
+    let command = session_agent_command(config_options)?;
+    let connection = Arc::new(connect(command).await.expect("handshake failed"));
+
+    use atlas_acp_thread::AgentConnection as _;
+    let cwd = std::env::temp_dir();
+    let thread = connection
+        .clone()
+        .new_session(vec![cwd])
+        .await
+        .expect("session/new failed");
+    let session_id = thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .session_id()
+        .clone();
+    // The thread must outlive this call: the session registry holds it weakly.
+    Box::leak(Box::new(thread));
+    Some((connection, session_id))
+}
+
+/// The regression itself. `AgentConnection::model_selector` defaults to `None`,
+/// and `AcpConnection` did not override it — so `available_models` was empty for
+/// EVERY external agent and the composer's model pill never rendered, whatever
+/// the agent advertised.
+#[tokio::test]
+async fn an_agent_advertising_a_model_select_gets_a_model_selector() {
+    let Some((connection, session_id)) = session_on(model_config_options()).await else {
+        eprintln!("skipping: no python3 on this machine");
+        return;
+    };
+
+    use atlas_acp_thread::AgentConnection as _;
+    let selector = connection
+        .model_selector(&session_id)
+        .expect("an agent advertising a model select must offer a model selector");
+
+    let models = selector.list_models().await.expect("list_models failed");
+    let atlas_acp_thread::AgentModelList::Flat(models) = models else {
+        panic!("a select flattens into one list");
+    };
+    let ids: Vec<_> = models.iter().map(|model| model.id.as_str()).collect();
+    assert_eq!(ids, vec!["sonnet", "opus"]);
+
+    let selected = selector.selected_model().await.expect("selected_model failed");
+    assert_eq!(
+        selected.id.as_str(),
+        "sonnet",
+        "a session nobody has picked in still has the model the agent defaulted to"
+    );
+}
+
+/// Picking a model goes out as `session/set_config_option` on the model
+/// option's id — there is no `session/set_model` in this protocol version — and
+/// the response's list becomes the local view.
+#[tokio::test]
+async fn picking_a_model_sets_the_agents_model_config_option() {
+    let Some((connection, session_id)) = session_on(model_config_options()).await else {
+        eprintln!("skipping: no python3 on this machine");
+        return;
+    };
+
+    use atlas_acp_thread::AgentConnection as _;
+    let selector = connection.model_selector(&session_id).expect("a model selector");
+    selector
+        .select_model(atlas_acp_thread::AgentModelId::new("opus"))
+        .await
+        .expect("select_model failed");
+
+    let selected = selector.selected_model().await.expect("selected_model failed");
+    assert_eq!(selected.id.as_str(), "opus", "the pick must reach the agent");
+}
+
+/// The other half of the gate: no model select advertised, no model selector.
+/// This is what keeps the pill hidden for an agent that does not offer one —
+/// gated on the advertised category, never on which agent it is (ADR-0002).
+#[tokio::test]
+async fn an_agent_advertising_no_model_select_gets_no_model_selector() {
+    let Some((connection, session_id)) = session_on(serde_json::json!([
+        {
+            "id": "thinking",
+            "name": "Thinking",
+            "category": "thought_level",
+            "type": "select",
+            "currentValue": "low",
+            "options": [{ "value": "low", "name": "Low" }],
+        },
+    ]))
+    .await
+    else {
+        eprintln!("skipping: no python3 on this machine");
+        return;
+    };
+
+    use atlas_acp_thread::AgentConnection as _;
+    assert!(
+        connection.model_selector(&session_id).is_none(),
+        "an agent that advertises no model select must not get a model picker"
+    );
+    assert!(
+        connection.session_config_options(&session_id).is_some(),
+        "its other knobs still reach the composer"
+    );
+}

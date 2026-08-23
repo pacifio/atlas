@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { currentChoiceLabel, parseConfigOptions } from "./acp-config-options";
+import { currentChoiceLabel, modelSelectOf, parseConfigOptions } from "./acp-config-options";
 
 describe("parseConfigOptions", () => {
   it("reads a boolean knob", () => {
     const [opt] = parseConfigOptions([
-      { id: "web-search", name: "Web search", boolean: { currentValue: true } },
+      { id: "web-search", name: "Web search", type: "boolean", currentValue: true },
     ]);
     expect(opt).toEqual({
       kind: "boolean",
@@ -21,13 +21,12 @@ describe("parseConfigOptions", () => {
         id: "thinking",
         name: "Thinking",
         description: "How long to reason",
-        select: {
-          currentValue: "medium",
-          options: [
-            { id: "low", name: "Low" },
-            { id: "medium", name: "Medium", description: "Balanced" },
-          ],
-        },
+        type: "select",
+        currentValue: "medium",
+        options: [
+          { value: "low", name: "Low" },
+          { value: "medium", name: "Medium", description: "Balanced" },
+        ],
       },
     ]);
     expect(opt.kind).toBe("select");
@@ -46,17 +45,52 @@ describe("parseConfigOptions", () => {
         id: "m",
         name: "Mode",
         category: "mode",
-        select: { currentValue: "a", options: [{ id: "a", name: "A" }] },
+        type: "select",
+        currentValue: "a",
+        options: [{ value: "a", name: "A" }],
       },
       {
         id: "mo",
         name: "Model",
         category: "model",
-        select: { currentValue: "b", options: [{ id: "b", name: "B" }] },
+        type: "select",
+        currentValue: "b",
+        options: [{ value: "b", name: "B" }],
       },
-      { id: "t", name: "Thinking", category: "thought_level", boolean: { currentValue: false } },
+      {
+        id: "t",
+        name: "Thinking",
+        category: "thought_level",
+        type: "boolean",
+        currentValue: false,
+      },
     ]);
     expect(parsed.map((o) => o.id)).toEqual(["t"]);
+  });
+
+  /// ...but only when the owning surface can actually render it. The mode and
+  /// model pickers are selects; a model-category knob of any other kind is
+  /// claimed by nobody, and skipping it here would make it invisible AND
+  /// unsettable — the same hole that hid model selection in the first place.
+  it("keeps an owned-category option the dedicated picker cannot render", () => {
+    const parsed = parseConfigOptions([
+      {
+        id: "model-thinking",
+        name: "Extended thinking",
+        category: "model",
+        type: "boolean",
+        currentValue: true,
+      },
+      {
+        id: "mo",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "b",
+        options: [{ value: "b", name: "B" }],
+      },
+    ]);
+    expect(parsed.map((o) => o.id)).toEqual(["model-thinking"]);
   });
 
   /// The wire allows grouped select options; the composer popover is one flat
@@ -66,15 +100,12 @@ describe("parseConfigOptions", () => {
       {
         id: "g",
         name: "Grouped",
-        select: {
-          currentValue: "b",
-          options: {
-            groups: [
-              { name: "First", options: [{ id: "a", name: "A" }] },
-              { name: "Second", options: [{ id: "b", name: "B" }] },
-            ],
-          },
-        },
+        type: "select",
+        currentValue: "b",
+        options: [
+          { group: "first", name: "First", options: [{ value: "a", name: "A" }] },
+          { group: "second", name: "Second", options: [{ value: "b", name: "B" }] },
+        ],
       },
     ]);
     if (opt.kind !== "select") throw new Error("unreachable");
@@ -85,7 +116,7 @@ describe("parseConfigOptions", () => {
   /// nothing is worse than no menu.
   it("drops a select with no choices", () => {
     expect(
-      parseConfigOptions([{ id: "x", name: "X", select: { currentValue: "", options: [] } }]),
+      parseConfigOptions([{ id: "x", name: "X", type: "select", currentValue: "", options: [] }]),
     ).toEqual([]);
   });
 
@@ -95,10 +126,11 @@ describe("parseConfigOptions", () => {
     const parsed = parseConfigOptions([
       null,
       "nonsense",
-      { name: "no id", boolean: { currentValue: true } },
-      { id: "no-name", boolean: { currentValue: true } },
+      { name: "no id", type: "boolean", currentValue: true },
+      { id: "no-name", type: "boolean", currentValue: true },
       { id: "unknown-kind", name: "Unknown" },
-      { id: "ok", name: "OK", boolean: { currentValue: false } },
+      { id: "future-kind", name: "Future", type: "_colour", currentValue: "red" },
+      { id: "ok", name: "OK", type: "boolean", currentValue: false },
     ]);
     expect(parsed.map((o) => o.id)).toEqual(["ok"]);
   });
@@ -110,8 +142,66 @@ describe("parseConfigOptions", () => {
 
   /// A missing `currentValue` must read as false, not as "unknown/on".
   it("treats an absent boolean value as off", () => {
-    const [opt] = parseConfigOptions([{ id: "b", name: "B", boolean: {} }]);
+    const [opt] = parseConfigOptions([{ id: "b", name: "B", type: "boolean" }]);
     expect(opt.kind === "boolean" && opt.value).toBe(false);
+  });
+});
+
+describe("modelSelectOf", () => {
+  const modelOption = {
+    id: "model",
+    name: "Model",
+    category: "model",
+    type: "select",
+    currentValue: "sonnet",
+    options: [
+      { value: "sonnet", name: "Sonnet", description: "Fast" },
+      { value: "opus", name: "Opus" },
+    ],
+  };
+
+  /// ACP has no `models` field: model selection IS a `category: "model"`
+  /// select, and this is what fills the composer's model pill from a live
+  /// `config_options_updated` delta.
+  it("projects the model-category select into the picker's shape", () => {
+    const select = modelSelectOf([
+      { id: "t", name: "Thinking", type: "boolean", currentValue: true },
+      modelOption,
+    ]);
+    expect(select).toEqual({
+      currentModel: "sonnet",
+      availableModels: [
+        { id: "sonnet", name: "Sonnet", description: "Fast" },
+        { id: "opus", name: "Opus", description: undefined },
+      ],
+    });
+  });
+
+  /// Gating is on the advertised category, never on which agent this is
+  /// (ADR-0002). An agent that advertises no model select has no model pill.
+  it("is null when no option advertises the model category", () => {
+    expect(modelSelectOf([])).toBeNull();
+    expect(modelSelectOf(undefined)).toBeNull();
+    expect(
+      modelSelectOf([
+        { id: "t", name: "Thinking", category: "thought_level", type: "boolean" },
+        // The right category, but not a select — nothing to list.
+        { id: "model", name: "Model", category: "model", type: "boolean", currentValue: true },
+        // A select with no category is unknowable, so not the model pill.
+        {
+          id: "model",
+          name: "Model",
+          type: "select",
+          currentValue: "a",
+          options: [{ value: "a", name: "A" }],
+        },
+      ]),
+    ).toBeNull();
+  });
+
+  /// An empty list is a dead picker, same rule as the generic knobs.
+  it("is null when the model select offers nothing", () => {
+    expect(modelSelectOf([{ ...modelOption, currentValue: "", options: [] }])).toBeNull();
   });
 });
 

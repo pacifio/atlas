@@ -16,7 +16,8 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{Agent, Client, ConnectionTo, Lines};
 use anyhow::{anyhow, Context as _, Result};
 use atlas_acp_thread::{
-    AcpThread, AcpThreadEvent, AcpThreadHandle, AgentConnection, AgentId, AgentSessionConfigOptions,
+    AcpThread, AcpThreadEvent, AcpThreadHandle, AgentConnection, AgentId, AgentModelId,
+    AgentModelInfo, AgentModelList, AgentModelSelector, AgentSessionConfigOptions,
     AgentSessionModes, AuthRequired, ElicitationStore, ElicitationStoreEvent,
     ElicitationStoreHandle, EventSink, LoadError,
     TerminalAuthCommand, build_terminal_auth_command,
@@ -897,6 +898,27 @@ impl AgentConnection for AcpConnection {
         }))
     }
 
+    /// An external agent has a model picker exactly when it advertises a
+    /// `category: "model"` select among its session config options — see
+    /// [`model_select_of`]. Nothing about which agent this is enters the
+    /// decision (ADR-0002).
+    fn model_selector(&self, session_id: &acp::SessionId) -> Option<Arc<dyn AgentModelSelector>> {
+        let options = self
+            .sessions
+            .with_session(session_id, |session| session.config_options.clone())??;
+        model_select_of(
+            &options
+                .config_options
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()),
+        )?;
+        Some(Arc::new(AcpModelSelector {
+            connection: self.connection.clone(),
+            session_id: session_id.clone(),
+            options,
+        }))
+    }
+
     fn session_config_options(
         &self,
         session_id: &acp::SessionId,
@@ -1009,6 +1031,155 @@ impl AgentSessionModes for AcpSessionModes {
             }
         }
         .boxed()
+    }
+}
+
+/// The model picker an agent advertises, projected out of its config options.
+///
+/// ACP has no `models` field on a session: an agent that lets the client choose
+/// a model says so with a `category: "model"` SELECT among its session config
+/// options (schema 1.5.0, `SessionConfigOptionCategory::Model`). Atlas gives
+/// that one option its own composer pill instead of rendering it as a generic
+/// knob, which is why it is lifted out here into the port's model-selector
+/// shape rather than left to `session_config_options`.
+///
+/// The old stack normalised this during `session/new`; the port dropped that
+/// step, and with the frontend still filtering `category: "model"` out of the
+/// generic knobs as "owned elsewhere", model selection disappeared from both
+/// surfaces at once.
+struct ModelSelect {
+    config_id: acp::SessionConfigId,
+    current: acp::SessionConfigValueId,
+    models: Vec<AgentModelInfo>,
+}
+
+fn model_select_of(options: &[acp::SessionConfigOption]) -> Option<ModelSelect> {
+    options.iter().find_map(|option| {
+        if !matches!(
+            option.category,
+            Some(acp::SessionConfigOptionCategory::Model)
+        ) {
+            return None;
+        }
+        let acp::SessionConfigKind::Select(select) = &option.kind else {
+            return None;
+        };
+        // Groups flatten, exactly as `build_snapshot` flattens a grouped
+        // `AgentModelList`: the composer's picker is one list, and a nested
+        // menu would be a new visual pattern.
+        let choices: Vec<&acp::SessionConfigSelectOption> = match &select.options {
+            acp::SessionConfigSelectOptions::Ungrouped(choices) => choices.iter().collect(),
+            acp::SessionConfigSelectOptions::Grouped(groups) => {
+                groups.iter().flat_map(|group| group.options.iter()).collect()
+            }
+            // `#[non_exhaustive]`: a shape this build does not know is not a
+            // list we can render.
+            _ => return None,
+        };
+        // A select with nothing to pick is a dead control.
+        if choices.is_empty() {
+            return None;
+        }
+        Some(ModelSelect {
+            config_id: option.id.clone(),
+            current: select.current_value.clone(),
+            models: choices
+                .into_iter()
+                .map(|choice| AgentModelInfo {
+                    id: AgentModelId::new(choice.value.0.as_ref()),
+                    // An unnamed choice shows its id rather than a blank row —
+                    // the same fallback the frontend's parser makes, so a list
+                    // reads identically whichever path filled it.
+                    name: if choice.name.is_empty() {
+                        choice.value.0.as_ref().into()
+                    } else {
+                        choice.name.as_str().into()
+                    },
+                    description: choice.description.as_deref().map(Into::into),
+                    icon: None,
+                    is_latest: false,
+                    cost: None,
+                    disabled: None,
+                })
+                .collect(),
+        })
+    })
+}
+
+/// Model selection over the config-option wire. Selecting a model is
+/// `session/set_config_option` on the model option's id — there is no separate
+/// `session/set_model` in this protocol version.
+struct AcpModelSelector {
+    connection: ConnectionTo<Agent>,
+    session_id: acp::SessionId,
+    options: ConfigOptions,
+}
+
+impl AcpModelSelector {
+    fn select(&self) -> Result<ModelSelect> {
+        model_select_of(
+            &self
+                .options
+                .config_options
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()),
+        )
+        .ok_or_else(|| anyhow!("this agent no longer advertises a model selector"))
+    }
+}
+
+impl AgentModelSelector for AcpModelSelector {
+    fn list_models(&self) -> BoxFuture<'static, Result<AgentModelList>> {
+        // Already in memory — the agent advertised the list up front and keeps
+        // it current with `config_options_updated`, so this needs no round trip.
+        let models = self.select().map(|select| AgentModelList::Flat(select.models));
+        async move { models }.boxed()
+    }
+
+    fn selected_model(&self) -> BoxFuture<'static, Result<AgentModelInfo>> {
+        let selected = self.select().and_then(|select| {
+            select
+                .models
+                .into_iter()
+                .find(|model| model.id.as_str() == select.current.0.as_ref())
+                .ok_or_else(|| anyhow!("the agent's selected model is not in the list it offers"))
+        });
+        async move { selected }.boxed()
+    }
+
+    fn select_model(&self, model_id: AgentModelId) -> BoxFuture<'static, Result<()>> {
+        let conn = self.connection.clone();
+        let session_id = self.session_id.clone();
+        let options = self.options.clone();
+        let config_id = self.select().map(|select| select.config_id);
+
+        async move {
+            let response = conn
+                .send_request(acp::SetSessionConfigOptionRequest::new(
+                    session_id,
+                    config_id?,
+                    acp::SessionConfigOptionValue::ValueId {
+                        value: acp::SessionConfigValueId::new(model_id.as_str()),
+                    },
+                ))
+                .block_task()
+                .await
+                .map_err(map_acp_error)?;
+
+            // The response carries the authoritative list, so the local view
+            // does not have to guess that the pick took.
+            *options
+                .config_options
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()) = response.config_options;
+            options.notify();
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn watch(&self) -> Option<tokio::sync::watch::Receiver<()>> {
+        Some(self.options.subscribe())
     }
 }
 
@@ -1319,3 +1490,128 @@ mod terminal_auth_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod model_select_tests {
+    use super::*;
+
+    fn option(value: serde_json::Value) -> acp::SessionConfigOption {
+        serde_json::from_value(value).expect("an option this schema understands")
+    }
+
+    fn model_option() -> acp::SessionConfigOption {
+        option(serde_json::json!({
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "select",
+            "currentValue": "sonnet",
+            "options": [
+                { "value": "sonnet", "name": "Sonnet", "description": "Fast" },
+                { "value": "opus", "name": "Opus" },
+            ],
+        }))
+    }
+
+    /// The whole mechanism: ACP has no `models` field, so an agent that lets the
+    /// client pick a model says so with a `category: "model"` select. That is
+    /// what fills the composer's model pill.
+    #[test]
+    fn a_model_category_select_becomes_the_model_list() {
+        let select = model_select_of(&[model_option()]).expect("a model select");
+
+        assert_eq!(select.config_id.0.as_ref(), "model");
+        assert_eq!(select.current.0.as_ref(), "sonnet");
+        let ids: Vec<_> = select
+            .models
+            .iter()
+            .map(|model| model.id.as_str().to_string())
+            .collect();
+        assert_eq!(ids, vec!["sonnet".to_string(), "opus".to_string()]);
+        assert_eq!(select.models[0].name.as_ref(), "Sonnet");
+        assert_eq!(
+            select.models[0].description.as_deref(),
+            Some("Fast"),
+            "the choice's description carries through to the picker row"
+        );
+        assert!(select.models[1].description.is_none());
+    }
+
+    /// Grouped lists flatten, exactly as `build_snapshot` already flattens
+    /// [`AgentModelList::Grouped`]: the composer's picker is one list.
+    #[test]
+    fn a_grouped_model_select_flattens() {
+        let select = model_select_of(&[option(serde_json::json!({
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "select",
+            "currentValue": "gpt-5",
+            "options": [
+                { "group": "openai", "name": "OpenAI",
+                  "options": [{ "value": "gpt-5", "name": "GPT-5" }] },
+                { "group": "local", "name": "Local",
+                  "options": [{ "value": "qwen", "name": "Qwen" }] },
+            ],
+        }))])
+        .expect("a model select");
+
+        let ids: Vec<_> = select
+            .models
+            .iter()
+            .map(|model| model.id.as_str().to_string())
+            .collect();
+        assert_eq!(ids, vec!["gpt-5".to_string(), "qwen".to_string()]);
+    }
+
+    /// Gating is on the advertised category, never on who the agent is. An
+    /// agent that advertises no model select has no model picker — and one that
+    /// does gets it, whatever it is called (ADR-0002).
+    #[test]
+    fn only_a_model_category_select_counts() {
+        // A select, but a different knob.
+        let thought = option(serde_json::json!({
+            "id": "thought",
+            "name": "Thinking",
+            "category": "thought_level",
+            "type": "select",
+            "currentValue": "low",
+            "options": [{ "value": "low", "name": "Low" }],
+        }));
+        // The right category, but not a select — nothing to list.
+        let boolean = option(serde_json::json!({
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "boolean",
+            "currentValue": true,
+        }));
+        // A select with no category at all: unknowable, so not the model pill.
+        let uncategorised = option(serde_json::json!({
+            "id": "model",
+            "name": "Model",
+            "type": "select",
+            "currentValue": "a",
+            "options": [{ "value": "a", "name": "A" }],
+        }));
+
+        assert!(model_select_of(&[]).is_none());
+        assert!(model_select_of(&[thought, boolean, uncategorised]).is_none());
+    }
+
+    /// A select whose option list is empty is a dead control — the picker would
+    /// open onto nothing, so there is no model selection to report.
+    #[test]
+    fn an_empty_model_select_is_no_selector() {
+        assert!(model_select_of(&[option(serde_json::json!({
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "select",
+            "currentValue": "",
+            "options": [],
+        }))])
+        .is_none());
+    }
+}
+

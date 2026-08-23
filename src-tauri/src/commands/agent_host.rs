@@ -797,12 +797,34 @@ impl AgentHost {
         let connection = lock_thread(&handle).connection().clone();
 
         let (current_mode, available_modes) = self.modes_of(&handle, &session_id);
-        let available_models = connection
-            .model_selector(&session_id)
+        let selector = connection.model_selector(&session_id);
+        // A session nobody has picked a model in yet still HAS a current model —
+        // the one the agent defaulted to. Without this the picker opens on no
+        // selection at all.
+        //
+        // This is the PICKER's value and nothing else. `record.current_model` —
+        // what the user actually chose through Atlas — is what stamps the
+        // transcript below, because `snapshot_messages` applies one id to every
+        // assistant run it returns: stamping history with a default read at
+        // snapshot time would relabel turns that ran on a different model.
+        let picker_model = current_model.clone().or_else(|| {
+            selector
+                .as_ref()
+                .and_then(|selector| {
+                    futures::executor::block_on(async { selector.selected_model().await.ok() })
+                })
+                .map(|model| model.id.as_str().to_string())
+                // The native runtime names a session with no BYOK provider
+                // configured "/" — a joined pair of empty strings, not a model.
+                .filter(|id| !id.is_empty() && id != "/")
+        });
+        let available_models = selector
             .and_then(|selector| {
-                // The selector's list is async; the snapshot is a sync read on
-                // the send path. Anything not already known is left empty and
-                // arrives as a `config_options_updated` delta instead.
+                // `AgentModelSelector` is an async interface because the native
+                // agent's list can require work; both implementations here
+                // resolve from state already in memory (an external agent's
+                // list came in with `session/new`), so this never actually
+                // parks. That is what makes a `block_on` safe on the send path.
                 futures::executor::block_on(async { selector.list_models().await.ok() })
             })
             .map(|list| {
@@ -852,7 +874,7 @@ impl AgentHost {
             plugin_id,
             status,
             current_mode,
-            current_model: current_model.clone(),
+            current_model: picker_model,
             available_modes,
             available_models,
             available_commands: thread

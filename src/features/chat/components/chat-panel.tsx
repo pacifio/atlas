@@ -553,19 +553,17 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         if (models.length > 0) {
           useChatStore.getState().actions.setAcpModels(tabId, snap.current_model, models);
         } else {
-          // ACP `session/load` doesn't re-advertise models, so resumed
-          // sessions get an empty snapshot. Fall back to the per-agent cache —
-          // same agent, so no cross-agent leak — which also seeds
-          // `acpCurrentModel` (when unset) so new assistant messages get a
-          // model stamp/badge again in resumed sessions.
+          // An empty snapshot means either that this agent advertises no model
+          // select, or that its config options had not landed yet. Fall back to
+          // the per-agent cache — same agent, so no cross-agent leak — so the
+          // picker is populated either way. The cache holds the LIST only; the
+          // current model comes from the session itself (`acp-models-cache`).
           // Re-read the agent type from the store — the closed-over `session`
           // is the render-time value and can be stale after the await.
           const at = useChatStore.getState().sessions[tabId]?.agentType ?? "claude-code";
           const cached = loadCachedAcpModels(at);
           if (cached && cached.availableModels.length > 0) {
-            useChatStore
-              .getState()
-              .actions.setAcpModels(tabId, cached.currentModel, cached.availableModels);
+            useChatStore.getState().actions.setAcpModels(tabId, null, cached.availableModels);
           }
         }
         // Same backfill for slash commands: a session bound before this
