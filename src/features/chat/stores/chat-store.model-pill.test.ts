@@ -54,6 +54,55 @@ function boundSession() {
   return () => useChatStore.getState().sessions[TAB];
 }
 
+describe("the config-option knobs' snapshot path (#32)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useChatStore.setState({ sessions: {}, activeSessionId: null });
+  });
+
+  /// 3-A: options advertised at `session/new` reach the frontend only through
+  /// the snapshot — an agent that never volunteers a `config_option_update`
+  /// notification otherwise has NO knobs, ever. The snapshot consumers apply
+  /// this the same way they apply models.
+  it("applies the snapshot's config options", () => {
+    const session = boundSession();
+    expect(session().acpConfigOptions).toBeUndefined();
+
+    useChatStore.getState().actions.setAcpConfigOptions(TAB, [
+      {
+        id: "thought",
+        name: "Thinking",
+        category: "thought_level",
+        type: "select",
+        currentValue: "high",
+        options: [{ value: "high", name: "High" }],
+      },
+    ]);
+
+    expect(session().acpConfigOptions).toHaveLength(1);
+  });
+
+  /// The same guard the commands list has: an empty snapshot must not erase a
+  /// list the live delta already delivered, but MAY end the undefined loading
+  /// state for an agent that genuinely advertises nothing.
+  it("does not blank delta-delivered options with an empty snapshot", () => {
+    const session = boundSession();
+    useChatStore.getState().actions.applyAgentDelta({
+      kind: "config_options_updated",
+      session_id: ACP_SESSION,
+      config_options: [{ id: "web", name: "Web search", type: "boolean", currentValue: true }],
+    } as AgentDelta);
+
+    useChatStore.getState().actions.setAcpConfigOptions(TAB, []);
+    expect(session().acpConfigOptions).toHaveLength(1);
+
+    // But undefined -> [] is a real answer: this agent has no knobs.
+    useChatStore.getState().actions.createSession("tab-2", "claude-code");
+    useChatStore.getState().actions.setAcpConfigOptions("tab-2", []);
+    expect(useChatStore.getState().sessions["tab-2"].acpConfigOptions).toEqual([]);
+  });
+});
+
 describe("the model pill's live path", () => {
   beforeEach(() => {
     localStorage.clear();

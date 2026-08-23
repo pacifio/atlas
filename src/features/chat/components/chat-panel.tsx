@@ -429,6 +429,14 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             useChatStore
               .getState()
               .actions.setAcpAvailableCommands(tabId, snap.available_commands ?? []);
+            // And the config-option knobs (#32). The `session/new`
+            // advertisement lives only in the backend cell — a follow-up
+            // notification is optional and most agents never send one, so
+            // without this the effort pill and every other knob simply never
+            // appeared. This also heals the early-delta drop: any
+            // `config_options_updated` emitted before the tab was bound is
+            // re-covered by this snapshot, which is fetched after bind.
+            useChatStore.getState().actions.setAcpConfigOptions(tabId, snap.config_options ?? []);
             // Boot finished (with or without modes) — drop the loading state.
             useChatStore.getState().actions.setAcpModesPending(tabId, false);
           }
@@ -573,6 +581,10 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           useChatStore
             .getState()
             .actions.setAcpAvailableCommands(tabId, snap.available_commands ?? []);
+        }
+        // And the knobs, for the same reasons (#32).
+        if (useChatStore.getState().sessions[tabId]?.acpConfigOptions === undefined) {
+          useChatStore.getState().actions.setAcpConfigOptions(tabId, snap.config_options ?? []);
         }
       } catch {
         // best-effort backfill

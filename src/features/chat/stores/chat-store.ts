@@ -374,6 +374,10 @@ interface ChatActions {
      *  by the session router. Never clobbers a non-empty live list with an
      *  empty snapshot. */
     setAcpAvailableCommands: (sessionId: string, commands: unknown[]) => void;
+    /** Apply a snapshot's config options — the ONLY way an agent's initial
+     *  knobs reach the frontend, since `session/new`'s advertisement lives in
+     *  the backend cell and a follow-up notification is optional (#32). */
+    setAcpConfigOptions: (tabId: string, options: unknown[]) => void;
     /** Native Cersei agent: pick the BYOK provider. Clears the model so the
      *  composer re-selects a default for the new provider before pushing. */
     setCerseiProvider: (sessionId: string, provider: string) => void;
@@ -1041,9 +1045,12 @@ export const useChatStore = createSelectors(
               configId,
               value,
             );
-            // No optimistic local write: the agent answers with a
-            // `config_option_update` carrying the authoritative state, and
-            // guessing here would flicker the control when it disagrees.
+            // No optimistic local write — but not for the reason this once
+            // claimed. A follow-up notification is OPTIONAL and most agents
+            // never send one; the authoritative echo is the set RESPONSE,
+            // which the host now forwards as a `config_options_updated` delta
+            // (#32). The confirmed state arrives through that, so guessing
+            // here would only flicker the control when the agent disagrees.
           } catch (e) {
             console.warn("setConfigOption failed:", e);
           }
@@ -1059,6 +1066,19 @@ export const useChatStore = createSelectors(
               return;
             }
             session.availableCommands = commands;
+          });
+        },
+        setAcpConfigOptions: (tabId, options) => {
+          set((s) => {
+            const session = s.sessions[tabId];
+            if (!session) return;
+            // An empty snapshot must not erase a list the live delta already
+            // delivered; it MAY end the undefined loading state (this agent
+            // advertises no knobs). Same rule as the commands list above.
+            if (options.length === 0 && (session.acpConfigOptions?.length ?? 0) > 0) {
+              return;
+            }
+            session.acpConfigOptions = options;
           });
         },
         setAcpModels: (sessionId, currentModel, availableModels) => {

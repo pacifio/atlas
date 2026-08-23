@@ -313,6 +313,25 @@ impl DeltaProjector {
         });
     }
 
+    /// The confirmed config options a `session/set_config_option` RESPONSE
+    /// carried. The response is the protocol's authoritative echo — a
+    /// follow-up `config_option_update` notification is optional — so the host
+    /// announces it the way it announces a model change: the thread has no
+    /// event for something the thread never saw (#32).
+    pub fn note_config_options(
+        &self,
+        session_id: &acp::SessionId,
+        options: &[acp::SessionConfigOption],
+    ) {
+        let config_options: Vec<serde_json::Value> = options
+            .iter()
+            .map(|option| serde_json::to_value(option).unwrap_or(serde_json::Value::Null))
+            .collect();
+        self.emit_for(session_id, |_| {
+            vec![SessionDelta::ConfigOptionsUpdated { config_options }]
+        });
+    }
+
     pub fn note_compression_saved(&self, session_id: &acp::SessionId, saved_tokens: u64) {
         self.emit_for(session_id, |_| {
             vec![SessionDelta::CompressionSaved { saved_tokens }]

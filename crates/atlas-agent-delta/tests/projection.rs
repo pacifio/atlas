@@ -948,3 +948,43 @@ async fn a_prompt_the_agent_abandoned_before_the_drain_is_still_announced_then_r
     );
     assert!(request_at < resolved_at, "announced before resolved: {kinds:?}");
 }
+
+/// #32 — the authoritative echo of a config-option set is the RESPONSE, not a
+/// follow-up notification (the schema makes the notification optional). The
+/// host forwards the response's list through this announcement; without it,
+/// clicking "high" on the effort pill worked on the agent while the pill
+/// snapped back, because nothing ever told the frontend it took.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_host_announces_config_options_the_set_response_confirmed() {
+    let harness = Harness::start();
+
+    let options: Vec<acp::SessionConfigOption> = vec![serde_json::from_value(serde_json::json!({
+        "id": "thought",
+        "name": "Thinking",
+        "category": "thought_level",
+        "type": "select",
+        "currentValue": "high",
+        "options": [
+            { "value": "low", "name": "Low" },
+            { "value": "high", "name": "High" },
+        ],
+    }))
+    .expect("an option this schema understands")];
+
+    harness
+        .projector
+        .note_config_options(&harness.session_id, &options);
+    harness.expect(1);
+
+    match &harness.recorder.deltas()[0] {
+        SessionDelta::ConfigOptionsUpdated { config_options } => {
+            assert_eq!(config_options.len(), 1);
+            assert_eq!(config_options[0]["id"], "thought");
+            assert_eq!(
+                config_options[0]["currentValue"], "high",
+                "the confirmed value is what moves the pill"
+            );
+        }
+        other => panic!("expected config options, got {other:?}"),
+    }
+}

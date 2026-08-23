@@ -1009,11 +1009,17 @@ impl AgentHost {
                     .unwrap_or_else(|| other.to_string()),
             ),
         };
-        options
+        let confirmed = options
             .set_config_option(acp::SessionConfigId::new(config_id), value)
             .await
-            .map(|_| ())
-            .map_err(HostError::from)
+            .map_err(HostError::from)?;
+        // The response is the authoritative echo — a follow-up notification is
+        // optional, and most agents never send one. Discarding this list is
+        // what made the effort pill snap back: the set WORKED on the agent and
+        // nothing ever told the frontend (#32). Same shape as
+        // `note_model_changed` below, for the same reason.
+        self.projector.note_config_options(&session_id, &confirmed);
+        Ok(())
     }
 
     /// Reasoning effort — a native-agent-only knob, as in Zed.

@@ -265,6 +265,7 @@ export const SessionSidebar = memo(function SessionSidebar({
     setAcpBinding,
     setAcpModes,
     setAcpModels,
+    setAcpConfigOptions,
     setAcpAvailableCommands,
     setSessionAgentType,
     clearSession,
@@ -510,6 +511,9 @@ export const SessionSidebar = memo(function SessionSidebar({
         setAcpModels(targetTabId, snapshot.current_model, snapshot.available_models);
       }
       setAcpAvailableCommands(targetTabId, snapshot.available_commands ?? []);
+      // The knobs travel the same way (#32): the resume snapshot is the only
+      // carrier for an agent that never volunteers a notification.
+      setAcpConfigOptions(targetTabId, snapshot.config_options ?? []);
       setTranscriptLoading(targetTabId, false);
     })();
   };
