@@ -11,31 +11,63 @@
 // `authenticate()` on the live agent so the already-running session picks the
 // new credentials up without a respawn.
 
-import { agents, listenAuthRunDone } from "./agents-api";
+import { agents, listenAuthRunDone, type AuthRunDone } from "./agents-api";
 import { catalogEntry } from "@/features/agents/lib/agent-meta";
 
-/** Resolves when the login subprocess exits. `agents.runAuthMethod` returns as
- *  soon as the process is spawned — completion arrives as an event. */
-function awaitAuthRun(
-  timeoutMs = 5 * 60 * 1000,
-): Promise<{ success: boolean; message: string | null }> {
-  return new Promise((resolve) => {
-    let unlisten: (() => void) | undefined;
-    const timer = setTimeout(() => {
-      unlisten?.();
-      resolve({
-        success: false,
-        message: "Timed out waiting for sign-in to finish.",
-      });
-    }, timeoutMs);
-    void listenAuthRunDone((p) => {
-      clearTimeout(timer);
-      unlisten?.();
-      resolve({ success: p.success, message: p.message });
-    }).then((fn) => {
-      unlisten = fn;
-    });
+/** A completion watcher armed BEFORE the login subprocess exists.
+ *
+ *  Two things have to hold, and neither did.
+ *
+ *  It must be listening before the process can exit. `runAuthMethod` resolves
+ *  with the run id only once the process is spawned, and a login that hands off
+ *  to a browser can be gone by then — firing its completion into an empty room,
+ *  after which sign-in waits out the full timeout for an event already sent.
+ *  So the subscription is awaited first and buffers whatever lands until the
+ *  caller knows which run it is waiting for.
+ *
+ *  And it must resolve only for ITS run. `AuthRunDone.runId` exists precisely
+ *  so two agents signing in at once cannot resolve each other's wait — but the
+ *  filter the API offers was never passed, so the first completion to arrive
+ *  won, whoever it belonged to.
+ */
+async function armAuthRun(): Promise<{
+  wait: (
+    runId: string,
+    timeoutMs?: number,
+  ) => Promise<{ success: boolean; message: string | null }>;
+  dispose: () => void;
+}> {
+  const buffered: AuthRunDone[] = [];
+  let deliver: ((p: AuthRunDone) => void) | null = null;
+  const unlisten = await listenAuthRunDone((p) => {
+    if (deliver) deliver(p);
+    else buffered.push(p);
   });
+
+  return {
+    wait(runId, timeoutMs = 5 * 60 * 1000) {
+      const already = buffered.find((p) => p.runId === runId);
+      if (already) {
+        return Promise.resolve({ success: already.success, message: already.message });
+      }
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          deliver = null;
+          resolve({
+            success: false,
+            message: "Timed out waiting for sign-in to finish.",
+          });
+        }, timeoutMs);
+        deliver = (p) => {
+          if (p.runId !== runId) return;
+          clearTimeout(timer);
+          deliver = null;
+          resolve({ success: p.success, message: p.message });
+        };
+      });
+    },
+    dispose: unlisten,
+  };
 }
 
 /** Run ONE advertised sign-in method end to end. Terminal-command methods run
@@ -49,11 +81,15 @@ export async function runSignInMethod(
   label: string,
 ): Promise<void> {
   if (method.terminalCommand) {
-    const done = awaitAuthRun();
-    await agents.runAuthMethod(agentId, method.id);
-    const result = await done;
-    if (!result.success) {
-      throw new Error(result.message ?? `Signing in to ${label} failed.`);
+    const watcher = await armAuthRun();
+    try {
+      const runId = await agents.runAuthMethod(agentId, method.id);
+      const result = await watcher.wait(runId);
+      if (!result.success) {
+        throw new Error(result.message ?? `Signing in to ${label} failed.`);
+      }
+    } finally {
+      watcher.dispose();
     }
   }
   // The adapters explicitly want this after the CLI login ("then call
