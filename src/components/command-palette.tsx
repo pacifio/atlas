@@ -29,6 +29,7 @@ import {
   Brain,
   Search,
   FolderOpen,
+  Circle,
 } from "lucide-react";
 import type { TabType } from "@/lib/constants";
 
@@ -325,6 +326,14 @@ export function CommandPalette({
         icon: Settings,
         category: "App",
         action: () => openTab("settings", "Settings"),
+      },
+      {
+        id: "open-capture",
+        label: "Open Session Capture",
+        shortcut: "⌘⌥C",
+        icon: Circle,
+        category: "App",
+        action: () => window.dispatchEvent(new CustomEvent("atlas:open-capture")),
       },
     ],
     [

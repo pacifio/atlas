@@ -1415,6 +1415,14 @@ export function App() {
           data: {},
         }),
     },
+    {
+      // ⌘⌥C — open Session Capture (the popover behind the titlebar's
+      // project pill). Local `captureOpen` state lives in `ProjectLabel`,
+      // so this reaches it via the same `atlas:open-capture` event the
+      // command palette entry dispatches.
+      combo: { key: "c", meta: true, alt: true },
+      action: () => window.dispatchEvent(new CustomEvent("atlas:open-capture")),
+    },
     // ── Interface zoom (⌘+ / ⌘- / ⌘0) ──
     // `⌘+` on a US layout arrives as Shift+`=` (e.key === "+"); `⌘=` works too.
     // Both step the global UI scale up; `⌘-` down; `⌘0` resets to 100%.
