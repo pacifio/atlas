@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{bail, Context as _, Result};
 use atlas_acp_thread::AgentId;
@@ -129,12 +129,23 @@ struct State {
     is_fetching: bool,
     fetch_error: Option<String>,
     last_refresh: Option<Instant>,
+    /// Wall-clock time of the last SUCCESSFUL fetch, for "showing cached data
+    /// from …". `Instant` can't cross the wire, which is why this is separate
+    /// from `last_refresh` (a monotonic throttle input).
+    last_success: Option<SystemTime>,
+    /// Bumped once per *completed* refresh, success or failure. A caller that
+    /// waited behind someone else's fetch compares this against the value it
+    /// read on entry to know whether that fetch is its answer.
+    generation: u64,
 }
 
 pub struct AgentRegistryStore {
     data_dir: PathBuf,
     http: Arc<dyn HttpClient>,
     state: Mutex<State>,
+    /// Held across the network fetch so concurrent refreshes serialize instead
+    /// of racing. Async, because it is held across `.await`.
+    refresh_lock: tokio::sync::Mutex<()>,
 }
 
 impl AgentRegistryStore {
@@ -143,6 +154,7 @@ impl AgentRegistryStore {
             data_dir,
             http,
             state: Mutex::new(State::default()),
+            refresh_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -163,15 +175,34 @@ impl AgentRegistryStore {
 
     /// Fetch the registry index and replace the catalogue.
     ///
-    /// A refresh already in flight wins; the second caller returns immediately
-    /// rather than issuing a duplicate request (Zed's `pending_refresh` guard,
-    /// `agent_registry_store.rs:203-206`).
+    /// A refresh already in flight is JOINED, not skipped: the second caller
+    /// waits for it and adopts its outcome. Zed's `pending_refresh` guard
+    /// (`agent_registry_store.rs:203-206`) can return early because its callers
+    /// observe the catalogue reactively; ours returns the catalogue *to the
+    /// caller*, so an early `Ok(())` was a lie — it handed back whatever was in
+    /// memory (on a cold start, nothing) and reported success. That is what made
+    /// the marketplace show "Registry unavailable" on first open and then fill in
+    /// on a manual Refresh: its mount-time refresh collided with the one boot had
+    /// already started.
     pub async fn refresh(&self) -> Result<()> {
+        let generation_on_entry = self.state.lock().unwrap().generation;
+
+        let _guard = self.refresh_lock.lock().await;
+
+        // Someone else's fetch finished while we waited. It is as fresh as one
+        // we would start now, so adopt its outcome rather than re-fetching.
+        {
+            let state = self.state.lock().unwrap();
+            if state.generation != generation_on_entry {
+                return match &state.fetch_error {
+                    Some(error) => bail!("{error}"),
+                    None => Ok(()),
+                };
+            }
+        }
+
         {
             let mut state = self.state.lock().unwrap();
-            if state.is_fetching {
-                return Ok(());
-            }
             state.is_fetching = true;
             state.fetch_error = None;
             state.last_refresh = Some(Instant::now());
@@ -181,10 +212,12 @@ impl AgentRegistryStore {
 
         let mut state = self.state.lock().unwrap();
         state.is_fetching = false;
+        state.generation = state.generation.wrapping_add(1);
         match result {
             Ok(agents) => {
                 state.agents = agents;
                 state.fetch_error = None;
+                state.last_success = Some(SystemTime::now());
                 Ok(())
             }
             Err(error) => {
@@ -241,12 +274,22 @@ impl AgentRegistryStore {
         self.state.lock().unwrap().fetch_error.clone()
     }
 
+    /// Wall-clock time of the last successful fetch — what the marketplace
+    /// dates its cached listing by. `None` means the catalogue on hand, if any,
+    /// came off disk and has never been confirmed against the network.
+    pub fn last_refreshed_at(&self) -> Option<SystemTime> {
+        self.state.lock().unwrap().last_success
+    }
+
     async fn fetch_and_build(&self) -> Result<Vec<RegistryAgent>> {
         let (status, body) = get_body(&*self.http, REGISTRY_URL, REGISTRY_FETCH_TIMEOUT)
             .await
             .context("fetching ACP registry")?;
 
-        if (400..500).contains(&status) {
+        // Any non-2xx, not just 4xx. A 5xx used to fall through to the parser,
+        // so a CDN outage reached the marketplace as "expected value at line 1
+        // column 1" instead of as a server error.
+        if !(200..300).contains(&status) {
             let text = String::from_utf8_lossy(&body);
             bail!("registry status error {status}, response: {text:?}");
         }
@@ -393,7 +436,9 @@ impl AgentRegistryStore {
 
     async fn download_icon(&self, icon_url: &str, icon_path: &Path) -> Result<()> {
         let (status, body) = get_body(&*self.http, icon_url, REGISTRY_ICON_FETCH_TIMEOUT).await?;
-        if (400..500).contains(&status) {
+        // Same rule as the index fetch — and here it also stops a 5xx error page
+        // being written to disk under an `.svg` name and served as an icon.
+        if !(200..300).contains(&status) {
             let text = String::from_utf8_lossy(&body);
             bail!("icon status error {status}, response: {text:?}");
         }

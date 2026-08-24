@@ -652,6 +652,11 @@ pub fn install_manager(app: &AppHandle) {
 
             let _ = registry.refresh().await;
             store.registry_updated();
+            // Announce the catalogue the moment it lands. Detection below can
+            // take seconds — it shells out once per registry agent — and the
+            // marketplace has everything it needs before that starts, so making
+            // it wait is what left "Registry unavailable" on screen.
+            emit_catalog_changed(&app, "registry");
             // Detection runs after the refresh: it probes for the programs the
             // registry names, so a first-run machine with no cached index would
             // otherwise have nothing to look for.

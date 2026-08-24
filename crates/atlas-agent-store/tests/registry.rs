@@ -262,3 +262,72 @@ async fn fetches_the_real_registry_and_installs_a_binary_agent() {
         .components()
         .any(|component| component.as_os_str().to_string_lossy().starts_with("v_")));
 }
+
+/// The regression behind "the marketplace said Registry unavailable until I hit
+/// Refresh": boot starts a refresh, the marketplace mounts and starts its own,
+/// and the second one used to return `Ok(())` immediately over an empty
+/// in-memory catalogue. A caller that gets `Ok` must be able to read the
+/// catalogue that `Ok` is about.
+#[tokio::test]
+async fn a_concurrent_refresh_waits_for_the_one_in_flight() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let http = FakeHttp::new()
+        .with(REGISTRY_URL, 200, index_with(NPX_DISTRIBUTION).into_bytes())
+        .slow(std::time::Duration::from_millis(150));
+    let store = Arc::new(AgentRegistryStore::new(
+        data_dir.path().to_path_buf(),
+        http.clone(),
+    ));
+
+    // Boot's refresh.
+    let first = tokio::spawn({
+        let store = store.clone();
+        async move { store.refresh().await }
+    });
+    // Let it get as far as the (slow) request before the second caller arrives.
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    assert!(store.is_fetching(), "the first refresh should be in flight");
+
+    // The marketplace's mount-time refresh.
+    store.refresh().await.unwrap();
+    assert_eq!(
+        store.agents().len(),
+        1,
+        "the second caller was told the refresh succeeded, so the catalogue must be there"
+    );
+
+    first.await.unwrap().unwrap();
+    assert_eq!(
+        http.request_count(REGISTRY_URL),
+        1,
+        "joining an in-flight refresh must not issue a second request"
+    );
+}
+
+/// The joined caller adopts the outcome, not just the timing: if the fetch it
+/// waited on failed, it fails too rather than reporting a success it never saw.
+#[tokio::test]
+async fn a_concurrent_refresh_adopts_a_failure() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let http = FakeHttp::new()
+        .with(REGISTRY_URL, 500, b"boom".to_vec())
+        .slow(std::time::Duration::from_millis(150));
+    let store = Arc::new(AgentRegistryStore::new(
+        data_dir.path().to_path_buf(),
+        http.clone(),
+    ));
+
+    let first = tokio::spawn({
+        let store = store.clone();
+        async move { store.refresh().await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    let error = store.refresh().await.unwrap_err();
+    assert!(
+        error.to_string().contains("500"),
+        "unexpected error: {error:#}"
+    );
+    assert!(first.await.unwrap().is_err());
+    assert_eq!(http.request_count(REGISTRY_URL), 1);
+}

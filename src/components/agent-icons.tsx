@@ -134,8 +134,46 @@ export const AgentIcons = {
   Kilo: KiloIcon,
 };
 
+/** Does this SVG defer its color to the caller?
+ *
+ *  `currentColor` means "I have no color of my own". Inside an `<img>` that is a
+ *  trap: the SVG is a separate document, CSS does not cascade into it, and
+ *  `currentColor` falls back to the initial value of `color` — **black** — so
+ *  the glyph disappears against Atlas's black surfaces. Every icon in the ACP
+ *  registry is monochrome this way today, which is why every one of them was
+ *  invisible.
+ *
+ *  Cached per data URL: the answer never changes for a given icon, and the grid
+ *  re-renders on every install-progress tick. */
+const deferredColorCache = new Map<string, boolean>();
+function defersColor(dataUrl: string): boolean {
+  const cached = deferredColorCache.get(dataUrl);
+  if (cached !== undefined) return cached;
+  let answer = false;
+  const base64 = dataUrl.slice(dataUrl.indexOf("base64,") + 7);
+  try {
+    answer = dataUrl.includes("base64,")
+      ? atob(base64).includes("currentColor")
+      : decodeURIComponent(dataUrl).includes("currentColor");
+  } catch {
+    // Undecodable: treat it as carrying its own color and just draw it.
+    answer = false;
+  }
+  deferredColorCache.set(dataUrl, answer);
+  return answer;
+}
+
 /** Registry-installed external agent icon — the manifest's SVG delivered as a
- *  base64 data URL (asset protocol can't serve the hidden cache dir). */
+ *  base64 data URL (asset protocol can't serve the hidden cache dir).
+ *
+ *  Two rendering paths, chosen by what the SVG itself asks for:
+ *
+ *  - **`currentColor` (monochrome)** → drawn as a CSS mask filled with
+ *    `currentColor`, so the glyph inherits the surrounding text color exactly
+ *    as the author intended, in any theme. A mask also cannot execute script,
+ *    which matters for artwork fetched from a third-party registry.
+ *  - **anything else (real brand colors)** → drawn as an image, untouched.
+ *    Masking one of these would flatten a multicolor logo to a single tone. */
 export function ExternalAgentIcon({
   dataUrl,
   size = 14,
@@ -145,6 +183,23 @@ export function ExternalAgentIcon({
   size?: number;
   className?: string;
 }) {
+  if (defersColor(dataUrl)) {
+    const mask = `url("${dataUrl}") center / contain no-repeat`;
+    return (
+      <span
+        className={className}
+        style={{
+          display: "inline-block",
+          width: size,
+          height: size,
+          backgroundColor: "currentColor",
+          mask,
+          WebkitMask: mask,
+        }}
+        aria-hidden
+      />
+    );
+  }
   return (
     <img
       src={dataUrl}

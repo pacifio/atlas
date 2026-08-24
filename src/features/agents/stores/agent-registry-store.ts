@@ -28,6 +28,24 @@ interface AgentRegistryState {
    *  components subscribe to instead of the arrays themselves. */
   signature: string;
   hydrated: boolean;
+
+  // ── Registry listing status ────────────────────────────────────────────────
+  // The marketplace renders from here rather than fetching on mount, so opening
+  // Settings → Agents paints the prefetched listing instead of starting from
+  // nothing. These are primitives on purpose: components subscribe to them
+  // directly (the Record-of-objects selector trap only bites on the arrays).
+
+  /** A listing call has returned at least once — distinguishes "still loading"
+   *  from "loaded, and there is genuinely nothing here". */
+  registryLoaded: boolean;
+  /** A network refresh is in flight. Cached entries stay on screen underneath. */
+  registryRefreshing: boolean;
+  /** Last refresh failure, from the backend or the invoke itself. Cleared by a
+   *  refresh that succeeds. */
+  registryError: string | null;
+  /** RFC3339 time of the last successful fetch; `null` = never confirmed
+   *  against the network (cold boot, or disk cache only). */
+  registryRefreshedAt: string | null;
 }
 
 function signatureOf(entries: AcpRegistryEntry[], catalog: AgentCatalogEntry[]): string {
@@ -55,10 +73,18 @@ export const useAgentRegistryStore = create<AgentRegistryState>(() => ({
   catalogById: {},
   signature: "",
   hydrated: false,
+  registryLoaded: false,
+  registryRefreshing: false,
+  registryError: null,
+  registryRefreshedAt: null,
 }));
 
 /** Re-fetch the agent catalog and the registry listing.
- *  Safe to call repeatedly; failures leave the previous state in place. */
+ *  Safe to call repeatedly; failures leave the previous state in place.
+ *
+ *  This is the marketplace's PREFETCH: App.tsx calls it at startup and again on
+ *  every `atlas:agent-catalog:changed`, so by the time the user opens Settings →
+ *  Agents the listing is already here. */
 export async function hydrateAgentRegistry(): Promise<void> {
   try {
     const [listing, catalog] = await Promise.all([
@@ -78,10 +104,59 @@ export async function hydrateAgentRegistry(): Promise<void> {
       catalogById: indexCatalog(entries),
       signature: signatureOf(registryEntries, entries),
       hydrated: true,
+      // A listing that arrived mid-fetch is provisional: `isFetching` says boot's
+      // own refresh is still running, so this is not yet "loaded and empty".
+      registryLoaded: previous.registryLoaded || (listing !== null && !listing.isFetching),
+      registryRefreshing: previous.registryRefreshing || (listing?.isFetching ?? false),
+      registryError: listing ? listing.lastError : previous.registryError,
+      registryRefreshedAt: listing?.lastRefreshedAt ?? previous.registryRefreshedAt,
     });
   } catch {
     // Backend not up yet (early boot) — a later call re-hydrates.
   }
+}
+
+/** In-flight refresh, shared. A second caller joins the first rather than
+ *  issuing a duplicate — the frontend half of the same rule the Rust store now
+ *  follows (`AgentRegistryStore::refresh`). */
+let pendingRefresh: Promise<void> | null = null;
+
+/** Pull a fresh listing from the network, leaving the cached one on screen
+ *  while it runs (stale-while-revalidate).
+ *
+ *  A failure never empties the list: the backend keeps the previous catalogue
+ *  and we keep showing it, annotated with the error. */
+export function refreshAgentRegistry(): Promise<void> {
+  if (pendingRefresh) return pendingRefresh;
+  useAgentRegistryStore.setState({ registryRefreshing: true });
+  pendingRefresh = (async () => {
+    try {
+      const listing = await acpRegistry.refresh();
+      const catalog = await agents.catalog().catch(() => null);
+      const entries = catalog?.entries ?? useAgentRegistryStore.getState().catalog;
+      useAgentRegistryStore.setState({
+        registryEntries: listing.entries,
+        catalog: entries,
+        catalogById: indexCatalog(entries),
+        signature: signatureOf(listing.entries, entries),
+        hydrated: true,
+        registryLoaded: true,
+        registryError: listing.lastError,
+        registryRefreshedAt: listing.lastRefreshedAt,
+      });
+    } catch (error) {
+      useAgentRegistryStore.setState({
+        // Loaded, just not from this attempt — whatever is cached is what the
+        // user sees, and the error explains why it may be stale.
+        registryLoaded: true,
+        registryError: String(error),
+      });
+    } finally {
+      useAgentRegistryStore.setState({ registryRefreshing: false });
+      pendingRefresh = null;
+    }
+  })();
+  return pendingRefresh;
 }
 
 let unlistenCatalog: (() => void) | null = null;

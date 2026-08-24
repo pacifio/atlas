@@ -23,8 +23,13 @@ export interface AcpRegistryEntry {
 
 export interface AcpRegistryListing {
   entries: AcpRegistryEntry[];
+  /** RFC3339 time of the last successful network fetch. `null` means the
+   *  entries (if any) came off the disk cache and were never confirmed. */
   lastRefreshedAt: string | null;
   lastError: string | null;
+  /** A fetch is in flight in the backend right now — so an empty `entries` here
+   *  means "not yet", not "nothing". */
+  isFetching: boolean;
 }
 
 export interface RegistryInstallProgress {

@@ -53,6 +53,9 @@ pub struct RegistryListing {
     pub entries: Vec<RegistryEntryView>,
     pub last_refreshed_at: Option<String>,
     pub last_error: Option<String>,
+    /// A fetch is in flight right now — a listing taken mid-boot is provisional,
+    /// and the marketplace shows it as refreshing rather than as the final word.
+    pub is_fetching: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -115,8 +118,15 @@ fn listing(host: &AgentHost) -> RegistryListing {
     entries.sort_by_key(|entry| entry.name.to_lowercase());
     RegistryListing {
         entries,
-        last_refreshed_at: None,
+        // `None` means "never confirmed against the network" — either a cold
+        // boot or a disk-cache-only catalogue. The marketplace reads it to date
+        // what it is showing instead of implying it is live.
+        last_refreshed_at: host
+            .registry()
+            .last_refreshed_at()
+            .map(|at| chrono::DateTime::<chrono::Utc>::from(at).to_rfc3339()),
         last_error: host.registry().fetch_error(),
+        is_fetching: host.registry().is_fetching(),
     }
 }
 

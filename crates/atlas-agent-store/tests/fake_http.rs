@@ -18,6 +18,9 @@ use futures::StreamExt as _;
 pub struct FakeHttp {
     responses: Mutex<HashMap<String, (u16, Vec<u8>)>>,
     requests: Mutex<Vec<String>>,
+    /// Held before every response, so a test can keep a fetch in flight long
+    /// enough for a second caller to arrive while it is still running.
+    delay: Mutex<Option<std::time::Duration>>,
 }
 
 impl FakeHttp {
@@ -30,6 +33,12 @@ impl FakeHttp {
             .lock()
             .unwrap()
             .insert(url.to_string(), (status, body.into()));
+        self.clone()
+    }
+
+    /// Make every response take `delay`, so concurrent callers overlap.
+    pub fn slow(self: &Arc<Self>, delay: std::time::Duration) -> Arc<Self> {
+        *self.delay.lock().unwrap() = Some(delay);
         self.clone()
     }
 
@@ -57,7 +66,11 @@ impl HttpClient for FakeHttp {
             .get(url)
             .cloned()
             .unwrap_or((404, b"not found".to_vec()));
+        let delay = *self.delay.lock().unwrap();
         Box::pin(async move {
+            if let Some(delay) = delay {
+                tokio::time::sleep(delay).await;
+            }
             Ok(HttpResponse {
                 status,
                 body: futures::stream::once(async move { Ok(body) }).boxed(),

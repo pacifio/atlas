@@ -7,6 +7,13 @@ const api = {
   entries: [] as { id: string; installed: boolean; version: string }[],
   catalog: [] as AgentCatalogEntry[],
   catalogThrows: false,
+  /** Backend-reported state of the listing `list()` hands back. */
+  isFetching: false,
+  lastError: null as string | null,
+  lastRefreshedAt: null as string | null,
+  /** What `refresh()` does: resolve with the current api state, or throw. */
+  refreshThrows: null as string | null,
+  refreshCalls: 0,
 };
 let catalogHandler: (() => void) | null = null;
 const unlisten = vi.fn();
@@ -28,14 +35,33 @@ vi.mock("@/features/chat/lib/agents-api", () => ({
     return Promise.resolve(unlisten);
   },
 }));
+function listingNow() {
+  return {
+    entries: api.entries,
+    lastRefreshedAt: api.lastRefreshedAt,
+    lastError: api.lastError,
+    isFetching: api.isFetching,
+  };
+}
 vi.mock("../lib/agent-registry-api", () => ({
   acpRegistry: {
-    list: () => Promise.resolve({ entries: api.entries, lastRefreshedAt: null, lastError: null }),
+    list: () => Promise.resolve(listingNow()),
+    refresh: () => {
+      api.refreshCalls++;
+      return api.refreshThrows
+        ? Promise.reject(new Error(api.refreshThrows))
+        : Promise.resolve(listingNow());
+    },
   },
 }));
 
-const { useAgentRegistryStore, hydrateAgentRegistry, startCatalogListener, stopCatalogListener } =
-  await import("./agent-registry-store");
+const {
+  useAgentRegistryStore,
+  hydrateAgentRegistry,
+  refreshAgentRegistry,
+  startCatalogListener,
+  stopCatalogListener,
+} = await import("./agent-registry-store");
 
 function entry(e: Partial<AgentCatalogEntry> & Pick<AgentCatalogEntry, "id">): AgentCatalogEntry {
   return {
@@ -52,6 +78,11 @@ beforeEach(() => {
   api.entries = [];
   api.catalog = [];
   api.catalogThrows = false;
+  api.isFetching = false;
+  api.lastError = null;
+  api.lastRefreshedAt = null;
+  api.refreshThrows = null;
+  api.refreshCalls = 0;
   catalogHandler = null;
   unlisten.mockClear();
   stopCatalogListener();
@@ -61,6 +92,10 @@ beforeEach(() => {
     catalogById: {},
     signature: "",
     hydrated: false,
+    registryLoaded: false,
+    registryRefreshing: false,
+    registryError: null,
+    registryRefreshedAt: null,
   });
 });
 
@@ -159,5 +194,68 @@ describe("startCatalogListener", () => {
     startCatalogListener();
     await flush();
     expect(catalogHandler).toBe(first);
+  });
+});
+
+// ── The prefetch contract ────────────────────────────────────────────────────
+// The marketplace renders from this store instead of fetching on mount, so
+// these flags are what decide whether it shows a spinner, cached cards, or
+// "couldn't reach the registry". Getting them wrong is what put "Registry
+// unavailable" on screen while boot's own fetch was still running.
+
+describe("registry listing status", () => {
+  it("does not call an in-flight boot fetch 'loaded'", async () => {
+    // An empty listing taken while the backend is still fetching means "not
+    // yet", not "nothing" — reporting it as loaded is the empty-state bug.
+    api.isFetching = true;
+    api.entries = [];
+    await hydrateAgentRegistry();
+    const s = useAgentRegistryStore.getState();
+    expect(s.registryLoaded).toBe(false);
+    expect(s.registryRefreshing).toBe(true);
+  });
+
+  it("is loaded once a settled listing arrives", async () => {
+    api.entries = [{ id: "amp-acp", installed: false, version: "1.0.0" }];
+    await hydrateAgentRegistry();
+    expect(useAgentRegistryStore.getState().registryLoaded).toBe(true);
+  });
+
+  it("keeps the cached entries when a refresh fails, and records why", async () => {
+    // Stale beats empty: the backend keeps the previous catalogue on a failed
+    // fetch, and so must we — with the error attached to explain the staleness.
+    api.entries = [{ id: "amp-acp", installed: false, version: "1.0.0" }];
+    await hydrateAgentRegistry();
+
+    api.refreshThrows = "network is unreachable";
+    await refreshAgentRegistry();
+
+    const s = useAgentRegistryStore.getState();
+    expect(s.registryEntries).toHaveLength(1);
+    expect(s.registryError).toContain("network is unreachable");
+    expect(s.registryRefreshing).toBe(false);
+    expect(s.registryLoaded).toBe(true);
+  });
+
+  it("clears a previous error once a refresh succeeds", async () => {
+    api.refreshThrows = "offline";
+    await refreshAgentRegistry();
+    expect(useAgentRegistryStore.getState().registryError).toBeTruthy();
+
+    api.refreshThrows = null;
+    api.entries = [{ id: "amp-acp", installed: false, version: "1.0.0" }];
+    api.lastRefreshedAt = "2026-08-25T00:00:00Z";
+    await refreshAgentRegistry();
+
+    const s = useAgentRegistryStore.getState();
+    expect(s.registryError).toBeNull();
+    expect(s.registryRefreshedAt).toBe("2026-08-25T00:00:00Z");
+  });
+
+  it("joins a refresh already in flight instead of issuing a second", async () => {
+    // Same rule as the Rust store: the marketplace's mount-time refresh and a
+    // manual Refresh must not become two fetches.
+    await Promise.all([refreshAgentRegistry(), refreshAgentRegistry(), refreshAgentRegistry()]);
+    expect(api.refreshCalls).toBe(1);
   });
 });
