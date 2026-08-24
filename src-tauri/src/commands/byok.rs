@@ -255,20 +255,26 @@ pub fn byok_env_list(app: AppHandle) -> Vec<EnvKeyMeta> {
 }
 
 /// Map the env-sourced keys onto the variable spellings the installed agent
-/// CLIs actually read. Google gets both spellings — the Vercel AI SDK stack
-/// inside opencode reads `GOOGLE_GENERATIVE_AI_API_KEY`, other tooling reads
-/// `GEMINI_API_KEY` — so a user who exported either gets both.
+/// CLIs actually read.
+///
+/// [`ENV_KEY_VARS`] is the single source of truth for BOTH directions —
+/// recognising a key the user exported, and handing it to an agent. Keeping two
+/// lists is what broke this: injection covered only six providers while the
+/// settings page happily stored twenty-two, so a user who saved a Mistral, xAI
+/// or DeepSeek key had it accepted and then silently never delivered, and the
+/// agent kept insisting it had no credentials.
+///
+/// Injecting under EVERY recognised spelling (not just a canonical one) is
+/// deliberate: agents disagree about names — the Vercel AI SDK stack inside
+/// opencode reads `GOOGLE_GENERATIVE_AI_API_KEY`, the Gemini CLI reads
+/// `GEMINI_API_KEY`. An extra var an agent doesn't know is inert.
 fn agent_key_env() -> std::collections::HashMap<String, String> {
     let inject_vars = |provider: &str| -> &'static [&'static str] {
-        match provider {
-            "anthropic" => &["ANTHROPIC_API_KEY"],
-            "openai" => &["OPENAI_API_KEY"],
-            "openrouter" => &["OPENROUTER_API_KEY"],
-            "google" => &["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
-            "groq" => &["GROQ_API_KEY"],
-            "deepinfra" => &["DEEPINFRA_API_KEY"],
-            _ => &[],
-        }
+        ENV_KEY_VARS
+            .iter()
+            .find(|(p, _)| *p == provider)
+            .map(|(_, vars)| *vars)
+            .unwrap_or(&[])
     };
     let mut env = std::collections::HashMap::new();
     for (provider, ek) in env_keys() {
@@ -290,8 +296,8 @@ fn agent_key_env() -> std::collections::HashMap<String, String> {
 /// still win. Called at boot and after every key add/remove; live agents keep
 /// their env until respawned.
 pub fn sync_agent_key_env(app: &AppHandle) {
-    if let Some(registry) = app.try_state::<atlas_registry::RegistryStore>() {
-        registry.set_agent_env(agent_key_env());
+    if let Some(host) = app.try_state::<std::sync::Arc<super::agent_host::AgentHost>>() {
+        host.store().set_byok_env(agent_key_env());
     }
 }
 
@@ -558,4 +564,120 @@ pub fn byok_env_unset(app: AppHandle, env_var: String) -> Result<(), String> {
 #[tauri::command]
 pub fn byok_get(_app: AppHandle, provider: String) -> Result<Option<String>, String> {
     Ok(env_keys().get(&provider).map(|k| k.key.clone()))
+}
+
+// ── Auth-checklist env probes (agents_auth_env_status) ──────────────────────
+
+
+/// The env vars that satisfy a provider, in preference order. Empty for a
+/// provider the BYOK table has never heard of.
+#[must_use]
+pub fn env_vars_for_provider(provider: &str) -> &'static [&'static str] {
+    ENV_KEY_VARS
+        .iter()
+        .find(|(p, _)| *p == provider)
+        .map(|(_, vars)| *vars)
+        .unwrap_or(&[])
+}
+
+/// Where a variable's value was found. Never carries the value itself — the
+/// auth UI only ever needs to say "this is set", and routing secrets through an
+/// extra surface is how they end up in a log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EnvVarSource {
+    /// Exported in the environment Atlas itself was launched with.
+    ProcessEnv,
+    /// Found by the login-shell probe, i.e. it lives in `~/.zshrc` & friends.
+    ShellEnv,
+}
+
+/// Whether `name` is set, and where it came from (R5).
+///
+/// Process env is checked first and wins: a var exported in the terminal that
+/// launched Atlas is more current than whatever the shell profile says. Falls
+/// back to the cached login-shell probe, which is what makes a key the user put
+/// in `~/.zshrc` visible to an app launched from Finder — the case the whole
+/// env-BYOK model depends on.
+pub fn env_var_source(name: &str) -> Option<EnvVarSource> {
+    if std::env::var(name).is_ok_and(|v| !v.trim().is_empty()) {
+        return Some(EnvVarSource::ProcessEnv);
+    }
+    env_state()
+        .read()
+        .by_var
+        .get(name)
+        .filter(|v| !v.trim().is_empty())
+        .map(|_| EnvVarSource::ShellEnv)
+}
+
+/// Probe the login shell for variables the standard [`ENV_KEY_VARS`] sweep does
+/// not cover — an agent's `env_var` auth method may name anything.
+///
+/// Results are merged into the shared cache so a second lookup for the same var
+/// is free. Deliberately does nothing when every name is already known: each
+/// call costs a `$SHELL -lic` spawn, and the auth modal re-checks on every
+/// `atlas:byok-env-updated`.
+pub fn ensure_vars_probed(names: &[String]) {
+    let unknown: Vec<&str> = {
+        let state = env_state().read();
+        names
+            .iter()
+            .filter(|n| !state.by_var.contains_key(n.as_str()))
+            .filter(|n| std::env::var(n.as_str()).is_err())
+            .map(String::as_str)
+            .collect()
+    };
+    if unknown.is_empty() {
+        return;
+    }
+    let found = probe_shell_vars(&unknown);
+    let mut state = env_state().write();
+    for (var, value) in found {
+        state.by_var.entry(var).or_insert(value);
+    }
+}
+
+fn probe_shell_vars(vars: &[&str]) -> BTreeMap<String, String> {
+    if vars.is_empty() {
+        return BTreeMap::new();
+    }
+    let fmt: String = vars
+        .iter()
+        .map(|v| format!("\"${{{v}}}\""))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let script = format!(
+        "printf 'ATLAS_ENV_PROBE\x1f'; printf '%s\x1f' {fmt}"
+    );
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let child = std::process::Command::new(&shell)
+        .args(["-lic", &script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let Ok(child) = child else { return BTreeMap::new() };
+    let pid = child.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let out = match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(Ok(out)) if out.status.success() => out,
+        _ => {
+            let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).status();
+            return BTreeMap::new();
+        }
+    };
+    let raw = String::from_utf8_lossy(&out.stdout);
+    let Some(after) = raw.rsplit("ATLAS_ENV_PROBE").next() else {
+        return BTreeMap::new();
+    };
+    let values: Vec<&str> = after.split('').collect();
+    vars.iter()
+        .zip(values)
+        .filter(|(_, v)| !v.trim().is_empty())
+        .map(|(var, v)| ((*var).to_string(), v.trim().to_string()))
+        .collect()
 }

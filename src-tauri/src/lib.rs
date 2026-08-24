@@ -7,8 +7,6 @@ mod telemetry;
 
 use std::sync::Arc;
 
-use atlas_acp::AgentRegistry;
-use commands::claude::ClaudeSessionIndex;
 use commands::cli::CliLaunchState;
 use commands::fileindex::FileIndexState;
 use commands::git_watcher::GitWatcherState;
@@ -16,7 +14,6 @@ use commands::knowledge_links::KnowledgeLinksState;
 use commands::knowledge_meta::KnowledgeMetaState;
 use commands::mention_search::MentionCacheState;
 use commands::recent_files::RecentFilesState;
-use commands::sessions_watch::SessionsWatchState;
 use commands::terminal::TerminalState;
 use parking_lot::Mutex;
 use state::{AppState, AppStateHandle};
@@ -42,7 +39,7 @@ pub fn run() {
 
     // Strip CLAUDECODE so child ACP agents (canonical claude-code-acp) don't
     // refuse to start when Atlas was launched from a parent Claude Code shell.
-    atlas_acp::sanitize_host_env();
+    atlas_agent_servers::sanitize_host_env();
 
     // Parse argv for an initial project path BEFORE tauri::Builder starts
     // so the webview boot path can read it via `cli_take_initial_project_path`.
@@ -259,7 +256,6 @@ pub fn run() {
         .manage(commands::browser::BrowserState::new())
         .manage(TerminalState::new())
         .manage(commands::modelchat::ModelChatState::new())
-        .manage(AgentRegistry::new())
         .manage(FileIndexState::new())
         .manage(GitWatcherState::new())
         .manage(RecentFilesState::new())
@@ -267,8 +263,6 @@ pub fn run() {
         .manage(Arc::new(KnowledgeMetaState::new()))
         .manage(Arc::new(KnowledgeLinksState::new()))
         .manage(CliLaunchState::new(initial_project))
-        .manage(SessionsWatchState::new())
-        .manage(ClaudeSessionIndex::new())
         .manage(commands::memory_sharing::MemorySharingState::new())
         .manage(commands::shared_memory::SharedMemoryStore::new())
         // Owns the per-Workspace session stores and the capture worker
@@ -349,6 +343,8 @@ pub fn run() {
             commands::git::git_diff_all,
             commands::git::git_workspace_summary,
             commands::mission_control::mission_control_usage,
+            commands::usage::agent_session_usage,
+            commands::usage::agent_project_usage,
             commands::mission_control::mission_control_export_markdown,
             commands::mission_control::mission_control_write_file,
             commands::git::git_diff_file,
@@ -451,15 +447,10 @@ pub fn run() {
             commands::github::delete_cloned_repo,
             // Legacy Claude-CLI subprocess commands (claude_run/stream/stop/check/version)
             // were replaced by ACP. Session-history readers below are still in use.
-            commands::claude::list_claude_sessions,
             commands::gitdiff::git_diff_structured,
             commands::gitdiff::diff_structured_text,
             commands::gitdiff::git_commit_changed_files,
             commands::gitdiff::git_diff_line_status,
-            commands::claude::delete_claude_session,
-            commands::claude::read_claude_session,
-            commands::claude::claude_session_stats,
-            commands::claude::project_usage_stats,
             commands::search::search_in_files,
             commands::project_session::save_project_session,
             commands::project_session::load_project_session,
@@ -519,15 +510,17 @@ pub fn run() {
             commands::cli::cli_status,
             commands::cli::cli_install_helper,
             commands::cli::cli_take_initial_project_path,
-            commands::node_setup::node_check,
-            commands::node_setup::node_install,
             commands::registry::acp_registry_list,
             commands::registry::acp_registry_refresh,
             commands::registry::acp_registry_install,
+            commands::registry::acp_registry_install_detected,
             commands::registry::acp_registry_uninstall,
-            commands::registry::acp_registry_install_custom,
-            commands::registry::acp_registry_set_env,
             commands::registry::acp_registry_metadata,
+            // The unified read surface. `agents_list_plugins` /
+            // `acp_registry_list` stay registered and delegating for one
+            // release so a stale frontend keeps working.
+            commands::catalog::agents_catalog,
+            commands::catalog::agents_catalog_refresh,
             commands::agents::agents_list_plugins,
             commands::agents::agents_list_running,
             commands::agents::agents_spawn,
@@ -535,13 +528,22 @@ pub fn run() {
             commands::agents::agents_new_session,
             commands::agents::agents_load_session,
             commands::agents::agents_replay_transcript,
+            commands::agents::agent_transcripts_list,
+            commands::agents::agent_transcripts_read,
+            commands::agents::threads_resume,
+            commands::agents::threads_delete,
+            commands::agents::threads_import_candidates,
+            commands::agents::threads_import,
+            commands::agents::threads_projects,
+            commands::agents::threads_history,
+            commands::agents::threads_archive,
+            commands::agents::agent_transcripts_delete,
             commands::agents::agents_snapshot,
             commands::agents::agents_snapshot_meta,
             commands::agents::agents_send,
             commands::agents::agents_cancel,
             commands::agents::agents_set_mode,
             commands::agents::agents_set_model,
-            commands::agents::agents_set_config_option,
             commands::agents::agents_set_effort,
             commands::agents::agents_set_compress,
             commands::mcp::mcp_list,
@@ -550,6 +552,13 @@ pub fn run() {
             commands::models_pricing::models_pricing_refresh,
             commands::agents::agents_respond_permission,
             commands::agents::agents_list_auth_methods,
+            commands::agents::agents_auth_env_status,
+            commands::agents::agents_logout,
+            commands::agents::agents_set_config_option,
+            commands::agents::agents_respond_elicitation,
+            commands::agents::agents_fork_session,
+            commands::agents::agents_agent_sessions,
+            commands::agents::agents_delete_agent_session,
             commands::agents::agents_run_auth_method,
             commands::agents::agents_authenticate,
             commands::agents::agents_drop_session,
@@ -570,15 +579,8 @@ pub fn run() {
             commands::fileindex::fileindex_search,
             commands::fileindex::fileindex_search_dirs,
             commands::fileindex::fileindex_status,
-            commands::sessions_watch::sessions_watch_open,
-            commands::sessions_watch::sessions_watch_close,
-            commands::sessions_watch::sessions_watch_status,
             commands::plans::plans_load,
             commands::plans::plans_append,
-            commands::agent_memory::list_codex_sessions,
-            commands::agent_memory::codex_delete_session,
-            commands::kilo::list_kilo_sessions,
-            commands::kilo::kilo_delete_session,
             commands::memory_graph::memory_embed_status,
             commands::memory_graph::memory_embed_download,
             commands::memory_graph::memory_index_build,
@@ -653,10 +655,10 @@ pub fn run() {
                     // child's stdin; the SDK reaps it). `process::exit` skips
                     // Drop impls, so this must happen before the exit — with a
                     // short bounded grace for the async teardown to run.
-                    if let Some(manager) =
-                        app_handle.try_state::<atlas_agents::AgentManager>()
+                    if let Some(host) = app_handle
+                        .try_state::<Arc<commands::agent_host::AgentHost>>()
                     {
-                        manager.shutdown();
+                        host.shutdown();
                         std::thread::sleep(std::time::Duration::from_millis(500));
                     }
                 }

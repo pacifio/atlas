@@ -2,32 +2,46 @@
 //!
 //! Unlike the Claude Code / Codex agents (external subprocesses speaking ACP),
 //! this agent runs *inside* the Atlas process: it drives a `cersei::Agent`
-//! directly and **adapts Cersei's `AgentEvent` stream into the same `AcpEvent`
-//! contract** the ACP driver emits ([`atlas_acp::EventSink`]). That lets
-//! `atlas-agents`' dispatch/state/UI path consume it with zero changes —
-//! streaming text, thinking, tool cards, permission prompts, and turn lifecycle
-//! all flow through the existing pipeline.
+//! directly and adapts Cersei's `AgentEvent` stream into [`NativeEvent`]s —
+//! streaming text, thinking, tool cards, permission prompts, and turn lifecycle.
 //!
-//! `CerseiRuntime` mirrors the slice of `atlas_acp::AgentRegistry`'s API that
-//! `atlas-agents`' manager + worker call, so a thin `AgentBackend` adapter in
-//! atlas-agents can route to either backend.
+//! # This crate names no protocol version
+//!
+//! It used to emit the old ACP stack's `AcpEvent`, which put `agent-client-protocol` 1.3
+//! in its dependency graph. Because that crate pins its schema crate exactly
+//! (1.3 → `=1.4.0`, 2.0 → `=1.5.0`), no Cargo graph can hold both versions — so
+//! a runtime that speaks 1.3 can never be linked by the ported stack, which is
+//! on 2.0. The runtime therefore speaks neither: it emits [`NativeEvent`] and
+//! each consumer renders it in its own protocol version. See [`events`].
+//!
+//! Two consumers exist during the port:
+//!
+//! - `atlas-native-agent` adapts [`NativeEvent`] onto the ported
+//!   `AgentConnection` seam, so the host treats it like any other agent.
+//! - `atlas-native-agent` (ported stack) applies it to an
+//!   `atlas_acp_thread::AcpThread`; that crate is where Cersei implements the
+//!   ported `AgentConnection`. It is a separate crate only because this one
+//!   must stay linkable from both stacks until the old one is deleted.
 
 mod context;
+pub mod events;
 mod mcp;
 pub mod tools;
 mod memory;
 mod provider;
 mod store;
 
+pub use events::{
+    AgentId, AgentInfo, Error, NativeEvent, NativeEventSink, NewSessionInfo, PermissionDecision,
+    PermissionOptionKind, PermissionOptionSpec, PermissionToolCall, Result, SessionId,
+};
 pub use memory::{MemDoc, MemorySearchFn, register_memory_search};
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use agent_client_protocol::schema::v1 as acp_schema;
 use async_trait::async_trait;
-use atlas_acp::{AcpError, AcpEvent, AgentId, AgentInfo, EventSink, NewSessionInfo, Result, SessionId};
 use cersei::prelude::{PermissionDecision as CerseiDecision, PermissionPolicy, PermissionRequest};
 use cersei::tools::PermissionLevel;
 use cersei::types::Message;
@@ -94,7 +108,24 @@ const ATLAS_GUIDANCE: &str = r#"You are Atlas, a coding agent embedded natively 
 - Don't write "Let me read the file." before a tool call — just make the call; the UI shows it. No colons trailing into a tool call.
 - Report outcomes faithfully: if something failed, say so with the evidence; if you skipped a step, note it; when it's done and verified, state it plainly without hedging."#;
 
-/// One historical conversation item, in a UI-neutral shape so `atlas-agents`
+/// Builds the provider a turn runs against, in place of the BYOK-configured
+/// one. Only [`CerseiRuntime::set_provider_factory`] installs one, and that is
+/// test-only.
+pub type ProviderFactoryOverride =
+    Arc<dyn Fn() -> Box<dyn cersei::provider::Provider + Send + Sync> + Send + Sync>;
+
+/// A model the native agent can be pointed at.
+///
+/// `id` is the `provider/model` form [`CerseiRuntime::set_model`] accepts, so a
+/// picker can round-trip a choice without knowing how the two halves combine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ModelChoice {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+}
+
+/// One historical conversation item, in a UI-neutral shape so the host
 /// can rebuild its own `Message` type on resume without depending on Cersei.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -122,6 +153,11 @@ struct Inner {
     /// App config dir (holds `byok-keys.json` + `cersei-sessions/`).
     config_dir: PathBuf,
     agents: DashMap<AgentId, AgentEntry>,
+    /// Set only by [`CerseiRuntime::set_provider_factory`], which exists only
+    /// under `cfg(test)` / the `test-support` feature. In a normal build
+    /// nothing can populate it, so a turn always resolves its provider from the
+    /// BYOK keys on disk.
+    provider_override: Mutex<Option<ProviderFactoryOverride>>,
     /// MCP servers, connected once on first use. `None` = none configured /
     /// none connected. Connecting spawns subprocess servers, so it's cached for
     /// the app session (edits to `mcp-servers.json` apply on restart).
@@ -129,7 +165,7 @@ struct Inner {
 }
 
 struct AgentEntry {
-    sink: Arc<dyn EventSink>,
+    sink: Arc<dyn NativeEventSink>,
     sessions: DashMap<String, Arc<SessionEntry>>,
 }
 
@@ -184,11 +220,11 @@ impl Drop for BusyGuard {
 /// producing turn's identity, so the adapter helpers below don't have to
 /// thread the stamp through every call.
 struct TurnStampedSink {
-    inner: Arc<dyn EventSink>,
+    inner: Arc<dyn NativeEventSink>,
     turn: Option<u64>,
 }
-impl EventSink for TurnStampedSink {
-    fn emit(&self, agent_id: AgentId, event: AcpEvent, turn: Option<u64>) {
+impl NativeEventSink for TurnStampedSink {
+    fn emit(&self, agent_id: AgentId, event: NativeEvent, turn: Option<u64>) {
         self.inner.emit(agent_id, event, turn.or(self.turn));
     }
 }
@@ -199,14 +235,29 @@ impl CerseiRuntime {
             inner: Arc::new(Inner {
                 config_dir,
                 agents: DashMap::new(),
+                provider_override: Mutex::new(None),
                 mcp: tokio::sync::OnceCell::new(),
             }),
         }
     }
 
+    /// Run turns against `factory`'s provider instead of one built from the
+    /// BYOK keys on disk.
+    ///
+    /// A turn is the one thing in this runtime that needs a real model behind
+    /// it, and that is exactly what a test cannot have. With an override in
+    /// place the rest of the turn — the agent loop, the tools, the permission
+    /// policy, the event stream — runs for real against a scripted model.
+    ///
+    /// Gated so it cannot be reached from a shipping build.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_provider_factory(&self, factory: Option<ProviderFactoryOverride>) {
+        *self.inner.provider_override.lock() = factory;
+    }
+
     /// Register a native agent. No process is spawned — this just allocates an
     /// id and stashes the event sink the turn loop will emit through.
-    pub fn spawn(&self, sink: Arc<dyn EventSink>) -> AgentInfo {
+    pub fn spawn(&self, sink: Arc<dyn NativeEventSink>) -> AgentInfo {
         let agent_id = AgentId::new();
         self.inner.agents.insert(
             agent_id,
@@ -255,10 +306,6 @@ impl CerseiRuntime {
             session_id: SessionId::new(session_id),
             modes: Some(modes_blob("default")),
             models: None,
-            // The native agent exposes its knobs (provider/model/effort/
-            // compress) through its own composer pills, not ACP config
-            // options.
-            config_options: None,
         })
     }
 
@@ -269,7 +316,7 @@ impl CerseiRuntime {
         agent_id: AgentId,
         session_id: SessionId,
         cwd: PathBuf,
-    ) -> Result<atlas_acp::LoadedSessionInfo> {
+    ) -> Result<Option<serde_json::Value>> {
         let agent = self.agent(agent_id)?;
         let sid = session_id_str(&session_id);
         let cwd_str = cwd.to_string_lossy().into_owned();
@@ -298,10 +345,7 @@ impl CerseiRuntime {
             busy: AtomicBool::new(false),
         });
         agent.sessions.insert(sid, entry);
-        Ok(atlas_acp::LoadedSessionInfo {
-            modes: Some(modes_blob("default")),
-            config_options: None,
-        })
+        Ok(Some(modes_blob("default")))
     }
 
     /// UI-facing transcript for a stored session (for replay on resume).
@@ -484,7 +528,7 @@ impl CerseiRuntime {
         &self,
         agent_id: AgentId,
         request_id: Uuid,
-        decision: atlas_acp::PermissionDecision,
+        decision: PermissionDecision,
     ) -> Result<()> {
         let agent = self.agent(agent_id)?;
         // The request id is unique across sessions; find whichever session holds it.
@@ -494,10 +538,10 @@ impl CerseiRuntime {
                 return Ok(());
             }
         }
-        Err(AcpError::UnknownPermissionRequest(request_id))
+        Err(Error::UnknownPermissionRequest(request_id))
     }
 
-    /// Drive one prompt turn to completion, emitting `AcpEvent`s as it streams.
+    /// Drive one prompt turn to completion, emitting `NativeEvent`s as it streams.
     /// Returns the lowercased stop-reason token the worker forwards as
     /// `TurnFinished`.
     pub async fn send_prompt(
@@ -514,7 +558,7 @@ impl CerseiRuntime {
         // would silently drop the other turn's messages. The actor serializes
         // sends per session; this is the backstop for any other caller.
         if entry.busy.swap(true, Ordering::SeqCst) {
-            return Err(AcpError::other(
+            return Err(Error::other(
                 "a turn is already running for this session; cancel it or wait for it to finish",
             ));
         }
@@ -525,7 +569,7 @@ impl CerseiRuntime {
             let t = entry.turn_seq.load(Ordering::SeqCst);
             (t > 0).then_some(t)
         };
-        let sink: Arc<dyn EventSink> = Arc::new(TurnStampedSink {
+        let sink: Arc<dyn NativeEventSink> = Arc::new(TurnStampedSink {
             inner: agent.sink.clone(),
             turn,
         });
@@ -546,17 +590,28 @@ impl CerseiRuntime {
         // Resolve provider + key.
         let provider_id = entry.provider.lock().clone();
         let model = entry.model.lock().clone();
-        if provider_id.is_empty() || model.is_empty() {
-            return Err(AcpError::other(
-                "No model selected for the Atlas agent. Add an API key in Settings → API Keys and pick a model.",
-            ));
-        }
-        let api_key = store::byok_get(&self.inner.config_dir, &provider_id).ok_or_else(|| {
-            AcpError::other(format!(
-                "No API key configured for '{provider_id}'. Add one in Settings → API Keys."
-            ))
-        })?;
-        let provider = provider::build_provider(&provider_id, &api_key, &model).map_err(AcpError::other)?;
+        let provider_override = self.inner.provider_override.lock().clone();
+        let (provider, api_key) = match &provider_override {
+            // A scripted model needs no key, and the id/model pair is whatever
+            // the caller set — only the persistence path reads them.
+            Some(factory) => (factory(), String::new()),
+            None => {
+                if provider_id.is_empty() || model.is_empty() {
+                    return Err(Error::other(
+                        "No model selected for the Atlas agent. Add an API key in Settings → API Keys and pick a model.",
+                    ));
+                }
+                let api_key =
+                    store::byok_get(&self.inner.config_dir, &provider_id).ok_or_else(|| {
+                        Error::other(format!(
+                            "No API key configured for '{provider_id}'. Add one in Settings → API Keys."
+                        ))
+                    })?;
+                let provider = provider::build_provider(&provider_id, &api_key, &model)
+                    .map_err(Error::other)?;
+                (provider, api_key)
+            }
+        };
 
         let history = entry.history.lock().clone();
         let mode = entry.mode.lock().clone();
@@ -580,7 +635,10 @@ impl CerseiRuntime {
         // conversation + the coding toolset, runs on the SAME provider/model via
         // the factory below, and cannot delegate further (depth-capped). The
         // batch runs children concurrently (default 3 in flight).
-        let provider_factory: ProviderFactory = {
+        let provider_factory: ProviderFactory = if let Some(factory) = provider_override.clone() {
+            // Sub-agents run on the same model as their parent, override included.
+            Arc::new(move || Ok(factory()))
+        } else {
             let pid = provider_id.clone();
             let key = api_key.clone();
             let m = model.clone();
@@ -672,7 +730,7 @@ impl CerseiRuntime {
         }
         let built = builder
             .build()
-            .map_err(|e| AcpError::other(format!("build agent: {e}")))?;
+            .map_err(|e| Error::other(format!("build agent: {e}")))?;
         let built = Arc::new(built);
 
         let mut stream = built.run_stream(&text);
@@ -742,7 +800,7 @@ impl CerseiRuntime {
         if saved_tokens > 0 {
             sink.emit(
                 agent_id,
-                AcpEvent::CompressionSaved {
+                NativeEvent::CompressionSaved {
                     session_id: session_id.clone(),
                     saved_tokens,
                 },
@@ -780,7 +838,7 @@ impl CerseiRuntime {
             turn_error.as_deref(),
         );
         if let Some(e) = turn_error {
-            return Err(AcpError::other(e));
+            return Err(Error::other(e));
         }
         Ok(stop)
     }
@@ -788,7 +846,7 @@ impl CerseiRuntime {
     // ── internals ─────────────────────────────────────────────────────────────
 
     fn agent(&self, agent_id: AgentId) -> Result<dashmap::mapref::one::Ref<'_, AgentId, AgentEntry>> {
-        self.inner.agents.get(&agent_id).ok_or(AcpError::UnknownAgent)
+        self.inner.agents.get(&agent_id).ok_or(Error::UnknownAgent)
     }
 
     fn session(&self, agent_id: AgentId, session_id: &str) -> Result<Arc<SessionEntry>> {
@@ -797,7 +855,41 @@ impl CerseiRuntime {
             .sessions
             .get(session_id)
             .map(|e| e.value().clone())
-            .ok_or(AcpError::UnknownSession)
+            .ok_or(Error::UnknownSession)
+    }
+
+    /// The models a user can pick for this agent right now: one entry per
+    /// configured BYOK provider, at that provider's default model.
+    ///
+    /// The runtime's own view is deliberately narrow — Atlas's full per-provider
+    /// model catalogue lives in the BYOK layer above it, which is also where a
+    /// user types a model id the runtime has never heard of. Everything here is
+    /// derived from what has a key on disk, so an empty list means "no keys
+    /// configured", which is exactly what a picker should show.
+    pub fn configured_models(&self) -> Vec<ModelChoice> {
+        store::byok_providers(&self.inner.config_dir)
+            .into_iter()
+            .filter_map(|provider| {
+                let model = provider::default_model_for(&provider)?;
+                Some(ModelChoice {
+                    id: format!("{provider}/{model}"),
+                    provider,
+                    model: model.to_string(),
+                })
+            })
+            .collect()
+    }
+
+    /// The session's current `provider/model`.
+    pub fn session_model(&self, agent_id: AgentId, session_id: &str) -> Result<ModelChoice> {
+        let entry = self.session(agent_id, session_id)?;
+        let provider = entry.provider.lock().clone();
+        let model = entry.model.lock().clone();
+        Ok(ModelChoice {
+            id: format!("{provider}/{model}"),
+            provider,
+            model,
+        })
     }
 
     /// First configured BYOK provider (by priority) + its default model. Empty
@@ -852,7 +944,7 @@ fn mode_kind(mode: &str) -> ModeKind {
 }
 
 struct UiPolicy {
-    sink: Arc<dyn EventSink>,
+    sink: Arc<dyn NativeEventSink>,
     agent_id: AgentId,
     session_id: SessionId,
     pending: Arc<SessionEntry>,
@@ -899,7 +991,7 @@ impl PermissionPolicy for UiPolicy {
         self.pending.pending.insert(request_id, tx);
         self.sink.emit(
             self.agent_id,
-            AcpEvent::PermissionRequest {
+            NativeEvent::PermissionRequest {
                 request_id,
                 session_id: self.session_id.clone(),
                 tool_call: permission_tool_call(request),
@@ -914,41 +1006,43 @@ impl PermissionPolicy for UiPolicy {
     }
 }
 
-fn permission_options() -> Vec<acp_schema::PermissionOption> {
-    use acp_schema::{PermissionOption, PermissionOptionKind};
+fn permission_options() -> Vec<PermissionOptionSpec> {
     vec![
-        PermissionOption::new("allow_once", "Allow once", PermissionOptionKind::AllowOnce),
-        PermissionOption::new(
-            "allow_always",
-            "Allow for this session",
-            PermissionOptionKind::AllowAlways,
-        ),
-        PermissionOption::new("reject", "Reject", PermissionOptionKind::RejectOnce),
+        PermissionOptionSpec {
+            id: "allow_once",
+            name: "Allow once",
+            kind: PermissionOptionKind::AllowOnce,
+        },
+        PermissionOptionSpec {
+            id: "allow_always",
+            name: "Allow for this session",
+            kind: PermissionOptionKind::AllowAlways,
+        },
+        PermissionOptionSpec {
+            id: "reject",
+            name: "Reject",
+            kind: PermissionOptionKind::RejectOnce,
+        },
     ]
 }
 
-fn permission_tool_call(req: &PermissionRequest) -> acp_schema::ToolCallUpdate {
-    let kind = tool_kind(&req.tool_name);
-    let v = serde_json::json!({
-        "toolCallId": req.id,
-        "title": req.tool_name,
-        "kind": kind,
-        "status": "pending",
-        "rawInput": req.tool_input,
-    });
-    serde_json::from_value(v).unwrap_or_else(|_| {
-        acp_schema::ToolCallUpdate::new(req.id.clone(), acp_schema::ToolCallUpdateFields::default())
-    })
+fn permission_tool_call(req: &PermissionRequest) -> PermissionToolCall {
+    PermissionToolCall {
+        id: req.id.clone(),
+        title: req.tool_name.clone(),
+        kind: tool_kind(&req.tool_name),
+        raw_input: req.tool_input.clone(),
+    }
 }
 
-fn map_decision(d: atlas_acp::PermissionDecision) -> CerseiDecision {
+fn map_decision(d: PermissionDecision) -> CerseiDecision {
     match d {
-        atlas_acp::PermissionDecision::Selected { option_id } => match option_id.as_str() {
+        PermissionDecision::Selected { option_id } => match option_id.as_str() {
             "allow_once" => CerseiDecision::AllowOnce,
             "allow_always" => CerseiDecision::AllowForSession,
             _ => CerseiDecision::Deny("Rejected by user".into()),
         },
-        atlas_acp::PermissionDecision::Cancelled => CerseiDecision::Deny("cancelled".into()),
+        PermissionDecision::Cancelled => CerseiDecision::Deny("cancelled".into()),
     }
 }
 
@@ -994,13 +1088,13 @@ enum TurnStep {
     Failed(String),
 }
 
-/// Translate one Cersei `AgentEvent` into the emitted `AcpEvent`(s) and the loop
+/// Translate one Cersei `AgentEvent` into the emitted `NativeEvent`(s) and the loop
 /// control signal. Pulled out of `send_prompt` so the whole adapter — text,
 /// thinking, tool cards, the TodoWrite→plan mapping, and stop-reason handling —
 /// is unit-testable with scripted events + a capturing sink, without a provider.
 fn translate_event(
     ev: cersei::events::AgentEvent,
-    sink: &Arc<dyn EventSink>,
+    sink: &Arc<dyn NativeEventSink>,
     agent_id: AgentId,
     session_id: &SessionId,
     todo_ids: &mut std::collections::HashSet<String>,
@@ -1064,11 +1158,14 @@ fn translate_event(
             acct.cost = cumulative_cost;
             sink.emit(
                 agent_id,
-                AcpEvent::Usage {
+                NativeEvent::Usage {
                     session_id: session_id.clone(),
                     input_tokens,
                     output_tokens,
-                    cost: cumulative_cost,
+                    // The native agent reports no cache split. The consumer
+                    // leaves whatever an end-of-turn response contributed
+                    // intact rather than zeroing it.
+                    cost: Some(cumulative_cost),
                 },
                 None,
             );
@@ -1077,7 +1174,7 @@ fn translate_event(
         E::CompactStart { .. } => {
             sink.emit(
                 agent_id,
-                AcpEvent::Compaction {
+                NativeEvent::Compaction {
                     session_id: session_id.clone(),
                     active: true,
                 },
@@ -1088,7 +1185,7 @@ fn translate_event(
         E::CompactEnd { .. } => {
             sink.emit(
                 agent_id,
-                AcpEvent::Compaction {
+                NativeEvent::Compaction {
                     session_id: session_id.clone(),
                     active: false,
                 },
@@ -1104,7 +1201,7 @@ fn translate_event(
         } => {
             sink.emit(
                 agent_id,
-                AcpEvent::Retry {
+                NativeEvent::Retry {
                     session_id: session_id.clone(),
                     attempt,
                     max_attempts,
@@ -1122,9 +1219,9 @@ fn translate_event(
     }
 }
 
-// ─── AgentEvent → AcpEvent adapters ─────────────────────────────────────────
+// ─── AgentEvent → NativeEvent adapters ─────────────────────────────────────────
 
-fn emit_chunk(sink: &Arc<dyn EventSink>, agent_id: AgentId, session_id: &SessionId, kind: &str, text: &str) {
+fn emit_chunk(sink: &Arc<dyn NativeEventSink>, agent_id: AgentId, session_id: &SessionId, kind: &str, text: &str) {
     let v = serde_json::json!({
         "sessionUpdate": kind,
         "content": { "type": "text", "text": text },
@@ -1135,7 +1232,7 @@ fn emit_chunk(sink: &Arc<dyn EventSink>, agent_id: AgentId, session_id: &Session
 /// Map a `TodoWrite` tool input (`{ todos: [{ content, status, activeForm }] }`)
 /// into an ACP `plan` session update so it renders as a live plan/todo card
 /// (the same surface Claude Code's TodoWrite drives) instead of a tool card.
-fn emit_plan(sink: &Arc<dyn EventSink>, agent_id: AgentId, session_id: &SessionId, input: &serde_json::Value) {
+fn emit_plan(sink: &Arc<dyn NativeEventSink>, agent_id: AgentId, session_id: &SessionId, input: &serde_json::Value) {
     let entries: Vec<serde_json::Value> = input
         .get("todos")
         .and_then(|t| t.as_array())
@@ -1156,7 +1253,7 @@ fn emit_plan(sink: &Arc<dyn EventSink>, agent_id: AgentId, session_id: &SessionI
 }
 
 fn emit_tool_call(
-    sink: &Arc<dyn EventSink>,
+    sink: &Arc<dyn NativeEventSink>,
     agent_id: AgentId,
     session_id: &SessionId,
     id: &str,
@@ -1175,7 +1272,7 @@ fn emit_tool_call(
 }
 
 fn emit_tool_update(
-    sink: &Arc<dyn EventSink>,
+    sink: &Arc<dyn NativeEventSink>,
     agent_id: AgentId,
     session_id: &SessionId,
     id: &str,
@@ -1191,23 +1288,26 @@ fn emit_tool_update(
     emit_session_update(sink, agent_id, session_id, v);
 }
 
+/// Emit a `session/update`-shaped payload.
+///
+/// The JSON is handed over as-is; the consumer deserializes it into its own
+/// protocol version's `SessionUpdate`. That decode used to happen here, and
+/// moving it is the only behavioural difference — a payload no protocol
+/// version accepts is now reported by the consumer rather than this function.
 fn emit_session_update(
-    sink: &Arc<dyn EventSink>,
+    sink: &Arc<dyn NativeEventSink>,
     agent_id: AgentId,
     session_id: &SessionId,
     v: serde_json::Value,
 ) {
-    match serde_json::from_value::<acp_schema::SessionUpdate>(v) {
-        Ok(update) => sink.emit(
-            agent_id,
-            AcpEvent::SessionUpdate {
-                session_id: session_id.clone(),
-                update,
-            },
-            None,
-        ),
-        Err(e) => tracing::warn!(target: "atlas_cersei::adapter", "session update decode failed: {e}"),
-    }
+    sink.emit(
+        agent_id,
+        NativeEvent::SessionUpdate {
+            session_id: session_id.clone(),
+            update: v,
+        },
+        None,
+    );
 }
 
 /// Map a Cersei tool name to an ACP `ToolKind` token (drives the UI icon).
@@ -1255,10 +1355,7 @@ fn modes_blob(current: &str) -> serde_json::Value {
 }
 
 fn session_id_str(id: &SessionId) -> String {
-    serde_json::to_value(id)
-        .ok()
-        .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .unwrap_or_default()
+    id.as_str().to_string()
 }
 
 // ─── Transcript → replay items ──────────────────────────────────────────────
@@ -1347,7 +1444,7 @@ fn tool_result_text(content: &cersei::types::ToolResultContent) -> String {
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 //
-// These pin the AgentEvent→AcpEvent adapter (where bugs live) without needing a
+// These pin the AgentEvent→NativeEvent adapter (where bugs live) without needing a
 // provider or network: scripted Cersei events are fed through `translate_event`
 // into a capturing sink and the emitted ACP session updates are asserted.
 
@@ -1358,26 +1455,26 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    /// EventSink that records every emitted AcpEvent for assertions.
+    /// NativeEventSink that records every emitted NativeEvent for assertions.
     #[derive(Default)]
     struct CollectingSink {
-        events: Mutex<Vec<AcpEvent>>,
+        events: Mutex<Vec<NativeEvent>>,
     }
-    impl EventSink for CollectingSink {
-        fn emit(&self, _agent_id: AgentId, event: AcpEvent, _turn: Option<u64>) {
+    impl NativeEventSink for CollectingSink {
+        fn emit(&self, _agent_id: AgentId, event: NativeEvent, _turn: Option<u64>) {
             self.events.lock().push(event);
         }
     }
 
-    fn sink() -> (Arc<dyn EventSink>, Arc<CollectingSink>) {
+    fn sink() -> (Arc<dyn NativeEventSink>, Arc<CollectingSink>) {
         let c = Arc::new(CollectingSink::default());
-        (c.clone() as Arc<dyn EventSink>, c)
+        (c.clone() as Arc<dyn NativeEventSink>, c)
     }
 
     /// The session-update JSON of the i-th recorded event (re-serialized).
     fn update_json(c: &CollectingSink, i: usize) -> serde_json::Value {
         match &c.events.lock()[i] {
-            AcpEvent::SessionUpdate { update, .. } => serde_json::to_value(update).unwrap(),
+            NativeEvent::SessionUpdate { update, .. } => serde_json::to_value(update).unwrap(),
             other => panic!("event {i} is not a SessionUpdate: {other:?}"),
         }
     }
@@ -1537,7 +1634,7 @@ mod tests {
         assert!(matches!(step, TurnStep::Continue));
         let evs = c.events.lock();
         match &evs[0] {
-            AcpEvent::Usage {
+            NativeEvent::Usage {
                 input_tokens,
                 output_tokens,
                 cost,
@@ -1545,7 +1642,7 @@ mod tests {
             } => {
                 assert_eq!(*input_tokens, 1200);
                 assert_eq!(*output_tokens, 340);
-                assert!((*cost - 0.05).abs() < f64::EPSILON);
+                assert!((cost.expect("native agent reports cost") - 0.05).abs() < f64::EPSILON);
             }
             other => panic!("expected Usage, got {other:?}"),
         }
@@ -1557,12 +1654,12 @@ mod tests {
             reason: cersei::events::CompactReason::ThresholdExceeded,
             messages_before: 50,
         });
-        assert!(matches!(c1.events.lock().first(), Some(AcpEvent::Compaction { active: true, .. })));
+        assert!(matches!(c1.events.lock().first(), Some(NativeEvent::Compaction { active: true, .. })));
         let (c2, _) = run(E::CompactEnd {
             messages_after: 12,
             tokens_freed: 8000,
         });
-        assert!(matches!(c2.events.lock().first(), Some(AcpEvent::Compaction { active: false, .. })));
+        assert!(matches!(c2.events.lock().first(), Some(NativeEvent::Compaction { active: false, .. })));
     }
 
     #[test]

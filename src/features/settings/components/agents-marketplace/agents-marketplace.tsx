@@ -1,7 +1,10 @@
 // Settings → Agents. The ACP Registry marketplace (modeled on Zed's): every
 // agent published to the official ACP registry, searchable, with
-// All/Installed/Not-Installed pills and per-card Install/Remove. The five
-// entries that duplicate first-party Atlas agents render a "Built-in" badge.
+// All/Installed/Not-Installed pills and per-card Install/Remove.
+//
+// This is the ONLY way an ACP agent comes to exist (ADR-0002): Atlas
+// ships none, so no card can say "built-in" and there is nothing to switch
+// off. An agent is installed, merely detected on the user's PATH, or an offer.
 //
 // Install state machine mirrors skills-marketplace.tsx: in-flight ids live at
 // MODULE scope behind useSyncExternalStore so a mid-install unmount (switching
@@ -11,7 +14,7 @@
 import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Download, Github, Globe, Loader2, RefreshCw, Search, X } from "lucide-react";
+import { Check, Download, Github, Globe, Loader2, RefreshCw, Search, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -22,9 +25,87 @@ import {
   type AcpRegistryListing,
   type RegistryInstallProgress,
 } from "@/features/agents/lib/agent-registry-api";
-import { hydrateAgentRegistry } from "@/features/agents/stores/agent-registry-store";
+import {
+  hydrateAgentRegistry,
+  useAgentRegistryStore,
+} from "@/features/agents/stores/agent-registry-store";
+import type { AgentCatalogEntry } from "@/types/agent-catalog";
 import { downloadTrend, fmtDownloads } from "@/features/agents/lib/download-trends";
 import { TrendSparkline } from "@/components/trend-sparkline";
+
+/** Which action a card offers. Pure and exported so the precedence is tested
+ *  rather than re-read out of JSX.
+ *
+ *  "detected" is the system-first addition: the agent is on the user's PATH and
+ *  spawns from there, but Atlas never installed it — so offering "Remove" would
+ *  be a lie, and offering "Install" alone would hide that it already works. */
+export function cardState(
+  entry: AcpRegistryEntry,
+  catalog: AgentCatalogEntry | undefined,
+): "installed" | "detected" | "install" {
+  if (entry.installed) return "installed";
+  if (catalog?.source === "detected") return "detected";
+  return "install";
+}
+
+/** Which install a card's action performs.
+ *
+ *  A detection is ACCEPTED — the installed-agents map gets a `custom` entry pointing
+ *  at the binary already on the user's machine, so Atlas runs their copy. Every
+ *  other card downloads Atlas's own. Both write the same map; only the entry
+ *  differs, and that difference is the whole point of a detection. */
+export function installKind(state: ReturnType<typeof cardState>): "detected" | "registry" {
+  return state === "detected" ? "detected" : "registry";
+}
+
+/** A card for an agent the registry listing doesn't cover — one found on the
+ *  user's PATH, or one they installed that was never published. Deduped by id
+ *  against the real listing by [`marketplaceCards`]. */
+function syntheticCard(entry: AgentCatalogEntry): AcpRegistryEntry {
+  return {
+    id: entry.id,
+    name: entry.name,
+    version: entry.version ?? "",
+    description: entry.description,
+    repository: entry.repository,
+    website: entry.website,
+    iconDataUrl: entry.iconDataUrl,
+    installed: entry.installed,
+    // Not a platform claim from a manifest: this agent is on THIS machine, so
+    // the only way it is unsupported here is the catalog saying its install
+    // resolves to nothing runnable.
+    platformSupported: entry.source !== "unavailable",
+    distributionKind: entry.distributionKind,
+    unverified: entry.unverified,
+    unsupportedReason: null,
+  };
+}
+
+/** Every card the marketplace shows: the registry's own listing, plus one
+ *  synthesized card per agent Atlas knows about that the listing has never
+ *  heard of.
+ *
+ *  That second group is both halves of "off the registry": an agent merely
+ *  found on the user's PATH, and one they have already installed from there.
+ *  Dropping the installed half is what once made a hand-installed agent
+ *  disappear from Settings the moment it was accepted — taking its only
+ *  Remove button with it.
+ *
+ *  The native agent is never a card: it is in-process, so there is nothing to
+ *  install and nothing to remove. */
+export function marketplaceCards(
+  listed: AcpRegistryEntry[],
+  catalogById: Record<string, AgentCatalogEntry>,
+): AcpRegistryEntry[] {
+  const listedIds = new Set(listed.map((e) => e.id));
+  const offRegistry = Object.values(catalogById)
+    .filter((e) => e.kind !== "native" && !listedIds.has(e.id))
+    // catalogById is keyed by BOTH id and agentType, so one entry can appear
+    // twice — dedupe before synthesizing cards.
+    .filter((e, i, all) => all.findIndex((o) => o.id === e.id) === i)
+    .map(syntheticCard);
+  return [...listed, ...offRegistry];
+}
 
 // ── Module-scope install tracking (survives unmount) ─────────────────────────
 
@@ -89,12 +170,13 @@ export function AgentsMarketplace() {
   }, []);
 
   const install = useCallback(
-    async (entry: AcpRegistryEntry) => {
+    async (entry: AcpRegistryEntry, kind: "detected" | "registry") => {
       if (installingIds.has(entry.id)) return;
       installingIds.add(entry.id);
       notifyInstalling();
       try {
-        await acpRegistry.install(entry.id);
+        if (kind === "detected") await acpRegistry.installDetected(entry.id);
+        else await acpRegistry.install(entry.id);
         toast.success(`${entry.name} installed`);
       } catch (e) {
         toast.error(`Couldn't install ${entry.name}: ${String(e)}`);
@@ -123,12 +205,22 @@ export function AgentsMarketplace() {
     [reload],
   );
 
+  // Catalog-backed annotations: which of these the user already has on their
+  // system. Subscribes to the primitive signature (Record selectors
+  // infinite-loop under useShallow — the store's documented trap).
+  useAgentRegistryStore((s) => s.signature);
+  const catalogById = useAgentRegistryStore.getState().catalogById;
+
   const entries = useMemo(() => {
-    const all = listing?.entries ?? [];
+    const all = marketplaceCards(listing?.entries ?? [], catalogById);
     const q = query.trim().toLowerCase();
     return all.filter((e) => {
-      if (filter === "installed" && !e.installed) return false;
-      if (filter === "not-installed" && e.installed) return false;
+      const state = cardState(e, catalogById[e.id]);
+      // "Installed" means "already available to you", which a detected agent
+      // is — it just wasn't Atlas that put it there.
+      const have = e.installed || state === "detected";
+      if (filter === "installed" && !have) return false;
+      if (filter === "not-installed" && have) return false;
       if (!q) return true;
       return (
         e.name.toLowerCase().includes(q) ||
@@ -136,7 +228,17 @@ export function AgentsMarketplace() {
         (e.description ?? "").toLowerCase().includes(q)
       );
     });
-  }, [listing, query, filter]);
+  }, [listing, query, filter, catalogById]);
+
+  /** Cards for agents Atlas found rather than installed, rendered under their
+   *  own heading so "you already have this" reads as a fact, not an offer. */
+  const detectedIds = useMemo(
+    () =>
+      new Set(
+        entries.filter((e) => cardState(e, catalogById[e.id]) === "detected").map((e) => e.id),
+      ),
+    [entries, catalogById],
+  );
 
   return (
     <div className="h-full flex flex-col">
@@ -217,18 +319,39 @@ export function AgentsMarketplace() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-2.5">
-            {entries.map((entry) => (
-              <AgentCard
-                key={entry.id}
-                entry={entry}
-                installing={installingIds.has(entry.id)}
-                progress={progressById.get(entry.id) ?? null}
-                onInstall={install}
-                onUninstall={uninstall}
-              />
-            ))}
-          </div>
+          <>
+            {(["detected", "registry"] as const).map((section) => {
+              const inSection = entries.filter((e) =>
+                section === "detected" ? detectedIds.has(e.id) : !detectedIds.has(e.id),
+              );
+              if (inSection.length === 0) return null;
+              return (
+                <div
+                  key={section}
+                  className={cn(section === "registry" && detectedIds.size > 0 && "mt-4")}
+                >
+                  {detectedIds.size > 0 && (
+                    <h3 className="mb-1.5 text-[10.5px] font-medium uppercase tracking-wide text-[var(--text-tertiary)]">
+                      {section === "detected" ? "Detected on your system" : "Registry"}
+                    </h3>
+                  )}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-2.5">
+                    {inSection.map((entry) => (
+                      <AgentCard
+                        key={entry.id}
+                        entry={entry}
+                        catalog={catalogById[entry.id]}
+                        installing={installingIds.has(entry.id)}
+                        progress={progressById.get(entry.id) ?? null}
+                        onInstall={install}
+                        onUninstall={uninstall}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </>
         )}
       </div>
     </div>
@@ -242,15 +365,17 @@ export function AgentsMarketplace() {
 // useCallbacks instead of per-render arrows.
 const AgentCard = memo(function AgentCard({
   entry,
+  catalog,
   installing,
   progress,
   onInstall,
   onUninstall,
 }: {
   entry: AcpRegistryEntry;
+  catalog: AgentCatalogEntry | undefined;
   installing: boolean;
   progress: RegistryInstallProgress | null;
-  onInstall: (entry: AcpRegistryEntry) => void;
+  onInstall: (entry: AcpRegistryEntry, kind: "detected" | "registry") => void;
   onUninstall: (entry: AcpRegistryEntry) => void;
 }) {
   const pct =
@@ -297,6 +422,7 @@ const AgentCard = memo(function AgentCard({
         </div>
         <CardAction
           entry={entry}
+          catalog={catalog}
           installing={installing}
           pct={pct}
           onInstall={onInstall}
@@ -347,17 +473,21 @@ const AgentCard = memo(function AgentCard({
 
 function CardAction({
   entry,
+  catalog,
   installing,
   pct,
   onInstall,
   onUninstall,
 }: {
   entry: AcpRegistryEntry;
+  catalog: AgentCatalogEntry | undefined;
   installing: boolean;
   pct: number | null;
-  onInstall: (entry: AcpRegistryEntry) => void;
+  onInstall: (entry: AcpRegistryEntry, kind: "detected" | "registry") => void;
   onUninstall: (entry: AcpRegistryEntry) => void;
 }) {
+  const state = cardState(entry, catalog);
+  const kind = installKind(state);
   if (installing) {
     return (
       <span className="flex items-center gap-1.5 h-6 px-2 rounded-md text-[10.5px] font-medium text-[var(--text-secondary)] border border-[var(--border-default)] tabular-nums">
@@ -366,7 +496,7 @@ function CardAction({
       </span>
     );
   }
-  if (entry.installed) {
+  if (state === "installed") {
     return (
       <button
         onClick={() => {
@@ -380,9 +510,40 @@ function CardAction({
       </button>
     );
   }
+  if (state === "detected") {
+    // Atlas found this on the user's PATH but has NOT installed it, and a
+    // detection alone never makes an agent spawnable (ADR-0002). The
+    // badge says why the card is here; the button is the user accepting it,
+    // which writes an installed-agents-map entry pointing at the copy they already
+    // have — no download, and their binary is what runs.
+    return (
+      <span className="flex items-center gap-1.5">
+        <span
+          className="flex items-center gap-1 h-6 px-2 rounded-md text-[10.5px] font-medium text-[var(--text-tertiary)] border border-[var(--border-default)]"
+          title={
+            catalog?.resolvedPath ? `Found at ${catalog.resolvedPath}` : "Found on your system"
+          }
+        >
+          <Check size={10} />
+          Detected
+        </span>
+        <button
+          onClick={() => onInstall(entry, kind)}
+          title={
+            catalog?.resolvedPath
+              ? `Add it, running your own copy at ${catalog.resolvedPath}. Nothing is downloaded.`
+              : "Add it, running the copy already on your system. Nothing is downloaded."
+          }
+          className="flex items-center gap-1 h-6 px-2.5 rounded-md text-[10.5px] font-medium text-[var(--text-primary)] border border-[var(--border-default)] bg-[var(--bg-elevated,var(--bg-primary))] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+        >
+          Install
+        </button>
+      </span>
+    );
+  }
   return (
     <button
-      onClick={() => onInstall(entry)}
+      onClick={() => onInstall(entry, kind)}
       disabled={!entry.platformSupported}
       className={cn(
         "flex items-center gap-1 h-6 px-2.5 rounded-md text-[10.5px] font-medium border transition-colors",

@@ -22,12 +22,12 @@ import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Manifests that may declare cersei dependencies today: the in-process
- *  native agent, the agent manager that hosts it, and the app crate (which
- *  carries the vendored `cersei-provider` UTF-8 compile guard). */
+/** Manifests that may declare cersei dependencies today: the protocol-free
+ *  cersei wrapper, the in-process native agent built on it, and the app crate
+ *  (which carries the vendored `cersei-provider` UTF-8 compile guard). */
 const ALLOWED_CERSEI_MANIFESTS = new Set([
   "crates/atlas-cersei/Cargo.toml",
-  "crates/atlas-agents/Cargo.toml",
+  "crates/atlas-native-agent/Cargo.toml",
   "src-tauri/Cargo.toml",
 ]);
 

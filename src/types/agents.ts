@@ -1,3 +1,5 @@
+import type { ToolContentBlock } from "@/types/agent";
+
 // Wire shapes for the `atlas-agents` Rust surface. These mirror
 // `crates/atlas-agents/src/{session,events,plugin,manager}.rs` — keep in sync
 // when the Rust types change.
@@ -14,9 +16,6 @@ export interface SessionInit {
   key: SessionKey;
   current_mode: string | null;
   available_modes: SessionModeInfo[];
-  /** The agent's advertised config options at session creation. Absent when
-   *  the agent advertises none (serde skips an empty vec). */
-  config_options?: AcpConfigOption[];
 }
 
 export type TranscriptKind = { kind: "none" } | { kind: "claude_jsonl" } | { kind: "cersei_json" };
@@ -54,6 +53,8 @@ export interface ToolCall {
   arguments: unknown;
   result: string | null;
   locations: unknown[];
+  /** Structural content blocks (P1.4). Omitted by Rust when empty. */
+  content_blocks?: ToolContentBlock[];
 }
 
 export interface PlanEntry {
@@ -101,13 +102,16 @@ export interface SessionSnapshot {
   current_mode: string | null;
   current_model: string | null;
   available_modes: SessionModeInfo[];
-  /** Models the agent advertised (ACP `session/new` `models`). Drives the
-   *  Claude Code / Codex model picker; empty when unsupported. */
+  /** Models the agent advertised. ACP has no `models` field on a session: an
+   *  agent offering a choice says so with a `category: "model"` select among
+   *  its config options, which the host projects into this list. Drives the
+   *  composer's model pill; empty when the agent advertises no such option. */
   available_models: SessionModeInfo[];
   available_commands: unknown[];
-  /** The agent's advertised `session/set_config_option` state. ACP's general
-   *  settings mechanism — mode and model are just two well-known ids. */
-  config_options?: AcpConfigOption[];
+  /** Raw ACP config-option state — advertised config options and their current
+   *  values, kept current by the `config_options_updated` delta. The composer
+   *  renders these as generic knobs, minus the ones a dedicated picker owns. */
+  config_options?: unknown[];
   /** Whether the agent's transport accepts image content blocks in prompts
    *  (`promptCapabilities.image`). Drives the composer's attach routing:
    *  true → picked/pasted images become inline base64 attachments; false →
@@ -124,31 +128,6 @@ export interface SessionSnapshot {
  * Single multiplexed delta stream emitted on the `atlas:agents` window event.
  * `kind` discriminates; `agent_id` + `session_id` route to the right tab.
  */
-/** One entry of an agent's advertised `config_options`.
- *
- *  Field names are the ACP v1 wire shape, verified against
- *  `agent-client-protocol-schema`'s `SessionConfigOption`: a flattened `type`
- *  discriminator, `currentValue` for BOTH kinds (a value id for `select`, a
- *  bool for `boolean`), and `options` — not `values`/`availableValues` — for a
- *  select's choices. Getting these wrong is silent: the schema deserializes
- *  the option list with `DefaultOnError`, so one malformed entry empties the
- *  WHOLE list rather than erroring.
- *
- *  `type` is left open because ACP's option kinds are extensible and Atlas
- *  renders whatever an agent publishes rather than enumerating kinds. */
-export interface AcpConfigOption {
-  id: string;
-  name?: string;
-  description?: string | null;
-  /** Semantic category (UX only), e.g. "model" / "mode" / "thought_level". */
-  category?: string | null;
-  type?: "select" | "boolean" | (string & {});
-  /** Value id for a select, boolean for a toggle. */
-  currentValue?: string | boolean | null;
-  /** A select's choices. */
-  options?: { value: string; name?: string; description?: string | null }[];
-}
-
 export type AgentDelta =
   | {
       kind: "status";
@@ -220,16 +199,38 @@ export type AgentDelta =
       commands: unknown[];
     }
   | {
-      kind: "config_options_updated";
-      agent_id: AgentId;
-      session_id: AcpSessionId;
-      options: AcpConfigOption[];
-    }
-  | {
       kind: "usage_updated";
       agent_id: AgentId;
       session_id: AcpSessionId;
       usage: Usage;
+    }
+  | {
+      /** The agent is asking the user something mid-turn (P3.3). */
+      kind: "elicitation_requested";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      request_id: string;
+      mode: "form" | "url";
+      message: string;
+      requested_schema?: unknown;
+      url?: string | null;
+    }
+  | {
+      /** The agent named its own session (P3.1). Beats Atlas's
+       *  first-40-characters-of-the-prompt title. */
+      kind: "title_updated";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      title: string;
+    }
+  | {
+      /** The agent's own config options changed (P2.2) — a knob toggled inside
+       *  the agent rather than through Atlas. Raw JSON, same shape the snapshot
+       *  carries. */
+      kind: "config_options_updated";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      config_options: unknown[];
     }
   | {
       kind: "context_usage";

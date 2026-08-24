@@ -11,7 +11,8 @@ import { extractPlanMarkdown } from "../lib/plans";
 import { extractQuestions } from "../lib/questions";
 import { ApprovalCard } from "./approval-card";
 import type { PermissionOptionRef, PendingPermission } from "@/types/acp";
-import { AGENT_LABEL, type AgentType } from "@/types/agent";
+import { type AgentType } from "@/types/agent";
+import { agentMeta } from "@/features/agents/lib/agent-meta";
 
 function isAllow(kind: string) {
   return kind === "allow_once" || kind === "allow_always";
@@ -26,7 +27,9 @@ function isReject(kind: string) {
 // never names the wrong agent. Ordered longest-first to avoid partial matches.
 const AGENT_BRANDS = ["Claude Code", "Codex", "Claude", "OpenCode", "Cursor"];
 function relabelAgentBrand(label: string, agentType: AgentType): string {
-  const display = (AGENT_LABEL as Record<string, string>)[agentType] ?? "the agent";
+  // `agentMeta`, not a raw AGENT_LABEL read: that table only covers first-party
+  // agents, so every external one rendered as the anonymous "the agent".
+  const display = agentMeta(agentType).label;
   let out = label;
   for (const brand of AGENT_BRANDS) {
     if (brand === display) continue;

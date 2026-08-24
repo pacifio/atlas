@@ -24,7 +24,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use atlas_agents::SessionKey;
+use super::agent_host::SessionKey;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::State;

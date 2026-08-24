@@ -102,9 +102,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - crate: atlas-acp
-          - crate: atlas-agentkit
-          - crate: atlas-agents
+          - crate: atlas-acp-thread
+            clippy: true
+          - crate: atlas-agent-delta
+            clippy: true
+          - crate: atlas-agent-manager
+            clippy: true
+          - crate: atlas-agent-servers
+            clippy: true
+          - crate: atlas-agent-transcript
+            clippy: true
+          - crate: atlas-agent-store
+            clippy: true
+          - crate: atlas-agent-wire
+            clippy: true
           - crate: atlas-bus
           - crate: atlas-cersei
           - crate: atlas-checkpoint
@@ -115,10 +126,13 @@ jobs:
           - crate: atlas-gitdiff
           - crate: atlas-kb-server
           - crate: atlas-memory
+          - crate: atlas-native-agent
+            clippy: true
           - crate: atlas-redact
             clippy: true
-          - crate: atlas-registry
           - crate: atlas-terminal
+          - crate: atlas-thread-metadata
+            clippy: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

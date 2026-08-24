@@ -100,7 +100,7 @@ pub fn build_session_handoff(cwd: &str, current_session_id: &str) -> Option<(Str
     let dir = home
         .join(".claude")
         .join("projects")
-        .join(atlas_agents::transcript::encode_cwd(cwd));
+        .join(atlas_agent_transcript::encode_cwd(cwd));
 
     // Tolerate a missing dir (user never ran Claude here) → no handoff, no error.
     let rd = std::fs::read_dir(&dir).ok()?;
@@ -136,7 +136,7 @@ pub fn pick_newest_session(candidates: Vec<(PathBuf, SystemTime)>) -> Option<Pat
 }
 
 /// Pure: parse a Claude Code JSONL transcript into `(role, text)` turns, taking
-/// the last `max_turns`. Mirrors `atlas_agents::transcript::replay_claude_jsonl`:
+/// the last `max_turns`. Mirrors `atlas_agent_transcript::replay_claude_jsonl`:
 /// skips sidechain lines, tool-result user messages, and injected system text.
 pub fn parse_handoff_turns(jsonl: &str, max_turns: usize) -> Vec<(String, String)> {
     let mut turns: Vec<(String, String)> = Vec::new();
@@ -171,7 +171,7 @@ pub fn parse_handoff_turns(jsonl: &str, max_turns: usize) -> Vec<(String, String
 fn user_message_text(v: &serde_json::Value) -> Option<String> {
     let content = v.get("message")?.get("content")?;
     if let Some(s) = content.as_str() {
-        if atlas_agents::transcript::is_injected_user_text(s) {
+        if atlas_agent_transcript::is_injected_user_text(s) {
             return None;
         }
         return Some(s.trim().to_string());
@@ -194,7 +194,7 @@ fn user_message_text(v: &serde_json::Value) -> Option<String> {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        if atlas_agents::transcript::is_injected_user_text(&text) {
+        if atlas_agent_transcript::is_injected_user_text(&text) {
             return None;
         }
         return Some(text.trim().to_string());

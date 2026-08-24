@@ -41,12 +41,14 @@ import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { jumpToSession } from "@/features/chat/lib/tab-workspace";
-import { refreshCachedAcpModels } from "@/features/chat/lib/warm-acp-models";
 import { pruneContextUsageCache } from "@/features/chat/lib/context-usage-cache";
 import { isScrollHot } from "@/lib/scroll-hot";
-import { hydrateAgentRegistry } from "@/features/agents/stores/agent-registry-store";
-import { AgentLoginDialogHost } from "@/features/chat/components/agent-login-dialog";
-import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
+import {
+  hydrateAgentRegistry,
+  startCatalogListener,
+} from "@/features/agents/stores/agent-registry-store";
+import { AgentOAuthModalHost } from "@/features/agents/components/agent-oauth-modal";
+import { AgentElicitationHost } from "@/features/chat/components/agent-elicitation-host";
 import {
   isPermissionGranted,
   requestPermission,
@@ -100,19 +102,20 @@ export function App() {
     void useModelsStore.getState().actions.init();
   }, []);
 
-  // Probe Claude Code (installed? authed?) on mount. Drives the banner
-  // above the message composer and the hard-disabled state of the input
-  // when the CLI isn't ready. Fast — two parallel subprocesses, totals
-  // <100ms on a warm machine.
+  // No Claude probe here any more. It used to run at boot to drive a banner
+  // above the composer and hard-disable the input; both are gone, and probing
+  // meant a fresh install spawned subprocesses for an agent it does not have
+  // (ADR-0002). The one caller that still needs the answer — the post-auth
+  // re-check in `agent-auth-hooks` — asks for it itself.
   useEffect(() => {
-    // Probe the Node runtime first (the ACP agents launch via `npx`). If it's
-    // missing or too old, the store auto-installs the latest LTS via the
-    // bundled nvm in the background and re-runs ACP discovery when ready.
-    void useNodeSetupStore.getState().actions.check();
-    // Agent identity registry (the native agent + registry-installed agents):
-    // hydrate once so pickers/glyphs/memory dropdown resolve agent metadata;
-    // the marketplace re-hydrates after installs.
+    // Agent identity registry (the native agent + registry-installed
+    // externals):
+    // hydrate once so pickers/glyphs/memory dropdown resolve external
+    // metadata; the marketplace re-hydrates after installs.
     void hydrateAgentRegistry();
+    // …and stay current: discovery finishes after boot, and installs /
+    // acquisitions / settings toggles all change how an agent launches.
+    startCatalogListener();
   }, []);
 
   // Refresh the `atlas` CLI helper at `~/.local/bin/atlas` on every
@@ -393,18 +396,6 @@ export function App() {
     }
   };
   const currentProject = useProjectStore.use.currentProject();
-
-  // Silent startup refresh of cached ACP model lists (Claude Code / Codex) so
-  // the model picker stays fresh — optimistic UI: the cache drives the picker
-  // immediately, this updates it in the background. Only re-warms agents already
-  // cached (i.e. used before), so we never spawn an agent the user never touches.
-  // Deferred so it never competes with launch.
-  useEffect(() => {
-    const cwd = currentProject?.path;
-    if (!cwd) return;
-    const t = setTimeout(() => refreshCachedAcpModels(cwd), 4000);
-    return () => clearTimeout(t);
-  }, [currentProject?.path]);
 
   // Global agent event bus. One listener routes atlas-agents SessionDelta
   // events into the chat-store, queues permission requests for the
@@ -1445,7 +1436,10 @@ export function App() {
       <SearchOverlay open={searchOpen} onOpenChange={setSearchOpen} />
       <FilePicker open={filePickerOpen} onOpenChange={setFilePickerOpen} />
       <HintOverlay />
-      <AgentLoginDialogHost />
+      <AgentOAuthModalHost />
+      {/* Sign-in asks questions of its own (device codes, login URLs), and they
+          arrive before the agent has any session to route them by. */}
+      <AgentElicitationHost />
       <NotificationPanel />
       <FeedbackPanel />
       <UpdateAvailableModal />

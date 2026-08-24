@@ -5,43 +5,59 @@ import { appendNextStepsDirective } from "../lib/next-steps";
 import { stripInjectedContext } from "../lib/atlas-context";
 import { agents, ensureAgent } from "../lib/agents-api";
 import { loadCachedAcpModes } from "../lib/acp-modes-cache";
-import { warmAcpModels, otherAcpAgents } from "../lib/warm-acp-models";
+import { configOptionPushes, loadConfigOptionPrefs } from "../lib/config-option-prefs";
 import type { ImageAttachment, SessionKey } from "@/types/agents";
-import type { ChatMessage } from "@/types/agent";
 import {
   hasInFlightToolCalls,
   isBusyAgentStatus,
   agentTypeFromPluginId,
   pluginIdForAgent,
-  NATIVE_AGENT,
+  CLAUDE_PERMISSION_MODES,
 } from "@/types/agent";
-import { agentMeta, switchableAgentIds } from "@/features/agents/lib/agent-meta";
-import { canSignIn, isAuthError, promptSignIn, signInToAgent } from "../lib/agent-signin";
+import {
+  agentMeta,
+  catalogEntry as agentCatalogEntry,
+  installedExternals,
+} from "@/features/agents/lib/agent-meta";
+import { bindFailureAction, errInfo, promptSignIn } from "../lib/agent-signin";
 import { toast } from "sonner";
 
 /** Tab+agent pairs whose bind failure has already been surfaced, so the
  *  focus-triggered retry doesn't re-toast the same error on every focus.
  *  Cleared for a pair once its bind finally succeeds. */
 const reportedBindFailures = new Set<string>();
+
+/** Tab+agent pairs we have ALREADY walked through sign-in once.
+ *
+ *  Without this the sign-in flow loops forever: the retry callback clears
+ *  `reportedBindFailures` so the rebind can report afresh, so a rebind that
+ *  fails on auth AGAIN re-opens the dialog, and completing it retries, and so
+ *  on. That is not hypothetical — plenty of registry agents advertise an auth
+ *  method that does not actually authenticate them (`autohand`'s only method is
+ *  `npm install -g autohand-cli`, which installs a CLI and leaves the agent
+ *  still demanding a login). Offering the dialog once and then showing the
+ *  agent's own message is the honest end state.
+ *
+ *  Cleared alongside `reportedBindFailures` when a bind finally succeeds, so a
+ *  genuine re-auth later in the session still gets the dialog. */
+const signInAttempted = new Set<string>();
 import { composePrompt, type MentionData } from "../lib/mentions";
 import { usePaneFind } from "../lib/use-pane-find";
-import { useDefaultAgentType } from "../hooks/use-default-agent";
 import { MessageInput } from "./message-input";
 import { SessionSidebar } from "./session-sidebar";
 import { ChatHeader } from "./chat-header";
-import { openNewAgentChat } from "../lib/open-agent-session";
+import { openAgentSession, openNewAgentChat } from "../lib/open-agent-session";
 import { workspacePathForTab } from "../lib/tab-workspace";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchTextDiff } from "@/features/git/lib/git-diff-api";
-import { getEditParts, getFilePathFromInput } from "../lib/tool-files";
-import { OPEN_TURN_DIFF_EVENT, toRepoRelative, type TurnDiffRequest } from "../lib/open-turn-diff";
+import { OPEN_TURN_DIFF_EVENT, type TurnDiffRequest } from "../lib/open-turn-diff";
+import { collectTurnEdits } from "../lib/turn-edits";
 
 /** Height the floating header occupies — the transcript pads its content by
  *  this much so the first row clears the bar. Must match `ChatHeader`'s bar. */
 const HEADER_INSET = 46;
 import { PermissionModal } from "./permission-modal";
-import { NodeSetupBanner } from "@/features/node-setup/components/node-setup-banner";
-import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
+import { ElicitationModal } from "./elicitation-modal";
 
 // Both panels are modal-style and never visible on first paint. Lazy so
 // they don't add to the initial chunk.
@@ -71,16 +87,7 @@ const GitDiffModal = lazy(() =>
     default: m.GitDiffModal,
   })),
 );
-import {
-  Sparkles,
-  Search,
-  Loader2,
-  ChevronDown,
-  ArrowRight,
-  LogIn,
-  GitCompare,
-  FlaskConical,
-} from "lucide-react";
+import { Sparkles, Search, ChevronDown, ArrowRight, GitCompare, FlaskConical } from "lucide-react";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { PanelSkeleton } from "@/components/panel-skeleton";
 import { logEvent } from "@/features/log/lib/log";
@@ -130,74 +137,53 @@ async function rebindDisconnectedSession(tabId: string): Promise<boolean> {
   }
 }
 
-/**
- * The before/after text a single turn produced, per file.
- *
- * Walks the turn's assistant run — `turnId` is `t:<first assistant message id>`,
- * the same formula the row projection uses — and folds every edit tool call into
- * one before/after pair per path. Multiple edits to the same file concatenate in
- * order, so a turn that touched a file three times reads as one diff rather than
- * three competing ones.
- *
- * A `Write` carries whole content (`old` empty), which is why a file CREATED by
- * the turn renders in full. An `Edit` carries only the replaced fragment, so its
- * diff covers that fragment — honest about what the record holds. A file the
- * turn only deleted contributes no edit parts and simply does not appear, which
- * is the correct answer: there is nothing to browse.
- */
-function collectTurnEdits(
-  messages: ChatMessage[],
-  turnId: string,
-  repoPath: string,
-  preferredFile?: string,
-): {
-  files: string[];
-  initial: string;
-  sources: Record<string, { old: string; new: string }>;
-} {
-  const firstId = turnId.startsWith("t:") ? turnId.slice(2) : turnId;
-  const start = messages.findIndex((m) => m.id === firstId);
-  const sources: Record<string, { old: string; new: string }> = {};
-  const order: string[] = [];
-
-  if (start >= 0) {
-    // The turn is the consecutive assistant run beginning at that message.
-    for (let i = start; i < messages.length && messages[i].role === "assistant"; i++) {
-      for (const tc of messages[i].toolCalls) {
-        const args = tc.arguments ?? {};
-        const parts = getEditParts(tc.toolName, args);
-        if (parts.length === 0) continue;
-        const abs = getFilePathFromInput(args);
-        if (!abs) continue;
-        const path = toRepoRelative(abs, repoPath);
-        if (!sources[path]) {
-          sources[path] = { old: "", new: "" };
-          order.push(path);
-        }
-        for (const p of parts) {
-          sources[path].old += p.old;
-          sources[path].new += p.neu;
-        }
-      }
-    }
-  }
-
-  const wanted = preferredFile ? toRepoRelative(preferredFile, repoPath) : "";
-  return {
-    files: order,
-    initial: wanted && sources[wanted] ? wanted : (order[0] ?? ""),
-    sources,
-  };
-}
-
 export function ChatPanel({ tabId }: ChatPanelProps) {
   // Subscribe to ONLY this tab's session. Streaming chunks on other tabs
   // shouldn't repaint this panel — immer preserves reference equality for
   // unchanged sub-paths, so `s.sessions[tabId]` only changes when this tab
   // mutates.
   const session = useChatStore((s) => s.sessions[tabId]);
-  const { createSession, addMessage, updateSessionStatus, setSessionTitle } =
+  const { createSession, addMessage, updateSessionStatus, setSessionTitle, clearElicitation } =
     useChatStore.use.actions();
+  // Narrow subscription — an unanswered `elicitation/create` (P3.3).
+  const pendingElicitation = useChatStore((s) => s.sessions[tabId]?.pendingElicitation);
+
+  // P3.4: only offer "branch from here" when the bound agent advertised
+  // `sessionCapabilities.fork`. Gated on data, never on an agent name.
+  const canFork = useChatStore((s) => {
+    const sess = s.sessions[tabId];
+    if (!sess?.acpAgentId || !sess.acpSessionId || !sess.agentType) return false;
+    return agentCatalogEntry(sess.agentType)?.supportsFork === true;
+  });
+
+  /** Fork the bound session and open the branch in a new tab, so the thread
+   *  that got here stays intact — which is the entire point of forking. */
+  const onForkSessionStable = useCallback(() => {
+    void (async () => {
+      const sess = useChatStore.getState().sessions[tabId];
+      if (!sess?.acpAgentId || !sess.acpSessionId) return;
+      try {
+        const forked = await agents.forkSession({
+          agent_id: sess.acpAgentId,
+          session_id: sess.acpSessionId,
+        });
+        if (!forked) {
+          toast.error("This agent cannot branch a session.");
+          return;
+        }
+        // Open the branch in its own tab so the thread that got here stays
+        // intact — which is the entire point of forking.
+        await openAgentSession({
+          acpSessionId: forked,
+          title: `${sess.title ?? "Session"} (branch)`,
+          cwd: useProjectStore.getState().currentProject?.path ?? "",
+          agentType: sess.agentType,
+        });
+      } catch (err) {
+        toast.error(errInfo(err).message);
+      }
+    })();
+  }, [tabId]);
   const [roleFilter, setRoleFilter] = useState<"all" | "user" | "assistant">("all");
   const [bashPanelOpen, setBashPanelOpen] = useState(false);
   const [plansPanelOpen, setPlansPanelOpen] = useState(false);
@@ -299,19 +285,12 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
 
   const acpSessionId = session?.acpSessionId ?? "";
 
-  // Which agent a fresh chat starts on — Claude Code when it's installed +
-  // authed, otherwise the native Atlas agent. `null` while the Claude probe is
-  // still deciding on a first-ever launch: creating the session then would pin
-  // it to the wrong agent (and, for Claude, to a disabled composer), so we wait
-  // the few hundred ms it takes. The transcript already renders its skeleton
-  // for a session-less tab.
-  const defaultAgentType = useDefaultAgentType();
-
+  // A fresh chat starts on the native agent and starts immediately: the
+  // default needs no probe, so there is no window in which the tab has to sit
+  // session-less waiting to find out which agent it is.
   useEffect(() => {
-    if (!session && defaultAgentType) {
-      createSession(tabId, defaultAgentType);
-    }
-  }, [tabId, session, createSession, defaultAgentType]);
+    if (!session) createSession(tabId);
+  }, [tabId, session, createSession]);
 
   // Bind an ACP agent + session to this tab as soon as the panel mounts.
   // The agent spawn takes 1–3 s warm and up to 30 s on a cold `npx` cache,
@@ -358,9 +337,14 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // bypassPermissions and still trigger a stray prompt on turn one.
         // Awaiting here guarantees the agent is in the right mode first.
         const session = useChatStore.getState().sessions[tabId];
-        // No explicit pick means "defer to the agent" — preserve whatever mode
-        // it resolved from its own user-level config rather than overriding it.
-        const requestedMode = session?.acpModeExplicit ? session.acpCurrentMode : undefined;
+        const selectedMode = session?.claudePermissionMode ?? "default";
+        // `default` means the user has not overridden the agent. Preserve the
+        // mode resolved by Claude/Codex from their own user-level config.
+        const requestedClaudeMode = session?.claudePermissionModeExplicit
+          ? selectedMode
+          : undefined;
+        const requestedAcpMode = session?.acpModeExplicit ? session.acpCurrentMode : undefined;
+        const requestedMode = nowAt === "claude-code" ? requestedClaudeMode : requestedAcpMode;
         const mode = requestedMode ?? init.current_mode;
         const modeAdvertised =
           !mode ||
@@ -380,24 +364,28 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // default instead of a hard-coded Atlas fallback.
         if (!cancelled) {
           const actions = useChatStore.getState().actions;
-          // Config options ride the session/new response — seed them with the
-          // modes so the composer's pickers (effort) paint at bind. Agents that
-          // only answer on session/new and never push a config_option_update
-          // (Codex) have no other source. `?? []` records "none advertised",
-          // which is what stops the composer self-heal from re-fetching.
-          actions.setAcpConfigOptions(tabId, init.config_options ?? [], nowAt);
-          if (init.available_modes.length > 0) {
+          if (
+            nowAt === "claude-code" &&
+            (effectiveMode ?? init.current_mode) &&
+            CLAUDE_PERMISSION_MODES.includes(
+              (effectiveMode ?? init.current_mode) as (typeof CLAUDE_PERMISSION_MODES)[number],
+            )
+          ) {
+            actions.hydrateClaudePermissionMode(
+              tabId,
+              (effectiveMode ?? init.current_mode) as (typeof CLAUDE_PERMISSION_MODES)[number],
+            );
+          } else if (nowAt !== "claude-code" && init.available_modes.length > 0) {
             actions.setAcpModes(tabId, effectiveMode, init.available_modes, nowAt);
-          } else if (effectiveMode ?? init.current_mode) {
-            // An agent that reports a mode but advertises no list to pick from.
-            actions.hydrateAcpMode(tabId, (effectiveMode ?? init.current_mode) as string);
           }
         }
         useChatStore.getState().actions.setAcpBinding(tabId, agent.agent_id, key.session_id, cwd);
         // Bound successfully — re-arm the failure toast so a LATER breakage
         // (agent crashes, gets uninstalled) is reported again rather than
-        // swallowed by the earlier dedupe.
+        // swallowed by the earlier dedupe. Same for the sign-in offer: a token
+        // that expires later in the session deserves the dialog again.
         reportedBindFailures.delete(`${tabId}:${pluginId}`);
+        signInAttempted.delete(`${tabId}:${pluginId}`);
         // Seed the composer mode picker from the freshly-created session's
         // advertised modes (Codex: read-only / auto / full-access). The modes
         // are seeded into the Rust SessionState by `new_session`, so the
@@ -442,6 +430,38 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             useChatStore
               .getState()
               .actions.setAcpAvailableCommands(tabId, snap.available_commands ?? []);
+            // And the config-option knobs (#32). The `session/new`
+            // advertisement lives only in the backend cell — a follow-up
+            // notification is optional and most agents never send one, so
+            // without this the effort pill and every other knob simply never
+            // appeared. This also heals the early-delta drop: any
+            // `config_options_updated` emitted before the tab was bound is
+            // re-covered by this snapshot, which is fetched after bind.
+            useChatStore
+              .getState()
+              .actions.setAcpConfigOptions(
+                tabId,
+                snap.config_options ?? [],
+                agentTypeFromPluginId(snap.plugin_id),
+              );
+            // Re-apply the user's remembered knob picks (#33) — the mode
+            // pref's discipline: only knobs this session advertises, only
+            // values it offers, nothing when it already sits there. Each push
+            // answers with the confirmed list as a delta, so the pills follow.
+            const at = useChatStore.getState().sessions[tabId]?.agentType;
+            if (at) {
+              for (const push of configOptionPushes(
+                snap.config_options ?? [],
+                loadConfigOptionPrefs(at),
+              )) {
+                try {
+                  await agents.setConfigOption(key, push.configId, push.value);
+                } catch (err) {
+                  console.warn("re-applying a config-option pref failed:", err);
+                }
+                if (cancelled) return;
+              }
+            }
             // Boot finished (with or without modes) — drop the loading state.
             useChatStore.getState().actions.setAcpModesPending(tabId, false);
           }
@@ -467,20 +487,40 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             // "you need to sign in" case lands HERE, not on the turn-failure
             // route that raises `atlas:auth-required`. Offer the one-click fix
             // instead of dumping a raw protocol error, and rebind once it lands.
-            if (at && canSignIn(at) && isAuthError(err)) {
-              promptSignIn(
-                at,
-                () => {
+            // Only ONCE per tab+agent — see `signInAttempted`.
+            const action = bindFailureAction({
+              agentType: at,
+              err,
+              alreadyAttempted: signInAttempted.has(key),
+            });
+            if (action === "sign-in" && at) {
+              signInAttempted.add(key);
+              // `reason` is what lets the dialog offer in-app key entry rather
+              // than the agent's own (often unusable) auth methods.
+              promptSignIn(at, {
+                reason: errInfo(err).message,
+                onSignedIn: () => {
                   reportedBindFailures.delete(key);
                   void ensureBound();
                 },
                 // Dismissed without signing in: re-arm reporting only. The
                 // dedupe key used to stay set forever, silently swallowing
                 // every subsequent bind failure for this tab+agent.
-                () => reportedBindFailures.delete(key),
+                onDismissed: () => reportedBindFailures.delete(key),
+              });
+            } else if (action === "signed-in-but-refused" && at) {
+              // Signed in already and STILL refused. Say so, and surface the
+              // agent's own words — it is the only thing that can explain what
+              // else it wants.
+              toast.error(
+                `${agentMeta(at).label} still reports no credentials after signing in. ` +
+                  `It said: ${errInfo(err).message}`,
               );
             } else {
-              toast.error(String((err as Error)?.message ?? err));
+              // `errInfo`, not String(err): these commands reject with a
+              // structured `{message, kind}`, which stringifies to
+              // "[object Object]".
+              toast.error(errInfo(err).message);
             }
           }
         }
@@ -546,19 +586,17 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         if (models.length > 0) {
           useChatStore.getState().actions.setAcpModels(tabId, snap.current_model, models);
         } else {
-          // ACP `session/load` doesn't re-advertise models, so resumed
-          // sessions get an empty snapshot. Fall back to the per-agent cache —
-          // same agent, so no cross-agent leak — which also seeds
-          // `acpCurrentModel` (when unset) so new assistant messages get a
-          // model stamp/badge again in resumed sessions.
+          // An empty snapshot means either that this agent advertises no model
+          // select, or that its config options had not landed yet. Fall back to
+          // the per-agent cache — same agent, so no cross-agent leak — so the
+          // picker is populated either way. The cache holds the LIST only; the
+          // current model comes from the session itself (`acp-models-cache`).
           // Re-read the agent type from the store — the closed-over `session`
           // is the render-time value and can be stale after the await.
-          const at = useChatStore.getState().sessions[tabId]?.agentType ?? NATIVE_AGENT;
+          const at = useChatStore.getState().sessions[tabId]?.agentType ?? "claude-code";
           const cached = loadCachedAcpModels(at);
           if (cached && cached.availableModels.length > 0) {
-            useChatStore
-              .getState()
-              .actions.setAcpModels(tabId, cached.currentModel, cached.availableModels);
+            useChatStore.getState().actions.setAcpModels(tabId, null, cached.availableModels);
           }
         }
         // Same backfill for slash commands: a session bound before this
@@ -568,6 +606,16 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           useChatStore
             .getState()
             .actions.setAcpAvailableCommands(tabId, snap.available_commands ?? []);
+        }
+        // And the knobs, for the same reasons (#32).
+        if (useChatStore.getState().sessions[tabId]?.acpConfigOptions === undefined) {
+          useChatStore
+            .getState()
+            .actions.setAcpConfigOptions(
+              tabId,
+              snap.config_options ?? [],
+              agentTypeFromPluginId(snap.plugin_id),
+            );
         }
       } catch {
         // best-effort backfill
@@ -584,17 +632,12 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     session?.acpAvailableModels?.length,
   ]);
 
-  // While a chat is active on one ACP agent, prefetch the other used agents'
-  // model lists in the background so switching is instant (cached). Fire-and-
-  // forget, once per app session per agent.
-  useEffect(() => {
-    const at = session?.agentType;
-    if (!at) return;
-    const others = otherAcpAgents(at);
-    if (others.length === 0) return;
-    const cwd = useProjectStore.getState().currentProject?.path ?? "/";
-    for (const other of others) void warmAcpModels(other, cwd);
-  }, [session?.agentType]);
+  // The other-agent model prefetch is gone with `warm-acp-models`. It iterated
+  // a STATIC list of five agent names to decide who to warm — the last such
+  // list on the chat path (ADR-0002) — and opened a throwaway session on each
+  // to harvest its model list. The persisted cache still drives the picker for
+  // any agent seen before; one that has not been opened this session fills its
+  // picker when it is.
 
   // Shift+Tab → cycle the agent permission mode. Registered on the window in
   // capture phase so the browser's default focus traversal never steals it.
@@ -607,10 +650,20 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
       if (!root || !active || !root.contains(active)) return;
       e.preventDefault();
       e.stopPropagation();
-      // The store action both cycles to the agent's next advertised mode AND
-      // propagates it to the bound agent (so e.g. bypassPermissions actually
-      // stops permission prompts).
-      useChatStore.getState().actions.cycleAcpMode(tabId);
+      // The store action both cycles the mode AND propagates it to the bound
+      // agent (so e.g. bypassPermissions actually stops permission prompts).
+      // For non-Claude agents (Codex) cycle the agent-advertised ACP modes.
+      const sess = useChatStore.getState().sessions[tabId];
+      const actions = useChatStore.getState().actions;
+      if (sess?.agentType !== "claude-code") {
+        const modes = sess?.acpAvailableModes ?? [];
+        if (modes.length === 0) return;
+        const i = modes.findIndex((m) => m.id === sess?.acpCurrentMode);
+        const next = modes[(i + 1) % modes.length];
+        actions.setAcpMode(tabId, next.id);
+        return;
+      }
+      actions.cycleClaudePermissionMode(tabId);
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
@@ -623,24 +676,26 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   // Pre-warm secondary ACP agents in the background. The ~3-4s a fresh switch
   // pays is dominated by spawning the adapter (npx / CLI) + the ACP initialize
   // handshake; `ensureAgent` does exactly that (deduped/cached, no session, no
-  // auth), so paying it ahead of time makes the actual switch fast. Gated per
-  // agent on the user having used it before (a persisted modes cache exists) so
-  // we never spawn agents someone only ever ignores. Runs once per app session,
-  // deferred and staggered so it never competes with the primary (Claude) bind.
+  // auth), so paying it ahead of time makes the actual switch fast. Runs once
+  // per app session, deferred and staggered so it never competes with the
+  // primary bind.
+  //
+  // Two gates, and both matter. The agent must be INSTALLED — a hardcoded list
+  // of agent names here would have spawned agents the user never asked for,
+  // which is exactly what ADR-0002 forbids — and the user must have used it
+  // before (a persisted modes cache exists), so we never spawn one they only
+  // ever ignore.
   useEffect(() => {
     if (acpPrewarmStarted) return;
     acpPrewarmStarted = true;
     const timers: ReturnType<typeof setTimeout>[] = [];
-    // Prewarm candidates come from the live install list, not a hardcoded id
-    // table — an uninstalled agent must never be spawned, and an installed one
-    // the user actually uses (has a modes cache) should be warm.
-    const candidates = switchableAgentIds().filter((id) => id !== NATIVE_AGENT);
-    candidates.forEach((at, i) => {
+    installedExternals().forEach((agent, i) => {
+      const at = agent.agentType;
       if (!loadCachedAcpModes(at)) return; // never used → skip
       timers.push(
         setTimeout(
           () => {
-            void ensureAgent(pluginIdForAgent(at)).catch(() => {
+            void ensureAgent(agent.id).catch(() => {
               // Not installed / not ready — the real switch surfaces a proper
               // error; allow a later retry by clearing the once-flag.
               acpPrewarmStarted = false;
@@ -829,12 +884,16 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
 
     updateSessionStatus(tabId, "running");
 
-    // Expand mentions into a trailing context block. composePrompt fetches
-    // file/note bodies via Tauri and appends them under a fenced
-    // `## @ref` section — see `mentions.ts::composePrompt`.
+    // Expand mentions. Bodies that have no URI (notes, papers, past sessions)
+    // still append under a fenced `## @ref` section; file/folder mentions come
+    // back as structured `resourceLinks` and ride as ACP `ResourceLink` blocks
+    // instead (P2.1) — see `mentions.ts::composePrompt`.
     let wirePrompt: string;
+    let resourceLinks: { uri: string; name: string }[] = [];
     try {
-      wirePrompt = await composePrompt(actualContent, mentions);
+      const composed = await composePrompt(actualContent, mentions);
+      wirePrompt = composed.prose;
+      resourceLinks = composed.resourceLinks;
     } catch (err) {
       console.warn("composePrompt failed, sending raw text:", err);
       wirePrompt = actualContent;
@@ -856,7 +915,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
       session_id: bound.acpSessionId,
     };
     try {
-      await agents.send(key, wirePrompt, attachments);
+      await agents.send(key, wirePrompt, attachments, resourceLinks);
       logEvent({
         source: "agent",
         kind: "stream-started",
@@ -935,6 +994,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
                 // poisoning the bind ("JSON.stringify cannot serialize cyclic
                 // structures" from agents_spawn) and killing the composer.
                 onNewSession={onNewSessionStable}
+                onForkSession={canFork ? onForkSessionStable : undefined}
               />
             </div>
           </div>
@@ -944,6 +1004,13 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           {/* Permission / question prompt — an inline card pinned above the
               composer (plan reviews still render as a centered modal). */}
           <PermissionModal tabId={tabId} onSendMessage={onPermissionSend} />
+          {pendingElicitation && (
+            <ElicitationModal
+              key={pendingElicitation.requestId}
+              pending={pendingElicitation}
+              onClose={() => clearElicitation(tabId)}
+            />
+          )}
           {/* Bottom fade lives in the transcript; the centered floating
               row (setup pill + scroll-to-bottom) lives inside
               ChatComposer below. */}
@@ -1067,11 +1134,16 @@ function LoadingTranscriptState() {
 }
 
 /**
- * Composer wrapper: the sign-in pill + the real `MessageInput`.
+ * Composer wrapper: the login dialog + the real `MessageInput`.
  *
- * Agent-agnostic by construction — it holds no per-agent probe or gate, and
- * the only auth state it carries is "this session's agent reported it needs
- * credentials", learned from the agent itself.
+ * It no longer gates on anything. Two agent-specific surfaces used to live
+ * here: a Claude setup banner that hard-disabled the input until Claude Code
+ * was installed and authed, and a Codex sign-in pill driven by a probe of
+ * `~/.codex/auth.json`. Both are gone (ADR-0002). A composer disabled by one
+ * agent's readiness was a trap, because the agent switcher lives INSIDE it —
+ * the user could not switch to an agent that WAS ready. Failures now arrive as
+ * `atlas:auth-required` and route through `canSignIn`, which asks the catalog
+ * whether an agent has a sign-in, never which agent it is.
  */
 // Memoized: with the parent passing stable callbacks + value props, this heavy
 // subtree (input, mode/agent pickers, attach menu) skips re-render on every
@@ -1095,67 +1167,14 @@ const ChatComposer = memo(function ChatComposer({
   jumpCount: number;
   onScrollToBottom: () => void;
 }) {
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? NATIVE_AGENT);
-
-  // ── Sign-in, the same way for every agent ────────────────────────────────
-  //
-  // No agent is probed up front and no agent's auth state disables the
-  // composer. Atlas learns an agent needs credentials the only way that is
-  // true for all of them: the agent said so, as an auth-classified failure on
-  // THIS session. That raises one pill, which opens the one shared sign-in
-  // dialog, which offers whatever methods the agent itself advertised.
-  //
-  // What this replaces: a Claude-only install/auth probe that hard-disabled
-  // the composer, a Codex-only `~/.codex/auth.json` probe with its own pill,
-  // and a per-agent table of terminal login commands to copy-paste.
-  const [needsAuth, setNeedsAuth] = useState(false);
-  const [signingIn, setSigningIn] = useState(false);
-  useEffect(() => setNeedsAuth(false), [agentType, tabId]);
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
-      if (detail?.agentType !== agentType) return;
-      const sess = useChatStore.getState().sessions[tabId];
-      if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;
-      setNeedsAuth(true);
-    };
-    window.addEventListener("atlas:auth-required", handler);
-    return () => window.removeEventListener("atlas:auth-required", handler);
-  }, [agentType, tabId]);
-
-  const signIn = async () => {
-    setSigningIn(true);
-    try {
-      await signInToAgent(agentType);
-      setNeedsAuth(false);
-    } catch (err) {
-      // The dialog is the richer surface (it lists every advertised method and
-      // streams the login process); fall back to it when the one-shot path
-      // can't complete on its own.
-      promptSignIn(agentType);
-      logEvent({
-        source: "atlas",
-        kind: "agent-auth",
-        summary: `${agentMeta(agentType).label} sign-in failed`,
-        status: "failure",
-        payload: { error: String(err), agentType },
-      });
-    } finally {
-      setSigningIn(false);
-    }
-  };
-
-  // An agent that needs credentials is not a broken composer: the user can
-  // still switch agents, edit their draft, and read the thread.
-  const disabled = false;
-
-  const setupVisible = needsAuth;
-  // Node install pill (bundled-nvm). Non-blocking — informs only, doesn't
-  // disable the composer. Shown for both agents since `npx` powers both.
-  const nodePhase = useNodeSetupStore.use.phase();
-  const nodeBusy =
-    nodePhase === "installing" || nodePhase === "installed" || nodePhase === "failed";
-  const showRow = setupVisible || nodeBusy || showJumpToBottom;
+  // OpenCode / Cursor / Kilo auth used to raise a "copy `cursor-agent login`"
+  // pill here. It is gone: `atlas:auth-required` now routes ONLY to the
+  // AgentLoginDialog (see message-input.tsx), which runs the login for the
+  // user instead of asking them to run it themselves. The pill also gave
+  // advice that was wrong on the machines that needed it most — when Atlas
+  // downloaded the CLI into its app-data dir, there was no such command on the
+  // user's PATH to run. The dialog's error phase now shows the real absolute
+  // path as a manual fallback.
 
   return (
     <>
@@ -1164,27 +1183,9 @@ const ChatComposer = memo(function ChatComposer({
             rendered (each gets its own slide-up + fade-in animation
             via `.atlas-pill-in`); when the row is empty it doesn't
             paint at all so it never blocks pointer events. */}
-        {showRow && (
+        {showJumpToBottom && (
           <div className="pointer-events-none absolute bottom-full inset-x-0 mb-2 z-20 flex justify-center">
             <div className="pointer-events-auto flex items-center gap-2">
-              {nodeBusy && (
-                <span key={`node-${nodePhase}`} className="atlas-pill-in">
-                  <NodeSetupBanner />
-                </span>
-              )}
-              {needsAuth && canSignIn(agentType) && (
-                <button
-                  key="agent-signin"
-                  onClick={signIn}
-                  disabled={signingIn}
-                  className="atlas-pill-in inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[11px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer disabled:opacity-60"
-                >
-                  {signingIn ? <Loader2 size={11} className="animate-spin" /> : <LogIn size={11} />}
-                  {signingIn
-                    ? `Signing in to ${agentMeta(agentType).label}…`
-                    : `Sign in to ${agentMeta(agentType).label}`}
-                </button>
-              )}
               {showJumpToBottom && (
                 <button
                   key="jump-to-bottom"
@@ -1217,7 +1218,6 @@ const ChatComposer = memo(function ChatComposer({
           onStop={onStop}
           running={running}
           stopping={stopping}
-          disabled={disabled}
           placeholder="Ask Atlas what to do…"
         />
       </div>

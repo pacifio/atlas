@@ -13,35 +13,28 @@ import {
   ChevronDown,
   Search,
   SlidersHorizontal,
-  Download,
-  Plus,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useChatStore } from "../stores/chat-store";
 import { agents } from "../lib/agents-api";
-import { NATIVE_AGENT, agentTypeFromPluginId, type SwitchableAgent } from "@/types/agent";
+import {
+  CLAUDE_PERMISSION_MODE_LABEL,
+  CLAUDE_PERMISSION_MODES,
+  type ClaudePermissionMode,
+  agentTypeFromPluginId,
+  type SwitchableAgent,
+} from "@/types/agent";
 import {
   agentMeta,
-  skillToolIdForAgent,
+  switchableAgentOf,
   useSwitchableAgents,
 } from "@/features/agents/lib/agent-meta";
-import {
-  installFeaturedAgent,
-  useInstallingAgents,
-  useSuggestedAgents,
-} from "@/features/agents/lib/featured-agents";
-import {
-  displayModeName,
-  isEffortOption,
-  optionLabel,
-  optionValue,
-  optionValues,
-} from "../lib/acp-config-options";
 import { canSignIn, promptSignIn } from "../lib/agent-signin";
 import { switchAgentForTab } from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
 import { ProviderModelPills } from "./provider-model-pills";
 import { loadCerseiEffort, loadCerseiCompress } from "../lib/cersei-model-pref";
+import { loadCachedAcpConfigOptions } from "../lib/acp-config-options-cache";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
 import { modelLabel } from "../lib/model-label";
 // `ChatInput` pulls in CodeMirror (~870 KB) via `cm-mention-extension`.
@@ -80,9 +73,9 @@ import type {
   PastSessionRef,
 } from "../lib/mentions";
 import { toast } from "sonner";
+import { parseConfigOptions } from "../lib/acp-config-options";
 import { useComposerFileDrop } from "../hooks/use-composer-file-drop";
 import { useProjectStore } from "@/features/project/stores/project-store";
-import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import type { MentionTrigger } from "../lib/cm-mention-extension";
 import type { SlashTrigger } from "../lib/cm-slash-extension";
 // Value import — MUST come from the CodeMirror-free module, not from
@@ -271,116 +264,6 @@ function EffortPill({ tabId }: { tabId: string }) {
   );
 }
 
-/**
- * Right-aligned reasoning-effort pill for ACP agents, driven by the agent's
- * own advertised config option (category `thought_level`, e.g. Claude's
- * `effort`: Default/Low/Medium/High/Xhigh/Max). Hidden when the agent
- * advertises none. Self-contained dropup with narrow selectors + outside-click
- * close, mirroring the other standalone pills.
- */
-function AcpEffortPill({ tabId }: { tabId: string }) {
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType);
-  const configOptions = useChatStore((s) => s.sessions[tabId]?.acpConfigOptions);
-  const { setAcpConfigOption } = useChatStore.use.actions();
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  if (!agentType || agentType === NATIVE_AGENT) return null;
-  const loading = configOptions === undefined;
-  const opt = (configOptions ?? []).find(isEffortOption);
-  const values = opt ? optionValues(opt) : [];
-  const hasEffort = !!opt && values.length > 0;
-  const pillLabel = loading ? "Effort" : hasEffort ? optionLabel(opt!) : "Default";
-
-  return (
-    <div ref={rootRef} className="relative">
-      {open && (
-        <div className="absolute bottom-full right-0 mb-1.5 z-30 w-52 rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] p-1 shadow-lg">
-          <div className="px-2 pb-1 pt-0.5 text-[9px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)] select-none">
-            Agent effort
-          </div>
-          {loading ? (
-            <div className="flex items-center gap-1.5 px-2 py-2 text-[11px] text-[var(--text-tertiary)]">
-              <Loader2 size={11} className="animate-spin" /> Loading…
-            </div>
-          ) : hasEffort ? (
-            values.map((v) => {
-              const active = v.id === optionValue(opt!);
-              return (
-                <button
-                  key={v.id}
-                  onClick={() => {
-                    setAcpConfigOption(tabId, opt!.id, v.id);
-                    setOpen(false);
-                  }}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                    active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
-                  )}
-                >
-                  <span className="flex-1 truncate text-[11px] font-medium text-[var(--text-primary)]">
-                    {displayModeName(v.label)}
-                  </span>
-                  {active && <Check size={11} className="text-[var(--accent-primary)]" />}
-                </button>
-              );
-            })
-          ) : (
-            // Placeholder: this agent exposes no effort control. One inert
-            // entry, so opening the menu explains itself instead of vanishing.
-            <div className="rounded-md px-2 py-1.5 bg-[var(--bg-selected)] select-none">
-              <div className="flex items-center gap-2">
-                <span className="flex-1 text-[11px] font-medium text-[var(--text-primary)]">
-                  Default
-                </span>
-                <Check size={11} className="text-[var(--accent-primary)]" />
-              </div>
-              <div className="mt-0.5 text-[10px] leading-snug text-[var(--text-tertiary)]">
-                Agent will use recommended effort
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[10px] leading-none font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-        title={opt?.description ?? "Reasoning effort"}
-      >
-        {loading ? (
-          <Loader2 size={11} className="shrink-0 animate-spin text-[var(--text-tertiary)]" />
-        ) : (
-          <SlidersHorizontal size={11} className="shrink-0 text-[var(--text-tertiary)]" />
-        )}
-        {pillLabel}
-        <ChevronDown
-          size={10}
-          className={cn(
-            "shrink-0 text-[var(--text-tertiary)] transition-transform",
-            open && "rotate-180",
-          )}
-        />
-      </button>
-    </div>
-  );
-}
-
 /** Compact tokens-used + cost pill for the native agent, plus a "compacting…"
  *  state while the context window is being summarized. Hidden until the first
  *  `usage_updated` delta lands. Narrow selectors so it only re-renders on its
@@ -422,11 +305,29 @@ function CerseiUsagePill({ tabId }: { tabId: string }) {
  * Self-contained: own narrow store selectors + click-outside, so it doesn't
  * widen MessageInput's render surface.
  */
+/** Mode names arrive verbatim from the agent — OpenCode sends lowercase ids as
+ *  names ("build", "plan"). Title-case a single all-lowercase word for display;
+ *  multi-word or already-cased names (Claude's "Accept Edits") pass through. */
+function displayModeName(name: string): string {
+  return /^[a-z][a-z0-9-]*$/.test(name) ? name.charAt(0).toUpperCase() + name.slice(1) : name;
+}
 
-/** A composer pill group. Beyond the three fixed ones, every ACP config
- *  option the agent advertises gets its own group, keyed `cfg:<optionId>`. */
-type ComposerGroup = "agent" | "mode" | "model" | (string & {});
-const GROUP_ORDER: ComposerGroup[] = ["agent", "mode", "model"];
+type ComposerGroup = "agent" | "mode" | "model" | "options";
+const GROUP_ORDER: ComposerGroup[] = ["agent", "mode", "model", "options"];
+
+/** Colour class for the Claude permission-mode dot (mirrors the old pill). */
+function claudeModeDotClass(mode: ClaudePermissionMode): string {
+  switch (mode) {
+    case "acceptEdits":
+      return "bg-[var(--status-success)]";
+    case "plan":
+      return "bg-[var(--accent-primary)]";
+    case "bypassPermissions":
+      return "bg-[var(--status-error)]";
+    default:
+      return "bg-[var(--text-tertiary)]";
+  }
+}
 
 /**
  * The composer's grouped, animated picker — coding agent / permission mode /
@@ -451,16 +352,29 @@ function ComposerGroupsMenu({
   currentAgent: SwitchableAgent;
   onSwitchAgent: (agent: SwitchableAgent) => void;
 }) {
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? NATIVE_AGENT);
+  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
+  const permissionMode = useChatStore((s) => s.sessions[tabId]?.claudePermissionMode ?? "default");
   const currentMode = useChatStore((s) => s.sessions[tabId]?.acpCurrentMode);
   const availableModes = useChatStore((s) => s.sessions[tabId]?.acpAvailableModes);
+  // P2.2: knobs the agent advertises beyond mode/model — a thinking select, a
+  // web-search toggle. Kept current by the `config_options_updated` delta, so a
+  // change made inside the agent shows here without a refetch.
+  const rawConfigOptions = useChatStore((s) => s.sessions[tabId]?.acpConfigOptions);
+  // Restart fallback (#36), the model pill's posture one hook down: an
+  // `undefined` store value means no live session has spoken yet — render the
+  // last list this agent advertised. An explicit `[]` is a live session saying
+  // "no knobs", and the cache must NOT override that (there this fallback
+  // deliberately differs from the model one, which also covers empty).
+  const configOptions = useMemo(
+    () => parseConfigOptions(rawConfigOptions ?? loadCachedAcpConfigOptions(agentType)),
+    [rawConfigOptions, agentType],
+  );
   const modesPending = useChatStore((s) => s.sessions[tabId]?.acpModesPending ?? false);
   const currentModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel);
   const availableModels = useChatStore((s) => s.sessions[tabId]?.acpAvailableModels);
-  const { setAcpMode, setAcpModel } = useChatStore.use.actions();
+  const { setAcpMode, setAcpModel, setClaudePermissionMode, setAcpConfigOption } =
+    useChatStore.use.actions();
   const switchableAgents = useSwitchableAgents();
-  const suggestedAgents = useSuggestedAgents();
-  const installingAgents = useInstallingAgents();
 
   const [openGroup, setOpenGroup] = useState<ComposerGroup | null>(null);
   const [dir, setDir] = useState(1);
@@ -500,8 +414,10 @@ function ComposerGroupsMenu({
     };
   }, [openGroup]);
 
-  // Self-heal exactly like the old model picker: `session/load` doesn't
-  // re-advertise models, so fall back to the persisted per-agent cache.
+  // Self-heal: the store is fed by the bind-time snapshot and the
+  // `config_options_updated` delta, and a tab can render before either has
+  // landed. Fall back to the persisted per-agent cache so the pill does not
+  // flicker away in that gap.
   const models = useMemo(() => {
     if (availableModels && availableModels.length > 0) return availableModels;
     return loadCachedAcpModels(agentType)?.availableModels ?? [];
@@ -517,8 +433,9 @@ function ComposerGroupsMenu({
     );
   }, [models, q]);
 
+  const isClaude = agentType === "claude-code";
   const hasAcpModes = !!availableModes && availableModes.length > 0;
-  const showMode = hasAcpModes || modesPending;
+  const showMode = isClaude || hasAcpModes || modesPending;
   const showModel = agentType !== "cersei" && models.length > 0;
 
   const toggle = (g: ComposerGroup) => {
@@ -593,68 +510,39 @@ function ComposerGroupsMenu({
                     </button>
                   );
                 })}
-                {/* One-click install suggestions (Zed's featured-agents
-                    pattern): the marketplace Install button relocated next to
-                    the picker. A row installs, then switches the chat to the
-                    fresh agent; installed agents leave the list above it. */}
-                {suggestedAgents.length > 0 && (
-                  <>
-                    <div className="my-1 h-px bg-[var(--border-subtle)]" />
-                    {suggestedAgents.map((a) => {
-                      const busy = installingAgents.has(a);
-                      return (
-                        <button
-                          key={a}
-                          disabled={busy}
-                          onClick={() => {
-                            void installFeaturedAgent(a)
-                              .then(() => onSwitchAgent(a as SwitchableAgent))
-                              .catch((err) =>
-                                toast.error(
-                                  `Couldn't install ${agentMeta(a).label}: ${String(err).slice(0, 120)}`,
-                                ),
-                              );
-                          }}
-                          title={`Install ${agentMeta(a).label} from the ACP registry`}
-                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer hover:bg-[var(--bg-hover)] disabled:cursor-default"
-                        >
-                          <AgentMark
-                            agentType={a}
-                            className="!h-4 !w-4 !text-[9px] !rounded opacity-70"
-                          />
-                          <span className="flex-1 truncate text-[11px] font-medium text-[var(--text-secondary)]">
-                            {agentMeta(a).label}
-                          </span>
-                          {busy ? (
-                            <Loader2
-                              size={11}
-                              className="animate-spin text-[var(--text-tertiary)]"
-                            />
-                          ) : (
-                            <Download size={11} className="text-[var(--text-tertiary)]" />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </>
-                )}
-                <div className="my-1 h-px bg-[var(--border-subtle)]" />
-                <button
-                  onClick={() => {
-                    openSettingsSection("agents");
-                    close();
-                  }}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer hover:bg-[var(--bg-hover)]"
-                >
-                  <Plus size={12} className="text-[var(--text-tertiary)]" />
-                  <span className="flex-1 truncate text-[11px] font-medium text-[var(--text-secondary)]">
-                    Add more agents
-                  </span>
-                </button>
               </div>
             )}
 
-            {openGroup === "mode" && (
+            {openGroup === "mode" && isClaude && (
+              <div className="p-1">
+                {CLAUDE_PERMISSION_MODES.map((m) => {
+                  const active = m === permissionMode;
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => {
+                        setClaudePermissionMode(tabId, m);
+                        close();
+                      }}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
+                        active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
+                      )}
+                    >
+                      <span
+                        className={cn("h-1.5 w-1.5 shrink-0 rounded-full", claudeModeDotClass(m))}
+                      />
+                      <span className="flex-1 text-[11px] font-medium text-[var(--text-primary)]">
+                        {CLAUDE_PERMISSION_MODE_LABEL[m]}
+                      </span>
+                      {active && <Check size={11} className="text-[var(--accent-primary)]" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {openGroup === "mode" && !isClaude && (
               <div className="p-1">
                 {!hasAcpModes ? (
                   <div className="flex items-center gap-1.5 px-2 py-2 text-[11px] text-[var(--text-tertiary)]">
@@ -694,6 +582,81 @@ function ComposerGroupsMenu({
                     );
                   })
                 )}
+              </div>
+            )}
+
+            {openGroup === "options" && (
+              // Capped like the agent list above: the panel is bottom-anchored
+              // and grows upward, so an uncapped knob list (an agent may
+              // advertise a select with dozens of choices) clips its TOP —
+              // which is the FIRST knob — off-screen.
+              <div className="max-h-[300px] overflow-y-auto hide-scrollbar p-1">
+                {configOptions.map((opt) => (
+                  <div key={opt.id}>
+                    {opt.kind === "boolean" ? (
+                      <button
+                        onClick={() => {
+                          void setAcpConfigOption(tabId, opt.id, !opt.value);
+                          close();
+                        }}
+                        className={cn(
+                          "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
+                          "hover:bg-[var(--bg-hover)]",
+                        )}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
+                            {opt.name}
+                            {opt.value && (
+                              <Check size={11} className="text-[var(--accent-primary)]" />
+                            )}
+                          </span>
+                          {opt.description && (
+                            <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)]">
+                              {opt.description}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    ) : (
+                      <>
+                        <div className="px-2 pt-1.5 pb-0.5 text-[9px] font-medium uppercase tracking-wider text-[var(--text-tertiary)]">
+                          {opt.name}
+                        </div>
+                        {opt.choices.map((c) => {
+                          const active = c.id === opt.currentValue;
+                          return (
+                            <button
+                              key={c.id}
+                              onClick={() => {
+                                void setAcpConfigOption(tabId, opt.id, c.id);
+                                close();
+                              }}
+                              className={cn(
+                                "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
+                                active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
+                              )}
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
+                                  {c.name}
+                                  {active && (
+                                    <Check size={11} className="text-[var(--accent-primary)]" />
+                                  )}
+                                </span>
+                                {c.description && (
+                                  <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)]">
+                                    {c.description}
+                                  </span>
+                                )}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
 
@@ -774,17 +737,40 @@ function ComposerGroupsMenu({
           className={pillCls(openGroup === "mode")}
           title="Permission mode — pick here, ⇧⇥ cycles"
         >
-          <span
-            className="h-1.5 w-1.5 shrink-0 rounded-full"
-            style={{ background: acpModeColor(currentMode) }}
-          />
+          {isClaude ? (
+            <span
+              className={cn(
+                "h-1.5 w-1.5 shrink-0 rounded-full",
+                claudeModeDotClass(permissionMode),
+              )}
+            />
+          ) : (
+            <span
+              className="h-1.5 w-1.5 shrink-0 rounded-full"
+              style={{ background: acpModeColor(currentMode) }}
+            />
+          )}
           <span className={labelCls(openGroup === "mode")}>
-            {currentAcpMode
-              ? displayModeName(currentAcpMode.name)
-              : modesPending
-                ? "Loading…"
-                : "Mode"}
+            {isClaude
+              ? CLAUDE_PERMISSION_MODE_LABEL[permissionMode]
+              : currentAcpMode
+                ? displayModeName(currentAcpMode.name)
+                : modesPending
+                  ? "Loading…"
+                  : "Mode"}
           </span>
+        </button>
+      )}
+
+      {configOptions.length > 0 && (
+        <button
+          onClick={() => toggle("options")}
+          className={pillCls(openGroup === "options")}
+          title="Agent options — knobs this agent advertises"
+        >
+          <SlidersHorizontal size={11} className="shrink-0 text-[var(--text-tertiary)]" />
+          <span className={labelCls(openGroup === "options")}>Options</span>
+          <ChevronDown size={10} className="ml-0.5 shrink-0 text-[var(--text-tertiary)]" />
         </button>
       )}
 
@@ -818,7 +804,6 @@ export function MessageInput({
     enqueueMessage,
     removeQueueItem,
     setAcpModes,
-    setAcpConfigOptions,
     setAcpModesPending,
     setCerseiProvider,
     setCerseiModel,
@@ -833,20 +818,15 @@ export function MessageInput({
   // first bound, but that path can be missed (resumed/restored sessions, an
   // effect that didn't re-run, etc.) — leaving a bound Codex session with the
   // modes sitting in Rust state but never pushed to the store, so no pill.
-  // Since THIS component is what renders the pill, seed from here too:
-  // whenever we're a bound session with no modes loaded, pull the snapshot and
-  // seed. Idempotent (bails once modes exist) and mirrors the codebase's
+  // Since THIS component is what renders the pill, seed from here too: whenever
+  // we're a bound non-Claude session with no modes loaded, pull the snapshot
+  // and seed. Idempotent (bails once modes exist) and mirrors the codebase's
   // consumer-side self-heal pattern (file index / knowledge mentions).
   const seedBinding = useChatStore((s) => {
     const sess = s.sessions[tabId];
-    if (!sess) return null;
+    if (!sess || sess.agentType === "claude-code") return null;
     if (!sess.acpAgentId || !sess.acpSessionId) return null;
-    const haveModes = (sess.acpAvailableModes?.length ?? 0) > 0;
-    // Gate on CONFIRMED, not merely present: an optimistic cache seed paints
-    // the picker instantly but still has to be reconciled against the live
-    // session (values move even when the advertised set doesn't).
-    const haveOptions = sess.acpConfigOptionsConfirmed === true;
-    if (haveModes && haveOptions) return null;
+    if ((sess.acpAvailableModes?.length ?? 0) > 0) return null;
     return `${sess.acpAgentId}::${sess.acpSessionId}`;
   });
   useEffect(() => {
@@ -856,8 +836,7 @@ export function MessageInput({
     void (async () => {
       try {
         const snap = await agents.snapshotMeta({ agent_id, session_id });
-        if (cancelled) return;
-        if (snap.available_modes.length > 0) {
+        if (!cancelled && snap.available_modes.length > 0) {
           setAcpModes(
             tabId,
             snap.current_mode,
@@ -865,47 +844,45 @@ export function MessageInput({
             agentTypeFromPluginId(snap.plugin_id),
           );
         }
-        // `?? []` rather than a length guard: an agent with no config options
-        // must record that fact, or this self-heal re-fetches on every render.
-        setAcpConfigOptions(
-          tabId,
-          snap.config_options ?? [],
-          agentTypeFromPluginId(snap.plugin_id),
-        );
       } catch (err) {
-        console.warn("seed ACP settings (composer self-heal) failed:", err);
+        console.warn("seed ACP modes (composer self-heal) failed:", err);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [tabId, seedBinding, setAcpModes, setAcpConfigOptions]);
-  // Safety net: an agent whose boot hangs (e.g. Codex's models-refresh times out
-  // waiting on a child process) never resolves `new_session`, so the create
-  // effect's `setAcpModesPending(false)` never runs and the picker spins
-  // forever. Time the loading state out so the pill settles regardless — if the
-  // binding lands later, the self-heal above still seeds the real modes; any
-  // optimistic cached modes simply stay shown without the spinner.
+  }, [tabId, seedBinding, setAcpModes]);
+  // Safety net for a boot that HANGS (e.g. Codex's models-refresh waiting on a
+  // child process that never answers): `new_session` neither resolves nor
+  // rejects, so the create effect's `setAcpModesPending(false)` — which owns
+  // settling this pill on every real outcome, success and failure alike —
+  // never runs, and the picker would spin forever. This backstop must be
+  // generous: a FIRST boot of a freshly installed agent legitimately takes
+  // tens of seconds (adapter spawn + SDK init + the CLI's own first-run
+  // setup), and a timer short enough to fire during it makes the composer
+  // look ready while the agent is still starting. If the binding lands after
+  // the backstop fires, the self-heal above still seeds the real modes.
   useEffect(() => {
     if (!acpModesPending) return;
-    const t = setTimeout(() => setAcpModesPending(tabId, false), 12000);
+    const t = setTimeout(() => setAcpModesPending(tabId, false), 120000);
     return () => clearTimeout(t);
   }, [tabId, acpModesPending, setAcpModesPending]);
   // Narrow per-tab selectors — primitives only, no message-array refs. This
   // component otherwise would re-render on every streaming chunk because it
   // sits inside the active chat panel.
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? NATIVE_AGENT);
+  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
   // Settings → General → "Enter to send". Narrow selector so a toggle flip
   // only re-renders composers, not the whole settings surface.
   const enterToSend = useProjectStore((s) => s.settings.enterToSend);
-  // `agentType` widened to a SwitchableAgent (drops "custom") for the composer
-  // sub-components (session scope, agent switcher) + the label lookup.
-  // The union is open (registry externals are valid agent types) — only the
-  // legacy "custom" placeholder collapses to the default. The old five-literal
-  // ladder here silently remapped every EXTERNAL agent to claude-code, which
-  // pointed the grouped picker's current-agent highlight (and session scope)
-  // at the wrong agent.
-  const switchableAgent: SwitchableAgent = agentType;
+  // `agentType` normalised for the composer sub-components (session scope,
+  // agent switcher) + the label lookup. This used to be a hardcoded list of the
+  // six first-party agents with everything else falling through to
+  // "claude-code" — so every registry-installed agent showed up in the pill as
+  // "Claude Code", and the grouped picker's current-agent highlight (and
+  // session scope) pointed at the wrong agent. `switchableAgentOf` passes
+  // external ids through and collapses only the legacy "custom" placeholder,
+  // which is what the transcript and sidebar already did.
+  const switchableAgent: SwitchableAgent = switchableAgentOf(agentType);
   // Native Cersei agent only: BYOK provider + model selection for the composer.
   const cerseiProvider = useChatStore((s) => s.sessions[tabId]?.cerseiProvider ?? "");
   const cerseiModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel ?? "");
@@ -991,10 +968,21 @@ export function MessageInput({
         };
       })
       .filter((c) => c.name && c.name !== "login");
-    // `/login` is Atlas-handled and synthesised the same way for every ACP
-    // agent — the adapters filter it out of their own command list, so without
-    // this row there is nothing to select. It opens the one shared sign-in
-    // dialog, which lists whatever methods the bound agent advertised.
+    // `/login` is the ONE command Atlas synthesizes (S1). Everything else the
+    // picker shows is passthrough from the agent's own `availableCommands` —
+    // "we render what ACP gives, nothing else".
+    //
+    // Removed here, deliberately:
+    //  - the per-agent `codex-login` / `atlas-login` handlers: every agent now
+    //    routes through the same `AgentOAuthModal`, so the fork had no purpose
+    //    beyond picking which of three dialogs to open;
+    //  - the synthetic `/skills` row: Settings is not an agent command, and
+    //    listing it here implied the agent understood it;
+    //  - the dimmed `/clear` + `/logout` guard rows for Claude: the adapter
+    //    blocklists them from `available_commands_update`, so showing rows that
+    //    explain why an unadvertised command does nothing is Atlas inventing
+    //    protocol surface. If an agent advertises them, they appear as
+    //    passthrough like anything else.
     const login: SlashCommand | null = canSignIn(agentType)
       ? {
           name: "login",
@@ -1003,19 +991,7 @@ export function MessageInput({
           handler: "agent-login" as const,
         }
       : null;
-    // Host-handled guard rows, merged in alongside whatever the agent
-    // advertises. `/skills` opens Settings for any supported agent.
-    const guards: SlashCommand[] = [
-      {
-        name: "skills",
-        signature: "/skills",
-        description: "Open Skills settings.",
-        handler: "open-settings",
-      },
-    ];
-    const guardNames = new Set(guards.map((g) => g.name));
-    const deduped = fromAgent.filter((c) => !guardNames.has(c.name));
-    return [...(login ? [login] : []), ...guards, ...deduped];
+    return [...(login ? [login] : []), ...fromAgent];
   }, [agentType, availableCommands]);
   const queue = useChatStore((s) => s.queues[tabId] ?? EMPTY_QUEUE);
 
@@ -1128,18 +1104,25 @@ export function MessageInput({
   const slashTriggerRef = useRef<SlashTrigger | null>(null);
   slashTriggerRef.current = slashTrigger;
 
-  // An auth-classified turn failure routes to the sign-in flow instead of
-  // dying as a generic banner — the SAME shared dialog for every agent, which
-  // offers whatever methods that agent advertised. Without it an
-  // `Authentication required` error is a dead end the user cannot act on.
+  /** The agent's own words from the last auth failure, so a later `/login`
+   *  can pass them along — the modal uses `reason` to tell "wants a provider
+   *  key" from "not signed in". */
+  const lastAuthReasonRef = useRef<string | null>(null);
+
+  // An auth-classified turn failure routes to the sign-in flow (P15) instead of
+  // dying as a generic banner. Every agent lands on the SAME modal now (S2):
+  // Claude no longer forks to its setup dialog and Codex no longer to a pill,
+  // because `AgentOAuthModal` renders whatever methods the agent advertises.
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string }>).detail;
+      const detail = (e as CustomEvent<{ sessionId?: string; agentType?: string; reason?: string }>)
+        .detail;
       const at = detail?.agentType;
       if (!at) return;
       const sess = useChatStore.getState().sessions[tabId];
       if (!sess?.acpSessionId || sess.acpSessionId !== detail.sessionId) return;
-      if (canSignIn(at)) promptSignIn(at);
+      lastAuthReasonRef.current = detail.reason ?? null;
+      if (canSignIn(at)) promptSignIn(at, { reason: detail.reason });
     };
     window.addEventListener("atlas:auth-required", handler);
     return () => window.removeEventListener("atlas:auth-required", handler);
@@ -1404,7 +1387,7 @@ export function MessageInput({
       displayName: session.title,
       sessionId: session.id,
       sessionTitle: session.title,
-      filePath: session.filePath,
+      cwd: session.cwd,
     };
     inputRef.current?.insertMention(mention);
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -1446,29 +1429,12 @@ export function MessageInput({
       if (!t || !view) return;
 
       if (cmd.handler === "agent-login") {
-        // `/login` doesn't pass through to the agent — it opens Atlas's one
-        // shared sign-in dialog for whichever agent is bound.
+        // The one Atlas-handled command (S1): every agent opens the same
+        // `AgentOAuthModal`. `reason` is passed so the modal can tell an
+        // "agent wants a provider key" failure from a plain "not signed in".
         clearSlashRange(view, t.from, t.to);
         setSlashTrigger(null);
-        promptSignIn(agentType);
-        inputRef.current?.focus();
-        return;
-      }
-
-      if (cmd.handler === "open-settings") {
-        clearSlashRange(view, t.from, t.to);
-        setSlashTrigger(null);
-        openSettingsSection("skills");
-        inputRef.current?.focus();
-        return;
-      }
-
-      if (cmd.handler === "unavailable") {
-        // Host-handled guard row — the agent doesn't support this command
-        // (or the ACP adapter blocklists it from advertisement). Nothing to
-        // run; just close the picker and drop the typed token.
-        clearSlashRange(view, t.from, t.to);
-        setSlashTrigger(null);
+        promptSignIn(agentType, { reason: lastAuthReasonRef.current ?? undefined });
         inputRef.current?.focus();
         return;
       }
@@ -1979,7 +1945,7 @@ export function MessageInput({
               <ComposerAddMenu
                 disabled={disabled || githubSyncing !== null}
                 projectPath={useProjectStore.getState().currentProject?.path ?? null}
-                agentId={skillToolIdForAgent(agentType)}
+                agentId={switchableAgent}
                 imageSupported={imageSupported}
                 onAddFilesOrPhotos={() => void pickFilesOrPhotos()}
                 onAttachMedia={() => void pickMedia()}
@@ -1987,6 +1953,8 @@ export function MessageInput({
                 onCloneRepo={(repo) => void handleCloneRepo(repo)}
                 onPickSession={handlePickSession}
                 onPickWorkspace={handlePickWorkspace}
+                currentAgent={switchableAgent}
+                onSwitchAgent={handleSwitchAgent}
               />
               {/* Agent / mode / model as one grouped, animated picker — the
                   pills double as its tab strip. Cycling shortcuts (⌥/ agents,
@@ -2011,13 +1979,10 @@ export function MessageInput({
               {agentType === "cersei" && <CerseiMemoryPill />}
               {agentType === "cersei" && <CerseiUsagePill tabId={tabId} />}
             </div>
-            {/* Right side: the agent's reasoning-effort picker (ACP config
-                option, hidden when not advertised) and the live
-                implementation-plan pill. */}
-            <div className="flex items-center gap-1.5">
-              <AcpEffortPill tabId={tabId} />
-              <PlanTasksPill tabId={tabId} />
-            </div>
+            {/* Right side: the live implementation-plan pill (arc progress +
+                count; opens its own morphing task-list panel). Replaces the
+                PlanDock strip that used to sit above the composer. */}
+            <PlanTasksPill tabId={tabId} />
           </div>
         </div>
       </div>
@@ -2030,10 +1995,9 @@ export function MessageInput({
           initialScope={trigger?.scope ?? null}
           projectPath={projectPath}
           // Per-agent component gating: pack components (command/agent/rule)
-          // only list ones enabled for the active agent. The skills registry
-          // keys enablement on TOOL ids ("claude-code" / "codex" / "atlas"),
-          // not agent registry ids — map through the capability bridge.
-          agentId={skillToolIdForAgent(agentType)}
+          // only list ones enabled for the active agent (registry ids
+          // "claude-code" / "codex" match agentType).
+          agentId={agentType}
           onSelect={handleMentionSelect}
           onClose={() => setTrigger(null)}
         />
@@ -2049,7 +2013,15 @@ export function MessageInput({
           commands={agentSlashCommands}
           loading={slashCommandsLoading}
           footerLabel={
-            agentType === NATIVE_AGENT ? undefined : `${agentMeta(agentType).label} commands`
+            agentType === "codex"
+              ? "Codex commands"
+              : agentType === "opencode"
+                ? "OpenCode commands"
+                : agentType === "cursor"
+                  ? "Cursor commands"
+                  : agentType === "claude-code"
+                    ? "Claude Code commands"
+                    : undefined
           }
         />
       )}

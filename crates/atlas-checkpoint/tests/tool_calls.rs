@@ -1044,7 +1044,7 @@ fn capture_degrades_gracefully_when_a_call_carries_no_usable_location() {
     let mut capture = Capture::new(&mut store, WorkspaceMode::Local);
 
     let arguments = serde_json::json!({ "command": "cargo test" });
-    assert!(extract_paths(&[], &arguments).is_empty());
+    assert!(extract_paths(&[], &[], &arguments).is_empty());
 
     capture
         .record_tool_call(

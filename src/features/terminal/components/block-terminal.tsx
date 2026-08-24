@@ -246,11 +246,28 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
       const outputChannel = new Channel<ArrayBuffer | number[]>();
       let sessionId: string | null = null;
       let earlyChunks: (ArrayBuffer | number[])[] = [];
+      // A command the opener queued for this terminal (an agent's login,
+      // today), held until the shell can actually receive it — see `sendQueued`.
+      let queued: string | null = null;
+      const sendQueued = () => {
+        if (queued === null || sessionId === null) return;
+        const line = queued;
+        queued = null;
+        void invoke("terminal_write", {
+          id: sessionId,
+          data: Array.from(new TextEncoder().encode(`${line}\n`)),
+        }).catch(() => {});
+      };
       const handleChunk = (payload: ArrayBuffer | number[]) => {
         const bytes =
           payload instanceof ArrayBuffer ? new Uint8Array(payload) : new Uint8Array(payload);
         term.write(bytes); // interactive surface
         parser.push(decoderRef.current.decode(bytes, { stream: true })); // blocks
+        // Send only once the shell has drawn a prompt. Written any earlier it
+        // races the user's profile — anything in there that reads stdin or
+        // calls `stty` eats the line, and before ZLE takes the tty out of
+        // canonical mode a long line is truncated at MAX_CANON.
+        if (parser.hasDrawnPrompt) sendQueued();
       };
       outputChannel.onmessage = (payload) => {
         if (disposed) return;
@@ -281,6 +298,19 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
         handleChunk(chunk);
       }
       earlyChunks = [];
+
+      // A command the opener queued for this terminal — an agent's login,
+      // today. Written into the shell rather than exec'd, so it runs with a
+      // real tty and a login that asks a question can be answered: the whole
+      // point of sending it here instead of spawning it headlessly. Taken
+      // once, so a remount does not re-run it.
+      queued = useTerminalStore.getState().actions.takePendingCommand(terminalKey) ?? null;
+      if (queued !== null) {
+        // A shell with no OSC 133 integration (anything but zsh here) never
+        // reports a prompt, so the wait needs a floor as well as a signal.
+        // Late is recoverable — the user retypes; never is not.
+        window.setTimeout(sendQueued, 1500);
+      }
 
       // Interactive-surface parity with the classic terminal: word/line
       // navigation + ⌘C/⌘V/⌘A copy-paste, and ⌘-click file paths.

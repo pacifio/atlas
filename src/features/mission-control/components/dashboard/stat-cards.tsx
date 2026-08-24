@@ -6,8 +6,8 @@ import { StatCard } from "./stat-card";
 /** The headline metric tiles — lifetime totals across all projects. */
 export function StatCards({ data }: { data: MissionControlUsage }) {
   const t = data.totals;
-  const totalIn = t.claudeInput;
-  const totalOut = t.claudeOutput;
+  const totalIn = t.agentInput;
+  const totalOut = t.agentOutput;
   const byokSince = data.byokSince ? new Date(data.byokSince).toLocaleDateString() : null;
 
   return (
@@ -16,26 +16,20 @@ export function StatCards({ data }: { data: MissionControlUsage }) {
         label="Total Tokens"
         value={fmtTokens(t.totalTokens)}
         sub={`${fmtTokens(totalIn)} in · ${fmtTokens(totalOut)} out`}
-        accent={AGENT_COLOR.claude}
+        accent={AGENT_COLOR.agents}
       />
       <StatCard
         label="Total Cost"
         value={fmtCost(t.totalCostUsd)}
-        sub="Claude + BYOK"
+        sub="Agents + BYOK"
         accent={AGENT_COLOR.output}
       />
       <StatCard
-        label="Requests"
-        value={fmtTokens(t.claudeRequests)}
-        sub={`${t.claudeSessions} sessions`}
+        label="Messages"
+        value={fmtTokens(t.agentMessages)}
+        sub={`${t.agentSessions} sessions`}
       />
-      <StatCard label="Cache Tokens" value={fmtTokens(t.claudeCache)} sub="creation + read" />
-      <StatCard
-        label="Codex"
-        value={fmtTokens(t.codexTokens)}
-        sub={`${t.codexSessions} threads · total only`}
-        accent={AGENT_COLOR.codex}
-      />
+      <StatCard label="Cache Tokens" value={fmtTokens(t.agentCache)} sub="creation + read" />
       <StatCard
         label="BYOK"
         value={fmtTokens(t.byokInput + t.byokOutput)}

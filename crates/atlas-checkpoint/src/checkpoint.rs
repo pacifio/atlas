@@ -182,6 +182,38 @@ fn resolve_range(repo: &Path, cursor: Option<&str>, head: &str) -> (Vec<String>,
     }
 }
 
+/// Evaluate SPECIFIC commits, wherever the cursor is.
+///
+/// The ordinary walk advances the cursor past every commit it examines and
+/// never looks back — correct for its job, and exactly wrong for the one case
+/// this exists for: a shell call that COMMITS ITS OWN WRITES (#31). The git
+/// watcher fires the instant the agent's `git commit` moves refs, so the walk
+/// can consume that commit before the call's touches are recorded; when the
+/// touches then land, the walk cannot help. Whoever recorded them names the
+/// commits the window saw HEAD move across, and this evaluates exactly those —
+/// same rule, same consumption, no cursor movement.
+///
+/// Idempotent by construction: the first evaluation consumes the touches it
+/// settled, so a re-run finds no candidates.
+pub fn link_commits(
+    store: &Store,
+    workspace_id: &str,
+    repo: &Path,
+    commits: &[String],
+    mode: WorkspaceMode,
+) -> Result<usize> {
+    if commits.is_empty() || !git::is_repository(repo) {
+        return Ok(0);
+    }
+    let mut candidates = store.link_candidates(workspace_id)?;
+    let branch = git::current_branch(repo);
+    let mut created = 0;
+    for commit in commits {
+        created += link_commit(store, repo, commit, &mut candidates, branch.as_deref(), mode)?;
+    }
+    Ok(created)
+}
+
 /// Evaluate one commit against every candidate Session.
 ///
 /// Returns how many Checkpoints it produced — zero is the ordinary case for a

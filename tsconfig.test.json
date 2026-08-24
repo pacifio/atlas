@@ -3,9 +3,16 @@
   // globals are available to tests (which read the repo off disk and hook
   // `process` events) without being available to `src/` app code, which runs
   // in a WebView where none of them exist.
+  //
+  // `vite/client` alongside `node`: `types` REPLACES the default set, so
+  // naming only "node" drops Vite's ambient declarations — `import.meta.env`
+  // and the `*.svg` module shims. That went unnoticed while tests imported
+  // only leaf modules, but a test that imports a component (or a store that
+  // reaches one) pulls those app files into this program and they fail to
+  // resolve. Tests run under vitest, which IS vite, so these types apply.
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": ["node", "vite/client"]
   },
   "include": [
     "tests",

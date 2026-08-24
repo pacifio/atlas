@@ -496,8 +496,9 @@ impl AppState {
             std::fs::create_dir_all(dir)?;
         }
         let tmp = path.with_extension("json.tmp");
-        let raw = serde_json::to_string_pretty(state)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        let raw = serde_json::to_string_pretty(state).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        })?;
         std::fs::write(&tmp, raw)?;
         std::fs::rename(tmp, path)?;
         Ok(())
@@ -559,17 +560,20 @@ mod tests {
         assert_eq!(state.version, SCHEMA_VERSION);
     }
 
-    /// Settings saved by an older frontend still carry the retired
-    /// `disabledBuiltinAgents` key. It must parse and be ignored, not fail the
-    /// save — an agent is now switched off by uninstalling it.
+    /// The retired built-in toggle is gone from `AppSettings` (ADR-0002:
+    /// nothing ships that can be switched off), but a user's `state.json` may
+    /// still carry the key. Their OTHER settings must survive it.
+    ///
+    /// `enter_to_send` is the probe precisely because its default is `true`:
+    /// reading `false` back proves the file was parsed, not that `load` fell
+    /// through to `AppState::default()` — which is what a strict deserializer
+    /// would have done, silently resetting every setting the user had.
     #[test]
-    fn a_retired_settings_key_is_ignored_rather_than_fatal() {
-        let patch: AppStatePatch = serde_json::from_value(serde_json::json!({
-            "settings": { "disabledBuiltinAgents": ["kilo", "opencode"] }
+    fn a_retired_key_in_state_json_does_not_reset_the_other_settings() {
+        let state: AppState = serde_json::from_value(serde_json::json!({
+            "settings": { "disabledBuiltinAgents": ["kilo"], "enterToSend": false }
         }))
-        .expect("patch with a retired key still parses");
-        let mut state = AppState::default();
-        state.apply_patch(patch);
-        assert_eq!(state.version, SCHEMA_VERSION);
+        .expect("an older state file parses");
+        assert!(!state.settings.enter_to_send);
     }
 }

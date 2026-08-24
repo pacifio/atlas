@@ -23,6 +23,7 @@ import {
   ChevronDown,
   Search,
   MoreHorizontal,
+  GitBranch,
   TerminalSquare,
   ClipboardList,
   ListFilter,
@@ -72,6 +73,10 @@ interface ChatHeaderProps {
   onToggleBash: () => void;
   plansPanelOpen: boolean;
   onTogglePlans: () => void;
+  /** P3.4: only rendered when the agent advertised `sessionCapabilities.fork`.
+   *  Absent for every agent that did not, so the menu never offers a branch
+   *  that would fail on the wire. */
+  onForkSession?: () => void;
   onNewSession: () => void;
 }
 
@@ -90,6 +95,7 @@ function ChatHeaderImpl({
   onToggleBash,
   plansPanelOpen,
   onTogglePlans,
+  onForkSession,
   onNewSession,
 }: ChatHeaderProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -221,6 +227,18 @@ function ChatHeaderImpl({
                 <span className="flex-1">Plans</span>
                 {plansPanelOpen && <Check size={11} />}
               </DropdownMenu.Item>
+              {onForkSession && (
+                <>
+                  <DropdownMenu.Separator className="my-1 h-px bg-[var(--border-subtle)]" />
+                  <DropdownMenu.Item
+                    onSelect={onForkSession}
+                    className="flex h-[26px] cursor-default items-center gap-2 px-3 text-[11px] text-[var(--text-secondary)] outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                  >
+                    <GitBranch size={11} />
+                    <span className="flex-1">Branch from here</span>
+                  </DropdownMenu.Item>
+                </>
+              )}
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>

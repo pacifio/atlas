@@ -118,13 +118,9 @@ function buildMarkdown(data: MissionControlUsage): string {
   lines.push(`| Metric | Value |`);
   lines.push(`| --- | --- |`);
   lines.push(`| Total tokens | ${fmtTokens(t.totalTokens)} |`);
-  lines.push(
-    `| Claude input / output | ${fmtTokens(t.claudeInput)} / ${fmtTokens(t.claudeOutput)} |`,
-  );
-  lines.push(`| Claude cache | ${fmtTokens(t.claudeCache)} |`);
-  lines.push(`| Requests / sessions | ${fmtTokens(t.claudeRequests)} / ${t.claudeSessions} |`);
-  lines.push(`| Codex tokens | ${fmtTokens(t.codexTokens)} (${t.codexSessions} threads) |`);
-  lines.push();
+  lines.push(`| Agent input / output | ${fmtTokens(t.agentInput)} / ${fmtTokens(t.agentOutput)} |`);
+  lines.push(`| Agent cache | ${fmtTokens(t.agentCache)} |`);
+  lines.push(`| Messages / sessions | ${fmtTokens(t.agentMessages)} / ${t.agentSessions} |`);
   lines.push(
     `| BYOK tokens / calls | ${fmtTokens(t.byokInput + t.byokOutput)} / ${t.byokRequests} |`,
   );
@@ -132,11 +128,11 @@ function buildMarkdown(data: MissionControlUsage): string {
   lines.push("");
   lines.push(`## Per project`);
   lines.push("");
-  lines.push(`| Project | Claude (in/out) | Cost | Requests | Codex |`);
-  lines.push(`| --- | --- | --- | --- | --- |`);
+  lines.push(`| Project | Agents (in/out) | Cost | Messages |`);
+  lines.push(`| --- | --- | --- | --- |`);
   for (const p of [...data.projects].sort((a, b) => b.totalTokens - a.totalTokens)) {
     lines.push(
-      `| ${p.projectName} | ${fmtTokens(p.claude.inputTokens)} / ${fmtTokens(p.claude.outputTokens)} | ${fmtCost(p.claude.costUsd)} | ${fmtTokens(p.claude.requests)} | ${fmtTokens(p.codex.tokens)} |`,
+      `| ${p.projectName} | ${fmtTokens(p.agents.inputTokens)} / ${fmtTokens(p.agents.outputTokens)} | ${fmtCost(p.agents.costUsd)} | ${fmtTokens(p.agents.messages)} |`,
     );
   }
   lines.push("");

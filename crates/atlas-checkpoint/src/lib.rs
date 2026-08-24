@@ -73,7 +73,7 @@ pub use capture::{
     hash_written_content, Capture, FileWrite, SessionKey, ToolCallContent, TurnContent,
 };
 pub use error::{Error, Result};
-pub use checkpoint::{reconcile_rewrites, walk_new_commits, ReconcileOutcome, WalkOutcome};
+pub use checkpoint::{link_commits, reconcile_rewrites, walk_new_commits, ReconcileOutcome, WalkOutcome};
 pub use binding::{bind, detect, disable, enable, refresh_detection};
 pub use health::{evaluate as evaluate_health, CaptureHealth, HealthState, HostSignals};
 pub use import::{import_all, preview as import_preview, ImportOutcome, ImportPreview, TranscriptSource};

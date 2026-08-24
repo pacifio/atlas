@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { getProjectUsage, type ProjectUsage } from "@/features/chat/lib/claude-api";
+import { getProjectUsage, type ProjectUsage } from "../lib/usage-api";
 
 /**
  * Cached project-usage report, keyed by workspace cwd. The panel renders

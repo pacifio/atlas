@@ -55,10 +55,29 @@ chrono = { version = "0.4", features = ["serde"] }
 # Step 7 session-extraction BYOK closure can return `anyhow::Result` into
 # `atlas_memory::extract::extract_and_store` (which is generic over the LLM seam).
 anyhow = "1"
-atlas-agents = { path = "../crates/atlas-agents" }
+# The ported ACP stack (Zed port). It is the only one now: `atlas-agents`,
+# `atlas-acp`, `atlas-registry` and `atlas-agentkit` are deleted.
+#
+# They could never have coexisted with these crates anyway, which is why the
+# move had to be one change rather than a gradual one: the old stack pinned
+# `agent-client-protocol` 1.3 with its schema crate pinned EXACTLY (`=1.4.0`),
+# the ported one pins 2.0 / `=1.5.0`, and no single Cargo resolution can
+# contain two exact 1.x pins of the same crate. That collision is also why this
+# repo still has no `[workspace]`.
+atlas-acp-thread = { path = "../crates/atlas-acp-thread" }
+atlas-agent-servers = { path = "../crates/atlas-agent-servers" }
+atlas-agent-store = { path = "../crates/atlas-agent-store" }
+atlas-agent-manager = { path = "../crates/atlas-agent-manager" }
+atlas-agent-delta = { path = "../crates/atlas-agent-delta" }
+atlas-agent-wire = { path = "../crates/atlas-agent-wire" }
+atlas-agent-transcript = { path = "../crates/atlas-agent-transcript" }
+atlas-native-agent = { path = "../crates/atlas-native-agent" }
+# Atlas's session history — the only source for the sidebar (ADR-0001).
+atlas-thread-metadata = { path = "../crates/atlas-thread-metadata" }
+atlas-cersei = { path = "../crates/atlas-cersei" }
+atlas-bus = { path = "../crates/atlas-bus" }
+agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
 atlas-terminal = { path = "../crates/atlas-terminal" }
-atlas-acp = { path = "../crates/atlas-acp" }
-atlas-registry = { path = "../crates/atlas-registry" }
 # Already in the tree transitively (via atlas-cersei → cersei). Promoted to a
 # direct dep ONLY so src/lib.rs can reference cersei_provider::utf8::
 # ATLAS_UTF8_PATCH — a compile-time guard that fails `cargo check` if the
@@ -188,7 +207,7 @@ opt-level = 3       # Default for release, restated for clarity
 [profile.dev]
 
 # Optimize ALL transitive dependencies in dev mode at `opt-level = 1`
-# (Tauri, wry, tao, atlas-acp, atlas-agents, atlas-terminal, tokio, serde,
+# (Tauri, wry, tao, the ported ACP crates, atlas-terminal, tokio, serde,
 # reqwest, etc.). First clean build pays a one-time ~3–5 minute cost;
 # subsequent rebuilds only recompile the app crate and are unaffected.
 # Net effect: `bunx tauri dev` startup drops noticeably because Tauri's

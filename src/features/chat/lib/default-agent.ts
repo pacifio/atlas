@@ -1,24 +1,23 @@
 // Which coding agent a BRAND-NEW chat starts on.
 //
-// Since the ACP-registry port there is exactly one answer that is always
-// correct: the native in-process agent. It needs no external CLI, no download
-// and no sign-in, so it is the only agent guaranteed to exist on a fresh
-// install — which is precisely why Zed's picker shows only its native agent
-// until the user installs something.
+// The native agent, unconditionally. It is in-process, so it needs no install,
+// no sign-in and no probe — it is the one agent a fresh profile is guaranteed
+// to have (ADR-0002: Atlas ships no ACP agents).
 //
-// There is deliberately no "prefer agent X if it happens to be installed"
-// rule. That is what hardcoded "claude-code" was, and it turned a fresh install
-// into a dead end: the composer was disabled until Claude Code was installed
-// AND signed in, and the agent switcher lives inside that composer. Users pick
-// their agent explicitly; new chats start somewhere that always works.
+// This used to start on Claude Code whenever a probe said it was installed and
+// authenticated, falling back otherwise. Two things were wrong with that. It
+// named an agent a fresh install does not have — and the agent switcher lives
+// inside the composer that agent's absence disables, so the user could not
+// switch away from it either. And the probe was asynchronous, which made a
+// first-ever launch hold off creating the session at all until it settled.
+//
+// Claude Code becomes eligible the moment the user installs it, by switching to
+// it like any other agent. Nothing here decides that for them.
 
-import { NATIVE_AGENT, type SwitchableAgent } from "@/types/agent";
+import { NATIVE_AGENT_ID, type SwitchableAgent } from "@/types/agent";
 
-/** The agent a new chat starts on. */
-export const FALLBACK_DEFAULT_AGENT: SwitchableAgent = NATIVE_AGENT;
-
-/** The agent a new chat should start on. Safe to call at any time — it depends
- *  on no probe, no network and no install state. */
+/** The agent a new chat starts on. Synchronous and total: there is nothing to
+ *  probe, so there is no "not decided yet". */
 export function defaultAgentForNewSession(): SwitchableAgent {
-  return NATIVE_AGENT;
+  return NATIVE_AGENT_ID;
 }

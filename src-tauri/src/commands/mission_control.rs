@@ -1,12 +1,16 @@
 //! Mission Control dashboard aggregator — one orchestrating command that folds
 //! per-project usage across ALL tracked projects into the compact shape the
 //! dashboard needs (stat-card totals + a daily time-series + per-project
-//! metrics for charts/gantt). All heavy JSONL/sqlite parsing stays in Rust so
-//! the frontend never ships megabytes of transcripts.
+//! metrics for charts/gantt). All the folding stays in Rust so the frontend
+//! never ships megabytes of history.
 //!
 //! Data sources (honest about granularity):
-//!  - Claude: rich (input/output/cache, real cost, per-message day series).
-//!  - Codex: total tokens only (no in/out, no cost) attributed to a thread's day.
+//!  - Agents: **every** agent that ran through Atlas, from Atlas's own record
+//!    (`commands::usage`) — input/output/cache tokens, turns, and cost from the
+//!    cached models.dev prices. Bucketed by the day a session was last active,
+//!    because the record keeps one token total per session rather than per
+//!    message. Was Claude-only, scraped out of `~/.claude/projects` JSONL and
+//!    priced from a table in the source, until ADR-0001 / issue #17.
 //!  - BYOK: appended to `byok-usage.jsonl` going forward (see modelchat.rs).
 
 use serde::{Deserialize, Serialize};
@@ -14,28 +18,26 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-use super::agent_memory::collect_codex_sessions;
-use super::claude;
+use super::usage;
 
 // ── Wire shapes (camelCase to the frontend) ───────────────────────────────
 
+/// What Atlas's agents cost in one project — every agent, folded together.
+///
+/// One bucket rather than one per agent: which agent ran a session is data on
+/// the session, and a dashboard that grew a column per agent would need Atlas
+/// code for each new one.
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct ClaudeMetrics {
+pub struct AgentMetrics {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_creation_tokens: u64,
     pub cache_read_tokens: u64,
-    pub requests: u64,
+    /// Recorded messages — user and assistant rows in Atlas's own record.
+    pub messages: u64,
     pub cost_usd: f64,
     pub sessions: u64,
-}
-
-#[derive(Serialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexMetrics {
-    pub tokens: i64,
-    pub sessions: u32,
 }
 
 #[derive(Serialize)]
@@ -43,11 +45,10 @@ pub struct CodexMetrics {
 pub struct ProjectMetrics {
     pub project_path: String,
     pub project_name: String,
-    pub claude: ClaudeMetrics,
-    pub codex: CodexMetrics,
+    pub agents: AgentMetrics,
     pub first_activity_ms: Option<i64>,
     pub last_activity_ms: Option<i64>,
-    /// claude(in+out) + codex — drives the consumption pie.
+    /// agents(in+out) — drives the consumption pie.
     pub total_tokens: u64,
 }
 
@@ -56,11 +57,10 @@ pub struct ProjectMetrics {
 pub struct DailyBucket {
     pub date: String, // local "YYYY-MM-DD"
     pub project_path: String,
-    pub claude_input: u64,
-    pub claude_output: u64,
-    pub claude_cost: f64,
-    pub claude_requests: u64,
-    pub codex_tokens: u64,
+    pub agent_input: u64,
+    pub agent_output: u64,
+    pub agent_cost: f64,
+    pub agent_messages: u64,
 }
 
 #[derive(Serialize, Default)]
@@ -75,14 +75,12 @@ pub struct ByokDay {
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GrandTotals {
-    pub claude_input: u64,
-    pub claude_output: u64,
-    pub claude_cache: u64,
-    pub claude_cost: f64,
-    pub claude_requests: u64,
-    pub claude_sessions: u64,
-    pub codex_tokens: i64,
-    pub codex_sessions: u32,
+    pub agent_input: u64,
+    pub agent_output: u64,
+    pub agent_cache: u64,
+    pub agent_cost: f64,
+    pub agent_messages: u64,
+    pub agent_sessions: u64,
     pub byok_input: u64,
     pub byok_output: u64,
     pub byok_cost: f64,
@@ -100,17 +98,6 @@ pub struct MissionControlUsage {
     pub totals: GrandTotals,
     pub byok_since: Option<String>,
     pub generated_at: String,
-}
-
-// ── Per-project day accumulator (claude + codex on one date) ───────────────
-
-#[derive(Default)]
-struct DayAll {
-    c_in: u64,
-    c_out: u64,
-    c_cost: f64,
-    c_req: u64,
-    codex: u64,
 }
 
 #[derive(Deserialize)]
@@ -134,12 +121,6 @@ pub(crate) fn byok_usage_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|d| d.join("byok-usage.jsonl"))
 }
 
-fn ms_local_day(ms: i64) -> String {
-    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms)
-        .map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
 fn iso_local_day(s: &str) -> Option<String> {
     chrono::DateTime::parse_from_rfc3339(s)
         .ok()
@@ -151,100 +132,75 @@ pub async fn mission_control_usage(
     app: AppHandle,
     project_paths: Vec<String>,
 ) -> Result<MissionControlUsage, String> {
-    // Codex is async (sqlite3 shell-out) — gather per project up front.
-    let mut codex_by_project: Vec<Vec<super::agent_memory::CodexSession>> = Vec::new();
-    for p in &project_paths {
-        codex_by_project.push(collect_codex_sessions(p).await);
-    }
-
     let byok_path = byok_usage_path(&app);
 
     tokio::task::spawn_blocking(move || {
+        let prices = usage::read_prices(&app);
         let mut projects: Vec<ProjectMetrics> = Vec::new();
         let mut daily: Vec<DailyBucket> = Vec::new();
         let mut totals = GrandTotals::default();
 
-        for (i, path) in project_paths.iter().enumerate() {
-            let name = path.rsplit('/').find(|s| !s.is_empty()).unwrap_or(path).to_string();
-            let cagg = claude::claude_project_agg(path);
-            let codex_sessions = &codex_by_project[i];
+        for path in project_paths.iter() {
+            let name = usage::project_name(path);
+            // One read per project, covering every agent that ran there. A
+            // project whose store is missing or unreadable contributes nothing
+            // and must not blank the other projects' figures.
+            let recorded = usage::project_usage(path, &prices).unwrap_or_default();
 
-            // Per-day map combining both sources for this project.
-            let mut days: BTreeMap<String, DayAll> = BTreeMap::new();
-            for (date, d) in &cagg.days {
-                let e = days.entry(date.clone()).or_default();
-                e.c_in += d.input;
-                e.c_out += d.output;
-                e.c_cost += d.cost;
-                e.c_req += d.requests;
+            // Per-day map for this project.
+            let mut days: BTreeMap<String, usage::DayUsage> = BTreeMap::new();
+            for (date, day) in usage::day_buckets(&recorded.sessions) {
+                days.insert(date, day);
             }
-            // Codex — attribute the whole thread total to its updated day.
-            let mut codex_tokens_total: i64 = 0;
-            let (mut codex_first, mut codex_last): (Option<i64>, Option<i64>) = (None, None);
-            for s in codex_sessions {
-                codex_tokens_total += s.tokens;
-                codex_first = Some(codex_first.map_or(s.created_at_ms, |f: i64| f.min(s.created_at_ms)));
-                codex_last = Some(codex_last.map_or(s.updated_at_ms, |l: i64| l.max(s.updated_at_ms)));
-                if s.tokens > 0 {
-                    days.entry(ms_local_day(s.updated_at_ms)).or_default().codex += s.tokens as u64;
-                }
+            // Both ends of the span: when the earliest session started, and
+            // when the latest one last did work. Deriving both from the same
+            // timestamp would collapse every project's Gantt bar to a point.
+            let (mut agents_first, mut agents_last): (Option<i64>, Option<i64>) = (None, None);
+            for session in &recorded.sessions {
+                let started = session.started_ms;
+                agents_first = Some(agents_first.map_or(started, |f: i64| f.min(started)));
+                let last = session.last_activity_ms.unwrap_or(started);
+                agents_last = Some(agents_last.map_or(last, |l: i64| l.max(last)));
             }
-
             // Emit this project's day buckets.
             for (date, d) in days {
                 daily.push(DailyBucket {
                     date,
                     project_path: path.clone(),
-                    claude_input: d.c_in,
-                    claude_output: d.c_out,
-                    claude_cost: d.c_cost,
-                    claude_requests: d.c_req,
-                    codex_tokens: d.codex,
+                    agent_input: d.input_tokens,
+                    agent_output: d.output_tokens,
+                    agent_cost: d.cost_usd,
+                    agent_messages: d.messages,
                 });
             }
 
-            let claude = ClaudeMetrics {
-                input_tokens: cagg.totals.input_tokens,
-                output_tokens: cagg.totals.output_tokens,
-                cache_creation_tokens: cagg.totals.cache_creation_tokens,
-                cache_read_tokens: cagg.totals.cache_read_tokens,
-                requests: cagg.totals.request_count,
-                cost_usd: cagg.totals.total_cost_usd,
-                sessions: cagg.totals.session_count,
+            let agents = AgentMetrics {
+                input_tokens: recorded.totals.input_tokens,
+                output_tokens: recorded.totals.output_tokens,
+                cache_creation_tokens: recorded.totals.cache_creation_tokens,
+                cache_read_tokens: recorded.totals.cache_read_tokens,
+                messages: recorded.totals.messages,
+                cost_usd: recorded.totals.total_cost_usd,
+                sessions: recorded.totals.session_count,
             };
-            let codex = CodexMetrics {
-                tokens: codex_tokens_total,
-                sessions: codex_sessions.len() as u32,
-            };
-            let first_activity_ms = [cagg.first_ms, codex_first]
-                .into_iter()
-                .flatten()
-                .min();
-            let last_activity_ms = [cagg.last_ms, codex_last]
-                .into_iter()
-                .flatten()
-                .max();
-            let total_tokens = claude.input_tokens
-                + claude.output_tokens
-                + codex.tokens.max(0) as u64;
+            let first_activity_ms = agents_first;
+            let last_activity_ms = agents_last;
+            let total_tokens = agents.input_tokens + agents.output_tokens;
 
             // Grand totals.
-            totals.claude_input += claude.input_tokens;
-            totals.claude_output += claude.output_tokens;
-            totals.claude_cache += claude.cache_creation_tokens + claude.cache_read_tokens;
-            totals.claude_cost += claude.cost_usd;
-            totals.claude_requests += claude.requests;
-            totals.claude_sessions += claude.sessions;
-            totals.codex_tokens += codex.tokens;
-            totals.codex_sessions += codex.sessions;
+            totals.agent_input += agents.input_tokens;
+            totals.agent_output += agents.output_tokens;
+            totals.agent_cache += agents.cache_creation_tokens + agents.cache_read_tokens;
+            totals.agent_cost += agents.cost_usd;
+            totals.agent_messages += agents.messages;
+            totals.agent_sessions += agents.sessions;
             totals.total_tokens += total_tokens;
-            totals.total_cost_usd += claude.cost_usd;
+            totals.total_cost_usd += agents.cost_usd;
 
             projects.push(ProjectMetrics {
                 project_path: path.clone(),
                 project_name: name,
-                claude,
-                codex,
+                agents,
                 first_activity_ms,
                 last_activity_ms,
                 total_tokens,

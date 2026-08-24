@@ -88,13 +88,6 @@ export interface AppSettings {
    *  Cmd/Ctrl+Enter sends, bare Enter always inserts a newline (the old
    *  default). Cmd/Ctrl+Enter always sends regardless of this setting. */
   enterToSend: boolean;
-  /** Built-in agents the user turned off, by plugin id. Only the optional
-   *  built-ins can appear here (`cursor` / `opencode` / `kilo` — the ones
-   *  Atlas downloads on demand); Claude, Codex and Cersei are always on.
-   *  Empty by default. Mirrors `AppSettings::disabled_builtin_agents` in Rust,
-   *  which is the authority — the spawn command rejects a disabled agent even
-   *  if some UI path forgets to hide it. */
-  disabledBuiltinAgents: string[];
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -112,7 +105,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoUpdate: true,
   updaterIgnoredVersion: null,
   enterToSend: true,
-  disabledBuiltinAgents: [],
 };
 
 /**

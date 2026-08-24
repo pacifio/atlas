@@ -2,9 +2,15 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // The bridge resolves through the real `agentMeta`, which reads the registry
 // store. Stub the store so these tests describe the mapping, not the registry.
-const registryState: { plugins: unknown[]; registryEntries: unknown[]; signature: string } = {
+const registryState: {
+  plugins: unknown[];
+  registryEntries: unknown[];
+  catalogById: Record<string, unknown>;
+  signature: string;
+} = {
   plugins: [],
   registryEntries: [],
+  catalogById: {},
   signature: "",
 };
 
@@ -19,6 +25,7 @@ import { agentMetaForSource, isAgentSource, pluginIdForSource } from "./memory-a
 beforeEach(() => {
   registryState.plugins = [];
   registryState.registryEntries = [];
+  registryState.catalogById = {};
   registryState.signature = "";
 });
 
@@ -71,10 +78,13 @@ describe("agentMetaForSource", () => {
   it("resolves a legacy corpus source to its branded identity", () => {
     // "claude" matches no plugin id, so before the bridge this fell through to
     // a monogram (or, in the timeline, a hardcoded Claude glyph for everyone).
+    // On this branch any `claude*` id resolves to the FIRST-PARTY Claude
+    // branding (`agent-meta`'s deliberate branding collapse), so the assertion
+    // pins the branded identity, not the registry id spelling.
     const meta = agentMetaForSource("claude");
-    expect(meta.pluginId).toBe("claude-acp");
+    expect(meta.agentType).toBe("claude-code");
     expect(meta.label).toBe("Claude Code");
-    expect(meta.firstPartyIcon).toBe("claude-acp");
+    expect(meta.firstPartyIcon).toBe("claude-code");
   });
 
   it("gives a registry-installed agent its own name and icon", () => {

@@ -144,6 +144,75 @@ fn run_status(repo: &Path, args: &[&str]) -> Result<RunStatus> {
     })
 }
 
+/// Every path the working tree differs from HEAD at, right now.
+///
+/// The input to shell-write attribution. An agent that writes through a shell
+/// command — `sed -i`, a redirect, a Makefile, a script — names no file
+/// anywhere in the protocol, so the only way to know what it touched is to look
+/// at the tree before the command and again after, and take the difference.
+///
+/// `None` means there is no answer (not a repository, or git failed), which the
+/// caller must distinguish from `Some(empty)` — "nothing changed". Attributing
+/// on a failed probe would credit a Session with every file in the tree.
+///
+/// `-z` because porcelain v1 quotes paths containing spaces or non-ASCII;
+/// `--untracked-files=all` because the default collapses a new directory to
+/// `dir/`, and a directory is not something a Checkpoint can link.
+pub fn worktree_changes(repo: &Path) -> Option<std::collections::BTreeSet<String>> {
+    if !is_repository(repo) {
+        return None;
+    }
+    let out = run(
+        repo,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )
+    .ok()?;
+
+    let mut paths = std::collections::BTreeSet::new();
+    let mut fields = out.split('\0');
+    while let Some(entry) = fields.next() {
+        if entry.len() < 4 {
+            continue;
+        }
+        let (status, path) = entry.split_at(3);
+        if path.is_empty() {
+            continue;
+        }
+        paths.insert(path.to_string());
+        // A rename entry is followed by its ORIGIN path as a separate field.
+        // Both sides changed, and the origin is the one a later commit records
+        // as deleted, so neither may be dropped.
+        if status.starts_with('R') || status.starts_with('C') {
+            if let Some(origin) = fields.next() {
+                if !origin.is_empty() {
+                    paths.insert(origin.to_string());
+                }
+            }
+        }
+    }
+    Some(paths)
+}
+
+/// The paths a commit RANGE changed, with each path's change kind.
+///
+/// The shell-attribution input for a command that committed its own writes
+/// (#31): the tree is clean again by the time the after-snapshot runs, so the
+/// window's evidence is `before_head..after_head` — the commits the command
+/// itself made. The kind is what makes `existed_before` honest for these
+/// paths: an `Added` file did not exist when the command started, whatever
+/// the post-commit index now says.
+///
+/// `None` when the diff cannot be produced (not a repository, unknown shas);
+/// the caller must treat that as "no answer", not "nothing changed".
+pub fn changed_between(repo: &Path, from: &str, to: &str) -> Option<Vec<ChangedPath>> {
+    let out = run(
+        repo,
+        &["diff", "--name-status", "-z", "-M", &format!("{from}..{to}")],
+    )
+    .ok()?;
+    Some(parse_name_status(&out))
+}
+
 /// Is this directory a git repository?
 ///
 /// Git is optional: a Workspace that is not a repository captures Sessions
@@ -470,10 +539,16 @@ pub fn changed_paths(repo: &Path, sha: &str) -> Result<Vec<ChangedPath>> {
             sha,
         ],
     )?;
+    Ok(parse_name_status(&out))
+}
 
-    // `-z` output is NUL-separated, and a rename entry is three fields:
-    // status, old path, new path. Without it a path containing a quote or a
-    // newline is silently mangled.
+/// Parse `--name-status -z` output — shared by [`changed_paths`] and
+/// [`changed_between`].
+///
+/// `-z` output is NUL-separated, and a rename entry is three fields: status,
+/// old path, new path. Without it a path containing a quote or a newline is
+/// silently mangled.
+fn parse_name_status(out: &str) -> Vec<ChangedPath> {
     let mut fields = out.split('\0').filter(|f| !f.is_empty());
     let mut changes = Vec::new();
     while let Some(status) = fields.next() {
@@ -500,7 +575,7 @@ pub fn changed_paths(repo: &Path, sha: &str) -> Result<Vec<ChangedPath>> {
             }
         }
     }
-    Ok(changes)
+    changes
 }
 
 /// The content of a path as the commit recorded it.
@@ -751,6 +826,122 @@ mod tests {
             self.git(&["commit", "-m", message]);
             head_commit(self.path()).expect("a commit")
         }
+    }
+
+    // ── Working-tree snapshots ──────────────────────────────────────────────
+
+    /// The signal behind shell-write attribution: what the tree looks like
+    /// before a command runs, and what it looks like after.
+    #[test]
+    fn a_worktree_snapshot_names_every_kind_of_change() {
+        let repo = TestRepo::new();
+        repo.write("kept.txt", "one");
+        repo.write("removed.txt", "one");
+        repo.commit_all("initial");
+
+        assert!(
+            worktree_changes(repo.path()).unwrap().is_empty(),
+            "a clean tree changes nothing"
+        );
+
+        repo.write("kept.txt", "two"); // modified
+        repo.write("fresh.txt", "new"); // untracked
+        std::fs::remove_file(repo.path().join("removed.txt")).unwrap();
+
+        let changed = worktree_changes(repo.path()).unwrap();
+        assert!(changed.contains("kept.txt"), "{changed:?}");
+        assert!(changed.contains("fresh.txt"), "{changed:?}");
+        assert!(changed.contains("removed.txt"), "{changed:?}");
+        assert_eq!(changed.len(), 3);
+    }
+
+    /// A file inside an untracked DIRECTORY still has to be named. Git's
+    /// default status collapses it to `dir/`, which is not a path anything can
+    /// be attributed to.
+    #[test]
+    fn a_file_in_a_new_directory_is_named_individually() {
+        let repo = TestRepo::new();
+        repo.write("seed.txt", "one");
+        repo.commit_all("initial");
+        repo.write("out/generated.txt", "made by a script");
+
+        let changed = worktree_changes(repo.path()).unwrap();
+        assert!(changed.contains("out/generated.txt"), "{changed:?}");
+    }
+
+    /// Staged and unstaged are the same answer here: the question is "did this
+    /// file change since the command started", not "is it ready to commit".
+    #[test]
+    fn staging_a_change_does_not_hide_it() {
+        let repo = TestRepo::new();
+        repo.write("a.txt", "one");
+        repo.commit_all("initial");
+        repo.write("a.txt", "two");
+        repo.git(&["add", "a.txt"]);
+
+        assert!(worktree_changes(repo.path()).unwrap().contains("a.txt"));
+    }
+
+    /// A path with a space survives. Git quotes those in porcelain v1 output,
+    /// and a naive split on whitespace would record half a filename.
+    #[test]
+    fn a_path_with_a_space_survives_the_snapshot() {
+        let repo = TestRepo::new();
+        repo.write("seed.txt", "one");
+        repo.commit_all("initial");
+        repo.write("my notes.txt", "hello");
+
+        assert!(worktree_changes(repo.path()).unwrap().contains("my notes.txt"));
+    }
+
+    /// Not a repository is not an error — it is "no answer", and the caller
+    /// must be able to tell that from "nothing changed".
+    #[test]
+    fn a_directory_that_is_not_a_repository_has_no_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(worktree_changes(dir.path()).is_none());
+    }
+
+    /// The #31 input: what a commit RANGE changed, with kinds — the evidence
+    /// for a shell command that committed its own writes.
+    #[test]
+    fn a_range_diff_names_adds_edits_and_deletes_with_their_kinds() {
+        let repo = TestRepo::new();
+        repo.write("kept.txt", "one");
+        repo.write("gone.txt", "one");
+        let before = repo.commit_all("seed");
+
+        repo.write("kept.txt", "two");
+        repo.write("fresh.txt", "new");
+        std::fs::remove_file(repo.path().join("gone.txt")).unwrap();
+        repo.commit_all("first");
+        repo.write("fresh.txt", "newer");
+        let after = repo.commit_all("second");
+
+        let mut changes = changed_between(repo.path(), &before, &after).unwrap();
+        changes.sort_by(|a, b| a.path.cmp(&b.path));
+        let summary: Vec<(String, ChangeKind)> =
+            changes.into_iter().map(|c| (c.path, c.kind)).collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("fresh.txt".to_string(), ChangeKind::Added),
+                ("gone.txt".to_string(), ChangeKind::Deleted),
+                ("kept.txt".to_string(), ChangeKind::Modified),
+            ],
+            "the range collapses both commits into one honest delta"
+        );
+    }
+
+    /// Unknown shas are "no answer", which the caller must distinguish from
+    /// "nothing changed" — attributing on a failed diff would be a guess.
+    #[test]
+    fn a_range_diff_with_an_unknown_sha_has_no_answer() {
+        let repo = TestRepo::new();
+        repo.write("a.txt", "x");
+        let head = repo.commit_all("seed");
+        assert!(changed_between(repo.path(), "0000000000000000000000000000000000000000", &head)
+            .is_none());
     }
 
     #[test]

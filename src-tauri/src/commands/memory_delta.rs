@@ -16,7 +16,7 @@
 //!   `SharedMemoryStore::session_meta` (registered by `agents_send`), keeping
 //!   the hot `emit` path off the manager lock.
 
-use atlas_agents::{MessageRole, SessionDelta, SessionDeltaEnvelope, ToolCallStatus};
+use atlas_agent_wire::{MessageRole, SessionDelta, SessionDeltaEnvelope, ToolCallStatus};
 
 use super::shared_memory::{EventKind, RawEvent, SharedMemoryStore};
 
@@ -240,7 +240,7 @@ fn looks_secret(tok: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use atlas_agents::PlanEntry;
+    use atlas_agent_wire::PlanEntry;
 
     fn plan_delta() -> SessionDelta {
         SessionDelta::PlanUpdated {

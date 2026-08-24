@@ -12,7 +12,7 @@
 //!   [`OutboundMiddleware`] / [`InboundMiddleware`]. Outbound observes every
 //!   emitted event (broadcast, telemetry, memory-ingest); inbound mutates an
 //!   outgoing prompt before it reaches the agent (context / skill / bootstrap
-//!   injection). The concrete middleware live in the host / `atlas-agents`; this
+//!   injection). The concrete middleware live in the host; this
 //!   crate only owns the plumbing.
 
 mod bus;

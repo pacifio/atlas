@@ -5,6 +5,7 @@ import { useChatStore } from "@/features/chat/stores/chat-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { ensureAgent, getAgentSync } from "./agents-api";
+import { errInfo } from "./agent-signin";
 import {
   isBusyAgentStatus,
   pluginIdForAgent,
@@ -135,7 +136,7 @@ export async function openAgentSession({
   // Resume through the session's OWN agent — loading a Codex/OpenCode session
   // through the Claude plugin fails and falls back to a blank chat.
   const pluginId = pluginIdForAgent(agentType);
-  if (agentType) {
+  if (agentType && agentType !== "custom") {
     useChatStore.getState().actions.setSessionAgentType(targetTabId, agentType);
   }
   const cached = getAgentSync(pluginId);
@@ -148,7 +149,6 @@ export async function openAgentSession({
     // Two-stage: paint from disk in ~50ms, bind the agent concurrently. See
     // `resumeSessionFast` for why the old single-await chain felt slow.
     const { agent, snapshot } = await resumeSessionFast({
-      pluginId,
       sessionId: acpSessionId,
       cwd,
       ensure: () => ensureAgent(pluginId),
@@ -166,7 +166,9 @@ export async function openAgentSession({
   } catch (err) {
     setTranscriptLoading(targetTabId, false);
     setResumePending(targetTabId, false);
-    toast.error(`Couldn't open session: ${err instanceof Error ? err.message : String(err)}`);
+    // `errInfo`: the spawn/load commands in this path reject with a structured
+    // `{message, kind}` that would render as "[object Object]".
+    toast.error(`Couldn't open session: ${errInfo(err).message}`);
   }
 }
 

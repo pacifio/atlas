@@ -1022,3 +1022,147 @@ fn an_imported_session_is_never_link_matched() {
 
     assert!(store.checkpoints_for_session(&imported).unwrap().is_empty());
 }
+
+// ── Targeted evaluation for commits the cursor already passed (#31) ─────────
+
+/// A Session whose prompt has been recorded — and nothing else yet. The #31
+/// ordering needs the Session to predate the commit, as it does in production.
+fn session_started(store: &mut Store, native_id: &str) -> String {
+    let mut capture = Capture::new(store, WorkspaceMode::Local);
+    let key = SessionKey {
+        workspace_id: WORKSPACE.to_string(),
+        source: Source::Acp,
+        native_session_id: native_id.to_string(),
+    };
+    capture
+        .record_prompt(&key, "do the work", 1, Some("claude-code"), None, None)
+        .expect("prompt")
+}
+
+/// Touches for a Session that already exists — the shell window's late writes.
+fn session_touched_existing(
+    store: &mut Store,
+    root: &Path,
+    session_id: &str,
+    path: &str,
+    content: &str,
+    existed_before: bool,
+) {
+    let mut capture = Capture::new(store, WorkspaceMode::Local);
+    let call = capture
+        .record_tool_call(
+            session_id,
+            ToolCallContent {
+                turn_seq: 1,
+                native_call_id: Some("late-call"),
+                tool_name: ToolName::Bash,
+                title: None,
+                kind: Some("execute"),
+                status: ToolStatus::Completed,
+                locations: &serde_json::json!([]),
+                arguments: None,
+                result: None,
+            },
+        )
+        .expect("tool call");
+    capture
+        .record_file_write(
+            session_id,
+            &call,
+            1,
+            FileWrite {
+                path: &resolve_path(path, root),
+                sha256_after: Some(hash_written_content(content.as_bytes())),
+                sketch_after: atlas_checkpoint::sketch::sketch(content.as_bytes()),
+                existed_before,
+                deleted: false,
+            },
+        )
+        .expect("write");
+}
+
+/// The ordering hazard behind "the agent committed and nothing linked". The
+/// git watcher fires the moment the agent's own `git commit` moves refs, and
+/// its walk can run BEFORE the shell call's touches land — the cursor then
+/// advances past the commit having seen no candidates, and the walk never
+/// looks at it again. Whoever records touches for an already-walked commit
+/// must be able to evaluate exactly those commits, cursor be damned.
+#[test]
+fn a_commit_the_cursor_already_passed_links_when_evaluated_directly() {
+    let fixture = Fixture::new();
+    let mut store = fixture.store();
+    fixture.write("seed.txt", "seed");
+    fixture.commit_all("seed");
+    fixture.walk(&store); // cursor at seed
+
+    // The Session exists BEFORE the command runs — the prompt is recorded at
+    // turn start. (The link rule refuses commits that predate the Session, so
+    // ordering here mirrors production, not convenience.)
+    let session_id = session_started(&mut store, "native-late");
+
+    // The agent's command writes and commits in one shell call…
+    fixture.write("made.txt", "made by the agent");
+    let sha = fixture.commit_all("agent: add made.txt");
+    // …and the watcher-driven walk runs before any touch exists.
+    let outcome = fixture.walk(&store);
+    assert_eq!(outcome.checkpoints_created, 0, "nothing to link yet");
+
+    // Now the touches land (the shell window noticed the moved HEAD)…
+    session_touched_existing(
+        &mut store,
+        fixture.path(),
+        &session_id,
+        "made.txt",
+        "made by the agent",
+        false,
+    );
+
+    // …and a second ordinary walk cannot help: the cursor is already past.
+    let outcome = fixture.walk(&store);
+    assert_eq!(outcome.checkpoints_created, 0, "the cursor never looks back");
+
+    // Targeted evaluation is what links it.
+    let created = atlas_checkpoint::link_commits(
+        &store,
+        WORKSPACE,
+        fixture.path(),
+        std::slice::from_ref(&sha),
+        WorkspaceMode::Local,
+    )
+    .expect("evaluation runs");
+    assert_eq!(created, 1);
+
+    let checkpoints = store.checkpoints_for_session(&session_id).expect("query");
+    assert_eq!(checkpoints.len(), 1);
+    assert_eq!(checkpoints[0].commit_sha, sha);
+}
+
+/// Evaluating a commit twice must not double-link: the first evaluation
+/// consumed the touches it settled.
+#[test]
+fn re_evaluating_the_same_commit_is_idempotent() {
+    let fixture = Fixture::new();
+    let mut store = fixture.store();
+    fixture.write("seed.txt", "seed");
+    fixture.commit_all("seed");
+    fixture.walk(&store);
+
+    let session_id = session_started(&mut store, "native-idem");
+    fixture.write("made.txt", "content");
+    let sha = fixture.commit_all("agent: add");
+    fixture.walk(&store);
+    session_touched_existing(&mut store, fixture.path(), &session_id, "made.txt", "content", false);
+
+    for _ in 0..2 {
+        atlas_checkpoint::link_commits(
+            &store,
+            WORKSPACE,
+            fixture.path(),
+            std::slice::from_ref(&sha),
+            WorkspaceMode::Local,
+        )
+        .expect("evaluation runs");
+    }
+
+    assert_eq!(store.checkpoints_for_session(&session_id).expect("query").len(), 1);
+}
