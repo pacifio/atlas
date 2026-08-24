@@ -580,7 +580,11 @@ function ComposerGroupsMenu({
             )}
 
             {openGroup === "options" && (
-              <div className="p-1">
+              // Capped like the agent list above: the panel is bottom-anchored
+              // and grows upward, so an uncapped knob list (an agent may
+              // advertise a select with dozens of choices) clips its TOP —
+              // which is the FIRST knob — off-screen.
+              <div className="max-h-[300px] overflow-y-auto hide-scrollbar p-1">
                 {configOptions.map((opt) => (
                   <div key={opt.id}>
                     {opt.kind === "boolean" ? (
@@ -854,15 +858,19 @@ export function MessageInput({
       cancelled = true;
     };
   }, [tabId, seedBinding, setAcpModes]);
-  // Safety net: an agent whose boot hangs (e.g. Codex's models-refresh times out
-  // waiting on a child process) never resolves `new_session`, so the create
-  // effect's `setAcpModesPending(false)` never runs and the picker spins
-  // forever. Time the loading state out so the pill settles regardless — if the
-  // binding lands later, the self-heal above still seeds the real modes; any
-  // optimistic cached modes simply stay shown without the spinner.
+  // Safety net for a boot that HANGS (e.g. Codex's models-refresh waiting on a
+  // child process that never answers): `new_session` neither resolves nor
+  // rejects, so the create effect's `setAcpModesPending(false)` — which owns
+  // settling this pill on every real outcome, success and failure alike —
+  // never runs, and the picker would spin forever. This backstop must be
+  // generous: a FIRST boot of a freshly installed agent legitimately takes
+  // tens of seconds (adapter spawn + SDK init + the CLI's own first-run
+  // setup), and a timer short enough to fire during it makes the composer
+  // look ready while the agent is still starting. If the binding lands after
+  // the backstop fires, the self-heal above still seeds the real modes.
   useEffect(() => {
     if (!acpModesPending) return;
-    const t = setTimeout(() => setAcpModesPending(tabId, false), 12000);
+    const t = setTimeout(() => setAcpModesPending(tabId, false), 120000);
     return () => clearTimeout(t);
   }, [tabId, acpModesPending, setAcpModesPending]);
   // Narrow per-tab selectors — primitives only, no message-array refs. This
