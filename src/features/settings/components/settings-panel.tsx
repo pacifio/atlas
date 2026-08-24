@@ -580,6 +580,7 @@ function KeybindingsSettings() {
         { action: "Global Search", keys: "⌘⇧F" },
         { action: "Settings", keys: "⌘," },
         { action: "New Window", keys: "⌘⇧N" },
+        { action: "Open Session Capture", keys: "⌘⌥C" },
         { action: "Zoom in", keys: "⌘+" },
         { action: "Zoom out", keys: "⌘-" },
         { action: "Reset zoom", keys: "⌘0" },

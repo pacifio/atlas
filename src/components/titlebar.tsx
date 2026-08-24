@@ -198,6 +198,14 @@ function ProjectLabel({
 
   useEffect(() => readCapture(), [readCapture]);
 
+  // Command palette + ⌘⌥C both open this popover from outside the component
+  // tree, since `captureOpen` is local state — see `atlas:open-capture`.
+  useEffect(() => {
+    const onOpenCapture = () => setCaptureOpen(true);
+    window.addEventListener("atlas:open-capture", onOpenCapture);
+    return () => window.removeEventListener("atlas:open-capture", onOpenCapture);
+  }, []);
+
   return (
     <div className="relative min-w-0">
       {/* Pill: `org / project`. The org segment is de-emphasised so the project
