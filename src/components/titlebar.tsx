@@ -223,6 +223,7 @@ function ProjectLabel({
             // is why it sat visibly high.
             className="group flex h-[19px] max-w-[320px] min-w-0 cursor-pointer items-center gap-1 rounded-full border border-[#303030] bg-[#0C0C0C] px-2 text-[11px] leading-none font-medium transition-colors hover:bg-[#1f1f1f]"
             title={health?.summary ?? "Session capture"}
+            aria-label={health?.summary ?? "Session capture"}
           >
             {orgName && (
               <>
@@ -340,6 +341,7 @@ function WorkspaceToggle() {
         sidebarOpen ? "text-[#ccc]" : "text-[#555] hover:text-[#aaa]",
       )}
       title={sidebarOpen ? "Hide workspaces (⌘⇧.)" : "Show workspaces (⌘⇧.)"}
+      aria-label={sidebarOpen ? "Hide workspaces" : "Show workspaces"}
     >
       <Layers size={14} />
       {count > 1 && (
@@ -360,6 +362,7 @@ function LeftPanelToggle() {
       onClick={toggleLeftPanel}
       className="flex items-center justify-center w-6 h-6 rounded text-[#555] hover:text-[#aaa] hover:bg-[#ffffff08] transition-all duration-150"
       title={leftPanel.visible ? "Hide left panel" : "Show left panel"}
+      aria-label={leftPanel.visible ? "Hide left panel" : "Show left panel"}
     >
       <PanelLeft size={14} className={leftPanel.visible ? "" : "opacity-40"} />
     </button>
@@ -450,6 +453,7 @@ function UpdateButton() {
         ready || downloading ? "text-[#ccc]" : "text-[#555] hover:text-[#aaa]",
       )}
       title={title}
+      aria-label={title}
     >
       {checking ? (
         <Loader2 size={14} className="animate-spin" />
@@ -493,6 +497,7 @@ function NotificationButton() {
       onClick={toggle}
       className="relative flex items-center justify-center w-6 h-6 rounded text-[#555] hover:text-[#aaa] hover:bg-[#ffffff08] transition-all duration-150 outline-none focus:outline-none"
       title="Notifications"
+      aria-label="Notifications"
     >
       <Bell size={14} />
       {(hasUnread || needsAttention) && (
@@ -522,6 +527,7 @@ function RightPanelToggle() {
       onClick={toggleRightPanel}
       className="flex items-center justify-center w-6 h-6 rounded text-[#555] hover:text-[#aaa] hover:bg-[#ffffff08] transition-all duration-150"
       title={rightPanel.visible ? "Hide right panel" : "Show right panel"}
+      aria-label={rightPanel.visible ? "Hide right panel" : "Show right panel"}
     >
       <PanelRight size={14} className={rightPanel.visible ? "" : "opacity-40"} />
     </button>

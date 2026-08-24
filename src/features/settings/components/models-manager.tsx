@@ -176,6 +176,11 @@ export function ModelsManager() {
                             ? `Use ${m.name} for embeddings`
                             : "Download this model first"
                         }
+                        aria-label={
+                          m.downloaded
+                            ? `Use ${m.name} for embeddings`
+                            : "Download this model first"
+                        }
                         onClick={() => void doUse(m)}
                         className="h-6 rounded-md px-2 text-[10px] font-medium border border-border-default bg-bg-elevated text-text-primary hover:bg-bg-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                       >
@@ -186,6 +191,7 @@ export function ModelsManager() {
                       <button
                         type="button"
                         title="Remove download"
+                        aria-label="Remove download"
                         disabled={busy}
                         onClick={() => void doRemove(m)}
                         className="h-6 w-6 flex items-center justify-center rounded-md text-text-tertiary hover:text-[var(--status-error)] hover:bg-bg-hover transition-colors disabled:opacity-50"
