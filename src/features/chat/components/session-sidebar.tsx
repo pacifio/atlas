@@ -512,8 +512,14 @@ export const SessionSidebar = memo(function SessionSidebar({
       }
       setAcpAvailableCommands(targetTabId, snapshot.available_commands ?? []);
       // The knobs travel the same way (#32): the resume snapshot is the only
-      // carrier for an agent that never volunteers a notification.
-      setAcpConfigOptions(targetTabId, snapshot.config_options ?? []);
+      // carrier for an agent that never volunteers a notification. Tagged with
+      // the snapshot's own agent so a stale binding can't seed another
+      // agent's pill or cache (#36).
+      setAcpConfigOptions(
+        targetTabId,
+        snapshot.config_options ?? [],
+        agentTypeFromPluginId(snapshot.plugin_id),
+      );
       setTranscriptLoading(targetTabId, false);
     })();
   };

@@ -437,7 +437,13 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             // appeared. This also heals the early-delta drop: any
             // `config_options_updated` emitted before the tab was bound is
             // re-covered by this snapshot, which is fetched after bind.
-            useChatStore.getState().actions.setAcpConfigOptions(tabId, snap.config_options ?? []);
+            useChatStore
+              .getState()
+              .actions.setAcpConfigOptions(
+                tabId,
+                snap.config_options ?? [],
+                agentTypeFromPluginId(snap.plugin_id),
+              );
             // Re-apply the user's remembered knob picks (#33) — the mode
             // pref's discipline: only knobs this session advertises, only
             // values it offers, nothing when it already sits there. Each push
@@ -603,7 +609,13 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         }
         // And the knobs, for the same reasons (#32).
         if (useChatStore.getState().sessions[tabId]?.acpConfigOptions === undefined) {
-          useChatStore.getState().actions.setAcpConfigOptions(tabId, snap.config_options ?? []);
+          useChatStore
+            .getState()
+            .actions.setAcpConfigOptions(
+              tabId,
+              snap.config_options ?? [],
+              agentTypeFromPluginId(snap.plugin_id),
+            );
         }
       } catch {
         // best-effort backfill

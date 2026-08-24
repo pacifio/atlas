@@ -36,6 +36,7 @@ import { switchAgentForTab } from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
 import { ProviderModelPills } from "./provider-model-pills";
 import { loadCerseiEffort, loadCerseiCompress } from "../lib/cersei-model-pref";
+import { loadCachedAcpConfigOptions } from "../lib/acp-config-options-cache";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
 import { modelLabel } from "../lib/model-label";
 // `ChatInput` pulls in CodeMirror (~870 KB) via `cm-mention-extension`.
@@ -361,7 +362,15 @@ function ComposerGroupsMenu({
   // web-search toggle. Kept current by the `config_options_updated` delta, so a
   // change made inside the agent shows here without a refetch.
   const rawConfigOptions = useChatStore((s) => s.sessions[tabId]?.acpConfigOptions);
-  const configOptions = useMemo(() => parseConfigOptions(rawConfigOptions), [rawConfigOptions]);
+  // Restart fallback (#36), the model pill's posture one hook down: an
+  // `undefined` store value means no live session has spoken yet — render the
+  // last list this agent advertised. An explicit `[]` is a live session saying
+  // "no knobs", and the cache must NOT override that (there this fallback
+  // deliberately differs from the model one, which also covers empty).
+  const configOptions = useMemo(
+    () => parseConfigOptions(rawConfigOptions ?? loadCachedAcpConfigOptions(agentType)),
+    [rawConfigOptions, agentType],
+  );
   const modesPending = useChatStore((s) => s.sessions[tabId]?.acpModesPending ?? false);
   const currentModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel);
   const availableModels = useChatStore((s) => s.sessions[tabId]?.acpAvailableModels);

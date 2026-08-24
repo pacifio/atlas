@@ -24,6 +24,7 @@ import { loadCachedAcpModes, saveCachedAcpModes } from "../lib/acp-modes-cache";
 import { loadLastModePref, saveLastModePref } from "../lib/last-mode-pref";
 import { modelSelectOf } from "../lib/acp-config-options";
 import { saveConfigOptionPref } from "../lib/config-option-prefs";
+import { saveCachedAcpConfigOptions } from "../lib/acp-config-options-cache";
 import { loadCachedAcpModels, saveCachedAcpModels } from "../lib/acp-models-cache";
 import { resolveModelLabel } from "../lib/model-label";
 import { defaultAgentForNewSession } from "../lib/default-agent";
@@ -378,7 +379,7 @@ interface ChatActions {
     /** Apply a snapshot's config options — the ONLY way an agent's initial
      *  knobs reach the frontend, since `session/new`'s advertisement lives in
      *  the backend cell and a follow-up notification is optional (#32). */
-    setAcpConfigOptions: (tabId: string, options: unknown[]) => void;
+    setAcpConfigOptions: (tabId: string, options: unknown[], sourceAgentType?: string) => void;
     /** Native Cersei agent: pick the BYOK provider. Clears the model so the
      *  composer re-selects a default for the new provider before pushing. */
     setCerseiProvider: (sessionId: string, provider: string) => void;
@@ -1073,7 +1074,15 @@ export const useChatStore = createSelectors(
             session.availableCommands = commands;
           });
         },
-        setAcpConfigOptions: (tabId, options) => {
+        setAcpConfigOptions: (tabId, options, sourceAgentType) => {
+          const at = get().sessions[tabId]?.agentType;
+          // Same stale-snapshot hazard `setAcpModes` was versioned for: a tab
+          // relabelled to another agent keeps its old binding, so a snapshot
+          // fetched off that binding can land under the new label — and would
+          // write the OLD agent's knobs into the new agent's pill and cache.
+          // Callers pass the agent the snapshot actually came from; a mismatch
+          // is stale by definition, so drop it.
+          if (sourceAgentType && at && sourceAgentType !== at) return;
           set((s) => {
             const session = s.sessions[tabId];
             if (!session) return;
@@ -1085,6 +1094,12 @@ export const useChatStore = createSelectors(
             }
             session.acpConfigOptions = options;
           });
+          // Survive the next restart (#36) — modes and models already do;
+          // without this the Options pill died with the process. Outside the
+          // immer pass (side effect, not state), like the sibling caches.
+          if (options.length > 0 && at && at !== "claude-code") {
+            saveCachedAcpConfigOptions(at, options);
+          }
         },
         setAcpModels: (sessionId, currentModel, availableModels) => {
           set((s) => {
@@ -1988,6 +2003,11 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       // Keeps the mode/model pickers honest when the change came from inside
       // the agent (its own `/model`, a thinking toggle) rather than from Atlas.
       session.acpConfigOptions = env.config_options;
+      // Survive the next restart (#36) — the same posture as the model-list
+      // save just below (empty sets are a no-op inside the cache).
+      if (session.agentType) {
+        saveCachedAcpConfigOptions(session.agentType, env.config_options);
+      }
       // The model pill rides on this same blob — ACP has no separate model
       // field, so a `category: "model"` select IS the model list. Without this
       // the pill only ever saw the bind-time snapshot and went stale (or, for a
