@@ -24,7 +24,10 @@ import { loadCachedAcpModes, saveCachedAcpModes } from "../lib/acp-modes-cache";
 import { loadLastModePref, saveLastModePref } from "../lib/last-mode-pref";
 import { modelSelectOf } from "../lib/acp-config-options";
 import { saveConfigOptionPref } from "../lib/config-option-prefs";
-import { saveCachedAcpConfigOptions } from "../lib/acp-config-options-cache";
+import {
+  loadCachedAcpConfigOptions,
+  saveCachedAcpConfigOptions,
+} from "../lib/acp-config-options-cache";
 import { loadCachedAcpModels, saveCachedAcpModels } from "../lib/acp-models-cache";
 import { resolveModelLabel } from "../lib/model-label";
 import { defaultAgentForNewSession } from "../lib/default-agent";
@@ -756,6 +759,19 @@ export const useChatStore = createSelectors(
             const cachedModels = loadCachedAcpModels(agentType);
             sess.acpAvailableModels = cachedModels?.availableModels ?? [];
             sess.acpCurrentModel = undefined;
+            // The advertised knobs are per-agent too, and this was the one
+            // per-agent list the switch never reset — so the Options pill kept
+            // rendering the PREVIOUS agent's state until the new binding spoke.
+            // Two ways that showed: a settled "Default" carried over from an
+            // agent with no knobs and then snapped to "Options" with no loading
+            // in between, and (worse) another agent's knobs stayed clickable,
+            // writing `set_config_option` for ids the new agent never advertised.
+            //
+            // Same posture as the modes seed above: optimistically adopt the new
+            // agent's cache — including a cached empty list, which is a real
+            // "this agent has no knobs" verdict — and leave it `undefined` on a
+            // miss, which is exactly the pill's loading state.
+            sess.acpConfigOptions = loadCachedAcpConfigOptions(agentType) ?? undefined;
           }),
         setSessionAgentType: (tabId, agentType) =>
           set((s) => {
@@ -765,6 +781,11 @@ export const useChatStore = createSelectors(
               sess.agentType = agentType;
               // Per-agent ACP command list — stale across an agent change.
               sess.availableCommands = undefined;
+              // And the per-agent knob list, for the same reason. The resume
+              // snapshot's own `setAcpConfigOptions` lands right after; this is
+              // what the pill shows meanwhile, and it must not be the previous
+              // agent's.
+              sess.acpConfigOptions = loadCachedAcpConfigOptions(agentType) ?? undefined;
               sess.claudePermissionMode =
                 agentType === "claude-code" ? (sess.claudePermissionMode ?? "default") : undefined;
               sess.claudePermissionModeExplicit = false;
@@ -926,6 +947,11 @@ export const useChatStore = createSelectors(
               // Commands belong to the ACP session being dropped; the next
               // binding re-advertises its own list.
               session.availableCommands = undefined;
+              // The advertised knobs go with it, for the same reason. Reseeded
+              // from this agent's cache rather than blanked, so the Options pill
+              // keeps rendering the right list across a clear instead of
+              // dropping to a spinner for something we already know.
+              session.acpConfigOptions = loadCachedAcpConfigOptions(session.agentType) ?? undefined;
               // The tab no longer points at the session being resumed, so the
               // send gate must drop with it. A resume that gets superseded
               // (New chat / another sidebar click) bails WITHOUT clearing its own
@@ -1097,8 +1123,20 @@ export const useChatStore = createSelectors(
           // Survive the next restart (#36) — modes and models already do;
           // without this the Options pill died with the process. Outside the
           // immer pass (side effect, not state), like the sibling caches.
-          if (options.length > 0 && at && at !== "claude-code") {
-            saveCachedAcpConfigOptions(at, options);
+          //
+          // Cache what actually LANDED, not what was passed: the guard above may
+          // have rejected this call, and an empty list that survived it is a real
+          // verdict ("this agent has no knobs") the pill renders instantly next
+          // launch instead of spinning for it.
+          //
+          // Note there is no agent-id condition here. `claude-code` used to be
+          // excluded, which is why the pill took seconds to appear for exactly
+          // the agent most people run — a spawn-time snapshot cached nothing, so
+          // every cold start waited on a live delta. Capability, never identity
+          // (ADR-0002).
+          const landed = get().sessions[tabId]?.acpConfigOptions;
+          if (at && landed !== undefined) {
+            saveCachedAcpConfigOptions(at, landed);
           }
         },
         setAcpModels: (sessionId, currentModel, availableModels) => {
@@ -2004,7 +2042,9 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       // the agent (its own `/model`, a thinking toggle) rather than from Atlas.
       session.acpConfigOptions = env.config_options;
       // Survive the next restart (#36) — the same posture as the model-list
-      // save just below (empty sets are a no-op inside the cache).
+      // save just below. An empty list is cached too: a live session saying
+      // "no knobs" is the answer the pill shows as "Default", and remembering
+      // it is what stops the next cold start from spinning to re-learn it.
       if (session.agentType) {
         saveCachedAcpConfigOptions(session.agentType, env.config_options);
       }

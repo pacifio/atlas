@@ -196,3 +196,61 @@ describe("the model pill's live path", () => {
     expect(session().acpCurrentModel).toBeUndefined();
   });
 });
+
+// ── The knob cache the Options pill renders from on a cold start ─────────────
+// The pill is always visible now, so what the cache holds decides whether a
+// fresh launch shows the knobs, "Default", or a spinner. Two things were wrong:
+// `claude-code` was excluded from caching entirely (an agent-identity branch —
+// ADR-0002 — and the agent most people run), and an empty verdict was never
+// stored, so "this agent has no knobs" had to be re-learned from a live session
+// on every launch. That relearning IS the 3-4 second wait.
+
+describe("the config-option cache the composer reads at boot (#36)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useChatStore.setState({ sessions: {}, activeSessionId: null });
+  });
+
+  const knob = {
+    id: "thought",
+    name: "Thinking",
+    category: "thought_level",
+    type: "select",
+    currentValue: "high",
+    options: [{ value: "high", name: "High" }],
+  };
+
+  it("caches for claude-code like every other agent", async () => {
+    const { loadCachedAcpConfigOptions } = await import("../lib/acp-config-options-cache");
+    boundSession();
+    useChatStore.getState().actions.setAcpConfigOptions(TAB, [knob]);
+    expect(loadCachedAcpConfigOptions("claude-code")).toEqual([knob]);
+  });
+
+  it("caches an empty verdict, so the next launch renders Default instead of a spinner", async () => {
+    const { loadCachedAcpConfigOptions } = await import("../lib/acp-config-options-cache");
+    boundSession();
+    useChatStore.getState().actions.setAcpConfigOptions(TAB, []);
+    expect(loadCachedAcpConfigOptions("claude-code")).toEqual([]);
+  });
+
+  it("an empty snapshot rejected by the guard does not erase the cached list", async () => {
+    // The guard lives in the store, so the cache write has to follow what
+    // LANDED rather than what was passed — otherwise a late empty snapshot
+    // would blank the cache while leaving the live list on screen, and the
+    // next launch would spin.
+    const { loadCachedAcpConfigOptions } = await import("../lib/acp-config-options-cache");
+    boundSession();
+    useChatStore.getState().actions.setAcpConfigOptions(TAB, [knob]);
+    useChatStore.getState().actions.setAcpConfigOptions(TAB, []);
+    expect(loadCachedAcpConfigOptions("claude-code")).toEqual([knob]);
+  });
+
+  it("a stale snapshot from another agent never reaches this agent's cache", async () => {
+    const { loadCachedAcpConfigOptions } = await import("../lib/acp-config-options-cache");
+    boundSession();
+    useChatStore.getState().actions.setAcpConfigOptions(TAB, [knob], "codex-acp");
+    expect(loadCachedAcpConfigOptions("claude-code")).toBeNull();
+    expect(loadCachedAcpConfigOptions("codex-acp")).toBeNull();
+  });
+});

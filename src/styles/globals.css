@@ -1825,6 +1825,24 @@
   animation: atlas-group-slide-right 0.22s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+/* Composer options pill: the label swaps between loading / Options / Default —
+   most often on an agent switch, where the new agent's cached knobs land in the
+   same frame the old agent's state is dropped. Without this the pill snaps.
+   One-shot, ends at identity, no fill-mode (the standing transform rules). */
+@keyframes atlas-pill-swap {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.atlas-pill-swap {
+  animation: atlas-pill-swap 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
 @keyframes atlas-placeholder-in {
   from {
     opacity: 0;

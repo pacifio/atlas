@@ -5,8 +5,11 @@
 // initial `color` — black — so every icon vanished against Atlas's black
 // surfaces. These tests pin the rule that decides between the two paths.
 
-import { describe, expect, it } from "vitest";
-import { render } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
+import { cleanup, render } from "@testing-library/react";
+
+// `globals: false` in vitest.config.ts — auto-cleanup is not registered.
+beforeEach(cleanup);
 
 import { ExternalAgentIcon } from "./agent-icons";
 

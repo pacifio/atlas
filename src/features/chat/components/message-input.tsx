@@ -12,7 +12,6 @@ import {
   Cpu,
   ChevronDown,
   Search,
-  SlidersHorizontal,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useChatStore } from "../stores/chat-store";
@@ -34,7 +33,6 @@ import { switchAgentForTab } from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
 import { ProviderModelPills } from "./provider-model-pills";
 import { loadCerseiEffort, loadCerseiCompress } from "../lib/cersei-model-pref";
-import { loadCachedAcpConfigOptions } from "../lib/acp-config-options-cache";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
 import { modelLabel } from "../lib/model-label";
 // `ChatInput` pulls in CodeMirror (~870 KB) via `cm-mention-extension`.
@@ -60,6 +58,7 @@ import type {
 } from "./slash-command-picker";
 import { commandRequiresArgs } from "./slash-command-picker";
 import { PlanTasksPill } from "./plan-tasks-pill";
+import { ComposerOptionsPill } from "./composer-options-pill";
 import { RetryPill } from "./retry-pill";
 import { ComposerAddMenu } from "./composer-add-menu";
 import type { GithubRepo } from "@/features/github/types";
@@ -73,7 +72,6 @@ import type {
   PastSessionRef,
 } from "../lib/mentions";
 import { toast } from "sonner";
-import { parseConfigOptions } from "../lib/acp-config-options";
 import { useComposerFileDrop } from "../hooks/use-composer-file-drop";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import type { MentionTrigger } from "../lib/cm-mention-extension";
@@ -312,8 +310,8 @@ function displayModeName(name: string): string {
   return /^[a-z][a-z0-9-]*$/.test(name) ? name.charAt(0).toUpperCase() + name.slice(1) : name;
 }
 
-type ComposerGroup = "agent" | "mode" | "model" | "options";
-const GROUP_ORDER: ComposerGroup[] = ["agent", "mode", "model", "options"];
+type ComposerGroup = "agent" | "mode" | "model";
+const GROUP_ORDER: ComposerGroup[] = ["agent", "mode", "model"];
 
 /** Colour class for the Claude permission-mode dot (mirrors the old pill). */
 function claudeModeDotClass(mode: ClaudePermissionMode): string {
@@ -356,24 +354,12 @@ function ComposerGroupsMenu({
   const permissionMode = useChatStore((s) => s.sessions[tabId]?.claudePermissionMode ?? "default");
   const currentMode = useChatStore((s) => s.sessions[tabId]?.acpCurrentMode);
   const availableModes = useChatStore((s) => s.sessions[tabId]?.acpAvailableModes);
-  // P2.2: knobs the agent advertises beyond mode/model — a thinking select, a
-  // web-search toggle. Kept current by the `config_options_updated` delta, so a
-  // change made inside the agent shows here without a refetch.
-  const rawConfigOptions = useChatStore((s) => s.sessions[tabId]?.acpConfigOptions);
-  // Restart fallback (#36), the model pill's posture one hook down: an
-  // `undefined` store value means no live session has spoken yet — render the
-  // last list this agent advertised. An explicit `[]` is a live session saying
-  // "no knobs", and the cache must NOT override that (there this fallback
-  // deliberately differs from the model one, which also covers empty).
-  const configOptions = useMemo(
-    () => parseConfigOptions(rawConfigOptions ?? loadCachedAcpConfigOptions(agentType)),
-    [rawConfigOptions, agentType],
-  );
+  // The agent's own knobs are NOT here: they render as <ComposerOptionsPill/>
+  // on the right of the footer, next to the plan pill.
   const modesPending = useChatStore((s) => s.sessions[tabId]?.acpModesPending ?? false);
   const currentModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel);
   const availableModels = useChatStore((s) => s.sessions[tabId]?.acpAvailableModels);
-  const { setAcpMode, setAcpModel, setClaudePermissionMode, setAcpConfigOption } =
-    useChatStore.use.actions();
+  const { setAcpMode, setAcpModel, setClaudePermissionMode } = useChatStore.use.actions();
   const switchableAgents = useSwitchableAgents();
 
   const [openGroup, setOpenGroup] = useState<ComposerGroup | null>(null);
@@ -585,81 +571,6 @@ function ComposerGroupsMenu({
               </div>
             )}
 
-            {openGroup === "options" && (
-              // Capped like the agent list above: the panel is bottom-anchored
-              // and grows upward, so an uncapped knob list (an agent may
-              // advertise a select with dozens of choices) clips its TOP —
-              // which is the FIRST knob — off-screen.
-              <div className="max-h-[300px] overflow-y-auto hide-scrollbar p-1">
-                {configOptions.map((opt) => (
-                  <div key={opt.id}>
-                    {opt.kind === "boolean" ? (
-                      <button
-                        onClick={() => {
-                          void setAcpConfigOption(tabId, opt.id, !opt.value);
-                          close();
-                        }}
-                        className={cn(
-                          "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                          "hover:bg-[var(--bg-hover)]",
-                        )}
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
-                            {opt.name}
-                            {opt.value && (
-                              <Check size={11} className="text-[var(--accent-primary)]" />
-                            )}
-                          </span>
-                          {opt.description && (
-                            <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)]">
-                              {opt.description}
-                            </span>
-                          )}
-                        </span>
-                      </button>
-                    ) : (
-                      <>
-                        <div className="px-2 pt-1.5 pb-0.5 text-[9px] font-medium uppercase tracking-wider text-[var(--text-tertiary)]">
-                          {opt.name}
-                        </div>
-                        {opt.choices.map((c) => {
-                          const active = c.id === opt.currentValue;
-                          return (
-                            <button
-                              key={c.id}
-                              onClick={() => {
-                                void setAcpConfigOption(tabId, opt.id, c.id);
-                                close();
-                              }}
-                              className={cn(
-                                "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                                active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
-                              )}
-                            >
-                              <span className="min-w-0 flex-1">
-                                <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
-                                  {c.name}
-                                  {active && (
-                                    <Check size={11} className="text-[var(--accent-primary)]" />
-                                  )}
-                                </span>
-                                {c.description && (
-                                  <span className="mt-0.5 block text-[9px] leading-snug text-[var(--text-tertiary)]">
-                                    {c.description}
-                                  </span>
-                                )}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
             {openGroup === "model" && (
               <>
                 <div className="flex h-8 items-center gap-1.5 border-b border-[var(--border-subtle)] px-2.5">
@@ -759,18 +670,6 @@ function ComposerGroupsMenu({
                   ? "Loading…"
                   : "Mode"}
           </span>
-        </button>
-      )}
-
-      {configOptions.length > 0 && (
-        <button
-          onClick={() => toggle("options")}
-          className={pillCls(openGroup === "options")}
-          title="Agent options — knobs this agent advertises"
-        >
-          <SlidersHorizontal size={11} className="shrink-0 text-[var(--text-tertiary)]" />
-          <span className={labelCls(openGroup === "options")}>Options</span>
-          <ChevronDown size={10} className="ml-0.5 shrink-0 text-[var(--text-tertiary)]" />
         </button>
       )}
 
@@ -1979,10 +1878,15 @@ export function MessageInput({
               {agentType === "cersei" && <CerseiMemoryPill />}
               {agentType === "cersei" && <CerseiUsagePill tabId={tabId} />}
             </div>
-            {/* Right side: the live implementation-plan pill (arc progress +
-                count; opens its own morphing task-list panel). Replaces the
-                PlanDock strip that used to sit above the composer. */}
-            <PlanTasksPill tabId={tabId} />
+            {/* Right side, in this order: the agent's own knobs, then the live
+                implementation-plan pill hard against the right edge (arc
+                progress + count; opens its own morphing task-list panel, and
+                replaces the PlanDock strip that used to sit above the
+                composer). Both are right-anchored dropups. */}
+            <div className="flex items-center gap-1">
+              <ComposerOptionsPill tabId={tabId} />
+              <PlanTasksPill tabId={tabId} />
+            </div>
           </div>
         </div>
       </div>
