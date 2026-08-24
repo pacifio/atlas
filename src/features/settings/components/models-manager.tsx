@@ -91,6 +91,12 @@ export function ModelsManager() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && query) {
+                e.stopPropagation();
+                setQuery("");
+              }
+            }}
             placeholder="Filter models…"
             className={cn(
               "w-full h-7 pl-8 pr-2.5 rounded-md bg-bg-elevated border border-border-default",
