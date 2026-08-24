@@ -14,7 +14,7 @@ import {
   EyeOff,
   Lock,
 } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { SecretInput } from "@/ui/secret-input";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
@@ -337,7 +337,18 @@ function ProviderEditor({
       const file = await save(envVar, draft);
       setDraft("");
       setRevealed(null);
-      toast.success(`${provider.name} key written to ${tildePath(file)}`);
+      toast.success(`${provider.name} key written to ${tildePath(file)}`, {
+        action: {
+          label: "Reveal",
+          onClick: () => {
+            revealItemInDir(file).catch((err) => {
+              toast.error(
+                `Couldn't reveal in Finder: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
+          },
+        },
+      });
     } catch (e) {
       toast.error(`Couldn't save key: ${e instanceof Error ? e.message : String(e)}`);
     }
