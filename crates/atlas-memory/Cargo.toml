@@ -2,30 +2,23 @@
 name = "atlas-memory"
 version = "0.1.0"
 edition = "2021"
-description = "Atlas's on-device RAG/memory engine: MiniLM → usearch HNSW + Cersei graph memory, behind the MemorySearchFn seam."
+description = "Atlas's on-device RAG/memory engine: MiniLM → usearch HNSW + grafeo graph memory, behind the MemorySearchFn seam."
 
 [lib]
 name = "atlas_memory"
 
 [dependencies]
-# Cersei embeddings — used ONLY for the `EmbeddingProvider` trait (our MiniLM
-# bridge implements it) and so BYOK remote providers can drop in later. Its
-# in-memory `EmbeddingStore`/`VectorIndex` are NOT used for persistence (they
-# have no save/load/remove — verified in Step 0); we drive `usearch` directly.
-cersei-embeddings = "0.2.6"
-# Grafeo-backed graph memory (relationships, topic tags). `graph` feature pulls
-# in `grafeo`. Same 0.2.5 pin as the other cersei consumers so Cargo unifies.
-cersei-memory = { version = "0.2.6", features = ["graph"] }
-# Direct grafeo dep ONLY to enable the `lpg` graph-store backend: cersei-memory
-# pulls grafeo with `default-features = false` (gql/grafeo-file/wal), which omits
-# the LPG store, so `GrafeoDB::open` panics with "no graph store available". Cargo
-# feature-unification means enabling `lpg` here switches it on for cersei's grafeo
-# too. `lpg` already implies gql + storage (wal/grafeo-file). Pinned to the 0.5
-# line cersei resolves, so there is a single grafeo build.
+# Embedded graph database behind `graph::GraphMemory` (relationships, topic
+# tags). The `lpg` feature is what provides the actual graph store — without it
+# `GrafeoDB::open` panics with "no graph store available". `lpg` already implies
+# gql + storage (wal/grafeo-file).
 grafeo = { version = "0.5", default-features = false, features = ["lpg", "gql", "grafeo-file", "wal"] }
-# Session-extraction gates (`should_extract`/`extraction_prompt`/`parse_extraction_output`)
-# and `AutoDream` consolidation gates/state/lock. Already an Atlas dep elsewhere.
-cersei-agent = "0.2.6"
+# Timestamps on graph nodes + the memdir date headers.
+chrono = { version = "0.4", features = ["serde"] }
+# Memory-node ids.
+uuid = { version = "1", features = ["v4"] }
+# `embedding::EmbeddingError`.
+thiserror = "2"
 # The persistent HNSW vector index — has native save/load/remove (hard deletes).
 usearch = "2.25.3"
 # On-device MiniLM embedder (384-d, CPU). The `MiniLmProvider` wraps this.
@@ -37,15 +30,3 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "sync"] }
 tracing = "0.1"
-
-[patch.crates-io]
-# ATLAS PATCH (Phase 0, plans/atlas-agent-stack-zed-parity.md): incremental
-# UTF-8 decoding in the SSE stream decoders — the published crate corrupts
-# multi-byte chars split across HTTP chunk boundaries (from_utf8_lossy on raw
-# chunks). Guard: cersei_provider::utf8::ATLAS_UTF8_PATCH.
-cersei-provider = { path = "../../vendor/cersei-provider" }
-# Phase 2: cersei-agent vendored for the tool-cancel race fix — the published
-# runner never raced tool.execute() against the cancel token (writes landed
-# after Stop) and left orphaned tool_use blocks in provider history on cancel.
-# Guard: cersei_agent::ATLAS_CANCEL_PATCH.
-cersei-agent = { path = "../../vendor/cersei-agent" }

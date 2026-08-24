@@ -6,7 +6,7 @@ import type { MissionControlUsage } from "../../types";
 import { ChartCard } from "./chart-card";
 import { ChartTooltip } from "./chart-tooltip";
 
-/** Per-project stacked bars broken down by source (Agents/Review). */
+/** Per-project bars of agent token consumption. */
 export function UsageBarChart({ data }: { data: MissionControlUsage }) {
   const rows = useMemo(
     () =>
@@ -14,10 +14,9 @@ export function UsageBarChart({ data }: { data: MissionControlUsage }) {
         .map((p) => ({
           name: p.projectName,
           Agents: p.agents.inputTokens + p.agents.outputTokens,
-          Review: p.review.inputTokens + p.review.outputTokens,
         }))
-        .filter((r) => r.Agents + r.Review > 0)
-        .sort((a, b) => b.Agents + b.Review - (a.Agents + a.Review))
+        .filter((r) => r.Agents > 0)
+        .sort((a, b) => b.Agents - a.Agents)
         .slice(0, 12),
     [data.projects],
   );
@@ -51,14 +50,7 @@ export function UsageBarChart({ data }: { data: MissionControlUsage }) {
               <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
               <Bar
                 dataKey="Agents"
-                stackId="a"
                 fill={AGENT_COLOR.agents}
-                isAnimationActive={false}
-              />
-              <Bar
-                dataKey="Review"
-                stackId="a"
-                fill={AGENT_COLOR.review}
                 radius={[2, 2, 0, 0]}
                 isAnimationActive={false}
               />

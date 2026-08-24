@@ -161,6 +161,7 @@ bun run lint                       # oxlint on src/
 bun run format:check               # oxfmt --check on src/
 bun run typecheck                  # frontend typecheck (app + test code)
 bun run test                       # frontend and cross-cutting tests
+bun run test:rust                  # every standalone Rust crate + src-tauri --lib
 cd src-tauri && cargo check        # Rust typecheck, including every crates/* dependency
 ```
 
@@ -173,6 +174,8 @@ cd crates/atlas-acp && cargo run --example smoke          # ACP transport smoke 
 ```
 
 Run `cargo test` from inside the directory of any crate you touched.
+Run `bun run test:rust` from the repository root to test every standalone crate
+and the Tauri library in one pass; it stops at the first failure.
 
 Frontend tests run under Vitest:
 

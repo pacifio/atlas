@@ -39,12 +39,12 @@ import {
   GitBranch,
   Hash,
   MessageSquare,
-  Newspaper,
   Scale,
   SquareSlash,
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { shortPath } from "@/lib/paths";
 import { Kbd } from "@/ui/kbd";
 
 import {
@@ -869,8 +869,6 @@ function CategoryIcon({ kind }: { kind: MentionKind }) {
       return <FolderGit2 size={size} />;
     case "workspace":
       return <Boxes size={size} />;
-    case "paper":
-      return <Newspaper size={size} />;
     case "branch":
       return <GitBranch size={size} />;
     case "past_message":
@@ -908,8 +906,6 @@ function secondaryLabel(m: MentionData): string {
       return m.hasReadme ? "cloned · README" : "cloned";
     case "workspace":
       return m.orgName ? `${m.orgName} · ${shortPath(m.absPath)}` : shortPath(m.absPath);
-    case "paper":
-      return m.authors[0] ?? "";
     case "branch":
       return m.refKind + (m.isCurrent ? " · HEAD" : "");
     case "past_message":
@@ -922,11 +918,6 @@ function secondaryLabel(m: MentionData): string {
 function basenameOf(rel: string): string {
   const idx = rel.lastIndexOf("/");
   return idx >= 0 ? rel.slice(idx + 1) : rel;
-}
-
-function shortPath(p: string): string {
-  const parts = p.split("/");
-  return parts.slice(-2).join("/");
 }
 
 function emptyStateCopy(args: {
@@ -973,8 +964,6 @@ function mentionTitle(m: MentionData): string {
       return m.absPath;
     case "workspace":
       return m.absPath;
-    case "paper":
-      return m.metadataPath;
     case "branch":
       return `${m.refKind} ${m.id} (${m.sha.slice(0, 7)})`;
     case "past_message":

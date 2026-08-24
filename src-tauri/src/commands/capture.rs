@@ -69,6 +69,27 @@ fn lock_ok<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 /// What the middleware knows about one agent session, learned at send time.
 ///
+/// The canonical string identity of a Workspace.
+///
+/// `workspace_id` is derived twice from two independent sources — the agent's
+/// cwd when a Session records, and the git watcher's project path when commits
+/// are walked — and the two are compared as strings. `/repo` vs `/repo/`, and
+/// `/var/...` vs `/private/var/...` on macOS, are the same directory to every
+/// filesystem call in the pipeline but different `String`s, and when they
+/// diverge `link_candidates` matches nothing: Sessions record, commits are
+/// seen, the walk returns `Ok`, and no Checkpoint is ever created.
+///
+/// Both sites route through here so the identity cannot drift. Falls back to
+/// the lexical path when the directory does not exist (a Workspace whose folder
+/// was renamed or removed) — an id is still needed to read back what was
+/// already stored under it.
+pub(crate) fn workspace_id_for(root: &std::path::Path) -> String {
+    std::fs::canonicalize(root)
+        .unwrap_or_else(|_| root.to_path_buf())
+        .to_string_lossy()
+        .to_string()
+}
+
 /// Distinct from `atlas_checkpoint::Binding`, which is how the *Workspace* is
 /// bound (mode, Slug, fingerprints). This is per-conversation routing state.
 ///
@@ -202,6 +223,10 @@ struct CompletedWrite {
     existed_before: bool,
     /// Hash of what the agent produced. `None` for a deletion.
     sha256_after: Option<String>,
+    /// Bounded fingerprint of the same bytes, so the link rule can measure how
+    /// much of the agent's content survived into the commit rather than
+    /// demanding an exact match. Computed here, from the same read as the hash.
+    sketch_after: Option<String>,
     deleted: bool,
 }
 
@@ -541,7 +566,7 @@ impl CaptureState {
     pub fn note_git_change(&self, workspace_root: &std::path::Path) {
         self.submit(Job::WalkCommits {
             workspace_root: workspace_root.to_path_buf(),
-            workspace_id: workspace_root.to_string_lossy().to_string(),
+            workspace_id: workspace_id_for(workspace_root),
         });
     }
 
@@ -699,7 +724,23 @@ impl CaptureState {
         // bug with no symptom, and the call is a walk over a handful of blocks.
         for raw in extract_paths(&call.locations, &diff_paths(&call.content_blocks), &call.arguments)
         {
-            let path = resolve_path(&raw, workspace_root);
+            let mut path = resolve_path(&raw, workspace_root);
+            // `resolve_path` is deliberately lexical, so an agent that reports
+            // the CANONICAL form of a symlinked root — `/private/var/...` for a
+            // workspace opened as `/var/...`, common on macOS, and exactly what
+            // opencode does — fails the prefix strip, gets flagged
+            // `out_of_repo`, and its touch can never match a commit. Retry
+            // against the canonicalised root before accepting that verdict.
+            if path.out_of_repo {
+                if let Ok(real_root) = std::fs::canonicalize(workspace_root) {
+                    if real_root != workspace_root {
+                        let retry = resolve_path(&raw, &real_root);
+                        if !retry.out_of_repo {
+                            path = retry;
+                        }
+                    }
+                }
+            }
             if sample.writes.iter().any(|w| w.path.path == path.path) {
                 continue;
             }
@@ -955,7 +996,7 @@ fn seed_turn_seq(root: &Path, source: Source, native_session_id: &str) -> i64 {
     let Ok(store) = Store::open_reader(atlas_checkpoint::atlas_dir(root)) else {
         return 0;
     };
-    let workspace_id = root.to_string_lossy().to_string();
+    let workspace_id = workspace_id_for(root);
     let Ok(Some(session_id)) = store.session_id_for(&workspace_id, source, native_session_id)
     else {
         return 0;
@@ -1429,34 +1470,9 @@ pub async fn artifacts_sessions(
         let Some(store) = open_reader(&project_path)? else {
             return Ok(Vec::new());
         };
-        let workspace_id = workspace_id.unwrap_or_else(|| project_path.clone());
+        let workspace_id = workspace_id
+            .unwrap_or_else(|| workspace_id_for(std::path::Path::new(&project_path)));
         atlas_checkpoint::session_summaries(&store, &workspace_id).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// Per-agent session counts for this Workspace — one GROUP BY, no session
-/// bodies. Feeds the Memory panel's agent dropdown badges for the
-/// capture-backed agents (opencode/cursor/kilo) without loading full lists.
-#[tauri::command]
-pub async fn capture_agent_session_counts(
-    project_path: String,
-) -> Result<std::collections::HashMap<String, i64>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let Some(store) = open_reader(&project_path)? else {
-            return Ok(std::collections::HashMap::new());
-        };
-        let mut counts = std::collections::HashMap::new();
-        for s in store
-            .sessions_for_workspace(&project_path)
-            .map_err(|e| e.to_string())?
-        {
-            if let Some(agent) = s.agent {
-                *counts.entry(agent).or_insert(0i64) += 1;
-            }
-        }
-        Ok(counts)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1545,7 +1561,8 @@ pub async fn artifacts_board(projects: Vec<String>) -> Result<Vec<BoardSession>,
             let Ok(Some(store)) = open_reader(&project_path) else {
                 continue;
             };
-            let Ok(summaries) = atlas_checkpoint::session_summaries(&store, &project_path) else {
+            let workspace_id = workspace_id_for(Path::new(&project_path));
+            let Ok(summaries) = atlas_checkpoint::session_summaries(&store, &workspace_id) else {
                 continue;
             };
             let project_name = Path::new(&project_path)
@@ -1613,7 +1630,7 @@ pub async fn artifacts_checkpoints(projects: Vec<String>) -> Result<Vec<BoardChe
 
             let Ok(rows) = atlas_checkpoint::recent_checkpoints(
                 &store,
-                &project_path,
+                &workspace_id_for(&root),
                 CHECKPOINT_LIMIT,
                 |_| None,
             ) else {
@@ -2459,7 +2476,7 @@ fn process_job(
         // The Workspace binding proper arrives with the enable popover; until
         // then a Workspace is its project directory, which is the same
         // identity `.atlas/` already uses.
-        workspace_id: root.to_string_lossy().to_string(),
+        workspace_id: workspace_id_for(&root),
         source: binding.source,
         native_session_id: binding.native_session_id.clone(),
     };
@@ -2844,6 +2861,7 @@ fn record_tool_call(
             FileWrite {
                 path: &write.path,
                 sha256_after: write.sha256_after.clone(),
+                sketch_after: write.sketch_after.clone(),
                 existed_before: write.existed_before,
                 deleted: write.deleted,
             },
@@ -3077,16 +3095,20 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                         .iter()
                         .map(|write| {
                             let absolute = binding.workspace_root.join(&write.path.path);
-                            let (sha256_after, deleted) = match std::fs::read(&absolute) {
-                                Ok(bytes) => {
-                                    (Some(atlas_checkpoint::hash_written_content(&bytes)), false)
-                                }
-                                Err(_) => (None, true),
-                            };
+                            let (sha256_after, sketch_after, deleted) =
+                                match std::fs::read(&absolute) {
+                                    Ok(bytes) => (
+                                        Some(atlas_checkpoint::hash_written_content(&bytes)),
+                                        atlas_checkpoint::sketch::sketch(&bytes),
+                                        false,
+                                    ),
+                                    Err(_) => (None, None, true),
+                                };
                             CompletedWrite {
                                 path: write.path.clone(),
                                 existed_before: write.existed_before,
                                 sha256_after,
+                                sketch_after,
                                 deleted,
                             }
                         })

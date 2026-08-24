@@ -5,7 +5,7 @@
 //! Annotations are kept as editable data (NOT flattened into the PDF) so they
 //! stay erasable/movable across sessions. Geometry is normalized (0..1) on the
 //! frontend; this layer just persists the opaque JSON. Same atomic tmp+rename
-//! pattern as `plans.rs` / `pomodoro.rs`.
+//! pattern as `plans.rs`.
 
 use std::collections::HashMap;
 use std::fs;

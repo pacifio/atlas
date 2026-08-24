@@ -255,8 +255,8 @@ export const MessageItem = memo(function MessageItem({
               <StreamingMarkdown source={prose} streaming={streaming} className="text-sm" />
             )}
 
-            {/* Heavy @-mention bodies (files / folders / repo READMEs / notes /
-              papers) collapsed by default so the thread stays scannable. */}
+            {/* Heavy @-mention bodies (files / folders / repo READMEs /
+              notes) collapsed by default so the thread stays scannable. */}
             {context && <AtlasContextAccordion context={context} blockCount={contextBlockCount} />}
 
             {/* Tool calls */}

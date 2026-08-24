@@ -20,7 +20,7 @@ use crate::error::{Error, Result};
 // unreleased 0.3.0-x dev builds (one additive nullable column) and was
 // withdrawn; `migrate` folds such stores back to 8. Reusing 9 would make a
 // real migration indistinguishable from the withdrawn one.
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     // Fast path, outside any transaction: the overwhelmingly common case is a
@@ -88,6 +88,10 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             // Same tolerance again: one ALTER TABLE, two indexes, and three
             // repair statements that are all safe to re-run.
             apply_tolerant(conn, V8)?;
+        }
+        if found < 9 {
+            // One ALTER TABLE; tolerant for the same reason as V7/V8.
+            apply_tolerant(conn, V9)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
@@ -191,6 +195,25 @@ CREATE INDEX IF NOT EXISTS idx_message_activity
 -- is the whole token backfill. Re-reading is idempotent: every line carries the
 -- agent's own message id, and the usage write is a replace rather than a sum.
 DELETE FROM import_progress;
+"#;
+
+const V9: &str = r#"
+-- A bounded fingerprint of what the agent wrote, for the link rule's strict arm.
+--
+-- That arm governs files the agent *created*, and it used to require the
+-- committed blob to equal the agent's bytes exactly. The everyday loop — agent
+-- scaffolds a file, developer adjusts a line while reviewing, commits — failed
+-- that test, so the Checkpoint silently never appeared.
+--
+-- `sha256_after` alone cannot answer "how much of this survived", and keeping
+-- whole files would mirror the worktree into sessions.db. This column stores a
+-- bottom-k sample of the content's distinct line hashes instead (see
+-- `sketch.rs`), which is bounded and comparable.
+--
+-- Nullable and NOT backfilled: the content it summarises is long gone for
+-- existing rows. A NULL sketch falls back to the exact-hash comparison, so old
+-- Sessions behave exactly as they did before this migration.
+ALTER TABLE file_touch ADD COLUMN sketch_after TEXT;
 "#;
 
 const V1: &str = r#"

@@ -7,7 +7,7 @@
 //! project, across sessions.
 //!
 //! Stored as `<project>/.atlas/plans.json` — same simple atomic-write pattern
-//! as `pomodoro.rs`.
+//! as `canvas.rs`.
 
 use std::fs;
 use std::path::Path;

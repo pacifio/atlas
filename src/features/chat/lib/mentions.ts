@@ -38,7 +38,6 @@ export type MentionKind =
   | "component"
   | "repo"
   | "workspace"
-  | "paper"
   | "branch"
   | "past_message"
   | "past_session";
@@ -75,7 +74,7 @@ export interface MentionKnowledge {
    *  tree uses). Null when the note has no custom icon. */
   icon: string | null;
   filePath: string;
-  source: string; // "note" | "paper" | "chat" | ...
+  source: string; // "note" | "chat" | ...
   /** Parent folder portion of `id` (e.g. "Adib" for "Adib/weekly-notes").
    *  Surfaces the user's "spaces" — nested subfolders under
    *  `.atlas/knowledge/`. Null for top-level entries. */
@@ -115,14 +114,6 @@ export interface MentionWorkspace {
   orgName: string | null;
 }
 
-export interface MentionPaper {
-  kind: "paper";
-  id: string;
-  displayName: string; // title
-  authors: string[];
-  metadataPath: string;
-}
-
 export interface MentionBranch {
   kind: "branch";
   id: string; // ref name
@@ -160,7 +151,6 @@ export type MentionData =
   | MentionComponent
   | MentionRepo
   | MentionWorkspace
-  | MentionPaper
   | MentionBranch
   | MentionPastMessage
   | MentionPastSession;
@@ -194,7 +184,6 @@ export const MENTION_CATEGORIES: readonly MentionCategory[] = [
     aliases: ["workspace", "project", "ws", "w/"],
     weight: 0.82,
   },
-  { kind: "paper", label: "Papers", aliases: ["paper", "p/"], weight: 0.7 },
   { kind: "branch", label: "Branches", aliases: ["branch", "b/"], weight: 0.6 },
   { kind: "past_message", label: "Past Messages", aliases: ["msg", "message", "m/"], weight: 0.55 },
   { kind: "past_session", label: "Past Sessions", aliases: ["session", "sess/"], weight: 0.5 },
@@ -344,8 +333,6 @@ export function toShortForm(m: MentionData): string {
       return `@repo:${m.displayName}`;
     case "workspace":
       return `@workspace:${m.displayName}`;
-    case "paper":
-      return `@paper:${m.displayName}`;
     case "branch":
       return `@branch:${m.displayName}`;
     case "past_message":
@@ -361,7 +348,6 @@ export function toShortForm(m: MentionData): string {
  *  Rust owns the data for every kind:
  *   - file / folder via `FileIndexState` (live, watcher-updated)
  *   - repo via `list_cloned_repos` (cheap disk walk)
- *   - paper via `SavedPapersIndex` (mtime cache)
  *   - branch via watcher-invalidated `git_refs_cache`
  *   - knowledge / symbol via `MentionCacheState`, populated by the
  *     publishers below (`publishKnowledgeToMentionCache` etc.) when
@@ -418,7 +404,7 @@ export async function searchMentions(
     const stripped = stripCategoryAlias(query, scope ?? "file");
     // Unscoped `@`: blend the JS-owned kinds (workspaces) alongside the
     // Rust-ranked kinds so ONE search reaches everything — files, folders,
-    // notes, repos, branches, papers, symbols, workspaces. The JS kinds are
+    // notes, repos, branches, symbols, workspaces. The JS kinds are
     // small lists; they're appended after the Rust results and the picker
     // groups the flat list into per-kind sections for display.
     if (scope === null) {

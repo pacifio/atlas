@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { fmtTokens, fmtCost } from "@/features/monitor/lib/usage-format";
+import { copyText } from "@/lib/clipboard";
 import type { MissionControlUsage } from "../types";
 
 // Lazy-load the heavy libs only when an export is actually triggered.
@@ -98,6 +99,11 @@ export async function exportMarkdown(data: MissionControlUsage): Promise<void> {
   await invoke("mission_control_export_markdown", { targetPath: target, markdown: md });
 }
 
+/** Copy the same Markdown report used for file export straight to the clipboard. */
+export async function copyMarkdownReport(data: MissionControlUsage): Promise<boolean> {
+  return copyText(buildMarkdown(data));
+}
+
 function buildMarkdown(data: MissionControlUsage): string {
   const t = data.totals;
   const lines: string[] = [];
@@ -116,20 +122,17 @@ function buildMarkdown(data: MissionControlUsage): string {
   lines.push(`| Agent cache | ${fmtTokens(t.agentCache)} |`);
   lines.push(`| Messages / sessions | ${fmtTokens(t.agentMessages)} / ${t.agentSessions} |`);
   lines.push(
-    `| Review tokens / runs | ${fmtTokens(t.reviewInput + t.reviewOutput)} / ${t.reviewRuns} |`,
-  );
-  lines.push(
     `| BYOK tokens / calls | ${fmtTokens(t.byokInput + t.byokOutput)} / ${t.byokRequests} |`,
   );
   lines.push(`| Total cost | ${fmtCost(t.totalCostUsd)} |`);
   lines.push("");
   lines.push(`## Per project`);
   lines.push("");
-  lines.push(`| Project | Agents (in/out) | Cost | Messages | Review |`);
-  lines.push(`| --- | --- | --- | --- | --- |`);
+  lines.push(`| Project | Agents (in/out) | Cost | Messages |`);
+  lines.push(`| --- | --- | --- | --- |`);
   for (const p of [...data.projects].sort((a, b) => b.totalTokens - a.totalTokens)) {
     lines.push(
-      `| ${p.projectName} | ${fmtTokens(p.agents.inputTokens)} / ${fmtTokens(p.agents.outputTokens)} | ${fmtCost(p.agents.costUsd)} | ${fmtTokens(p.agents.messages)} | ${fmtTokens(p.review.inputTokens + p.review.outputTokens)} |`,
+      `| ${p.projectName} | ${fmtTokens(p.agents.inputTokens)} / ${fmtTokens(p.agents.outputTokens)} | ${fmtCost(p.agents.costUsd)} | ${fmtTokens(p.agents.messages)} |`,
     );
   }
   lines.push("");

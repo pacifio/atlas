@@ -1,70 +1,48 @@
-//! BYOK (bring-your-own-key) storage for AI provider API keys.
+//! BYOK (bring-your-own-key) — a view onto the user's shell environment.
 //!
-//! Keys are stored in a single JSON file in the app's private config dir
-//! (`byok-keys.json`, `0600` on unix). We deliberately do NOT use the OS
-//! keychain: on macOS an unsigned / frequently-rebuilt binary triggers a
-//! Keychain permission prompt on *every* access, which is unusable. The config
-//! dir is already app-private; this keeps key access prompt-free.
+//! **Atlas stores no API keys.** It used to keep them in a private JSON file;
+//! that store is gone. A key lives exactly where the rest of the user's tooling
+//! already looks for it — an `export` in their shell profile — and Settings ▸
+//! API Keys is an editor for those lines, not a vault.
 //!
-//! The frontend only ever receives metadata via `byok_list` (provider + last-4
-//! + added-at); the raw key is returned solely by `byok_get`, which the
-//! Model-Chat runtime calls to configure the AI SDK provider.
+//! This is the right shape for three reasons:
+//!
+//! - **One source of truth.** The user's CLIs, the ACP agents Atlas spawns
+//!   through a login shell, and Atlas itself all read the same variable. No
+//!   copy to drift, and no "works in my terminal but not in Atlas".
+//! - **Nothing to leak.** Atlas holds keys in memory for the session only.
+//!   Deleting Atlas takes nothing with it and leaves nothing behind.
+//! - **No lock-in.** The user can edit the same lines by hand, and does not
+//!   need Atlas running to keep their environment working.
+//!
+//! ## Reading
+//!
+//! Two phases, neither of which ever blocks a caller (see [`ensure_shell_probe`]):
+//! the process env answers instantly, and a background `$SHELL -lic` probe fills
+//! in profile-exported keys a moment later. On top of that, the profile files
+//! themselves are parsed ([`super::shell_profile`]) so the UI can say *which
+//! file and line* a key comes from, and offer to edit it.
+//!
+//! A key found only in the live environment (launchd, `/etc/profile`, a wrapper
+//! script) is shown but not editable — Atlas will not guess at a file it did not
+//! find the value in.
+//!
+//! ## Writing
+//!
+//! [`byok_env_set`] rewrites the assignment where it already lives, or appends
+//! to the shell's primary rc file. Every write is backed up once and applied
+//! atomically. The in-memory snapshot and the agent spawn env are updated
+//! immediately, so a key works in the running app without a restart — while a
+//! *terminal* needs a new shell, as it would for any profile edit.
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager};
 
-/// Stored record for one provider (key + display metadata).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredKey {
-    key: String,
-    last4: String,
-    added_at: String,
-}
-
-type Store = BTreeMap<String, StoredKey>;
-
-/// Non-secret per-provider metadata the UI reads (no key material).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderKeyMeta {
-    pub provider: String,
-    pub last4: String,
-    pub added_at: String,
-}
-
-fn store_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("no app config dir: {e}"))?;
-    fs::create_dir_all(&dir).map_err(|e| format!("create config dir: {e}"))?;
-    Ok(dir.join("byok-keys.json"))
-}
-
-fn read_store(app: &AppHandle) -> Store {
-    store_path(app)
-        .ok()
-        .and_then(|p| fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-fn write_store(app: &AppHandle, store: &Store) -> Result<(), String> {
-    let path = store_path(app)?;
-    let json = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
-    fs::write(&path, json).map_err(|e| e.to_string())?;
-    // Best-effort lock down to owner-only on unix.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-    }
-    Ok(())
-}
+use super::shell_profile::{self, ShellKind};
 
 /// Environment-sourced API keys — the user may already export provider keys in
 /// their shell profile. A Finder-launched GUI app never inherits those, so we
@@ -200,7 +178,7 @@ pub fn ensure_shell_probe(app: &AppHandle) {
             }
             state.shell_done = true;
         }
-        sync_builtin_agent_env(&app);
+        sync_agent_key_env(&app);
         use tauri::Emitter;
         let _ = app.emit("atlas:byok-env-updated", ());
     });
@@ -211,8 +189,385 @@ pub fn ensure_shell_probe(app: &AppHandle) {
 /// contain `` (unit separator) — a safe assumption for API keys.
 fn shell_env_values() -> BTreeMap<String, String> {
     let vars: Vec<&str> = ENV_KEY_VARS.iter().flat_map(|(_, vs)| vs.iter().copied()).collect();
-    probe_shell_vars(&vars)
+    let fmt: String = vars
+        .iter()
+        .map(|v| format!("\"${{{v}}}\""))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let script = format!(
+        "printf 'ATLAS_ENV_PROBE\x1f'; printf '%s\x1f' {fmt}"
+    );
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let child = std::process::Command::new(&shell)
+        .args(["-lic", &script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let Ok(child) = child else { return BTreeMap::new() };
+    let pid = child.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let out = match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(Ok(out)) if out.status.success() => out,
+        _ => {
+            let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).status();
+            return BTreeMap::new();
+        }
+    };
+    let raw = String::from_utf8_lossy(&out.stdout);
+    let Some(after) = raw.rsplit("ATLAS_ENV_PROBE").next() else {
+        return BTreeMap::new();
+    };
+    let values: Vec<&str> = after.split('').collect();
+    vars.iter()
+        .zip(values)
+        .filter(|(_, v)| !v.trim().is_empty())
+        .map(|(var, v)| ((*var).to_string(), v.trim().to_string()))
+        .collect()
 }
+
+/// Non-secret view of an env-imported key for the settings UI.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvKeyMeta {
+    pub provider: String,
+    pub env_var: String,
+    pub last4: String,
+}
+
+/// Env-imported keys (provider + var + last4). Instant: reads the current
+/// snapshot (process env at minimum) and never waits on the shell probe —
+/// when the probe lands, `atlas:byok-env-updated` fires and the UI refetches.
+#[tauri::command]
+pub fn byok_env_list(app: AppHandle) -> Vec<EnvKeyMeta> {
+    ensure_shell_probe(&app);
+    env_keys()
+        .values()
+        .map(|k| EnvKeyMeta {
+            provider: k.provider.clone(),
+            env_var: k.env_var.clone(),
+            last4: k.key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect(),
+        })
+        .collect()
+}
+
+/// Map the env-sourced keys onto the variable spellings the installed agent
+/// CLIs actually read.
+///
+/// [`ENV_KEY_VARS`] is the single source of truth for BOTH directions —
+/// recognising a key the user exported, and handing it to an agent. Keeping two
+/// lists is what broke this: injection covered only six providers while the
+/// settings page happily stored twenty-two, so a user who saved a Mistral, xAI
+/// or DeepSeek key had it accepted and then silently never delivered, and the
+/// agent kept insisting it had no credentials.
+///
+/// Injecting under EVERY recognised spelling (not just a canonical one) is
+/// deliberate: agents disagree about names — the Vercel AI SDK stack inside
+/// opencode reads `GOOGLE_GENERATIVE_AI_API_KEY`, the Gemini CLI reads
+/// `GEMINI_API_KEY`. An extra var an agent doesn't know is inert.
+fn agent_key_env() -> std::collections::HashMap<String, String> {
+    let inject_vars = |provider: &str| -> &'static [&'static str] {
+        ENV_KEY_VARS
+            .iter()
+            .find(|(p, _)| *p == provider)
+            .map(|(_, vars)| *vars)
+            .unwrap_or(&[])
+    };
+    let mut env = std::collections::HashMap::new();
+    for (provider, ek) in env_keys() {
+        for var in inject_vars(provider.as_str()) {
+            env.insert((*var).to_string(), ek.key.clone());
+        }
+    }
+    env
+}
+
+/// Push the current BYOK keys into the registry store's spawn env, so any
+/// installed agent that reads a standard provider key works out of the box —
+/// the clean alternative to an interactive `auth login` TUI, which Atlas
+/// cannot drive (it spawns login subprocesses with stdin closed).
+///
+/// Applied to EVERY installed agent, not a list of blessed ids: a key is a
+/// host capability, and whether an agent uses it is the agent's business. The
+/// agent's own registry env is the base and the user's per-install overrides
+/// still win. Called at boot and after every key add/remove; live agents keep
+/// their env until respawned.
+pub fn sync_agent_key_env(app: &AppHandle) {
+    if let Some(host) = app.try_state::<std::sync::Arc<super::agent_host::AgentHost>>() {
+        host.store().set_byok_env(agent_key_env());
+    }
+}
+
+
+// ── Shell-profile view + editor ───────────────────────────────────────────────
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+fn user_shell() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+}
+
+/// Every var Atlas recognises, flattened, with the provider it belongs to.
+fn known_vars() -> Vec<(&'static str, &'static str)> {
+    ENV_KEY_VARS
+        .iter()
+        .flat_map(|(p, vars)| vars.iter().map(move |v| (*p, *v)))
+        .collect()
+}
+
+/// Where a key's value came from — and therefore whether Atlas can edit it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvEntry {
+    pub provider: String,
+    pub env_var: String,
+    pub last4: String,
+    /// Absolute path of the profile file holding it, when we found one.
+    pub file: Option<String>,
+    /// 1-based line in `file`.
+    pub line: Option<usize>,
+    /// False when the value only exists in the live environment (launchd,
+    /// `/etc/profile`, a wrapper) — Atlas will not invent a file to edit.
+    pub editable: bool,
+}
+
+/// Which profile files Atlas reads, and which one a new key would go into.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileInfo {
+    pub shell: String,
+    /// File new variables are appended to.
+    pub target: String,
+    /// Every candidate, in scan order, with whether it exists today.
+    pub scanned: Vec<ScannedFile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScannedFile {
+    pub path: String,
+    pub exists: bool,
+}
+
+#[tauri::command]
+pub fn byok_profile_info() -> ProfileInfo {
+    let shell = user_shell();
+    let home = home_dir().unwrap_or_default();
+    ProfileInfo {
+        target: shell_profile::primary_target(&home, &shell)
+            .to_string_lossy()
+            .into_owned(),
+        scanned: shell_profile::scan_candidates(&home, &shell)
+            .into_iter()
+            .map(|p| ScannedFile {
+                exists: p.exists(),
+                path: p.to_string_lossy().into_owned(),
+            })
+            .collect(),
+        shell,
+    }
+}
+
+/// The first profile file that assigns `var`, with the parsed assignment.
+fn locate_in_profiles(var: &str) -> Option<(PathBuf, shell_profile::Assignment)> {
+    let home = home_dir()?;
+    for path in shell_profile::scan_candidates(&home, &user_shell()) {
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        // Last assignment wins — that is what the shell ends up with.
+        if let Some(a) = shell_profile::parse_assignments(&content)
+            .into_iter()
+            .filter(|a| a.var == var)
+            .next_back()
+        {
+            return Some((path, a));
+        }
+    }
+    None
+}
+
+fn last4(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    chars[chars.len().saturating_sub(4)..].iter().collect()
+}
+
+/// Every recognised key Atlas can see, whether it came from a profile file or
+/// the ambient environment. Secrets stay in Rust — only `last4` is returned.
+#[tauri::command]
+pub fn byok_env_entries(app: AppHandle) -> Vec<EnvEntry> {
+    ensure_shell_probe(&app);
+    let live = env_state().read().by_var.clone();
+    let mut out = Vec::new();
+
+    for (provider, var) in known_vars() {
+        let located = locate_in_profiles(var);
+        // A value can be in a profile, in the live env, or both. Prefer the
+        // profile's own text when present: it is what an edit would change.
+        let value = match (&located, live.get(var)) {
+            (Some((_, a)), _) => a.value.clone(),
+            (None, Some(v)) => v.clone(),
+            (None, None) => continue,
+        };
+        if value.trim().is_empty() {
+            continue;
+        }
+        out.push(EnvEntry {
+            provider: provider.to_string(),
+            env_var: var.to_string(),
+            last4: last4(&value),
+            file: located.as_ref().map(|(p, _)| p.to_string_lossy().into_owned()),
+            line: located.as_ref().map(|(_, a)| a.line),
+            editable: located.is_some(),
+        });
+    }
+    out
+}
+
+/// Reveal one key's full value, for the editor's show/copy affordance. Kept off
+/// [`byok_env_entries`] so a list render never ships every secret to the webview.
+#[tauri::command]
+pub fn byok_env_reveal(app: AppHandle, env_var: String) -> Option<String> {
+    ensure_shell_probe(&app);
+    if let Some((_, a)) = locate_in_profiles(&env_var) {
+        return Some(a.value);
+    }
+    env_state().read().by_var.get(&env_var).cloned()
+}
+
+/// Back up a profile once per run before Atlas first modifies it, so a bad edit
+/// is always recoverable from a file sitting next to the original.
+fn backup_once(path: &Path) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+    static DONE: Mutex<Option<std::collections::BTreeSet<PathBuf>>> = Mutex::new(None);
+    static POISONED: AtomicBool = AtomicBool::new(false);
+    if POISONED.load(Ordering::Relaxed) {
+        return;
+    }
+    let Ok(mut guard) = DONE.lock() else {
+        POISONED.store(true, Ordering::Relaxed);
+        return;
+    };
+    let set = guard.get_or_insert_with(Default::default);
+    if !set.insert(path.to_path_buf()) {
+        return;
+    }
+    if path.exists() {
+        let _ = fs::copy(path, path.with_extension("atlas-backup"));
+    }
+}
+
+/// Write `content` to `path` atomically (temp file + rename), so a crash mid-write
+/// can never leave a truncated profile — the difference between a working shell
+/// and a broken login.
+fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    }
+    let created = !path.exists();
+    let tmp = path.with_extension("atlas-tmp");
+    fs::write(&tmp, content).map_err(|e| format!("write temp: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Match the file we are replacing; a file we create ourselves holds
+        // secrets and starts owner-only.
+        let mode = fs::metadata(path).ok().map(|m| m.permissions().mode() & 0o777);
+        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(mode.unwrap_or(0o600)));
+    }
+    fs::rename(&tmp, path).map_err(|e| format!("replace {}: {e}", path.display()))?;
+    let _ = created;
+    Ok(())
+}
+
+/// Reflect a change into the live snapshot + agent env so the running app picks
+/// it up without a restart. A new *terminal* still needs a fresh shell, exactly
+/// as it would after editing the file by hand.
+fn apply_live(app: &AppHandle, var: &str, value: Option<&str>) {
+    {
+        let mut state = env_state().write();
+        match value {
+            Some(v) => state.by_var.insert(var.to_string(), v.to_string()),
+            None => state.by_var.remove(var),
+        };
+    }
+    // Also update this process's own env so an in-process consumer that reads
+    // it directly agrees with the snapshot.
+    match value {
+        Some(v) => std::env::set_var(var, v),
+        None => std::env::remove_var(var),
+    }
+    sync_agent_key_env(app);
+    let _ = app.emit("atlas:byok-env-updated", ());
+}
+
+/// Set (or replace) a key in the user's shell profile.
+///
+/// Rewrites the assignment where it already lives; otherwise appends it to the
+/// shell's primary rc file under a marked block.
+#[tauri::command]
+pub fn byok_env_set(app: AppHandle, env_var: String, value: String) -> Result<String, String> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        return Err("Value is empty.".into());
+    }
+    if !known_vars().iter().any(|(_, v)| *v == env_var) {
+        return Err(format!("'{env_var}' is not a recognised provider key variable."));
+    }
+    let home = home_dir().ok_or("No home directory.")?;
+    let shell = user_shell();
+
+    let path = locate_in_profiles(&env_var)
+        .map(|(p, _)| p)
+        .unwrap_or_else(|| shell_profile::primary_target(&home, &shell));
+
+    let content = fs::read_to_string(&path).unwrap_or_default();
+    let updated = shell_profile::upsert(
+        &content,
+        &env_var,
+        &value,
+        ShellKind::from_shell_path(&shell),
+    );
+
+    backup_once(&path);
+    write_atomic(&path, &updated)?;
+    apply_live(&app, &env_var, Some(&value));
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Remove a key's assignment from the profile that defines it.
+#[tauri::command]
+pub fn byok_env_unset(app: AppHandle, env_var: String) -> Result<(), String> {
+    let Some((path, _)) = locate_in_profiles(&env_var) else {
+        // Live-env-only: nothing of ours to delete, and we will not guess.
+        return Err(
+            "This key is set outside your shell profile, so Atlas can't remove it.".into(),
+        );
+    };
+    let content = fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let updated = shell_profile::remove(&content, &env_var);
+
+    backup_once(&path);
+    write_atomic(&path, &updated)?;
+    apply_live(&app, &env_var, None);
+    Ok(())
+}
+
+/// A provider's key, for the in-process BYOK consumers (Rig model calls, memory
+/// summarisation, the code-index Tier-2 pass). `None` if unset.
+#[tauri::command]
+pub fn byok_get(_app: AppHandle, provider: String) -> Result<Option<String>, String> {
+    Ok(env_keys().get(&provider).map(|k| k.key.clone()))
+}
+
+// ── Auth-checklist env probes (agents_auth_env_status) ──────────────────────
+
 
 /// The env vars that satisfy a provider, in preference order. Empty for a
 /// provider the BYOK table has never heard of.
@@ -325,245 +680,4 @@ fn probe_shell_vars(vars: &[&str]) -> BTreeMap<String, String> {
         .filter(|(_, v)| !v.trim().is_empty())
         .map(|(var, v)| ((*var).to_string(), v.trim().to_string()))
         .collect()
-}
-
-/// Non-secret view of an env-imported key for the settings UI.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EnvKeyMeta {
-    pub provider: String,
-    pub env_var: String,
-    pub last4: String,
-    /// Where it came from (E1). The distinction is what the user needs in
-    /// order to act: a `shell-env` key lives in their profile and persists,
-    /// while a `process-env` one only exists because they launched Atlas from a
-    /// terminal that had it exported — and will vanish next time they open the
-    /// app from Finder.
-    pub source: Option<EnvVarSource>,
-}
-
-/// Env-imported keys (provider + var + last4). Instant: reads the current
-/// snapshot (process env at minimum) and never waits on the shell probe —
-/// when the probe lands, `atlas:byok-env-updated` fires and the UI refetches.
-#[tauri::command]
-pub fn byok_env_list(app: AppHandle) -> Vec<EnvKeyMeta> {
-    ensure_shell_probe(&app);
-    env_keys()
-        .values()
-        .map(|k| EnvKeyMeta {
-            provider: k.provider.clone(),
-            env_var: k.env_var.clone(),
-            last4: k.key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect(),
-            source: env_var_source(&k.env_var),
-        })
-        .collect()
-}
-
-/// Map the BYOK store onto the env vars agent CLIs read for provider auth.
-///
-/// **Scope is EVERY spawned agent**, not just the built-ins the name suggests
-/// (see `RegistryStore::agent_env`, which consumes this). Marketplace agents
-/// mostly authenticate exactly this way and nothing else: `gemini` refuses to
-/// open a session with "Gemini API key is missing or not configured" and
-/// advertises no runnable login, and `qwen-code` states it "requires setting
-/// the `OPENAI_API_KEY` environment variable". While this was built-ins-only,
-/// installing them from the marketplace produced an agent that could never
-/// start.
-///
-/// Verified against opencode/kilo's provider docs; cursor uses browser OAuth
-/// and ignores these. Google gets both spellings — the Vercel AI SDK stack
-/// inside opencode reads `GOOGLE_GENERATIVE_AI_API_KEY`, other tooling
-/// (including the Gemini CLI) reads `GEMINI_API_KEY`.
-/// Every env-var spelling a stored key for `provider` should be injected under.
-///
-/// [`ENV_KEY_VARS`] is the single source of truth for BOTH directions —
-/// recognising a key the user exported, and handing it to an agent. Keeping two
-/// lists is what broke this: injection covered only six providers while the
-/// settings page happily stored twenty-two, so a user who saved a Mistral, xAI
-/// or DeepSeek key had it accepted and then silently never delivered, and the
-/// agent kept insisting it had no credentials.
-///
-/// Injecting under EVERY recognised spelling (not just a canonical one) is
-/// deliberate: agents disagree about names — the Vercel AI SDK stack inside
-/// opencode reads `GOOGLE_GENERATIVE_AI_API_KEY`, the Gemini CLI reads
-/// `GEMINI_API_KEY`. An extra var an agent doesn't know is inert.
-fn inject_vars_for(provider: &str) -> &'static [&'static str] {
-    ENV_KEY_VARS
-        .iter()
-        .find(|(p, _)| *p == provider)
-        .map(|(_, vars)| *vars)
-        .unwrap_or(&[])
-}
-
-fn builtin_agent_env(store: &Store) -> std::collections::HashMap<String, String> {
-    let mut env = std::collections::HashMap::new();
-    // Stored (keychain) keys for every provider Atlas knows about.
-    for (provider, vars) in ENV_KEY_VARS {
-        if let Some(k) = store.get(*provider) {
-            for var in *vars {
-                env.insert((*var).to_string(), k.key.clone());
-            }
-        }
-    }
-    // Env-imported keys OVERLAY the stored ones — when both exist for a
-    // provider, the environment's own key wins (the settings page surfaces
-    // the conflict).
-    for (provider, ek) in env_keys() {
-        for var in inject_vars_for(provider.as_str()) {
-            env.insert((*var).to_string(), ek.key.clone());
-        }
-    }
-    env
-}
-
-/// Push the current BYOK keys into the registry store's built-in spawn env so
-/// opencode/kilo work out of the box with Atlas-configured keys — the clean
-/// alternative to their interactive `auth login` TUI, which Atlas cannot
-/// drive (it spawns login subprocesses with stdin closed). Called at boot and
-/// after every key add/remove; live agents keep their env until respawned.
-pub fn sync_builtin_agent_env(app: &AppHandle) {
-    if let Some(host) = app.try_state::<std::sync::Arc<super::agent_host::AgentHost>>() {
-        host.store().set_byok_env(builtin_agent_env(&read_store(app)));
-    }
-}
-
-/// List configured providers (metadata only — no secrets).
-#[tauri::command]
-pub fn byok_list(app: AppHandle) -> Vec<ProviderKeyMeta> {
-    read_store(&app)
-        .into_iter()
-        .map(|(provider, v)| ProviderKeyMeta {
-            provider,
-            last4: v.last4,
-            added_at: v.added_at,
-        })
-        .collect()
-}
-
-/// Store/replace a provider's API key + metadata. `last4` is computed by the
-/// frontend so we never have to slice the key here.
-#[tauri::command]
-pub fn byok_set(
-    app: AppHandle,
-    provider: String,
-    key: String,
-    last4: String,
-    added_at: String,
-) -> Result<(), String> {
-    let mut store = read_store(&app);
-    store.insert(provider, StoredKey { key, last4, added_at });
-    write_store(&app, &store)?;
-    sync_builtin_agent_env(&app);
-    Ok(())
-}
-
-/// Remove a provider's key.
-#[tauri::command]
-pub fn byok_delete(app: AppHandle, provider: String) -> Result<(), String> {
-    let mut store = read_store(&app);
-    store.remove(&provider);
-    write_store(&app, &store)?;
-    sync_builtin_agent_env(&app);
-    Ok(())
-}
-
-/// Read a provider's actual key (for the Model-Chat runtime). `None` if unset.
-///
-/// Env-imported keys take priority over stored ones — the same rule the
-/// built-in agent injection uses, and what the settings page's conflict
-/// warning promises. Non-blocking: reads the current snapshot; a
-/// profile-only key can be missed in the first ~seconds after launch (before
-/// the background shell probe lands), in which case the stored key answers.
-#[tauri::command]
-pub fn byok_get(app: AppHandle, provider: String) -> Result<Option<String>, String> {
-    if let Some(ek) = env_keys().get(&provider) {
-        return Ok(Some(ek.key.clone()));
-    }
-    Ok(read_store(&app).get(&provider).map(|v| v.key.clone()))
-}
-
-#[cfg(test)]
-mod agent_env_tests {
-    use super::*;
-
-    fn store_with(providers: &[&str]) -> Store {
-        providers
-            .iter()
-            .map(|p| {
-                (
-                    (*p).to_string(),
-                    StoredKey {
-                        key: format!("sk-{p}"),
-                        last4: "aaaa".into(),
-                        added_at: "2026-08-17T00:00:00Z".into(),
-                    },
-                )
-            })
-            .collect()
-    }
-
-    /// A key the settings page accepts must reach agents. Injection used to
-    /// cover six providers while the store accepted all of these, so a saved
-    /// Mistral/xAI/DeepSeek key was silently never delivered and the agent went
-    /// on claiming it had no credentials.
-    #[test]
-    fn every_storable_provider_is_injected() {
-        for (provider, vars) in ENV_KEY_VARS {
-            let env = builtin_agent_env(&store_with(&[provider]));
-            assert!(
-                !env.is_empty(),
-                "{provider} can be stored but is never injected"
-            );
-            for var in *vars {
-                assert_eq!(
-                    env.get(*var).map(String::as_str),
-                    Some(format!("sk-{provider}").as_str()),
-                    "{provider} must be injected as {var}"
-                );
-            }
-        }
-    }
-
-    /// Mirrors `detectKeyNeed` in `src/features/chat/lib/agent-key-need.ts`:
-    /// the in-app prompt offers to collect keys for exactly these providers, so
-    /// each one must actually be deliverable — otherwise the user types a key,
-    /// Atlas says "saved", and nothing changes.
-    #[test]
-    fn the_providers_the_key_prompt_offers_are_all_deliverable() {
-        for provider in [
-            "google",
-            "openai",
-            "anthropic",
-            "openrouter",
-            "xai",
-            "mistral",
-            "groq",
-            "deepseek",
-        ] {
-            let env = builtin_agent_env(&store_with(&[provider]));
-            assert!(!env.is_empty(), "key prompt offers {provider} but it is undeliverable");
-        }
-    }
-
-    #[test]
-    fn google_is_injected_under_both_spellings_agents_use() {
-        // opencode's Vercel AI SDK reads GOOGLE_GENERATIVE_AI_API_KEY; the
-        // Gemini CLI reads GEMINI_API_KEY. Both, or one of them breaks.
-        let env = builtin_agent_env(&store_with(&["google"]));
-        assert_eq!(env.get("GEMINI_API_KEY").unwrap(), "sk-google");
-        assert_eq!(env.get("GOOGLE_GENERATIVE_AI_API_KEY").unwrap(), "sk-google");
-    }
-
-    #[test]
-    fn an_empty_store_injects_nothing() {
-        // No keys → no env → agents keep the cheap plain-command spawn path.
-        assert!(builtin_agent_env(&Store::new()).is_empty());
-    }
-
-    #[test]
-    fn unknown_providers_are_ignored_rather_than_injected_blindly() {
-        // A hand-edited byok-keys.json naming something Atlas has no var
-        // mapping for must not invent an env var.
-        assert!(builtin_agent_env(&store_with(&["not-a-provider"])).is_empty());
-    }
 }

@@ -38,18 +38,4 @@ export interface AgentMemory {
   codex: CodexMemory;
 }
 
-export type MemorySubTab =
-  | "claude"
-  | "codex"
-  | "cersei"
-  | "opencode"
-  | "cursor"
-  | "kilo"
-  | "graph"
-  | "policy"
-  | "timeline"
-  | "shared"
-  | "chat"
-  // Registry-installed external agents: their plugin id is their sub-tab
-  // (rendered via the generic CaptureSessionsView).
-  | (string & {});
+export type MemorySubTab = "graph" | "policy" | "timeline" | "shared";

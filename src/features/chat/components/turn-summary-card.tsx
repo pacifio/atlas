@@ -3,7 +3,6 @@ import {
   ChevronDown,
   ChevronRight,
   ArrowRight,
-  Workflow,
   Loader2,
   Sparkles,
   Gauge,
@@ -63,10 +62,6 @@ function FileStatusBadge({ file }: { file: TurnFile }) {
 import { useChatStore } from "../stores/chat-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useKnowledgeStore } from "@/features/knowledge/stores/knowledge-store";
-import { useCanvasStore } from "@/features/canvas/stores/canvas-store";
-import { useCanvasAiStore } from "@/features/canvas/stores/canvas-ai-store";
-import { useLayoutStore } from "@/features/layout/stores/layout-store";
-import { resolveByok } from "../lib/byok-resolve";
 import { stripNextSteps } from "../lib/next-steps";
 import { stripInjectedContext } from "../lib/atlas-context";
 import { CommitFlow } from "./commit-flow";
@@ -162,54 +157,6 @@ export const TurnSummaryCard = memo(function TurnSummaryCard({
       toast.error(`Failed to save: ${e}`);
     }
   };
-
-  const drawDiagram = () => {
-    const byok = resolveByok();
-    if (!byok) {
-      toast.error("Pick a BYOK model in the composer first to draw diagrams");
-      return;
-    }
-    const projectPath = useProjectStore.getState().currentProject?.path ?? "/";
-    const editedPaths = edits.map((f) => f.path);
-    const prompt = [
-      "Draw a clear architecture/flow diagram of the changes just made" +
-        (editedPaths.length ? " to these files:" : ":"),
-      ...editedPaths.map((p) => `- ${p}`),
-      "",
-      message.content.slice(0, 2000),
-    ].join("\n");
-
-    const canvas = useCanvasStore.getState().actions;
-    canvas.createPage();
-    const anchor = { x: 0, y: 0 };
-    // Create the "Ask AI" element (an AI group + thread) and hand it the diagram
-    // context. It generates with the default selected model — so the user sees
-    // the loading state and can keep chatting with the diagram afterward.
-    const groupId = canvas.createAiGroup(anchor, byok.provider, byok.model);
-    canvas.requestOpenAiThread(groupId);
-    void useCanvasAiStore.getState().actions.generate({
-      groupId,
-      anchor,
-      prompt,
-      provider: byok.provider,
-      model: byok.model,
-      projectPath,
-    });
-    // Reveal the Spaces tab so the user watches it draw.
-    const layout = useLayoutStore.getState().actions;
-    layout.addTab({
-      id: "canvas",
-      type: "canvas",
-      title: "Spaces",
-      closable: true,
-      dirty: false,
-      data: {},
-    });
-    layout.setActiveTab("canvas");
-    toast.success("Drawing a diagram in Spaces…");
-  };
-
-  const canDiagram = edits.length > 0 && resolveByok() !== null;
 
   return (
     <div className="mt-2 space-y-2">
@@ -323,9 +270,6 @@ export const TurnSummaryCard = memo(function TurnSummaryCard({
           label="Save to KB"
           onClick={saveToKb}
         />
-        {canDiagram && (
-          <ActionButton icon={<Workflow size={12} />} label="Draw diagram" onClick={drawDiagram} />
-        )}
         <CommitFlow editedPaths={edits.map((f) => f.path)} turnText={message.content} />
       </div>
     </div>

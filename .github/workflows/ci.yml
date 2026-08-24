@@ -130,7 +130,6 @@ jobs:
             clippy: true
           - crate: atlas-redact
             clippy: true
-          - crate: atlas-review
           - crate: atlas-terminal
           - crate: atlas-thread-metadata
             clippy: true

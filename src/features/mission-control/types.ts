@@ -18,18 +18,10 @@ export interface AgentMetrics {
   sessions: number;
 }
 
-export interface ReviewMetrics {
-  inputTokens: number;
-  outputTokens: number;
-  costUsd: number;
-  runs: number;
-}
-
 export interface ProjectMetrics {
   projectPath: string;
   projectName: string;
   agents: AgentMetrics;
-  review: ReviewMetrics;
   firstActivityMs: number | null;
   lastActivityMs: number | null;
   totalTokens: number;
@@ -42,7 +34,6 @@ export interface DailyBucket {
   agentOutput: number;
   agentCost: number;
   agentMessages: number;
-  reviewTokens: number;
 }
 
 export interface ByokDay {
@@ -59,10 +50,6 @@ export interface GrandTotals {
   agentCost: number;
   agentMessages: number;
   agentSessions: number;
-  reviewInput: number;
-  reviewOutput: number;
-  reviewCost: number;
-  reviewRuns: number;
   byokInput: number;
   byokOutput: number;
   byokCost: number;

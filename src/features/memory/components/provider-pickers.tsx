@@ -4,7 +4,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { Loader2, ChevronDown, Search, Check } from "lucide-react";
 import { ProviderLogo } from "@/components/provider-logo";
 import { providerById } from "@/features/settings/lib/providers";
-import { modelchat } from "@/features/model-chat/lib/model-chat-api";
+import { modelchat } from "@/lib/byok/byok-chat";
 
 // Provider + model selectors for Memory ▸ Chat's "Use Provider" mode. Visually
 // identical to the general LLM chat composer's pickers; kept here (rather than

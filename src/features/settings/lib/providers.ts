@@ -3,7 +3,7 @@
 // (AWS Bedrock, Google Vertex) are intentionally omitted — they need more than
 // one field and don't fit the single masked-key UX.
 //
-// `id` doubles as the keychain account name (see Rust `byok.rs`) and must stay
+// `id` is the provider identity used across Atlas (see Rust `byok.rs`) and must stay
 // stable. `env` is the conventional environment variable a consumer injects.
 
 export type ProviderCategory = "Frontier" | "Inference" | "Gateway" | "Embeddings";

@@ -1,16 +1,23 @@
-// BYOK provider-key store. Holds only NON-secret metadata (which providers are
-// configured + last-4 + when). The raw keys never enter this store — they live
-// in the OS keychain and are fetched on demand via `byok.get` by consumers that
-// need to inject them (see Rust `byok.rs`).
+// BYOK store — a mirror of the user's shell environment, not a vault.
+//
+// Atlas stores no keys (see Rust `byok.rs`). `keys` is derived from the
+// environment and answers one question for the rest of the app: which providers
+// are usable right now. Consumers only ever test membership, so the shape stayed
+// `Record<provider, …>` when the source moved from a private JSON store to the
+// shell profile.
+//
+// `entries` is the richer per-variable view the Settings editor renders (file,
+// line, editable). Only `last4` is ever held here — full values are fetched one
+// at a time via `byok.reveal`.
 
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import { createSelectors } from "@/lib/create-selectors";
-import { byok, type EnvKeyMeta, type ProviderKeyMeta } from "../lib/byok-api";
+import { byok, type EnvEntry, type EnvKeyMeta, type ProfileInfo } from "../lib/byok-api";
 
-// The env-key probe is two-phase in Rust: process env answers instantly, the
-// login-shell pass lands seconds later and fires this event. Refetch so the
-// "from env" pills / conflict warnings appear without a manual reload.
+// The env probe is two-phase in Rust: the process env answers instantly, the
+// login-shell pass lands seconds later and fires this event. It also fires after
+// every edit. Refetch so pills and rows stay live without a manual reload.
 // Module-level once-guard — the store is a singleton, the listener should be too.
 let envListenerArmed = false;
 function armEnvUpdateListener(refetch: () => void): void {
@@ -22,95 +29,83 @@ function armEnvUpdateListener(refetch: () => void): void {
 }
 
 interface ByokState {
-  /** provider id → metadata, for configured providers only. */
-  keys: Record<string, ProviderKeyMeta>;
-  /** provider id → key imported from the user's environment. Env keys WIN
-   *  over stored keys when both exist (the table flags the conflict). */
+  /** provider id → env key. Membership = "this provider is usable". */
+  keys: Record<string, EnvKeyMeta>;
+  /** Kept as an alias of `keys` so existing "from env" call sites still read. */
   envKeys: Record<string, EnvKeyMeta>;
+  /** Per-variable editor rows. */
+  entries: EnvEntry[];
+  profile: ProfileInfo | null;
   loaded: boolean;
-  /** provider id currently being saved/deleted (for inline busy state). */
+  /** env var currently being written/removed (inline busy state). */
   pending: string | null;
   actions: {
     load: () => Promise<void>;
-    save: (provider: string, key: string) => Promise<void>;
-    remove: (provider: string) => Promise<void>;
+    save: (envVar: string, value: string) => Promise<string>;
+    remove: (envVar: string) => Promise<void>;
   };
 }
 
 export const useByokStore = createSelectors(
-  create<ByokState>((set) => ({
-    keys: {},
-    envKeys: {},
-    loaded: false,
-    pending: null,
-    actions: {
-      load: async () => {
-        try {
-          const list = await byok.list();
-          const keys: Record<string, ProviderKeyMeta> = {};
-          for (const m of list) keys[m.provider] = m;
-          set({ keys, loaded: true });
-        } catch (err) {
-          console.error("byok.load failed", err);
-          set({ loaded: true });
-        }
-        // Separately and best-effort: the env list is instant (process-env
-        // snapshot) but grows once the background login-shell probe lands —
-        // the update event refetches so pills/conflicts appear live.
-        const fetchEnv = async () => {
+  create<ByokState>((set) => {
+    const refresh = async () => {
+      try {
+        const [list, entries] = await Promise.all([byok.envList(), byok.entries()]);
+        const keys: Record<string, EnvKeyMeta> = {};
+        for (const m of list) keys[m.provider] = m;
+        set({ keys, envKeys: keys, entries });
+      } catch (err) {
+        console.error("byok refresh failed", err);
+      }
+    };
+
+    return {
+      keys: {},
+      envKeys: {},
+      entries: [],
+      profile: null,
+      loaded: false,
+      pending: null,
+      actions: {
+        load: async () => {
+          armEnvUpdateListener(() => void refresh());
+          await refresh();
           try {
-            const envList = await byok.envList();
-            const envKeys: Record<string, EnvKeyMeta> = {};
-            for (const m of envList) envKeys[m.provider] = m;
-            set({ envKeys });
+            set({ profile: await byok.profileInfo() });
           } catch (err) {
-            console.error("byok.envList failed", err);
+            console.error("byok profileInfo failed", err);
           }
-        };
-        armEnvUpdateListener(() => void fetchEnv());
-        await fetchEnv();
-      },
+          set({ loaded: true });
+        },
 
-      save: async (provider, key) => {
-        const trimmed = key.trim();
-        if (!trimmed) return;
-        set({ pending: provider });
-        try {
-          await byok.set(provider, trimmed);
-          set((s) => ({
-            keys: {
-              ...s.keys,
-              [provider]: {
-                provider,
-                last4: trimmed.slice(-4),
-                addedAt: new Date().toISOString(),
-              },
-            },
-          }));
-        } catch (err) {
-          console.error("byok.save failed", err);
-          throw err;
-        } finally {
-          set({ pending: null });
-        }
-      },
+        save: async (envVar, value) => {
+          const trimmed = value.trim();
+          if (!trimmed) throw new Error("Value is empty.");
+          set({ pending: envVar });
+          try {
+            const file = await byok.set(envVar, trimmed);
+            await refresh();
+            return file;
+          } finally {
+            set({ pending: null });
+          }
+        },
 
-      remove: async (provider) => {
-        set({ pending: provider });
-        try {
-          await byok.delete(provider);
-          set((s) => {
-            const next = { ...s.keys };
-            delete next[provider];
-            return { keys: next };
-          });
-        } catch (err) {
-          console.error("byok.remove failed", err);
-          throw err;
-        } finally {
-          set({ pending: null });
-        }
+        remove: async (envVar) => {
+          set({ pending: envVar });
+          try {
+            await byok.unset(envVar);
+            await refresh();
+          } finally {
+            set({ pending: null });
+          }
+        },
       },
-    },
-  })),
+    };
+  }),
 );
+
+/** Convenience for callers that just need "is any provider usable". */
+export function hasAnyProviderKey(): boolean {
+  return Object.keys(useByokStore.getState().keys).length > 0;
+}

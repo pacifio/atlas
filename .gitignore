@@ -46,3 +46,6 @@ graphify-out/
 plans/
 scripts/release-macos.sh
 .firecrawl/
+
+# Stakpak session files
+.stakpak/session*

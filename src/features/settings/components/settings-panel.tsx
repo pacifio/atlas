@@ -9,7 +9,6 @@ import {
   Palette,
   Keyboard,
   Info,
-  FlaskConical,
   KeyRound,
   LayoutTemplate,
   Zap,
@@ -37,12 +36,7 @@ import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
 import { updater } from "@/features/updater/lib/updater-api";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
 import { useSettingsNav, type SettingsSection } from "../stores/settings-nav-store";
-import { isDev } from "@/lib/env";
 
-// Developer section is dev-build only — production users never see the
-// diagnostic toggles (they change app behavior and aren't useful outside
-// UI testing). `isDev` is a Vite build constant, so the production bundle
-// drops the entry entirely via dead-code elimination.
 const SECTIONS: Array<{
   id: SettingsSection;
   label: string;
@@ -57,7 +51,6 @@ const SECTIONS: Array<{
   { id: "models", label: "Local Models", icon: Boxes },
   { id: "updates", label: "Updates", icon: DownloadCloud },
   { id: "keybindings", label: "Keybindings", icon: Keyboard },
-  ...(isDev ? [{ id: "developer" as const, label: "Developer", icon: FlaskConical }] : []),
   { id: "about", label: "About", icon: Info },
 ];
 
@@ -175,7 +168,6 @@ export function SettingsPanel({ initialSection }: { initialSection?: string } = 
             {activeSection === "layouts" && <LayoutsSettings />}
             {activeSection === "updates" && <UpdatesSettings />}
             {activeSection === "keybindings" && <KeybindingsSettings />}
-            {isDev && activeSection === "developer" && <DeveloperSettings />}
             {activeSection === "about" && <AboutSettings />}
           </div>
         </ScrollArea>
@@ -669,18 +661,6 @@ function KeybindingsSettings() {
           </div>
         </div>
       ))}
-    </div>
-  );
-}
-
-function DeveloperSettings() {
-  return (
-    <div className="space-y-6">
-      <SectionTitle
-        title="Developer"
-        subtitle="Diagnostic toggles for UI testing — these change app behavior, leave off in normal use"
-      />
-      <div className="text-[11px] text-text-tertiary px-1">No developer toggles right now.</div>
     </div>
   );
 }

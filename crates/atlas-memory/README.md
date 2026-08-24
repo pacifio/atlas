@@ -8,6 +8,16 @@ share it without special-casing.
 
 > New to the codebase? Read this top-to-bottom. Upgrading an existing install or
 > debugging on-disk state? See [`MIGRATION.md`](./MIGRATION.md). Want the design
+> **2026-08-22 — this crate no longer depends on the Cersei SDK.** The graph
+> store, the memory-type taxonomy, session-memory extraction/persistence, the
+> consolidation gates, and the embedding-provider trait were ported in as
+> `src/graph.rs`, `src/session.rs`, `src/dream.rs` and `src/embedding.rs`.
+> `tests/cersei_parity.rs` was written against the SDK versions and passes
+> unchanged against the ported ones — run it before touching any of those four.
+> It also pins several inherited quirks on purpose (quote-wrapped query results,
+> duplicate `:Topic` nodes, an inert `recall_top_k` ranking); fixing one means
+> editing that file in the same commit.
+
 > rationale + the build plan? See `plans/atlas-cersei-rag-replan.md` and
 > `crates/atlas-cersei/ARCHITECTURE.md` §6e.
 
@@ -23,7 +33,7 @@ chats into durable memories, and a **global** store promotes cross-project facts
 
 ```
    files / chat / decisions ──▶  MiniLM embed ──▶  usearch HNSW  ──┐
-                                       +  Cersei graph memory      ├─▶ fused retrieve ─▶ MemDoc
+                                       +  grafeo graph memory      ├─▶ fused retrieve ─▶ MemDoc
                                        +  ~/.atlas global memory  ──┘        ▲
    (indexing runs in the BACKGROUND, never on the chat turn)                │
                                                           search_memory tool / pushed context
@@ -86,7 +96,7 @@ Corpus gathering lives in the **app layer**, not this crate: extend
 change — retrieval picks it up automatically.
 
 ### 3e. "I want richer/structured memory" (graph)
-`MemoryEngine` holds a Cersei `GraphMemory` (Grafeo). Extraction (§5) writes
+`MemoryEngine` holds a `GraphMemory` (grafeo, `src/graph.rs` — Atlas-owned since 2026-08-22). Extraction (§5) writes
 typed memories into it. Graph hits are a **down-weighted** contributor to
 retrieval (it's substring/word-overlap, not semantic) — the embedding path is
 always authoritative.
@@ -141,7 +151,7 @@ Per project, under `<project>/.atlas/memory/`:
 | `hnsw.usearch` | the persistent usearch HNSW index (vectors) |
 | `manifest.json` | `{provider_name, dim, next_key, entries:[{id,key,content_hash,corpus,mtime}]}` — id↔u64 key map + incremental ledger |
 | `docstore.json` | `id -> {title, source, text}` for building results (vectors alone have no text) |
-| `graph/` | Cersei `GraphMemory` (Grafeo) store |
+| `graph/` | `graph::GraphMemory` (grafeo) store |
 | `extracted/*.md` | session-extraction output (memdir) |
 | `.shared-memory-imported` | idempotency marker for the legacy `shared-memory/events.jsonl` import |
 | `.consolidation_state.json` / `.consolidation_lock` | AutoDream consolidation state + lock |
@@ -190,7 +200,7 @@ Tune the consts in `retrieve.rs` / `global.rs`.
 | Module (`src/`) | Responsibility |
 |---|---|
 | `lib.rs` | `MemoryEngine` (open/retrieve/index_corpus/persist), `RetrievedDoc`, `CorpusDoc` |
-| `provider.rs` | `MiniLmProvider` impl Cersei `EmbeddingProvider` (on-device, `spawn_blocking`) |
+| `provider.rs` | `MiniLmProvider` impl `embedding::EmbeddingProvider` (on-device, `spawn_blocking`) |
 | `store.rs` | `HnswStore` over `usearch` (save/load/add/remove/search) |
 | `manifest.rs` | `Manifest` — id↔key bimap, content-hash `diff` |
 | `docstore.rs` | `id -> {title,source,text}` side store |

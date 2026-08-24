@@ -6,7 +6,6 @@ import {
   RectangleHorizontal,
   Circle,
   Diamond,
-  Sparkles,
   Undo2,
   Redo2,
 } from "lucide-react";
@@ -23,7 +22,6 @@ interface ToolDef {
 // pan, click selects) is always active; create-tools auto-revert to it. Connect
 // nodes by dragging between their edge handles (no tool needed).
 const TOOLS: ToolDef[] = [
-  { tool: "ai", icon: Sparkles, label: "Ask AI — click the canvas to generate a diagram" },
   { tool: "note", icon: StickyNote, label: "Note" },
   { tool: "text", icon: Type, label: "Text" },
 ];

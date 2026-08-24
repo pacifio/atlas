@@ -22,7 +22,6 @@ import {
   CLAUDE_PERMISSION_MODES,
   type ClaudePermissionMode,
   agentTypeFromPluginId,
-  pluginIdForAgent,
   type SwitchableAgent,
 } from "@/types/agent";
 import {
@@ -30,7 +29,6 @@ import {
   switchableAgentOf,
   useSwitchableAgents,
 } from "@/features/agents/lib/agent-meta";
-import { useAgentAcquire, acquirePercent } from "../lib/agent-acquire";
 import { canSignIn, promptSignIn } from "../lib/agent-signin";
 import { switchAgentForTab } from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
@@ -65,7 +63,7 @@ import { PlanTasksPill } from "./plan-tasks-pill";
 import { RetryPill } from "./retry-pill";
 import { ComposerAddMenu } from "./composer-add-menu";
 import type { GithubRepo } from "@/features/github/types";
-import { imageMimeFromPath } from "@/features/model-chat/lib/model-capabilities";
+import { imageMimeFromPath } from "@/lib/byok/model-capabilities";
 import type { ImageAttachment } from "@/types/agents";
 import type {
   MentionFile,
@@ -376,7 +374,6 @@ function ComposerGroupsMenu({
   const availableModels = useChatStore((s) => s.sessions[tabId]?.acpAvailableModels);
   const { setAcpMode, setAcpModel, setClaudePermissionMode, setAcpConfigOption } =
     useChatStore.use.actions();
-  const acquiring = useAgentAcquire(pluginIdForAgent(agentType));
   const switchableAgents = useSwitchableAgents();
 
   const [openGroup, setOpenGroup] = useState<ComposerGroup | null>(null);
@@ -734,47 +731,35 @@ function ComposerGroupsMenu({
         <span className={labelCls(openGroup === "agent")}>{agentMeta(currentAgent).label}</span>
       </button>
 
-      {acquiring ? (
-        <span
-          className="flex h-6.5 items-center gap-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] px-2 text-[10px] font-medium leading-none text-[var(--text-tertiary)] select-none tabular-nums"
-          title={`Downloading ${agentMeta(agentType).label} — this happens once.`}
+      {showMode && (
+        <button
+          onClick={() => toggle("mode")}
+          className={pillCls(openGroup === "mode")}
+          title="Permission mode — pick here, ⇧⇥ cycles"
         >
-          <Loader2 size={11} className="shrink-0 animate-spin" />
-          {acquirePercent(acquiring) !== null
-            ? `Setting up ${agentMeta(agentType).label}… ${acquirePercent(acquiring)}%`
-            : `Setting up ${agentMeta(agentType).label}…`}
-        </span>
-      ) : (
-        showMode && (
-          <button
-            onClick={() => toggle("mode")}
-            className={pillCls(openGroup === "mode")}
-            title="Permission mode — pick here, ⇧⇥ cycles"
-          >
-            {isClaude ? (
-              <span
-                className={cn(
-                  "h-1.5 w-1.5 shrink-0 rounded-full",
-                  claudeModeDotClass(permissionMode),
-                )}
-              />
-            ) : (
-              <span
-                className="h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ background: acpModeColor(currentMode) }}
-              />
-            )}
-            <span className={labelCls(openGroup === "mode")}>
-              {isClaude
-                ? CLAUDE_PERMISSION_MODE_LABEL[permissionMode]
-                : currentAcpMode
-                  ? displayModeName(currentAcpMode.name)
-                  : modesPending
-                    ? "Loading…"
-                    : "Mode"}
-            </span>
-          </button>
-        )
+          {isClaude ? (
+            <span
+              className={cn(
+                "h-1.5 w-1.5 shrink-0 rounded-full",
+                claudeModeDotClass(permissionMode),
+              )}
+            />
+          ) : (
+            <span
+              className="h-1.5 w-1.5 shrink-0 rounded-full"
+              style={{ background: acpModeColor(currentMode) }}
+            />
+          )}
+          <span className={labelCls(openGroup === "mode")}>
+            {isClaude
+              ? CLAUDE_PERMISSION_MODE_LABEL[permissionMode]
+              : currentAcpMode
+                ? displayModeName(currentAcpMode.name)
+                : modesPending
+                  ? "Loading…"
+                  : "Mode"}
+          </span>
+        </button>
       )}
 
       {configOptions.length > 0 && (

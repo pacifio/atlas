@@ -1,38 +1,40 @@
-//! `models` — the Local Model Manager: a curated catalog of on-device **embedding**
-//! and **LLM** models the user can search (curated + HuggingFace), download, remove,
-//! and select. The selected ids live in `AppSettings` (`embedding_model_id` /
-//! `llm_model_id`) and are read by the two resolver chokepoints
-//! (`memory_graph::model_dir`, `memory_chat::chat_model_dir` + `local_model_paths`),
-//! so every on-device consumer follows the user's choice automatically.
+//! `models` — the Local Model Manager: a curated catalog of on-device
+//! **embedding** models the user can search (curated + HuggingFace), download,
+//! remove, and select. The selected id lives in `AppSettings`
+//! (`embedding_model_id`) and is read by the resolver chokepoint
+//! (`memory_graph::model_dir`), so every on-device consumer follows the user's
+//! choice automatically.
 //!
-//! Scope (locked): only models the existing candle loaders accept —
-//! **BERT-family** sentence-transformers for embeddings (`atlas_embed::Embedder`,
-//! varied dims) and **Qwen3-family** GGUF for the LLM (`atlas_embed::chat`). Other
-//! architectures are surfaced by HF search but flagged incompatible.
+//! Scope (locked): only models the existing candle loader accepts —
+//! **BERT-family** sentence-transformers (`atlas_embed::Embedder`, varied dims).
+//! Other architectures are surfaced by HF search but flagged incompatible.
+//!
+//! On-device *generation* was removed on 2026-08-22 (see `codebase_index`): the
+//! only consumer was the code-index Tier-2 summary, which now runs on BYOK.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::commands::memory_chat::MemoryChatState;
 use crate::commands::memory_indexer::MemoryRegistry;
 use crate::state::app_state::AppStateHandle;
 
 /// Embedding models all expose the same three sentence-transformer files; only the
-/// source repo differs. LLM (GGUF) models list their files explicitly.
+/// source repo differs.
 pub const EMBED_FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
 
+/// Retained as a single-variant enum: it is part of the wire shape the frontend
+/// filters on, and keeping it leaves room for a second on-device model class
+/// without another migration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelKind {
     Embedding,
-    Llm,
 }
 
 /// One file to fetch from `https://huggingface.co/{repo}/resolve/{revision}/{file}`
-/// into `dest` under the model's dir. GGUF models mix repos (weights from a quant
-/// mirror, tokenizer from the official repo), so the repo is per-file.
+/// into `dest` under the model's dir. Per-file repo so a model can mix sources.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileSpec {
     pub repo: String,
@@ -91,26 +93,9 @@ fn embed_repo(id: &str, name: &str, repo: &str, dim: usize, size_mb: u32, desc: 
     }
 }
 
-fn qwen_gguf(id: &str, name: &str, quant_repo: &str, gguf: &str, tok_repo: &str, size_mb: u32, desc: &str) -> ModelEntry {
-    ModelEntry {
-        id: id.to_string(),
-        kind: ModelKind::Llm,
-        name: name.to_string(),
-        repo: quant_repo.to_string(),
-        files: vec![
-            FileSpec { repo: quant_repo.to_string(), file: gguf.to_string(), dest: gguf.to_string() },
-            FileSpec { repo: tok_repo.to_string(), file: "tokenizer.json".to_string(), dest: "tokenizer.json".to_string() },
-        ],
-        dim: None,
-        size_mb,
-        description: desc.to_string(),
-        compatible: true,
-    }
-}
-
 /// The curated, guaranteed-compatible catalog. BERT sentence-transformers (384 or
-/// 768 dim) + Qwen3 GGUF (0.6B–8B). Ids match the historical dir names for the two
-/// defaults so existing downloads are reused with no migration.
+/// 768 dim). Ids match the historical dir names so existing downloads are reused
+/// with no migration.
 pub fn builtin_catalog() -> Vec<ModelEntry> {
     vec![
         // ── Embedding (BERT-family) ──
@@ -120,11 +105,6 @@ pub fn builtin_catalog() -> Vec<ModelEntry> {
         embed_repo("e5-small-v2", "E5-small v2", "intfloat/e5-small-v2", 384, 130, "E5 retrieval embeddings (384-d)."),
         embed_repo("bge-base-en-v1.5", "BGE-base-en v1.5", "BAAI/bge-base-en-v1.5", 768, 440, "Higher-quality 768-d embeddings (rebuilds the index)."),
         embed_repo("gte-base", "GTE-base", "thenlper/gte-base", 768, 220, "General Text Embeddings, base (768-d, rebuilds the index)."),
-        // ── LLM (Qwen3 GGUF, Q4_K_M) ──
-        qwen_gguf("qwen3-0.6b", "Qwen3 0.6B", "unsloth/Qwen3-0.6B-GGUF", "Qwen3-0.6B-Q4_K_M.gguf", "Qwen/Qwen3-0.6B", 470, "Tiny local RAG model. The default."),
-        qwen_gguf("qwen3-1.7b", "Qwen3 1.7B", "unsloth/Qwen3-1.7B-GGUF", "Qwen3-1.7B-Q4_K_M.gguf", "Qwen/Qwen3-1.7B", 1100, "Better answers, still fast on Apple Silicon."),
-        qwen_gguf("qwen3-4b", "Qwen3 4B", "unsloth/Qwen3-4B-GGUF", "Qwen3-4B-Q4_K_M.gguf", "Qwen/Qwen3-4B", 2500, "Higher quality; needs more RAM/VRAM."),
-        qwen_gguf("qwen3-8b", "Qwen3 8B", "unsloth/Qwen3-8B-GGUF", "Qwen3-8B-Q4_K_M.gguf", "Qwen/Qwen3-8B", 5000, "Best local quality; heavy."),
     ]
 }
 
@@ -160,14 +140,6 @@ pub fn selected_embedding_id(app: &AppHandle) -> String {
         .clone()
 }
 
-pub fn selected_llm_id(app: &AppHandle) -> String {
-    app.state::<AppStateHandle>()
-        .lock()
-        .settings
-        .llm_model_id
-        .clone()
-}
-
 /// Whether every file for `id` exists on disk. Uses the catalog's file list; for an
 /// unknown id (e.g. a legacy/manual dir) falls back to the embedding file triplet.
 pub fn is_downloaded(app: &AppHandle, id: &str) -> bool {
@@ -176,26 +148,6 @@ pub fn is_downloaded(app: &AppHandle, id: &str) -> bool {
         Some(e) => e.dest_files().iter().all(|f| dir.join(f).exists()),
         None => EMBED_FILES.iter().all(|f| dir.join(f).exists()),
     }
-}
-
-/// (gguf, tokenizer) paths for the selected LLM. Looks up the catalog for the gguf
-/// filename (varies per model); errors if not downloaded.
-pub fn selected_llm_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
-    let id = selected_llm_id(app);
-    let dir = model_dir_for(app, &id)?;
-    let entry = find_entry(&id).ok_or_else(|| format!("unknown LLM model '{id}'"))?;
-    let gguf_name = entry
-        .files
-        .iter()
-        .find(|f| f.dest.ends_with(".gguf"))
-        .map(|f| f.dest.clone())
-        .ok_or_else(|| format!("model '{id}' has no gguf file"))?;
-    let gguf = dir.join(&gguf_name);
-    let tok = dir.join("tokenizer.json");
-    if !gguf.exists() || !tok.exists() {
-        return Err("Local chat model is not downloaded.".into());
-    }
-    Ok((gguf, tok))
 }
 
 // ── Shared streamed downloader ─────────────────────────────────────────────────
@@ -321,14 +273,12 @@ pub struct ModelStatus {
 #[tauri::command]
 pub async fn models_list(app: AppHandle) -> Result<Vec<ModelStatus>, String> {
     let sel_embed = selected_embedding_id(&app);
-    let sel_llm = selected_llm_id(&app);
     Ok(builtin_catalog()
         .into_iter()
         .map(|entry| {
             let downloaded = is_downloaded(&app, &entry.id);
             let selected = match entry.kind {
                 ModelKind::Embedding => entry.id == sel_embed,
-                ModelKind::Llm => entry.id == sel_llm,
             };
             ModelStatus {
                 entry,
@@ -364,7 +314,7 @@ pub async fn model_download(app: AppHandle, id: String) -> Result<(), String> {
 /// (the frontend guards too).
 #[tauri::command]
 pub async fn model_remove(app: AppHandle, id: String) -> Result<(), String> {
-    if id == selected_embedding_id(&app) || id == selected_llm_id(&app) {
+    if id == selected_embedding_id(&app) {
         return Err("Can't remove the model that's currently selected.".into());
     }
     let dir = model_dir_for(&app, &id)?;
@@ -381,16 +331,15 @@ pub struct SelectResult {
     pub needs_reindex: bool,
 }
 
-/// Set the selected embedding or LLM model. Persists the setting, invalidates the
-/// relevant cached model so the next call reloads, and reports whether the memory
-/// index must be rebuilt (embedding-model change only). The caller (frontend)
-/// confirms with the user, then calls `force_reindex` per open project.
+/// Set the selected embedding model. Persists the setting, invalidates the cached
+/// provider so the next call reloads, and reports that the memory index must be
+/// rebuilt. The caller (frontend) confirms with the user, then calls
+/// `force_reindex` per open project.
 #[tauri::command]
 pub async fn model_select(
     app: AppHandle,
     id: String,
     registry: State<'_, std::sync::Arc<MemoryRegistry>>,
-    chat: State<'_, MemoryChatState>,
 ) -> Result<SelectResult, String> {
     let entry = find_entry(&id).ok_or_else(|| format!("unknown model '{id}'"))?;
     if !is_downloaded(&app, &id) {
@@ -408,9 +357,6 @@ pub async fn model_select(
                     needs_reindex = true;
                 }
             }
-            ModelKind::Llm => {
-                s.settings.llm_model_id = id.clone();
-            }
         }
         crate::state::app_state::AppState::save(&app, &s).map_err(|e| format!("save settings: {e}"))?;
     }
@@ -418,7 +364,6 @@ pub async fn model_select(
     // Drop cached models so the next call loads the newly selected one.
     match entry.kind {
         ModelKind::Embedding => registry.invalidate_provider().await,
-        ModelKind::Llm => chat.clear_chat(),
     }
 
     let _ = app.emit("atlas:models-changed", ());

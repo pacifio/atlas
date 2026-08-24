@@ -18,7 +18,6 @@ export const AGENT_COLOR = {
   agents: "#b9b1a6", // warm gray
   gpt: "#93a3ad", // muted slate
   gemini: "#9aa6c0", // muted periwinkle-gray
-  review: "#b6ad97", // muted sand
   byok: "#a89fb0", // muted mauve-gray
   input: "#c9c9cf", // light gray
   output: "#7f8088", // mid gray

@@ -6,8 +6,6 @@ import { useProjectStore } from "@/features/project/stores/project-store";
 import { KbdCombo } from "@/ui/kbd";
 import { AtlasIcon } from "@/components/atlas-icon";
 import {
-  MessageSquare,
-  Map,
   Globe,
   CheckSquare,
   Terminal,
@@ -16,6 +14,7 @@ import {
   PanelRight,
   PanelBottom,
   PanelTop,
+  Map,
   Sidebar,
   Columns2,
   Maximize2,
@@ -23,12 +22,10 @@ import {
   Network,
   BrainCircuit,
   ScrollText,
-  Timer,
   Code,
   GitBranch,
   ArrowLeftToLine,
   ArrowRightToLine,
-  BookOpen,
   Brain,
   Search,
   FolderOpen,
@@ -61,7 +58,6 @@ export function CommandPalette({
     toggleRightPanel,
     toggleBottomPanel,
     toggleChatSidebar,
-    toggleModelChatSidebar,
     toggleTabBar,
     toggleZenMode,
     toggleUsagePanel,
@@ -92,7 +88,6 @@ export function CommandPalette({
     "knowledge-graph",
     "memory",
     "log",
-    "pomodoro",
     "settings",
   ]);
   const openTab = (type: TabType, title: string) =>
@@ -136,11 +131,11 @@ export function CommandPalette({
         action: () => openTab("chat", "Agents"),
       },
       {
-        id: "new-model-chat",
-        label: "New Chat",
-        icon: MessageSquare,
+        id: "new-canvas",
+        label: "New Spaces",
+        icon: Map,
         category: "Open",
-        action: () => openTab("model-chat", "Chat"),
+        action: () => openTab("canvas", "Spaces"),
       },
       {
         id: "new-terminal",
@@ -159,13 +154,6 @@ export function CommandPalette({
         action: () => openTab("editor", "Untitled"),
       },
       {
-        id: "new-canvas",
-        label: "New Spaces",
-        icon: Map,
-        category: "Open",
-        action: () => openTab("canvas", "Spaces"),
-      },
-      {
         id: "new-browser",
         label: "Open Browser",
         icon: Globe,
@@ -178,13 +166,6 @@ export function CommandPalette({
         icon: CheckSquare,
         category: "Open",
         action: () => openTab("tasks", "Tasks"),
-      },
-      {
-        id: "new-research",
-        label: "Research",
-        icon: BookOpen,
-        category: "Open",
-        action: () => openTab("research", "Research"),
       },
       {
         id: "new-knowledge",
@@ -213,13 +194,6 @@ export function CommandPalette({
         icon: ScrollText,
         category: "Open",
         action: () => openTab("log", "Log"),
-      },
-      {
-        id: "new-pomodoro",
-        label: "Pomodoro",
-        icon: Timer,
-        category: "Open",
-        action: () => openTab("pomodoro", "Pomodoro"),
       },
 
       // ── Layout toggles ──
@@ -254,14 +228,6 @@ export function CommandPalette({
         icon: Sidebar,
         category: "Layout",
         action: toggleChatSidebar,
-      },
-      {
-        id: "toggle-model-chat-sidebar",
-        label: "Toggle Chat History Sidebar",
-        shortcut: "⌘⌥K",
-        icon: Sidebar,
-        category: "Layout",
-        action: toggleModelChatSidebar,
       },
       {
         id: "toggle-tab-bar",
@@ -367,7 +333,6 @@ export function CommandPalette({
       toggleRightPanel,
       toggleBottomPanel,
       toggleChatSidebar,
-      toggleModelChatSidebar,
       toggleTabBar,
       toggleZenMode,
       toggleUsagePanel,

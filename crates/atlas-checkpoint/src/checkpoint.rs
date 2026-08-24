@@ -58,6 +58,7 @@ use std::path::Path;
 use chrono::Utc;
 
 use crate::blobs;
+use crate::sketch;
 use crate::error::{Error, Result};
 use crate::git::{self, ChangedPath};
 use crate::model::{FileTouch, WorkspaceMode};
@@ -448,10 +449,33 @@ fn links(repo: &Path, commit_sha: &str, change: &ChangedPath, touch: &FileTouch)
     // declaring a mismatch, so a Windows-style repo does not silently fail the
     // strict arm on every agent-created file. Filters that are not invertible
     // from the blob side (ident expansion, LFS pointers) remain a genuine gap.
-    match git::blob_at_filtered(repo, commit_sha, &change.path) {
-        Some(filtered) => &blobs::key_for(&filtered) == expected,
-        None => false,
+    if let Some(filtered) = git::blob_at_filtered(repo, commit_sha, &change.path) {
+        if &blobs::key_for(&filtered) == expected {
+            return true;
+        }
     }
+
+    // Neither form matched byte-for-byte, so the developer changed something
+    // between the agent's write and the commit. That is the ordinary review
+    // loop, not a rejection: requiring an exact match here meant the agent
+    // scaffolds a file, the developer fixes one line, and the Checkpoint
+    // silently never appears.
+    //
+    // Ask how much of the agent's content survived instead. Containment is
+    // asymmetric on purpose — a developer who appends their own work to the
+    // agent's file has still committed the agent's work — and the threshold
+    // still rejects a wholesale rewrite, which is what this arm exists for.
+    //
+    // A touch written before schema v9 has no sketch. Those keep the old
+    // exact-match behaviour rather than being retroactively re-judged on
+    // evidence that was never recorded.
+    let Some(agent_sketch) = &touch.sketch_after else {
+        return false;
+    };
+    let Some(committed_sketch) = sketch::sketch(&committed) else {
+        return false;
+    };
+    sketch::retains_agent_work(agent_sketch, &committed_sketch)
 }
 
 /// Are there Checkpoints for this Workspace whose commit has gone missing?

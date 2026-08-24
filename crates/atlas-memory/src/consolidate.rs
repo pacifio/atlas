@@ -48,8 +48,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use cersei_agent::auto_dream::AutoDream;
-use cersei_memory::graph::GraphMemory;
+use crate::dream::AutoDream;
+use crate::graph::GraphMemory;
 
 use crate::MemoryEngine;
 
@@ -186,7 +186,7 @@ fn collect_global_candidates(memory_dir: &Path) -> Vec<(String, String, f32)> {
 /// Count current graph memories across all four `MemoryType`s (read-only; the
 /// graph has no delete API, so this is a signal only — see module docs).
 fn count_graph_nodes(graph: &GraphMemory) -> usize {
-    use cersei_memory::memdir::MemoryType::*;
+    use crate::graph::MemoryType::*;
     [User, Feedback, Project, Reference]
         .iter()
         .map(|t| graph.by_type(*t).len())
@@ -377,7 +377,7 @@ fn write_atomic(path: &Path, contents: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cersei_memory::memdir::MemoryType;
+    use crate::graph::MemoryType;
 
     fn tmp_root(name: &str) -> PathBuf {
         let mut p = std::env::temp_dir();

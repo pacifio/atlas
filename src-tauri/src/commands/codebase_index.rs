@@ -16,22 +16,18 @@ use std::path::Path;
 use std::sync::Arc;
 
 use atlas_codeindex::{compose_text, scan, structural_text, CodebaseDoc, CodebaseIndex, ScannedFile};
-use atlas_embed::chat::build_qwen_prompt;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 use super::byok::byok_get;
-use super::memory_chat::{local_model_paths, MemoryChatState};
 use super::memory_graph::memory_index_build;
 use super::memory_indexer::MemoryRegistry;
 
 /// Caps on how many files get an LLM summary per build (structural is uncapped).
 const PROVIDER_SUMMARY_CAP: usize = 150;
-const LOCAL_SUMMARY_CAP: usize = 25;
 /// Provider summaries run concurrently (each file is an independent API call).
 const PROVIDER_CONCURRENCY: usize = 8;
 const SNIPPET_CHARS: usize = 1600;
-const SUMMARY_MAX_TOKENS: usize = 96;
 
 const SUMMARY_SYSTEM: &str = "You summarize a source file's role in one or two plain sentences — what it is responsible for in the project. Output only the summary: no preamble, no markdown, no code.";
 
@@ -59,7 +55,7 @@ pub struct BuildOpts {
     /// "full" | "incremental" (default).
     #[serde(default)]
     pub mode: String,
-    /// "structural" (default) | "local" | "provider".
+    /// "structural" (default) | "provider".
     #[serde(default)]
     pub backend: String,
     #[serde(default)]
@@ -85,7 +81,6 @@ pub async fn codebase_index_build(
     app: AppHandle,
     project_path: String,
     opts: BuildOpts,
-    state: State<'_, MemoryChatState>,
     registry: State<'_, Arc<MemoryRegistry>>,
 ) -> Result<CodebaseIndexStatus, String> {
     let pp = project_path.trim_end_matches('/').to_string();
@@ -138,11 +133,9 @@ pub async fn codebase_index_build(
         docs.push(doc);
     }
 
-    // 4. Tier-2 summaries.
+    // 4. Tier-2 summaries (BYOK; `structural` skips this entirely).
     if opts.backend == "provider" {
         provider_summaries(&app, &opts, &mut docs, &to_summarize).await;
-    } else if opts.backend == "local" {
-        local_summaries(&app, &state, &mut docs, &to_summarize).await?;
     }
 
     // 5. Persist.
@@ -173,10 +166,11 @@ async fn provider_summaries(
     if opts.provider.is_empty() || opts.model.is_empty() {
         return;
     }
-    let key = match byok_get(app.clone(), opts.provider.clone()) {
-        Ok(Some(k)) => k,
-        _ => return,
-    };
+    // Guard only: `run_completion` resolves the key itself, but bail before
+    // fanning out rather than firing N calls that each fail on a missing key.
+    if !matches!(byok_get(app.clone(), opts.provider.clone()), Ok(Some(_))) {
+        return;
+    }
 
     let targets = top_targets(docs, to_summarize, PROVIDER_SUMMARY_CAP);
     if targets.is_empty() {
@@ -187,20 +181,19 @@ async fn provider_summaries(
 
     use futures::stream::{self, StreamExt};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let cancel = atlas_review::CancellationToken::new();
     let done = Arc::new(AtomicUsize::new(0));
     // Concurrent API calls; emit progress live as each completes so the
     // parallelism is visible.
     let results: Vec<(usize, String)> = stream::iter(targets.into_iter().map(|i| {
-        let user = build_summary_user(&docs[i]);
+        // `run_completion` sends a single user turn, so the system prompt is
+        // folded into it (same shape `memory_summarize::summarize` uses).
+        let prompt = format!("{SUMMARY_SYSTEM}\n\n{}", build_summary_user(&docs[i]));
         let provider = opts.provider.clone();
         let model = opts.model.clone();
-        let key = key.clone();
-        let cancel = cancel.clone();
         let app = app.clone();
         let done = done.clone();
         async move {
-            let out = atlas_review::complete(&provider, &model, &key, SUMMARY_SYSTEM, &user, &cancel)
+            let out = super::memory_summarize::run_completion(&app, prompt, &provider, &model)
                 .await
                 .unwrap_or_default();
             let n = done.fetch_add(1, Ordering::Relaxed) + 1;
@@ -215,64 +208,6 @@ async fn provider_summaries(
     for (i, summary) in results {
         apply_summary(docs, i, summary);
     }
-}
-
-async fn local_summaries(
-    app: &AppHandle,
-    state: &State<'_, MemoryChatState>,
-    docs: &mut [CodebaseDoc],
-    to_summarize: &[usize],
-) -> Result<(), String> {
-    let (gguf, tok) = match local_model_paths(app) {
-        Ok(p) => p,
-        Err(_) => return Ok(()), // no local model → leave structural-only
-    };
-    let targets = top_targets(docs, to_summarize, LOCAL_SUMMARY_CAP);
-    if targets.is_empty() {
-        return Ok(());
-    }
-    emit(app, "summarizing", 0, targets.len());
-
-    // Build prompts before the blocking pass.
-    let prompts: Vec<(usize, String)> = targets
-        .iter()
-        .map(|&i| {
-            let user = build_summary_user(&docs[i]);
-            (i, build_qwen_prompt(SUMMARY_SYSTEM, &[("user".into(), user)]))
-        })
-        .collect();
-
-    let chat_arc = state.chat_model();
-    let app_bg = app.clone();
-    let summaries: Vec<(usize, String)> = tokio::task::spawn_blocking(move || {
-        let mut guard = chat_arc.lock();
-        if guard.is_none() {
-            // Shared resilient loader: Metal→CPU fallback + persisted marker.
-            match super::memory_chat::load_chat_model(&app_bg, &gguf, &tok) {
-                Ok(m) => *guard = Some(m),
-                Err(_) => return Vec::new(),
-            }
-        }
-        let model = guard.as_mut().unwrap();
-        prompts
-            .into_iter()
-            .map(|(i, prompt)| {
-                let out = model
-                    .generate(&prompt, SUMMARY_MAX_TOKENS, 0.3, |_| {}, || false)
-                    .unwrap_or_default();
-                (i, clean_summary(&out))
-            })
-            .collect()
-    })
-    .await
-    .map_err(|e| format!("local summarize join: {e}"))?;
-
-    let total = summaries.len();
-    for (n, (i, summary)) in summaries.into_iter().enumerate() {
-        apply_summary(docs, i, summary);
-        emit(app, "summarizing", n + 1, total);
-    }
-    Ok(())
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

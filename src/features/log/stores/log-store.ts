@@ -9,12 +9,11 @@ export type LogSource =
   | "atlas"
   | "agent"
   | "chat"
+  | "canvas"
   | "git"
   | "knowledge"
   | "github"
-  | "canvas"
   | "editor"
-  | "research"
   | "project"
   | "system";
 

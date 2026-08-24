@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use atlas_embed::Embedder;
-use cersei_embeddings::{EmbeddingError, EmbeddingProvider};
+use crate::embedding::{EmbeddingError, EmbeddingProvider};
 
 /// Default provider identifier recorded in a *fresh* manifest before the first
 /// index pass reconciles it to the actually-selected model. A mismatch between

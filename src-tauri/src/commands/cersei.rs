@@ -4,12 +4,12 @@
 //! surface (spawn / new_session / send / set_mode / set_model / …). The only
 //! extra surface it needs is listing its own persisted sessions for the chat
 //! session sidebar — model/provider selection reuses the frontend's existing
-//! BYOK catalog (`review-agents/lib/model-catalog.ts`) + `agents_set_model`
+//! BYOK catalog (`settings/lib/model-catalog.ts`) + `agents_set_model`
 //! with a `"provider/model"` value.
 
 use std::sync::Arc;
 
-use atlas_cersei::{ReplayItem, SessionMeta};
+use atlas_cersei::SessionMeta;
 
 use super::agent_host::AgentHost;
 use tauri::State;
@@ -40,15 +40,4 @@ pub fn cersei_delete_session(
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<(), String> {
     host.native_delete_session(&project_path, &session_id)
-}
-
-/// Full transcript (UI-neutral replay items) for one stored native-agent
-/// session — drives the Memory tab's Atlas view (transcripts + plans).
-#[tauri::command]
-pub fn cersei_session_transcript(
-    project_path: String,
-    session_id: String,
-    host: State<'_, Arc<AgentHost>>,
-) -> Vec<ReplayItem> {
-    host.native_transcript(&project_path, &session_id)
 }

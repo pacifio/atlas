@@ -14,7 +14,6 @@ use commands::knowledge_links::KnowledgeLinksState;
 use commands::knowledge_meta::KnowledgeMetaState;
 use commands::mention_search::MentionCacheState;
 use commands::recent_files::RecentFilesState;
-use commands::papers::SavedPapersIndex;
 use commands::terminal::TerminalState;
 use parking_lot::Mutex;
 use state::{AppState, AppStateHandle};
@@ -257,7 +256,6 @@ pub fn run() {
         .manage(commands::browser::BrowserState::new())
         .manage(TerminalState::new())
         .manage(commands::modelchat::ModelChatState::new())
-        .manage(commands::review::ReviewState::new())
         .manage(FileIndexState::new())
         .manage(GitWatcherState::new())
         .manage(RecentFilesState::new())
@@ -265,8 +263,6 @@ pub fn run() {
         .manage(Arc::new(KnowledgeMetaState::new()))
         .manage(Arc::new(KnowledgeLinksState::new()))
         .manage(CliLaunchState::new(initial_project))
-        .manage(SavedPapersIndex::new())
-        .manage(commands::memory_chat::MemoryChatState::new())
         .manage(commands::memory_sharing::MemorySharingState::new())
         .manage(commands::shared_memory::SharedMemoryStore::new())
         // Owns the per-Workspace session stores and the capture worker
@@ -429,7 +425,6 @@ pub fn run() {
             commands::capture::capture_retry_failed,
             commands::capture::capture_retry_watcher,
             commands::capture::artifacts_sessions,
-            commands::capture::capture_agent_session_counts,
             commands::capture::artifacts_session,
             commands::capture::artifacts_payload,
             commands::capture::capture_commit_sessions,
@@ -457,13 +452,8 @@ pub fn run() {
             commands::gitdiff::git_commit_changed_files,
             commands::gitdiff::git_diff_line_status,
             commands::search::search_in_files,
-            commands::research::search_arxiv,
-            commands::research::search_semantic_scholar,
-            commands::research::download_paper,
-            commands::research::save_paper_to_knowledge,
-            commands::research::fetch_trending_papers,
-            commands::research::save_project_session,
-            commands::research::load_project_session,
+            commands::project_session::save_project_session,
+            commands::project_session::load_project_session,
             commands::knowledge::list_knowledge,
             commands::knowledge::save_knowledge_note,
             commands::knowledge::import_into_knowledge,
@@ -498,7 +488,6 @@ pub fn run() {
             commands::canvas::save_canvas,
             commands::canvas::canvas_media_upload,
             commands::canvas::canvas_media_data_url,
-            commands::canvas::canvas_codebase_context,
             commands::log::load_pinned_log,
             commands::log::append_pinned_log,
             commands::log::clear_pinned_log,
@@ -574,37 +563,24 @@ pub fn run() {
             commands::agents::agents_authenticate,
             commands::agents::agents_drop_session,
             commands::cersei::cersei_list_sessions,
-            commands::cersei::cersei_session_transcript,
             commands::cersei::cersei_delete_session,
-            commands::byok::byok_list,
-            commands::byok::byok_set,
-            commands::byok::byok_delete,
             commands::byok::byok_get,
             commands::byok::byok_env_list,
+            commands::byok::byok_env_entries,
+            commands::byok::byok_env_reveal,
+            commands::byok::byok_env_set,
+            commands::byok::byok_env_unset,
+            commands::byok::byok_profile_info,
             commands::modelchat::modelchat_models,
             commands::modelchat::modelchat_stream,
             commands::modelchat::modelchat_cancel,
-            commands::review::review_providers,
-            commands::review::review_base_branches,
-            commands::review::review_start,
-            commands::review::review_cancel,
-            commands::review::review_list,
-            commands::review::review_get,
-            commands::modelchat_sessions::modelchat_sessions_list,
-            commands::modelchat_sessions::modelchat_session_get,
-            commands::modelchat_sessions::modelchat_session_save,
-            commands::modelchat_sessions::modelchat_session_delete,
             commands::fileindex::fileindex_open_project,
             commands::fileindex::fileindex_close_project,
             commands::fileindex::fileindex_search,
             commands::fileindex::fileindex_search_dirs,
             commands::fileindex::fileindex_status,
-            commands::papers::list_saved_papers,
-            commands::pomodoro::pomodoro_load,
-            commands::pomodoro::pomodoro_save,
             commands::plans::plans_load,
             commands::plans::plans_append,
-            commands::agent_memory::agent_memory_read,
             commands::memory_graph::memory_embed_status,
             commands::memory_graph::memory_embed_download,
             commands::memory_graph::memory_index_build,
@@ -624,13 +600,6 @@ pub fn run() {
             commands::shared_memory::memory_append_event,
             commands::memory_timeline::memory_timeline,
             commands::memory_timeline::memory_timeline_cached,
-            commands::memory_chat::memory_chat_model_status,
-            commands::memory_chat::memory_chat_model_download,
-            commands::memory_chat::memory_chat_model_load,
-            commands::memory_chat::memory_chat_backend,
-            commands::memory_chat::memory_chat_send,
-            commands::memory_chat::memory_chat_cancel,
-            commands::memory_chat::memory_chat_retrieve,
             commands::memory_indexer::force_reindex,
             commands::memory_indexer::memory_indexer_close_project,
             commands::models::models_list,
@@ -639,10 +608,6 @@ pub fn run() {
             commands::models::model_select,
             commands::codebase_index::codebase_index_status,
             commands::codebase_index::codebase_index_build,
-            commands::memory_chat_sessions::memory_chat_sessions_list,
-            commands::memory_chat_sessions::memory_chat_session_get,
-            commands::memory_chat_sessions::memory_chat_session_save,
-            commands::memory_chat_sessions::memory_chat_session_delete,
             commands::session_chat::session_chat_retrieve,
             commands::session_chat_sessions::session_chat_threads_list,
             commands::session_chat_sessions::session_chat_thread_get,

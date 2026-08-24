@@ -25,7 +25,7 @@ import type { TimelineEntry } from "../types";
 
 /**
  * The tucked header itself, same construction as Memory ▸ Chat's codebase strip
- * (`memory-chat-view.tsx`): inset by `mx-2` so the composer's box is wider,
+ * (the former memory-chat view): inset by `mx-2` so the composer's box is wider,
  * `rounded-t-xl` for the curve, and `-mb-3.5` against `pb-5` so the box overlaps
  * its lower half. `z-0` keeps it behind — the composer carries `relative z-10`.
  */

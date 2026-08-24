@@ -1,50 +1,64 @@
 import { invoke } from "@tauri-apps/api/core";
 
-/** Non-secret per-provider metadata returned by Rust (camelCase from serde). */
-export interface ProviderKeyMeta {
+/**
+ * BYOK bridge — a view onto the user's shell environment.
+ *
+ * Atlas stores no keys. Every entry below is an `export VAR=...` in a shell
+ * profile (editable) or a value inherited from the ambient environment
+ * (read-only — Atlas won't guess at a file it didn't find the value in).
+ *
+ * Secrets stay in Rust: the list carries only `last4`, and the full value is
+ * fetched one at a time via `reveal` so a list render never ships every key to
+ * the webview.
+ */
+
+/** One recognised provider key Atlas can see. */
+export interface EnvEntry {
   provider: string;
+  envVar: string;
   last4: string;
-  addedAt: string;
+  /** Profile file holding it, when there is one. */
+  file: string | null;
+  /** 1-based line in `file`. */
+  line: number | null;
+  /** False when it exists only in the live environment. */
+  editable: boolean;
 }
 
-/**
- * BYOK bridge. Stored secrets live in a 0600 JSON file that Rust owns
- * (`byok.rs`) — NOT the OS keychain, despite what this comment used to claim
- * (E2). The frontend only ever sees metadata via `list`; the raw key never
- * reaches JS, and consumers that need it (the Model-Chat Rig backend) read it
- * Rust-side via `byok_get`.
- *
- * Two distinct sources feed this screen and they are not interchangeable:
- * stored keys (editable here, used by native Cersei + model-chat) and env keys
- * (read-only reflections of the system environment). For ACP agents the
- * environment is the ONLY channel — Atlas holds no agent credentials — which is
- * why env keys overlay stored ones in `builtin_agent_env`.
- */
-/** One key imported from the user's environment (shell profile / process env).
- *  Never stored by Atlas — probed at runtime; only the var name + last4 reach
- *  the UI. When both an env key and a stored key exist, the env key wins. */
+export interface ScannedFile {
+  path: string;
+  exists: boolean;
+}
+
+/** Which profile files Atlas reads, and where a new key would be written. */
+export interface ProfileInfo {
+  shell: string;
+  target: string;
+  scanned: ScannedFile[];
+}
+
+/** Compact provider→key view, for "which providers are usable" checks. */
 export interface EnvKeyMeta {
   provider: string;
   envVar: string;
   last4: string;
-  /** `shell-env` persists (it is in the shell profile); `process-env` only
-   *  exists because Atlas was launched from a terminal that had it exported. */
-  source: "process-env" | "shell-env" | null;
 }
 
 export const byok = {
-  list: () => invoke<ProviderKeyMeta[]>("byok_list"),
-
-  /** Env-imported keys. First call may take a few seconds (login-shell probe). */
+  /** Provider → env key, for "which providers are usable" checks. */
   envList: () => invoke<EnvKeyMeta[]>("byok_env_list"),
 
-  set: (provider: string, key: string) =>
-    invoke<void>("byok_set", {
-      provider,
-      key,
-      last4: key.slice(-4),
-      addedAt: new Date().toISOString(),
-    }),
+  /** Full editor listing: every recognised var, with its file + line. */
+  entries: () => invoke<EnvEntry[]>("byok_env_entries"),
 
-  delete: (provider: string) => invoke<void>("byok_delete", { provider }),
+  profileInfo: () => invoke<ProfileInfo>("byok_profile_info"),
+
+  /** Full value for one variable (show / copy). */
+  reveal: (envVar: string) => invoke<string | null>("byok_env_reveal", { envVar }),
+
+  /** Write or replace the assignment; resolves to the file that changed. */
+  set: (envVar: string, value: string) => invoke<string>("byok_env_set", { envVar, value }),
+
+  /** Remove the assignment from the profile that defines it. */
+  unset: (envVar: string) => invoke<void>("byok_env_unset", { envVar }),
 };

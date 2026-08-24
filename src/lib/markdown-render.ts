@@ -73,7 +73,6 @@ const MENTION_PREFIX_KIND: Record<string, string> = {
   "@symbol": "symbol",
   "@note": "knowledge",
   "@repo": "repo",
-  "@paper": "paper",
   "@branch": "branch",
   "@msg": "past_message",
   "@session": "past_session",
@@ -86,7 +85,7 @@ const MENTION_PREFIX_KIND: Record<string, string> = {
 // Not anchored inside words (avoids emails like `a@file:x`). Value runs to the
 // next whitespace; trailing punctuation is peeled back off into plain text.
 const MENTION_TOKEN_RE =
-  /(?<![\w/])([@#](?:file|folder|symbol|note|repo|paper|branch|msg|session|skill|command|agent|rule)):(\S+)/g;
+  /(?<![\w/])([@#](?:file|folder|symbol|note|repo|branch|msg|session|skill|command|agent|rule)):(\S+)/g;
 
 function baseName(s: string): string {
   const i = s.lastIndexOf("/");
@@ -163,17 +162,6 @@ const MENTION_GLYPH: Record<string, [string, Record<string, string | number>][]>
     ["circle", { cx: "13", cy: "12", r: "2" }],
     ["path", { d: "M18 19c-2.8 0-5-2.2-5-5v8" }],
     ["circle", { cx: "20", cy: "19", r: "2" }],
-  ],
-  paper: [
-    [
-      "path",
-      {
-        d: "M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2",
-      },
-    ],
-    ["path", { d: "M18 14h-8" }],
-    ["path", { d: "M15 18h-5" }],
-    ["path", { d: "M10 6h8v4h-8V6Z" }],
   ],
   branch: [
     ["line", { x1: "6", x2: "6", y1: "3", y2: "15" }],

@@ -1,6 +1,6 @@
 //! Persistent chat threads for Session-Chat.
 //!
-//! Mirrors `memory_chat_sessions` — one JSON file per thread, atomic write via
+//! One JSON file per thread, atomic write via
 //! tmp-and-rename — with one structural difference: threads are filed *under the
 //! Session they are about*, at
 //! `app_config_dir/session-chat/<agent_session_id>/<chat_id>.json`.

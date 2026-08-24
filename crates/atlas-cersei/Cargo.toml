@@ -9,11 +9,11 @@ name = "atlas_cersei"
 
 [dependencies]
 # Cersei agent SDK — the in-process agentic loop (provider builders, tools,
-# permission policies, streaming events). Same pin as atlas-review so the two
+# permission policies, streaming events). Same pin as atlas-codeindex so the two
 # Cersei consumers share one resolved version.
 # `default-features = false` drops the `vms` feature (cersei-vms ~4.5MB rlib +
 # its sub-crates) — Atlas does not use the VM tools. All cersei consumers must
-# agree (feature unification), so atlas-codeindex/atlas-review do the same.
+# agree (feature unification), so atlas-codeindex/atlas-memory do the same.
 cersei = { version = "0.2.6", default-features = false }
 # The agent crate directly, for the built-in `DelegateTool` + delegate batch
 # runner (parallel in-process sub-agents) — not re-exported by the `cersei`
@@ -22,7 +22,7 @@ cersei-agent = "0.2.6"
 # RTK (Rust Token Killer) tool-output compression — `CompressionLevel`, not
 # re-exported by the `cersei` facade. User-toggleable per session.
 cersei-compression = "0.2.6"
-# Cooperative cancellation of an in-flight turn (mirrors atlas-review).
+# Cooperative cancellation of an in-flight turn.
 tokio-util = "0.7"
 # Gitignore-aware recursive walker (ripgrep's own crate) backing the native
 # `List` tool — no external `rg`/`grep` binary. Unifies with cersei-tools'

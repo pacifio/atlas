@@ -479,11 +479,6 @@ const ICON_FOLDER_GIT = lucideSvg(
     `<path d="M18 19c-2.8 0-5-2.2-5-5v8"/>` +
     `<circle cx="20" cy="19" r="2"/>`,
 );
-const ICON_NEWSPAPER = lucideSvg(
-  `<path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/>` +
-    `<path d="M18 14h-8"/><path d="M15 18h-5"/>` +
-    `<path d="M10 6h8v4h-8V6Z"/>`,
-);
 const ICON_GIT_BRANCH = lucideSvg(
   `<line x1="6" x2="6" y1="3" y2="15"/>` +
     `<circle cx="18" cy="6" r="3"/>` +
@@ -513,8 +508,6 @@ function kindGlyph(kind: MentionKind): string {
       return ICON_FOLDER_GIT;
     case "workspace":
       return ICON_FOLDER_GIT;
-    case "paper":
-      return ICON_NEWSPAPER;
     case "branch":
       return ICON_GIT_BRANCH;
     case "past_message":
@@ -540,8 +533,6 @@ function chipTitle(m: MentionData): string {
       return m.absPath;
     case "workspace":
       return m.absPath;
-    case "paper":
-      return m.authors.length ? m.authors.join(", ") : "paper";
     case "branch":
       return `${m.refKind} · ${m.sha.slice(0, 7)}`;
     case "past_message":

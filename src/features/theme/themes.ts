@@ -136,6 +136,33 @@ export const ATLAS_THEMES: AtlasTheme[] = [
       accentForeground: "#090a12",
     },
   },
+  {
+    // AMOLED near-black + Rosé Pine's signature rose — soft, focused.
+    id: "rose-pine",
+    name: "Rosé Pine",
+    description: "AMOLED near-black with a soft rose accent — calm, focused.",
+    spec: {
+      // Keep the recognizable Rosé Pine warmth while pulling its surfaces
+      // toward black for OLED displays and preserving Atlas's depth ladder.
+      base: "#08070a",
+      panel: "#100e14",
+      elevated: "#18151e",
+      overlay: "#24202c",
+      input: "#0d0b10",
+      tabActive: "#1e1a25",
+      textPrimary: "#e0def4",
+      textSecondary: "#aaa6c2",
+      textTertiary: "#7a7692",
+      textGhost: "#292532",
+      textMuted: "#56516a",
+      borderDefault: "#302a39",
+      borderSubtle: "#1b1721",
+      borderStrong: "#51485f",
+      accent: "#eb6f92",
+      accentHover: "#f08ba7",
+      accentForeground: "#16090e",
+    },
+  },
 ];
 
 /** Look up a theme by id, falling back to the Atlas Black default. */

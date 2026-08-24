@@ -82,6 +82,7 @@ import {
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { ConnectDialog } from "@/features/auth/components/connect-dialog";
 import { clampScale, SCALE_STEP, DEFAULT_SCALE } from "@/features/settings/lib/ui-scale";
+import { useModelsStore } from "@/features/settings/stores/models-store";
 
 // Interface-zoom helpers (⌘+/⌘-/⌘0). They read + write the persisted
 // `uiScale` setting; `updateSettings` applies it to the native WebView zoom.
@@ -95,6 +96,12 @@ const zoomReset = () =>
   useProjectStore.getState().actions.updateSettings({ uiScale: DEFAULT_SCALE });
 
 export function App() {
+  // Own model download listeners at app scope so completion notifications are
+  // delivered even when Settings is closed.
+  useEffect(() => {
+    void useModelsStore.getState().actions.init();
+  }, []);
+
   // No Claude probe here any more. It used to run at boot to drive a banner
   // above the composer and hard-disable the input; both are gone, and probing
   // meant a fresh install spawned subprocesses for an agent it does not have
@@ -331,7 +338,6 @@ export function App() {
     toggleRightPanel,
     toggleBottomPanel,
     toggleChatSidebar,
-    toggleModelChatSidebar,
     toggleTabBar,
     addTab,
     setActiveTab,
@@ -1249,11 +1255,6 @@ export function App() {
     {
       combo: { key: "j", meta: true, alt: true },
       action: toggleChatSidebar,
-    },
-    {
-      // ⌘⌥K — toggle the Model-Chat history sidebar (mirror of ⌘⌥J).
-      combo: { key: "k", meta: true, alt: true },
-      action: toggleModelChatSidebar,
     },
     {
       // ⌥J — open the Knowledge Base, or jump to it if already open. Placed

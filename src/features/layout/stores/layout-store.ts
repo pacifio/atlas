@@ -3,7 +3,7 @@ import { persist } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
 import { createSelectors } from "@/lib/create-selectors";
 import { invoke } from "@tauri-apps/api/core";
-import type { TabType } from "@/lib/constants";
+import { TAB_TYPES, type TabType } from "@/lib/constants";
 import type { LayoutTemplate } from "../templates";
 
 export interface Tab {
@@ -52,7 +52,7 @@ interface LayoutState {
   rightPanel: {
     visible: boolean;
     width: number;
-    activeSection: "review-agents" | "changes" | "github" | "git-graph";
+    activeSection: "changes" | "github" | "git-graph";
   };
   /** Per-app KB tab layout — survives tab switches (each KB tab gets the
    *  same panel layout, matching the global-left/right model). */
@@ -67,10 +67,6 @@ interface LayoutState {
     height: number;
   };
   chatSidebar: {
-    visible: boolean;
-    width: number;
-  };
-  modelChatSidebar: {
     visible: boolean;
     width: number;
   };
@@ -118,7 +114,6 @@ interface LayoutActions {
     toggleRightPanel: () => void;
     toggleBottomPanel: () => void;
     toggleChatSidebar: () => void;
-    toggleModelChatSidebar: () => void;
     toggleUsagePanel: () => void;
     toggleKnowledgeSidebar: () => void;
     toggleKnowledgeInspector: () => void;
@@ -184,7 +179,7 @@ const initialState: LayoutState = {
   rightPanel: {
     visible: true,
     width: 280,
-    activeSection: "review-agents",
+    activeSection: "changes",
   },
   knowledgePanel: {
     showSidebar: true,
@@ -199,10 +194,6 @@ const initialState: LayoutState = {
   chatSidebar: {
     visible: true,
     width: 220,
-  },
-  modelChatSidebar: {
-    visible: true,
-    width: 230,
   },
   bashPanel: {
     width: 260,
@@ -367,10 +358,6 @@ export const useLayoutStore = createSelectors(
             set((s) => {
               s.chatSidebar.visible = !s.chatSidebar.visible;
             }),
-          toggleModelChatSidebar: () =>
-            set((s) => {
-              s.modelChatSidebar.visible = !s.modelChatSidebar.visible;
-            }),
           toggleUsagePanel: () =>
             set((s) => {
               s.leftPanel.usagePanelVisible = !s.leftPanel.usagePanelVisible;
@@ -427,7 +414,6 @@ export const useLayoutStore = createSelectors(
                 tab.type === "editor" ||
                 tab.type === "diff" ||
                 tab.type === "chat" ||
-                tab.type === "model-chat" ||
                 tab.type === "media" ||
                 tab.type === "svg" ||
                 tab.type === "pdf" ||
@@ -906,7 +892,6 @@ export const useLayoutStore = createSelectors(
           knowledgePanel: s.knowledgePanel,
           bottomPanel: s.bottomPanel,
           chatSidebar: s.chatSidebar,
-          modelChatSidebar: s.modelChatSidebar,
           bashPanel: s.bashPanel,
           plansPanel: s.plansPanel,
           tabBarVisible: s.tabBarVisible,
@@ -922,18 +907,29 @@ export const useLayoutStore = createSelectors(
           // pre-move `state.json` with "git-graph" on the left or "analysis"
           // on the right) back to a valid default so the panel isn't blank.
           const LEFT = ["files", "knowledge"];
-          const RIGHT = ["review-agents", "changes", "github", "git-graph"];
+          const RIGHT = ["changes", "github", "git-graph"];
           if (!LEFT.includes(leftPanel.activeSection)) leftPanel.activeSection = "files";
-          if (!RIGHT.includes(rightPanel.activeSection)) rightPanel.activeSection = "review-agents";
+          if (!RIGHT.includes(rightPanel.activeSection)) rightPanel.activeSection = "changes";
+          // Tabs whose feature has since been removed (pomodoro, model-chat,
+          // research…) still sit in persisted state.json; restoring them
+          // yields a permanent placeholder tab. Drop them, and repoint
+          // activeTabId if it pointed at one.
+          const validTypes = new Set<string>(TAB_TYPES);
+          const tabs = (p.tabs ?? current.tabs).filter((t) => validTypes.has(t.type));
+          let activeTabId = p.activeTabId ?? current.activeTabId;
+          if (activeTabId !== null && !tabs.some((t) => t.id === activeTabId)) {
+            activeTabId = tabs[0]?.id ?? null;
+          }
           return {
             ...current,
             ...p,
+            tabs,
+            activeTabId,
             leftPanel,
             rightPanel,
             knowledgePanel: { ...current.knowledgePanel, ...p.knowledgePanel },
             bottomPanel: { ...current.bottomPanel, ...p.bottomPanel },
             chatSidebar: { ...current.chatSidebar, ...p.chatSidebar },
-            modelChatSidebar: { ...current.modelChatSidebar, ...p.modelChatSidebar },
             bashPanel: { ...current.bashPanel, ...p.bashPanel },
             plansPanel: { ...current.plansPanel, ...p.plansPanel },
           };

@@ -11,7 +11,6 @@
 //!    because the record keeps one token total per session rather than per
 //!    message. Was Claude-only, scraped out of `~/.claude/projects` JSONL and
 //!    priced from a table in the source, until ADR-0001 / issue #17.
-//!  - Review: persisted per-run input/output tokens + optional cost.
 //!  - BYOK: appended to `byok-usage.jsonl` going forward (see modelchat.rs).
 
 use serde::{Deserialize, Serialize};
@@ -19,7 +18,6 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-use super::review;
 use super::usage;
 
 // ── Wire shapes (camelCase to the frontend) ───────────────────────────────
@@ -42,25 +40,15 @@ pub struct AgentMetrics {
     pub sessions: u64,
 }
 
-#[derive(Serialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewMetrics {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cost_usd: f64,
-    pub runs: u32,
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectMetrics {
     pub project_path: String,
     pub project_name: String,
     pub agents: AgentMetrics,
-    pub review: ReviewMetrics,
     pub first_activity_ms: Option<i64>,
     pub last_activity_ms: Option<i64>,
-    /// agents(in+out) + review(in+out) — drives the consumption pie.
+    /// agents(in+out) — drives the consumption pie.
     pub total_tokens: u64,
 }
 
@@ -73,7 +61,6 @@ pub struct DailyBucket {
     pub agent_output: u64,
     pub agent_cost: f64,
     pub agent_messages: u64,
-    pub review_tokens: u64,
 }
 
 #[derive(Serialize, Default)]
@@ -94,10 +81,6 @@ pub struct GrandTotals {
     pub agent_cost: f64,
     pub agent_messages: u64,
     pub agent_sessions: u64,
-    pub review_input: u64,
-    pub review_output: u64,
-    pub review_cost: f64,
-    pub review_runs: u32,
     pub byok_input: u64,
     pub byok_output: u64,
     pub byok_cost: f64,
@@ -115,16 +98,6 @@ pub struct MissionControlUsage {
     pub totals: GrandTotals,
     pub byok_since: Option<String>,
     pub generated_at: String,
-}
-
-// ── Per-project day accumulator (agents + review on one date) ─────────────
-
-/// One project's day: what `usage` already computed for the agents, plus the
-/// review runs that landed the same day.
-#[derive(Default)]
-struct DayAll {
-    agents: usage::DayUsage,
-    review: u64,
 }
 
 #[derive(Deserialize)]
@@ -173,12 +146,11 @@ pub async fn mission_control_usage(
             // project whose store is missing or unreadable contributes nothing
             // and must not blank the other projects' figures.
             let recorded = usage::project_usage(path, &prices).unwrap_or_default();
-            let reviews = review::review_list(path.clone());
 
-            // Per-day map combining both sources for this project.
-            let mut days: BTreeMap<String, DayAll> = BTreeMap::new();
+            // Per-day map for this project.
+            let mut days: BTreeMap<String, usage::DayUsage> = BTreeMap::new();
             for (date, day) in usage::day_buckets(&recorded.sessions) {
-                days.entry(date).or_default().agents = day;
+                days.insert(date, day);
             }
             // Both ends of the span: when the earliest session started, and
             // when the latest one last did work. Deriving both from the same
@@ -190,36 +162,15 @@ pub async fn mission_control_usage(
                 let last = session.last_activity_ms.unwrap_or(started);
                 agents_last = Some(agents_last.map_or(last, |l: i64| l.max(last)));
             }
-            // Review — attribute per-run tokens to its created day.
-            let mut r_in = 0u64;
-            let mut r_out = 0u64;
-            let mut r_cost = 0f64;
-            let (mut review_first, mut review_last): (Option<i64>, Option<i64>) = (None, None);
-            for r in &reviews {
-                r_in += r.report.input_tokens;
-                r_out += r.report.output_tokens;
-                r_cost += r.report.cost_usd.unwrap_or(0.0);
-                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&r.created_at) {
-                    let ms = dt.timestamp_millis();
-                    review_first = Some(review_first.map_or(ms, |f: i64| f.min(ms)));
-                    review_last = Some(review_last.map_or(ms, |l: i64| l.max(ms)));
-                }
-                if let Some(day) = iso_local_day(&r.created_at) {
-                    days.entry(day).or_default().review +=
-                        r.report.input_tokens + r.report.output_tokens;
-                }
-            }
-
             // Emit this project's day buckets.
             for (date, d) in days {
                 daily.push(DailyBucket {
                     date,
                     project_path: path.clone(),
-                    agent_input: d.agents.input_tokens,
-                    agent_output: d.agents.output_tokens,
-                    agent_cost: d.agents.cost_usd,
-                    agent_messages: d.agents.messages,
-                    review_tokens: d.review,
+                    agent_input: d.input_tokens,
+                    agent_output: d.output_tokens,
+                    agent_cost: d.cost_usd,
+                    agent_messages: d.messages,
                 });
             }
 
@@ -232,19 +183,9 @@ pub async fn mission_control_usage(
                 cost_usd: recorded.totals.total_cost_usd,
                 sessions: recorded.totals.session_count,
             };
-            let review_m = ReviewMetrics {
-                input_tokens: r_in,
-                output_tokens: r_out,
-                cost_usd: r_cost,
-                runs: reviews.len() as u32,
-            };
-
-            let first_activity_ms = [agents_first, review_first].into_iter().flatten().min();
-            let last_activity_ms = [agents_last, review_last].into_iter().flatten().max();
-            let total_tokens = agents.input_tokens
-                + agents.output_tokens
-                + review_m.input_tokens
-                + review_m.output_tokens;
+            let first_activity_ms = agents_first;
+            let last_activity_ms = agents_last;
+            let total_tokens = agents.input_tokens + agents.output_tokens;
 
             // Grand totals.
             totals.agent_input += agents.input_tokens;
@@ -253,18 +194,13 @@ pub async fn mission_control_usage(
             totals.agent_cost += agents.cost_usd;
             totals.agent_messages += agents.messages;
             totals.agent_sessions += agents.sessions;
-            totals.review_input += review_m.input_tokens;
-            totals.review_output += review_m.output_tokens;
-            totals.review_cost += review_m.cost_usd;
-            totals.review_runs += review_m.runs;
             totals.total_tokens += total_tokens;
-            totals.total_cost_usd += agents.cost_usd + review_m.cost_usd;
+            totals.total_cost_usd += agents.cost_usd;
 
             projects.push(ProjectMetrics {
                 project_path: path.clone(),
                 project_name: name,
                 agents,
-                review: review_m,
                 first_activity_ms,
                 last_activity_ms,
                 total_tokens,
