@@ -13,10 +13,9 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use atlas_agents::AgentManager;
+use super::agent_host::AgentHost;
 
-use super::agent_memory::{collect_codex_sessions, collect_corpus};
-use super::claude::{list_claude_sessions, ClaudeSessionIndex};
+use super::agent_memory::collect_corpus;
 use super::git::git_refs_compute;
 
 /// Per-branch commit cap (keeps large repos snappy).
@@ -68,11 +67,23 @@ pub struct MemoryTimeline {
     memory: Vec<TimelineMemory>,
 }
 
+/// The timeline's session lane.
+///
+/// One source, not three. This used to merge a scrape of Claude's JSONL, a
+/// scrape of Codex's state database, and the native agent's own list — the
+/// same six-source pattern the sidebar had, with the same consequences: an
+/// agent nobody had written a reader for was invisible here, and Atlas read
+/// two other programs' private storage to draw its own UI. The
+/// thread-metadata store knows every agent's sessions, whoever ran them
+/// (ADR-0001).
+///
+/// What it does not know is how big a session was. The old rows carried
+/// "N msgs" / "N tok" straight out of the files being scraped; the store holds
+/// metadata only, by design. That detail is dropped rather than guessed at.
 #[tauri::command]
 pub async fn memory_timeline(
     project_path: String,
-    claude_index: State<'_, ClaudeSessionIndex>,
-    manager: State<'_, AgentManager>,
+    host: State<'_, std::sync::Arc<AgentHost>>,
 ) -> Result<MemoryTimeline, String> {
     let pp = project_path.trim_end_matches('/').to_string();
 
@@ -82,45 +93,42 @@ pub async fn memory_timeline(
         .await
         .map_err(|e| e.to_string())??;
 
-    // Codex sessions carry git_branch/git_sha directly.
-    let codex = collect_codex_sessions(&pp).await;
-    // Claude sessions (reuse the cached lister); time-only, no branch.
-    let claude = list_claude_sessions(pp.clone(), claude_index)
-        .await
-        .unwrap_or_default();
     // Memory events.
     let docs = collect_corpus(&pp).await;
 
+    // Every agent's sessions for this project, from Atlas's own record.
     let mut sessions: Vec<TimelineSession> = Vec::new();
-    for c in codex {
-        sessions.push(TimelineSession {
-            id: c.id,
-            title: c.title,
-            agent: "codex".into(),
-            branch: c.branch,
-            sha: c.sha,
-            ts_ms: c.created_at_ms,
-            end_ms: c.updated_at_ms.max(c.created_at_ms),
-            detail: format!("{} · {} tok · {}", c.model, c.tokens, c.approval_mode),
-        });
+    if let Some(history) = host.history() {
+        let paths = atlas_thread_metadata::PathList::new(&[&pp]);
+        for thread in history.store().threads_for_path(&paths) {
+            let ts = thread
+                .created_at
+                .unwrap_or(thread.updated_at)
+                .timestamp_millis();
+            sessions.push(TimelineSession {
+                id: thread
+                    .session_id
+                    .as_ref()
+                    .map(|id| id.0.to_string())
+                    .unwrap_or_else(|| thread.thread_id.to_string()),
+                title: collapse(&thread.display_title()),
+                agent: thread.agent_id.as_str().to_string(),
+                // The store holds no git identity. Nothing did for Claude or
+                // the native agent either; only the Codex scrape carried it,
+                // and it went with the scrape.
+                branch: None,
+                sha: None,
+                ts_ms: ts,
+                end_ms: thread.updated_at.timestamp_millis().max(ts),
+                detail: String::new(),
+            });
+        }
     }
-    for s in claude {
-        let ts = parse_iso_ms(s.started_at.as_deref().or(s.last_modified.as_deref()));
-        let end = parse_iso_ms(s.last_modified.as_deref()).max(ts);
-        sessions.push(TimelineSession {
-            id: s.id,
-            title: collapse(&s.preview),
-            agent: "claude".into(),
-            branch: None,
-            sha: None,
-            ts_ms: ts,
-            end_ms: end,
-            detail: format!("{} msgs", s.message_count),
-        });
-    }
-    // Native Atlas (cersei) sessions — time-only, like Claude. The preview is
-    // already injected-context-stripped by `cersei_list_sessions`.
-    for s in manager.cersei_list_sessions(&pp) {
+    // The native agent's own list still contributes its size detail, which the
+    // store does not hold. Deduped against the store rows by session id.
+    let known: std::collections::HashSet<String> =
+        sessions.iter().map(|s| s.id.clone()).collect();
+    for s in host.native_sessions(&pp).into_iter().filter(|s| !known.contains(&s.id)) {
         let ts = parse_iso_ms(s.started_at.as_deref().or(s.last_modified.as_deref()));
         let end = parse_iso_ms(s.last_modified.as_deref()).max(ts);
         let detail = if s.total_tokens > 0 {
@@ -160,7 +168,7 @@ pub async fn memory_timeline(
         let title = s
             .title
             .as_deref()
-            .map(|t| collapse(&atlas_agents::transcript::strip_injected_context(t)))
+            .map(|t| collapse(&atlas_agent_transcript::strip_injected_context(t)))
             .unwrap_or_default();
         sessions.push(TimelineSession {
             id: s.native_session_id,

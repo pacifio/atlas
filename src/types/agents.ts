@@ -1,3 +1,5 @@
+import type { ToolContentBlock } from "@/types/agent";
+
 // Wire shapes for the `atlas-agents` Rust surface. These mirror
 // `crates/atlas-agents/src/{session,events,plugin,manager}.rs` — keep in sync
 // when the Rust types change.
@@ -9,7 +11,14 @@ export interface SessionKey {
   session_id: AcpSessionId;
 }
 
-export type TranscriptKind = { kind: "none" } | { kind: "claude_jsonl" };
+/** Metadata returned by `agents_new_session` before the binding is exposed. */
+export interface SessionInit {
+  key: SessionKey;
+  current_mode: string | null;
+  available_modes: SessionModeInfo[];
+}
+
+export type TranscriptKind = { kind: "none" } | { kind: "claude_jsonl" } | { kind: "cersei_json" };
 
 /** One image attached to an outbound prompt. Mirrors atlas-acp's
  *  `ImageAttachment` (serde camelCase). `dataBase64` is raw base64 — no
@@ -26,6 +35,8 @@ export interface PluginSpec {
   transcript: TranscriptKind;
   supports_modes: boolean;
   supports_models: boolean;
+  /** Registry-installed third-party agent (not first-party, not cersei). */
+  external: boolean;
 }
 
 export type SessionStatus = "idle" | "running" | "waiting" | "error";
@@ -42,6 +53,8 @@ export interface ToolCall {
   arguments: unknown;
   result: string | null;
   locations: unknown[];
+  /** Structural content blocks (P1.4). Omitted by Rust when empty. */
+  content_blocks?: ToolContentBlock[];
 }
 
 export interface PlanEntry {
@@ -89,13 +102,15 @@ export interface SessionSnapshot {
   current_mode: string | null;
   current_model: string | null;
   available_modes: SessionModeInfo[];
-  /** Models the agent advertised (ACP `session/new` `models`). Drives the
-   *  Claude Code / Codex model picker; empty when unsupported. */
+  /** Models the agent advertised. ACP has no `models` field on a session: an
+   *  agent offering a choice says so with a `category: "model"` select among
+   *  its config options, which the host projects into this list. Drives the
+   *  composer's model pill; empty when the agent advertises no such option. */
   available_models: SessionModeInfo[];
   available_commands: unknown[];
-  /** Raw ACP `config_option_update` state — advertised config options and
-   *  their current values. No UI consumes this yet; mirrored so an in-agent
-   *  change (e.g. `/model`) is at least visible in the snapshot. */
+  /** Raw ACP config-option state — advertised config options and their current
+   *  values, kept current by the `config_options_updated` delta. The composer
+   *  renders these as generic knobs, minus the ones a dedicated picker owns. */
   config_options?: unknown[];
   /** Whether the agent's transport accepts image content blocks in prompts
    *  (`promptCapabilities.image`). Drives the composer's attach routing:
@@ -148,11 +163,75 @@ export type AgentDelta =
       message_id: string;
       tool_call: ToolCall;
     }
-  | { kind: "plan_updated"; agent_id: AgentId; session_id: AcpSessionId; plan: PlanEntry[] }
-  | { kind: "mode_changed"; agent_id: AgentId; session_id: AcpSessionId; mode_id: string }
-  | { kind: "model_changed"; agent_id: AgentId; session_id: AcpSessionId; model_id: string }
-  | { kind: "available_commands"; agent_id: AgentId; session_id: AcpSessionId; commands: unknown[] }
-  | { kind: "usage_updated"; agent_id: AgentId; session_id: AcpSessionId; usage: Usage }
+  | {
+      // Incremental live command output — append `delta` to the tool call's
+      // `result` (the streaming sibling of `tool_call_upserted`; full
+      // snapshots would re-ship the whole accumulated output per chunk).
+      kind: "tool_call_output_chunk";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      message_id: string;
+      tool_call_id: string;
+      delta: string;
+    }
+  | {
+      kind: "plan_updated";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      plan: PlanEntry[];
+    }
+  | {
+      kind: "mode_changed";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      mode_id: string;
+    }
+  | {
+      kind: "model_changed";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      model_id: string;
+    }
+  | {
+      kind: "available_commands";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      commands: unknown[];
+    }
+  | {
+      kind: "usage_updated";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      usage: Usage;
+    }
+  | {
+      /** The agent is asking the user something mid-turn (P3.3). */
+      kind: "elicitation_requested";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      request_id: string;
+      mode: "form" | "url";
+      message: string;
+      requested_schema?: unknown;
+      url?: string | null;
+    }
+  | {
+      /** The agent named its own session (P3.1). Beats Atlas's
+       *  first-40-characters-of-the-prompt title. */
+      kind: "title_updated";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      title: string;
+    }
+  | {
+      /** The agent's own config options changed (P2.2) — a knob toggled inside
+       *  the agent rather than through Atlas. Raw JSON, same shape the snapshot
+       *  carries. */
+      kind: "config_options_updated";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      config_options: unknown[];
+    }
   | {
       kind: "context_usage";
       agent_id: AgentId;
@@ -161,8 +240,18 @@ export type AgentDelta =
       size: number;
       cost: number;
     }
-  | { kind: "compaction"; agent_id: AgentId; session_id: AcpSessionId; active: boolean }
-  | { kind: "compression_saved"; agent_id: AgentId; session_id: AcpSessionId; saved_tokens: number }
+  | {
+      kind: "compaction";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      active: boolean;
+    }
+  | {
+      kind: "compression_saved";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      saved_tokens: number;
+    }
   | {
       kind: "permission_request";
       agent_id: AgentId;
@@ -171,7 +260,12 @@ export type AgentDelta =
       tool_call: unknown;
       options: unknown;
     }
-  | { kind: "permission_resolved"; agent_id: AgentId; session_id: AcpSessionId; request_id: string }
+  | {
+      kind: "permission_resolved";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      request_id: string;
+    }
   | {
       kind: "turn_finished";
       agent_id: AgentId;
@@ -196,4 +290,9 @@ export type AgentDelta =
       delay_ms: number;
       last_error: string;
     }
-  | { kind: "agent_disconnected"; agent_id: AgentId; session_id: AcpSessionId; reason: string };
+  | {
+      kind: "agent_disconnected";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      reason: string;
+    };

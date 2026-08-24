@@ -13,14 +13,21 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-/** Put `text` on the clipboard. Resolves `true` when it landed. */
+/** Put `text` on the clipboard. Resolves `true` when it landed.
+ *
+ * NATIVE FIRST, web API as the fallback — the reverse of the original order.
+ * WKWebView's `navigator.clipboard.writeText` can RESOLVE without actually
+ * writing (permission/pasteboard quirks), and a lying success meant the Rust
+ * fallback never ran — the git-error dialog's "Copy output" silently copied
+ * nothing. The native pasteboard has no activation rules and no silent-failure
+ * mode; the web API only matters where IPC isn't available. */
 export async function copyText(text: string): Promise<boolean> {
   try {
-    await navigator.clipboard.writeText(text);
+    await invoke("clipboard_write_text", { text });
     return true;
   } catch {
     try {
-      await invoke("clipboard_write_text", { text });
+      await navigator.clipboard.writeText(text);
       return true;
     } catch {
       return false;

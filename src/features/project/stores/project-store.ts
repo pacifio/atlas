@@ -61,8 +61,6 @@ export interface AppSettings {
   /** Selected on-device embedding model id (== dir name). Managed by the Local
    *  Model Manager; carried here so settings round-trips never clobber it. */
   embeddingModelId: string;
-  /** Selected on-device LLM model id (== dir name). */
-  llmModelId: string;
   /** Code-editor color theme id (see src/features/editor/themes). Drives the
    *  CodeMirror editor, the diff viewer and the source-control diff views. */
   codeEditorTheme: string;
@@ -100,7 +98,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   shareTelemetry: true,
   linkTelemetryToAccount: true,
   embeddingModelId: "all-MiniLM-L6-v2",
-  llmModelId: "qwen3-0.6b",
   codeEditorTheme: DEFAULT_EDITOR_THEME_ID,
   atlasTheme: DEFAULT_ATLAS_THEME_ID,
   adaptiveSuggestions: "agent",

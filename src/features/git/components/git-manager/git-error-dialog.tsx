@@ -1,5 +1,6 @@
+import { useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { AlertTriangle, Copy } from "lucide-react";
+import { AlertTriangle, Check, Copy } from "lucide-react";
 import { useGitStore } from "../../stores/git-store";
 import { gitErrorTitle } from "../../lib/git-errors";
 import { copyText } from "@/lib/clipboard";
@@ -13,6 +14,18 @@ import { copyText } from "@/lib/clipboard";
 export function GitErrorDialog() {
   const payload = useGitStore.use.errorDialog();
   const actions = useGitStore.use.actions();
+  // Feedback for the copy button — without it a clipboard failure and a
+  // success were indistinguishable (both looked like "nothing happened").
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onCopy = (text: string) => {
+    void copyText(text).then((ok) => {
+      if (!ok) return;
+      setCopied(true);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 1500);
+    });
+  };
 
   return (
     <Dialog.Root open={payload !== null} onOpenChange={(o) => !o && actions.dismissErrorDialog()}>
@@ -59,12 +72,12 @@ export function GitErrorDialog() {
                 <div className="flex items-center gap-2 shrink-0">
                   {payload.rawStderr && (
                     <button
-                      onClick={() => copyText(payload.rawStderr)}
+                      onClick={() => onCopy(payload.rawStderr)}
                       className="flex items-center gap-1 px-2 h-7 rounded text-[11px] text-text-secondary hover:bg-bg-hover transition-colors"
                       title="Copy git output"
                     >
-                      <Copy size={11} />
-                      Copy output
+                      {copied ? <Check size={11} /> : <Copy size={11} />}
+                      {copied ? "Copied" : "Copy output"}
                     </button>
                   )}
                   <button

@@ -130,15 +130,15 @@ export function Titlebar() {
         <ProjectLabel name={displayName} orgName={orgName} path={currentProject?.path} />
       </div>
 
+      {/* Dev-mode flag — centered in the titlebar, outside both flex groups.
+          It's a build/runtime indicator, not project-dependent, and it takes
+          no pointer events so window dragging works straight through it. */}
+      <DevModePill />
+
       {/* The account button sits OUTSIDE the `currentProject` guard on purpose:
           a fresh install has no project open, and sign-in must be reachable
           from that empty state rather than hidden behind opening a folder. */}
       <div className="flex items-center gap-1.5">
-        {/* Dev-mode flag lives outside the `currentProject` guard too — it's
-            a build/runtime indicator, not project-dependent. Its own divider
-            travels with it, so the coloured capsule never sits flush against
-            the neutral icon row. */}
-        <DevModePill />
         {currentProject && (
           <>
             <UpdateButton />
@@ -198,6 +198,14 @@ function ProjectLabel({
 
   useEffect(() => readCapture(), [readCapture]);
 
+  // Command palette + ⌘⌥C both open this popover from outside the component
+  // tree, since `captureOpen` is local state — see `atlas:open-capture`.
+  useEffect(() => {
+    const onOpenCapture = () => setCaptureOpen(true);
+    window.addEventListener("atlas:open-capture", onOpenCapture);
+    return () => window.removeEventListener("atlas:open-capture", onOpenCapture);
+  }, []);
+
   return (
     <div className="relative min-w-0">
       {/* Pill: `org / project`. The org segment is de-emphasised so the project
@@ -215,6 +223,7 @@ function ProjectLabel({
             // is why it sat visibly high.
             className="group flex h-[19px] max-w-[320px] min-w-0 cursor-pointer items-center gap-1 rounded-full border border-[#303030] bg-[#0C0C0C] px-2 text-[11px] leading-none font-medium transition-colors hover:bg-[#1f1f1f]"
             title={health?.summary ?? "Session capture"}
+            aria-label={health?.summary ?? "Session capture"}
           >
             {orgName && (
               <>
@@ -280,7 +289,10 @@ function ProjectLabel({
 function DevModePill() {
   if (!isDev || !isTauri()) return null;
   return (
-    <>
+    // Dead-center of the titlebar, independent of how the left/right icon
+    // groups grow. `pointer-events-none` keeps the strip fully draggable —
+    // it's an indicator, not a control (which also retires its old divider).
+    <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2">
       <div
         className="relative flex h-5 shrink-0 items-center gap-1 overflow-hidden rounded-full px-2 text-[11px] leading-none font-medium text-white"
         style={{
@@ -288,7 +300,6 @@ function DevModePill() {
           boxShadow:
             "0 1px 5px 0 rgba(37,99,235,0.35), 0 1px 0 0 rgba(255,255,255,0.25) inset, 0 -2px 6px 0 rgba(37,99,235,0.5) inset",
         }}
-        title="Running via `bun run dev:app`"
       >
         {/* Crown highlight — the light source. Blurred so its lower edge melts
           into the body instead of banding across the glyphs. */}
@@ -313,10 +324,7 @@ function DevModePill() {
         <Hammer size={11} className="relative z-10" />
         <span className="relative z-10">Dev Mode</span>
       </div>
-      {/* Travels with the pill so the one coloured element in the titlebar is
-          never flush against the neutral icons beside it. */}
-      <div className="mx-0.5 h-4 w-px shrink-0 bg-border-default" aria-hidden />
-    </>
+    </div>
   );
 }
 
@@ -333,6 +341,7 @@ function WorkspaceToggle() {
         sidebarOpen ? "text-[#ccc]" : "text-[#555] hover:text-[#aaa]",
       )}
       title={sidebarOpen ? "Hide workspaces (⌘⇧.)" : "Show workspaces (⌘⇧.)"}
+      aria-label={sidebarOpen ? "Hide workspaces" : "Show workspaces"}
     >
       <Layers size={14} />
       {count > 1 && (
@@ -353,6 +362,7 @@ function LeftPanelToggle() {
       onClick={toggleLeftPanel}
       className="flex items-center justify-center w-6 h-6 rounded text-[#555] hover:text-[#aaa] hover:bg-[#ffffff08] transition-all duration-150"
       title={leftPanel.visible ? "Hide left panel" : "Show left panel"}
+      aria-label={leftPanel.visible ? "Hide left panel" : "Show left panel"}
     >
       <PanelLeft size={14} className={leftPanel.visible ? "" : "opacity-40"} />
     </button>
@@ -443,6 +453,7 @@ function UpdateButton() {
         ready || downloading ? "text-[#ccc]" : "text-[#555] hover:text-[#aaa]",
       )}
       title={title}
+      aria-label={title}
     >
       {checking ? (
         <Loader2 size={14} className="animate-spin" />
@@ -486,6 +497,7 @@ function NotificationButton() {
       onClick={toggle}
       className="relative flex items-center justify-center w-6 h-6 rounded text-[#555] hover:text-[#aaa] hover:bg-[#ffffff08] transition-all duration-150 outline-none focus:outline-none"
       title="Notifications"
+      aria-label="Notifications"
     >
       <Bell size={14} />
       {(hasUnread || needsAttention) && (
@@ -515,6 +527,7 @@ function RightPanelToggle() {
       onClick={toggleRightPanel}
       className="flex items-center justify-center w-6 h-6 rounded text-[#555] hover:text-[#aaa] hover:bg-[#ffffff08] transition-all duration-150"
       title={rightPanel.visible ? "Hide right panel" : "Show right panel"}
+      aria-label={rightPanel.visible ? "Hide right panel" : "Show right panel"}
     >
       <PanelRight size={14} className={rightPanel.visible ? "" : "opacity-40"} />
     </button>

@@ -1,11 +1,8 @@
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { X, MessageSquare, Search, PanelLeft, Plus } from "lucide-react";
-import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { X, MessageSquare, Search, PanelLeft, Plus, History, Archive } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { isBusyAgentStatus, agentTypeFromPluginId } from "@/types/agent";
 import {
@@ -14,37 +11,44 @@ import {
   OpenCodeIcon,
   CursorIcon,
   KiloIcon,
+  ExternalAgentIcon,
+  AgentMonogram,
 } from "@/components/agent-icons";
-import { AGENT_LABEL, pluginIdForAgent, type SwitchableAgent } from "@/types/agent";
+import { pluginIdForAgent, type SwitchableAgent } from "@/types/agent";
+import { agentMeta } from "@/features/agents/lib/agent-meta";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { timeAgo } from "@/lib/time-ago";
+import { ThreadHistoryView } from "./thread-history-view";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useChatStore } from "../stores/chat-store";
 import { bumpLoadToken, isLoadStale } from "../lib/load-tokens";
 import {
-  listClaudeSessions,
-  listCodexSessions,
-  listCerseiSessions,
-  listKiloSessions,
-  deleteClaudeSession,
-  cerseiDeleteSession,
-  codexDeleteSession,
-  kiloDeleteSession,
-  type ClaudeSessionMeta,
-} from "../lib/claude-api";
-import { ensureAgent, getAgentSync } from "../lib/agents-api";
+  archiveThread,
+  deleteThread,
+  onThreadsChanged,
+  threadProjects,
+  type ThreadRow,
+} from "../lib/history-api";
+import { getAgentSync } from "../lib/agents-api";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { useRecentChatsStore } from "@/features/workspaces/stores/recent-chats-store";
-import { resumeSessionFast, ResumeError } from "../lib/resume-session";
+import { resumeThreadFast, ResumeError } from "../lib/resume-session";
+
+/** One key for the whole sidebar: history is one store, so there is one query. */
+const THREAD_PROJECTS_KEY = ["thread-projects"] as const;
 
 /** Short per-row agent tag. "claude" doubles as the legacy default for rows
  *  with no metadata, so the mapping from AgentType is centralised here instead
  *  of repeated ternaries that silently mislabel new agents. */
-type SidebarAgent = "claude" | "codex" | "opencode" | "cursor" | "kilo" | "cersei";
+type SidebarAgent = "claude" | "codex" | "opencode" | "cursor" | "kilo" | "cersei" | (string & {});
 
-function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
+export function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
+  // A live codex-acp session and the ~/.codex disk row it produces MUST fold
+  // into one band, or twin suppression, row icon, and delete routing all miss
+  // each other (claude-acp folds via the startsWith below).
+  if (agentType === "codex-acp") return "codex";
   if (
     agentType === "codex" ||
     agentType === "opencode" ||
@@ -53,12 +57,40 @@ function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
     agentType === "cersei"
   )
     return agentType;
-  return "claude";
+  if (!agentType || agentType === "custom" || agentType.startsWith("claude")) return "claude";
+  // Registry-installed external agent: its plugin id IS its identity.
+  return agentType;
 }
 
-const AGENT_TYPE_BY_SIDEBAR: Record<SidebarAgent, SwitchableAgent> = {
-  claude: "claude-code",
-  codex: "codex",
+/** One history row, as the list renders it. Used by the sidebar's own list and
+ *  by the history view handing a row back to be opened — one builder, so the
+ *  two cannot disagree about what a row is. */
+function itemFromThread(thread: ThreadRow, projectName: string, cwd: string): SidebarItem {
+  return {
+    // Never a draft: `threads_projects` lists only threads that have been sent
+    // to, so the session id is always there.
+    id: thread.sessionId ?? "",
+    threadId: thread.threadId,
+    kind: "agent",
+    title: thread.title,
+    projectHeading: null,
+    projectName,
+    lastUpdated: thread.updatedAt,
+    agent: sidebarAgentOf(thread.agentId),
+    elsewhere: !thread.folderPaths.includes(cwd),
+    // The thread's own directory — where it resumes.
+    cwd: thread.folderPaths[0] ?? "",
+  };
+}
+
+/** Band → the registry id resume must spawn through. The claude/codex bands
+ *  come from disk listings that predate any live session, so they need an
+ *  explicit mapping back to the registry entries that own those stores. The
+ *  old values ("claude-code"/"codex") named plugin ids the registry-only port
+ *  deleted, so resuming those rows spawned UnknownSpec — a silent dead click. */
+export const AGENT_TYPE_BY_SIDEBAR: Partial<Record<string, SwitchableAgent>> = {
+  claude: "claude-acp",
+  codex: "codex-acp",
   opencode: "opencode",
   cursor: "cursor",
   kilo: "kilo",
@@ -66,28 +98,29 @@ const AGENT_TYPE_BY_SIDEBAR: Record<SidebarAgent, SwitchableAgent> = {
 };
 
 /** Compact token count: 1234 → "1.2k", 1_200_000 → "1.2M". */
-function formatTokenCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return `${n}`;
-}
 
 interface SidebarItem {
-  id: string; // acpSessionId for agent rows, tabId for chat rows
-  kind: "agent" | "chat";
+  /** The agent's session id, or a stand-in while the thread is still a draft.
+   *  Only used to match the row against a live tab. */
+  id: string;
+  /** Atlas's own id for the conversation — what opening and deleting use. */
+  threadId: string;
+  kind: "agent";
   title: string;
-  subtitle: string | null;
   lastUpdated: string | null;
-  messageCount: number;
-  /** Which coding agent ran this session (drives the row icon). Defaults to
-   *  "claude" — historical Claude-only sessions + anything without metadata. */
+  /** Which agent ran this session (drives the row icon). */
   agent: SidebarAgent;
-  // agent-only
-  filePath?: string;
-  /** Cumulative tokens processed (native Atlas agent sessions only). */
-  totalTokens?: number;
-  // chat-only
-  tabId?: string;
+  /** The project's name, on the first row of a run of its threads. Stamped
+   *  after filtering, so it follows what is actually on screen. */
+  projectHeading: string | null;
+  /** The project this thread belongs to, named on every row that is shown
+   *  outside the open project. */
+  projectName: string;
+  /** This thread belongs to a project other than the one that is open. */
+  elsewhere: boolean;
+  /** The thread's own working directory — where it resumes, which is not
+   *  necessarily the project that happens to be open. */
+  cwd: string;
 }
 
 interface SessionSidebarProps {
@@ -103,18 +136,28 @@ interface SessionSidebarProps {
    * and NOT gated on the sidebar's visibility (the picker exists precisely so
    * history is reachable with the sidebar closed).
    *
-   * This is a variant rather than a second component on purpose. Building the
-   * list means merging live tabs with three agents' on-disk listings and
-   * suppressing twins, and OPENING a row is ~180 lines of resume logic with
-   * several hard-won edge cases (orphan tabs, Codex rows with no JSONL, stale
-   * clicks). Duplicating either would guarantee they drift.
+   * This is a variant rather than a second component on purpose. Reading the
+   * list is one query now, but OPENING a row is still a hundred lines of
+   * resume logic with several hard-won edge cases (orphan tabs, a running tab
+   * that must not be overwritten, stale clicks). Duplicating that would
+   * guarantee the two drift.
    */
   variant?: "sidebar" | "dropdown";
   /** Called after a row is opened — lets the picker close itself. */
   onOpened?: () => void;
 }
 
-export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: SessionSidebarProps) {
+// memo: ChatPanel re-renders once per streaming rAF flush (whole-session
+// subscription), and this whole body was re-executed with it every frame.
+// Props are stable from ChatPanel
+// (tabId string; the dropdown variant passes its own onOpened, whose identity
+// its parent controls), so memo confines re-runs to this component's own
+// subscriptions.
+export const SessionSidebar = memo(function SessionSidebar({
+  tabId,
+  variant = "sidebar",
+  onOpened,
+}: SessionSidebarProps) {
   const asDropdown = variant === "dropdown";
   const queryClient = useQueryClient();
   const project = useProjectStore.use.currentProject();
@@ -127,15 +170,15 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
   const workspaces = useWorkspaceStore.use.workspaces();
   const resolvedCwd =
     project?.path ?? workspaces.find((w) => w.id === activeWorkspaceId)?.path ?? "";
-  // STICKY cwd. Even with the workspace fallback, `currentProject` and
-  // `activeWorkspaceId`/`workspaces` can momentarily DISAGREE mid-switch (e.g.
-  // when opening a Codex/Cersei session or hitting "+"), collapsing `resolvedCwd`
-  // to "" for a render or two. Because the three history queries are keyed on
-  // cwd, that blip flipped the keys to an empty/uncached entry → all lists
-  // flashed to [] and the whole history vanished until the next refetch (the
-  // "disappears, then comes back later" the user saw). Hold the last NON-EMPTY
-  // cwd so the query keys stay stable across these blips; only clear it when
-  // there is genuinely no project open (zero workspaces).
+  // STICKY cwd. It no longer keys any query — history is one app-level store —
+  // but it still decides which project's threads sort to the top and which
+  // directory a resumed thread binds against, and both would flicker if it
+  // collapsed to "" for a render. Even with the workspace fallback,
+  // `currentProject` and
+  // `activeWorkspaceId`/`workspaces` can momentarily DISAGREE mid-switch,
+  // collapsing `resolvedCwd` to "" for a render or two. Hold the last NON-EMPTY
+  // cwd across those blips; only clear it when there is genuinely no project
+  // open (zero workspaces).
   const lastCwdRef = useRef("");
   if (resolvedCwd) {
     lastCwdRef.current = resolvedCwd;
@@ -231,6 +274,8 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
     setAcpBinding,
     setAcpModes,
     setAcpModels,
+    setAcpConfigOptions,
+    setAcpAvailableCommands,
     setSessionAgentType,
     clearSession,
     setSessionTitle,
@@ -245,337 +290,82 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
     useLayoutStore.use.actions();
 
   const [search, setSearch] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
 
-  const queryKey = ["claude-sessions", cwd] as const;
-
-  // Polling-free listing. The Rust-side watcher (started below) emits
-  // `atlas:sessions-changed` whenever the project's JSONL directory mutates,
-  // so we refetch on event rather than every 1.5–5s. The cost of the disk
-  // walk only pays off when something actually changed.
+  // Atlas's own history — the only source. It used to be six: Claude's JSONL
+  // directory, Codex's SQLite, Kilo's SQLite, Cersei's store, Atlas's
+  // transcripts and a live ACP `session/list`, merged by session id. That
+  // coupled the sidebar to four private storage formats and meant an agent
+  // nobody had written a reader for had no history at all (ADR-0001).
+  //
+  // No polling and no file watching: the store says when it changed.
   const {
-    data: agentList = [],
+    data: projects = [],
     isLoading,
-    isSuccess: agentReady,
-    isPlaceholderData: agentPlaceholder,
+    isSuccess: historyReady,
   } = useQuery({
-    queryKey,
-    queryFn: () => listClaudeSessions(cwd),
-    enabled: cwd.length > 0,
+    queryKey: THREAD_PROJECTS_KEY,
+    queryFn: threadProjects,
     staleTime: 30_000,
     refetchInterval: false,
-    // Keep the prior rows on screen while the key changes or a refetch runs,
-    // instead of flashing to the empty default. Belt-and-braces with the sticky
-    // cwd above — together they guarantee history never blinks out.
     placeholderData: keepPreviousData,
   });
-
-  // Codex sessions live in `~/.codex` (SQLite), NOT Claude's JSONL dir, so they
-  // need their own listing — without it past Codex chats vanish from history
-  // after a restart. No file watcher exists for the SQLite db, so this refetches
-  // on the same focus / `atlas:sessions-changed` triggers as the Claude list.
-  const codexQueryKey = ["codex-sessions", cwd] as const;
-  const {
-    data: codexList = [],
-    isSuccess: codexReady,
-    isPlaceholderData: codexPlaceholder,
-  } = useQuery({
-    queryKey: codexQueryKey,
-    queryFn: () => listCodexSessions(cwd),
-    enabled: cwd.length > 0,
-    staleTime: 30_000,
-    // Codex (and Cersei) have NO file watcher — the ~/.codex watcher was removed
-    // because its SQLite WAL sidecars churn and stormed the refetch loop. So poll
-    // every few seconds instead: the read is in-process rusqlite (sub-ms) and
-    // keepPreviousData means the poll never flashes the list empty. Without this,
-    // a Codex session created after an agent switch only showed on the next window
-    // focus ("takes too long; unfocus→focus fixes it").
-    refetchInterval: 4000,
-    refetchIntervalInBackground: false,
-    placeholderData: keepPreviousData,
-  });
-
-  // Native Atlas (Cersei) sessions — persisted as JSON under the app config
-  // dir, same merge treatment as Codex.
-  const cerseiQueryKey = ["cersei-sessions", cwd] as const;
-  const {
-    data: cerseiList = [],
-    isSuccess: cerseiReady,
-    isPlaceholderData: cerseiPlaceholder,
-  } = useQuery({
-    queryKey: cerseiQueryKey,
-    queryFn: () => listCerseiSessions(cwd),
-    enabled: cwd.length > 0,
-    staleTime: 30_000,
-    // No watcher for the Cersei store either — poll (cheap JSON dir read), same
-    // rationale as the Codex query above.
-    refetchInterval: 4000,
-    refetchIntervalInBackground: false,
-    placeholderData: keepPreviousData,
-  });
-
-  // Kilo sessions — SQLite at ~/.local/share/kilo/kilo.db, same no-watcher
-  // poll + merge treatment as Codex.
-  const kiloQueryKey = ["kilo-sessions", cwd] as const;
-  const {
-    data: kiloList = [],
-    isSuccess: kiloReady,
-    isPlaceholderData: kiloPlaceholder,
-  } = useQuery({
-    queryKey: kiloQueryKey,
-    queryFn: () => listKiloSessions(cwd),
-    enabled: cwd.length > 0,
-    staleTime: 30_000,
-    refetchInterval: 4000,
-    refetchIntervalInBackground: false,
-    placeholderData: keepPreviousData,
-  });
-
-  // Start (or replace) the Rust file watcher for this cwd. The single
-  // `atlas:sessions-changed` listener below dispatches against `queryKey`
-  // closed over the current cwd, so the listener doesn't have to be
-  // reattached on every cwd change.
-  useEffect(() => {
-    if (!cwd) return;
-    let cancelled = false;
-    invoke("sessions_watch_open", { cwd }).catch((err) => {
-      if (!cancelled) console.warn("sessions watcher failed to start:", err);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [cwd]);
 
   useEffect(() => {
-    // Rebuild the key from `cwd` INSIDE the effect. Depending on the
-    // `queryKey` array (a fresh literal every render) made this effect
-    // re-subscribe on every render; because `listen()` is async, each render
-    // opened a teardown→reattach gap where an `atlas:sessions-changed` event
-    // could land with no listener attached → the refresh was silently dropped
-    // and the history list went stale until something else forced a refetch.
-    // Now it attaches once per `cwd` and stays attached.
-    const key = ["claude-sessions", cwd] as const;
-    const codexKey = ["codex-sessions", cwd] as const;
-    const cerseiKey = ["cersei-sessions", cwd] as const;
-    const kiloKey = ["kilo-sessions", cwd] as const;
     const invalidate = () => {
-      queryClient.invalidateQueries({ queryKey: key });
-      queryClient.invalidateQueries({ queryKey: codexKey });
-      queryClient.invalidateQueries({ queryKey: cerseiKey });
-      queryClient.invalidateQueries({ queryKey: kiloKey });
+      queryClient.invalidateQueries({ queryKey: THREAD_PROJECTS_KEY });
     };
-    const unlistenPromise = listen<{ cwd: string }>("atlas:sessions-changed", (e) => {
-      if (e.payload.cwd !== cwd) return;
-      invalidate();
-    });
+    const unlistenPromise = onThreadsChanged(invalidate);
     window.addEventListener("focus", invalidate);
     return () => {
       unlistenPromise.then((u) => u());
       window.removeEventListener("focus", invalidate);
     };
-  }, [queryClient, cwd]);
+  }, [queryClient]);
 
-  // Build the unified item list. Two sources, merged by session id:
-  //   1. disk JSONL rows (agentList, from list_claude_sessions polling)
-  //   2. live in-store sessions (chat-store, mutated optimistically)
-  //
-  // We MERGE rather than concat-and-dedup. When both sources have the same id
-  // the live row's title wins because the chat-store updates synchronously
-  // and is the source of truth for whatever's currently happening; the disk
-  // row contributes `filePath` (needed by handleOpenAgent to reload by id)
-  // and serves as the fallback `preview` for older sessions that aren't in
-  // the live store at all.
-  //
-  // Net effect: the row's title NEVER flips during the window where a disk
-  // row arrives mid-stream — it's always the live `session.title` for as
-  // long as the session is in the chat-store.
+  // The open project first, then everywhere else by how recently it was worked
+  // in. Threads from other worktrees are listed and resumable without
+  // switching to them — that is what an app-level store buys.
   const items = useMemo<SidebarItem[]>(() => {
-    // Only sessions the user has actually messaged belong in history. A new
-    // chat that merely got an ACP session bound (no message yet) must NOT
-    // appear — that was the "empty chat I can't remove" bug. The first user
-    // message is what promotes a chat into the history list (and becomes its
-    // title below).
-    // Scope to THIS project: the chat-store is global (it holds every mounted
-    // workspace's sessions), so without the cwd filter a session from another
-    // open project leaks into this project's history list.
-    const liveAgents = Object.values(tabSummaries).filter(
-      (s) =>
-        (s.userMessageCount > 0 || s.hasAnyMessage) &&
-        (s.workingDirectory === cwd || s.workingDirectory === ""),
-    );
-    const liveById = new Map(
-      liveAgents.map((s) => {
-        const id = s.acpSessionId ?? `live-${s.id}`;
-        return [id, s] as const;
-      }),
-    );
-    // Merge both agents' disk listings into one map, tagging each row with the
-    // agent that produced it so the row icon + resume routing are correct even
-    // when there's no live session to infer the agent from. Claude is inserted
-    // first; a Codex id never collides with a Claude JSONL id.
-    const diskById = new Map<string, { meta: ClaudeSessionMeta; agent: SidebarAgent }>();
-    for (const d of agentList) diskById.set(d.id, { meta: d, agent: "claude" });
-    for (const d of codexList) diskById.set(d.id, { meta: d, agent: "codex" });
-    for (const d of cerseiList) diskById.set(d.id, { meta: d, agent: "cersei" });
-    for (const d of kiloList) diskById.set(d.id, { meta: d, agent: "kilo" });
-
-    // An unbound live row (`live-<tabId>` key — after an agent switch or
-    // clearSession dropped the binding but kept messages, or during the
-    // first-send window before the binding lands) can describe the SAME
-    // conversation as a disk row listed under its real session id. Rendering
-    // both shows the session twice, so suppress the live twin whenever a
-    // disk row already covers the same first-user text.
-    const normFirstUser = (t: string) => stripInjectedContext(t).trim().slice(0, 60);
-    // Keyed by "<agent>|<text>", paired with the disk row's last-modified
-    // time. A live twin is only suppressed when the disk row belongs to the
-    // SAME agent and their activity times are close (a true twin's live
-    // `updatedAt` tracks its own disk `last_modified`). Cross-agent matches
-    // would repaint the chat with the wrong brand icon; distinct same-agent
-    // chats that merely share a short opener ("hi") are usually far apart in
-    // time, and suppressing those would hide a real conversation.
-    const diskPreviews = new Map<string, number>();
-    for (const { meta, agent } of diskById.values()) {
-      if (meta.preview && meta.preview !== "(no user message)") {
-        const p = normFirstUser(meta.preview);
-        if (!p) continue;
-        const ts = meta.last_modified ? Date.parse(meta.last_modified) : NaN;
-        if (Number.isNaN(ts)) continue;
-        const key = `${agent}|${p}`;
-        const prev = diskPreviews.get(key);
-        if (prev === undefined || ts > prev) diskPreviews.set(key, ts);
-      }
-    }
-    const TWIN_WINDOW_MS = 10 * 60 * 1000;
-    for (const [id, live] of Array.from(liveById)) {
-      if (!id.startsWith("live-")) continue;
-      const liveAgent = sidebarAgentOf(live.agentType);
-      const first = normFirstUser(live.firstUserContent ?? "");
-      if (!first) continue;
-      const diskTs = diskPreviews.get(`${liveAgent}|${first}`);
-      const liveTs = Date.parse(live.updatedAt ?? "");
-      if (
-        diskTs !== undefined &&
-        !Number.isNaN(liveTs) &&
-        Math.abs(liveTs - diskTs) < TWIN_WINDOW_MS
-      ) {
-        liveById.delete(id);
-      }
-    }
-
-    const allIds = new Set<string>([...liveById.keys(), ...diskById.keys()]);
-
-    const agents: SidebarItem[] = Array.from(allIds, (id) => {
-      const live = liveById.get(id);
-      const diskEntry = diskById.get(id);
-      const disk = diskEntry?.meta;
-      // Strip Atlas-injected memory scaffolding before deriving the title/preview
-      // (resumed sessions echo the injected prompt). A dirty fragment cleans to "".
-      const firstUser = stripInjectedContext(live?.firstUserContent ?? "");
-      const liveTitle = stripInjectedContext(live?.title ?? "");
-      const diskPreview =
-        disk?.preview && disk.preview !== "(no user message)"
-          ? stripInjectedContext(disk.preview)
-          : "";
-      const title =
-        (liveTitle && liveTitle !== "New Chat" ? liveTitle : "") ||
-        firstUser.slice(0, 80) ||
-        diskPreview ||
-        liveTitle ||
-        "New session";
-      const lastUpdated =
-        live?.status === "running"
-          ? (live.updatedAt ?? disk?.last_modified ?? null)
-          : (disk?.last_modified ?? live?.updatedAt ?? null);
-      return {
-        id,
-        kind: "agent" as const,
-        title,
-        subtitle: null,
-        lastUpdated,
-        // Show a row if EITHER the live session OR the on-disk record has
-        // content. A live session that reports userMessageCount=0 (just-bound or
-        // resumed, counter not caught up) must NOT shadow a disk row that
-        // genuinely has messages — that hid real sessions from history (frontend
-        // `items: 0` while `claude: 4`). Take the max of the two signals.
-        messageCount: Math.max(
-          live
-            ? live.userMessageCount > 0
-              ? live.userMessageCount
-              : live.hasAnyMessage
-                ? 1
-                : 0
-            : 0,
-          disk?.message_count ?? 0,
-        ),
-        // Agent identity: prefer the live session's, else the agent that
-        // produced the disk row (Claude JSONL vs Codex rollout). Drives the
-        // row icon AND which agent process handleOpenAgent resumes through.
-        agent: live ? sidebarAgentOf(live.agentType) : (diskEntry?.agent ?? "claude"),
-        filePath: disk?.file_path,
-        totalTokens: disk?.total_tokens,
-      };
+    const ordered = [...projects].sort((a, b) => {
+      const aHere = a.paths.includes(cwd) ? 0 : 1;
+      const bHere = b.paths.includes(cwd) ? 0 : 1;
+      return aHere - bHere;
     });
-
-    // Drop empty rows (disk JSONLs that exist but hold no messages, or any live
-    // session that slipped through) so history only ever shows messaged chats.
-    return agents
-      .filter((a) => a.messageCount > 0)
-      .sort((a, b) => (b.lastUpdated ?? "").localeCompare(a.lastUpdated ?? ""));
-  }, [agentList, codexList, cerseiList, kiloList, tabSummaries]);
+    return ordered.flatMap((project) =>
+      project.threads.map((thread) => itemFromThread(thread, project.name, cwd)),
+    );
+  }, [projects, cwd]);
 
   // Self-heal the workspace panel's persisted "Chats" list for THIS project.
   // That list (`atlas-recent-chats`) is recorded on agent activity and never
-  // re-validated against storage, so rows for sessions deleted elsewhere (or
-  // before purge-on-delete existed) linger forever. Once all three disk
-  // listings have real (non-placeholder) data, drop any row for this cwd whose
-  // session is neither on disk nor live in the chat-store. Placeholder data is
-  // excluded so a cwd switch can't purge the new project's rows against the
-  // old project's lists.
+  // re-validated, so rows for sessions deleted elsewhere linger forever. Now
+  // that history is one store, "does this still exist" is one lookup.
   useEffect(() => {
-    if (!cwd) return;
-    if (!agentReady || !codexReady || !cerseiReady || !kiloReady) return;
-    if (agentPlaceholder || codexPlaceholder || cerseiPlaceholder || kiloPlaceholder) return;
-    const diskIds = new Set<string>([
-      ...agentList.map((d) => d.id),
-      ...codexList.map((d) => d.id),
-      ...cerseiList.map((d) => d.id),
-      ...kiloList.map((d) => d.id),
-    ]);
-    const liveAcp = new Set<string>();
+    if (!cwd || !historyReady) return;
+    const known = new Set<string>();
+    for (const project of projects) {
+      for (const thread of project.threads) {
+        if (thread.sessionId) known.add(thread.sessionId);
+      }
+    }
     const liveTabs = new Set<string>();
     for (const s of Object.values(tabSummaries)) {
-      if (s.acpSessionId) liveAcp.add(s.acpSessionId);
+      if (s.acpSessionId) known.add(s.acpSessionId);
       liveTabs.add(s.id);
     }
     const { items: recent, actions } = useRecentChatsStore.getState();
-    // Grace period: a freshly-active row can be ahead of the polled disk
-    // listings (Codex/Cersei refresh on a 4s poll), so judging it against a
-    // stale snapshot would purge a real chat. Only rows quiet for a minute
-    // are eligible — truly deleted sessions get cleaned on a later pass.
+    // Grace period: a freshly-active row can be ahead of the store's own
+    // change event, so judging it against a stale snapshot would purge a real
+    // chat. Only rows quiet for a minute are eligible.
     const cutoff = Date.now() - 60_000;
     for (const c of recent) {
       if (c.projectPath !== cwd) continue;
       if (c.updatedAt > cutoff) continue;
-      const alive = c.acpSessionId
-        ? diskIds.has(c.acpSessionId) || liveAcp.has(c.acpSessionId)
-        : liveTabs.has(c.tabId);
+      const alive = c.acpSessionId ? known.has(c.acpSessionId) : liveTabs.has(c.tabId);
       if (!alive) actions.remove(c.tabId);
     }
-  }, [
-    cwd,
-    agentReady,
-    codexReady,
-    cerseiReady,
-    kiloReady,
-    agentPlaceholder,
-    codexPlaceholder,
-    cerseiPlaceholder,
-    kiloPlaceholder,
-    agentList,
-    codexList,
-    cerseiList,
-    kiloList,
-    tabSummaries,
-  ]);
+  }, [cwd, historyReady, projects, tabSummaries]);
 
   // Sessions currently running (used to show a spinner on the matching row).
   // Keys MUST match the `id`s used when constructing `items` above, otherwise
@@ -592,10 +382,19 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
     return set;
   }, [tabSummaries]);
 
+  // Headings are stamped AFTER filtering, not before: a search that hides a
+  // project's first row would otherwise take the project's name with it and
+  // leave the rest of its threads under the previous project's heading.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((it) => it.title.toLowerCase().includes(q));
+    const matching = q ? items.filter((it) => it.title.toLowerCase().includes(q)) : items;
+    const named = matching.length > 0 && new Set(matching.map((it) => it.projectName)).size > 1;
+    let previous: string | null = null;
+    return matching.map((item) => {
+      const heading = named && item.projectName !== previous ? item.projectName : null;
+      previous = item.projectName;
+      return { ...item, projectHeading: heading };
+    });
   }, [items, search]);
 
   // Singleton model: "New chat" always starts a fresh session in the CURRENT
@@ -605,51 +404,28 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
   const handleOpenAgent = (item: SidebarItem) => {
     const storeSnapshot = useChatStore.getState().sessions;
 
-    // Live-focus / de-dup: if an open tab already represents THIS session,
-    // just focus it. A tab matches by its bound `acpSessionId` OR by the
-    // synthetic `live-<tabId>` id used before binding — the exact same id
-    // formula `items` uses to key live rows. Covers re-clicks, clicks while
-    // loading, and clicks on a row already open in another tab (incl. a
-    // live-only Codex chat that has no disk JSONL to reload from).
-    // Only focus a tab that still EXISTS — a closed chat tab leaves its session
-    // behind (orphan), and focusing that dead tab id makes `setActiveTab` bounce
-    // to tab[0] ("jumps to a different chat"). Skip orphans → reload below.
+    // Live-focus: if an open tab already holds this conversation, focus it.
+    // Only a tab that still EXISTS — a closed chat leaves its session behind,
+    // and focusing that dead tab id makes `setActiveTab` bounce to tab[0].
     const openTabIds = new Set(useLayoutStore.getState().tabs.map((t) => t.id));
     for (const [tid, s] of Object.entries(storeSnapshot)) {
-      const liveId = s.acpSessionId ?? `live-${tid}`;
-      if (liveId === item.id && openTabIds.has(tid)) {
+      if (s.acpSessionId && s.acpSessionId === item.id && openTabIds.has(tid)) {
         setActiveTab(tid);
         return;
       }
     }
 
-    // Past here we reload from disk/ACP, which needs either a JSONL file OR a
-    // real (bound) ACP session id. Codex sessions never live in Claude's
-    // `~/.claude/projects` JSONL dir, so they only ever arrive as live rows
-    // with no `filePath` — gating on `filePath` alone made every Codex history
-    // row a dead click. A synthetic `live-<tabId>` with no file is the current
-    // empty tab itself (handled above when open), so those still bail here.
-    const isSynthetic = item.id.startsWith("live-");
-    if (!item.filePath && isSynthetic) return;
+    // The agent that actually ran this conversation, from the row — not the
+    // tab's current selection. Opening a Codex thread into a Claude tab used
+    // to resume it through the wrong process.
+    const resumedAgentType = AGENT_TYPE_BY_SIDEBAR[item.agent] ?? item.agent;
+    const pluginId = pluginIdForAgent(resumedAgentType);
+    // The thread's OWN directory. A row from another worktree resumes into the
+    // worktree it belongs to, which is the point of listing it here at all.
+    const threadCwd = item.cwd || cwd;
 
-    // Pick the agent that actually ran this session. This was hardcoded to the
-    // default (Claude), so clicking a Codex row tried to resume it through the
-    // Claude process → `loadSession` failed → it fell back to a blank session.
-    const resumedAgentTypeMapped = AGENT_TYPE_BY_SIDEBAR[item.agent];
-    const pluginId = pluginIdForAgent(resumedAgentTypeMapped);
-    // The composer's agent label must follow the RESUMED session's real agent,
-    // not whatever was selected in this tab. Without this, opening (say) an
-    // Atlas/Codex session into a Claude-Code tab left the composer on Claude;
-    // the user then "switched" agents, which (correctly) spawns a NEW chat —
-    // so resuming forced an annoying detour. `item.agent` is already narrowed
-    // to a shipped agent, so map it straight to the composer's SwitchableAgent.
-    const resumedAgentType = resumedAgentTypeMapped;
-
-    // Decide target tab. If the current tab's session is mid-flight
-    // (running OR waiting on the user), we MUST NOT overwrite it — the agent is
-    // still streaming back into that session and the user needs to see
-    // it keep running. Open the clicked history in a new chat tab
-    // instead. Otherwise replace in-place (idle tab is fair game).
+    // Decide the target tab. If the current tab is mid-flight the agent is
+    // still streaming into it, so open a new tab rather than overwrite.
     const currentRunning = isBusyAgentStatus(storeSnapshot[tabId]?.status);
     const targetTabId = currentRunning
       ? `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
@@ -664,184 +440,125 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
         dirty: false,
         data: {},
       });
-      // Pre-create the chat-store session before the ChatPanel mounts so
-      // the optimistic binding below has something to attach to — with the
-      // resumed session's agent so the composer is correct from the first frame.
       createSession(targetTabId, resumedAgentType);
       setActiveTab(targetTabId);
     }
 
-    // Bind with the component's STICKY `cwd` (closed over below), not a fresh
-    // `getState().currentProject` read — that can be transiently null at click
-    // time, which would stamp the session's `workingDirectory` with "" out of
-    // step with the sticky filter and briefly strand the live row.
-
-    // Replacing the CURRENT chat in place (idle tab)? The session we're about to
-    // clear loses its live sidebar row. Cersei/Codex have no file watcher, so
-    // without a refetch the just-left chat vanishes from history until the user
-    // hits "+" (which refreshes). Capture it now → refresh the disk lists below
-    // so the abandoned chat re-lists from disk immediately.
-    const abandoningCurrent =
-      targetTabId === tabId &&
-      ((storeSnapshot[tabId]?.userMessageCount ?? 0) > 0 ||
-        (storeSnapshot[tabId]?.messages?.length ?? 0) > 0);
-
-    // OPTIMISTIC SYNCHRONOUS UI: clear + retitle + bind the historical
-    // session id IMMEDIATELY when the default agent is already cached
-    // (App.tsx pre-spawns it at startup, so it almost always is).
     clearSession(targetTabId);
-    if (abandoningCurrent) {
-      queryClient.invalidateQueries({ queryKey });
-      queryClient.invalidateQueries({ queryKey: codexQueryKey });
-      queryClient.invalidateQueries({ queryKey: cerseiQueryKey });
-      queryClient.invalidateQueries({ queryKey: kiloQueryKey });
-    }
-    // Relabel the composer to the resumed session's agent (no-op if already
-    // matching). Keeps the existing binding — does NOT spawn a new chat.
     setSessionAgentType(targetTabId, resumedAgentType);
     setSessionTitle(targetTabId, item.title.slice(0, 40));
     const cachedAgent = getAgentSync(pluginId);
-    if (cachedAgent) {
-      setAcpBinding(targetTabId, cachedAgent.agent_id, item.id, cwd);
+    if (cachedAgent && item.id) {
+      // Optimistic: the backend has not loaded it yet, so flag the window so a
+      // send queues rather than firing at a session the manager lacks.
+      setAcpBinding(targetTabId, cachedAgent.agent_id, item.id, threadCwd);
     }
-    // The binding above is a GUESS — the backend hasn't loaded this session yet.
-    // Flag it so a send during the resume window queues instead of firing at a
-    // session the manager doesn't have (the transcript now paints well before
-    // the load lands, so this window is user-visible).
     setResumePending(targetTabId, true);
-    // Always flag loading at this point — the chat panel renders a spinner
-    // instead of the welcome state until the snapshot lands. On a Rust-cache
-    // hit the snapshot returns in ~1ms so the spinner is barely visible; on
-    // a miss it covers the JSONL replay window.
     setTranscriptLoading(targetTabId, true);
 
-    // Click-token cancellation: each click bumps the token for this tab.
-    // Every subsequent await re-checks the token and bails if a newer click
-    // has taken over — prevents 5-6 rapid clicks from piling up 5-6 in-flight
-    // `loadSession` calls against the same agent.
+    // Click-token cancellation: each click bumps the token for this tab, so
+    // rapid clicks collapse instead of piling up in-flight resumes.
     const myToken = bumpLoadToken(targetTabId);
     const isStale = () => isLoadStale(targetTabId, myToken);
 
     void (async () => {
-      // Yield once so multiple clicks in the same event-loop tick collapse:
-      // every click after this microtask resumes with a stale token and
-      // bails before doing any IPC.
       await Promise.resolve();
       if (isStale()) return;
 
-      // Two-stage resume (`resumeSessionFast`): the transcript is read off disk
-      // and painted immediately (~50ms even on a 34MB JSONL), while the agent
-      // spawn + ACP `session/load` — the part that actually costs seconds — runs
-      // concurrently and only gates SENDING, not reading.
-      //
-      // atlas-agents still owns the cache: `loadSession` is idempotent, so the
-      // second visit to the same session is a `DashMap::get` away from instant,
-      // with no JSONL replay and no ACP round-trip.
-      let agent, snapshot;
+      let resumed;
       try {
-        ({ agent, snapshot } = await resumeSessionFast({
-          pluginId,
-          sessionId: item.id,
-          cwd,
-          ensure: () => ensureAgent(pluginId),
+        resumed = await resumeThreadFast({
+          threadId: item.threadId,
+          cwd: threadCwd,
+          sessionId: item.id || null,
           cb: {
             paint: (msgs) => replaceMessages(targetTabId, msgs),
             onPainted: () => setTranscriptLoading(targetTabId, false),
             isStale,
           },
-        }));
+        });
       } catch (err) {
-        // Stale means a NEWER click owns this tab — and it has already set its
-        // own `resumePending`. Bail without touching the flag; clearing it here
-        // would un-gate the newer resume. Otherwise clear it, so a failed resume
-        // never leaves the tab silently queueing every future send.
         if (isStale()) return;
         setResumePending(targetTabId, false);
-        const stage = err instanceof ResumeError ? err.stage : "load";
-        const msg = err instanceof Error ? err.message : String(err);
         setTranscriptLoading(targetTabId, false);
-        if (stage === "spawn") {
-          toast.error(`Agent not available: ${msg}`);
-        } else if (stage === "load") {
-          // Don't silently fork a NEW persisted session here — the clicked file
-          // stays on disk and the fork lists as a second history row for what
-          // the user experiences as one conversation. Surface the failure and
-          // ROLL BACK the optimistic binding set before the load: leaving
-          // `acpSessionId` pointing at a session the backend never loaded would
-          // block the chat panel's bind effect (it early-returns when a binding
-          // exists) and strand the tab. Clearing re-arms the normal new-session
-          // flow if the user keeps typing.
-          console.warn("loadSession failed:", err);
+        const stage = err instanceof ResumeError ? err.stage : "resume";
+        const msg = err instanceof Error ? err.message : String(err);
+        if (stage === "snapshot") {
+          // The session IS open — only reading it back failed. Leave the bind.
+          toast.error(`Couldn't load session: ${msg}`);
+        } else {
+          // Roll the optimistic binding back: leaving `acpSessionId` pointing
+          // at a session the backend never opened strands the tab, because the
+          // chat panel's bind effect early-returns when a binding exists. True
+          // whether the agent failed to start or failed to reopen — one call
+          // did both, and neither left a session behind. The history row is
+          // untouched: only the user deletes rows.
+          console.warn("resume failed:", err);
           clearSession(targetTabId);
           toast.error(`Couldn't resume this session: ${msg.slice(0, 120)}`);
-        } else {
-          toast.error(`Couldn't load session: ${msg}`);
         }
         return;
       }
-      // Same as the catch: a newer click owns the flag, so leave it alone.
       if (isStale()) return;
 
-      setAcpBinding(targetTabId, agent.agent_id, item.id, cwd);
-      // Backend now holds the session — sends may go straight through, and the
-      // drain effect flushes anything the user queued while resuming.
+      const { key, snapshot } = resumed;
+      setAcpBinding(targetTabId, key.agent_id, key.session_id, threadCwd);
       setResumePending(targetTabId, false);
-      // Restore live status + docked plan AFTER the bind (which clears the
-      // plan): switching back to a still-running session re-shows its plan.
+      if (resumed.resumedWithoutHistory) {
+        // Honest rather than mysterious: this agent can continue the
+        // conversation but cannot replay it, so the thread opens empty.
+        toast.info("This agent can't replay past messages — the conversation continues from here.");
+      }
       hydrateSessionSnapshot(targetTabId, snapshot.status, snapshot.plan);
-      // Seed the composer mode picker from the resumed session's advertised
-      // modes (Codex). Claude ignores these in favour of its own pill.
       setAcpModes(
         targetTabId,
         snapshot.current_mode,
         snapshot.available_modes,
         agentTypeFromPluginId(snapshot.plugin_id),
       );
-      // Seed the ACP model picker too (Claude Code / Codex). On resume the agent
-      // may not re-advertise models, so setAcpModels falls back to the cache.
       if (snapshot.available_models.length > 0) {
         setAcpModels(targetTabId, snapshot.current_model, snapshot.available_models);
       }
+      setAcpAvailableCommands(targetTabId, snapshot.available_commands ?? []);
+      // The knobs travel the same way (#32): the resume snapshot is the only
+      // carrier for an agent that never volunteers a notification. Tagged with
+      // the snapshot's own agent so a stale binding can't seed another
+      // agent's pill or cache (#36).
+      setAcpConfigOptions(
+        targetTabId,
+        snapshot.config_options ?? [],
+        agentTypeFromPluginId(snapshot.plugin_id),
+      );
       setTranscriptLoading(targetTabId, false);
     })();
+  };
+
+  const handleArchiveAgent = async (e: React.MouseEvent, item: SidebarItem) => {
+    e.stopPropagation();
+    try {
+      // Out of the way, not gone. The thread stays in History and comes back
+      // the moment it is opened (ADR-0001: archive is a shelf, not a grave).
+      await archiveThread(item.threadId);
+    } catch (err) {
+      toast.error(`Couldn't archive: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   const handleDeleteAgent = async (e: React.MouseEvent, item: SidebarItem) => {
     e.stopPropagation();
     try {
-      // Route to the agent that actually owns this session's storage. Claude
-      // sessions are JSONL files under ~/.claude/projects (deleted by path);
-      // Cersei sessions are JSON under the app config dir (deleted by id via
-      // its own command — the Claude path guard rejects them); Codex threads
-      // live in ~/.codex SQLite and are soft-deleted (archived=1) by id.
-      if (item.agent === "cersei") {
-        await cerseiDeleteSession(cwd, item.id);
-      } else if (item.agent === "codex") {
-        await codexDeleteSession(item.id);
-      } else if (item.agent === "kilo") {
-        // Kilo rows soft-archive in ~/.local/share/kilo/kilo.db by id.
-        await kiloDeleteSession(item.id);
-      } else if (item.filePath) {
-        await deleteClaudeSession(item.filePath);
-      } else {
-        return;
-      }
+      // One call for every agent. Atlas's own row goes first and always; the
+      // agent is asked to forget its copy only if it advertised that it can
+      // (ADR-0001). No per-agent branch, and no path into anyone's storage.
+      await deleteThread(item.threadId);
       if (activeAcpId === item.id) clearSession(tabId);
-      // The workspace panel's "Chats" list is a separate persisted store
-      // recorded on agent activity and never re-validated against disk —
-      // purge the deleted session's row so it doesn't linger there.
+      // The workspace panel's "Chats" list is a separate persisted store,
+      // recorded on agent activity and never re-validated — purge the deleted
+      // session's row so it doesn't linger there.
       useRecentChatsStore.getState().actions.removeBySession(item.id);
     } catch (err) {
       console.error("Failed to delete session:", err);
       toast.error(`Couldn't delete session: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      // Always refetch so the list reflects on-disk truth — whether the delete
-      // succeeded (row gone) or failed (row stays). All three keys, since a
-      // delete shifts the merged/sorted cross-agent view.
-      queryClient.invalidateQueries({ queryKey });
-      queryClient.invalidateQueries({ queryKey: codexQueryKey });
-      queryClient.invalidateQueries({ queryKey: cerseiQueryKey });
-      queryClient.invalidateQueries({ queryKey: kiloQueryKey });
     }
   };
 
@@ -921,7 +638,24 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
           placeholder="Search…"
           className="flex-1 bg-transparent outline-none text-[11px] text-text-primary placeholder:text-text-tertiary min-w-0"
         />
+        {/* Everything ever, archived included — and where import lives. */}
+        {!asDropdown && (
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(true)}
+            aria-label="All history"
+            title="All history — archived threads, and import"
+            className="shrink-0 flex h-5 w-5 items-center justify-center rounded text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors cursor-pointer"
+          >
+            <History size={11} />
+          </button>
+        )}
       </div>
+      <ThreadHistoryView
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        onOpenThread={(thread) => handleOpenAgent(itemFromThread(thread, thread.projectName, cwd))}
+      />
 
       {/* List */}
       <div className="flex-1 overflow-y-auto hide-scrollbar">
@@ -930,9 +664,7 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
         )}
         {showEmpty && (
           <div className="text-[11px] text-[var(--text-tertiary)] px-3 py-3 leading-relaxed">
-            {search.trim()
-              ? "No sessions match your search."
-              : "No prior sessions for this project."}
+            {search.trim() ? "No sessions match your search." : "No chats yet."}
           </div>
         )}
         {filtered.map((item, idx) => {
@@ -940,83 +672,100 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
           const isRunning = runningKeys.has(`${item.kind}:${item.id}`);
           const isLast = idx === filtered.length - 1;
           return (
-            <div
-              key={`${item.kind}-${item.id}`}
-              onClick={() => {
-                if (item.kind !== "agent") return;
-                handleOpenAgent(item);
-                // Dismiss the picker; the sidebar variant stays put.
-                onOpened?.();
-              }}
-              className={cn(
-                "group relative w-full text-left px-3 py-3 transition-colors flex flex-col gap-1 cursor-pointer select-none",
-                active
-                  ? "bg-[var(--bg-selected)] text-[var(--text-primary)] opacity-100"
-                  : "text-[var(--text-secondary)] opacity-80 hover:opacity-100 hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
-                !isLast && "border-b border-[var(--border-default)]",
+            <div key={item.threadId}>
+              {item.projectHeading && (
+                // The project a run of rows belongs to. Threads from other
+                // worktrees are listed here too, and resume into their own
+                // worktree — that is what an app-level store is for.
+                <div className="px-3 pt-2.5 pb-1 text-[9px] uppercase tracking-wider text-text-tertiary truncate">
+                  {item.projectHeading}
+                </div>
               )}
-            >
-              <div className="flex items-start gap-2 min-w-0 pr-5">
-                <span
-                  className="shrink-0 inline-flex h-[15px] items-center justify-center text-[var(--text-secondary)]"
-                  title={
-                    item.kind !== "agent"
-                      ? "AI Chat"
-                      : AGENT_LABEL[AGENT_TYPE_BY_SIDEBAR[item.agent]]
-                  }
-                >
-                  {isRunning ? (
-                    <AtlasLoader size={8} className="text-[var(--accent-primary)]" />
-                  ) : item.kind === "agent" ? (
-                    item.agent === "codex" ? (
-                      <CodexIcon className="size-3" />
-                    ) : item.agent === "opencode" ? (
-                      <OpenCodeIcon className="size-3" />
-                    ) : item.agent === "cursor" ? (
-                      <CursorIcon className="size-3" />
-                    ) : item.agent === "kilo" ? (
-                      <KiloIcon className="size-3" />
-                    ) : item.agent === "cersei" ? (
-                      <AtlasIcon size={12} />
-                    ) : (
-                      <ClaudeIcon className="size-3" />
-                    )
-                  ) : (
-                    <MessageSquare size={11} className="text-[var(--accent-primary)]" />
-                  )}
-                </span>
-                <span className="text-[11px] leading-snug line-clamp-2 flex-1">{item.title}</span>
-              </div>
-              <div className="pl-[18px] flex items-center gap-1.5">
-                <span className="text-[9px] text-[var(--text-tertiary)]">
-                  {timeAgo(item.lastUpdated, { suffix: true })}
-                </span>
-                {!!item.totalTokens && item.totalTokens > 0 && (
-                  <span
-                    className="text-[9px] text-[var(--text-tertiary)] tabular-nums"
-                    title={`${item.totalTokens.toLocaleString()} tokens processed`}
-                  >
-                    · {formatTokenCount(item.totalTokens)} tok
-                  </span>
+              <div
+                onClick={() => {
+                  if (item.kind !== "agent") return;
+                  handleOpenAgent(item);
+                  // Dismiss the picker; the sidebar variant stays put.
+                  onOpened?.();
+                }}
+                className={cn(
+                  "group relative w-full text-left px-3 py-3 transition-colors flex flex-col gap-1 cursor-pointer select-none",
+                  active
+                    ? "bg-[var(--bg-selected)] text-[var(--text-primary)] opacity-100"
+                    : "text-[var(--text-secondary)] opacity-80 hover:opacity-100 hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
+                  !isLast && "border-b border-[var(--border-default)]",
                 )}
-              </div>
+              >
+                <div className="flex items-start gap-2 min-w-0 pr-5">
+                  <span
+                    className="shrink-0 inline-flex h-[15px] items-center justify-center text-[var(--text-secondary)]"
+                    title={
+                      item.kind !== "agent"
+                        ? "AI Chat"
+                        : agentMeta(AGENT_TYPE_BY_SIDEBAR[item.agent] ?? item.agent).label
+                    }
+                  >
+                    {isRunning ? (
+                      <AtlasLoader size={8} className="text-[var(--accent-primary)]" />
+                    ) : item.kind === "agent" ? (
+                      item.agent === "codex" ? (
+                        <CodexIcon className="size-3" />
+                      ) : item.agent === "opencode" ? (
+                        <OpenCodeIcon className="size-3" />
+                      ) : item.agent === "cursor" ? (
+                        <CursorIcon className="size-3" />
+                      ) : item.agent === "kilo" ? (
+                        <KiloIcon className="size-3" />
+                      ) : item.agent === "cersei" ? (
+                        <AtlasIcon size={12} />
+                      ) : item.agent === "claude" ? (
+                        <ClaudeIcon className="size-3" />
+                      ) : agentMeta(item.agent).iconDataUrl ? (
+                        <ExternalAgentIcon dataUrl={agentMeta(item.agent).iconDataUrl!} size={12} />
+                      ) : (
+                        <AgentMonogram label={agentMeta(item.agent).label} size={12} />
+                      )
+                    ) : (
+                      <MessageSquare size={11} className="text-[var(--accent-primary)]" />
+                    )}
+                  </span>
+                  <span className="text-[11px] leading-snug line-clamp-2 flex-1">{item.title}</span>
+                </div>
+                <div className="pl-[18px] flex items-center gap-1.5">
+                  <span className="text-[9px] text-[var(--text-tertiary)]">
+                    {timeAgo(item.lastUpdated, { suffix: true })}
+                  </span>
+                  {item.elsewhere && (
+                    <span
+                      className="text-[9px] text-[var(--text-tertiary)] truncate"
+                      title={item.cwd}
+                    >
+                      · {item.projectName}
+                    </span>
+                  )}
+                </div>
 
-              {/* Delete supported for all three: Claude removes the JSONL file,
-                  Cersei removes its JSON under the app config dir, Codex archives
-                  the thread (archived=1) in its ~/.codex SQLite (no file to rm). */}
-              {item.kind === "agent" &&
-                (item.agent === "cersei" ||
-                  item.agent === "codex" ||
-                  (item.agent === "claude" && !!item.filePath)) && (
+                {/* Both work for every agent now: the row is Atlas's, so neither
+                  depends on reaching the agent that produced it. */}
+                <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                  <button
+                    onClick={(e) => handleArchiveAgent(e, item)}
+                    aria-label="Archive session"
+                    className="flex items-center justify-center w-4 h-4 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]"
+                    title="Archive — keeps it in History"
+                  >
+                    <Archive size={10} />
+                  </button>
                   <button
                     onClick={(e) => handleDeleteAgent(e, item)}
                     aria-label="Delete session"
-                    className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 flex items-center justify-center w-4 h-4 rounded text-[var(--text-tertiary)] hover:text-[var(--status-error)] hover:bg-[var(--bg-elevated)] transition-opacity"
+                    className="flex items-center justify-center w-4 h-4 rounded text-[var(--text-tertiary)] hover:text-[var(--status-error)] hover:bg-[var(--bg-elevated)]"
                     title="Delete session"
                   >
                     <X size={10} />
                   </button>
-                )}
+                </div>
+              </div>
             </div>
           );
         })}
@@ -1062,4 +811,4 @@ export function SessionSidebar({ tabId, variant = "sidebar", onOpened }: Session
       )}
     </div>
   );
-}
+});

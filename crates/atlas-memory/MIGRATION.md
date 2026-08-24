@@ -1,7 +1,7 @@
 # `atlas-memory` — Migration & Operations
 
 How Atlas's RAG/memory moved from the in-Tauri **brute-force O(n) cosine** over a
-flat `memory-index/index.json` to the on-device **MiniLM → usearch HNSW + Cersei
+flat `memory-index/index.json` to the on-device **MiniLM → usearch HNSW + grafeo
 graph** engine in this crate. Covers the on-disk layout, the legacy migration,
 the feature flags, the retained rollback fallbacks, and the **manual** 3-agent
 runtime verification.
@@ -30,7 +30,7 @@ Background: `plans/atlas-cersei-rag-replan.md` (full build plan) and
 | `graph/` | `GraphMemory::open` (Grafeo LPG) | Per-project graph memory: structured facts, topic tags, `link_memories` edges. Falls back to in-memory if the dir can't open (non-fatal — empty until extraction runs). |
 | `extracted/*.md` | `extract.rs` | One markdown file per session of gated native session-extraction output (memdir). Also embedded into HNSW. |
 | `.shared-memory-imported` | `shared_import.rs` | Idempotency marker: the one-time fold of legacy `.atlas/shared-memory/events.jsonl` into the graph is done. |
-| `.consolidation_lock`, `.consolidation_state.json` | `AutoDream` (Cersei SDK) | AutoDream consolidation lock (stale after 3600s) + state (gate timestamps/session counts). |
+| `.consolidation_lock`, `.consolidation_state.json` | `dream::AutoDream` | AutoDream consolidation lock (stale after 3600s) + state (gate timestamps/session counts). |
 
 ### Global (cross-project) — `~/.atlas/memory/`
 
@@ -85,7 +85,7 @@ Accepted truthy values: `1` / `true` / `on` / `yes` (case-insensitive).
   unless the project's summarizer is a BYOK provider). This is the validated
   write-side path.
 - **ON.** `TurnFinished` instead enqueues `Job::ExtractSession{cwd, agent, session}`
-  into the background `MemoryIndexer` for **all three** agents. Cersei's gates
+  into the background `MemoryIndexer` for **all three** agents. The gates
   (`should_extract`: ≥20 msgs / ≥3 tool calls / no pending tool_use) decide whether
   to run; on pass, ONE BYOK call (off the hot path) distills the format-neutral
   transcript into `extracted/*.md` + graph nodes, then re-embeds into HNSW.

@@ -1,0 +1,42 @@
+[package]
+name = "atlas-agent-store"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# The seam this crate implements. `agent-client-protocol` arrives through it at
+# the exact `=2.0.0` pin both stage-1 crates use (`zed-ref/Cargo.toml:518`);
+# this crate needs no protocol types of its own, so it takes no direct dep
+# rather than pinning a version it would never name.
+atlas-agent-servers = { path = "../atlas-agent-servers" }
+atlas-acp-thread = { path = "../atlas-acp-thread" }
+anyhow = "1"
+bzip2 = "0.4"
+flate2 = "1"
+futures = "0.3"
+percent-encoding = "2"
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "stream",
+] }
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+tempfile = "3"
+tokio = { version = "1", features = [
+    "fs",
+    "io-util",
+    "macros",
+    "process",
+    "rt",
+    "sync",
+    "time",
+] }
+tracing = "0.1"
+url = "2"
+zip = "8"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }

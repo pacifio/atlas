@@ -1,6 +1,5 @@
 import { UsageBar } from "@/features/monitor/components/usage-bar";
 import { BranchPopover } from "./branch-popover";
-import { StatusBarTimer } from "@/features/pomodoro/components/status-bar-timer";
 import { FeedbackButton } from "@/features/feedback/components/feedback-button";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 
@@ -25,8 +24,6 @@ export function StatusBar() {
             <div className="w-px h-3 bg-border-default" aria-hidden />
           </>
         )}
-        <StatusBarTimer />
-        <div className="w-px h-3 bg-border-default" aria-hidden />
         <FeedbackButton />
       </div>
     </div>

@@ -2,9 +2,9 @@ import { lazy, Suspense } from "react";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "../stores/layout-store";
 import { PanelSkeleton } from "@/components/panel-skeleton";
-import { GitCommit, GitCompare, Github, CheckCheck } from "lucide-react";
+import { GitCommit, GitCompare, Github } from "lucide-react";
 
-// All four right-panel sub-panels are lazy so they don't run their first
+// All three right-panel sub-panels are lazy so they don't run their first
 // invokes / vendor parses during the boot-cascade window. The user lands
 // on a project, sees the tab bar + skeleton instantly, and the data slides
 // in as each chunk + IPC resolves. `GitManagerPanel` in particular pulls in
@@ -27,15 +27,8 @@ const GithubPanel = lazy(() =>
     default: m.GithubPanel,
   })),
 );
-const ReviewAgentsPanel = lazy(() =>
-  import("@/features/review-agents/components/review-agents-panel").then((m) => ({
-    default: m.ReviewAgentsPanel,
-  })),
-);
-
 const sections = [
   { id: "changes" as const, label: "Source Control", icon: GitCompare },
-  { id: "review-agents" as const, label: "Review", icon: CheckCheck },
   { id: "git-graph" as const, label: "Commit", icon: GitCommit },
   { id: "github" as const, label: "GitHub", icon: Github },
 ];
@@ -76,7 +69,6 @@ export function RightPanel() {
             <PanelSkeleton label={activeSection === "changes" ? "Loading changes…" : "Loading…"} />
           }
         >
-          {activeSection === "review-agents" && <ReviewAgentsPanel />}
           {activeSection === "changes" && <GitManagerPanel />}
           {activeSection === "git-graph" && <GitGraphPanel />}
           {activeSection === "github" && <GithubPanel />}

@@ -14,7 +14,7 @@
  * actually ran.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   Check,
@@ -24,8 +24,9 @@ import {
   TriangleAlert,
 } from "lucide-react";
 
-import { AgentIcons } from "@/components/agent-icons";
+import { AgentIcons, AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
+import { agentMeta } from "@/features/agents/lib/agent-meta";
 
 import { cn } from "@/lib/utils";
 
@@ -58,6 +59,9 @@ const FOLD_AT = 3;
 export function SessionList({ sessions, loading, filtered, onOpen }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const days = useMemo(() => groupByDay(sessions), [sessions]);
+  // Clustering is pure in the day's rows — memoized alongside `days` so a
+  // render caused by expand/compact state doesn't re-cluster every day.
+  const dayItems = useMemo(() => days.map((d) => clusterRows(d.sessions)), [days]);
   const [compact, setCompact] = useState(false);
   const root = useRef<HTMLDivElement | null>(null);
 
@@ -70,13 +74,16 @@ export function SessionList({ sessions, loading, filtered, onOpen }: Props) {
     return observeSize(el, (entry) => setCompact(entry.contentRect.width < COMPACT_WIDTH));
   }, [loading, days.length]);
 
-  const toggle = (key: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  const toggle = useCallback(
+    (key: string) =>
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      }),
+    [],
+  );
 
   if (loading) {
     return (
@@ -89,8 +96,8 @@ export function SessionList({ sessions, loading, filtered, onOpen }: Props) {
 
   return (
     <div ref={root}>
-      {days.map((day) => {
-        const items = clusterRows(day.sessions);
+      {days.map((day, di) => {
+        const items = dayItems[di];
         return (
           <section key={day.label}>
             {/* Sticks under the 32px header, so the day you are reading is
@@ -124,7 +131,8 @@ export function SessionList({ sessions, loading, filtered, onOpen }: Props) {
                   first={i === 0}
                   last={i === items.length - 1}
                   expanded={expanded.has(`${day.label}:${item.title}`)}
-                  onToggle={() => toggle(`${day.label}:${item.title}`)}
+                  toggleKey={`${day.label}:${item.title}`}
+                  onToggle={toggle}
                   compact={compact}
                   onOpen={onOpen}
                 />
@@ -163,7 +171,10 @@ const COMPACT_WIDTH = 720;
 /** Row height. Two lines of content, so taller than the single-line first pass. */
 const ROW_H = "h-14";
 
-function SessionRow({
+// memo (both rows): the board re-renders on every 15s poll / capture event
+// while the Timeline tab is open; with the parent's same-data bailout keeping
+// row identities stable, memo confines a live session's churn to its own row.
+const SessionRow = memo(function SessionRow({
   session,
   first,
   last,
@@ -259,7 +270,7 @@ function SessionRow({
       </span>
     </button>
   );
-}
+});
 
 /**
  * The vertical thread through a day.
@@ -431,11 +442,10 @@ export function AgentGlyph({
   if (agent.includes("kilo"))
     return <AgentIcons.Kilo style={dim} className={cn(!mono && "text-[var(--agent-kilo-chip)]")} />;
   if (agent.includes("cersei")) return <AtlasIcon size={size} className="rounded-[3px]" />;
-  return (
-    <span className="font-mono" style={{ fontSize: size * 0.8 }}>
-      {agent.slice(0, 1).toUpperCase()}
-    </span>
-  );
+  // Registry-installed external agent: manifest SVG, else a monogram.
+  const meta = agentMeta(agent);
+  if (meta.iconDataUrl) return <ExternalAgentIcon dataUrl={meta.iconDataUrl} size={size} />;
+  return <AgentMonogram label={meta.label} size={size} />;
 }
 
 // ── Clustering ──────────────────────────────────────────────────────────────
@@ -483,12 +493,13 @@ function clusterRows(rows: BoardSession[]): ListItem[] {
   return items;
 }
 
-function ClusterRow({
+const ClusterRow = memo(function ClusterRow({
   item,
   first,
   last,
   expanded,
   compact,
+  toggleKey,
   onToggle,
   onOpen,
 }: {
@@ -497,7 +508,9 @@ function ClusterRow({
   last: boolean;
   expanded: boolean;
   compact: boolean;
-  onToggle: () => void;
+  /** Passed back to `onToggle` so the parent can share one stable handler. */
+  toggleKey: string;
+  onToggle: (key: string) => void;
   onOpen: (id: string, projectPath: string) => void;
 }) {
   // Seconds, like every other duration here — `formatDuration` takes seconds.
@@ -506,7 +519,7 @@ function ClusterRow({
     <>
       <button
         type="button"
-        onClick={onToggle}
+        onClick={() => onToggle(toggleKey)}
         aria-expanded={expanded}
         className={cn(
           compact ? ROW_GRID_COMPACT : ROW_GRID,
@@ -591,7 +604,7 @@ function ClusterRow({
       )}
     </>
   );
-}
+});
 
 function Empty({ filtered }: { filtered: boolean }) {
   return (

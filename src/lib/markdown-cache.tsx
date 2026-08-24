@@ -16,6 +16,7 @@ import { isTypingHot } from "./input-activity";
 import MarkdownWorker from "./markdown.worker?worker";
 import "highlight.js/styles/github-dark.css";
 import { cn } from "./utils";
+import { isScrollHot } from "./scroll-hot";
 
 // Insertion-ordered Map → simple LRU via delete+set on hit. Bounded so a
 // thread of thousands of unique strings can't grow this unbounded.
@@ -120,6 +121,13 @@ async function renderToHtmlAsync(src: string): Promise<string> {
 
 let worker: Worker | null = null;
 let workerBroken = false;
+/** Whether THIS worker instance has ever answered a message. The parse
+ *  watchdog can't tell "script never loaded" from "this one parse is slow"
+ *  (a multi-MB fence, or WebKit cold-resuming a suspended worker) — it used
+ *  to latch `workerBroken` either way, permanently demoting every later
+ *  large block to the main thread for the rest of the session. Only a worker
+ *  that has never answered anything is presumed dead. */
+let workerEverAnswered = false;
 let seq = 0;
 // Waiters keep their SOURCE so a worker failure can settle them synchronously —
 // without it each in-flight block sat blank until its own 3s watchdog fired.
@@ -138,6 +146,7 @@ function ensureWorker(): Worker | null {
   try {
     worker = new MarkdownWorker();
     worker.onmessage = (e: MessageEvent<{ id: number; html: string }>) => {
+      workerEverAnswered = true;
       const waiter = waiters.get(e.data.id);
       if (waiter) {
         waiters.delete(e.data.id);
@@ -168,6 +177,21 @@ export function warmMarkdownWorker(): void {
   // Same idea for the main-thread renderer: get its chunk resident before the
   // first small block wants a synchronous parse.
   void ensureRenderer();
+  // Recovery path: a worker latched broken (never answered before a watchdog
+  // fired) gets one fresh attempt per warm ping. If it is genuinely dead it
+  // re-latches on next use; if the failure was transient (cold start racing
+  // the first big block), the app gets its worker back instead of parsing on
+  // the main thread for the rest of the session.
+  if (workerBroken) {
+    try {
+      worker?.terminate();
+    } catch {
+      /* ignore */
+    }
+    worker = null;
+    workerBroken = false;
+    workerEverAnswered = false;
+  }
   const w = ensureWorker();
   if (w) {
     try {
@@ -215,6 +239,11 @@ function pump(): void {
     inFlight += 1;
     item.dispatch();
   }
+  // Queue drained → the streaming tail may take the worker (see the transient
+  // lane's yield rule below).
+  if (inFlight === 0 && queue.length === 0) {
+    kickTransient();
+  }
 }
 
 /** Raise a queued item's priority — the same source can be requested again by a
@@ -258,12 +287,14 @@ function parseLarge(source: string, priority: number): Promise<string> {
         priority,
         dispatch: () => {
           waiters.set(id, { source, finish });
-          // Watchdog: if the worker never answers (e.g. its script failed to
-          // load asynchronously), fall back to a main-thread parse so the
-          // message still renders instead of hanging blank.
+          // Watchdog: if the worker never answers, fall back to a main-thread
+          // parse so the message still renders instead of hanging blank. Only
+          // a worker that has NEVER answered is presumed dead — a slow parse
+          // (huge block, WebKit cold-resume) falls back for this block alone
+          // and the worker stays in service.
           window.setTimeout(() => {
             if (!settled) {
-              workerBroken = true;
+              if (!workerEverAnswered) workerBroken = true;
               void renderToHtmlAsync(source).then(finish);
             }
           }, 3000);
@@ -301,6 +332,94 @@ function parseLarge(source: string, priority: number): Promise<string> {
     }),
   );
   return pending.get(source)!;
+}
+
+// ── Transient (streaming-tail) lane ────────────────────────────────────────
+//
+// The live tail's source is a new unique string every throttle tick, so it
+// must never touch the LRU (per-frame partials would evict the settled blocks
+// the cache protects) or the priority queue (hundreds of dead parses drained
+// two at a time — the original pathology StreamingMarkdown documents). This
+// lane is the worker path built for exactly that shape: ONE in-flight parse,
+// and a single "next" slot where a newer source REPLACES the queued one —
+// superseded tails are never parsed at all.
+
+let transientBusy = false;
+let transientNext: { source: string; resolve: (html: string | null) => void } | null = null;
+
+/** Whether the transient lane can run off-thread right now. When false the
+ *  caller should parse synchronously itself (the pre-worker behavior). */
+export function transientWorkerAvailable(): boolean {
+  return ensureWorker() !== null;
+}
+
+/**
+ * Parse a streaming-tail source off the main thread, latest-wins. Resolves
+ * `null` when the request was superseded by a newer tail or timed out — the
+ * caller skips that tick (a newer parse is already on the way, and settling
+ * re-renders through `CachedMarkdown` regardless). Never caches.
+ */
+export function parseTransientOffThread(source: string): Promise<string | null> {
+  const w = ensureWorker();
+  if (!w) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    if (transientNext) transientNext.resolve(null); // superseded before dispatch
+    transientNext = { source, resolve };
+    pumpTransient(w);
+  });
+}
+
+/** Run the transient job if the worker is idle and the settled-block queue is
+ *  empty. Split out so `pump()` can kick it when the queue drains. */
+function kickTransient(): void {
+  if (!transientNext) return;
+  const w = ensureWorker();
+  if (w) pumpTransient(w);
+}
+
+function pumpTransient(w: Worker): void {
+  if (transientBusy || !transientNext) return;
+  // YIELD to settled-block parses. The worker is one serial thread: scroll
+  // just revealed those blocks and the reader is looking at raw-text
+  // placeholders, while the tail is mid-word growth that can happily skip a
+  // tick (latest-wins keeps only the newest source anyway). Without this
+  // rule the 120ms tail cadence kept the worker ~always busy during a
+  // stream, and scroll-back blocks stayed unformatted for seconds.
+  if (inFlight > 0 || queue.length > 0) return;
+  const job = transientNext;
+  transientNext = null;
+  transientBusy = true;
+  const id = ++seq;
+  let settled = false;
+  const finish = (html: string) => {
+    if (settled) return;
+    settled = true;
+    waiters.delete(id);
+    transientBusy = false;
+    job.resolve(html);
+    const next = ensureWorker();
+    if (next) pumpTransient(next);
+  };
+  waiters.set(id, { source: job.source, finish });
+  // Same watchdog contract as parseLarge, but the fallback is "skip this
+  // tick" rather than a main-thread parse — the next throttle tick retries,
+  // and a stream that ended settles through CachedMarkdown anyway.
+  window.setTimeout(() => {
+    if (!settled) {
+      if (!workerEverAnswered) workerBroken = true;
+      settled = true;
+      waiters.delete(id);
+      transientBusy = false;
+      job.resolve(null);
+      const next = ensureWorker();
+      if (next) pumpTransient(next);
+    }
+  }, 3000);
+  try {
+    w.postMessage({ id, source: job.source });
+  } catch {
+    finish(""); // resolve with empty → caller skips the tick
+  }
 }
 
 interface CachedMarkdownProps {
@@ -342,7 +461,13 @@ export function CachedMarkdown({ source, className, unstyled, priority = 0 }: Ca
     // to the worker via the effect below. A small block ALSO defers when the
     // renderer chunk hasn't loaded yet — the effect routes it to the worker,
     // which carries its own copy of the pipeline and needs nothing from here.
-    if (source.length <= SYNC_LIMIT) return renderToHtmlSyncIfReady(source);
+    //
+    // …and when the reader is MID-FLING: a scroll-triggered window grow
+    // mounts dozens of these in one commit, and dozens of sync parses inside
+    // a scroll frame is a main-thread stall the compositor scrolls straight
+    // past (black viewport). Cache hits above still render instantly; a
+    // fresh block shows its raw-text placeholder and formats on settle.
+    if (source.length <= SYNC_LIMIT && !isScrollHot()) return renderToHtmlSyncIfReady(source);
     return null;
   });
   const ref = useRef<HTMLDivElement>(null);
@@ -353,7 +478,7 @@ export function CachedMarkdown({ source, className, unstyled, priority = 0 }: Ca
       if (hit !== html) setHtml(hit);
       return;
     }
-    if (source.length <= SYNC_LIMIT) {
+    if (source.length <= SYNC_LIMIT && !isScrollHot()) {
       const fresh = renderToHtmlSyncIfReady(source);
       if (fresh !== null) {
         if (fresh !== html) setHtml(fresh);

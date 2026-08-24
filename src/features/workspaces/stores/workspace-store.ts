@@ -204,7 +204,12 @@ function teardownHot(id: string): void {
   // The picker's no-IPC fast path must stop vouching for an index that is
   // about to be torn down.
   const path = useWorkspaceStore.getState().workspaces.find((w) => w.id === id)?.path;
-  if (path) markFileIndexClosedFor(path);
+  if (path) {
+    markFileIndexClosedFor(path);
+    // Memory registry is keyed by cwd, not workspaceId — releases the engine,
+    // its recursive FS watcher and the debounce task for this project.
+    void invoke("memory_indexer_close_project", { cwd: path }).catch(() => {});
+  }
   void invoke("fileindex_close_project", { workspaceId: id }).catch(() => {});
   void invoke("git_watch_stop", { workspaceId: id }).catch(() => {});
   void invoke("recent_files_close_project", { workspaceId: id }).catch(() => {});
@@ -237,7 +242,20 @@ export const useWorkspaceStore = createSelectors(
     editingWorkspaceId: null,
     actions: {
       addWorkspace: async (path: string) => {
-        const existing = get().workspaces.find((w) => w.path === path);
+        // Dedup by (path, ORG) — not path alone. Workspace identity is
+        // per-organisation in the tag-in-place model: the sidebar filters by
+        // `orgId === activeOrganisationId`, so matching a same-path workspace
+        // that belongs to ANOTHER org and switching to it left the project
+        // rendered in the center panel (currentProject is not org-filtered)
+        // while invisible in the new org's switcher — the "added a project in
+        // a fresh org and it never appeared" bug. Opening the same folder
+        // from a second org now creates that org's own workspace row.
+        // Legacy untagged rows (orgId == null, shown in every org) still
+        // dedupe against any org so they aren't duplicated post-migration.
+        const org = activeOrgId();
+        const existing = get().workspaces.find(
+          (w) => w.path === path && (w.orgId === org || w.orgId == null),
+        );
         if (existing) {
           await get().actions.switchTo(existing.id);
           return existing.id;
@@ -247,7 +265,7 @@ export const useWorkspaceStore = createSelectors(
           name: nameOf(path),
           path,
           groupId: null,
-          orgId: activeOrgId(),
+          orgId: org,
         };
         set((s) => ({ workspaces: [...s.workspaces, ws] }));
         scheduleAppStateSave();
@@ -256,14 +274,18 @@ export const useWorkspaceStore = createSelectors(
       },
 
       addProjectEntry: (path: string) => {
-        const existing = get().workspaces.find((w) => w.path === path);
+        // Same (path, org) identity rule as addWorkspace above.
+        const org = activeOrgId();
+        const existing = get().workspaces.find(
+          (w) => w.path === path && (w.orgId === org || w.orgId == null),
+        );
         if (existing) return existing.id;
         const ws: Workspace = {
           id: uuid(),
           name: nameOf(path),
           path,
           groupId: null,
-          orgId: activeOrgId(),
+          orgId: org,
         };
         set((s) => ({ workspaces: [...s.workspaces, ws] }));
         scheduleAppStateSave();
@@ -330,7 +352,10 @@ export const useWorkspaceStore = createSelectors(
         //    immediately even though the real `activeWorkspaceId` lags behind.
         const pinnedNow = get().sidebarPinned;
         const wasOpen = get().sidebarOpen && !pinnedNow;
-        set({ optimisticActiveId: id, ...(pinnedNow ? {} : { sidebarOpen: false }) });
+        set({
+          optimisticActiveId: id,
+          ...(pinnedNow ? {} : { sidebarOpen: false }),
+        });
 
         // A switch already in flight → don't DROP the click; remember the latest
         // target and run it when the current one settles (coalesce). The close +
@@ -567,7 +592,10 @@ export const useWorkspaceStore = createSelectors(
           orgId: activeOrgId(),
         };
         // Open the new group straight into inline-rename so the user can name it.
-        set((s) => ({ groups: [...s.groups, group], editingGroupId: group.id }));
+        set((s) => ({
+          groups: [...s.groups, group],
+          editingGroupId: group.id,
+        }));
         scheduleAppStateSave();
         return group.id;
       },

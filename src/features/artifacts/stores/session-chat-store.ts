@@ -1,7 +1,7 @@
 /**
  * Session-Chat store — chat threads about one recorded Session.
  *
- * Modelled on `memory-chat-store`, with two differences that follow from the
+ * Modelled on the former memory-chat store, with two differences that follow from the
  * feature rather than from taste:
  *
  * * **Provider-only.** There is no local-model branch, so no `mode`, no model
@@ -18,11 +18,12 @@
 import { create } from "zustand";
 
 import { createSelectors } from "@/lib/create-selectors";
+import { createStreamDeltaBuffer } from "@/lib/stream-delta-buffer";
 import {
   modelchat as providerChat,
   listenModelChat,
   type ModelChatEvent,
-} from "@/features/model-chat/lib/model-chat-api";
+} from "@/lib/byok/byok-chat";
 import type { ChatMessage } from "@/types/agent";
 
 import {
@@ -386,6 +387,27 @@ function bumpMeta(
   });
 }
 
+// Token deltas coalesce to ONE setState per animation frame (see
+// stream-delta-buffer) instead of a full-Record spread + render per token.
+const deltaBuffer = createStreamDeltaBuffer((chunks) => {
+  useSessionChatStoreBase.setState((st) => {
+    let threads = st.threads;
+    for (const [streamId, delta] of chunks) {
+      const threadId = st.streamToThread[streamId];
+      if (!threadId) continue;
+      const t = threads[threadId];
+      if (!t) continue;
+      const msgs = t.messages.slice();
+      const last = msgs[msgs.length - 1];
+      if (last?.role !== "assistant") continue;
+      msgs[msgs.length - 1] = { ...last, content: last.content + delta };
+      if (threads === st.threads) threads = { ...threads };
+      threads[threadId] = { ...t, messages: msgs };
+    }
+    return threads === st.threads ? {} : { threads };
+  });
+});
+
 function onEvent(
   set: (fn: (st: SessionChatState) => Partial<SessionChatState>) => void,
   get: () => SessionChatState,
@@ -397,20 +419,13 @@ function onEvent(
   if (!threadId) return;
 
   if (e.kind === "text_delta") {
-    set((st) => {
-      const t = st.threads[threadId];
-      if (!t) return {};
-      const msgs = t.messages.slice();
-      const last = msgs[msgs.length - 1];
-      if (last?.role === "assistant") {
-        msgs[msgs.length - 1] = { ...last, content: last.content + e.delta };
-      }
-      return { threads: { ...st.threads, [threadId]: { ...t, messages: msgs } } };
-    });
+    deltaBuffer.push(e.stream_id, e.delta);
     return;
   }
 
   if (e.kind === "done" || e.kind === "error") {
+    // The terminal persists the thread from state — drain buffered text first.
+    deltaBuffer.flush();
     set((st) => {
       const t = st.threads[threadId];
       const streamToThread = { ...st.streamToThread };

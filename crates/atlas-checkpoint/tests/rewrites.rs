@@ -123,6 +123,7 @@ fn agent_commit(
                 FileWrite {
                     path: &resolved,
                     sha256_after: Some(hash_written_content(content.as_bytes())),
+                sketch_after: atlas_checkpoint::sketch::sketch(content.as_bytes()),
                     existed_before: true,
                     deleted: false,
                 },

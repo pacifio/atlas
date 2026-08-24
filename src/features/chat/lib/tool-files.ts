@@ -72,8 +72,13 @@ export function classifyToolFileKind(
   return null;
 }
 
-/** Trim common prefix/suffix and count changed lines (matches `EditDiffView`). */
-function countPart(oldStr: string, neu: string): { added: number; removed: number } {
+/** Trim common prefix/suffix and count changed lines (matches `EditDiffView`).
+ *
+ *  Exported because an edit reaches Atlas two ways — as recognisable tool
+ *  arguments, and as an ACP `diff` content block — and both must count it the
+ *  same, or the same change reads as a different size depending on which
+ *  shape the agent happened to send. */
+export function countChangedLines(oldStr: string, neu: string): { added: number; removed: number } {
   const o = oldStr.split("\n");
   const n = neu.split("\n");
   let start = 0;
@@ -102,7 +107,7 @@ export function countEditLines(
   let added = 0;
   let removed = 0;
   for (const p of getEditParts(toolName, args)) {
-    const c = countPart(p.old, p.neu);
+    const c = countChangedLines(p.old, p.neu);
     added += c.added;
     removed += c.removed;
   }

@@ -4,10 +4,14 @@
 //! surface (spawn / new_session / send / set_mode / set_model / …). The only
 //! extra surface it needs is listing its own persisted sessions for the chat
 //! session sidebar — model/provider selection reuses the frontend's existing
-//! BYOK catalog (`review-agents/lib/model-catalog.ts`) + `agents_set_model`
+//! BYOK catalog (`settings/lib/model-catalog.ts`) + `agents_set_model`
 //! with a `"provider/model"` value.
 
-use atlas_agents::{AgentManager, ReplayItem, SessionMeta};
+use std::sync::Arc;
+
+use atlas_cersei::SessionMeta;
+
+use super::agent_host::AgentHost;
 use tauri::State;
 
 /// Stored native-agent sessions for `project_path`, newest first (sidebar).
@@ -17,10 +21,10 @@ use tauri::State;
 #[tauri::command]
 pub async fn cersei_list_sessions(
     project_path: String,
-    manager: State<'_, AgentManager>,
+    host: State<'_, Arc<AgentHost>>,
 ) -> Result<Vec<SessionMeta>, String> {
-    let mgr = (*manager).clone();
-    let rows = tokio::task::spawn_blocking(move || mgr.cersei_list_sessions(&project_path))
+    let host = host.inner().clone();
+    let rows = tokio::task::spawn_blocking(move || host.native_sessions(&project_path))
         .await
         .map_err(|e| e.to_string())?;
     Ok(rows)
@@ -33,18 +37,7 @@ pub async fn cersei_list_sessions(
 pub fn cersei_delete_session(
     project_path: String,
     session_id: String,
-    manager: State<'_, AgentManager>,
+    host: State<'_, Arc<AgentHost>>,
 ) -> Result<(), String> {
-    manager.cersei_delete_session(&project_path, &session_id)
-}
-
-/// Full transcript (UI-neutral replay items) for one stored native-agent
-/// session — drives the Memory tab's Atlas view (transcripts + plans).
-#[tauri::command]
-pub fn cersei_session_transcript(
-    project_path: String,
-    session_id: String,
-    manager: State<'_, AgentManager>,
-) -> Vec<ReplayItem> {
-    manager.cersei_session_transcript(&project_path, &session_id)
+    host.native_delete_session(&project_path, &session_id)
 }

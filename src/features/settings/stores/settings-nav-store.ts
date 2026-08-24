@@ -15,10 +15,10 @@ export type SettingsSection =
   | "layouts"
   | "providers"
   | "skills"
+  | "agents"
   | "models"
   | "updates"
   | "keybindings"
-  | "developer"
   | "about";
 
 /** Cross-component signal to open the Settings tab on a specific section.

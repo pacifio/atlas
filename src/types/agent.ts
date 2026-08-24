@@ -1,28 +1,41 @@
 import type { SessionModeInfo } from "./agents";
 
-export type AgentType =
-  | "claude-code"
-  | "codex"
-  | "opencode"
-  | "cursor"
-  | "kilo"
-  | "cersei"
-  | "custom";
+/** The agents Atlas has first-party BRANDING for — labels, brand icons and
+ *  `.agent-*` CSS tokens, which are Atlas's own design rather than registry
+ *  metadata. It is not a list of agents that exist: apart from `cersei` (the
+ *  native agent) every one of these must be installed from the Marketplace
+ *  before it can run (ADR-0002), and an installed agent with no entry here
+ *  simply renders from its registry metadata. */
+export type FirstPartyAgent = "claude-code" | "codex" | "opencode" | "cursor" | "kilo" | "cersei";
 
-/** Switchable (Atlas-shipped) agents — excludes the catch-all "custom". */
-export type SwitchableAgent = "claude-code" | "codex" | "opencode" | "cursor" | "kilo" | "cersei";
+/** Agent identity is plugin-id-first and OPEN (Paseo-style): the first-party
+ *  literals keep autocomplete/narrowing, but any registry-installed plugin id
+ *  is a valid agent type. `"custom"` survives as a legacy value only. */
+export type AgentType = FirstPartyAgent | "custom" | (string & {});
 
-/** The coding agents Atlas ships, in switch order (for option+/). */
-export const SWITCHABLE_AGENTS: SwitchableAgent[] = [
-  "claude-code",
-  "codex",
-  "opencode",
-  "cursor",
-  "kilo",
-  "cersei",
-];
+/** Open alias — kept for call-site readability where "switchable" intent
+ *  matters. The actual switchable list is dynamic and entirely catalog-derived:
+ *  `useSwitchableAgents()` in features/agents (the native agent + whatever the
+ *  user installed). */
+export type SwitchableAgent = FirstPartyAgent | (string & {});
 
-export const AGENT_LABEL: Record<SwitchableAgent, string> = {
+/** The native, in-process agent. The one id that is always runnable: it needs
+ *  no install, cannot be uninstalled, and is what a fresh profile offers on its
+ *  own (ADR-0002 — Atlas ships no ACP agents).
+ *
+ *  This is NOT a default ACP agent and must never be used as a stand-in for
+ *  one; it is the identity of "Atlas itself". The switchable list is otherwise
+ *  entirely catalog-derived — see `switchableAgentIds()` in features/agents. */
+export const NATIVE_AGENT_ID = "cersei";
+
+/** Upstream 0.3.0-x's name for the same constant — its identity model calls
+ *  the native agent `NATIVE_AGENT` and files merged from that line import it
+ *  under this name. One value, two spellings; do not let them diverge. */
+export const NATIVE_AGENT = NATIVE_AGENT_ID;
+
+/** First-party labels. For externals use `agentMeta(id).label`
+ *  (features/agents/lib/agent-meta). */
+export const AGENT_LABEL: Record<FirstPartyAgent, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
@@ -31,10 +44,10 @@ export const AGENT_LABEL: Record<SwitchableAgent, string> = {
   cersei: "Atlas",
 };
 
-/** The Rust-side spawnable plugin id for each switchable agent (see
+/** The Rust-side spawnable plugin id for each first-party agent (see
  *  `AgentSpec::all_known()` in crates/atlas-acp). Single source of truth —
  *  every agentType→pluginId decision goes through `pluginIdForAgent`. */
-export const PLUGIN_ID_BY_AGENT: Record<SwitchableAgent, string> = {
+export const PLUGIN_ID_BY_AGENT: Record<FirstPartyAgent, string> = {
   "claude-code": "claude-code-ts",
   codex: "codex",
   opencode: "opencode",
@@ -43,25 +56,44 @@ export const PLUGIN_ID_BY_AGENT: Record<SwitchableAgent, string> = {
   cersei: "cersei",
 };
 
-export function pluginIdForAgent(agentType: AgentType | undefined): string {
-  if (agentType && agentType !== "custom") return PLUGIN_ID_BY_AGENT[agentType];
-  return PLUGIN_ID_BY_AGENT["claude-code"];
+function isFirstPartyAgent(agentType: string): agentType is FirstPartyAgent {
+  return Object.prototype.hasOwnProperty.call(PLUGIN_ID_BY_AGENT, agentType);
 }
 
-/** ACP-transport agents (out-of-process adapters) — the ones with modes/models
- *  advertised over ACP and warmable caches. Excludes the native in-process
- *  agent. */
-export const ACP_AGENTS: SwitchableAgent[] = ["claude-code", "codex", "opencode", "cursor", "kilo"];
+/** The spawnable spec id for an agent type.
+ *
+ *  No identity at all — absent, or the retired `"custom"` — routes to the
+ *  NATIVE agent. It used to route to Claude Code, the last hardcoded default
+ *  plugin id: on a fresh profile that silently aimed at an agent nobody had
+ *  installed, and it is reached for real by resuming a history row that
+ *  recorded no agent type. `switchableAgentOf` already resolves the same
+ *  inputs to the native agent, and the two must not disagree about one
+ *  session (ADR-0002). */
+export function pluginIdForAgent(agentType: AgentType | undefined): string {
+  if (!agentType || agentType === "custom") return PLUGIN_ID_BY_AGENT[NATIVE_AGENT_ID];
+  if (isFirstPartyAgent(agentType)) return PLUGIN_ID_BY_AGENT[agentType];
+  // External agents: the agent type IS the plugin id.
+  return agentType;
+}
 
-/** Derive the display agent type from a spawnable plugin id. */
+/** Derive the display agent type from a spawnable plugin id. Unknown ids pass
+ *  through unchanged — an external agent's identity is its plugin id, and
+ *  collapsing it (the old `"custom"` fallback) lost it forever. */
 export function agentTypeFromPluginId(pluginId: string): AgentType {
   if (pluginId === "codex") return "codex";
   if (pluginId === "opencode") return "opencode";
   if (pluginId === "cursor") return "cursor";
   if (pluginId === "kilo") return "kilo";
   if (pluginId === "cersei") return "cersei";
-  if (pluginId.startsWith("claude")) return "claude-code";
-  return "custom";
+  // The NATIVE claude ids only — the current spec id and the legacy one old
+  // history rows recorded. A `startsWith("claude")` here also swallowed the
+  // EXTERNAL registry agent "claude-acp", whose identity is its plugin id:
+  // every snapshot-seed gate then compared the collapsed "claude-code" against
+  // the tab's real "claude-acp", dropped the seed as stale, and the
+  // modes/knobs pills starved. Same bug `switchableAgentOf` was already
+  // cured of — externals pass through.
+  if (pluginId === "claude-code-ts" || pluginId === "claude-code") return "claude-code";
+  return pluginId;
 }
 export type AgentStatus = "idle" | "running" | "waiting" | "done" | "error";
 
@@ -76,12 +108,17 @@ export function isBusyAgentStatus(status: string | undefined): boolean {
  *  The composer stays "busy" while tools are in flight even if `status` has
  *  (racily) flipped to idle, so it never re-enables ahead of a still-spinning
  *  tool card. Rust is authoritative — it defers turn-end until tool calls
- *  quiesce — this is the thin view-side guard against any residual race. */
-export function hasInFlightToolCalls(session: { messages: ChatMessage[] } | undefined): boolean {
-  if (!session) return false;
-  return session.messages.some((m) =>
-    m.toolCalls.some((tc) => tc.status === "pending" || tc.status === "running"),
-  );
+ *  quiesce — this is the thin view-side guard against any residual race.
+ *  O(1): reads the store-maintained `inflightToolIds` map (synced on
+ *  tool_call_upserted, swept on every terminal) — ChatPanel calls this once
+ *  per streaming frame, so an O(messages) rescan here was per-frame cost. */
+export function hasInFlightToolCalls(
+  session: { inflightToolIds?: Record<string, true> } | undefined,
+): boolean {
+  const ids = session?.inflightToolIds;
+  if (!ids) return false;
+  for (const _ in ids) return true;
+  return false;
 }
 export type MessageRole = "user" | "assistant" | "system" | "tool";
 export type ClaudePermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
@@ -141,6 +178,10 @@ export interface ChatSession {
     /** ms epoch when this retry status arrived (for the countdown). */
     receivedAt: number;
   };
+  /** Ids of tool calls currently pending/running, maintained incrementally on
+   *  tool_call_upserted and swept (to undefined) on every terminal — the O(1)
+   *  source for `hasInFlightToolCalls`. */
+  inflightToolIds?: Record<string, true>;
   /** Turn identity of this session's current/most-recent turn, taken from the
    *  Rust `turn_seq` on status/terminal deltas. Used to reject a stale terminal
    *  (idle/error) belonging to a turn already superseded by a newer send —
@@ -168,6 +209,11 @@ export interface ChatSession {
   /** Claude-only permission mode. Absent for non-Claude agents (e.g. Codex),
    *  which drive their modes via the generic ACP `acpCurrentMode`/snapshot. */
   claudePermissionMode?: ClaudePermissionMode;
+  /** True only after the user explicitly changes Claude's mode in this tab. */
+  claudePermissionModeExplicit?: boolean;
+  /** Id of the user message sent JUST NOW — the only row that plays the
+   *  composer-side bubble entrance animation (see UserRowView). */
+  justSentMessageId?: string;
   /** ACP agent process bound to this tab (set eagerly when the tab mounts). */
   acpAgentId?: string;
   /**
@@ -179,6 +225,8 @@ export interface ChatSession {
   acpSessionId?: string;
   /** Currently selected ACP session mode (default / acceptEdits / plan / …). */
   acpCurrentMode?: string;
+  /** True only after the user explicitly changes an ACP mode in this tab. */
+  acpModeExplicit?: boolean;
   /** Modes the agent advertised for this session — drives the composer's mode
    *  picker for non-Claude agents (e.g. Codex). Seeded from the snapshot. */
   acpAvailableModes?: SessionModeInfo[];
@@ -191,6 +239,19 @@ export interface ChatSession {
    *  native Cersei agent this is the bare model id; the provider lives in
    *  `cerseiProvider` and the two are pushed to the backend as `provider/model`. */
   acpCurrentModel?: string;
+  /** Raw ACP `configOptions` for this session (P2.2). Kept current by the
+   *  `config_options_updated` delta so a knob toggled INSIDE the agent is
+   *  reflected without waiting for a snapshot refetch. */
+  acpConfigOptions?: unknown[];
+  /** An unanswered `elicitation/create` from the agent (P3.3). */
+  pendingElicitation?: {
+    agentId: string;
+    requestId: string;
+    mode: "form" | "url";
+    message: string;
+    requestedSchema?: unknown;
+    url?: string | null;
+  };
   /** Models the ACP agent advertised (Claude Code / Codex) — drives the
    *  composer's model picker. Seeded from the snapshot's `available_models`;
    *  empty for agents (or the native one) that don't expose ACP model lists. */
@@ -319,6 +380,17 @@ export interface ChatMessage {
   model?: string;
 }
 
+/**
+ * A tool-content block that renders structurally rather than as result text
+ * (P1.4). Mirrors `atlas_agents::session::ToolContentBlock` — the Rust test
+ * `blocks_serialize_to_the_shape_the_frontend_expects` pins this wire shape.
+ */
+export type ToolContentBlock =
+  /** An edit the agent proposed or made. `oldText` is absent for a new file. */
+  | { type: "diff"; path: string; oldText?: string; newText: string }
+  /** A terminal the agent created via ACP `terminal/*`. */
+  | { type: "terminal"; terminalId: string };
+
 export interface ToolCallDisplay {
   id: string;
   toolName: string;
@@ -330,6 +402,12 @@ export interface ToolCallDisplay {
   result: string | null;
   status: "pending" | "running" | "completed" | "failed";
   duration: number | null;
+  /**
+   * Structural content the agent attached to this call. Absent for almost every
+   * call — only ACP agents that report edits as `ToolCallContent::Diff` (rather
+   * than as recognisable Write/Edit arguments) populate it.
+   */
+  contentBlocks?: ToolContentBlock[];
 }
 
 export interface FileChange {

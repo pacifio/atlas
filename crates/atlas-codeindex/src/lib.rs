@@ -1,16 +1,19 @@
 //! `atlas-codeindex` — turn a live codebase into fresh, embeddable documents.
 //!
 //! Deterministic half of the Memory-Chat codebase indexer: walk the project
-//! (gitignore-respecting), parse each supported source file with Cersei's
-//! tree-sitter `code_intel`, and emit one [`CodebaseDoc`] per file carrying its
-//! language, imports, top-level symbols, and a content hash for incremental
-//! rebuilds. The LLM-summary (Tier 2) and embedding steps live in the app's
-//! command layer; this crate stays pure (no I/O beyond reading source files).
+//! (gitignore-respecting), parse each supported source file with Atlas's own
+//! tree-sitter [`code_intel`], and emit one [`CodebaseDoc`] per file carrying
+//! its language, imports, top-level symbols, and a content hash for incremental
+//! rebuilds. The embedding step and the optional Tier-2 LLM summary both live
+//! in the app's command layer; this crate is pure (no network, and no I/O
+//! beyond reading source files).
+
+pub mod code_intel;
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use cersei::tools::tool_primitives::code_intel::{self, Language, SymbolKind};
+use code_intel::{Language, SymbolKind};
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -69,14 +72,7 @@ pub struct ScannedFile {
 }
 
 fn language_label(language: Language) -> &'static str {
-    match language {
-        Language::Rust => "rust",
-        Language::TypeScript => "typescript",
-        Language::JavaScript => "javascript",
-        Language::Python => "python",
-        Language::Go => "go",
-        Language::Unknown => "unknown",
-    }
+    language.label()
 }
 
 fn symbol_label(kind: SymbolKind) -> &'static str {

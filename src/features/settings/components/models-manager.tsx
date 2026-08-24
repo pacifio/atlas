@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Search, Download, Check, Trash2, Loader2, Cpu, Boxes, AlertTriangle } from "lucide-react";
+import { Search, Download, Check, Trash2, Loader2, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useModelsStore } from "../stores/models-store";
-import { models, type ModelKind, type ModelStatus } from "../lib/models-api";
+import { models, type ModelStatus } from "../lib/models-api";
 
 const COL = {
   name: "flex-1 min-w-[240px]",
@@ -26,7 +26,6 @@ export function ModelsManager() {
   const actions = useModelsStore.use.actions();
   const projectPath = useProjectStore.use.currentProject()?.path ?? null;
 
-  const [kind, setKind] = useState<ModelKind>("embedding");
   const [query, setQuery] = useState("");
   const [confirm, setConfirm] = useState<{ id: string; name: string } | null>(null);
 
@@ -35,13 +34,10 @@ export function ModelsManager() {
   }, [actions]);
 
   const rows = useMemo(() => {
-    const filtered = list.filter((m) => m.kind === kind);
-    if (!query.trim()) return filtered;
+    if (!query.trim()) return list;
     const q = query.toLowerCase();
-    return filtered.filter(
-      (m) => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q),
-    );
-  }, [list, kind, query]);
+    return list.filter((m) => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
+  }, [list, query]);
 
   const doDownload = async (m: ModelStatus) => {
     try {
@@ -60,20 +56,11 @@ export function ModelsManager() {
     }
   };
 
-  // Selecting an embedding model rebuilds the per-project memory index, so gate it
-  // behind a confirm dialog (option 4B). LLM switches are instant.
-  const doUse = async (m: ModelStatus) => {
+  // Selecting a model rebuilds the per-project memory index (a different model
+  // means a different vector space), so gate it behind a confirm dialog.
+  const doUse = (m: ModelStatus) => {
     if (m.selected) return;
-    if (m.kind === "embedding") {
-      setConfirm({ id: m.id, name: m.name });
-      return;
-    }
-    try {
-      await actions.select(m.id);
-      toast.success(`Using ${m.name}`);
-    } catch (e) {
-      toast.error(`${e instanceof Error ? e.message : String(e)}`);
-    }
+    setConfirm({ id: m.id, name: m.name });
   };
 
   const confirmSwitch = async () => {
@@ -96,22 +83,7 @@ export function ModelsManager() {
     <div className="h-full flex flex-col">
       {/* Toolbar */}
       <div className="shrink-0 border-b border-border-default px-4 py-2.5 flex items-center gap-2">
-        <div className="flex items-center rounded-md border border-border-default overflow-hidden">
-          <KindTab
-            active={kind === "embedding"}
-            onClick={() => setKind("embedding")}
-            icon={Boxes}
-            label="Embedding"
-          />
-          <KindTab
-            active={kind === "llm"}
-            onClick={() => setKind("llm")}
-            icon={Cpu}
-            label="Language"
-          />
-        </div>
-
-        <div className="relative ml-auto w-[240px]">
+        <div className="relative w-[240px]">
           <Search
             size={13}
             className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary"
@@ -119,6 +91,12 @@ export function ModelsManager() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && query) {
+                e.stopPropagation();
+                setQuery("");
+              }
+            }}
             placeholder="Filter models…"
             className={cn(
               "w-full h-7 pl-8 pr-2.5 rounded-md bg-bg-elevated border border-border-default",
@@ -141,7 +119,7 @@ export function ModelsManager() {
               <div className={COL.size}>Size</div>
               <div className={COL.dim}>Dim</div>
               <div className={COL.status}>Status</div>
-              <div className={COL.use}></div>
+              <div className={COL.use}>Use</div>
             </div>
             {rows.map((m) => {
               const dl = downloading[m.id];
@@ -188,12 +166,29 @@ export function ModelsManager() {
                     )}
                   </div>
                   <div className={cn(COL.use, "flex items-center justify-end gap-1")}>
-                    {m.downloaded && !m.selected && (
+                    {m.selected ? (
+                      <span className="inline-flex items-center gap-1 h-6 px-2 text-[10px] font-medium text-text-secondary">
+                        <Check size={11} /> In use
+                      </span>
+                    ) : (
                       <button
                         type="button"
-                        disabled={busy}
+                        // Shown even before download so the Download → Use path
+                        // is discoverable; a model can only be selected once its
+                        // files are on disk.
+                        disabled={busy || !m.downloaded}
+                        title={
+                          m.downloaded
+                            ? `Use ${m.name} for embeddings`
+                            : "Download this model first"
+                        }
+                        aria-label={
+                          m.downloaded
+                            ? `Use ${m.name} for embeddings`
+                            : "Download this model first"
+                        }
                         onClick={() => void doUse(m)}
-                        className="h-6 rounded-md px-2 text-[10px] font-medium border border-border-default bg-bg-elevated text-text-primary hover:bg-bg-hover transition-colors disabled:opacity-50"
+                        className="h-6 rounded-md px-2 text-[10px] font-medium border border-border-default bg-bg-elevated text-text-primary hover:bg-bg-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {busy ? <Loader2 size={11} className="animate-spin" /> : "Use"}
                       </button>
@@ -202,6 +197,7 @@ export function ModelsManager() {
                       <button
                         type="button"
                         title="Remove download"
+                        aria-label="Remove download"
                         disabled={busy}
                         onClick={() => void doRemove(m)}
                         className="h-6 w-6 flex items-center justify-center rounded-md text-text-tertiary hover:text-[var(--status-error)] hover:bg-bg-hover transition-colors disabled:opacity-50"
@@ -225,32 +221,6 @@ export function ModelsManager() {
         />
       )}
     </div>
-  );
-}
-
-function KindTab({
-  active,
-  onClick,
-  icon: Icon,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon?: React.ComponentType<{ size?: number; className?: string }>;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "inline-flex items-center gap-1.5 h-7 px-2.5 text-[11px] font-medium transition-colors cursor-pointer",
-        active ? "bg-bg-selected text-text-primary" : "text-text-secondary hover:bg-bg-hover",
-      )}
-    >
-      {Icon && <Icon size={12} />}
-      {label}
-    </button>
   );
 }
 

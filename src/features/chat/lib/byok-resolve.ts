@@ -1,5 +1,5 @@
 import { useByokStore } from "@/features/settings/stores/byok-store";
-import { preferredModels } from "@/features/review-agents/lib/model-catalog";
+import { preferredModels } from "@/features/settings/lib/model-catalog";
 import { loadCerseiModelPref } from "./cersei-model-pref";
 
 /** A one-click BYOK (provider, model) for the adaptive card's LLM features

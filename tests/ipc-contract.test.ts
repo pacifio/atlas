@@ -72,9 +72,7 @@ function declaredCommands(): Map<string, string[]> {
   for (const file of walk(RUST_SRC, [".rs"])) {
     const src = readFileSync(file, "utf8");
     for (const attr of src.matchAll(attribute)) {
-      const match = src
-        .slice(attr.index + attr[0].length)
-        .match(/\bfn\s+([a-z_][a-z0-9_]*)/i);
+      const match = src.slice(attr.index + attr[0].length).match(/\bfn\s+([a-z_][a-z0-9_]*)/i);
       if (!match) continue;
       const name = match[1];
       const where = path.relative(REPO_ROOT, file);

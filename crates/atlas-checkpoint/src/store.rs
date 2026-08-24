@@ -937,8 +937,8 @@ impl Store {
         tx.execute(
             "INSERT INTO file_touch
                 (id, tool_call_id, session_id, turn_seq, seq, path, sha256_after,
-                 existed_before, deleted, out_of_repo, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 existed_before, deleted, out_of_repo, created_at, sketch_after)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 id,
                 input.tool_call_id,
@@ -951,6 +951,7 @@ impl Store {
                 i64::from(input.deleted),
                 i64::from(input.out_of_repo),
                 Utc::now().to_rfc3339(),
+                input.sketch_after,
             ],
         )?;
         tx.commit()?;
@@ -1646,6 +1647,12 @@ impl Store {
         Ok(())
     }
 
+    /// The `.atlas` directory this store lives in — home for import sidecars
+    /// (cache files that must NOT live in the schema-gated database).
+    pub(crate) fn atlas_root(&self) -> &Path {
+        &self.root
+    }
+
     // ── Checkpoints and the commit cursor ───────────────────────────────────
 
     /// Create a Checkpoint, or leave the existing one alone.
@@ -2181,6 +2188,10 @@ pub struct FileTouchInput<'a> {
     /// NFC-normalised, workspace-relative.
     pub path: &'a str,
     pub sha256_after: Option<&'a str>,
+    /// Bounded fingerprint of the written content (see `crate::sketch`), for the
+    /// link rule's strict arm. `None` for a deletion, a binary or blank file, or
+    /// a caller that has no content to sketch.
+    pub sketch_after: Option<&'a str>,
     pub existed_before: bool,
     pub deleted: bool,
     pub out_of_repo: bool,
@@ -2224,7 +2235,7 @@ fn row_to_tool_call(row: &rusqlite::Row<'_>) -> rusqlite::Result<ToolCall> {
 }
 
 const FILE_TOUCH_COLUMNS: &str = "id, tool_call_id, session_id, turn_seq, seq, path, \
-     sha256_after, existed_before, deleted, out_of_repo, created_at";
+     sha256_after, existed_before, deleted, out_of_repo, created_at, sketch_after";
 
 fn row_to_file_touch(row: &rusqlite::Row<'_>) -> rusqlite::Result<FileTouch> {
     Ok(FileTouch {
@@ -2239,6 +2250,7 @@ fn row_to_file_touch(row: &rusqlite::Row<'_>) -> rusqlite::Result<FileTouch> {
         deleted: row.get::<_, i64>(8)? != 0,
         out_of_repo: row.get::<_, i64>(9)? != 0,
         created_at: parse_time(row.get::<_, String>(10)?),
+        sketch_after: row.get(11)?,
     })
 }
 

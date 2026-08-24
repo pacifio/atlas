@@ -44,9 +44,10 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use atlas_agents::{
-    MessageRole, OutboundMiddleware, SessionDelta, SessionDeltaEnvelope, ToolCallStatus,
+use atlas_agent_wire::{
+    MessageRole, SessionDelta, SessionDeltaEnvelope, ToolCall, ToolCallStatus, ToolContentBlock,
 };
+use atlas_bus::OutboundMiddleware;
 use atlas_checkpoint::model::DrainGate;
 use atlas_checkpoint::tools::{extract_paths, resolve_path, ResolvedPath, ToolName};
 use atlas_checkpoint::{
@@ -68,6 +69,27 @@ fn lock_ok<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 /// What the middleware knows about one agent session, learned at send time.
 ///
+/// The canonical string identity of a Workspace.
+///
+/// `workspace_id` is derived twice from two independent sources — the agent's
+/// cwd when a Session records, and the git watcher's project path when commits
+/// are walked — and the two are compared as strings. `/repo` vs `/repo/`, and
+/// `/var/...` vs `/private/var/...` on macOS, are the same directory to every
+/// filesystem call in the pipeline but different `String`s, and when they
+/// diverge `link_candidates` matches nothing: Sessions record, commits are
+/// seen, the walk returns `Ok`, and no Checkpoint is ever created.
+///
+/// Both sites route through here so the identity cannot drift. Falls back to
+/// the lexical path when the directory does not exist (a Workspace whose folder
+/// was renamed or removed) — an id is still needed to read back what was
+/// already stored under it.
+pub(crate) fn workspace_id_for(root: &std::path::Path) -> String {
+    std::fs::canonicalize(root)
+        .unwrap_or_else(|_| root.to_path_buf())
+        .to_string_lossy()
+        .to_string()
+}
+
 /// Distinct from `atlas_checkpoint::Binding`, which is how the *Workspace* is
 /// bound (mode, Slug, fingerprints). This is per-conversation routing state.
 ///
@@ -96,6 +118,12 @@ struct SessionBinding {
 }
 
 /// Work for the capture thread.
+///
+/// `ToolCall` dwarfs the other variants (its writes, arguments and now the
+/// settled-commit list all ride inline). Boxing it would buy back a few dozen
+/// bytes per QUEUED job on an unbounded queue that drains in milliseconds —
+/// the indirection costs more in reading than the memory ever will.
+#[allow(clippy::large_enum_variant)]
 enum Job {
     Prompt {
         binding: SessionBinding,
@@ -122,6 +150,10 @@ enum Job {
         /// only on the *first* terminal sighting, so repeated terminal upserts
         /// cannot duplicate `file_touch` / `agent_edit` rows.
         writes: Vec<CompletedWrite>,
+        /// Commits the shell window saw HEAD move across — a command that
+        /// committed its own writes. The worker evaluates exactly these after
+        /// the touches land; the walk's cursor has already gone past them.
+        settled_commits: Vec<String>,
         /// The patch an edit-shaped call applied, when the arguments carry one.
         /// Recorded once per call, not once per path.
         patch: Option<String>,
@@ -191,7 +223,31 @@ struct CompletedWrite {
     existed_before: bool,
     /// Hash of what the agent produced. `None` for a deletion.
     sha256_after: Option<String>,
+    /// Bounded fingerprint of the same bytes, so the link rule can measure how
+    /// much of the agent's content survived into the commit rather than
+    /// demanding an exact match. Computed here, from the same read as the hash.
+    sketch_after: Option<String>,
     deleted: bool,
+}
+
+/// How long a shell command may run and still have its writes attributed.
+///
+/// The window is the whole weakness of this approach: git cannot tell the
+/// agent's write from the user's, so everything that changed while the command
+/// ran looks the same. A command that finishes in a moment barely overlaps the
+/// user at all; one that runs for minutes — a watch, a build, a server — is
+/// long enough that the developer plausibly edited something themselves, and
+/// crediting that to the agent would make every later commit on that file link
+/// to this Session. Past this, nothing is attributed.
+const SHELL_WINDOW_LIMIT: Duration = Duration::from_secs(60);
+
+/// What the tree looked like when a shell command started.
+struct ShellWindow {
+    before: std::collections::BTreeSet<String>,
+    /// Where HEAD stood. A command that COMMITS its own writes leaves the tree
+    /// clean again, so a moved HEAD is the only evidence the window keeps.
+    head: Option<String>,
+    started: Instant,
 }
 
 /// The sampling state for one tool call's writes.
@@ -225,6 +281,21 @@ pub struct CaptureState {
     /// Write sampling per tool call id — `existed_before` answers and whether
     /// the call's writes have been recorded. Evicted when the session closes.
     pending_writes: Mutex<HashMap<String, WriteSample>>,
+    /// Open shell windows, keyed by tool-call id. See [`CaptureState::shell_window`].
+    shell_windows: Mutex<HashMap<String, ShellWindow>>,
+    /// Where HEAD stood at each session's last prompt (or where the last
+    /// fallback attribution left it) — the coarse anchor for a shell call the
+    /// per-call window never saw. Some adapters announce a command only once,
+    /// already completed, so there is no non-terminal sighting to open a
+    /// window at; the turn is then the tightest boundary that provably
+    /// predates the command. Advanced after each use, so two calls in one
+    /// turn cannot claim the same commits twice.
+    turn_heads: Mutex<HashMap<String, String>>,
+    /// Commits a closed shell window saw HEAD move across, keyed by tool-call
+    /// id, parked until the worker takes them with the call's job. They ride
+    /// separately because the ordinary walk's cursor has already consumed
+    /// them — the worker re-evaluates exactly these AFTER the touches land.
+    settled_commits: Mutex<HashMap<String, Vec<String>>>,
     /// Tool-call ids seen per session, so the write caches above can be evicted
     /// when the session's agent disconnects.
     session_calls: Mutex<HashMap<String, Vec<String>>>,
@@ -334,6 +405,9 @@ impl CaptureState {
         Self {
             sessions: Mutex::new(HashMap::new()),
             pending_writes: Mutex::new(HashMap::new()),
+            shell_windows: Mutex::new(HashMap::new()),
+            turn_heads: Mutex::new(HashMap::new()),
+            settled_commits: Mutex::new(HashMap::new()),
             session_calls: Mutex::new(HashMap::new()),
             pending_turns: Mutex::new(HashMap::new()),
             token,
@@ -411,6 +485,11 @@ impl CaptureState {
         // mis-attributed. The read is two indexed lookups, done *before* taking
         // the registry lock so no I/O happens under it.
         let source = source_for(plugin_id);
+        // The coarse shell anchor: where HEAD stands as this turn begins. Read
+        // BEFORE any lock — it spawns git once per prompt.
+        if let Some(head) = atlas_checkpoint::git::head_commit(Path::new(cwd)) {
+            lock_ok(&self.turn_heads).insert(session_id.to_string(), head);
+        }
         let needs_seed = !lock_ok(&self.sessions).contains_key(session_id);
         let seed = if needs_seed {
             seed_turn_seq(Path::new(cwd), source, session_id)
@@ -487,7 +566,7 @@ impl CaptureState {
     pub fn note_git_change(&self, workspace_root: &std::path::Path) {
         self.submit(Job::WalkCommits {
             workspace_root: workspace_root.to_path_buf(),
-            workspace_id: workspace_root.to_string_lossy().to_string(),
+            workspace_id: workspace_id_for(workspace_root),
         });
     }
 
@@ -567,11 +646,18 @@ impl CaptureState {
         // `sample_writes` acquires the two locks in the opposite order.
         let calls = lock_ok(&self.session_calls).remove(session_id);
         if let Some(calls) = calls {
+            self.forget_shell_windows(&calls);
+            self.forget_turn_head(session_id);
             let mut pending = lock_ok(&self.pending_writes);
             for call_id in calls {
                 pending.remove(&call_id);
             }
         }
+        // The binding registry itself — without this, one SessionBinding per
+        // session ever seen survived for the process lifetime (and the map is
+        // scanned under its mutex on every delta). Re-sighting the same session
+        // later is safe: note_prompt's seed path re-creates the entry.
+        lock_ok(&self.sessions).remove(session_id);
         // And the worker's cached store id for the session.
         self.submit(Job::EndSession {
             native_session_id: binding.native_session_id.clone(),
@@ -616,12 +702,11 @@ impl CaptureState {
     fn sample_writes(
         &self,
         session_id: &str,
-        call_id: &str,
         workspace_root: &std::path::Path,
-        locations: &[serde_json::Value],
-        arguments: &serde_json::Value,
+        call: &ToolCall,
         terminal: bool,
     ) -> (Vec<PendingWrite>, bool) {
+        let call_id = call.id.as_str();
         let mut pending = lock_ok(&self.pending_writes);
 
         let first_sighting = !pending.contains_key(call_id);
@@ -634,8 +719,28 @@ impl CaptureState {
         }
         let sample = pending.get_mut(call_id).expect("just ensured");
 
-        for raw in extract_paths(locations, arguments) {
-            let path = resolve_path(&raw, workspace_root);
+        // Derived here rather than passed in: a caller that computed this for
+        // the write-detection gate and then handed over a different slice is a
+        // bug with no symptom, and the call is a walk over a handful of blocks.
+        for raw in extract_paths(&call.locations, &diff_paths(&call.content_blocks), &call.arguments)
+        {
+            let mut path = resolve_path(&raw, workspace_root);
+            // `resolve_path` is deliberately lexical, so an agent that reports
+            // the CANONICAL form of a symlinked root — `/private/var/...` for a
+            // workspace opened as `/var/...`, common on macOS, and exactly what
+            // opencode does — fails the prefix strip, gets flagged
+            // `out_of_repo`, and its touch can never match a commit. Retry
+            // against the canonicalised root before accepting that verdict.
+            if path.out_of_repo {
+                if let Ok(real_root) = std::fs::canonicalize(workspace_root) {
+                    if real_root != workspace_root {
+                        let retry = resolve_path(&raw, &real_root);
+                        if !retry.out_of_repo {
+                            path = retry;
+                        }
+                    }
+                }
+            }
             if sample.writes.iter().any(|w| w.path.path == path.path) {
                 continue;
             }
@@ -658,6 +763,211 @@ impl CaptureState {
             sample.recorded = true;
         }
         (sample.writes.clone(), already_recorded)
+    }
+
+    /// Attribute the files a SHELL command wrote, by watching the tree around it.
+    ///
+    /// A shell command names no file anywhere in the protocol — not in
+    /// `locations`, not in a diff block, not in its arguments — so `sed -i`, a
+    /// redirect, a Makefile or a script left the Session nominating nothing and
+    /// therefore never earning a checkpoint (#27). The only evidence available
+    /// is the tree itself: what differed from HEAD before the command, and what
+    /// differs after.
+    ///
+    /// Deliberately silent when it cannot be sure, because a WRONG path is
+    /// worse than a missing one — it keeps linking the user's later commits to
+    /// this Session. Nothing is attributed when:
+    ///
+    /// - there is no "before" (the call's first sighting was already terminal,
+    ///   so the command had already run when we first heard of it),
+    /// - either snapshot failed or the workspace is not a repository,
+    /// - the command ran longer than [`SHELL_WINDOW_LIMIT`].
+    ///
+    /// What it still cannot see: an edit the developer made OUTSIDE Atlas while
+    /// the command ran. Within Atlas that is knowable; in another editor it is
+    /// not, and this deliberately does not guess.
+    fn shell_window(
+        &self,
+        session_id: &str,
+        call_id: &str,
+        workspace_root: &std::path::Path,
+        terminal: bool,
+    ) -> Vec<PendingWrite> {
+        if !terminal {
+            // Registered under the session so an open window is evicted when the
+            // session ends. Taken and released BEFORE `shell_windows`, matching
+            // the order `sample_writes` uses — the two must not interleave.
+            {
+                let mut calls = lock_ok(&self.session_calls);
+                let seen = calls.entry(session_id.to_string()).or_default();
+                if !seen.iter().any(|id| id == call_id) {
+                    seen.push(call_id.to_string());
+                }
+            }
+            // First sighting, still running: this is the only moment the tree
+            // is known to predate the command's writes.
+            let mut windows = lock_ok(&self.shell_windows);
+            if !windows.contains_key(call_id) {
+                if let Some(before) = atlas_checkpoint::git::worktree_changes(workspace_root) {
+                    windows.insert(
+                        call_id.to_string(),
+                        ShellWindow {
+                            before,
+                            head: atlas_checkpoint::git::head_commit(workspace_root),
+                            started: Instant::now(),
+                        },
+                    );
+                }
+            }
+            return Vec::new();
+        }
+
+        let Some(window) = lock_ok(&self.shell_windows).remove(call_id) else {
+            // No window means the call's FIRST sighting was already terminal —
+            // some adapters announce a command exactly once, finished. The
+            // per-call window cannot exist, so fall back to the turn anchor:
+            // a HEAD that moved since the prompt is still exact evidence, just
+            // coarser (the whole turn rather than one call). The anchor
+            // advances after use, so a later call in the same turn cannot
+            // re-claim these commits. No anchor, or an unmoved HEAD, stays
+            // silent — same posture as everywhere else in this file.
+            let anchored = lock_ok(&self.turn_heads).get(session_id).cloned();
+            let (Some(before_head), Some(after_head)) =
+                (anchored, atlas_checkpoint::git::head_commit(workspace_root))
+            else {
+                return Vec::new();
+            };
+            if before_head == after_head {
+                return Vec::new();
+            }
+            let Some(changes) = atlas_checkpoint::git::changed_between(
+                workspace_root,
+                &before_head,
+                &after_head,
+            ) else {
+                return Vec::new();
+            };
+            lock_ok(&self.turn_heads).insert(session_id.to_string(), after_head.clone());
+            if let Ok(commits) = atlas_checkpoint::git::commits_between(
+                workspace_root,
+                Some(&before_head),
+                &after_head,
+            ) {
+                if !commits.is_empty() {
+                    lock_ok(&self.settled_commits).insert(call_id.to_string(), commits);
+                }
+            }
+            return changes
+                .into_iter()
+                .map(|change| {
+                    let path = resolve_path(&change.path, workspace_root);
+                    PendingWrite { path, existed_before: change.kind.existed_in_parent() }
+                })
+                .collect();
+        };
+        if window.started.elapsed() > SHELL_WINDOW_LIMIT {
+            tracing::debug!(
+                target: "atlas::capture",
+                "shell call {call_id} ran for {:?}; too long to attribute its writes",
+                window.started.elapsed()
+            );
+            return Vec::new();
+        }
+        let Some(after) = atlas_checkpoint::git::worktree_changes(workspace_root) else {
+            return Vec::new();
+        };
+
+        let mut writes: Vec<PendingWrite> = after
+            .difference(&window.before)
+            .map(|raw| {
+                let path = resolve_path(raw, workspace_root);
+                // Post-write by construction, so git's index is the only source
+                // that still distinguishes "created" from "edited" — the same
+                // reasoning as the late-locations arm above.
+                let existed_before =
+                    atlas_checkpoint::git::tracked_in_head(workspace_root, &path.path);
+                PendingWrite { path, existed_before }
+            })
+            .collect();
+
+        // A command that COMMITTED its own writes leaves the tree clean, so
+        // the status difference above misses them entirely (#31). The moved
+        // HEAD is evidence, not absence: what `before_head..after_head`
+        // changed IS what the window can no longer see, with each path's
+        // `existed_before` taken from the range's change kind — the
+        // post-commit index would call every created file tracked. The
+        // commits themselves are parked for the worker, which re-evaluates
+        // exactly those after the touches land: the ordinary walk's cursor
+        // has already gone past them.
+        //
+        // A call that commits TWICE links its final commit, not the
+        // intermediate ones: the touch hashes the worktree at terminal time —
+        // the final state — so an intermediate commit's blob fails the strict
+        // arm, which deliberately does not consume the touch, leaving it live
+        // for the commit whose content it actually is. One checkpoint for the
+        // state the agent left is the honest summary of one call.
+        let after_head = atlas_checkpoint::git::head_commit(workspace_root);
+        if let (Some(before_head), Some(after_head)) = (&window.head, &after_head) {
+            if before_head != after_head {
+                if let Some(changes) = atlas_checkpoint::git::changed_between(
+                    workspace_root,
+                    before_head,
+                    after_head,
+                ) {
+                    for change in changes {
+                        let path = resolve_path(&change.path, workspace_root);
+                        if writes.iter().any(|w| w.path.path == path.path) {
+                            continue;
+                        }
+                        writes.push(PendingWrite {
+                            path,
+                            existed_before: change.kind.existed_in_parent(),
+                        });
+                    }
+                    if let Ok(commits) = atlas_checkpoint::git::commits_between(
+                        workspace_root,
+                        Some(before_head),
+                        after_head,
+                    ) {
+                        if !commits.is_empty() {
+                            lock_ok(&self.settled_commits)
+                                .insert(call_id.to_string(), commits);
+                        }
+                    }
+                    // The turn anchor moves with us, so the coarse fallback
+                    // can never re-claim commits a per-call window settled.
+                    lock_ok(&self.turn_heads)
+                        .insert(session_id.to_string(), after_head.clone());
+                }
+            }
+        }
+
+        writes
+    }
+
+    /// The commits a closed window saw HEAD move across, if any. Taken once —
+    /// by the worker, when it records the call's writes.
+    fn take_settled_commits(&self, call_id: &str) -> Vec<String> {
+        lock_ok(&self.settled_commits)
+            .remove(call_id)
+            .unwrap_or_default()
+    }
+
+    /// Drop any shell window still open for a session's calls. Called when the
+    /// session ends, so a command that never reported a terminal status does
+    /// not hold its snapshot for the life of the process.
+    fn forget_shell_windows(&self, call_ids: &[String]) {
+        let mut windows = lock_ok(&self.shell_windows);
+        let mut settled = lock_ok(&self.settled_commits);
+        for id in call_ids {
+            windows.remove(id);
+            settled.remove(id);
+        }
+    }
+
+    /// Drop a session's turn anchor with the session.
+    fn forget_turn_head(&self, session_id: &str) {
+        lock_ok(&self.turn_heads).remove(session_id);
     }
 
     fn submit(&self, job: Job) {
@@ -686,7 +996,7 @@ fn seed_turn_seq(root: &Path, source: Source, native_session_id: &str) -> i64 {
     let Ok(store) = Store::open_reader(atlas_checkpoint::atlas_dir(root)) else {
         return 0;
     };
-    let workspace_id = root.to_string_lossy().to_string();
+    let workspace_id = workspace_id_for(root);
     let Ok(Some(session_id)) = store.session_id_for(&workspace_id, source, native_session_id)
     else {
         return 0;
@@ -1160,34 +1470,9 @@ pub async fn artifacts_sessions(
         let Some(store) = open_reader(&project_path)? else {
             return Ok(Vec::new());
         };
-        let workspace_id = workspace_id.unwrap_or_else(|| project_path.clone());
+        let workspace_id = workspace_id
+            .unwrap_or_else(|| workspace_id_for(std::path::Path::new(&project_path)));
         atlas_checkpoint::session_summaries(&store, &workspace_id).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// Per-agent session counts for this Workspace — one GROUP BY, no session
-/// bodies. Feeds the Memory panel's agent dropdown badges for the
-/// capture-backed agents (opencode/cursor/kilo) without loading full lists.
-#[tauri::command]
-pub async fn capture_agent_session_counts(
-    project_path: String,
-) -> Result<std::collections::HashMap<String, i64>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let Some(store) = open_reader(&project_path)? else {
-            return Ok(std::collections::HashMap::new());
-        };
-        let mut counts = std::collections::HashMap::new();
-        for s in store
-            .sessions_for_workspace(&project_path)
-            .map_err(|e| e.to_string())?
-        {
-            if let Some(agent) = s.agent {
-                *counts.entry(agent).or_insert(0i64) += 1;
-            }
-        }
-        Ok(counts)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1276,7 +1561,8 @@ pub async fn artifacts_board(projects: Vec<String>) -> Result<Vec<BoardSession>,
             let Ok(Some(store)) = open_reader(&project_path) else {
                 continue;
             };
-            let Ok(summaries) = atlas_checkpoint::session_summaries(&store, &project_path) else {
+            let workspace_id = workspace_id_for(Path::new(&project_path));
+            let Ok(summaries) = atlas_checkpoint::session_summaries(&store, &workspace_id) else {
                 continue;
             };
             let project_name = Path::new(&project_path)
@@ -1344,7 +1630,7 @@ pub async fn artifacts_checkpoints(projects: Vec<String>) -> Result<Vec<BoardChe
 
             let Ok(rows) = atlas_checkpoint::recent_checkpoints(
                 &store,
-                &project_path,
+                &workspace_id_for(&root),
                 CHECKPOINT_LIMIT,
                 |_| None,
             ) else {
@@ -1849,7 +2135,7 @@ fn open_reader_raw(project_path: &str) -> Result<Option<Store>, atlas_checkpoint
 /// input/output token split where ACP agents only surface a context gauge, and
 /// the importer needs to tell an in-app Session from one it read off disk.
 fn source_for(plugin_id: &str) -> Source {
-    if plugin_id == atlas_agents::CERSEI_PLUGIN_ID {
+    if plugin_id == atlas_native_agent::CERSEI_AGENT_ID {
         Source::Cersei
     } else {
         Source::Acp
@@ -2190,12 +2476,18 @@ fn process_job(
         // The Workspace binding proper arrives with the enable popover; until
         // then a Workspace is its project directory, which is the same
         // identity `.atlas/` already uses.
-        workspace_id: root.to_string_lossy().to_string(),
+        workspace_id: workspace_id_for(&root),
         source: binding.source,
         native_session_id: binding.native_session_id.clone(),
     };
 
     let mut capture = Capture::new(store, mode);
+    // Commits a shell window saw HEAD move across, linked AFTER the touches
+    // land — on this same ordered worker, which is the whole ordering
+    // guarantee (#31). The ordinary walk cannot do it: the watcher fired the
+    // moment the agent's own `git commit` moved refs, and its walk consumed
+    // these commits before any touch existed, advancing the cursor past them.
+    let mut link_after: Vec<String> = Vec::new();
     let outcome = match job {
         // Already handled above; none of these needs a Session.
         Job::WalkCommits { .. }
@@ -2251,26 +2543,33 @@ fn process_job(
             arguments,
             result,
             writes,
+            settled_commits,
             patch,
             ..
         } => match session_ids.get(&binding.native_session_id) {
-            Some(session_id) => record_tool_call(
-                &mut capture,
-                session_id,
-                &binding,
-                ToolCallJob {
-                    native_call_id,
-                    tool_name,
-                    title,
-                    kind,
-                    status,
-                    locations,
-                    arguments,
-                    result,
-                    writes,
-                    patch,
-                },
-            ),
+            Some(session_id) => {
+                let recorded = record_tool_call(
+                    &mut capture,
+                    session_id,
+                    &binding,
+                    ToolCallJob {
+                        native_call_id,
+                        tool_name,
+                        title,
+                        kind,
+                        status,
+                        locations,
+                        arguments,
+                        result,
+                        writes,
+                        patch,
+                    },
+                );
+                if recorded.is_ok() {
+                    link_after = settled_commits;
+                }
+                recorded
+            }
             None => Ok(()),
         },
         Job::FinishTurn { .. } => match session_ids.get(&binding.native_session_id) {
@@ -2287,6 +2586,22 @@ fn process_job(
         // Already flagged on the Session row by the crate where it matters;
         // this is the operator-facing half.
         tracing::warn!(target: "atlas::capture", "capture failed: {e}");
+    }
+
+    if !link_after.is_empty() {
+        match atlas_checkpoint::link_commits(store, &key.workspace_id, &root, &link_after, mode) {
+            Ok(created) if created > 0 => tracing::info!(
+                target: "atlas::capture",
+                commits = link_after.len(),
+                created,
+                "linked the commits a shell call made itself"
+            ),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(
+                target: "atlas::capture",
+                "evaluating a shell call's own commits failed: {e}"
+            ),
+        }
     }
 }
 
@@ -2488,11 +2803,15 @@ fn warn_once_unregistered(root: &std::path::Path) {
 /// Where this Workspace's agent transcripts live.
 ///
 /// Claude Code encodes the project directory into a folder name under
-/// `~/.claude/projects/`; the encoding already exists in `atlas-agents`, so it
+/// `~/.claude/projects/`; the encoding lives in `atlas-agent-transcript`, so it
 /// is reused rather than reproduced.
+///
+/// This is the checkpoint importer, whose contract (research §C9 touchpoint
+/// #11) explicitly survives the history port: Atlas stopped *reading* CLI
+/// storage for its UI, and never touches these files.
 fn transcript_source_for(root: &std::path::Path) -> Option<atlas_checkpoint::TranscriptSource> {
     let projects = dirs::home_dir()?.join(".claude").join("projects");
-    let encoded = atlas_agents::transcript::encode_cwd(&root.to_string_lossy());
+    let encoded = atlas_agent_transcript::encode_cwd(&root.to_string_lossy());
     Some(atlas_checkpoint::TranscriptSource::new(projects.join(encoded)))
 }
 
@@ -2542,6 +2861,7 @@ fn record_tool_call(
             FileWrite {
                 path: &write.path,
                 sha256_after: write.sha256_after.clone(),
+                sketch_after: write.sketch_after.clone(),
                 existed_before: write.existed_before,
                 deleted: write.deleted,
             },
@@ -2572,12 +2892,33 @@ fn serialize_arguments(arguments: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// The patch an edit-shaped call applied, from whatever shape its arguments use.
+/// The patch an edit-shaped call applied, from whatever shape it arrived in.
 ///
 /// Attribution's input, and unrecoverable once the Session ends and the file
 /// moves on — so a best-effort reconstruction from the before/after strings is
 /// worth more than nothing. Agents that hand over a real diff are preferred.
-fn edit_patch(arguments: &serde_json::Value) -> Option<String> {
+///
+/// The call's diff BLOCK is checked alongside its arguments, for the same
+/// reason the block feeds path extraction: an agent that sends no `rawInput`
+/// names its before/after only there, and reading arguments alone left exactly
+/// those agents with no attribution input at all while every other agent had it.
+///
+/// `target` is the path the patch will be stored against, so the right block is
+/// chosen when a call edits several files: the blocks carry one patch EACH, and
+/// `content_blocks[0]` is not necessarily the same file as the first recorded
+/// write (the write set may have come from `locations`, in its own order).
+/// Storing a patch under another file's name is a worse answer than storing
+/// none, because attribution consumes it as fact.
+///
+/// The two halves always come from ONE source. Splicing an `old` out of the
+/// arguments onto a `new` out of a block would synthesise a before/after that
+/// neither description ever claimed.
+fn edit_patch(
+    arguments: &serde_json::Value,
+    blocks: &[ToolContentBlock],
+    target: Option<&ResolvedPath>,
+    workspace_root: &std::path::Path,
+) -> Option<String> {
     for key in ["patch", "diff"] {
         if let Some(patch) = arguments.get(key).and_then(serde_json::Value::as_str) {
             if !patch.trim().is_empty() {
@@ -2586,12 +2927,33 @@ fn edit_patch(arguments: &serde_json::Value) -> Option<String> {
         }
     }
 
-    let old = ["old_string", "oldText", "old_str"]
+    let old_arg = ["old_string", "oldText", "old_str"]
         .iter()
         .find_map(|k| arguments.get(k).and_then(serde_json::Value::as_str));
-    let new = ["new_string", "newText", "new_str", "content"]
+    let new_arg = ["new_string", "newText", "new_str", "content"]
         .iter()
         .find_map(|k| arguments.get(k).and_then(serde_json::Value::as_str));
+
+    let (old, new) = if old_arg.is_some() || new_arg.is_some() {
+        (old_arg, new_arg)
+    } else {
+        let block = blocks.iter().find_map(|block| match block {
+            ToolContentBlock::Diff { path, old_text, new_text } => {
+                let same_file = match target {
+                    Some(target) => resolve_path(path, workspace_root).path == target.path,
+                    // Nothing to pair against — a lone block is unambiguous,
+                    // several are not, so only the lone one is trusted.
+                    None => blocks.len() == 1,
+                };
+                same_file.then_some((old_text.as_deref(), new_text.as_str()))
+            }
+            ToolContentBlock::Terminal { .. } => None,
+        });
+        match block {
+            Some((old, new)) => (old, Some(new)),
+            None => (None, None),
+        }
+    };
 
     match (old, new) {
         (None, None) => None,
@@ -2630,11 +2992,11 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                     return;
                 }
                 let (mode, body) = match message.mode {
-                    atlas_agents::MessageMode::Thinking => {
+                    atlas_agent_wire::MessageMode::Thinking => {
                         (Mode::Thinking, message.thinking.clone())
                     }
-                    atlas_agents::MessageMode::Tool => (Mode::Tool, message.content.clone()),
-                    atlas_agents::MessageMode::Text => (Mode::Text, message.content.clone()),
+                    atlas_agent_wire::MessageMode::Tool => (Mode::Tool, message.content.clone()),
+                    atlas_agent_wire::MessageMode::Text => (Mode::Text, message.content.clone()),
                 };
                 // Started even when the first chunk is empty: the body arrives
                 // as later chunks, and entries that stay empty are skipped at
@@ -2681,14 +3043,32 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                 // or not paths were extractable yet — the sampling *event* is
                 // what must be cached, or a late-locations agent gets its
                 // `existed_before` re-sampled after the write.
-                let (writes, already_recorded) = if tool_name.writes_files() {
+                // A diff block IS a write — the agent attached the before/after
+                // for a named file. That outranks the name derivation, which is
+                // a heuristic over a title and a `kind` token: an adapter that
+                // labels its edit `other` would otherwise have its diffs
+                // ignored, which is the same failure one step earlier.
+                let (writes, already_recorded) = if tool_name.writes_files()
+                    || !diff_paths(&tool_call.content_blocks).is_empty()
+                {
                     state.sample_writes(
                         &envelope.session_id,
-                        &tool_call.id,
                         &binding.workspace_root,
-                        &tool_call.locations,
-                        &tool_call.arguments,
+                        tool_call,
                         terminal,
+                    )
+                } else if tool_name == ToolName::Bash {
+                    // A shell command names no file, so the tree around it is
+                    // the only evidence of what it wrote (#27). Gated on the
+                    // call being shell-SHAPED, never on which agent sent it.
+                    (
+                        state.shell_window(
+                            &envelope.session_id,
+                            &tool_call.id,
+                            &binding.workspace_root,
+                            terminal,
+                        ),
+                        false,
                     )
                 } else {
                     (Vec::new(), true)
@@ -2700,21 +3080,35 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                 // developer's later edits get hashed as the agent's — the exact
                 // false attribution the link rule exists to prevent. Only the
                 // first terminal sighting records; repeats carry nothing.
-                let completed: Vec<CompletedWrite> = if terminal && !already_recorded {
+                //
+                // A FAILED call records nothing. `failed` is also where a
+                // rejected edit lands, and such a call has still announced its
+                // content — so recording its paths claims the agent wrote a
+                // file the user refused to let it write. That claim is not
+                // harmless: for a file that already existed, the link rule's
+                // permissive arm links on paths alone, without consulting the
+                // hash, so the next human commit touching it would be credited
+                // to a Session whose only edit was declined.
+                let succeeded = matches!(status, ToolStatus::Completed);
+                let completed: Vec<CompletedWrite> = if terminal && succeeded && !already_recorded {
                     writes
                         .iter()
                         .map(|write| {
                             let absolute = binding.workspace_root.join(&write.path.path);
-                            let (sha256_after, deleted) = match std::fs::read(&absolute) {
-                                Ok(bytes) => {
-                                    (Some(atlas_checkpoint::hash_written_content(&bytes)), false)
-                                }
-                                Err(_) => (None, true),
-                            };
+                            let (sha256_after, sketch_after, deleted) =
+                                match std::fs::read(&absolute) {
+                                    Ok(bytes) => (
+                                        Some(atlas_checkpoint::hash_written_content(&bytes)),
+                                        atlas_checkpoint::sketch::sketch(&bytes),
+                                        false,
+                                    ),
+                                    Err(_) => (None, None, true),
+                                };
                             CompletedWrite {
                                 path: write.path.clone(),
                                 existed_before: write.existed_before,
                                 sha256_after,
+                                sketch_after,
                                 deleted,
                             }
                         })
@@ -2723,6 +3117,15 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                     Vec::new()
                 };
 
+                // Before `completed` is moved into the job: the patch is
+                // stored against the first recorded write, so that is the file
+                // whose block it must come from.
+                let patch = edit_patch(
+                    &tool_call.arguments,
+                    &tool_call.content_blocks,
+                    completed.first().map(|write| &write.path),
+                    &binding.workspace_root,
+                );
                 state.submit(Job::ToolCall {
                     binding,
                     native_call_id: tool_call.id.clone(),
@@ -2734,7 +3137,8 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                     arguments: serialize_arguments(&tool_call.arguments),
                     result: tool_call.result.clone(),
                     writes: completed,
-                    patch: edit_patch(&tool_call.arguments),
+                    settled_commits: state.take_settled_commits(&tool_call.id),
+                    patch,
                 });
             }
 
@@ -2782,5 +3186,566 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
 
             _ => {}
         }
+    }
+}
+
+/// The files a tool call's diff blocks name.
+///
+/// ACP's `locations` are a SHOULD, and codex acp and cursor acp both skip them:
+/// their edits arrive with `locations: []` and no `rawInput`, naming the file
+/// only in the attached diff. That is still the agent being structural about
+/// which file the edit concerns — the same fact `locations` carries, in the
+/// other place the protocol allows it — so it feeds path extraction just as
+/// `locations` do. Reading only `locations` recorded no write for those calls,
+/// which left the Session nominating no paths and never earning a checkpoint.
+///
+/// "Concerns", not "wrote": a diff block is an edit the agent is PROPOSING or
+/// has made (`ToolContentBlock::Diff`), and in plan mode or behind a permission
+/// prompt it is announced before anything reaches disk. What separates the two
+/// is how the call ends, so the caller records writes only for a call that
+/// ended `completed` — see the note there.
+fn diff_paths(blocks: &[ToolContentBlock]) -> Vec<String> {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ToolContentBlock::Diff { path, .. } => Some(path.clone()),
+            // A terminal block names no file. Whatever the command wrote is
+            // invisible to capture either way — that is a separate gap, not
+            // one a path guessed from a command line should paper over.
+            ToolContentBlock::Terminal { .. } => None,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod diff_path_tests {
+    use super::*;
+
+    fn tool_call(locations: Vec<serde_json::Value>, blocks: Vec<ToolContentBlock>) -> ToolCall {
+        ToolCall {
+            id: "call-1".to_string(),
+            tool_name: "apply_patch".to_string(),
+            // The prose title these agents send — it names no file, which is
+            // why the diff block is the only path source.
+            title: Some("Editing files".to_string()),
+            kind: Some("edit".to_string()),
+            status: ToolCallStatus::Completed,
+            arguments: serde_json::Value::Null,
+            result: None,
+            locations,
+            raw_output: None,
+            content_blocks: blocks,
+        }
+    }
+
+    fn diff(path: &str) -> ToolContentBlock {
+        ToolContentBlock::Diff {
+            path: path.to_string(),
+            old_text: None,
+            new_text: "x".to_string(),
+        }
+    }
+
+    /// The codex acp / cursor acp shape: the diff is the only place the file is
+    /// named, so this is what has to reach `extract_paths`.
+    #[test]
+    fn a_diff_block_yields_the_file_it_edited() {
+        assert_eq!(
+            diff_paths(&[diff("/repo/index.html")]),
+            vec!["/repo/index.html".to_string()]
+        );
+    }
+
+    /// One call may edit several files; all of them must nominate the Session.
+    #[test]
+    fn every_diff_block_is_collected_in_order() {
+        assert_eq!(
+            diff_paths(&[diff("src/a.rs"), diff("src/b.rs")]),
+            vec!["src/a.rs".to_string(), "src/b.rs".to_string()]
+        );
+    }
+
+    // ── Shell-written files (#27) ───────────────────────────────────────────
+
+    fn shell_call(id: &str) -> ToolCall {
+        ToolCall {
+            id: id.to_string(),
+            tool_name: "bash".to_string(),
+            title: Some("Bash".to_string()),
+            kind: Some("execute".to_string()),
+            status: ToolCallStatus::Completed,
+            arguments: serde_json::json!({ "command": "sed -i '' s/a/b/ index.html" }),
+            result: None,
+            locations: Vec::new(),
+            raw_output: None,
+            content_blocks: Vec::new(),
+        }
+    }
+
+    /// A git repository with one commit, so `worktree_changes` has a HEAD to
+    /// compare against.
+    fn repo(name: &str) -> std::path::PathBuf {
+        let root = workspace(name);
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .expect("git runs");
+        };
+        git(&["init", "--initial-branch=main"]);
+        git(&["config", "user.email", "dev@example.com"]);
+        git(&["config", "user.name", "Dev"]);
+        std::fs::write(root.join("seed.txt"), b"seed").expect("fixture");
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "initial"]);
+        root
+    }
+
+    /// The bug: a file written by a shell command is named nowhere in the
+    /// protocol, so the Session recorded no write and never earned a
+    /// checkpoint. The tree around the command is the only evidence there is.
+    #[test]
+    fn a_file_written_by_a_shell_command_is_attributed() {
+        let root = repo("shell-write");
+        let state = CaptureState::new();
+        let call = shell_call("call-1");
+
+        // Running: the tree is known to predate whatever the command writes.
+        assert!(state.shell_window("s1", &call.id, &root, false).is_empty());
+        std::fs::write(root.join("index.html"), b"written by sed").expect("the command's write");
+        let writes = state.shell_window("s1", &call.id, &root, true);
+
+        assert_eq!(
+            writes.iter().map(|w| w.path.path.as_str()).collect::<Vec<_>>(),
+            vec!["index.html"]
+        );
+        assert!(!writes[0].existed_before, "the command created it");
+    }
+
+    /// Only what changed DURING the command. A file the developer had already
+    /// left dirty before it started is theirs, and crediting it to the agent
+    /// would link their later commits to this Session.
+    #[test]
+    fn a_file_already_dirty_before_the_command_is_not_attributed() {
+        let root = repo("shell-pre-dirty");
+        let state = CaptureState::new();
+        let call = shell_call("call-1");
+
+        std::fs::write(root.join("mine.txt"), b"the developer's own edit").expect("fixture");
+        assert!(state.shell_window("s1", &call.id, &root, false).is_empty());
+        std::fs::write(root.join("theirs.txt"), b"the command's").expect("fixture");
+
+        let writes = state.shell_window("s1", &call.id, &root, true);
+        assert_eq!(
+            writes.iter().map(|w| w.path.path.as_str()).collect::<Vec<_>>(),
+            vec!["theirs.txt"]
+        );
+    }
+
+    /// No "before", no answer. A call whose first sighting is already terminal
+    /// had already run when we heard of it, so everything dirty in the tree
+    /// might predate it — and a wrong path is worse than a missing one.
+    #[test]
+    fn a_command_already_finished_when_first_seen_attributes_nothing() {
+        let root = repo("shell-no-before");
+        let state = CaptureState::new();
+        std::fs::write(root.join("whoknows.txt"), b"who wrote this?").expect("fixture");
+
+        assert!(state.shell_window("s1", "call-1", &root, true).is_empty());
+    }
+
+    /// A workspace that is not a repository has no tree to compare, and that is
+    /// not the same as "nothing changed".
+    #[test]
+    fn a_workspace_that_is_not_a_repository_attributes_nothing() {
+        let root = workspace("shell-no-repo");
+        let state = CaptureState::new();
+        std::fs::write(root.join("a.txt"), b"x").expect("fixture");
+
+        assert!(state.shell_window("s1", "call-1", &root, false).is_empty());
+        assert!(state.shell_window("s1", "call-1", &root, true).is_empty());
+    }
+
+    /// The window is the weakness: git cannot tell the agent's write from the
+    /// developer's, so a command that ran long enough for them to have edited
+    /// something themselves attributes nothing.
+    #[test]
+    fn a_command_that_ran_too_long_attributes_nothing() {
+        let root = repo("shell-too-long");
+        let state = CaptureState::new();
+
+        state.shell_window("s1", "call-1", &root, false);
+        // Age the window past the limit rather than sleeping through it.
+        {
+            let mut windows = lock_ok(&state.shell_windows);
+            let window = windows.get_mut("call-1").expect("an open window");
+            window.started = Instant::now() - (SHELL_WINDOW_LIMIT + Duration::from_secs(1));
+        }
+        std::fs::write(root.join("late.txt"), b"whose is this?").expect("fixture");
+
+        assert!(state.shell_window("s1", "call-1", &root, true).is_empty());
+    }
+
+    /// The user's exact report on #31: `write && git add && git commit` in ONE
+    /// shell call. HEAD has moved and the tree is clean again by the time the
+    /// after-snapshot runs, so the status difference is empty — the commits the
+    /// window saw HEAD move across are the only remaining evidence.
+    #[test]
+    fn a_command_that_commits_its_own_writes_is_still_attributed() {
+        let root = repo("shell-self-commit");
+        let state = CaptureState::new();
+        let call = shell_call("call-1");
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .expect("git runs");
+        };
+
+        assert!(state.shell_window("s1", &call.id, &root, false).is_empty());
+        // The command writes, edits, and commits — all inside the window.
+        std::fs::write(root.join("made.txt"), b"created by the agent").expect("write");
+        std::fs::write(root.join("seed.txt"), b"edited by the agent").expect("edit");
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "agent: work"]);
+
+        let writes = state.shell_window("s1", &call.id, &root, true);
+
+        let mut paths: Vec<(&str, bool)> = writes
+            .iter()
+            .map(|w| (w.path.path.as_str(), w.existed_before))
+            .collect();
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec![("made.txt", false), ("seed.txt", true)],
+            "the moved HEAD is evidence, not absence — with existed_before from \
+             the commit's own change kinds, not the post-commit index"
+        );
+    }
+
+    /// The commits the window saw HEAD move across ride along, so the caller
+    /// can evaluate exactly those after the touches land — the ordinary walk's
+    /// cursor has already gone past them.
+    #[test]
+    fn the_window_names_the_commits_it_saw_head_move_across() {
+        let root = repo("shell-commit-range");
+        let state = CaptureState::new();
+        let call = shell_call("call-1");
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .expect("git runs");
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+
+        state.shell_window("s1", &call.id, &root, false);
+        std::fs::write(root.join("a.txt"), b"x").expect("write");
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "agent: a"]);
+        let sha = git(&["rev-parse", "HEAD"]);
+
+        let _ = state.shell_window("s1", &call.id, &root, true);
+        let settled = state.take_settled_commits(&call.id);
+        assert_eq!(settled, vec![sha]);
+    }
+
+    /// The user's live repro on claude acp: the adapter announced the command
+    /// exactly once, ALREADY COMPLETED — no non-terminal sighting, so no
+    /// per-call window could open, and the write+commit inside it attributed
+    /// nothing. The turn anchor (HEAD at prompt time) is the fallback: coarser
+    /// than a call window, still exact evidence.
+    #[test]
+    fn a_call_first_seen_completed_falls_back_to_the_turn_anchor() {
+        let root = repo("shell-terminal-first");
+        let state = CaptureState::new();
+        // The prompt is where the anchor is taken.
+        state.note_prompt("s1", root.to_str().unwrap(), "claude-code", None, "add a test file");
+
+        // The command runs and commits before capture ever sights the call…
+        std::fs::write(root.join("test.txt"), b"test file").expect("write");
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .expect("git runs");
+        };
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "agent: add test file"]);
+
+        // …and the FIRST sighting is already terminal.
+        let call = shell_call("call-1");
+        let writes = state.shell_window("s1", &call.id, &root, true);
+
+        assert_eq!(
+            writes.iter().map(|w| w.path.path.as_str()).collect::<Vec<_>>(),
+            vec!["test.txt"]
+        );
+        assert!(!writes[0].existed_before, "the commit created it");
+        assert_eq!(
+            state.take_settled_commits(&call.id).len(),
+            1,
+            "the commit rides along for the cursor-blind evaluation"
+        );
+    }
+
+    /// The anchor advances after use: a second sighting-starved call in the
+    /// same turn cannot re-claim the commits the first one settled.
+    #[test]
+    fn the_turn_anchor_advances_so_commits_are_claimed_once() {
+        let root = repo("shell-anchor-advances");
+        let state = CaptureState::new();
+        state.note_prompt("s1", root.to_str().unwrap(), "claude-code", None, "work");
+
+        std::fs::write(root.join("a.txt"), b"a").expect("write");
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .expect("git runs");
+        };
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "agent: a"]);
+
+        let first = state.shell_window("s1", "call-1", &root, true);
+        assert_eq!(first.len(), 1);
+
+        // A later call in the same turn, also first-seen terminal, with no new
+        // commit: nothing left to claim.
+        let second = state.shell_window("s1", "call-2", &root, true);
+        assert!(second.is_empty(), "the anchor moved with the first claim");
+        assert!(state.take_settled_commits("call-2").is_empty());
+    }
+
+    /// A window whose command never reported an ending must not hold its
+    /// snapshot for the life of the process.
+    #[test]
+    fn an_unfinished_window_is_dropped_with_its_session() {
+        let root = repo("shell-forget");
+        let state = CaptureState::new();
+
+        state.shell_window("s1", "call-1", &root, false);
+        assert_eq!(lock_ok(&state.shell_windows).len(), 1);
+
+        state.forget_shell_windows(&["call-1".to_string()]);
+        assert!(lock_ok(&state.shell_windows).is_empty());
+    }
+
+    /// A terminal block is not a file write — capture must not invent a path
+    /// for it.
+    #[test]
+    fn a_terminal_block_names_no_file() {
+        assert!(diff_paths(&[ToolContentBlock::Terminal {
+            terminal_id: "t1".to_string()
+        }])
+        .is_empty());
+        assert!(diff_paths(&[]).is_empty());
+    }
+
+    /// A directory of this test's own. The path feeds `existed_before`, which
+    /// reads the filesystem — a shared fixed path would make one test's leavings
+    /// another's input.
+    fn workspace(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("atlas-capture-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("test workspace");
+        root
+    }
+
+    /// The wiring, not just the helper. This is the regression: sampling a call
+    /// shaped like codex acp's — no locations, no arguments, one diff block —
+    /// must yield a write, because a Session that records no write nominates no
+    /// path and therefore never earns a checkpoint.
+    ///
+    /// Reverting `sample_writes` to read only `locations`/`arguments` fails
+    /// here, which a test of `diff_paths` or `extract_paths` alone would not.
+    #[test]
+    fn a_call_naming_its_file_only_in_a_diff_block_records_a_write() {
+        let root = workspace("diff-block-write");
+        let state = CaptureState::new();
+        let call = tool_call(Vec::new(), vec![diff(&root.join("index.html").to_string_lossy())]);
+
+        let (writes, _) = state.sample_writes("session-1", &root, &call, true);
+
+        assert_eq!(
+            writes.iter().map(|w| w.path.path.as_str()).collect::<Vec<_>>(),
+            vec!["index.html"],
+            "the diff block's absolute path resolves relative to the workspace"
+        );
+        assert!(!writes[0].path.out_of_repo, "it is inside the workspace");
+        assert!(
+            !writes[0].existed_before,
+            "the file is not in the workspace, and the workspace is no git repo"
+        );
+    }
+
+    /// The same call with its diff block removed records nothing — which is the
+    /// state every codex acp and cursor acp edit was in.
+    #[test]
+    fn the_same_call_without_a_diff_block_records_nothing() {
+        let root = workspace("no-diff-block");
+        let state = CaptureState::new();
+        let call = tool_call(Vec::new(), Vec::new());
+
+        let (writes, _) = state.sample_writes("session-1", &root, &call, true);
+
+        assert!(writes.is_empty());
+    }
+
+    /// `existed_before` decides which arm of the link rule can fire, so the
+    /// diff-block paths must be sampled the same way location paths are.
+    #[test]
+    fn a_file_already_on_disk_is_sampled_as_pre_existing() {
+        let root = workspace("diff-block-existing");
+        std::fs::write(root.join("index.html"), b"before").expect("fixture");
+        let state = CaptureState::new();
+        let call = tool_call(Vec::new(), vec![diff(&root.join("index.html").to_string_lossy())]);
+
+        // Not yet terminal, first sighting: the filesystem still answers
+        // truthfully, which is the branch that reads it.
+        let (writes, _) = state.sample_writes("session-1", &root, &call, false);
+
+        assert!(writes[0].existed_before);
+    }
+
+    // ── The write-detection gate ────────────────────────────────────────────
+
+    /// The gate the fix widened. `canonical_name` is a heuristic over a title
+    /// and a `kind` token; an adapter free to label its edit `other` would have
+    /// had its diffs ignored, which is the same failure one step earlier. A
+    /// diff block settles it on its own.
+    #[test]
+    fn a_diff_block_is_enough_even_when_the_name_says_nothing_about_writing() {
+        let mut call = tool_call(Vec::new(), vec![diff("/repo/index.html")]);
+        call.tool_name = "shell".to_string();
+        call.title = Some("Working".to_string());
+        call.kind = Some("other".to_string());
+
+        let tool_name = atlas_checkpoint::canonical_name(
+            Some(&call.tool_name),
+            call.title.as_deref(),
+            call.kind.as_deref(),
+            &call.arguments,
+        );
+        assert!(
+            !tool_name.writes_files(),
+            "precondition: this name is not write-shaped"
+        );
+        assert!(
+            !diff_paths(&call.content_blocks).is_empty(),
+            "but the call carries a diff, which is what opens the gate"
+        );
+    }
+
+    // ── The patch an edit applied ───────────────────────────────────────────
+
+    /// The agents this fix targets send no `rawInput`, so the block is the only
+    /// before/after there is. Without this their checkpoints formed while their
+    /// attribution input stayed empty.
+    #[test]
+    fn the_patch_comes_from_the_diff_block_when_the_arguments_carry_none() {
+        let patch = edit_patch(
+            &serde_json::Value::Null,
+            &[ToolContentBlock::Diff {
+                path: "/repo/a.rs".to_string(),
+                old_text: Some("one".to_string()),
+                new_text: "two".to_string(),
+            }],
+            None,
+            std::path::Path::new("/repo"),
+        )
+        .expect("a patch");
+        assert!(patch.contains("-one"), "{patch}");
+        assert!(patch.contains("+two"), "{patch}");
+    }
+
+    /// Both halves come from ONE description of the edit. Splicing an `old`
+    /// from the arguments onto a `new` from a block invents a before/after
+    /// neither of them claimed.
+    #[test]
+    fn the_two_halves_are_never_spliced_across_sources() {
+        let patch = edit_patch(
+            &serde_json::json!({ "old_string": "from-args" }),
+            &[ToolContentBlock::Diff {
+                path: "/repo/a.rs".to_string(),
+                old_text: Some("from-block".to_string()),
+                new_text: "block-new".to_string(),
+            }],
+            None,
+            std::path::Path::new("/repo"),
+        )
+        .expect("a patch");
+        assert!(patch.contains("-from-args"), "{patch}");
+        assert!(
+            !patch.contains("block-new"),
+            "the arguments won, so the block contributes nothing: {patch}"
+        );
+    }
+
+    /// A call editing several files carries one patch EACH, and the patch is
+    /// stored against the first recorded write — which need not be the first
+    /// block. Storing one file's patch under another's name is worse than
+    /// storing none.
+    #[test]
+    fn the_patch_is_taken_from_the_block_for_the_file_it_is_stored_against() {
+        let blocks = vec![
+            ToolContentBlock::Diff {
+                path: "/repo/a.rs".to_string(),
+                old_text: Some("a-old".to_string()),
+                new_text: "a-new".to_string(),
+            },
+            ToolContentBlock::Diff {
+                path: "/repo/b.rs".to_string(),
+                old_text: Some("b-old".to_string()),
+                new_text: "b-new".to_string(),
+            },
+        ];
+        let target = atlas_checkpoint::tools::resolve_path("/repo/b.rs", std::path::Path::new("/repo"));
+
+        let patch = edit_patch(
+            &serde_json::Value::Null,
+            &blocks,
+            Some(&target),
+            std::path::Path::new("/repo"),
+        )
+        .expect("a patch");
+
+        assert!(patch.contains("-b-old"), "{patch}");
+        assert!(!patch.contains("a-old"), "not the other file's patch: {patch}");
+    }
+
+    /// With several blocks and nothing to pair against, which one applies is
+    /// unknowable — and a wrong patch is worse than none.
+    #[test]
+    fn several_blocks_and_no_target_yields_no_patch() {
+        let blocks = vec![
+            ToolContentBlock::Diff {
+                path: "/repo/a.rs".to_string(),
+                old_text: None,
+                new_text: "a".to_string(),
+            },
+            ToolContentBlock::Diff {
+                path: "/repo/b.rs".to_string(),
+                old_text: None,
+                new_text: "b".to_string(),
+            },
+        ];
+        assert!(edit_patch(
+            &serde_json::Value::Null,
+            &blocks,
+            None,
+            std::path::Path::new("/repo")
+        )
+        .is_none());
     }
 }

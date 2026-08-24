@@ -12,7 +12,11 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { useKnowledgeStore } from "@/features/knowledge/stores/knowledge-store";
 import { useKnowledgeMetaStore } from "@/features/knowledge/stores/knowledge-meta-store";
-import { listClaudeSessions, readClaudeSession, type ChatMessageDump } from "./claude-api";
+import {
+  listAtlasTranscripts,
+  readAtlasTranscript,
+  type AtlasTranscriptMessage,
+} from "./atlas-transcripts";
 import { ensureFileIndex } from "@/features/file-picker/lib/file-picker-api";
 import { activeWorkspaceId } from "@/features/workspaces/lib/active-workspace";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
@@ -34,7 +38,6 @@ export type MentionKind =
   | "component"
   | "repo"
   | "workspace"
-  | "paper"
   | "branch"
   | "past_message"
   | "past_session";
@@ -71,7 +74,7 @@ export interface MentionKnowledge {
    *  tree uses). Null when the note has no custom icon. */
   icon: string | null;
   filePath: string;
-  source: string; // "note" | "paper" | "chat" | ...
+  source: string; // "note" | "chat" | ...
   /** Parent folder portion of `id` (e.g. "Adib" for "Adib/weekly-notes").
    *  Surfaces the user's "spaces" — nested subfolders under
    *  `.atlas/knowledge/`. Null for top-level entries. */
@@ -111,14 +114,6 @@ export interface MentionWorkspace {
   orgName: string | null;
 }
 
-export interface MentionPaper {
-  kind: "paper";
-  id: string;
-  displayName: string; // title
-  authors: string[];
-  metadataPath: string;
-}
-
 export interface MentionBranch {
   kind: "branch";
   id: string; // ref name
@@ -140,11 +135,12 @@ export interface MentionPastMessage {
 
 export interface MentionPastSession {
   kind: "past_session";
-  id: string; // the session id (JSONL stem = acpSessionId)
+  id: string; // the agent's session id
   displayName: string; // session title/preview
   sessionId: string;
   sessionTitle: string;
-  filePath: string; // JSONL transcript path — read + formatted at send time
+  /** Which project's transcripts to read it from, at send time. */
+  cwd: string;
 }
 
 export type MentionData =
@@ -155,7 +151,6 @@ export type MentionData =
   | MentionComponent
   | MentionRepo
   | MentionWorkspace
-  | MentionPaper
   | MentionBranch
   | MentionPastMessage
   | MentionPastSession;
@@ -189,7 +184,6 @@ export const MENTION_CATEGORIES: readonly MentionCategory[] = [
     aliases: ["workspace", "project", "ws", "w/"],
     weight: 0.82,
   },
-  { kind: "paper", label: "Papers", aliases: ["paper", "p/"], weight: 0.7 },
   { kind: "branch", label: "Branches", aliases: ["branch", "b/"], weight: 0.6 },
   { kind: "past_message", label: "Past Messages", aliases: ["msg", "message", "m/"], weight: 0.55 },
   { kind: "past_session", label: "Past Sessions", aliases: ["session", "sess/"], weight: 0.5 },
@@ -236,19 +230,26 @@ export interface MentionContext {
 export interface PastSessionRef {
   id: string;
   title: string;
-  filePath: string;
+  /** Which project's transcripts hold it. */
+  cwd: string;
   lastModified: string | null;
   messageCount: number;
 }
 
+/**
+ * Past sessions come from Atlas's own transcripts, so the feature works for
+ * every agent that ran through Atlas rather than only for the one whose JSONL
+ * Atlas used to parse (ADR-0001, issue #17).
+ */
 export async function listPastSessions(ctx: MentionContext): Promise<PastSessionRef[]> {
   if (!ctx.projectPath) return [];
+  const cwd = ctx.projectPath;
   try {
-    const sessions = await listClaudeSessions(ctx.projectPath);
+    const sessions = await listAtlasTranscripts(cwd);
     return sessions.map((s) => ({
       id: s.id,
       title: s.preview && s.preview !== "(no user message)" ? s.preview : "Untitled session",
-      filePath: s.file_path,
+      cwd,
       lastModified: s.last_modified,
       messageCount: s.message_count,
     }));
@@ -264,7 +265,7 @@ export async function listMessagesInPastSession(
 ): Promise<MentionPastMessage[]> {
   let dump;
   try {
-    dump = await readClaudeSession(session.filePath);
+    dump = await readAtlasTranscript(session.cwd, session.id);
   } catch {
     return [];
   }
@@ -332,8 +333,6 @@ export function toShortForm(m: MentionData): string {
       return `@repo:${m.displayName}`;
     case "workspace":
       return `@workspace:${m.displayName}`;
-    case "paper":
-      return `@paper:${m.displayName}`;
     case "branch":
       return `@branch:${m.displayName}`;
     case "past_message":
@@ -349,7 +348,6 @@ export function toShortForm(m: MentionData): string {
  *  Rust owns the data for every kind:
  *   - file / folder via `FileIndexState` (live, watcher-updated)
  *   - repo via `list_cloned_repos` (cheap disk walk)
- *   - paper via `SavedPapersIndex` (mtime cache)
  *   - branch via watcher-invalidated `git_refs_cache`
  *   - knowledge / symbol via `MentionCacheState`, populated by the
  *     publishers below (`publishKnowledgeToMentionCache` etc.) when
@@ -366,7 +364,7 @@ export async function searchMentions(
   ctx: MentionContext,
 ): Promise<MentionData[]> {
   if (scope === "past_message") return [];
-  // Past sessions: list the project's Claude transcripts, filtered by title.
+  // Past sessions: list the project's Atlas-recorded transcripts, by title.
   // (This category used to be a dead row — locked scope returned nothing.)
   if (scope === "past_session") {
     const q = stripCategoryAlias(query, "past_session").trim().toLowerCase();
@@ -380,7 +378,7 @@ export async function searchMentions(
         displayName: s.title,
         sessionId: s.id,
         sessionTitle: s.title,
-        filePath: s.filePath,
+        cwd: s.cwd,
       }));
   }
   if (scope === "component") {
@@ -406,7 +404,7 @@ export async function searchMentions(
     const stripped = stripCategoryAlias(query, scope ?? "file");
     // Unscoped `@`: blend the JS-owned kinds (workspaces) alongside the
     // Rust-ranked kinds so ONE search reaches everything — files, folders,
-    // notes, repos, branches, papers, symbols, workspaces. The JS kinds are
+    // notes, repos, branches, symbols, workspaces. The JS kinds are
     // small lists; they're appended after the Rust results and the picker
     // groups the flat list into per-kind sections for display.
     if (scope === null) {
@@ -591,10 +589,10 @@ export async function ensureKnowledgeMentionCache(projectPath: string): Promise<
  *
  *  Knowledge entries pre-fill `inlineBody` from the in-memory store so
  *  Rust doesn't re-read them from disk. */
-/** Render a Claude session's message dump as a plain-text transcript for the
+/** Render an Atlas-recorded session's messages as a plain-text transcript for the
  *  `@session:` context block. Roles are labelled; empty turns are skipped. The
  *  Rust side clips the final size to the mention body budget. */
-function formatSessionTranscript(dump: ChatMessageDump[]): string {
+function formatSessionTranscript(dump: AtlasTranscriptMessage[]): string {
   const parts: string[] = [];
   for (const m of dump) {
     const content = m.content?.trim();
@@ -605,11 +603,28 @@ function formatSessionTranscript(dump: ChatMessageDump[]): string {
   return parts.join("\n\n");
 }
 
+/** One `@`-mention that points at something on disk (P2.1). */
+export interface ResourceLinkSpec {
+  uri: string;
+  name: string;
+}
+
+/** Prose plus the structured file references the turn should carry.
+ *
+ *  `resourceLinks` used to be flattened into the prose ("File at `/x/y`. Use
+ *  your filesystem tools to read it.") — a sentence the agent had to parse a
+ *  path back out of. They now ride as ACP `ResourceLink` blocks, which every
+ *  agent is required to understand. */
+export interface ComposedPrompt {
+  prose: string;
+  resourceLinks: ResourceLinkSpec[];
+}
+
 export async function composePrompt(
   prosePlainText: string,
   mentions: MentionData[],
-): Promise<string> {
-  if (mentions.length === 0) return prosePlainText;
+): Promise<ComposedPrompt> {
+  if (mentions.length === 0) return { prose: prosePlainText, resourceLinks: [] };
   const wireMentions = await Promise.all(
     mentions.map(async (m) => {
       if (m.kind === "knowledge") {
@@ -619,17 +634,17 @@ export async function composePrompt(
             useKnowledgeStore.getState().entries.find((e) => e.id === m.id)?.content ?? null,
         };
       }
-      // Past session: read the JSONL transcript now and format it into a
+      // Past session: read Atlas's own transcript now and format it into a
       // plain-text conversation the agent can reference. Kept lightweight in
-      // the chip (just filePath); the (potentially large) body only
-      // materializes here, at send time.
+      // the chip (just the project and the session id); the (potentially
+      // large) body only materializes here, at send time.
       if (m.kind === "past_session") {
         let inlineBody: string | null = null;
         try {
-          const dump = await readClaudeSession(m.filePath);
+          const dump = await readAtlasTranscript(m.cwd, m.sessionId);
           inlineBody = formatSessionTranscript(dump);
         } catch (e) {
-          console.warn("readClaudeSession for compose failed:", e);
+          console.warn("readAtlasTranscript for compose failed:", e);
         }
         return { ...m, inlineBody };
       }
@@ -637,13 +652,13 @@ export async function composePrompt(
     }),
   );
   try {
-    return await invoke<string>("compose_prompt", {
+    return await invoke<ComposedPrompt>("compose_prompt", {
       prose: prosePlainText,
       mentions: wireMentions,
     });
   } catch (e) {
     console.warn("compose_prompt invoke failed, sending raw prose:", e);
-    return prosePlainText;
+    return { prose: prosePlainText, resourceLinks: [] };
   }
 }
 

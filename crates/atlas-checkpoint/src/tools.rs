@@ -78,8 +78,11 @@ impl ToolName {
 
     /// Does a call by this name write to a file?
     ///
-    /// What decides whether a `file_touch` is expected — and therefore whether a
-    /// missing location is worth noticing.
+    /// One of the two things that make a `file_touch` expected, and the weaker
+    /// of them: the name is DERIVED, from a title and a `kind` token an adapter
+    /// picks freely. A call carrying a diff block has said it edits a file
+    /// outright, so capture treats that as sufficient on its own and this
+    /// answer is not the last word.
     pub fn writes_files(self) -> bool {
         matches!(self, Self::Edit | Self::Write | Self::Delete | Self::Move)
     }
@@ -111,6 +114,17 @@ pub fn canonical_name(
         if let Some(name) = match_known(explicit) {
             return name;
         }
+    }
+
+    // A call whose arguments carry a `command` string IS a shell call,
+    // whatever its title's first word happens to be. Adapters title these
+    // with the command line itself, and a command line is prose: a heredoc
+    // write leads with "cat", which is a Read alias — so the call that WROTE
+    // AND COMMITTED a file was classified as a read and never sampled for
+    // writes. The argument shape outranks the title because it cannot be
+    // prose.
+    if arguments.get("command").and_then(serde_json::Value::as_str).is_some() {
+        return ToolName::Bash;
     }
 
     // `wire_name` is the runtime's first-sighting value, which for the native
@@ -327,9 +341,24 @@ fn compose(base: char, mark: char) -> Option<char> {
 
 /// Pull file paths out of a tool call, preferring the pre-extracted locations.
 ///
+/// Three sources, in descending order of how directly the agent said "this
+/// file": its `locations`, the paths named by the call's diff content blocks,
+/// then a path-shaped key in its arguments.
+///
+/// The middle one is not optional. ACP's `locations` are a SHOULD, not a MUST,
+/// and real adapters skip them: codex acp and cursor acp both report an edit
+/// with `locations: []` and no `rawInput`, naming the file only in the diff
+/// block. Reading just the first and last source recorded no write for those
+/// calls, so the Session nominated no paths and no commit could ever link to
+/// it — Timeline entries appeared, checkpoints never did.
+///
 /// Never goes through the title-derived name: a title is prose, and parsing a
 /// path out of prose is how you end up recording `src/foo.rs,` with a comma.
-pub fn extract_paths(locations: &[serde_json::Value], arguments: &serde_json::Value) -> Vec<String> {
+pub fn extract_paths(
+    locations: &[serde_json::Value],
+    diff_paths: &[String],
+    arguments: &serde_json::Value,
+) -> Vec<String> {
     let mut out = Vec::new();
 
     // ACP hands these over already extracted — the structural advantage over
@@ -340,6 +369,18 @@ pub fn extract_paths(locations: &[serde_json::Value], arguments: &serde_json::Va
                 out.push(path.to_string());
             }
         }
+    }
+
+    if out.is_empty() {
+        // Also structural: the agent attached a diff FOR this file. Every block
+        // counts — one call editing three files must nominate all three, or the
+        // commit links to part of its own work.
+        out.extend(
+            diff_paths
+                .iter()
+                .filter(|path| !path.trim().is_empty())
+                .cloned(),
+        );
     }
 
     if out.is_empty() {
@@ -367,6 +408,51 @@ mod tests {
 
     // ── Canonical name, per agent family ────────────────────────────────────
 
+    /// The user's real repro: claude acp writes a file with a `cat` heredoc
+    /// and commits, in one call titled with the COMMAND LINE. Its first word
+    /// is "cat" — a Read alias — so the call that wrote and committed was
+    /// classified as a read and never sampled for writes. A `command`
+    /// argument is a shell call, whatever the title says.
+    #[test]
+    fn a_command_argument_makes_the_call_shell_shaped_whatever_the_title_leads_with() {
+        for title in [
+            "cat > test.txt <<'EOF'\ntest\nEOF\ngit add test.txt",
+            "head -5 build.log",
+            "find . -name '*.rs'",
+        ] {
+            assert_eq!(
+                canonical_name(
+                    Some(title),
+                    Some(title),
+                    Some("execute"),
+                    &args(serde_json::json!({ "command": title })),
+                ),
+                ToolName::Bash,
+                "title {title:?} must not out-vote the command argument"
+            );
+        }
+    }
+
+    /// …but an explicit name in the arguments still wins over everything,
+    /// and a call WITHOUT a command argument keeps the title-token behaviour.
+    #[test]
+    fn the_command_rule_does_not_disturb_the_other_sources() {
+        assert_eq!(
+            canonical_name(
+                None,
+                None,
+                None,
+                &args(serde_json::json!({ "name": "read", "command": "irrelevant" })),
+            ),
+            ToolName::Read,
+            "an explicit name is the agent naming itself"
+        );
+        assert_eq!(
+            canonical_name(Some("Read"), Some("Read"), None, &args(serde_json::json!({}))),
+            ToolName::Read
+        );
+    }
+
     #[test]
     fn the_native_agent_titles_are_already_canonical() {
         // It emits the real tool name as the title.
@@ -388,7 +474,7 @@ mod tests {
     #[test]
     fn claude_code_display_titles_reduce_to_their_leading_token() {
         for (title, kind, expected) in [
-            ("Bash(cargo test --package atlas-review)", "execute", ToolName::Bash),
+            ("Bash(cargo test --package atlas-codeindex)", "execute", ToolName::Bash),
             ("Read /Users/nafiz/dev/atlas/src/lib.rs", "read", ToolName::Read),
             ("Edit src/rate_limit.rs", "edit", ToolName::Edit),
         ] {
@@ -538,6 +624,7 @@ mod tests {
     fn locations_are_preferred_over_the_arguments() {
         let paths = extract_paths(
             &[serde_json::json!({ "path": "/tmp/project/src/a.rs" })],
+            &[],
             &args(serde_json::json!({ "file_path": "/tmp/project/src/b.rs" })),
         );
         assert_eq!(paths, vec!["/tmp/project/src/a.rs"]);
@@ -545,13 +632,15 @@ mod tests {
 
     #[test]
     fn the_arguments_are_the_fallback_when_no_location_arrived() {
-        let paths = extract_paths(&[], &args(serde_json::json!({ "file_path": "src/b.rs" })));
+        let paths = extract_paths(&[], &[], &args(serde_json::json!({ "file_path": "src/b.rs" })));
         assert_eq!(paths, vec!["src/b.rs"]);
     }
 
     #[test]
     fn a_call_with_no_usable_location_yields_nothing_rather_than_failing() {
-        assert!(extract_paths(&[], &args(serde_json::json!({ "command": "cargo test" }))).is_empty());
+        assert!(
+            extract_paths(&[], &[], &args(serde_json::json!({ "command": "cargo test" }))).is_empty()
+        );
     }
 
     #[test]
@@ -561,7 +650,76 @@ mod tests {
                 serde_json::json!({ "path": "src/a.rs" }),
                 serde_json::json!({ "path": "src/b.rs" }),
             ],
+            &[],
             &args(serde_json::json!({})),
+        );
+        assert_eq!(paths, vec!["src/a.rs", "src/b.rs"]);
+    }
+
+    /// The shape that broke Timeline capture, taken from real captured rows.
+    ///
+    /// codex acp and cursor acp both report an edit with `locations: []` and no
+    /// `rawInput` at all — the ONLY place the file is named is the call's diff
+    /// content block. Without reading that, the write is never recorded, the
+    /// Session nominates no paths, and no commit can ever link to it: the
+    /// Session produces Timeline entries but never a checkpoint.
+    #[test]
+    fn a_diff_block_names_the_file_when_the_agent_sent_no_location() {
+        let paths = extract_paths(
+            &[],
+            &["/Users/dev/project/index.html".to_string()],
+            &args(serde_json::Value::Null),
+        );
+        assert_eq!(paths, vec!["/Users/dev/project/index.html"]);
+    }
+
+    /// Pre-extracted locations still win: they are the agent's own answer to
+    /// "which files", and a diff block is one block of possibly several.
+    #[test]
+    fn locations_are_preferred_over_a_diff_block() {
+        let paths = extract_paths(
+            &[serde_json::json!({ "path": "src/a.rs" })],
+            &["src/b.rs".to_string()],
+            &args(serde_json::json!({})),
+        );
+        assert_eq!(paths, vec!["src/a.rs"]);
+    }
+
+    /// A diff block is structural — the agent named the file it edited — so it
+    /// beats sniffing a path-shaped key out of free-form arguments.
+    #[test]
+    fn a_diff_block_is_preferred_over_the_arguments() {
+        let paths = extract_paths(
+            &[],
+            &["src/a.rs".to_string()],
+            &args(serde_json::json!({ "file_path": "src/b.rs" })),
+        );
+        assert_eq!(paths, vec!["src/a.rs"]);
+    }
+
+    /// A blank path is not a file. It must not become a touch, and it must not
+    /// stop the arguments from being consulted either.
+    #[test]
+    fn a_blank_diff_path_is_not_a_file() {
+        assert!(extract_paths(&[], &["   ".to_string()], &args(serde_json::Value::Null)).is_empty());
+        assert_eq!(
+            extract_paths(
+                &[],
+                &["".to_string()],
+                &args(serde_json::json!({ "file_path": "src/b.rs" })),
+            ),
+            vec!["src/b.rs"]
+        );
+    }
+
+    /// One call may edit several files, and every one of them has to nominate
+    /// the Session or the commit links to only part of its own work.
+    #[test]
+    fn every_diff_block_in_a_call_is_extracted() {
+        let paths = extract_paths(
+            &[],
+            &["src/a.rs".to_string(), "src/b.rs".to_string()],
+            &args(serde_json::Value::Null),
         );
         assert_eq!(paths, vec!["src/a.rs", "src/b.rs"]);
     }

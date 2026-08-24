@@ -20,7 +20,6 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
 
-use super::memory_chat::MemoryChatState;
 use super::memory_delta::redact;
 use super::memory_indexer::MemoryRegistry;
 
@@ -46,13 +45,10 @@ pub struct RetrievedDoc {
 /// — the Cersei `search_memory` pull tool (`agents.rs` closure) and the
 /// Claude/Codex push (site C) — so it improves all three agents at once.
 ///
-/// `_chat_state` is unused now (the engine owns its own provider via the registry)
-/// but kept in the signature so the two call sites compile byte-for-byte unchanged.
 /// Empty on any failure (no model, no engine, timeout) — callers treat empty as
 /// "skip". Still time-bounded so it can never stall a turn.
 pub async fn retrieve(
     app: &AppHandle,
-    _chat_state: &MemoryChatState,
     project_path: &str,
     query: &str,
     top_k: usize,
@@ -91,7 +87,19 @@ async fn retrieve_engine(
         return Vec::new();
     };
     let engine = registry.engine_for(project_path);
-    let guard = engine.read().await;
+    // try_read, never read().await: the indexer holds the WRITE lock for the
+    // whole of a re-embed pass, and a big working-tree churn keeps it busy for
+    // minutes. This retrieval is a best-effort nicety prepended to the user's
+    // prompt — queueing their send behind indexing turned "agent is thinking"
+    // into a flat 6s stall (the timeout) on every turn while the index was
+    // warm. Busy index ⇒ skip the block this turn; the next quiet turn gets it.
+    let Ok(guard) = engine.try_read() else {
+        tracing::debug!(
+            target: "atlas::shared_memory",
+            "memory index busy (indexer holds the write lock) — skipping RAG block this turn"
+        );
+        return Vec::new();
+    };
     let docs = guard.retrieve(query, top_k, &provider).await;
     drop(guard);
 

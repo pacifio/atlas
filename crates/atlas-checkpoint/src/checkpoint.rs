@@ -58,6 +58,7 @@ use std::path::Path;
 use chrono::Utc;
 
 use crate::blobs;
+use crate::sketch;
 use crate::error::{Error, Result};
 use crate::git::{self, ChangedPath};
 use crate::model::{FileTouch, WorkspaceMode};
@@ -179,6 +180,38 @@ fn resolve_range(repo: &Path, cursor: Option<&str>, head: &str) -> (Vec<String>,
             ),
         },
     }
+}
+
+/// Evaluate SPECIFIC commits, wherever the cursor is.
+///
+/// The ordinary walk advances the cursor past every commit it examines and
+/// never looks back — correct for its job, and exactly wrong for the one case
+/// this exists for: a shell call that COMMITS ITS OWN WRITES (#31). The git
+/// watcher fires the instant the agent's `git commit` moves refs, so the walk
+/// can consume that commit before the call's touches are recorded; when the
+/// touches then land, the walk cannot help. Whoever recorded them names the
+/// commits the window saw HEAD move across, and this evaluates exactly those —
+/// same rule, same consumption, no cursor movement.
+///
+/// Idempotent by construction: the first evaluation consumes the touches it
+/// settled, so a re-run finds no candidates.
+pub fn link_commits(
+    store: &Store,
+    workspace_id: &str,
+    repo: &Path,
+    commits: &[String],
+    mode: WorkspaceMode,
+) -> Result<usize> {
+    if commits.is_empty() || !git::is_repository(repo) {
+        return Ok(0);
+    }
+    let mut candidates = store.link_candidates(workspace_id)?;
+    let branch = git::current_branch(repo);
+    let mut created = 0;
+    for commit in commits {
+        created += link_commit(store, repo, commit, &mut candidates, branch.as_deref(), mode)?;
+    }
+    Ok(created)
 }
 
 /// Evaluate one commit against every candidate Session.
@@ -416,10 +449,33 @@ fn links(repo: &Path, commit_sha: &str, change: &ChangedPath, touch: &FileTouch)
     // declaring a mismatch, so a Windows-style repo does not silently fail the
     // strict arm on every agent-created file. Filters that are not invertible
     // from the blob side (ident expansion, LFS pointers) remain a genuine gap.
-    match git::blob_at_filtered(repo, commit_sha, &change.path) {
-        Some(filtered) => &blobs::key_for(&filtered) == expected,
-        None => false,
+    if let Some(filtered) = git::blob_at_filtered(repo, commit_sha, &change.path) {
+        if &blobs::key_for(&filtered) == expected {
+            return true;
+        }
     }
+
+    // Neither form matched byte-for-byte, so the developer changed something
+    // between the agent's write and the commit. That is the ordinary review
+    // loop, not a rejection: requiring an exact match here meant the agent
+    // scaffolds a file, the developer fixes one line, and the Checkpoint
+    // silently never appears.
+    //
+    // Ask how much of the agent's content survived instead. Containment is
+    // asymmetric on purpose — a developer who appends their own work to the
+    // agent's file has still committed the agent's work — and the threshold
+    // still rejects a wholesale rewrite, which is what this arm exists for.
+    //
+    // A touch written before schema v9 has no sketch. Those keep the old
+    // exact-match behaviour rather than being retroactively re-judged on
+    // evidence that was never recorded.
+    let Some(agent_sketch) = &touch.sketch_after else {
+        return false;
+    };
+    let Some(committed_sketch) = sketch::sketch(&committed) else {
+        return false;
+    };
+    sketch::retains_agent_work(agent_sketch, &committed_sketch)
 }
 
 /// Are there Checkpoints for this Workspace whose commit has gone missing?

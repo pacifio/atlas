@@ -49,6 +49,17 @@ pub mod consolidate;
 // local memory is sparse. Tauri-free; resolves `$HOME` (or an env override).
 pub mod global;
 
+// ─── Ported-from-Cersei modules ───────────────────────────────────────────────
+//
+// These four were `cersei-embeddings` / `cersei-memory` / `cersei-agent` until
+// 2026-08-22; they are now Atlas's own. `tests/cersei_parity.rs` was written
+// against the SDK versions and passes unchanged against these, which is the
+// evidence that the swap did not move observable behaviour.
+pub mod dream;
+pub mod embedding;
+pub mod graph;
+pub mod session;
+
 pub use consolidate::{consolidate, ConsolidateOutcome};
 pub use global::{global_recall, record_candidates, CandidateEntry};
 pub use docstore::{DocStore, DocText};
@@ -67,8 +78,8 @@ pub use store::HnswStore;
 #[cfg(test)]
 mod parity_bench;
 
-use cersei_embeddings::EmbeddingProvider;
-use cersei_memory::graph::GraphMemory;
+use embedding::EmbeddingProvider;
+use graph::GraphMemory;
 
 /// One corpus document handed to [`MemoryEngine::index_corpus`]. The Tauri layer
 /// builds these by flattening `agent_memory::collect_corpus` (Claude/Codex/Cersei

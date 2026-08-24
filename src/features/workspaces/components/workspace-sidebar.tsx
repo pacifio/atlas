@@ -599,16 +599,31 @@ export function WorkspaceSidebar() {
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
     if (pinned.length) {
-      out.push({ kind: "section", id: "sec:pinned", label: "Pinned", key: "s:pinned" });
+      out.push({
+        kind: "section",
+        id: "sec:pinned",
+        label: "Pinned",
+        key: "s:pinned",
+      });
       if (!collapsed["sec:pinned"])
         for (const ws of pinned) out.push({ kind: "ws", ws, indented: false, key: ws.id });
     }
-    out.push({ kind: "section", id: "sec:projects", label: "Projects", key: "s:projects" });
+    out.push({
+      kind: "section",
+      id: "sec:projects",
+      label: "Projects",
+      key: "s:projects",
+    });
     if (!collapsed["sec:projects"]) {
       const inGroup = (gid: string) => projects.filter((w) => w.groupId === gid);
       for (const g of sortedGroups) {
         const members = inGroup(g.id);
-        out.push({ kind: "group", group: g, count: members.length, key: `g:${g.id}` });
+        out.push({
+          kind: "group",
+          group: g,
+          count: members.length,
+          key: `g:${g.id}`,
+        });
         if (!collapsed[g.id])
           for (const ws of members) out.push({ kind: "ws", ws, indented: true, key: ws.id });
       }
@@ -616,13 +631,28 @@ export function WorkspaceSidebar() {
         out.push({ kind: "ws", ws, indented: false, key: ws.id });
     }
     if (recents.length) {
-      out.push({ kind: "section", id: "sec:recent", label: "Recent", key: "s:recent" });
+      out.push({
+        kind: "section",
+        id: "sec:recent",
+        label: "Recent",
+        key: "s:recent",
+      });
       if (!collapsed["sec:recent"])
         for (const r of recents)
-          out.push({ kind: "recent", name: r.name, path: r.path, key: `r:${r.path}` });
+          out.push({
+            kind: "recent",
+            name: r.name,
+            path: r.path,
+            key: `r:${r.path}`,
+          });
     }
     if (orgRecentChats.length) {
-      out.push({ kind: "section", id: "sec:chats", label: "Chats", key: "s:chats" });
+      out.push({
+        kind: "section",
+        id: "sec:chats",
+        label: "Chats",
+        key: "s:chats",
+      });
       // Active (live-running) chats float to the top of the stack; the rest keep
       // their most-recent-first order. Capacity (15) is enforced by the store.
       const ordered = [
@@ -685,9 +715,16 @@ export function WorkspaceSidebar() {
 
   const openChat = useCallback(
     async (chat: RecentChat) => {
-      // 1. Focus the chat's project workspace (register it if new).
-      const ws = useWorkspaceStore.getState().workspaces.find((w) => w.path === chat.projectPath);
-      if (ws) await useWorkspaceStore.getState().actions.switchTo(ws.id);
+      // 1. Focus the chat's project workspace (register it if new). Prefer
+      //    the ACTIVE org's row — the same path can be a workspace in several
+      //    orgs, and switching to another org's twin would silently jump the
+      //    user across organisations. addWorkspace registers an org-scoped
+      //    row when this org has none.
+      const st = useWorkspaceStore.getState();
+      const orgId = useOrgStore.getState().activeOrganisationId;
+      const twins = st.workspaces.filter((w) => w.path === chat.projectPath);
+      const ws = twins.find((w) => w.orgId === orgId || w.orgId == null) ?? twins[0];
+      if (ws) await st.actions.switchTo(ws.id);
       else await addWorkspace(chat.projectPath);
       // 2. Open THIS session (by acp session id — not the tab id, which is reused
       //    across many sessions). openAgentSession focuses it if already open,

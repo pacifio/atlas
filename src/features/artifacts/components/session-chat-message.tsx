@@ -31,7 +31,7 @@ import {
   Terminal,
 } from "lucide-react";
 
-import { MermaidBlock } from "@/features/review-agents/components/mermaid-block";
+import { MermaidBlock } from "@/components/mermaid-block";
 import { CachedMarkdown } from "@/lib/markdown-cache";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types/agent";

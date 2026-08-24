@@ -1379,32 +1379,32 @@
   0%,
   10% {
     background-position:
-      50% calc(0*100%/3),
-      50% calc(1*100%/3),
-      50% calc(2*100%/3),
-      50% calc(3*100%/3);
+      50% calc(0 * 100% / 3),
+      50% calc(1 * 100% / 3),
+      50% calc(2 * 100% / 3),
+      50% calc(3 * 100% / 3);
   }
   33% {
     background-position:
-      100% calc(0*100%/3),
-      calc(100% - var(--g)) calc(1*100%/3),
-      var(--g) calc(2*100%/3),
-      0 calc(3*100%/3);
+      100% calc(0 * 100% / 3),
+      calc(100% - var(--g)) calc(1 * 100% / 3),
+      var(--g) calc(2 * 100% / 3),
+      0 calc(3 * 100% / 3);
   }
   66% {
     background-position:
-      0 calc(0*100%/3),
-      var(--g) calc(1*100%/3),
-      calc(100% - var(--g)) calc(2*100%/3),
-      100% calc(3*100%/3);
+      0 calc(0 * 100% / 3),
+      var(--g) calc(1 * 100% / 3),
+      calc(100% - var(--g)) calc(2 * 100% / 3),
+      100% calc(3 * 100% / 3);
   }
   90%,
   100% {
     background-position:
-      50% calc(0*100%/3),
-      50% calc(1*100%/3),
-      50% calc(2*100%/3),
-      50% calc(3*100%/3);
+      50% calc(0 * 100% / 3),
+      50% calc(1 * 100% / 3),
+      50% calc(2 * 100% / 3),
+      50% calc(3 * 100% / 3);
   }
 }
 
@@ -1616,6 +1616,11 @@
    to layers makes WKWebView worse, not better. */
 .atlas-row {
   contain: layout style;
+  /* DO NOT add `content-visibility: auto` here. Tried 2026-08-18 against the
+     scroll-blanking: on WKWebView, momentum scroll outruns skipped-row
+     materialization — during a fling nearly every row is in the skipped
+     state and the viewport goes FULLY black until the gesture settles.
+     Strictly worse than the blanking it was meant to fix. */
 }
 
 /* Marker rows: one line, muted, never wraps. */
@@ -1729,9 +1734,128 @@
    which arrives with its own line breaks — collapsing them ran eight `hint:`
    lines into one grey paragraph. Single-line descriptions are unaffected.
 
-   Specificity has to match sonner's own selector, hence the doubled
-   attribute — a class alone loses to it. */
-[data-sonner-toast][data-styled="true"] [data-description] {
+   MATCHING sonner's specificity was not enough: at (0,3,0) vs (0,3,0) the
+   winner is import order, and sonner's stylesheet lands after this file in
+   the bundle — so the #3f3f3f still won and git failures stayed unreadable.
+   The extra `[data-sonner-toaster]` ancestor takes this to (0,4,0), beating
+   every sonner description rule regardless of order. */
+/* ── Chat micro-animations ───────────────────────────────────────────────────
+   One-shot, GPU-cheap, and they END AT IDENTITY (no fill-mode) — per the
+   frosted-panel lesson, nothing here leaves a lingering transform behind.
+
+   `atlas-bubble-in`: entrance for a freshly-SENT user bubble only. Rows that
+   mount while scrolling up through history must not replay it — the caller
+   gates on message timestamp, not on mount.
+
+   `.cm-placeholder`: CodeMirror re-creates the placeholder element whenever
+   its text changes (e.g. the agent switch retargets "Ask Claude Code…"), so
+   animating the element itself gives the fade-in placeholder without touching
+   CM internals. OPACITY ONLY: the placeholder is an inline element inside
+   CM's line box — forcing `inline-block` to enable transforms shifted its
+   baseline against the caret (visible misalignment), so no translate here. */
+@keyframes atlas-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.atlas-bubble-in {
+  animation: atlas-bubble-in 0.18s ease-out;
+}
+
+/* Indeterminate arc spinner for in-progress plan steps (SVG ring rotate).
+   Continuous by design — it only renders while a step is actively running. */
+@keyframes atlas-arc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.atlas-arc-spin {
+  animation: atlas-arc-spin 1.1s linear infinite;
+  transform-origin: center;
+}
+
+/* Dropup menu entrance (the composer's + menu and its submenus): a soft
+   scale/rise from the trigger. One-shot, ends at identity, no fill-mode. */
+@keyframes atlas-menu-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.atlas-menu-pop {
+  transform-origin: bottom left;
+  animation: atlas-menu-pop 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Grouped composer menu: direction-aware content slide when switching tabs.
+   One-shot, ends at identity, no fill-mode (the standing transform rules). */
+@keyframes atlas-group-slide-left {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes atlas-group-slide-right {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.atlas-group-slide-left {
+  animation: atlas-group-slide-left 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.atlas-group-slide-right {
+  animation: atlas-group-slide-right 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Composer options pill: the label swaps between loading / Options / Default —
+   most often on an agent switch, where the new agent's cached knobs land in the
+   same frame the old agent's state is dropped. Without this the pill snaps.
+   One-shot, ends at identity, no fill-mode (the standing transform rules). */
+@keyframes atlas-pill-swap {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.atlas-pill-swap {
+  animation: atlas-pill-swap 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes atlas-placeholder-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.atlas-chat-cm-host .cm-placeholder {
+  animation: atlas-placeholder-in 0.22s ease-out;
+}
+
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-description] {
   color: var(--text-secondary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;

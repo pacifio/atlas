@@ -13,7 +13,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useGitStore, type GitFileStatus } from "../../stores/git-store";
+import { useGitStore, retainGitDiff, type GitFileStatus } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
 import { openGitDiff } from "../../lib/git-diff-api";
 import { hunkWireLines, type DiffHunk } from "../../lib/diff";
@@ -170,6 +170,10 @@ export function ChangesView() {
   const actions = useGitStore.use.actions();
   const { addTab } = useLayoutStore.use.actions();
   const currentProject = useProjectStore.use.currentProject();
+
+  // This is the only reader of the whole-working-tree `diff` — the store
+  // skips refreshing it while nothing is retaining (see retainGitDiff).
+  useEffect(() => retainGitDiff(), []);
 
   const [selected, setSelected] = useState<string | null>(null);
   const [fileDiff, setFileDiff] = useState<string | null>(null);

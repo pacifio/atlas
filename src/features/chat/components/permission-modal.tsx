@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { CheckCircle2, XCircle, AlertTriangle, ClipboardList } from "lucide-react";
 import { toast } from "sonner";
@@ -11,7 +11,8 @@ import { extractPlanMarkdown } from "../lib/plans";
 import { extractQuestions } from "../lib/questions";
 import { ApprovalCard } from "./approval-card";
 import type { PermissionOptionRef, PendingPermission } from "@/types/acp";
-import { AGENT_LABEL, type AgentType } from "@/types/agent";
+import { type AgentType } from "@/types/agent";
+import { agentMeta } from "@/features/agents/lib/agent-meta";
 
 function isAllow(kind: string) {
   return kind === "allow_once" || kind === "allow_always";
@@ -26,7 +27,9 @@ function isReject(kind: string) {
 // never names the wrong agent. Ordered longest-first to avoid partial matches.
 const AGENT_BRANDS = ["Claude Code", "Codex", "Claude", "OpenCode", "Cursor"];
 function relabelAgentBrand(label: string, agentType: AgentType): string {
-  const display = (AGENT_LABEL as Record<string, string>)[agentType] ?? "the agent";
+  // `agentMeta`, not a raw AGENT_LABEL read: that table only covers first-party
+  // agents, so every external one rendered as the anonymous "the agent".
+  const display = agentMeta(agentType).label;
   let out = label;
   for (const brand of AGENT_BRANDS) {
     if (brand === display) continue;
@@ -50,7 +53,12 @@ interface PermissionModalProps {
  * Cancelled requests (ESC / click outside) resolve as `cancelled` on the wire
  * so the agent backs off correctly.
  */
-export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) {
+// memo: ChatPanel re-renders per streaming rAF flush; tabId + the stable
+// onSendMessage wrapper never change identity, so the permission card's own
+// narrow store subscriptions decide when it actually re-renders.
+export const PermissionModal = memo(PermissionModalImpl);
+
+function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
   // Narrow subscription: only this tab's acpSessionId and the head of its
   // permission queue, so the card stays idle until a request actually arrives.
   const acpSessionId = useChatStore((s) => s.sessions[tabId]?.acpSessionId);
@@ -60,7 +68,7 @@ export function PermissionModal({ tabId, onSendMessage }: PermissionModalProps) 
   const queueLength = useChatStore((s) =>
     acpSessionId ? (s.pendingPermissions[acpSessionId]?.length ?? 0) : 0,
   );
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
+  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "cersei");
   const popPermission = useChatStore.use.actions().popPermission;
 
   const [draft, setDraft] = useState("");

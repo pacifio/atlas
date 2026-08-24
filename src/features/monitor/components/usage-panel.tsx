@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Maximize2 } from "lucide-react";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useUsageReport } from "../stores/usage-report-store";
-import type { SessionUsage } from "@/features/chat/lib/claude-api";
+import type { SessionUsage } from "../lib/usage-api";
 import { UsageDonut, type DonutSegment } from "./usage-donut";
 import { UsageModal } from "./usage-modal";
 import { fmtTokens, fmtCost } from "../lib/usage-format";
@@ -91,7 +91,7 @@ export function UsagePanel() {
       {/* Stats */}
       <div className="grid grid-cols-3 gap-2">
         <Stat label="Tokens" value={fmtTokens(totalTokens)} />
-        <Stat label="Requests" value={totals.request_count.toLocaleString()} />
+        <Stat label="Messages" value={totals.messages.toLocaleString()} />
         <Stat label="Sessions" value={String(totals.session_count)} />
       </div>
 
@@ -147,7 +147,7 @@ export function UsagePanel() {
                 style={{ background: SESSION_COLORS[i] ?? OTHERS_COLOR }}
               />
               <span className="text-[10px] text-text-secondary truncate flex-1 min-w-0">
-                {s.preview || s.session_id.slice(0, 8)}
+                {s.title || s.session_id.slice(0, 8)}
               </span>
               <span className="text-[9px] font-mono tabular-nums text-text-tertiary shrink-0 w-10 text-right">
                 {fmtTokens(sessionTokens(s))}

@@ -153,13 +153,73 @@ impl MentionSpec {
     }
 }
 
+/// What `compose_prompt` hands back (P2.1).
+///
+/// Was a bare `String`. Path-bearing mentions now ALSO travel as structured
+/// `resourceLinks`, which the caller turns into `ContentBlock::ResourceLink` —
+/// the ACP-native way to say "here is a file, open it yourself". Every agent
+/// MUST support that block type, so there is no capability to gate on.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposedPrompt {
+    /// Prose plus the context block for mentions that have no URI (knowledge
+    /// entries, past sessions, papers) or whose block carries instructions
+    /// rather than just a path.
+    pub prose: String,
+    pub resource_links: Vec<ResourceLinkSpec>,
+}
+
+/// One `@`-mention that points at something on disk.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceLinkSpec {
+    /// `file://` URI — ACP wants a URI, not a bare path.
+    pub uri: String,
+    /// What the user typed, so the agent can echo it back recognisably.
+    pub name: String,
+}
+
+/// `file://` URI for an absolute path.
+///
+/// Percent-encodes the characters that would otherwise terminate or re-scope
+/// the URI. Deliberately narrow: over-encoding a path breaks agents that
+/// naively strip the scheme and use the remainder as a path, which several do.
+fn file_uri(abs_path: &str) -> String {
+    let mut out = String::with_capacity(abs_path.len() + 8);
+    out.push_str("file://");
+    for ch in abs_path.chars() {
+        match ch {
+            ' ' => out.push_str("%20"),
+            '#' => out.push_str("%23"),
+            '?' => out.push_str("%3F"),
+            '%' => out.push_str("%25"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The on-disk target of a mention, when it has one.
+fn mention_path(m: &MentionSpec) -> Option<&str> {
+    match m {
+        MentionSpec::File { abs_path, .. }
+        | MentionSpec::Folder { abs_path, .. }
+        | MentionSpec::Workspace { abs_path, .. }
+        | MentionSpec::Repo { abs_path, .. } => Some(abs_path),
+        _ => None,
+    }
+}
+
 #[tauri::command]
 pub async fn compose_prompt(
     prose: String,
     mentions: Vec<MentionSpec>,
-) -> Result<String, String> {
+) -> Result<ComposedPrompt, String> {
     if mentions.is_empty() {
-        return Ok(prose);
+        return Ok(ComposedPrompt {
+            prose,
+            resource_links: Vec::new(),
+        });
     }
 
     // Dedupe by id preserving first-seen order — a user can reference
@@ -175,6 +235,18 @@ pub async fn compose_prompt(
     // task on tokio's blocking pool; the join_all waits for all of
     // them. Branches have no body so they short-circuit without
     // spawning.
+    // Structured links for everything with a path (P2.1). Built before the
+    // bodies fan out, so the ordering matches what the user typed.
+    let links: Vec<ResourceLinkSpec> = uniq
+        .iter()
+        .filter_map(|m| {
+            mention_path(m).map(|p| ResourceLinkSpec {
+                uri: file_uri(p),
+                name: m.short_form(),
+            })
+        })
+        .collect();
+
     let futures = uniq.into_iter().map(|m| async move {
         tokio::task::spawn_blocking(move || render_block(&m))
             .await
@@ -182,14 +254,19 @@ pub async fn compose_prompt(
     });
     let blocks: Vec<Option<String>> = futures::future::join_all(futures).await;
     let present: Vec<String> = blocks.into_iter().flatten().collect();
-    if present.is_empty() {
-        return Ok(prose);
-    }
+    let composed = if present.is_empty() {
+        prose
+    } else {
+        format!(
+            "{prose}\n\n---\n# Atlas context\n\n{joined}\n",
+            joined = present.join("\n\n")
+        )
+    };
 
-    Ok(format!(
-        "{prose}\n\n---\n# Atlas context\n\n{joined}\n",
-        joined = present.join("\n\n")
-    ))
+    Ok(ComposedPrompt {
+        prose: composed,
+        resource_links: links,
+    })
 }
 
 /// Synchronous body renderer for a single mention. Runs on the
@@ -198,21 +275,14 @@ pub async fn compose_prompt(
 /// payload).
 fn render_block(m: &MentionSpec) -> Option<String> {
     match m {
-        MentionSpec::File { abs_path, .. } => {
-            // Reference the file by path — let the agent read it via
-            // its own filesystem tools instead of inlining the body.
-            // Inlining a 5000-line file blows up the context for every
-            // turn forever; pointing at the path is one line and the
-            // agent can pull just what it needs.
-            Some(format!(
-                "## {sf}\n\nFile at `{abs_path}`. Use your filesystem tools to read it.",
-                sf = m.short_form()
-            ))
-        }
-        MentionSpec::Folder { abs_path, .. } => Some(format!(
-            "## {sf}\n\nDirectory at `{abs_path}`. Use your filesystem tools to explore.",
-            sf = m.short_form()
-        )),
+        // P2.1: files and folders contribute NO prose block any more — their
+        // entire payload was the path, and that now rides as a structured
+        // `ResourceLink` the agent parses instead of a sentence it has to
+        // read. The long-standing decision NOT to inline file bodies is
+        // unchanged and is exactly what ResourceLink expresses natively:
+        // "here is the file, open the part you need". Instruction-bearing
+        // mentions (workspace/repo) keep their block AND get a link.
+        MentionSpec::File { .. } | MentionSpec::Folder { .. } => None,
         MentionSpec::Workspace {
             abs_path,
             display_name,
@@ -497,4 +567,49 @@ fn read_repo_readme_body(repo_abs: &str, _repo_name: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod resource_link_tests {
+    use super::file_uri;
+
+    #[test]
+    fn a_plain_path_becomes_a_file_uri() {
+        assert_eq!(file_uri("/repo/src/main.rs"), "file:///repo/src/main.rs");
+    }
+
+    /// Spaces are the common case on macOS (`/Users/x/My Project`); an
+    /// unencoded space truncates the URI at the first word for a strict parser.
+    #[test]
+    fn spaces_are_encoded() {
+        assert_eq!(
+            file_uri("/Users/x/My Project/a.rs"),
+            "file:///Users/x/My%20Project/a.rs"
+        );
+    }
+
+    /// `#` and `?` would otherwise re-scope the rest of the path as a fragment
+    /// or query string, silently pointing the agent at the wrong file.
+    #[test]
+    fn fragment_and_query_delimiters_are_encoded() {
+        assert_eq!(file_uri("/a/b#c.rs"), "file:///a/b%23c.rs");
+        assert_eq!(file_uri("/a/b?c.rs"), "file:///a/b%3Fc.rs");
+        assert_eq!(file_uri("/a/100%.rs"), "file:///a/100%25.rs");
+    }
+
+    /// Deliberately narrow encoding: several agents strip the scheme and use
+    /// the remainder as a path, so over-encoding ordinary characters would
+    /// hand them a path that no longer exists.
+    #[test]
+    fn ordinary_path_characters_are_left_alone() {
+        for path in [
+            "/a/b-c_d.rs",
+            "/a/b.test.ts",
+            "/a/@scope/pkg/index.js",
+            "/a/b(1)/c.rs",
+            "/Users/x/Ünïcodé/файл.rs",
+        ] {
+            assert_eq!(file_uri(path), format!("file://{path}"), "{path}");
+        }
+    }
 }

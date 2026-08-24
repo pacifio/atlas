@@ -13,11 +13,11 @@ export const CHART = {
 // Muted, desaturated tones that sit quietly on Atlas's AMOLED-black monochrome
 // theme (NO bright orange / saturated hues). Faint hue separation only.
 export const AGENT_COLOR = {
-  claude: "#b9b1a6", // warm gray
-  codex: "#8fa39b", // muted sage
+  // One colour for every Atlas agent: the dashboard folds them into one
+  // series rather than growing a column per agent (issue #17).
+  agents: "#b9b1a6", // warm gray
   gpt: "#93a3ad", // muted slate
   gemini: "#9aa6c0", // muted periwinkle-gray
-  review: "#b6ad97", // muted sand
   byok: "#a89fb0", // muted mauve-gray
   input: "#c9c9cf", // light gray
   output: "#7f8088", // mid gray

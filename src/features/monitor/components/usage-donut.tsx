@@ -6,7 +6,7 @@ export interface DonutSegment {
 
 /**
  * Hand-rolled SVG donut (no chart lib — consistent with the app's
- * pomodoro timer-ring). Each segment is an arc drawn with
+ * SVG ring technique). Each segment is an arc drawn with
  * `stroke-dasharray` + a cumulative `strokeDashoffset`. Rotated -90° so
  * the first segment starts at 12 o'clock.
  */

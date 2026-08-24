@@ -10,10 +10,9 @@
 //!   atlas --version   print the IDE version
 //!
 //! Install location is `~/.local/bin/atlas` because:
-//!   1. macOS GUI launches have a minimal PATH; atlas-acp's
-//!      `enrich_path()` (`crates/atlas-acp/src/registry.rs:383-398`)
-//!      already prepends `~/.local/bin`, so anything we install
-//!      there is reachable from spawned child processes too.
+//!   1. macOS GUI launches have a minimal PATH, and the agent spawn path
+//!      already prepends `~/.local/bin` when enriching a child's PATH — so
+//!      anything installed there is reachable from spawned processes too.
 //!   2. It's the standard XDG-ish "user binaries" location and
 //!      doesn't require sudo.
 //!

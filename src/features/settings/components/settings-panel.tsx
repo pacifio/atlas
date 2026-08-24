@@ -9,10 +9,10 @@ import {
   Palette,
   Keyboard,
   Info,
-  FlaskConical,
   KeyRound,
   LayoutTemplate,
   Zap,
+  WandSparkles,
   Boxes,
   Plus,
   Minus,
@@ -27,22 +27,16 @@ import { LayoutsSettings } from "./layouts-settings";
 import { CodeEditorThemesSettings } from "./code-editor-themes-settings";
 import { AtlasThemesSettings } from "./atlas-themes-settings";
 import { SkillsAndPacks } from "./skills-and-packs";
+import { AgentsMarketplace } from "./agents-marketplace/agents-marketplace";
 import { ModelsManager } from "./models-manager";
-import { useDevFlagsStore } from "../stores/dev-flags-store";
 import { useModelPricingStore } from "../stores/model-pricing-store";
-import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { setEnabled as setTelemetryEnabled } from "@/features/telemetry/posthog-client";
 import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
 import { updater } from "@/features/updater/lib/updater-api";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
 import { useSettingsNav, type SettingsSection } from "../stores/settings-nav-store";
-import { isDev } from "@/lib/env";
 
-// Developer section is dev-build only — production users never see the
-// diagnostic toggles (they change app behavior and aren't useful outside
-// UI testing). `isDev` is a Vite build constant, so the production bundle
-// drops the entry entirely via dead-code elimination.
 const SECTIONS: Array<{
   id: SettingsSection;
   label: string;
@@ -53,10 +47,10 @@ const SECTIONS: Array<{
   { id: "layouts", label: "Layouts", icon: LayoutTemplate },
   { id: "providers", label: "API Keys", icon: KeyRound },
   { id: "skills", label: "Skills", icon: Zap },
+  { id: "agents", label: "Agents", icon: WandSparkles },
   { id: "models", label: "Local Models", icon: Boxes },
   { id: "updates", label: "Updates", icon: DownloadCloud },
   { id: "keybindings", label: "Keybindings", icon: Keyboard },
-  ...(isDev ? [{ id: "developer" as const, label: "Developer", icon: FlaskConical }] : []),
   { id: "about", label: "About", icon: Info },
 ];
 
@@ -155,6 +149,10 @@ export function SettingsPanel({ initialSection }: { initialSection?: string } = 
         <div className="flex-1 min-w-0 min-h-0">
           <SkillsAndPacks />
         </div>
+      ) : activeSection === "agents" ? (
+        <div className="flex-1 min-w-0 min-h-0">
+          <AgentsMarketplace />
+        </div>
       ) : activeSection === "models" ? (
         <div className="flex-1 min-w-0 min-h-0">
           <ModelsManager />
@@ -170,7 +168,6 @@ export function SettingsPanel({ initialSection }: { initialSection?: string } = 
             {activeSection === "layouts" && <LayoutsSettings />}
             {activeSection === "updates" && <UpdatesSettings />}
             {activeSection === "keybindings" && <KeybindingsSettings />}
-            {isDev && activeSection === "developer" && <DeveloperSettings />}
             {activeSection === "about" && <AboutSettings />}
           </div>
         </ScrollArea>
@@ -583,6 +580,7 @@ function KeybindingsSettings() {
         { action: "Global Search", keys: "⌘⇧F" },
         { action: "Settings", keys: "⌘," },
         { action: "New Window", keys: "⌘⇧N" },
+        { action: "Open Session Capture", keys: "⌘⌥C" },
         { action: "Zoom in", keys: "⌘+" },
         { action: "Zoom out", keys: "⌘-" },
         { action: "Reset zoom", keys: "⌘0" },
@@ -668,43 +666,6 @@ function KeybindingsSettings() {
   );
 }
 
-function DeveloperSettings() {
-  const triggerClaudeInstall = useDevFlagsStore.use.triggerClaudeInstall();
-  const { setTriggerClaudeInstall } = useDevFlagsStore.use.actions();
-  const { refreshStatus } = useClaudeSetupStore.use.actions();
-
-  return (
-    <div className="space-y-6">
-      <SectionTitle
-        title="Developer"
-        subtitle="Diagnostic toggles for UI testing — these change app behavior, leave off in normal use"
-      />
-
-      <div className="space-y-2">
-        <div className="text-[10px] uppercase tracking-wider text-text-tertiary px-1">
-          Claude Code setup
-        </div>
-        <div className="rounded-lg border border-border-default bg-bg-secondary px-3 py-3 space-y-3">
-          <SettingRow
-            label="Trigger Claude Install"
-            description="Force the install banner to appear regardless of whether the CLI is actually installed. The Install button and sign-in dialog run a simulated flow on this machine — no real curl, no real `claude /login`. Use this to UI-test the onboarding surface."
-          >
-            <Toggle
-              checked={triggerClaudeInstall}
-              onChange={(next) => {
-                setTriggerClaudeInstall(next);
-                // Re-run status so the banner reflects the new override
-                // immediately (turning OFF probes the real CLI again).
-                void refreshStatus();
-              }}
-            />
-          </SettingRow>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function AboutSettings() {
   return (
     <div className="space-y-4">
@@ -714,7 +675,7 @@ function AboutSettings() {
           <AtlasIcon size={40} className="rounded-xl" />
           <div>
             <p className="text-sm font-semibold text-text-primary">Atlas</p>
-            <p className="text-[10px] text-text-tertiary">v0.2.6 — The second brain IDE</p>
+            <p className="text-[10px] text-text-tertiary">v0.3.0 — The second brain IDE</p>
           </div>
         </div>
         <p className="text-[11px] text-text-secondary leading-relaxed pt-2">
@@ -760,7 +721,7 @@ function SettingRow({
  * owns the state and `onChange` is fired on click; otherwise we keep
  * internal state seeded by `defaultChecked` (original behavior).
  */
-function Toggle({
+export function Toggle({
   defaultChecked = false,
   checked,
   onChange,

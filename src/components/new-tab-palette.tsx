@@ -1,11 +1,9 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, type ElementType } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
-  MessageSquare,
-  Terminal,
   Map,
+  Terminal,
   Globe,
-  BookOpen,
   Brain,
   Network,
   BrainCircuit,
@@ -13,7 +11,6 @@ import {
   Code,
   Settings,
   Search,
-  Timer,
   GitCompare,
   type LucideProps,
 } from "lucide-react";
@@ -46,18 +43,15 @@ const MODULES: ModuleEntry[] = [
     icon: AtlasIcon as ElementType<LucideProps>,
     shortcut: "⌘T",
   },
-  { id: "model-chat", type: "model-chat", label: "New Chat", icon: MessageSquare },
+  { id: "canvas", type: "canvas", label: "Spaces", icon: Map },
   { id: "terminal", type: "terminal", label: "New Terminal", icon: Terminal, shortcut: "⌘⇧T" },
   { id: "knowledge", type: "knowledge", label: "Knowledge", icon: Brain },
   { id: "knowledge-graph", type: "knowledge-graph", label: "Knowledge Graph", icon: Network },
   { id: "memory", type: "memory", label: "Memory", icon: BrainCircuit },
-  { id: "research", type: "research", label: "Research", icon: BookOpen },
-  { id: "canvas", type: "canvas", label: "Spaces", icon: Map },
   { id: "diff", type: "diff", label: "Git Diff", icon: GitCompare },
   { id: "browser", type: "browser", label: "Browser", icon: Globe },
   { id: "editor", type: "editor", label: "Untitled Editor", icon: Code, shortcut: "⌘N" },
   { id: "log", type: "log", label: "Log", icon: ScrollText },
-  { id: "pomodoro", type: "pomodoro", label: "Pomodoro", icon: Timer },
   { id: "settings", type: "settings", label: "Settings", icon: Settings, shortcut: "⌘," },
 ];
 
@@ -108,15 +102,6 @@ export function NewTabPalette({
       // Singleton agent chat — focus the existing chat tab (resetting it to a
       // fresh session) instead of opening a second one.
       openNewAgentChat();
-    } else if (item.type === "model-chat") {
-      addTab({
-        id: `model-chat-${ts}`,
-        type: "model-chat",
-        title: "Chat",
-        closable: true,
-        dirty: false,
-        data: {},
-      });
     } else if (item.type === "editor") {
       addTab({
         id: `editor-untitled-${ts}`,
@@ -140,15 +125,6 @@ export function NewTabPalette({
         id: "settings",
         type: "settings",
         title: "Settings",
-        closable: true,
-        dirty: false,
-        data: {},
-      });
-    } else if (item.type === "pomodoro") {
-      addTab({
-        id: "pomodoro",
-        type: "pomodoro",
-        title: "Pomodoro",
         closable: true,
         dirty: false,
         data: {},

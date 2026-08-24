@@ -41,9 +41,14 @@ import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { jumpToSession } from "@/features/chat/lib/tab-workspace";
-import { refreshCachedAcpModels } from "@/features/chat/lib/warm-acp-models";
-import { useClaudeSetupStore } from "@/features/claude-setup/stores/claude-setup-store";
-import { useNodeSetupStore } from "@/features/node-setup/stores/node-setup-store";
+import { pruneContextUsageCache } from "@/features/chat/lib/context-usage-cache";
+import { isScrollHot } from "@/lib/scroll-hot";
+import {
+  hydrateAgentRegistry,
+  startCatalogListener,
+} from "@/features/agents/stores/agent-registry-store";
+import { AgentOAuthModalHost } from "@/features/agents/components/agent-oauth-modal";
+import { AgentElicitationHost } from "@/features/chat/components/agent-elicitation-host";
 import {
   isPermissionGranted,
   requestPermission,
@@ -77,6 +82,7 @@ import {
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { ConnectDialog } from "@/features/auth/components/connect-dialog";
 import { clampScale, SCALE_STEP, DEFAULT_SCALE } from "@/features/settings/lib/ui-scale";
+import { useModelsStore } from "@/features/settings/stores/models-store";
 
 // Interface-zoom helpers (⌘+/⌘-/⌘0). They read + write the persisted
 // `uiScale` setting; `updateSettings` applies it to the native WebView zoom.
@@ -90,16 +96,26 @@ const zoomReset = () =>
   useProjectStore.getState().actions.updateSettings({ uiScale: DEFAULT_SCALE });
 
 export function App() {
-  // Probe Claude Code (installed? authed?) on mount. Drives the banner
-  // above the message composer and the hard-disabled state of the input
-  // when the CLI isn't ready. Fast — two parallel subprocesses, totals
-  // <100ms on a warm machine.
+  // Own model download listeners at app scope so completion notifications are
+  // delivered even when Settings is closed.
   useEffect(() => {
-    // Probe the Node runtime first (the ACP agents launch via `npx`). If it's
-    // missing or too old, the store auto-installs the latest LTS via the
-    // bundled nvm in the background and re-runs ACP discovery when ready.
-    void useNodeSetupStore.getState().actions.check();
-    void useClaudeSetupStore.getState().actions.refreshStatus();
+    void useModelsStore.getState().actions.init();
+  }, []);
+
+  // No Claude probe here any more. It used to run at boot to drive a banner
+  // above the composer and hard-disable the input; both are gone, and probing
+  // meant a fresh install spawned subprocesses for an agent it does not have
+  // (ADR-0002). The one caller that still needs the answer — the post-auth
+  // re-check in `agent-auth-hooks` — asks for it itself.
+  useEffect(() => {
+    // Agent identity registry (the native agent + registry-installed
+    // externals):
+    // hydrate once so pickers/glyphs/memory dropdown resolve external
+    // metadata; the marketplace re-hydrates after installs.
+    void hydrateAgentRegistry();
+    // …and stay current: discovery finishes after boot, and installs /
+    // acquisitions / settings toggles all change how an agent launches.
+    startCatalogListener();
   }, []);
 
   // Refresh the `atlas` CLI helper at `~/.local/bin/atlas` on every
@@ -322,7 +338,6 @@ export function App() {
     toggleRightPanel,
     toggleBottomPanel,
     toggleChatSidebar,
-    toggleModelChatSidebar,
     toggleTabBar,
     addTab,
     setActiveTab,
@@ -382,18 +397,6 @@ export function App() {
   };
   const currentProject = useProjectStore.use.currentProject();
 
-  // Silent startup refresh of cached ACP model lists (Claude Code / Codex) so
-  // the model picker stays fresh — optimistic UI: the cache drives the picker
-  // immediately, this updates it in the background. Only re-warms agents already
-  // cached (i.e. used before), so we never spawn an agent the user never touches.
-  // Deferred so it never competes with launch.
-  useEffect(() => {
-    const cwd = currentProject?.path;
-    if (!cwd) return;
-    const t = setTimeout(() => refreshCachedAcpModels(cwd), 4000);
-    return () => clearTimeout(t);
-  }, [currentProject?.path]);
-
   // Global agent event bus. One listener routes atlas-agents SessionDelta
   // events into the chat-store, queues permission requests for the
   // PermissionModal, and resets the lazy agent handle on disconnect.
@@ -428,6 +431,7 @@ export function App() {
     // mis-ordered fragments.)
     const pendingDeltas: AgentDelta[] = [];
     const toolDeltaPos = new Map<string, number>(); // dedup key → index in pendingDeltas
+    const outputChunkPos = new Map<string, number>(); // live-output coalesce key → index
     let rafId: number | null = null;
     /** Timer drain that survives RAF being paused — see `schedule` below. */
     let backstopId: ReturnType<typeof setTimeout> | null = null;
@@ -500,6 +504,11 @@ export function App() {
       }
     }, KEEP_WARM_MS);
 
+    // Housekeeping, well off the startup critical path: sweep stale
+    // per-session context-usage gauges out of localStorage (they had no
+    // other removal path and grew one key per session forever).
+    const pruneTimer = window.setTimeout(() => pruneContextUsageCache(), 15_000);
+
     let permissionState: "unknown" | "granted" | "denied" = "unknown";
     // Establish notification permission EAGERLY at startup. The old lazy path
     // only asked the OS the first time a notification fired while unfocused —
@@ -571,7 +580,14 @@ export function App() {
       }
     };
 
-    const flush = () => {
+    /** Longest a batch may be held for an active scroll gesture. Bounded so a
+     *  continuous fling can never starve the stream — worst case the reader
+     *  sees updates land ~2-3× per second instead of per frame while flicking. */
+    const SCROLL_HOLD_MAX_MS = 400;
+    /** When the oldest un-flushed delta was buffered (null = buffer empty). */
+    let oldestBufferedAt: number | null = null;
+
+    const flush = (force = false) => {
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
         rafId = null;
@@ -580,10 +596,29 @@ export function App() {
         clearTimeout(backstopId);
         backstopId = null;
       }
-      if (pendingDeltas.length === 0) return;
+      if (pendingDeltas.length === 0) {
+        oldestBufferedAt = null;
+        return;
+      }
+      // Mid-fling, hold the batch: applying it re-renders ChatPanel →
+      // Transcript → a reconcile of every mounted row, and when that lands in
+      // a momentum-scroll frame WKWebView misses tile deadlines — the
+      // viewport blanks. Deltas keep buffering; they land the moment the
+      // gesture goes quiet or the hold cap expires.
+      if (
+        !force &&
+        isScrollHot() &&
+        oldestBufferedAt !== null &&
+        performance.now() - oldestBufferedAt < SCROLL_HOLD_MAX_MS
+      ) {
+        backstopId = setTimeout(flush, 100);
+        return;
+      }
+      oldestBufferedAt = null;
       const deltas = pendingDeltas.slice();
       pendingDeltas.length = 0;
       toolDeltaPos.clear();
+      outputChunkPos.clear();
       try {
         useChatStore.getState().actions.applyAgentBatch({ texts: [], thoughts: [], deltas });
       } catch (e) {
@@ -633,7 +668,8 @@ export function App() {
     // cancelled timer per frame and changes nothing about normal streaming.
     const BACKSTOP_MS = 250;
     const schedule = () => {
-      if (rafId === null) rafId = requestAnimationFrame(flush);
+      if (oldestBufferedAt === null) oldestBufferedAt = performance.now();
+      if (rafId === null) rafId = requestAnimationFrame(() => flush());
       if (backstopId === null) backstopId = setTimeout(flush, BACKSTOP_MS);
     };
 
@@ -672,13 +708,53 @@ export function App() {
       pendingDeltas.push(env);
     };
 
+    // Coalesce incremental live tool output. Priority order matters for
+    // correctness, not just batching:
+    // 1. A full `tool_call_upserted` snapshot for this tool is already
+    //    buffered — fold the delta into ITS `result`. A separate chunk entry
+    //    would double-apply: a later snapshot replaces that buffer slot with
+    //    a result that already contains every earlier chunk, and the stray
+    //    chunk entry would then append the same bytes again.
+    // 2. This tool's previous buffered entry is a chunk — concatenate.
+    // 3. Fresh chunk entry. (Chunks buffered BEFORE a tool's first snapshot
+    //    of the frame stay safe: they apply first and the later snapshot
+    //    replaces the result wholesale.)
+    const bufferOutputChunk = (env: Extract<AgentDelta, { kind: "tool_call_output_chunk" }>) => {
+      const key = `${env.session_id}::${env.tool_call_id}`;
+      const upsertAt = toolDeltaPos.get(key);
+      if (upsertAt !== undefined) {
+        const entry = pendingDeltas[upsertAt];
+        if (entry?.kind === "tool_call_upserted") {
+          pendingDeltas[upsertAt] = {
+            ...entry,
+            tool_call: {
+              ...entry.tool_call,
+              result: (entry.tool_call.result ?? "") + env.delta,
+            },
+          };
+          return;
+        }
+      }
+      const chunkAt = outputChunkPos.get(key);
+      const prev = chunkAt !== undefined ? pendingDeltas[chunkAt] : undefined;
+      if (prev?.kind === "tool_call_output_chunk" && chunkAt !== undefined) {
+        pendingDeltas[chunkAt] = { ...prev, delta: prev.delta + env.delta };
+        return;
+      }
+      outputChunkPos.set(key, pendingDeltas.length);
+      pendingDeltas.push(env);
+    };
+
     // Resolve the chat tab + title for an ACP session, for in-app notifications.
     const agentSessionInfo = (acpSessionId: string) => {
       const sessions = useChatStore.getState().sessions;
       for (const [tabId, s] of Object.entries(sessions)) {
         if (s.acpSessionId === acpSessionId) return { tabId, title: s.title };
       }
-      return { tabId: undefined as string | undefined, title: undefined as string | undefined };
+      return {
+        tabId: undefined as string | undefined,
+        title: undefined as string | undefined,
+      };
     };
     const notify = () => useNotificationsStore.getState().actions;
 
@@ -736,7 +812,9 @@ export function App() {
           // "Indexing…" then refresh its status.
           const emit = (active: boolean) =>
             window.dispatchEvent(
-              new CustomEvent("atlas:cersei-index", { detail: { path, active } }),
+              new CustomEvent("atlas:cersei-index", {
+                detail: { path, active },
+              }),
             );
           emit(true);
           void invoke("codebase_index_build", {
@@ -793,6 +871,10 @@ export function App() {
           bufferChunk(env);
           schedule();
           return;
+        case "tool_call_output_chunk":
+          bufferOutputChunk(env);
+          schedule();
+          return;
         case "permission_request": {
           // Permission requests block the agent waiting for the user
           // — apply synchronously so the modal opens on the very next
@@ -841,7 +923,8 @@ export function App() {
           // Flush whatever's buffered before tearing the agent down
           // so we don't lose a final chunk to the post-disconnect
           // discard. `flush` cancels both pending drains itself.
-          flush();
+          // Forced: teardown correctness outranks the scroll-hold.
+          flush(true);
           actions.clearPermissionsForAgent(env.agent_id);
           // Reset the spawn cache for the plugin that actually died — the old
           // resetDefaultAgent() only ever cleared claude-code-ts, so a crashed
@@ -954,6 +1037,7 @@ export function App() {
       window.removeEventListener("keydown", onUserActivity);
       window.removeEventListener("wheel", onUserActivity);
       window.clearInterval(keepWarm);
+      window.clearTimeout(pruneTimer);
       indexTimers.forEach((t) => clearTimeout(t));
       unlisten?.();
     };
@@ -967,7 +1051,11 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | null = null;
-    type Payload = { workspaceId?: string; dirs: string[]; fullRefresh: boolean };
+    type Payload = {
+      workspaceId?: string;
+      dirs: string[];
+      fullRefresh: boolean;
+    };
     listen<Payload>("atlas:explorer:changed", (e) => {
       if (cancelled) return;
       // Ignore changes from a backgrounded workspace's resident watcher —
@@ -1169,11 +1257,6 @@ export function App() {
       action: toggleChatSidebar,
     },
     {
-      // ⌘⌥K — toggle the Model-Chat history sidebar (mirror of ⌘⌥J).
-      combo: { key: "k", meta: true, alt: true },
-      action: toggleModelChatSidebar,
-    },
-    {
       // ⌥J — open the Knowledge Base, or jump to it if already open. Placed
       // after ⌘⌥J (chat sidebar) so the matcher resolves that combo first;
       // plain ⌥J (no ⌘) only matches here.
@@ -1323,6 +1406,14 @@ export function App() {
           data: {},
         }),
     },
+    {
+      // ⌘⌥C — open Session Capture (the popover behind the titlebar's
+      // project pill). Local `captureOpen` state lives in `ProjectLabel`,
+      // so this reaches it via the same `atlas:open-capture` event the
+      // command palette entry dispatches.
+      combo: { key: "c", meta: true, alt: true },
+      action: () => window.dispatchEvent(new CustomEvent("atlas:open-capture")),
+    },
     // ── Interface zoom (⌘+ / ⌘- / ⌘0) ──
     // `⌘+` on a US layout arrives as Shift+`=` (e.key === "+"); `⌘=` works too.
     // Both step the global UI scale up; `⌘-` down; `⌘0` resets to 100%.
@@ -1345,6 +1436,10 @@ export function App() {
       <SearchOverlay open={searchOpen} onOpenChange={setSearchOpen} />
       <FilePicker open={filePickerOpen} onOpenChange={setFilePickerOpen} />
       <HintOverlay />
+      <AgentOAuthModalHost />
+      {/* Sign-in asks questions of its own (device codes, login URLs), and they
+          arrive before the agent has any session to route them by. */}
+      <AgentElicitationHost />
       <NotificationPanel />
       <FeedbackPanel />
       <UpdateAvailableModal />

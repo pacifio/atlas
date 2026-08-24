@@ -5,6 +5,7 @@ import { useChatStore } from "@/features/chat/stores/chat-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { ensureAgent, getAgentSync } from "./agents-api";
+import { errInfo } from "./agent-signin";
 import {
   isBusyAgentStatus,
   pluginIdForAgent,
@@ -148,7 +149,6 @@ export async function openAgentSession({
     // Two-stage: paint from disk in ~50ms, bind the agent concurrently. See
     // `resumeSessionFast` for why the old single-await chain felt slow.
     const { agent, snapshot } = await resumeSessionFast({
-      pluginId,
       sessionId: acpSessionId,
       cwd,
       ensure: () => ensureAgent(pluginId),
@@ -166,7 +166,9 @@ export async function openAgentSession({
   } catch (err) {
     setTranscriptLoading(targetTabId, false);
     setResumePending(targetTabId, false);
-    toast.error(`Couldn't open session: ${err instanceof Error ? err.message : String(err)}`);
+    // `errInfo`: the spawn/load commands in this path reject with a structured
+    // `{message, kind}` that would render as "[object Object]".
+    toast.error(`Couldn't open session: ${errInfo(err).message}`);
   }
 }
 
@@ -192,6 +194,11 @@ export async function openAgentSession({
  * mid-turn spawns a new chat instead of killing the live one.
  */
 export function openNewAgentChat(agent?: SwitchableAgent): void {
+  // This is a public entry point that WILL get wired as an event handler again
+  // someday — a React SyntheticEvent arriving here once reached the store as
+  // agentType and broke the whole bind pipeline. Anything non-string means
+  // "no agent preference".
+  if (typeof agent !== "string") agent = undefined;
   const layout = useLayoutStore.getState();
   const chat = useChatStore.getState();
   const { addTab, setActiveTab } = layout.actions;
@@ -226,7 +233,14 @@ export function openNewAgentChat(agent?: SwitchableAgent): void {
 
   // No chat tab open, or the current chat is mid-turn → fresh tab.
   const id = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  addTab({ id, type: "chat", title: "Agents", closable: true, dirty: false, data: {} });
+  addTab({
+    id,
+    type: "chat",
+    title: "Agents",
+    closable: true,
+    dirty: false,
+    data: {},
+  });
   createSession(id);
   if (agent) switchChatAgent(id, agent);
   setActiveTab(id);

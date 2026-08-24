@@ -1,14 +1,8 @@
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
-import {
-  ClaudeIcon,
-  CodexIcon,
-  OpenCodeIcon,
-  CursorIcon,
-  KiloIcon,
-} from "@/components/agent-icons";
-import { AtlasIcon } from "@/components/atlas-icon";
+import { AgentMark } from "@/components/agent-mark";
+import { pluginIdForSource } from "../lib/memory-agent";
 
 export interface PanelItem {
   id: string; // memory doc id ("claude:…" / "codex:…" / "cersei:…")
@@ -30,14 +24,12 @@ export function MemoryTimelinePanel({
   subtitle,
   items,
   onClose,
-  onActivate,
 }: {
   open: boolean;
   title: string;
   subtitle: string;
   items: PanelItem[];
   onClose: () => void;
-  onActivate: (id: string) => void;
 }) {
   if (!open) return null;
   return (
@@ -65,6 +57,7 @@ export function MemoryTimelinePanel({
             onClick={onClose}
             className="mt-1 flex items-center justify-center w-5 h-5 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
             title="Close"
+            aria-label="Close"
           >
             <X size={13} />
           </button>
@@ -77,26 +70,15 @@ export function MemoryTimelinePanel({
             </div>
           ) : (
             items.map((it) => (
-              <button
+              <div
                 key={it.id + it.note}
-                onClick={() => onActivate(it.id)}
-                className="w-full text-left px-3 py-2.5 border-b border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] transition-colors flex flex-col gap-0.5"
-                title="Open in its source agent tab"
+                className="w-full text-left px-3 py-2.5 border-b border-[var(--border-subtle)] flex flex-col gap-0.5"
               >
                 <div className="flex items-center gap-1.5 min-w-0">
-                  {it.source === "codex" ? (
-                    <CodexIcon className="size-3 shrink-0 opacity-70" />
-                  ) : it.source === "cersei" ? (
-                    <AtlasIcon size={12} className="shrink-0 opacity-70" />
-                  ) : it.source === "opencode" ? (
-                    <OpenCodeIcon className="size-3 shrink-0 opacity-70" />
-                  ) : it.source === "cursor" ? (
-                    <CursorIcon className="size-3 shrink-0 opacity-70" />
-                  ) : it.source === "kilo" ? (
-                    <KiloIcon className="size-3 shrink-0 opacity-70" />
-                  ) : (
-                    <ClaudeIcon className="size-3 shrink-0 opacity-70" />
-                  )}
+                  <AgentMark
+                    agentType={pluginIdForSource(it.source)}
+                    className="shrink-0 opacity-70"
+                  />
                   <span className="text-[11px] text-[var(--text-primary)] truncate flex-1">
                     {it.title}
                   </span>
@@ -114,7 +96,7 @@ export function MemoryTimelinePanel({
                     </span>
                   )}
                 </div>
-              </button>
+              </div>
             ))
           )}
         </div>

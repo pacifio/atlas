@@ -1,0 +1,47 @@
+[package]
+name = "atlas-native-agent"
+version = "0.1.0"
+edition = "2021"
+description = "Cersei, Atlas's in-process agent, on the ported AgentConnection seam."
+
+[lib]
+name = "atlas_native_agent"
+
+[dependencies]
+# The seam. Same exact pin as every other crate in the ported stack
+# (`zed-ref/Cargo.toml:518`).
+agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
+atlas-acp-thread = { path = "../atlas-acp-thread" }
+# For the `AgentServer` trait: the native agent occupies the same slot an
+# external one does, exactly as Zed's `NativeAgentServer` does.
+atlas-agent-servers = { path = "../atlas-agent-servers" }
+# The runtime itself. It names no protocol version — that is what makes it
+# linkable from here as well as from the old stack; see `atlas_cersei::events`.
+atlas-cersei = { path = "../atlas-cersei" }
+anyhow = "1"
+futures = "0.3"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+# `test-support` lets a test point a real turn at a scripted model, which is the
+# only part of the native agent a test cannot otherwise run.
+atlas-cersei = { path = "../atlas-cersei", features = ["test-support"] }
+async-trait = "0.1"
+cersei = { version = "0.2.6", default-features = false }
+tempfile = "3"
+tokio = { version = "1", features = ["full", "test-util"] }
+
+[patch.crates-io]
+# Same vendored Cersei patches every consumer of `atlas-cersei` must apply — a
+# `[patch]` section only takes effect in the manifest cargo is invoked on, so
+# each package that reaches the SDK has to repeat it.
+#
+# UTF-8: the published SSE decoders corrupt multi-byte chars split across HTTP
+# chunk boundaries. Guard: `cersei_provider::utf8::ATLAS_UTF8_PATCH`.
+cersei-provider = { path = "../../vendor/cersei-provider" }
+# Cancel: the published runner never raced `tool.execute()` against the cancel
+# token, so writes landed after Stop and cancelled rounds left orphaned
+# `tool_use` blocks. Guard: `cersei_agent::ATLAS_CANCEL_PATCH`.
+cersei-agent = { path = "../../vendor/cersei-agent" }

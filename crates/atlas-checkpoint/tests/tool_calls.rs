@@ -583,6 +583,7 @@ fn every_file_the_agent_writes_records_path_hash_and_whether_it_existed() {
             FileWrite {
                 path: &resolved,
                 sha256_after: Some(hash_written_content(content)),
+                sketch_after: atlas_checkpoint::sketch::sketch(content),
                 existed_before: false,
                 deleted: false,
             },
@@ -639,6 +640,7 @@ fn existed_before_distinguishes_a_new_file_from_a_modified_one() {
                 FileWrite {
                     path: &resolved,
                     sha256_after: Some(hash_written_content(b"x")),
+                sketch_after: atlas_checkpoint::sketch::sketch(b"x"),
                     existed_before: existed,
                     deleted: false,
                 },
@@ -688,6 +690,7 @@ fn a_file_written_twice_in_one_turn_records_both_and_the_link_rule_sees_the_last
                 FileWrite {
                     path: &resolved,
                     sha256_after: Some(hash_written_content(content)),
+                sketch_after: atlas_checkpoint::sketch::sketch(content),
                     existed_before: true,
                     deleted: false,
                 },
@@ -742,6 +745,7 @@ fn a_file_touched_across_several_turns_records_one_per_turn() {
                 FileWrite {
                     path: &resolved,
                     sha256_after: Some(hash_written_content(format!("turn {turn}").as_bytes())),
+                sketch_after: atlas_checkpoint::sketch::sketch(format!("turn {turn}").as_bytes()),
                     existed_before: true,
                     deleted: false,
                 },
@@ -786,6 +790,7 @@ fn a_file_created_then_deleted_is_represented_truthfully() {
             FileWrite {
                 path: &resolved,
                 sha256_after: Some(hash_written_content(b"temp")),
+                sketch_after: atlas_checkpoint::sketch::sketch(b"temp"),
                 existed_before: false,
                 deleted: false,
             },
@@ -801,6 +806,7 @@ fn a_file_created_then_deleted_is_represented_truthfully() {
                 // No content hash for a deletion — the deletion marker is the
                 // evidence the link rule uses instead.
                 sha256_after: None,
+                sketch_after: None,
                 existed_before: true,
                 deleted: true,
             },
@@ -848,6 +854,7 @@ fn a_write_outside_the_workspace_is_flagged_rather_than_recorded_as_a_broken_pat
             FileWrite {
                 path: &resolved,
                 sha256_after: Some(hash_written_content(b"x")),
+                sketch_after: atlas_checkpoint::sketch::sketch(b"x"),
                 existed_before: true,
                 deleted: false,
             },
@@ -1004,6 +1011,7 @@ fn a_unicode_normalisation_difference_does_not_prevent_a_path_from_matching() {
             FileWrite {
                 path: &decomposed,
                 sha256_after: Some(hash_written_content(b"x")),
+                sketch_after: atlas_checkpoint::sketch::sketch(b"x"),
                 existed_before: true,
                 deleted: false,
             },
@@ -1036,7 +1044,7 @@ fn capture_degrades_gracefully_when_a_call_carries_no_usable_location() {
     let mut capture = Capture::new(&mut store, WorkspaceMode::Local);
 
     let arguments = serde_json::json!({ "command": "cargo test" });
-    assert!(extract_paths(&[], &arguments).is_empty());
+    assert!(extract_paths(&[], &[], &arguments).is_empty());
 
     capture
         .record_tool_call(

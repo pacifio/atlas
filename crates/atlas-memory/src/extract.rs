@@ -32,11 +32,11 @@ use std::path::Path;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use cersei_agent::session_memory::{
+use crate::session::{
     extraction_prompt, parse_extraction_output, persist_memories, MemoryCategory,
 };
-use cersei_memory::graph::GraphMemory;
-use cersei_memory::memdir::MemoryType;
+use crate::graph::GraphMemory;
+use crate::graph::MemoryType;
 
 /// Mirrors `cersei_agent::session_memory::MIN_MESSAGES_TO_EXTRACT` (private there).
 const MIN_MESSAGES_TO_EXTRACT: usize = 20;

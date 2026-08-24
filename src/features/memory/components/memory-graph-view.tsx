@@ -12,12 +12,10 @@ import {
   Clock,
   Network,
   ListTree,
-  ArrowUpRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useMemoryGraphStore } from "../stores/memory-graph-store";
-import { useMemoryStore } from "../stores/memory-store";
 import { MemoryGraphCanvas } from "./memory-graph-canvas";
 import { MemoryTreeView } from "./memory-tree-view";
 
@@ -249,8 +247,6 @@ function GraphReady({
     }
   };
 
-  const { navigateToMemory } = useMemoryStore.use.actions();
-
   // Esc deselects the active node (unless typing in the search field).
   useEffect(() => {
     if (!selectedId) return;
@@ -263,22 +259,6 @@ function GraphReady({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [selectedId, onSelect]);
-
-  // Jump from the detail card to the source memory: Claude file, Codex thread,
-  // native Atlas (cersei) session, or a capture-backed agent session view
-  // (opencode/cursor/kilo). Anything else (codebase/shared/note) → Claude tab.
-  const openSource = () => {
-    if (!selected) return;
-    const sub =
-      selected.source === "codex" ||
-      selected.source === "cersei" ||
-      selected.source === "opencode" ||
-      selected.source === "cursor" ||
-      selected.source === "kilo"
-        ? selected.source
-        : "claude";
-    navigateToMemory(sub, selected.id);
-  };
 
   // Animate the cutoff from oldest → newest, then reveal everything.
   useEffect(() => {
@@ -436,30 +416,15 @@ function GraphReady({
               </span>
             </div>
           )}
-          {/* Selected node detail card — click to open the source memory. */}
+          {/* Selected node detail card. Read-only: the per-agent memory views it
+              used to open were removed with the agent dropdown. */}
           {selected && (
-            <button
-              onClick={openSource}
-              title={
-                selected.source === "codex" ||
-                selected.source === "cersei" ||
-                selected.source === "opencode" ||
-                selected.source === "cursor" ||
-                selected.source === "kilo"
-                  ? "Open this session in its agent tab"
-                  : "Open this file in the Claude Code tab"
-              }
-              className="group absolute left-[26px] bottom-3 max-w-[340px] text-left rounded-lg border border-[var(--border-default)] hover:border-[var(--border-strong)] bg-[var(--bg-elevated)]/90 backdrop-blur-sm shadow-[var(--shadow-overlay)] p-3 transition-colors cursor-pointer"
-            >
+            <div className="absolute left-[26px] bottom-3 max-w-[340px] text-left rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)]/90 backdrop-blur-sm shadow-[var(--shadow-overlay)] p-3">
               <div className="flex items-center gap-1.5 mb-1">
                 <SourceDot source={selected.source} />
                 <span className="text-[11px] font-medium text-[var(--text-primary)] truncate">
                   {selected.summary || selected.title}
                 </span>
-                <ArrowUpRight
-                  size={12}
-                  className="ml-auto shrink-0 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity"
-                />
               </div>
               <p className="text-[10px] text-[var(--text-tertiary)] line-clamp-4 leading-relaxed">
                 {selected.snippet || "—"}
@@ -468,7 +433,7 @@ function GraphReady({
                 {selected.source} · {selected.kind}
                 {selected.timestampMs > 0 && ` · ${fmtDate(selected.timestampMs)}`}
               </p>
-            </button>
+            </div>
           )}
         </div>
 

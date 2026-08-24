@@ -13,7 +13,7 @@
 //!   had their first send (so turns 2..N are zero-overhead) plus a write-through
 //!   cache of the per-project enable toggle.
 //! - Two per-project JSON files under `.atlas/` (atomic-written, mirroring the
-//!   `plans.rs` / `pomodoro.rs` / `canvas.rs` convention):
+//!   `plans.rs` / `canvas.rs` convention):
 //!     - `.atlas/memory-sharing.json`     → `{ "enabled": bool }` (default true)
 //!     - `.atlas/memory-summarizer.json`  → [`SummarizerPref`]
 //!
@@ -24,7 +24,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use atlas_agents::SessionKey;
+use super::agent_host::SessionKey;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -79,7 +79,7 @@ fn summarizer_path(project_path: &str) -> PathBuf {
 }
 
 /// Atomic write: create `.atlas/`, write to a sibling `.tmp`, then rename over
-/// the target (atomic on POSIX). Mirrors `plans.rs` / `pomodoro.rs`.
+/// the target (atomic on POSIX). Mirrors `plans.rs`.
 fn atomic_write(path: &Path, payload: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;

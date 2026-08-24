@@ -36,6 +36,19 @@ interface TerminalState {
    *  Surfaced as a spinner on the tab strip; the BlockTerminal reports it. */
   busy: Record<string, boolean>;
   pendingFocus: PendingTerminalFocus | null;
+  /** A command to run in one terminal, once its PTY exists.
+   *
+   *  Keyed by the LAYOUT TERMINAL id, not by tab. Keying by tab looked simpler
+   *  but was wrong twice over: a terminal tab is a singleton per column, so the
+   *  tab a caller asks for usually already exists (and `addTab` rewrites the id
+   *  even when it does not), and a tab can hold several terminals, so "the
+   *  tab's terminal" is not a thing. The opener mints the terminal it wants and
+   *  queues against that.
+   *
+   *  Consumed once — a command must not re-run when the terminal remounts
+   *  (HMR, a tab switch that unmounts the panel), which for a login would mean
+   *  signing in twice. */
+  pendingCommands: Record<string, string>;
 }
 
 interface TerminalActions {
@@ -50,6 +63,16 @@ interface TerminalActions {
     setTerminalBusy: (ptyId: string, busy: boolean) => void;
     requestTerminalFocus: (tabId: string) => void;
     clearPendingTerminalFocus: () => void;
+    /** Mint a terminal in `tabId` to run a command in, and return its id.
+     *
+     *  A NEW terminal every time, even when the tab already has one: the
+     *  existing shell may be mid-command, and typing into it would interleave
+     *  with whatever the user is doing. */
+    addTerminalForCommand: (tabId: string) => string;
+    /** Queue a command for one terminal. */
+    setPendingCommand: (terminalId: string, command: string) => void;
+    /** Take the queued command, if any. Removes it — see `pendingCommands`. */
+    takePendingCommand: (terminalId: string) => string | undefined;
     /** Drop several terminal tabs (used when a workspace is DISCARDED). PTYs
      *  are already closed by the BlockTerminal unmount; this frees the trees. */
     removeTabs: (tabIds: string[]) => void;
@@ -117,6 +140,7 @@ export const useTerminalStore = createSelectors(
       tabs: {},
       busy: {},
       pendingFocus: null,
+      pendingCommands: {},
       actions: {
         initTab: (tabId) => {
           if (get().tabs[tabId]) return;
@@ -170,6 +194,9 @@ export const useTerminalStore = createSelectors(
 
         closeTerminalInPane: (tabId, paneId, ptyId) => {
           set((s) => {
+            // A queued command outlives nothing: its terminal is gone, and the
+            // line can hold an agent's login.
+            delete s.pendingCommands[ptyId];
             const t = s.tabs[tabId];
             if (!t) return;
             const pane = findPane(t.root, paneId);
@@ -234,6 +261,45 @@ export const useTerminalStore = createSelectors(
           });
         },
 
+        addTerminalForCommand: (tabId) => {
+          const ptyId = genId("pty");
+          set((s) => {
+            const paneId = genId("pane");
+            const t = s.tabs[tabId];
+            if (!t) {
+              // The tab has no terminal state yet — it was just created, and
+              // the panel has not mounted to `initTab` it. Seed it, so the
+              // terminal we hand back is the one that mounts.
+              s.tabs[tabId] = {
+                root: { type: "pane", id: paneId, terminals: [ptyId], activeTerminalId: ptyId },
+                activePaneId: paneId,
+              };
+              return;
+            }
+            const pane =
+              (t.activePaneId && findPane(t.root, t.activePaneId)) ?? collectPanes(t.root)[0];
+            if (!pane) return;
+            pane.terminals.push(ptyId);
+            pane.activeTerminalId = ptyId;
+            t.activePaneId = pane.id;
+          });
+          return ptyId;
+        },
+
+        setPendingCommand: (terminalId, command) =>
+          set((s) => {
+            s.pendingCommands[terminalId] = command;
+          }),
+
+        takePendingCommand: (terminalId) => {
+          const command = get().pendingCommands[terminalId];
+          if (command === undefined) return undefined;
+          set((s) => {
+            delete s.pendingCommands[terminalId];
+          });
+          return command;
+        },
+
         requestTerminalFocus: (tabId) => {
           set((s) => {
             s.pendingFocus = { tabId, requestId: (s.pendingFocus?.requestId ?? 0) + 1 };
@@ -247,7 +313,14 @@ export const useTerminalStore = createSelectors(
         },
         removeTabs: (tabIds) =>
           set((s) => {
-            for (const id of tabIds) delete s.tabs[id];
+            for (const id of tabIds) {
+              // Any command still queued for a terminal in this tab will never
+              // run — and the line can hold an agent's login.
+              for (const pane of s.tabs[id] ? collectPanes(s.tabs[id].root) : []) {
+                for (const terminalId of pane.terminals) delete s.pendingCommands[terminalId];
+              }
+              delete s.tabs[id];
+            }
           }),
       },
     })),

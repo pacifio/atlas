@@ -118,8 +118,8 @@ export function KnowledgeSidebar({
 
   // Build the "Recently opened" list from the host-supplied stack of
   // recent entry ids, looking up titles from the current entries.
-  // Dedupe defensively — `entries` may contain duplicate ids (a paper
-  // import racing a manual save) and that's also a React-key risk.
+  // Dedupe defensively — `entries` may contain duplicate ids (an import
+  // racing a manual save) and that's also a React-key risk.
   const recents = (() => {
     const out: Array<{ id: string; title: string }> = [];
     const seen = new Set<string>();

@@ -7,7 +7,7 @@
 //!
 //! ## Parity (agent-agnostic retrieval)
 //! All three agents reach retrieval through ONE closure registered with
-//! `atlas_agents::register_memory_search` — a `Fn(cwd, query, limit) -> Vec<MemDoc>`
+//! the host's `register_memory_search` — a `Fn(cwd, query, limit) -> Vec<MemDoc>`
 //! with **no agent-type parameter** (`src-tauri/.../agents.rs`). That closure calls
 //! `memory_retrieve::retrieve` → [`MemoryEngine::retrieve`], which returns
 //! [`RetrievedDoc { id, title, source, text }`](crate::RetrievedDoc); the Tauri
@@ -29,7 +29,7 @@
 
 use crate::{RetrievedDoc, DIM};
 
-/// Local mirror of the frozen `atlas_cersei::MemDoc` / `atlas_agents::MemDoc` shape.
+/// Local mirror of the frozen `atlas_cersei::MemDoc` shape.
 /// `atlas-memory` must not depend on `atlas-cersei` (Invariant 4), so we redeclare
 /// the three fields here and prove [`RetrievedDoc`] maps onto them. If the real
 /// `MemDoc` ever grows/loses a field, this mirror (and the mapping below) is where

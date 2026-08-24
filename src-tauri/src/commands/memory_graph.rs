@@ -224,7 +224,7 @@ pub async fn memory_index_build(
     }
 
     // Shared, load-once MiniLM (reused by the indexer, retrieve, query, policy and
-    // memory-chat) instead of loading a fresh ~90 MB model per graph build.
+    // the indexer) instead of loading a fresh ~90 MB model per graph build.
     let embedder = registry
         .provider(&app)
         .await

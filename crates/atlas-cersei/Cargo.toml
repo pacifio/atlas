@@ -9,11 +9,11 @@ name = "atlas_cersei"
 
 [dependencies]
 # Cersei agent SDK — the in-process agentic loop (provider builders, tools,
-# permission policies, streaming events). Same pin as atlas-review so the two
+# permission policies, streaming events). Same pin as atlas-codeindex so the two
 # Cersei consumers share one resolved version.
 # `default-features = false` drops the `vms` feature (cersei-vms ~4.5MB rlib +
 # its sub-crates) — Atlas does not use the VM tools. All cersei consumers must
-# agree (feature unification), so atlas-codeindex/atlas-review do the same.
+# agree (feature unification), so atlas-codeindex/atlas-memory do the same.
 cersei = { version = "0.2.6", default-features = false }
 # The agent crate directly, for the built-in `DelegateTool` + delegate batch
 # runner (parallel in-process sub-agents) — not re-exported by the `cersei`
@@ -22,20 +22,17 @@ cersei-agent = "0.2.6"
 # RTK (Rust Token Killer) tool-output compression — `CompressionLevel`, not
 # re-exported by the `cersei` facade. User-toggleable per session.
 cersei-compression = "0.2.6"
-# Cooperative cancellation of an in-flight turn (mirrors atlas-review).
+# Cooperative cancellation of an in-flight turn.
 tokio-util = "0.7"
 # Gitignore-aware recursive walker (ripgrep's own crate) backing the native
 # `List` tool — no external `rg`/`grep` binary. Unifies with cersei-tools'
 # transitive `ignore` (0.4.26 in the lockfile), so no extra build.
 ignore = "0.4"
-# Shared identifiers + the EventSink / AcpEvent contract. The native runtime
-# adapts Cersei's event stream into the SAME AcpEvent shape the ACP driver
-# emits, so atlas-agents' dispatch/state/UI path is reused unchanged.
-atlas-acp = { path = "../atlas-acp" }
-# Needed to CONSTRUCT the typed ACP schema values (`SessionUpdate`,
-# `ToolCallUpdate`, `PermissionOption`) that ride inside `AcpEvent`. Feature set
-# mirrors atlas-acp so Cargo unifies to one build and the wire shapes match.
-agent-client-protocol = { version = "1.2", features = ["unstable"] }
+# NOTE: no `atlas-acp`, no `agent-client-protocol`. This crate must stay
+# linkable from BOTH the old stack (protocol 1.3) and the ported one (2.0), and
+# those can never share a Cargo graph: `agent-client-protocol` pins its schema
+# crate exactly (`=1.4.0` / `=1.5.0`). The runtime therefore emits the
+# protocol-free `events::NativeEvent` — see `src/events.rs`.
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -45,6 +42,13 @@ dashmap = "6"
 parking_lot = "0.12"
 tracing = "0.1"
 async-trait = "0.1"
+thiserror = "2"
+
+[features]
+# Exposes `CerseiRuntime::set_provider_factory`, which lets a test run a real
+# turn against a scripted model. Off by default: a shipping build must have no
+# way to redirect the provider.
+test-support = []
 
 [target.'cfg(unix)'.dependencies]
 # Process-group kill for the cancellable Bash tool (SIGKILL to -pgid so a

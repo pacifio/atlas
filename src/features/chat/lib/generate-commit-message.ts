@@ -1,4 +1,4 @@
-import { modelchat, listenModelChat, type WireMsg } from "@/features/model-chat/lib/model-chat-api";
+import { modelchat, listenModelChat, type WireMsg } from "@/lib/byok/byok-chat";
 
 /**
  * Generate a Conventional-Commits message for a turn's edits via a single BYOK

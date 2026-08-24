@@ -1,4 +1,6 @@
 import { agents } from "./agents-api";
+import { resumeThread } from "./history-api";
+import { errInfo } from "./agent-signin";
 import { snapshotMessageToWire } from "./snapshot-message";
 import type { AgentInfo } from "@/types/acp";
 import type { SessionKey, SessionMessage, SessionSnapshot } from "@/types/agents";
@@ -59,16 +61,30 @@ function sameThread(a: SessionMessage[], b: SessionMessage[]): boolean {
 /** Which stage of the resume failed. Callers map this to their own message +
  *  rollback: a `spawn` failure means no agent (nothing to roll back), a `load`
  *  failure must clear the optimistic binding so the tab isn't stranded pointing
- *  at a session the backend never loaded, and `snapshot` leaves the load intact. */
-export type ResumeStage = "spawn" | "load" | "snapshot";
+ *  at a session the backend never loaded, and `snapshot` leaves the load intact.
+ *
+ *  `resume` is the history path's single step: `threads_resume` starts the
+ *  agent *and* reopens the session in one call, so which half failed is not
+ *  knowable from here — and it does not matter, because either way no binding
+ *  exists and the optimistic one must go. Claiming `load` or `spawn` would be
+ *  a guess dressed as a fact. */
+export type ResumeStage = "spawn" | "load" | "snapshot" | "resume";
 
 export class ResumeError extends Error {
+  /** `atlas_acp::ErrorClass` wire token from the backend, when it sent one. */
+  readonly kind: string | null;
+
   constructor(
     readonly stage: ResumeStage,
     readonly cause: unknown,
   ) {
-    super(cause instanceof Error ? cause.message : String(cause));
+    // `errInfo`, not String(cause): both stages this wraps (`agents_spawn`,
+    // `agents_load_session`) reject with a structured `{message, kind}`, which
+    // stringifies to "[object Object]".
+    const info = errInfo(cause);
+    super(info.message);
     this.name = "ResumeError";
+    this.kind = info.kind;
   }
 }
 
@@ -87,13 +103,12 @@ export interface ResumeResult {
  * authoritative.
  */
 export async function resumeSessionFast(opts: {
-  pluginId: string;
   sessionId: string;
   cwd: string;
   ensure: () => Promise<AgentInfo>;
   cb: ResumeCallbacks;
 }): Promise<ResumeResult> {
-  const { pluginId, sessionId, cwd, ensure, cb } = opts;
+  const { sessionId, cwd, ensure, cb } = opts;
 
   // Kick off the SLOW chain first so it owns the full wall-clock window — the
   // fast replay must never sit in front of the agent spawn.
@@ -122,7 +137,7 @@ export async function resumeSessionFast(opts: {
   let fastMessages: SessionMessage[] = [];
   let fastPainted = false;
   try {
-    fastMessages = await agents.replayTranscript(pluginId, sessionId, cwd);
+    fastMessages = await agents.replayTranscript(sessionId, cwd);
     if (fastMessages.length > 0 && !cb.isStale()) {
       cb.paint(fastMessages.map(snapshotMessageToWire));
       cb.onPainted();
@@ -144,10 +159,106 @@ export async function resumeSessionFast(opts: {
 
   // Only repaint when the snapshot actually says something different. On a clean
   // resume it doesn't, and skipping saves a full virtualizer re-measure.
-  if (!cb.isStale() && (!fastPainted || !sameThread(fastMessages, snapshot.messages))) {
+  //
+  // And never let a SHORTER snapshot replace the fast paint: stage 1 read the
+  // JSONL just now, so it is strictly fresher disk truth. The manager's
+  // load_session is an idempotent cache — a session whose transcript grew
+  // while cached hands back a stale, shorter snapshot, and repainting from it
+  // deleted the newest user messages from the visible thread.
+  const snapshotIsStale = fastPainted && snapshot.messages.length < fastMessages.length;
+  if (
+    !cb.isStale() &&
+    !snapshotIsStale &&
+    (!fastPainted || !sameThread(fastMessages, snapshot.messages))
+  ) {
     cb.paint(snapshot.messages.map(snapshotMessageToWire));
     cb.onPainted();
   }
 
   return { fastPainted, agent, key, snapshot };
+}
+
+/** What opening a history row produced. */
+export interface ResumedThreadResult extends Omit<ResumeResult, "agent"> {
+  /**
+   * The agent could only continue the session, not replay it. The old messages
+   * are not coming back and the user has to be told — a conversation that
+   * reopens empty with no explanation reads as data loss.
+   */
+  resumedWithoutHistory: boolean;
+}
+
+/**
+ * Open a history row: the same two stages as [`resumeSessionFast`], with the
+ * slow half driven by the thread rather than by a session id.
+ *
+ * The difference that matters is which protocol call is made. `threads_resume`
+ * starts the agent if it is not running and then picks `session/load` or
+ * `session/resume` by what that agent advertised, so this path works for an
+ * agent that can only continue a conversation — and says so when it did.
+ *
+ * The fast stage still paints from whatever transcript is on disk, because
+ * `session/load`'s replay arrives over seconds and the content is usually
+ * already there.
+ */
+export async function resumeThreadFast(opts: {
+  threadId: string;
+  /** The thread's OWN working directory — not the open project's. A row from
+   *  another worktree resumes into the worktree it belongs to. */
+  cwd: string;
+  /** The agent's session id, when the thread has one. Drafts have none, and
+   *  there is nothing on disk to replay for them. */
+  sessionId: string | null;
+  cb: ResumeCallbacks;
+}): Promise<ResumedThreadResult> {
+  const { threadId, cwd, sessionId, cb } = opts;
+
+  const slow = (async () => {
+    try {
+      return await resumeThread(threadId);
+    } catch (err) {
+      throw new ResumeError("resume", err);
+    }
+  })();
+  slow.catch(() => {});
+
+  let fastMessages: SessionMessage[] = [];
+  let fastPainted = false;
+  if (sessionId) {
+    try {
+      fastMessages = await agents.replayTranscript(sessionId, cwd);
+      if (fastMessages.length > 0 && !cb.isStale()) {
+        cb.paint(fastMessages.map(snapshotMessageToWire));
+        cb.onPainted();
+        fastPainted = true;
+      }
+    } catch {
+      // Optimisation only — the authoritative path below still runs.
+    }
+  }
+
+  const resumed = await slow;
+  let snapshot: SessionSnapshot;
+  try {
+    snapshot = await agents.snapshot(resumed.key);
+  } catch (err) {
+    throw new ResumeError("snapshot", err);
+  }
+
+  const snapshotIsStale = fastPainted && snapshot.messages.length < fastMessages.length;
+  if (
+    !cb.isStale() &&
+    !snapshotIsStale &&
+    (!fastPainted || !sameThread(fastMessages, snapshot.messages))
+  ) {
+    cb.paint(snapshot.messages.map(snapshotMessageToWire));
+    cb.onPainted();
+  }
+
+  return {
+    fastPainted,
+    key: resumed.key,
+    snapshot,
+    resumedWithoutHistory: resumed.resumedWithoutHistory,
+  };
 }

@@ -22,7 +22,6 @@ import {
   Paperclip,
   Brain,
   Bookmark,
-  Workflow,
   Code2,
   ChevronDown,
 } from "lucide-react";
@@ -31,7 +30,6 @@ import { CachedMarkdown } from "@/lib/markdown-cache";
 import { StreamingMarkdown } from "./streaming-markdown";
 import { openDetail } from "../stores/detail-panel-store";
 import { openTurnDiff } from "../lib/open-turn-diff";
-import { canDrawDiagram } from "../lib/turn-actions";
 import type {
   UserRow,
   ProseRow,
@@ -54,11 +52,18 @@ function Column({ children, className }: { children: React.ReactNode; className?
 export const UserRowView = memo(function UserRowView({
   row,
   priority,
+  justSent = false,
   onToggleExpand,
 }: {
   row: UserRow;
   /** Position in the thread — newest parses first. See `CachedMarkdown`. */
   priority: number;
+  /** True ONLY for the message the user sent just now (id-scoped in the
+   *  store). The previous wall-clock-vs-timestamp gate animated entire
+   *  restored threads (resume/replay paths stamp messages "now") and every
+   *  row mounted during an early scroll — bulk entrance animations during
+   *  fast scroll were a blanking contributor. */
+  justSent?: boolean;
   onToggleExpand: (id: string) => void;
 }) {
   return (
@@ -83,11 +88,20 @@ export const UserRowView = memo(function UserRowView({
             inline content, and the moment the bubble holds block elements
             (paragraphs, a list, a fence) it stops clamping at all. */}
         <div
-          className="atlas-prose atlas-prose--user min-w-0 max-w-full rounded-2xl rounded-br-md bg-[var(--accent-primary-muted)] px-3.5 py-2 select-text"
+          className={cn(
+            // Apple-squircle read: one big continuous radius (no clipped
+            // corner), a touch more padding — iMessage-adjacent geometry.
+            "atlas-prose atlas-prose--user min-w-0 max-w-full rounded-[20px] bg-[var(--accent-primary-muted)] px-4 py-2.5 select-text",
+            // Entrance only for THE message sent just now (id-scoped).
+            justSent && "atlas-bubble-in",
+          )}
           style={
             row.expanded
               ? undefined
-              : { maxHeight: M.userMaxLines * M.userLineHeight, overflow: "hidden" }
+              : {
+                  maxHeight: M.userMaxLines * M.userLineHeight,
+                  overflow: "hidden",
+                }
           }
         >
           <CachedMarkdown source={row.text} unstyled priority={priority} />
@@ -375,15 +389,10 @@ export const SeparatorRowView = memo(function SeparatorRowView({ row }: { row: S
 export const TurnFooterRowView = memo(function TurnFooterRowView({
   row,
   onSaveKb,
-  onDiagram,
 }: {
   row: TurnFooterRow;
   onSaveKb: () => void;
-  /** Stable across renders; the messageId binding happens in here so the memo
-   *  holds (an inline `() => onDiagram(id)` prop defeated it). */
-  onDiagram: (messageId: string) => void;
 }) {
-  const canDiagram = canDrawDiagram(row.files);
   // `row.files` is the first three; `row.allFiles` is everything. The overflow
   // line is a disclosure, not a dead count.
   const [showAll, setShowAll] = useState(false);
@@ -418,14 +427,6 @@ export const TurnFooterRowView = memo(function TurnFooterRowView({
               title="Save this thread to the knowledge base"
               onClick={onSaveKb}
             />
-            {canDiagram && (
-              <FooterPill
-                icon={<Workflow size={11} />}
-                label="Diagram"
-                title="Draw a diagram of these changes"
-                onClick={() => onDiagram(row.messageId)}
-              />
-            )}
             {edits.length > 0 && (
               <FooterPill
                 icon={<Code2 size={11} />}

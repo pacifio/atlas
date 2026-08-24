@@ -3,7 +3,7 @@ import type { EditorColorTheme, EditorThemeColors } from "./types";
 /**
  * Built-in editor color themes. `atlas` is the default; `atlas-mono` keeps the
  * historical monochrome look for anyone who prefers it. The others are the
- * standard dark palettes (Dracula, One Dark, Monokai, Vesper).
+ * standard dark palettes (Dracula, One Dark, Monokai, Tokyo Night, Vesper).
  *
  * Every theme renders on the interface base surface (see `resolveEditorColors`),
  * which is AMOLED black or near it in all three Atlas interface themes. Syntax
@@ -274,6 +274,54 @@ const monokai: EditorColorTheme = {
   },
 };
 
+const tokyoNight: EditorColorTheme = {
+  id: "tokyo-night",
+  name: "Tokyo Night",
+  description: "Cool midnight blue with vivid purple, cyan, and coral syntax.",
+  dark: true,
+  colors: {
+    bg: "#1a1b26",
+    fg: "#c0caf5",
+    caret: "#c0caf5",
+    gutterBg: "#1a1b26",
+    gutterFg: "#565f89",
+    activeLineGutterFg: "#a9b1d6",
+    activeLineBg: "#ffffff0a",
+    selectionBg: "#33467c",
+    matchBracketBg: "#292e42",
+    matchBracketOutline: "#7aa2f7",
+    foldBg: "#16161e",
+    foldBorder: "#292e42",
+    foldFg: "#565f89",
+
+    comment: "#565f89",
+    keyword: "#bb9af7",
+    string: "#9ece6a",
+    number: "#ff9e64",
+    type: "#2ac3de",
+    func: "#7aa2f7",
+    variable: "#c0caf5",
+    operator: "#89ddff",
+    tagName: "#f7768e",
+    attributeName: "#73daca",
+    constant: "#ff9e64",
+    regexp: "#b4f9f8",
+    escape: "#bb9af7",
+    definition: "#7aa2f7",
+    propertyName: "#7dcfff",
+    bool: "#ff9e64",
+    null: "#ff9e64",
+
+    addLineBg: "#1b3328",
+    removeLineBg: "#3b202b",
+    contextBg: "#16161e",
+    addSideBg: "rgba(158,206,106,0.13)",
+    removeSideBg: "rgba(247,118,142,0.13)",
+    emphAddBg: "rgba(158,206,106,0.30)",
+    emphRemoveBg: "rgba(247,118,142,0.30)",
+  },
+};
+
 const vesper: EditorColorTheme = {
   id: "vesper",
   name: "Vesper",
@@ -328,6 +376,7 @@ export const EDITOR_THEMES: EditorColorTheme[] = [
   dracula,
   oneDark,
   monokai,
+  tokyoNight,
   vesper,
 ];
 

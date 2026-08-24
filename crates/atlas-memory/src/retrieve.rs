@@ -120,7 +120,7 @@ impl MemoryEngine {
         pool: usize,
         provider: &MiniLmProvider,
     ) -> anyhow::Result<Vec<Ranked>> {
-        use cersei_embeddings::EmbeddingProvider;
+        use crate::embedding::EmbeddingProvider;
 
         let mut vecs = provider
             .embed_batch(std::slice::from_ref(&query.to_string()))

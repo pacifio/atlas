@@ -8,6 +8,13 @@ edition = "2021"
 # Apple-Silicon GPU. Off by default (keeps non-macOS / CI builds buildable);
 # `src-tauri` turns it on for the macOS target.
 metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
+# NVIDIA GPU slot in the `gpu_device()` chain (macOS: Metal→CPU; elsewhere:
+# CUDA→CPU). Declared but NOT wired to candle's cuda features: candle 0.11's
+# `cudarc ^0.19.8` doesn't resolve in this tree, and Atlas ships macOS-only
+# today. Enabling it as-is makes `Device::new_cuda` return a clean Err → the
+# chain falls to CPU. When a CUDA target becomes real, add: candle-core/cuda,
+# candle-nn/cuda, candle-transformers/cuda.
+cuda = []
 
 [dependencies]
 anyhow = "1.0.102"

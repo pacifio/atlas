@@ -1,6 +1,6 @@
 //! Map an Atlas BYOK `(provider, model)` + key to a boxed Cersei provider.
 //!
-//! Identical strategy to `atlas-review`'s provider table (Anthropic native, all
+//! Identical strategy to `atlas-codeindex::llm`'s provider table (Anthropic native, all
 //! others via the OpenAI-compatible client with a per-provider base URL) — kept
 //! as a small self-contained copy so the native-agent crate doesn't pull in the
 //! whole review engine.
@@ -79,7 +79,7 @@ pub fn build_provider(
 
 /// Best-first preferred coding model per provider — the offline default the
 /// runtime selects when the UI hasn't pinned one yet. Mirrors the frontend
-/// `review-agents/lib/model-catalog.ts` PREFERRED table (keep in sync).
+/// `settings/lib/model-catalog.ts` PREFERRED table (keep in sync).
 pub fn default_model_for(provider: &str) -> Option<&'static str> {
     Some(match provider {
         "anthropic" => "claude-opus-4-8",

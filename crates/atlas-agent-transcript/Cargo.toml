@@ -1,0 +1,17 @@
+[package]
+name = "atlas-agent-transcript"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+atlas-agent-wire = { path = "../atlas-agent-wire" }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
+uuid = { version = "1", features = ["v4"] }

@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ProjectUsage } from "@/features/chat/lib/claude-api";
+import type { ProjectUsage } from "../lib/usage-api";
 import { fmtTokens, fmtCost, fmtDate } from "../lib/usage-format";
 
 /**
@@ -50,12 +50,13 @@ export function UsageModal({
             <table className="w-full text-[11px]">
               <thead className="sticky top-0 bg-bg-elevated">
                 <tr className="text-text-tertiary border-b border-border-default">
-                  <Th className="text-left w-[34%]">Session</Th>
+                  <Th className="text-left w-[30%]">Session</Th>
+                  <Th className="text-left">Agent</Th>
                   <Th className="text-left">Model</Th>
                   <Th className="text-right">Input</Th>
                   <Th className="text-right">Output</Th>
                   <Th className="text-right">Cache</Th>
-                  <Th className="text-right">Reqs</Th>
+                  <Th className="text-right">Msgs</Th>
                   <Th className="text-right">Cost</Th>
                   <Th className="text-right">Updated</Th>
                 </tr>
@@ -68,12 +69,11 @@ export function UsageModal({
                   >
                     <Td className="text-left max-w-0">
                       <span className="block truncate text-text-secondary">
-                        {s.preview || s.session_id.slice(0, 8)}
+                        {s.title || s.session_id.slice(0, 8)}
                       </span>
                     </Td>
-                    <Td className="text-left text-text-tertiary truncate">
-                      {(s.model ?? "—").replace(/^claude-/, "")}
-                    </Td>
+                    <Td className="text-left text-text-tertiary truncate">{s.agent ?? "—"}</Td>
+                    <Td className="text-left text-text-tertiary truncate">{s.model ?? "—"}</Td>
                     <Td className="text-right font-mono tabular-nums">
                       {fmtTokens(s.input_tokens)}
                     </Td>
@@ -83,11 +83,11 @@ export function UsageModal({
                     <Td className="text-right font-mono tabular-nums">
                       {fmtTokens(s.cache_creation_tokens + s.cache_read_tokens)}
                     </Td>
-                    <Td className="text-right font-mono tabular-nums">{s.request_count}</Td>
+                    <Td className="text-right font-mono tabular-nums">{s.messages}</Td>
                     <Td className="text-right font-mono tabular-nums text-text-primary">
                       {fmtCost(s.total_cost_usd)}
                     </Td>
-                    <Td className="text-right text-text-tertiary">{fmtDate(s.last_modified)}</Td>
+                    <Td className="text-right text-text-tertiary">{fmtDate(s.last_activity_ms)}</Td>
                   </tr>
                 ))}
               </tbody>

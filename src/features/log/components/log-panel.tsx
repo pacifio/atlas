@@ -14,6 +14,7 @@ import {
   Pin,
   PinOff,
   Copy,
+  ClipboardCopy,
   Check,
   Trash2,
   ListFilter,
@@ -21,7 +22,9 @@ import {
   ChevronDown,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { copyText } from "@/lib/clipboard";
 import { timeAgo } from "@/lib/time-ago";
 import { useLogStore, type LogEntry, type LogSource } from "../stores/log-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
@@ -31,12 +34,11 @@ const SOURCES: LogSource[] = [
   "atlas",
   "agent",
   "chat",
+  "canvas",
   "git",
   "knowledge",
   "github",
-  "canvas",
   "editor",
-  "research",
   "project",
   "system",
 ];
@@ -46,6 +48,11 @@ const SOURCE_COLOR: Record<LogSource, { text: string; bg: string; border: string
     text: "text-[var(--accent-primary)]",
     bg: "bg-[var(--accent-primary-muted)]",
     border: "border-[var(--accent-primary)]/30",
+  },
+  canvas: {
+    text: "text-[var(--accent-secondary)]",
+    bg: "bg-[var(--accent-secondary)]/15",
+    border: "border-[var(--accent-secondary)]/30",
   },
   chat: {
     text: "text-[var(--accent-primary)]",
@@ -67,20 +74,10 @@ const SOURCE_COLOR: Record<LogSource, { text: string; bg: string; border: string
     bg: "bg-[var(--bg-elevated)]",
     border: "border-[var(--border-default)]",
   },
-  canvas: {
-    text: "text-[var(--accent-secondary)]",
-    bg: "bg-[var(--accent-secondary)]/15",
-    border: "border-[var(--accent-secondary)]/30",
-  },
   editor: {
     text: "text-[var(--status-success)]",
     bg: "bg-[var(--status-success)]/15",
     border: "border-[var(--status-success)]/30",
-  },
-  research: {
-    text: "text-[var(--text-secondary)]",
-    bg: "bg-[var(--bg-elevated)]",
-    border: "border-[var(--border-default)]",
   },
   project: {
     text: "text-[var(--text-secondary)]",
@@ -115,6 +112,7 @@ export function LogPanel() {
   const [showPinnedOnly, setShowPinnedOnly] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedLineId, setCopiedLineId] = useState<string | null>(null);
 
   // Keyed on the Organisation, not just on `ready`: the panel can mount before
   // the org store has hydrated (pins then load as empty), and an org switch has
@@ -173,12 +171,19 @@ export function LogPanel() {
   };
 
   const handleCopy = async (e: LogEntry) => {
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(e, null, 2));
+    const ok = await copyText(JSON.stringify(e, null, 2));
+    if (ok) {
       setCopiedId(e.id);
       setTimeout(() => setCopiedId(null), 1200);
-    } catch {
-      // ignore
+    }
+  };
+
+  const handleCopyLine = async (e: LogEntry) => {
+    const ok = await copyText(`[${e.source}] ${e.kind} — ${e.summary}`);
+    if (ok) {
+      setCopiedLineId(e.id);
+      toast.success("Copied");
+      setTimeout(() => setCopiedLineId(null), 1200);
     }
   };
 
@@ -300,13 +305,23 @@ export function LogPanel() {
               >
                 {copiedId === e.id ? <Check size={11} /> : <Copy size={11} />}
               </button>
+              <button
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  handleCopyLine(e);
+                }}
+                className="p-1 rounded hover:bg-[var(--bg-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer transition-colors opacity-0 group-hover:opacity-100"
+                title="Copy line"
+              >
+                {copiedLineId === e.id ? <Check size={11} /> : <ClipboardCopy size={11} />}
+              </button>
             </div>
           );
         },
-        size: 60,
+        size: 84,
       },
     ],
-    [expanded, copiedId, pin, unpin],
+    [expanded, copiedId, copiedLineId, pin, unpin],
   );
 
   const table = useReactTable<LogEntry>({
@@ -431,7 +446,7 @@ export function LogPanel() {
                   <div
                     onClick={() => toggleExpanded(row.original.id)}
                     className={cn(
-                      "flex items-center px-3 cursor-pointer border-b border-[var(--border-subtle)] hover:bg-bg-hover",
+                      "group flex items-center px-3 cursor-pointer border-b border-[var(--border-subtle)] hover:bg-bg-hover",
                       isExpanded && "bg-[var(--bg-elevated)]/40",
                     )}
                     style={{ height: 32 }}

@@ -1,4 +1,4 @@
-//! `agent_memory_read` — surface what each ACP agent persists for the
+//! Agent memory on disk — what each ACP agent persists for the
 //! current project, read-only.
 //!
 //! Claude Code keeps a per-project *markdown* memory folder at
@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
-use tokio::process::Command as AsyncCommand;
 
 /// App config dir holding `cersei-sessions/` — set once at startup
 /// (`install_manager`) so the corpus reader can find native-agent transcripts
@@ -93,108 +92,17 @@ pub struct CodexMemory {
     threads: Vec<CodexThread>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct AgentMemory {
-    claude: ClaudeMemory,
-    codex: CodexMemory,
-}
 
 /// History-list row for a Codex session, shaped to match `ClaudeSessionMeta`
 /// so the chat sidebar can merge both agents' sessions uniformly. `id` is the
-/// Codex thread id — the exact identifier the codex-acp adapter resolves to a
-/// rollout file in `session/load`, so it doubles as the resume key. There's no
-/// single editable transcript file to expose, so `file_path` is empty.
-#[derive(Debug, Clone, Serialize)]
-pub struct CodexSessionMeta {
-    pub id: String,
-    pub file_path: String,
-    pub started_at: Option<String>,
-    pub last_modified: Option<String>,
-    pub message_count: usize,
-    pub preview: String,
-}
-
-/// Unix-ms → RFC3339 string, matching the `last_modified` format the Claude
-/// listing uses so the sidebar's lexical date sort orders both agents together.
-fn ms_to_rfc3339(ms: i64) -> Option<String> {
-    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms).map(|dt| dt.to_rfc3339())
-}
-
-/// List the current project's Codex sessions for the chat history sidebar.
-/// Sourced from the same `~/.codex` SQLite `threads` table as the memory tab
-/// (via `collect_codex_sessions`), filtered to this `cwd`.
-#[tauri::command]
-pub async fn list_codex_sessions(cwd: String) -> Result<Vec<CodexSessionMeta>, String> {
-    let cwd = cwd.trim_end_matches('/').to_string();
-    let sessions = collect_codex_sessions(&cwd).await;
-    let rows: Vec<CodexSessionMeta> = sessions
-        .into_iter()
-        .map(|s| {
-            // The threads table has no message count; treat any session with a
-            // title/preview or recorded token use as non-empty so it survives
-            // the sidebar's `message_count > 0` visibility filter.
-            let message_count = if !s.title.trim().is_empty() || s.tokens > 0 {
-                1
-            } else {
-                0
-            };
-            CodexSessionMeta {
-                id: s.id,
-                file_path: String::new(),
-                started_at: ms_to_rfc3339(s.created_at_ms),
-                last_modified: ms_to_rfc3339(s.updated_at_ms),
-                message_count,
-                preview: s.title,
-            }
-        })
-        .collect();
-    Ok(rows)
-}
-
-/// Archive (soft-delete) one Codex session so it leaves the history sidebar.
-/// Codex keeps threads in `~/.codex/state_<n>.sqlite` with no per-session file
-/// to remove, so we set `archived = 1` — the same flag `list_codex_sessions`
-/// filters on — rather than hard-deleting the row (recoverable, mirrors how
-/// Codex itself hides threads).
-#[tauri::command]
-pub async fn codex_delete_session(session_id: String) -> Result<(), String> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let codex_dir = home.join(".codex");
-    let db = newest_state_db(&codex_dir).ok_or("no Codex state DB found in ~/.codex")?;
-    // sqlite3's CLI can't bind params, so inline the id with the standard
-    // single-quote escape (double it). Thread ids are uuids, but be safe.
-    let escaped = session_id.replace('\'', "''");
-    let sql = format!("UPDATE threads SET archived = 1 WHERE id = '{escaped}';");
-    let out = AsyncCommand::new("sqlite3")
-        .arg(&db)
-        .arg(&sql)
-        .output()
-        .await
-        .map_err(|e| format!("failed to run sqlite3: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "sqlite3 archive failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn agent_memory_read(project_path: String) -> Result<AgentMemory, String> {
-    let project_path = project_path.trim_end_matches('/').to_string();
-
-    // Claude side is pure filesystem — run it on the blocking pool.
-    let pp = project_path.clone();
-    let claude = tokio::task::spawn_blocking(move || read_claude(&pp))
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Codex side needs an out-of-process sqlite read; keep it async.
-    let codex = read_codex(&project_path).await;
-
-    Ok(AgentMemory { claude, codex })
-}
+// The Codex SESSION-HISTORY surface used to live here: `list_codex_sessions`
+// and `codex_delete_session`, reading and archiving rows in
+// `~/.codex/state_*.sqlite` so the sidebar could show Codex chats. Both are
+// gone (ADR-0001) — history comes from the thread-metadata store, which knows
+// every agent's sessions without a reader per agent.
+//
+// What remains below is the MEMORY CORPUS, a different feature: the Memory tab
+// reads agent instruction files and notes as documents. See the module docs.
 
 // ── Corpus collection (for the Graph / embeddings feature) ──────────────────
 
@@ -402,7 +310,7 @@ fn capture_covered_agent(agent: &str) -> bool {
 /// No-op when capture is disabled for the project — those agents then
 /// contribute only via the promoted shared-memory events, same as before.
 fn read_capture_docs(project_path: &str) -> Vec<MemoryDoc> {
-    use atlas_agents::transcript::strip_injected_context;
+    use atlas_agent_transcript::strip_injected_context;
     const TEXT_CAP: usize = 12 * 1024;
 
     let store = match crate::commands::capture::open_reader(project_path) {
@@ -524,12 +432,12 @@ fn read_knowledge_docs(project_path: &str) -> Vec<MemoryDoc> {
 /// Codex threads. Atlas-injected context (memory blocks, mention bodies) is
 /// stripped so the index holds the user's actual words, not the scaffolding.
 fn read_cersei_docs(project_path: &str) -> Vec<MemoryDoc> {
-    use atlas_agents::transcript::strip_injected_context;
+    use atlas_agent_transcript::strip_injected_context;
     let Some(config_dir) = CERSEI_CONFIG_DIR.get() else {
         return Vec::new();
     };
     let mut out: Vec<MemoryDoc> = Vec::new();
-    for s in atlas_agents::cersei_corpus_sessions(config_dir, project_path) {
+    for s in atlas_cersei::corpus_sessions(config_dir, project_path) {
         let title_raw = strip_injected_context(&s.first_user);
         let title_raw = title_raw.trim();
         if title_raw.is_empty() {
@@ -654,46 +562,6 @@ fn read_codebase_docs(project_path: &str) -> Vec<MemoryDoc> {
         .collect()
 }
 
-/// A Codex session with its recorded git context — the strong agent→branch→
-/// commit link for the timeline (Codex stamps `git_branch`/`git_sha` per run).
-#[derive(Debug, Clone, Serialize)]
-pub struct CodexSession {
-    pub id: String,
-    pub title: String,
-    pub branch: Option<String>,
-    pub sha: Option<String>,
-    pub created_at_ms: i64,
-    pub updated_at_ms: i64,
-    pub model: String,
-    pub tokens: i64,
-    pub approval_mode: String,
-}
-
-/// Codex sessions for a project (from the SQLite `threads` table), mapped to a
-/// timeline-friendly shape.
-pub async fn collect_codex_sessions(project_path: &str) -> Vec<CodexSession> {
-    let codex = read_codex(project_path.trim_end_matches('/')).await;
-    codex
-        .threads
-        .into_iter()
-        .map(|t| CodexSession {
-            title: short_title(if t.title.trim().is_empty() {
-                &t.first_user_message
-            } else {
-                &t.title
-            }),
-            id: t.id,
-            branch: t.git_branch.filter(|b| !b.is_empty()),
-            sha: t.git_sha.filter(|s| !s.is_empty()),
-            created_at_ms: t.created_at.saturating_mul(1000),
-            updated_at_ms: t.updated_at.saturating_mul(1000),
-            model: t.model,
-            tokens: t.tokens_used,
-            approval_mode: t.approval_mode,
-        })
-        .collect()
-}
-
 /// File mtime as unix ms, or 0 if unavailable.
 fn file_mtime_ms(path: &std::path::Path) -> i64 {
     std::fs::metadata(path)
@@ -755,17 +623,25 @@ fn extract_wikilinks(s: &str) -> Vec<String> {
 
 /// `/Users/adib/Desktop/atlas` → `-Users-adib-Desktop-atlas` (Claude's
 /// per-project dir naming: every `/` becomes `-`).
-fn encode_project_dir(project_path: &str) -> String {
+pub(crate) fn encode_project_dir(project_path: &str) -> String {
     project_path.replace('/', "-")
+}
+
+/// The per-project Claude memory dir (`~/.claude/projects/<encoded>/memory`) —
+/// the bulk of the memory corpus, and therefore a directory the indexer's FS
+/// watcher must cover (the project cwd alone never sees these writes).
+pub(crate) fn claude_memory_dir(project_path: &str) -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".claude")
+        .join("projects")
+        .join(encode_project_dir(project_path))
+        .join("memory")
 }
 
 fn read_claude(project_path: &str) -> ClaudeMemory {
     let home = dirs::home_dir().unwrap_or_default();
-    let mem_dir = home
-        .join(".claude")
-        .join("projects")
-        .join(encode_project_dir(project_path))
-        .join("memory");
+    let mem_dir = claude_memory_dir(project_path);
 
     let index = std::fs::read_to_string(mem_dir.join("MEMORY.md")).ok();
 
@@ -971,7 +847,7 @@ async fn query_codex_threads(db: &Path, project_path: &str) -> Vec<CodexThread> 
     // they never surface as a session preview/title (mirrors the Claude reader).
     for t in &mut threads {
         t.first_user_message =
-            atlas_agents::transcript::strip_injected_context(&t.first_user_message);
+            atlas_agent_transcript::strip_injected_context(&t.first_user_message);
     }
     threads
 }

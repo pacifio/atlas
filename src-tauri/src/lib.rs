@@ -7,8 +7,6 @@ mod telemetry;
 
 use std::sync::Arc;
 
-use atlas_acp::AgentRegistry;
-use commands::claude::ClaudeSessionIndex;
 use commands::cli::CliLaunchState;
 use commands::fileindex::FileIndexState;
 use commands::git_watcher::GitWatcherState;
@@ -16,8 +14,6 @@ use commands::knowledge_links::KnowledgeLinksState;
 use commands::knowledge_meta::KnowledgeMetaState;
 use commands::mention_search::MentionCacheState;
 use commands::recent_files::RecentFilesState;
-use commands::papers::SavedPapersIndex;
-use commands::sessions_watch::SessionsWatchState;
 use commands::terminal::TerminalState;
 use parking_lot::Mutex;
 use state::{AppState, AppStateHandle};
@@ -43,7 +39,7 @@ pub fn run() {
 
     // Strip CLAUDECODE so child ACP agents (canonical claude-code-acp) don't
     // refuse to start when Atlas was launched from a parent Claude Code shell.
-    atlas_acp::sanitize_host_env();
+    atlas_agent_servers::sanitize_host_env();
 
     // Parse argv for an initial project path BEFORE tauri::Builder starts
     // so the webview boot path can read it via `cli_take_initial_project_path`.
@@ -260,8 +256,6 @@ pub fn run() {
         .manage(commands::browser::BrowserState::new())
         .manage(TerminalState::new())
         .manage(commands::modelchat::ModelChatState::new())
-        .manage(commands::review::ReviewState::new())
-        .manage(AgentRegistry::new())
         .manage(FileIndexState::new())
         .manage(GitWatcherState::new())
         .manage(RecentFilesState::new())
@@ -269,10 +263,6 @@ pub fn run() {
         .manage(Arc::new(KnowledgeMetaState::new()))
         .manage(Arc::new(KnowledgeLinksState::new()))
         .manage(CliLaunchState::new(initial_project))
-        .manage(SessionsWatchState::new())
-        .manage(ClaudeSessionIndex::new())
-        .manage(SavedPapersIndex::new())
-        .manage(commands::memory_chat::MemoryChatState::new())
         .manage(commands::memory_sharing::MemorySharingState::new())
         .manage(commands::shared_memory::SharedMemoryStore::new())
         // Owns the per-Workspace session stores and the capture worker
@@ -353,6 +343,8 @@ pub fn run() {
             commands::git::git_diff_all,
             commands::git::git_workspace_summary,
             commands::mission_control::mission_control_usage,
+            commands::usage::agent_session_usage,
+            commands::usage::agent_project_usage,
             commands::mission_control::mission_control_export_markdown,
             commands::mission_control::mission_control_write_file,
             commands::git::git_diff_file,
@@ -433,7 +425,6 @@ pub fn run() {
             commands::capture::capture_retry_failed,
             commands::capture::capture_retry_watcher,
             commands::capture::artifacts_sessions,
-            commands::capture::capture_agent_session_counts,
             commands::capture::artifacts_session,
             commands::capture::artifacts_payload,
             commands::capture::capture_commit_sessions,
@@ -456,23 +447,13 @@ pub fn run() {
             commands::github::delete_cloned_repo,
             // Legacy Claude-CLI subprocess commands (claude_run/stream/stop/check/version)
             // were replaced by ACP. Session-history readers below are still in use.
-            commands::claude::list_claude_sessions,
             commands::gitdiff::git_diff_structured,
             commands::gitdiff::diff_structured_text,
             commands::gitdiff::git_commit_changed_files,
             commands::gitdiff::git_diff_line_status,
-            commands::claude::delete_claude_session,
-            commands::claude::read_claude_session,
-            commands::claude::claude_session_stats,
-            commands::claude::project_usage_stats,
             commands::search::search_in_files,
-            commands::research::search_arxiv,
-            commands::research::search_semantic_scholar,
-            commands::research::download_paper,
-            commands::research::save_paper_to_knowledge,
-            commands::research::fetch_trending_papers,
-            commands::research::save_project_session,
-            commands::research::load_project_session,
+            commands::project_session::save_project_session,
+            commands::project_session::load_project_session,
             commands::knowledge::list_knowledge,
             commands::knowledge::save_knowledge_note,
             commands::knowledge::import_into_knowledge,
@@ -507,7 +488,6 @@ pub fn run() {
             commands::canvas::save_canvas,
             commands::canvas::canvas_media_upload,
             commands::canvas::canvas_media_data_url,
-            commands::canvas::canvas_codebase_context,
             commands::log::load_pinned_log,
             commands::log::append_pinned_log,
             commands::log::clear_pinned_log,
@@ -530,10 +510,17 @@ pub fn run() {
             commands::cli::cli_status,
             commands::cli::cli_install_helper,
             commands::cli::cli_take_initial_project_path,
-            commands::claude_setup::claude_status,
-            commands::claude_setup::claude_install,
-            commands::node_setup::node_check,
-            commands::node_setup::node_install,
+            commands::registry::acp_registry_list,
+            commands::registry::acp_registry_refresh,
+            commands::registry::acp_registry_install,
+            commands::registry::acp_registry_install_detected,
+            commands::registry::acp_registry_uninstall,
+            commands::registry::acp_registry_metadata,
+            // The unified read surface. `agents_list_plugins` /
+            // `acp_registry_list` stay registered and delegating for one
+            // release so a stale frontend keeps working.
+            commands::catalog::agents_catalog,
+            commands::catalog::agents_catalog_refresh,
             commands::agents::agents_list_plugins,
             commands::agents::agents_list_running,
             commands::agents::agents_spawn,
@@ -541,7 +528,18 @@ pub fn run() {
             commands::agents::agents_new_session,
             commands::agents::agents_load_session,
             commands::agents::agents_replay_transcript,
+            commands::agents::agent_transcripts_list,
+            commands::agents::agent_transcripts_read,
+            commands::agents::threads_resume,
+            commands::agents::threads_delete,
+            commands::agents::threads_import_candidates,
+            commands::agents::threads_import,
+            commands::agents::threads_projects,
+            commands::agents::threads_history,
+            commands::agents::threads_archive,
+            commands::agents::agent_transcripts_delete,
             commands::agents::agents_snapshot,
+            commands::agents::agents_snapshot_meta,
             commands::agents::agents_send,
             commands::agents::agents_cancel,
             commands::agents::agents_set_mode,
@@ -554,48 +552,35 @@ pub fn run() {
             commands::models_pricing::models_pricing_refresh,
             commands::agents::agents_respond_permission,
             commands::agents::agents_list_auth_methods,
+            commands::agents::agents_auth_env_status,
+            commands::agents::agents_logout,
+            commands::agents::agents_set_config_option,
+            commands::agents::agents_respond_elicitation,
+            commands::agents::agents_fork_session,
+            commands::agents::agents_agent_sessions,
+            commands::agents::agents_delete_agent_session,
             commands::agents::agents_run_auth_method,
             commands::agents::agents_authenticate,
             commands::agents::agents_drop_session,
-            commands::agents::codex_status,
             commands::cersei::cersei_list_sessions,
-            commands::cersei::cersei_session_transcript,
             commands::cersei::cersei_delete_session,
-            commands::byok::byok_list,
-            commands::byok::byok_set,
-            commands::byok::byok_delete,
             commands::byok::byok_get,
+            commands::byok::byok_env_list,
+            commands::byok::byok_env_entries,
+            commands::byok::byok_env_reveal,
+            commands::byok::byok_env_set,
+            commands::byok::byok_env_unset,
+            commands::byok::byok_profile_info,
             commands::modelchat::modelchat_models,
             commands::modelchat::modelchat_stream,
             commands::modelchat::modelchat_cancel,
-            commands::review::review_providers,
-            commands::review::review_base_branches,
-            commands::review::review_start,
-            commands::review::review_cancel,
-            commands::review::review_list,
-            commands::review::review_get,
-            commands::modelchat_sessions::modelchat_sessions_list,
-            commands::modelchat_sessions::modelchat_session_get,
-            commands::modelchat_sessions::modelchat_session_save,
-            commands::modelchat_sessions::modelchat_session_delete,
             commands::fileindex::fileindex_open_project,
             commands::fileindex::fileindex_close_project,
             commands::fileindex::fileindex_search,
             commands::fileindex::fileindex_search_dirs,
             commands::fileindex::fileindex_status,
-            commands::sessions_watch::sessions_watch_open,
-            commands::sessions_watch::sessions_watch_close,
-            commands::sessions_watch::sessions_watch_status,
-            commands::papers::list_saved_papers,
-            commands::pomodoro::pomodoro_load,
-            commands::pomodoro::pomodoro_save,
             commands::plans::plans_load,
             commands::plans::plans_append,
-            commands::agent_memory::agent_memory_read,
-            commands::agent_memory::list_codex_sessions,
-            commands::agent_memory::codex_delete_session,
-            commands::kilo::list_kilo_sessions,
-            commands::kilo::kilo_delete_session,
             commands::memory_graph::memory_embed_status,
             commands::memory_graph::memory_embed_download,
             commands::memory_graph::memory_index_build,
@@ -615,24 +600,14 @@ pub fn run() {
             commands::shared_memory::memory_append_event,
             commands::memory_timeline::memory_timeline,
             commands::memory_timeline::memory_timeline_cached,
-            commands::memory_chat::memory_chat_model_status,
-            commands::memory_chat::memory_chat_model_download,
-            commands::memory_chat::memory_chat_model_load,
-            commands::memory_chat::memory_chat_backend,
-            commands::memory_chat::memory_chat_send,
-            commands::memory_chat::memory_chat_cancel,
-            commands::memory_chat::memory_chat_retrieve,
             commands::memory_indexer::force_reindex,
+            commands::memory_indexer::memory_indexer_close_project,
             commands::models::models_list,
             commands::models::model_download,
             commands::models::model_remove,
             commands::models::model_select,
             commands::codebase_index::codebase_index_status,
             commands::codebase_index::codebase_index_build,
-            commands::memory_chat_sessions::memory_chat_sessions_list,
-            commands::memory_chat_sessions::memory_chat_session_get,
-            commands::memory_chat_sessions::memory_chat_session_save,
-            commands::memory_chat_sessions::memory_chat_session_delete,
             commands::session_chat::session_chat_retrieve,
             commands::session_chat_sessions::session_chat_threads_list,
             commands::session_chat_sessions::session_chat_thread_get,
@@ -680,10 +655,10 @@ pub fn run() {
                     // child's stdin; the SDK reaps it). `process::exit` skips
                     // Drop impls, so this must happen before the exit — with a
                     // short bounded grace for the async teardown to run.
-                    if let Some(manager) =
-                        app_handle.try_state::<atlas_agents::AgentManager>()
+                    if let Some(host) = app_handle
+                        .try_state::<Arc<commands::agent_host::AgentHost>>()
                     {
-                        manager.shutdown();
+                        host.shutdown();
                         std::thread::sleep(std::time::Duration::from_millis(500));
                     }
                 }

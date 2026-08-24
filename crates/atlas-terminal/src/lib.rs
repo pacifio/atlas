@@ -1,3 +1,4 @@
+pub mod command;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -88,9 +89,8 @@ impl TerminalManager {
             }
         }
 
-        let child = pair.slave.spawn_command(cmd)?;
+        let mut child = pair.slave.spawn_command(cmd)?;
         let pid = child.process_id();
-        drop(child); // the pty keeps the process alive; we only needed the pid
         drop(pair.slave); // drop slave so reads on master detect EOF
 
         let writer = pair.master.take_writer()?;
@@ -120,6 +120,12 @@ impl TerminalManager {
                     Err(_) => break,
                 }
             }
+            // Reap the shell. portable-pty's unix Child does not waitpid on
+            // Drop, so without this every exited shell stayed <defunct> until
+            // app quit. The reader unblocks exactly when the shell dies (EOF)
+            // or the session closes (channel gone → master drops → shell gets
+            // HUP), so wait() here returns promptly in both paths.
+            let _ = child.wait();
         });
 
         self.sessions.insert(

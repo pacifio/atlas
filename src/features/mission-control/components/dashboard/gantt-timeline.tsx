@@ -110,7 +110,7 @@ export function GanttTimeline({ data }: { data: MissionControlUsage }) {
                     style={{
                       left: `${(i / BUCKETS) * 100}%`,
                       width: `${100 / BUCKETS}%`,
-                      backgroundColor: AGENT_COLOR.claude,
+                      backgroundColor: AGENT_COLOR.agents,
                       opacity: 0.3 + 0.7 * Math.min(1, tokens / maxCell),
                     }}
                   />

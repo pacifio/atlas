@@ -410,6 +410,10 @@ pub struct FileTouch {
     /// Written outside the Workspace root, so it can never match a commit.
     pub out_of_repo: bool,
     pub created_at: DateTime<Utc>,
+    /// Bounded fingerprint of what the agent wrote (see `crate::sketch`).
+    /// `None` for rows written before schema v9, which fall back to the exact
+    /// `sha256_after` comparison.
+    pub sketch_after: Option<String>,
 }
 
 /// How a Workspace is bound, and whether it is capturing.

@@ -177,7 +177,12 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             display: "none",
           },
           ".cm-content": {
-            padding: "12px 16px 4px",
+            // Symmetric vertical padding: the input is its own card now (the
+            // toolbar moved to the outer shell's footer), so the old slim 4px
+            // bottom — tuned for a toolbar directly beneath — read as text
+            // glued to the card's bottom edge on multi-line drafts. 12+20+12
+            // also lands exactly on the 44px min height for one line.
+            padding: "12px 16px",
             // Hide the native contenteditable caret — CodeMirror's own
             // `drawSelection` extension paints the visible cursor. Without
             // this, WebKit shows BOTH (the native blink + CM's div), which
