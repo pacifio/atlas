@@ -1191,29 +1191,6 @@ fn off_health(summary: &str) -> atlas_checkpoint::CaptureHealth {
     }
 }
 
-/// Every Session captured in this Workspace, newest first.
-///
-/// The whole point of the recorder. Reading is safe from any window — the
-/// writer lock guards writes only — so this deliberately does not check
-/// `is_writer`: a second Atlas window cannot record, but it can still read back
-/// what the first one did.
-#[tauri::command]
-pub async fn artifacts_sessions(
-    project_path: String,
-    workspace_id: Option<String>,
-) -> Result<Vec<atlas_checkpoint::SessionSummary>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let Some(store) = open_reader(&project_path)? else {
-            return Ok(Vec::new());
-        };
-        let workspace_id = workspace_id
-            .unwrap_or_else(|| workspace_id_for(std::path::Path::new(&project_path)));
-        atlas_checkpoint::session_summaries(&store, &workspace_id).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 /// One Session as an ordered timeline.
 ///
 /// Commit subjects are resolved from git here rather than in the crate: this is
