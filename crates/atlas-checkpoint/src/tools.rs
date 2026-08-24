@@ -116,6 +116,17 @@ pub fn canonical_name(
         }
     }
 
+    // A call whose arguments carry a `command` string IS a shell call,
+    // whatever its title's first word happens to be. Adapters title these
+    // with the command line itself, and a command line is prose: a heredoc
+    // write leads with "cat", which is a Read alias — so the call that WROTE
+    // AND COMMITTED a file was classified as a read and never sampled for
+    // writes. The argument shape outranks the title because it cannot be
+    // prose.
+    if arguments.get("command").and_then(serde_json::Value::as_str).is_some() {
+        return ToolName::Bash;
+    }
+
     // `wire_name` is the runtime's first-sighting value, which for the native
     // agent is the tool's real name.
     for candidate in [wire_name, title].into_iter().flatten() {
@@ -396,6 +407,51 @@ mod tests {
     }
 
     // ── Canonical name, per agent family ────────────────────────────────────
+
+    /// The user's real repro: claude acp writes a file with a `cat` heredoc
+    /// and commits, in one call titled with the COMMAND LINE. Its first word
+    /// is "cat" — a Read alias — so the call that wrote and committed was
+    /// classified as a read and never sampled for writes. A `command`
+    /// argument is a shell call, whatever the title says.
+    #[test]
+    fn a_command_argument_makes_the_call_shell_shaped_whatever_the_title_leads_with() {
+        for title in [
+            "cat > test.txt <<'EOF'\ntest\nEOF\ngit add test.txt",
+            "head -5 build.log",
+            "find . -name '*.rs'",
+        ] {
+            assert_eq!(
+                canonical_name(
+                    Some(title),
+                    Some(title),
+                    Some("execute"),
+                    &args(serde_json::json!({ "command": title })),
+                ),
+                ToolName::Bash,
+                "title {title:?} must not out-vote the command argument"
+            );
+        }
+    }
+
+    /// …but an explicit name in the arguments still wins over everything,
+    /// and a call WITHOUT a command argument keeps the title-token behaviour.
+    #[test]
+    fn the_command_rule_does_not_disturb_the_other_sources() {
+        assert_eq!(
+            canonical_name(
+                None,
+                None,
+                None,
+                &args(serde_json::json!({ "name": "read", "command": "irrelevant" })),
+            ),
+            ToolName::Read,
+            "an explicit name is the agent naming itself"
+        );
+        assert_eq!(
+            canonical_name(Some("Read"), Some("Read"), None, &args(serde_json::json!({}))),
+            ToolName::Read
+        );
+    }
 
     #[test]
     fn the_native_agent_titles_are_already_canonical() {

@@ -258,6 +258,14 @@ pub struct CaptureState {
     pending_writes: Mutex<HashMap<String, WriteSample>>,
     /// Open shell windows, keyed by tool-call id. See [`CaptureState::shell_window`].
     shell_windows: Mutex<HashMap<String, ShellWindow>>,
+    /// Where HEAD stood at each session's last prompt (or where the last
+    /// fallback attribution left it) — the coarse anchor for a shell call the
+    /// per-call window never saw. Some adapters announce a command only once,
+    /// already completed, so there is no non-terminal sighting to open a
+    /// window at; the turn is then the tightest boundary that provably
+    /// predates the command. Advanced after each use, so two calls in one
+    /// turn cannot claim the same commits twice.
+    turn_heads: Mutex<HashMap<String, String>>,
     /// Commits a closed shell window saw HEAD move across, keyed by tool-call
     /// id, parked until the worker takes them with the call's job. They ride
     /// separately because the ordinary walk's cursor has already consumed
@@ -373,6 +381,7 @@ impl CaptureState {
             sessions: Mutex::new(HashMap::new()),
             pending_writes: Mutex::new(HashMap::new()),
             shell_windows: Mutex::new(HashMap::new()),
+            turn_heads: Mutex::new(HashMap::new()),
             settled_commits: Mutex::new(HashMap::new()),
             session_calls: Mutex::new(HashMap::new()),
             pending_turns: Mutex::new(HashMap::new()),
@@ -451,6 +460,11 @@ impl CaptureState {
         // mis-attributed. The read is two indexed lookups, done *before* taking
         // the registry lock so no I/O happens under it.
         let source = source_for(plugin_id);
+        // The coarse shell anchor: where HEAD stands as this turn begins. Read
+        // BEFORE any lock — it spawns git once per prompt.
+        if let Some(head) = atlas_checkpoint::git::head_commit(Path::new(cwd)) {
+            lock_ok(&self.turn_heads).insert(session_id.to_string(), head);
+        }
         let needs_seed = !lock_ok(&self.sessions).contains_key(session_id);
         let seed = if needs_seed {
             seed_turn_seq(Path::new(cwd), source, session_id)
@@ -608,6 +622,7 @@ impl CaptureState {
         let calls = lock_ok(&self.session_calls).remove(session_id);
         if let Some(calls) = calls {
             self.forget_shell_windows(&calls);
+            self.forget_turn_head(session_id);
             let mut pending = lock_ok(&self.pending_writes);
             for call_id in calls {
                 pending.remove(&call_id);
@@ -767,7 +782,47 @@ impl CaptureState {
         }
 
         let Some(window) = lock_ok(&self.shell_windows).remove(call_id) else {
-            return Vec::new();
+            // No window means the call's FIRST sighting was already terminal —
+            // some adapters announce a command exactly once, finished. The
+            // per-call window cannot exist, so fall back to the turn anchor:
+            // a HEAD that moved since the prompt is still exact evidence, just
+            // coarser (the whole turn rather than one call). The anchor
+            // advances after use, so a later call in the same turn cannot
+            // re-claim these commits. No anchor, or an unmoved HEAD, stays
+            // silent — same posture as everywhere else in this file.
+            let anchored = lock_ok(&self.turn_heads).get(session_id).cloned();
+            let (Some(before_head), Some(after_head)) =
+                (anchored, atlas_checkpoint::git::head_commit(workspace_root))
+            else {
+                return Vec::new();
+            };
+            if before_head == after_head {
+                return Vec::new();
+            }
+            let Some(changes) = atlas_checkpoint::git::changed_between(
+                workspace_root,
+                &before_head,
+                &after_head,
+            ) else {
+                return Vec::new();
+            };
+            lock_ok(&self.turn_heads).insert(session_id.to_string(), after_head.clone());
+            if let Ok(commits) = atlas_checkpoint::git::commits_between(
+                workspace_root,
+                Some(&before_head),
+                &after_head,
+            ) {
+                if !commits.is_empty() {
+                    lock_ok(&self.settled_commits).insert(call_id.to_string(), commits);
+                }
+            }
+            return changes
+                .into_iter()
+                .map(|change| {
+                    let path = resolve_path(&change.path, workspace_root);
+                    PendingWrite { path, existed_before: change.kind.existed_in_parent() }
+                })
+                .collect();
         };
         if window.started.elapsed() > SHELL_WINDOW_LIMIT {
             tracing::debug!(
@@ -838,6 +893,10 @@ impl CaptureState {
                                 .insert(call_id.to_string(), commits);
                         }
                     }
+                    // The turn anchor moves with us, so the coarse fallback
+                    // can never re-claim commits a per-call window settled.
+                    lock_ok(&self.turn_heads)
+                        .insert(session_id.to_string(), after_head.clone());
                 }
             }
         }
@@ -863,6 +922,11 @@ impl CaptureState {
             windows.remove(id);
             settled.remove(id);
         }
+    }
+
+    /// Drop a session's turn anchor with the session.
+    fn forget_turn_head(&self, session_id: &str) {
+        lock_ok(&self.turn_heads).remove(session_id);
     }
 
     fn submit(&self, job: Job) {
@@ -3369,6 +3433,77 @@ mod diff_path_tests {
         let _ = state.shell_window("s1", &call.id, &root, true);
         let settled = state.take_settled_commits(&call.id);
         assert_eq!(settled, vec![sha]);
+    }
+
+    /// The user's live repro on claude acp: the adapter announced the command
+    /// exactly once, ALREADY COMPLETED — no non-terminal sighting, so no
+    /// per-call window could open, and the write+commit inside it attributed
+    /// nothing. The turn anchor (HEAD at prompt time) is the fallback: coarser
+    /// than a call window, still exact evidence.
+    #[test]
+    fn a_call_first_seen_completed_falls_back_to_the_turn_anchor() {
+        let root = repo("shell-terminal-first");
+        let state = CaptureState::new();
+        // The prompt is where the anchor is taken.
+        state.note_prompt("s1", root.to_str().unwrap(), "claude-code", None, "add a test file");
+
+        // The command runs and commits before capture ever sights the call…
+        std::fs::write(root.join("test.txt"), b"test file").expect("write");
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .expect("git runs");
+        };
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "agent: add test file"]);
+
+        // …and the FIRST sighting is already terminal.
+        let call = shell_call("call-1");
+        let writes = state.shell_window("s1", &call.id, &root, true);
+
+        assert_eq!(
+            writes.iter().map(|w| w.path.path.as_str()).collect::<Vec<_>>(),
+            vec!["test.txt"]
+        );
+        assert!(!writes[0].existed_before, "the commit created it");
+        assert_eq!(
+            state.take_settled_commits(&call.id).len(),
+            1,
+            "the commit rides along for the cursor-blind evaluation"
+        );
+    }
+
+    /// The anchor advances after use: a second sighting-starved call in the
+    /// same turn cannot re-claim the commits the first one settled.
+    #[test]
+    fn the_turn_anchor_advances_so_commits_are_claimed_once() {
+        let root = repo("shell-anchor-advances");
+        let state = CaptureState::new();
+        state.note_prompt("s1", root.to_str().unwrap(), "claude-code", None, "work");
+
+        std::fs::write(root.join("a.txt"), b"a").expect("write");
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .expect("git runs");
+        };
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "agent: a"]);
+
+        let first = state.shell_window("s1", "call-1", &root, true);
+        assert_eq!(first.len(), 1);
+
+        // A later call in the same turn, also first-seen terminal, with no new
+        // commit: nothing left to claim.
+        let second = state.shell_window("s1", "call-2", &root, true);
+        assert!(second.is_empty(), "the anchor moved with the first claim");
+        assert!(state.take_settled_commits("call-2").is_empty());
     }
 
     /// A window whose command never reported an ending must not hold its
