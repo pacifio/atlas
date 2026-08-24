@@ -80,6 +80,7 @@ import {
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { ConnectDialog } from "@/features/auth/components/connect-dialog";
 import { clampScale, SCALE_STEP, DEFAULT_SCALE } from "@/features/settings/lib/ui-scale";
+import { useModelsStore } from "@/features/settings/stores/models-store";
 
 // Interface-zoom helpers (⌘+/⌘-/⌘0). They read + write the persisted
 // `uiScale` setting; `updateSettings` applies it to the native WebView zoom.
@@ -93,6 +94,12 @@ const zoomReset = () =>
   useProjectStore.getState().actions.updateSettings({ uiScale: DEFAULT_SCALE });
 
 export function App() {
+  // Own model download listeners at app scope so completion notifications are
+  // delivered even when Settings is closed.
+  useEffect(() => {
+    void useModelsStore.getState().actions.init();
+  }, []);
+
   // Probe Claude Code (installed? authed?) on mount. Drives the banner
   // above the message composer and the hard-disabled state of the input
   // when the CLI isn't ready. Fast — two parallel subprocesses, totals
