@@ -388,10 +388,6 @@ impl AgentHost {
         metas
     }
 
-    pub fn native_transcript(&self, cwd: &str, session_id: &str) -> Vec<atlas_cersei::ReplayItem> {
-        self.native_runtime.replay_session(cwd, session_id)
-    }
-
     pub fn native_delete_session(
         &self,
         cwd: &str,
