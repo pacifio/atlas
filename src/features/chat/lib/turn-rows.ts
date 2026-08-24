@@ -23,6 +23,7 @@ import {
 } from "./tool-files";
 import { splitAtlasContext } from "./atlas-context";
 import { stripNextSteps } from "./next-steps";
+import { shortPath } from "@/lib/paths";
 
 // ── Row kinds ──────────────────────────────────────────────────────────────
 
@@ -191,13 +192,6 @@ function isInternalTool(tc: ToolCallDisplay): boolean {
 }
 
 // ── Marker labelling ───────────────────────────────────────────────────────
-
-/** Trim a path to something that reads in one line without the eye scanning. */
-function shortPath(p: string): string {
-  const parts = p.split("/").filter(Boolean);
-  if (parts.length <= 2) return parts.join("/");
-  return parts.slice(-2).join("/");
-}
 
 /**
  * One tool call → one marker. Codex shows a single line with the command

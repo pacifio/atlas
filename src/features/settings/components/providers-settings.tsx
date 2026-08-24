@@ -18,6 +18,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { SecretInput } from "@/ui/secret-input";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
+import { tildePath } from "@/lib/paths";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { ProviderLogo } from "@/components/provider-logo";
 import {
@@ -60,12 +61,6 @@ const COL = {
 } as const;
 
 const TABLE_MIN_W = 200 + 200 + 120 + 100 + 200 + 32; // 852
-
-/** `/Users/x/.zshrc` → `~/.zshrc`, for a path that fits in a table cell. */
-function tildePath(p: string): string {
-  const m = /^\/(?:Users|home)\/[^/]+\/(.*)$/.exec(p);
-  return m ? `~/${m[1]}` : p;
-}
 
 export function ProvidersSettings() {
   const entries = useByokStore.use.entries();

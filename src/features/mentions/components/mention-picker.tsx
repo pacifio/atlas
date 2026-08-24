@@ -44,6 +44,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { shortPath } from "@/lib/paths";
 import { Kbd } from "@/ui/kbd";
 
 import {
@@ -917,11 +918,6 @@ function secondaryLabel(m: MentionData): string {
 function basenameOf(rel: string): string {
   const idx = rel.lastIndexOf("/");
   return idx >= 0 ? rel.slice(idx + 1) : rel;
-}
-
-function shortPath(p: string): string {
-  const parts = p.split("/");
-  return parts.slice(-2).join("/");
 }
 
 function emptyStateCopy(args: {
