@@ -80,7 +80,14 @@ export function agentTypeFromPluginId(pluginId: string): AgentType {
   if (pluginId === "cursor") return "cursor";
   if (pluginId === "kilo") return "kilo";
   if (pluginId === "cersei") return "cersei";
-  if (pluginId.startsWith("claude")) return "claude-code";
+  // The NATIVE claude ids only — the current spec id and the legacy one old
+  // history rows recorded. A `startsWith("claude")` here also swallowed the
+  // EXTERNAL registry agent "claude-acp", whose identity is its plugin id:
+  // every snapshot-seed gate then compared the collapsed "claude-code" against
+  // the tab's real "claude-acp", dropped the seed as stale, and the
+  // modes/knobs pills starved. Same bug `switchableAgentOf` was already
+  // cured of — externals pass through.
+  if (pluginId === "claude-code-ts" || pluginId === "claude-code") return "claude-code";
   return pluginId;
 }
 export type AgentStatus = "idle" | "running" | "waiting" | "done" | "error";
