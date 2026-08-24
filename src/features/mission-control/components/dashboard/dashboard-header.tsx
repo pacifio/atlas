@@ -6,6 +6,7 @@ import {
   FileType2,
   RefreshCw,
   ChevronDown,
+  Copy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AtlasIcon } from "@/components/atlas-icon";
@@ -22,7 +23,7 @@ export function DashboardHeader({
 }: {
   range: TimeRange;
   onRange: (r: TimeRange) => void;
-  onExport: (kind: "pdf" | "jpeg" | "markdown") => void;
+  onExport: (kind: "pdf" | "jpeg" | "markdown" | "copy-markdown") => void;
   onRefresh: () => void;
   loading: boolean;
 }) {
@@ -88,6 +89,11 @@ export function DashboardHeader({
               icon={<FileText size={13} />}
               label="Markdown report"
               onSelect={() => onExport("markdown")}
+            />
+            <Item
+              icon={<Copy size={13} />}
+              label="Copy as Markdown"
+              onSelect={() => onExport("copy-markdown")}
             />
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
