@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { fmtTokens, fmtCost } from "@/features/monitor/lib/usage-format";
+import { copyText } from "@/lib/clipboard";
 import type { MissionControlUsage } from "../types";
 
 // Lazy-load the heavy libs only when an export is actually triggered.
@@ -96,6 +97,11 @@ export async function exportMarkdown(data: MissionControlUsage): Promise<void> {
   const target = await pickSave(`atlas-console-${stamp()}.md`, "md");
   if (!target) return;
   await invoke("mission_control_export_markdown", { targetPath: target, markdown: md });
+}
+
+/** Copy the same Markdown report used for file export straight to the clipboard. */
+export async function copyMarkdownReport(data: MissionControlUsage): Promise<boolean> {
+  return copyText(buildMarkdown(data));
 }
 
 function buildMarkdown(data: MissionControlUsage): string {

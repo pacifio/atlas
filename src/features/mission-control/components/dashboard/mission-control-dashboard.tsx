@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { useMissionControlStore } from "../../stores/mission-control-store";
 import { RANGE_DAYS } from "../../types";
-import { exportJpeg, exportMarkdown, exportPdf } from "../../lib/export";
+import { copyMarkdownReport, exportJpeg, exportMarkdown, exportPdf } from "../../lib/export";
 import { DashboardHeader } from "./dashboard-header";
 import { StatCards } from "./stat-cards";
 import { UsageAreaChart } from "./usage-area-chart";
@@ -31,9 +31,15 @@ export function MissionControlDashboard() {
 
   const rangeDays = RANGE_DAYS[range];
 
-  const onExport = async (kind: "pdf" | "jpeg" | "markdown") => {
+  const onExport = async (kind: "pdf" | "jpeg" | "markdown" | "copy-markdown") => {
     if (!data) return;
     try {
+      if (kind === "copy-markdown") {
+        const ok = await copyMarkdownReport(data);
+        if (!ok) throw new Error("clipboard write failed");
+        toast.success("Copied Markdown report");
+        return;
+      }
       if (kind === "markdown") await exportMarkdown(data);
       else if (captureRef.current) {
         if (kind === "pdf") await exportPdf(captureRef.current);
