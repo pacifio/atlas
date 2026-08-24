@@ -163,6 +163,7 @@ export function ProvidersSettings() {
             <button
               className="flex items-center justify-center w-6 h-6 shrink-0 rounded text-text-tertiary hover:text-text-primary hover:bg-bg-hover cursor-pointer outline-none transition-colors"
               title="Filters & sort"
+              aria-label="Filters & sort"
             >
               <MoreHorizontal size={14} />
             </button>

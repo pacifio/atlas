@@ -57,6 +57,7 @@ export function MemoryTimelinePanel({
             onClick={onClose}
             className="mt-1 flex items-center justify-center w-5 h-5 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
             title="Close"
+            aria-label="Close"
           >
             <X size={13} />
           </button>

@@ -92,6 +92,7 @@ export function PdfToolbar({ fileName, zoom, dirty, onZoomIn, onZoomOut }: PdfTo
           type="button"
           onClick={onZoomOut}
           title="Zoom out"
+          aria-label="Zoom out"
           className="flex h-6 w-6 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
         >
           <ZoomOut size={13} />
@@ -103,6 +104,7 @@ export function PdfToolbar({ fileName, zoom, dirty, onZoomIn, onZoomOut }: PdfTo
           type="button"
           onClick={onZoomIn}
           title="Zoom in"
+          aria-label="Zoom in"
           className="flex h-6 w-6 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
         >
           <ZoomIn size={13} />

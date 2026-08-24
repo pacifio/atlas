@@ -271,6 +271,7 @@ export function MemoryTimelineView() {
           onClick={() => projectPath && void loadTimeline(projectPath, true)}
           className="flex items-center justify-center w-6 h-6 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
           title="Refresh"
+          aria-label="Refresh"
         >
           <RotateCw size={12} className={loading ? "animate-spin" : ""} />
         </button>
