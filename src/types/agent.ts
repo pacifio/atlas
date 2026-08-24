@@ -28,6 +28,11 @@ export type SwitchableAgent = FirstPartyAgent | (string & {});
  *  entirely catalog-derived — see `switchableAgentIds()` in features/agents. */
 export const NATIVE_AGENT_ID = "cersei";
 
+/** Upstream 0.3.0-x's name for the same constant — its identity model calls
+ *  the native agent `NATIVE_AGENT` and files merged from that line import it
+ *  under this name. One value, two spellings; do not let them diverge. */
+export const NATIVE_AGENT = NATIVE_AGENT_ID;
+
 /** First-party labels. For externals use `agentMeta(id).label`
  *  (features/agents/lib/agent-meta). */
 export const AGENT_LABEL: Record<FirstPartyAgent, string> = {

@@ -44,7 +44,11 @@ const THREAD_PROJECTS_KEY = ["thread-projects"] as const;
  *  of repeated ternaries that silently mislabel new agents. */
 type SidebarAgent = "claude" | "codex" | "opencode" | "cursor" | "kilo" | "cersei" | (string & {});
 
-function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
+export function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
+  // A live codex-acp session and the ~/.codex disk row it produces MUST fold
+  // into one band, or twin suppression, row icon, and delete routing all miss
+  // each other (claude-acp folds via the startsWith below).
+  if (agentType === "codex-acp") return "codex";
   if (
     agentType === "codex" ||
     agentType === "opencode" ||
@@ -79,9 +83,14 @@ function itemFromThread(thread: ThreadRow, projectName: string, cwd: string): Si
   };
 }
 
-const AGENT_TYPE_BY_SIDEBAR: Partial<Record<string, SwitchableAgent>> = {
-  claude: "claude-code",
-  codex: "codex",
+/** Band → the registry id resume must spawn through. The claude/codex bands
+ *  come from disk listings that predate any live session, so they need an
+ *  explicit mapping back to the registry entries that own those stores. The
+ *  old values ("claude-code"/"codex") named plugin ids the registry-only port
+ *  deleted, so resuming those rows spawned UnknownSpec — a silent dead click. */
+export const AGENT_TYPE_BY_SIDEBAR: Partial<Record<string, SwitchableAgent>> = {
+  claude: "claude-acp",
+  codex: "codex-acp",
   opencode: "opencode",
   cursor: "cursor",
   kilo: "kilo",

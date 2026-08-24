@@ -14,7 +14,9 @@
 // stored raw (the wire's `SessionConfigOption` JSON) so the same
 // `parseConfigOptions` projection reads both paths.
 
-const key = (agentType: string) => `atlas:acp-config-options:${agentType}`;
+// Versioned key (upstream 0.3.0-x convention, like `acp-modes:v2`) so a future
+// shape change can abandon stale payloads instead of mis-reading them.
+const key = (agentType: string) => `atlas:acp-config-options:v1:${agentType}`;
 
 /** Last-advertised knob list for an agent, or null if none was ever seen. */
 export function loadCachedAcpConfigOptions(agentType: string): unknown[] | null {
@@ -22,7 +24,19 @@ export function loadCachedAcpConfigOptions(agentType: string): unknown[] | null 
     const raw = localStorage.getItem(key(agentType));
     if (!raw) return null;
     const v = JSON.parse(raw) as unknown;
-    if (Array.isArray(v) && v.length > 0) return v;
+    // An entry without an id can't be written back with `set_config_option`,
+    // so a partially-corrupt cache is a miss, not a picker that fails on
+    // click (upstream's rule, kept through the merge).
+    const usable =
+      Array.isArray(v) &&
+      v.every(
+        (o) =>
+          !!o &&
+          typeof o === "object" &&
+          typeof (o as Record<string, unknown>).id === "string" &&
+          (o as Record<string, unknown>).id !== "",
+      );
+    if (usable && v.length > 0) return v;
   } catch {
     // corrupt / unavailable storage — treat as a cache miss
   }

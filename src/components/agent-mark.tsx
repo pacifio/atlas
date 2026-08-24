@@ -13,8 +13,8 @@ import { agentMeta } from "@/features/agents/lib/agent-meta";
  */
 function AgentGlyph({ agentType, size }: { agentType: AgentType; size: "sm" | "lg" }) {
   const cls = size === "lg" ? "size-[18px]" : "size-3.5";
-  if (agentType === "claude-code") return <AgentIcons.Claude className={cls} />;
-  if (agentType === "codex") return <AgentIcons.Codex className={cls} />;
+  if (agentType === "claude-acp") return <AgentIcons.Claude className={cls} />;
+  if (agentType === "codex-acp") return <AgentIcons.Codex className={cls} />;
   if (agentType === "opencode") return <AgentIcons.OpenCode className={cls} />;
   if (agentType === "cursor") return <AgentIcons.Cursor className={cls} />;
   if (agentType === "kilo") return <AgentIcons.Kilo className={cls} />;

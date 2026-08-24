@@ -59,3 +59,18 @@ describe("corrupt storage", () => {
     expect(loadCachedAcpConfigOptions("claude-acp")).toBeNull();
   });
 });
+
+describe("upstream-merged rules (0.3.0-x)", () => {
+  it("an entry without an id makes the whole cache a miss — it could not be set on click", () => {
+    localStorage.setItem(
+      "atlas:acp-config-options:v1:claude-acp",
+      JSON.stringify([{ name: "Nameless", type: "select", options: [{ value: "a", name: "A" }] }]),
+    );
+    expect(loadCachedAcpConfigOptions("claude-acp")).toBeNull();
+  });
+
+  it("the key is versioned — a pre-v1 payload is simply not read", () => {
+    localStorage.setItem("atlas:acp-config-options:claude-acp", JSON.stringify([effort]));
+    expect(loadCachedAcpConfigOptions("claude-acp")).toBeNull();
+  });
+});

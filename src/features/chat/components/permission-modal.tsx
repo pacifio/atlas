@@ -68,7 +68,7 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
   const queueLength = useChatStore((s) =>
     acpSessionId ? (s.pendingPermissions[acpSessionId]?.length ?? 0) : 0,
   );
-  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
+  const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "cersei");
   const popPermission = useChatStore.use.actions().popPermission;
 
   const [draft, setDraft] = useState("");

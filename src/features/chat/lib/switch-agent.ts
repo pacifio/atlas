@@ -1,5 +1,5 @@
 import { useChatStore } from "@/features/chat/stores/chat-store";
-import { isBusyAgentStatus, type SwitchableAgent } from "@/types/agent";
+import { NATIVE_AGENT, isBusyAgentStatus, type SwitchableAgent } from "@/types/agent";
 import { switchableAgentIds } from "@/features/agents/lib/agent-meta";
 import { openNewAgentChat } from "./open-agent-session";
 
@@ -21,7 +21,7 @@ import { openNewAgentChat } from "./open-agent-session";
 export function switchAgentForTab(tabId: string, next: SwitchableAgent): void {
   const chat = useChatStore.getState();
   const sess = chat.sessions[tabId];
-  if ((sess?.agentType ?? "claude-code") === next) return;
+  if ((sess?.agentType ?? NATIVE_AGENT) === next) return;
 
   if (isBusyAgentStatus(sess?.status)) {
     openNewAgentChat(next);
@@ -39,7 +39,7 @@ export function switchAgentForTab(tabId: string, next: SwitchableAgent): void {
 export function nextAgentForTab(tabId: string): SwitchableAgent {
   const rotation = switchableAgentIds();
   const cur = useChatStore.getState().sessions[tabId]?.agentType;
-  const idx = rotation.indexOf(cur ?? "claude-code");
+  const idx = rotation.indexOf(cur ?? NATIVE_AGENT);
   return rotation[(Math.max(idx, 0) + 1) % rotation.length];
 }
 

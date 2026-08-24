@@ -673,9 +673,6 @@ function KeybindingsSettings() {
   );
 }
 
-// Dev-build only. Empty right now: its one toggle forced a Claude install
-// banner above the composer, and that banner is gone — the composer no longer
-// gates on any agent's readiness (ADR-0002).
 function DeveloperSettings() {
   return (
     <div className="space-y-6">
@@ -683,7 +680,7 @@ function DeveloperSettings() {
         title="Developer"
         subtitle="Diagnostic toggles for UI testing — these change app behavior, leave off in normal use"
       />
-      <p className="text-[11px] text-text-tertiary px-1">No diagnostic toggles right now.</p>
+      <div className="text-[11px] text-text-tertiary px-1">No developer toggles right now.</div>
     </div>
   );
 }
