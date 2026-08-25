@@ -109,6 +109,7 @@
     "tailwind-merge": "^3",
     "tiptap-markdown": "^0.9.0",
     "unified": "^11.0.5",
+    "vercel": "^59.5.0",
     "zustand": "^5"
   },
   "devDependencies": {
@@ -141,5 +142,6 @@
   "overrides": {
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.43.0"
-  }
+  },
+  "packageManager": "pnpm@11.24.0+sha512.bd27e345e976dcb0be0b7a1228217b049a817e21b1f355c90dbe7dc46671895a8bc1e6d06c24554505ea93ea0b45f489a27ec1bfbc8de6a9659fca0f16fa0000"
 }

@@ -183,13 +183,98 @@
   .btn svg { width: 14px; height: 14px; }
 
   /* ============================================================
+     DOWNLOAD SPLIT BUTTON
+     ------------------------------------------------------------
+     One control, two jobs: the wide half downloads the default
+     build (Apple Silicon), the narrow half opens a picker for the
+     other architecture. Shipping two dmgs without this would mean
+     either two equal buttons — which asks every visitor a question
+     most of them do not need to answer — or a single link that is
+     silently wrong for Intel users.
+     ============================================================ */
+  .dl { position: relative; display: inline-flex; }
+  .dl-main,
+  .dl-toggle {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 30px;
+    background: #ededed; color: #000;
+    font-size: 13px; font-weight: 500;
+    font-family: inherit;
+    border: none;
+    cursor: pointer;
+    transition: background 120ms ease;
+  }
+  .dl-main { padding: 0 12px; border-radius: 6px 0 0 6px; }
+  .dl-toggle { padding: 0 8px; border-radius: 0 6px 6px 0; }
+  .dl-main:hover, .dl-toggle:hover { background: #fff; }
+  /* Hairline seam between the halves — rgba so it reads as a divider on both
+     the resting and hover fills without being a third colour. */
+  .dl-toggle { box-shadow: inset 1px 0 0 rgba(0,0,0,0.16); }
+  .dl-main svg { width: 14px; height: 14px; }
+  .dl-toggle svg { width: 12px; height: 12px; transition: transform 140ms ease; }
+  .dl.open .dl-toggle svg { transform: rotate(180deg); }
+
+  /* Nav variant: pill ends on the outside, square on the seam. */
+  .dl-sm .dl-main,
+  .dl-sm .dl-toggle { height: 30px; font-size: 13px; }
+  .dl-sm .dl-main { border-radius: 999px 0 0 999px; padding-left: 14px; }
+  .dl-sm .dl-toggle { border-radius: 0 999px 999px 0; padding-right: 12px; }
+
+  /* Hero / CTA variant, matching .btn-lg. */
+  .dl-lg .dl-main,
+  .dl-lg .dl-toggle { height: 38px; font-size: 14px; }
+  .dl-lg .dl-main { padding: 0 16px; border-radius: 7px 0 0 7px; }
+  .dl-lg .dl-toggle { padding: 0 11px; border-radius: 0 7px 7px 0; }
+
+  .dl-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 168px;
+    padding: 4px;
+    background: #0d0d0d;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.6);
+    z-index: 200;
+    opacity: 0;
+    transform: translateY(-4px);
+    pointer-events: none;
+    transition: opacity 120ms ease, transform 120ms ease;
+  }
+  .dl.open .dl-menu { opacity: 1; transform: none; pointer-events: auto; }
+  .dl-item {
+    display: block;
+    padding: 7px 10px;
+    border-radius: 5px;
+    color: var(--text-primary);
+    font-size: 13px; font-weight: 500;
+    text-align: left;
+    white-space: nowrap;
+    transition: background 120ms ease;
+  }
+  .dl-item:hover { background: var(--bg-raised); }
+
+  @media (max-width: 560px) {
+    .dl-menu { right: auto; left: 0; }
+  }
+
+  /* ============================================================
      HERO
      ============================================================ */
   .hero {
     position: relative;
     padding: 140px 0 64px;
     text-align: center;
-    overflow: hidden;
+    /* Was `overflow: hidden`, which CLIPPED the open download menu against the
+       bottom of the hero — the menu hangs below the CTA row and the section
+       ends 64px later. Clip only the horizontal axis, which is all the
+       decorative background needed; `body` already has `overflow-x: hidden`
+       as a second guard, so nothing can scroll sideways either way.
+       `overflow-x: clip` + `overflow-y: visible` is the one combination that
+       does this — `hidden` on one axis silently promotes the other to `auto`. */
+    overflow-x: clip;
+    overflow-y: visible;
   }
   .hero-inner { position: relative; z-index: 1; }
   .eyebrow {
@@ -1967,10 +2052,19 @@
       <svg viewBox="0 0 127.14 96.36" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z"/></svg>
       Discord
     </a>
-    <a href="https://github.com/pacifio/atlas/releases/download/alpha-0.2.6/Atlas_0.2.6_aarch64.dmg" class="nav-cta-btn">
-      Download
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
-    </a>
+    <div class="dl dl-sm" data-dl>
+      <a class="dl-main" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.0/Atlas_0.3.0_aarch64.dmg">
+        <svg viewBox="0 0 384 512" fill="currentColor" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+        Download
+      </a>
+      <button class="dl-toggle" type="button" data-dl-toggle aria-haspopup="true" aria-expanded="false" aria-label="Choose a Mac build">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="dl-menu" data-dl-menu role="menu">
+        <a class="dl-item" role="menuitem" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.0/Atlas_0.3.0_aarch64.dmg">For Apple ARM</a>
+        <a class="dl-item" role="menuitem" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.0/Atlas_0.3.0_x86_64.dmg">For Intel Macs</a>
+      </div>
+    </div>
   </div>
 </nav>
 
@@ -1984,10 +2078,19 @@
     <h1 class="hero-title">A planning surface for coding agents.</h1>
     <p class="hero-sub">Atlas is a native macOS editor built for the work <em style="color:var(--text-secondary);font-style:normal">around</em> the code — research, planning, knowledge, and the agent threads that turn them into commits. Built so teams of humans and agents can move fast together.</p>
     <div class="hero-cta">
-      <a href="https://github.com/pacifio/atlas/releases/download/alpha-0.2.6/Atlas_0.2.6_aarch64.dmg" class="btn btn-primary btn-lg">
-        Download for Mac
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
-      </a>
+      <div class="dl dl-lg" data-dl>
+        <a class="dl-main" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.0/Atlas_0.3.0_aarch64.dmg">
+          <svg viewBox="0 0 384 512" fill="currentColor" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+          Download for Mac
+        </a>
+        <button class="dl-toggle" type="button" data-dl-toggle aria-haspopup="true" aria-expanded="false" aria-label="Choose a Mac build">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="dl-menu" data-dl-menu role="menu">
+          <a class="dl-item" role="menuitem" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.0/Atlas_0.3.0_aarch64.dmg">For Apple ARM</a>
+          <a class="dl-item" role="menuitem" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.0/Atlas_0.3.0_x86_64.dmg">For Intel Macs</a>
+        </div>
+      </div>
       <a href="https://github.com/pacifio/atlas" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.36-3.88-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.79 0c2.2-1.5 3.18-1.18 3.18-1.18.62 1.58.23 2.75.11 3.04.73.81 1.18 1.84 1.18 3.1 0 4.43-2.7 5.4-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56C20.21 21.38 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg>
         Star on GitHub
@@ -1995,9 +2098,9 @@
     </div>
     <div class="hero-meta">
       <span class="atlas-dot atlas-dot-success"></span>
-      <span>v0.2.6 · alpha</span>
+      <span>v0.3.0 · alpha</span>
       <span class="hero-meta-sep">·</span>
-      <span>macOS Apple Silicon only</span>
+      <span>macOS 13+ · Apple Silicon &amp; Intel</span>
       <span class="hero-meta-sep">·</span>
       <span>local-first · anonymous telemetry you can turn off</span>
     </div>
@@ -3584,17 +3687,26 @@
 <section class="cta-section" id="download">
   <div class="wrap-tight">
     <h2 class="cta-title">Make agents part of the team.</h2>
-    <p class="cta-sub">Free during the alpha. Bring your own keys. Apple Silicon binary, no Electron. The Atlas account is optional — nothing is gated behind it.</p>
+    <p class="cta-sub">Free during the alpha. Bring your own keys. Native binary for Apple Silicon and Intel, no Electron. The Atlas account is optional — nothing is gated behind it.</p>
     <div class="cta-row">
-      <a href="https://github.com/pacifio/atlas/releases/download/alpha-0.2.6/Atlas_0.2.6_aarch64.dmg" class="btn btn-primary btn-lg">
-        Download for Mac
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
-      </a>
+      <div class="dl dl-lg" data-dl>
+        <a class="dl-main" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.0/Atlas_0.3.0_aarch64.dmg">
+          <svg viewBox="0 0 384 512" fill="currentColor" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+          Download for Mac
+        </a>
+        <button class="dl-toggle" type="button" data-dl-toggle aria-haspopup="true" aria-expanded="false" aria-label="Choose a Mac build">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="dl-menu" data-dl-menu role="menu">
+          <a class="dl-item" role="menuitem" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.0/Atlas_0.3.0_aarch64.dmg">For Apple ARM</a>
+          <a class="dl-item" role="menuitem" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.0/Atlas_0.3.0_x86_64.dmg">For Intel Macs</a>
+        </div>
+      </div>
       <a href="https://github.com/pacifio/atlas" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">
         Read the source
       </a>
     </div>
-    <div class="cta-tiny">v0.2.6 · macOS 13+ on Apple Silicon · alpha</div>
+    <div class="cta-tiny">v0.3.0 · macOS 13+ · Apple Silicon &amp; Intel · alpha</div>
   </div>
 </section>
 
@@ -3620,6 +3732,35 @@
     </div>
   </div>
 </footer>
+
+<script>
+  // Download split button: the chevron opens an architecture picker.
+  // Delegated from the document so all three controls (nav, hero, footer CTA)
+  // share one handler and one "only ever one open" rule.
+  document.addEventListener('click', (e) => {
+    const toggle = e.target.closest('[data-dl-toggle]');
+    const openDl = toggle ? toggle.closest('[data-dl]') : null;
+
+    document.querySelectorAll('[data-dl].open').forEach((dl) => {
+      if (dl === openDl) return;
+      dl.classList.remove('open');
+      dl.querySelector('[data-dl-toggle]').setAttribute('aria-expanded', 'false');
+    });
+
+    if (!toggle) return;                  // a click anywhere else just closes
+    e.preventDefault();
+    const nowOpen = openDl.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', String(nowOpen));
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    document.querySelectorAll('[data-dl].open').forEach((dl) => {
+      dl.classList.remove('open');
+      dl.querySelector('[data-dl-toggle]').setAttribute('aria-expanded', 'false');
+    });
+  });
+</script>
 
 <script>
   // Sticky nav border on scroll
