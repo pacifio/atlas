@@ -121,6 +121,20 @@ export function ModelsManager() {
               <div className={COL.status}>Status</div>
               <div className={COL.use}>Use</div>
             </div>
+            {rows.length === 0 && query.trim() !== "" && (
+              <div className="grid place-items-center gap-2 h-[160px] text-[11px] text-text-tertiary">
+                No models match.
+                {query.trim() !== "" && (
+                  <button
+                    type="button"
+                    onClick={() => setQuery("")}
+                    className="h-6 rounded-md border border-border-default bg-bg-elevated px-2 text-[10px] text-text-primary hover:bg-bg-hover transition-colors"
+                  >
+                    Clear filter
+                  </button>
+                )}
+              </div>
+            )}
             {rows.map((m) => {
               const dl = downloading[m.id];
               const busy = pending === m.id;

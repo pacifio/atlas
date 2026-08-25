@@ -125,6 +125,14 @@ export function ProvidersSettings() {
     [],
   );
 
+  const hasActiveFilter = query.trim() !== "" || category !== "All" || configuredOnly;
+
+  const clearFilters = () => {
+    setQuery("");
+    setCategory("All");
+    setConfiguredOnly(false);
+  };
+
   return (
     <div className="h-full flex flex-col bg-bg-base">
       {/* Toolbar */}
@@ -224,8 +232,17 @@ export function ProvidersSettings() {
           </div>
 
           {rows.length === 0 ? (
-            <div className="grid place-items-center h-[160px] text-[11px] text-text-tertiary">
+            <div className="grid place-items-center gap-2 h-[160px] text-[11px] text-text-tertiary">
               No providers match.
+              {hasActiveFilter && (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="h-6 rounded-md border border-border-default bg-bg-elevated px-2 text-[10px] text-text-primary hover:bg-bg-hover transition-colors"
+                >
+                  Clear filter
+                </button>
+              )}
             </div>
           ) : (
             rows.map((p) => (
