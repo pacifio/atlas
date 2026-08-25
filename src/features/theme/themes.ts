@@ -163,6 +163,33 @@ export const ATLAS_THEMES: AtlasTheme[] = [
       accentForeground: "#16090e",
     },
   },
+  {
+    // Amber CRT phosphor glow — classic terminal nostalgia, dark and warm.
+    id: "phosphor",
+    name: "Phosphor",
+    description: "Amber CRT phosphor glow — retro terminal warmth in the dark.",
+    spec: {
+      // Near-black warm-brown base (matching the depth ladder of the other
+      // themes) lit up by a saturated amber phosphor accent + text tier.
+      base: "#0a0500",
+      panel: "#120900",
+      elevated: "#1a0d00",
+      overlay: "#241300",
+      input: "#0d0600",
+      tabActive: "#291600",
+      textPrimary: "#ffb000",
+      textSecondary: "#cc8800",
+      textTertiary: "#8a5c00",
+      textGhost: "#2e1a00",
+      textMuted: "#5c3d00",
+      borderDefault: "#3d2200",
+      borderSubtle: "#1f1200",
+      borderStrong: "#5c3300",
+      accent: "#ff9500",
+      accentHover: "#ffb347",
+      accentForeground: "#170900",
+    },
+  },
 ];
 
 /** Look up a theme by id, falling back to the Atlas Black default. */
