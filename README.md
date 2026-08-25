@@ -7,7 +7,7 @@
 [![Latest release](https://img.shields.io/github/v/release/pacifio/atlas?include_prereleases&label=Release&style=for-the-badge)](https://github.com/pacifio/atlas/releases)
 [![Contributors](https://img.shields.io/github/contributors/pacifio/atlas?style=for-the-badge)](https://github.com/pacifio/atlas/graphs/contributors)
 
-**[Download](https://github.com/pacifio/atlas/releases)** · **[Discord](https://discord.gg/GmnFggaPfP)** · **[Docs](https://cersei.tryatlas.cc/docs)** · **[Contributing](CONTRIBUTING.md)** · **[Issues](https://github.com/pacifio/atlas/issues)** · **[Roadmap](#roadmap)**
+**[Download](https://github.com/pacifio/atlas/releases)** · **[Discord](https://discord.gg/GmnFggaPfP)** · **[Docs](https://docs.tryatlas.cc/)** · **[Contributing](CONTRIBUTING.md)** · **[Issues](https://github.com/pacifio/atlas/issues)** · **[Roadmap](#roadmap)**
 
 <a href="https://github.com/pacifio/atlas"><img src="https://img.shields.io/github/stars/pacifio/atlas?style=social" alt="GitHub stars"></a>
 <a href="https://github.com/pacifio/atlas"><img alt="GitHub forks" src="https://img.shields.io/github/forks/pacifio/atlas"></a>
