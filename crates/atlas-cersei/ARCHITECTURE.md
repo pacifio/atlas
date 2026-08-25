@@ -38,10 +38,10 @@ Atlas        ─┘   in-process, drives Cersei SDK, FAKES AcpEvent ┘
 └───────────────▲──────────────────────────────┬─────────────────────────┘
                 │                                ▼
 ┌───────────────┴────────────────────────────────────────────────────────┐
-│ atlas-agents  — AgentManager + SessionWorker  (agent-agnostic)           │
-│   backend.rs:  trait AgentBackend                                        │
-│      ├─ AcpBackend     → atlas_acp::AgentRegistry   (Claude Code, Codex)  │
-│      └─ CerseiBackend  → atlas_cersei::CerseiRuntime (Atlas)  ◀───────┐   │
+│ ported ACP stack — AgentHost / AgentManager  (agent-agnostic)            │
+│   atlas-acp-thread:  trait AgentConnection                               │
+│      ├─ atlas-agent-servers → an external ACP subprocess (Marketplace)    │
+│      └─ atlas-native-agent  → atlas_cersei::CerseiRuntime (Cersei) ◀───┐  │
 └──────────────────────────────────────────────────────────────────────┼──┘
                                                                         │
 ┌───────────────────────────────────────────────────────────────────── ┴──┐
@@ -63,10 +63,14 @@ Atlas        ─┘   in-process, drives Cersei SDK, FAKES AcpEvent ┘
 ```
 
 The seam that makes two very different agents interchangeable is the
-`AgentBackend` trait in `atlas-agents/src/backend.rs`. The manager/worker only ever
-call that trait. `CerseiBackend` is a thin wrapper that forwards each call into
-`CerseiRuntime`. So Atlas is "an ACP agent" from the manager's point of view, even
-though under the hood it never speaks ACP on a wire.
+`AgentConnection` trait in `crates/atlas-acp-thread/src/connection.rs`. Everything
+above it calls only that trait, and asks it about *capabilities* rather than
+identity. `atlas-native-agent` is the thin implementation that forwards each call
+into `CerseiRuntime`. So Cersei is "an ACP agent" from the manager's point of view,
+even though under the hood it never speaks ACP on a wire.
+
+See the root `ARCHITECTURE.md` for the seam, the manager, and the frozen delta wire;
+this document is about what sits *below* it, inside this crate.
 
 ---
 
@@ -152,7 +156,7 @@ This is the heart of the crate. When you hit send:
 ```mermaid
 sequenceDiagram
     participant UI as Frontend
-    participant W as atlas-agents Worker
+    participant W as AgentHost / AgentManager
     participant R as CerseiRuntime
     participant SDK as cersei::Agent
     participant P as Provider (LLM)
@@ -412,5 +416,5 @@ actual repo state.
 | change session storage / resume | `store.rs` |
 | debug "file not found" on relative paths | `tools/cwd.rs` (`resolve_path` / `CwdTool`) |
 | wire MCP | `mcp.rs` + `<config_dir>/mcp-servers.json` |
-| connect it to the rest of Atlas | `atlas-agents/src/backend.rs` (`CerseiBackend`) |
+| connect it to the rest of Atlas | `crates/atlas-native-agent` (the `AgentConnection` impl) |
 ```
