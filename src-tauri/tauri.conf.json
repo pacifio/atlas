@@ -45,7 +45,7 @@
     "category": "DeveloperTool",
     "shortDescription": "Atlas — agent-first ideation and planning tool",
     "longDescription": "Atlas is a Tauri-based desktop app that hosts ACP-compatible coding agents (Claude Code, Codex, OpenCode) with first-class file, knowledge, and research integration.",
-    "copyright": "Copyright © 2026 Adib Mohsin",
+    "copyright": "https://tryatlas.cc/ Report bugs to Github: https://github.com/pacifio/atlas/issues/",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
