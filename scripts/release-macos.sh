@@ -35,10 +35,18 @@
 #   by setting APPLE_API_KEY_PATH, APPLE_API_KEY_ID, APPLE_API_ISSUER.
 #
 # Usage:
-#   ./scripts/release-macos.sh                          # aarch64 (Apple Silicon), signed + notarized
-#   TARGET=x86_64-apple-darwin ./scripts/release-macos.sh   # Intel only
-#   UNIVERSAL=1 ./scripts/release-macos.sh              # universal (arm64 + x86_64), slow
-#   SKIP_NOTARIZE=1 ./scripts/release-macos.sh          # skip Apple round-trip (dev only)
+#   ./scripts/release-macos.sh                                 # TWO dmgs: arm64 + Intel (the default)
+#   TARGET=aarch64-apple-darwin ./scripts/release-macos.sh     # Apple Silicon only
+#   TARGET=x86_64-apple-darwin ./scripts/release-macos.sh      # Intel only
+#   UNIVERSAL=1 ./scripts/release-macos.sh                     # ONE fat dmg (arm64 + x86_64), slow
+#   SKIP_NOTARIZE=1 ./scripts/release-macos.sh                 # skip Apple round-trip (dev only)
+#
+# Two dmgs vs UNIVERSAL — different products, not two routes to the same one:
+#   default     two separate downloads, each ~half the size. Each is built,
+#               signed, notarized and stapled by Tauri's own path.
+#   UNIVERSAL=1 one download that runs anywhere, roughly twice the size, built by
+#               lipo'ing two .apps together and re-signing by hand.
+# Ship the two unless you specifically want a single universal download.
 # ============================================================================
 
 set -euo pipefail
@@ -50,10 +58,18 @@ cd "$(dirname "$0")/.."  # cd to repo root
 APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-Developer ID Application: Adib Mohsin (PLKDA3WBJJ)}"
 APPLE_TEAM_ID="${APPLE_TEAM_ID:-PLKDA3WBJJ}"
 
-# Default build target. M-series Macs are the realistic beta-user audience;
-# Intel + universal builds are opt-in.
-TARGET="${TARGET:-aarch64-apple-darwin}"
 UNIVERSAL="${UNIVERSAL:-0}"
+
+# The architectures this run produces a dmg for.
+#
+# A release ships BOTH by default: an arm64-only dmg silently excludes every
+# Intel Mac, and the failure mode is a user downloading something that will not
+# launch. Narrowing to one arch is the opt-in, via TARGET.
+if [[ -n "${TARGET:-}" ]]; then
+  TARGETS=("${TARGET}")
+else
+  TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
+fi
 
 # Set to 1 to skip the notarization round-trip (build still signs locally).
 # Useful while iterating on the build itself; the resulting .app/.dmg will
@@ -96,8 +112,13 @@ if [[ "${UNIVERSAL}" == "1" ]]; then
   ensure_target aarch64-apple-darwin
   ensure_target x86_64-apple-darwin
 else
-  ensure_target "${TARGET}"
+  for t in "${TARGETS[@]}"; do ensure_target "${t}"; done
 fi
+
+# The C-building dependencies need an SDK path. The macOS SDK is universal, so
+# one root serves both architectures — what matters is that it is SET, which it
+# is not in a login shell that never sourced a dev profile.
+export SDKROOT="${SDKROOT:-$(xcrun --show-sdk-path)}"
 
 # ── 4. Export env for tauri-cli ─────────────────────────────────────────────
 # Tauri reads these env vars and threads them through codesign + notarytool.
@@ -142,7 +163,55 @@ else
   log "PostHog key not set (.env missing key) — telemetry will be INERT in this build"
 fi
 
+# ── 6/7. Verify each artifact — signature, Gatekeeper, stapled ticket ───────
+# Defined here but CALLED from build_signed_dmg above, so with BOTH=1 each
+# architecture is verified as it finishes instead of both at the end. A failure
+# then names the arch that produced it, and does not burn a second full build
+# first.
+verify_artifacts() {
+  local app_path="$1" dmg_path="$2"
+
+  if [[ ! -d "${app_path}" ]]; then
+    err ".app not found at ${app_path}"
+    exit 1
+  fi
+  if [[ -z "${dmg_path}" || ! -f "${dmg_path}" ]]; then
+    err "No .dmg produced"
+    exit 1
+  fi
+  ok "Built ${app_path}"
+  ok "Built ${dmg_path}"
+
+  log "Verifying codesign on the .app"
+  codesign --verify --deep --strict --verbose=2 "${app_path}"
+  ok "Signature valid"
+
+  if [[ "${SKIP_NOTARIZE}" != "1" ]]; then
+    log "Verifying Gatekeeper acceptance"
+    if spctl --assess --type execute --verbose "${app_path}"; then
+      ok "Gatekeeper accepts the .app"
+    else
+      err "Gatekeeper rejected the .app — notarization probably failed"
+      err "Check the build log above for the notarytool submission ID + log URL"
+      exit 1
+    fi
+
+    log "Verifying the .dmg has a stapled ticket"
+    if xcrun stapler validate "${dmg_path}"; then
+      ok "Stapled ticket on .dmg"
+    else
+      err "Stapler validation failed on ${dmg_path}"
+      exit 1
+    fi
+  fi
+}
+
 # ── 5. Build ────────────────────────────────────────────────────────────────
+# Collected across every architecture this run builds, so the summary and the
+# universal branch read the same list.
+DMG_PATHS=()
+APP_PATHS=()
+
 if [[ "${UNIVERSAL}" == "1" ]]; then
   # Manual universal build: two single-arch builds + lipo. Avoids the
   # `--target universal-apple-darwin` codepath which has had issues in
@@ -201,109 +270,104 @@ if [[ "${UNIVERSAL}" == "1" ]]; then
     xcrun stapler staple "${DMG_OUT}"
   fi
 
-  BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
-  APP_PATH="${UNI_DIR}/Atlas.app"
-  DMG_PATH="${DMG_OUT}"
+  verify_artifacts "${UNI_DIR}/Atlas.app" "${DMG_OUT}"
+  APP_PATHS+=("${UNI_DIR}/Atlas.app")
+  DMG_PATHS+=("${DMG_OUT}")
 else
-  BUNDLE_ROOT="src-tauri/target/${TARGET}/release/bundle"
-  log "Cleaning ${BUNDLE_ROOT}"
-  rm -rf "${BUNDLE_ROOT}"
+  # ── One signed + notarized dmg per requested architecture ─────────────────
+  # Factored into a function so BOTH=1 is a loop rather than a second copy of
+  # this whole pipeline. Every artifact it produces is verified before the next
+  # architecture starts, so a failure names the arch that failed.
+  build_signed_dmg() {
+    local target="$1"
+    local bundle_root="src-tauri/target/${target}/release/bundle"
 
-  # `--bundles app` skips Tauri's bundle_dmg.sh step, which is fragile (it
-  # depends on create-dmg / AppleScript timing and can fail mid-pipeline
-  # even when signing + notarization succeed). We still get a fully signed,
-  # notarized, stapled .app from Tauri; the DMG is then built manually
-  # with hdiutil — same path the UNIVERSAL=1 branch uses.
-  log "Building Atlas for ${TARGET} (.app only — Tauri's DMG packager is skipped)"
-  bun run tauri build --target "${TARGET}" --bundles app
+    log "Cleaning ${bundle_root}"
+    rm -rf "${bundle_root}"
 
-  APP_PATH="${BUNDLE_ROOT}/macos/Atlas.app"
-  if [[ ! -d "${APP_PATH}" ]]; then
-    err ".app not found at ${APP_PATH}"
-    exit 1
-  fi
-  ok "Tauri built + signed + notarized + stapled ${APP_PATH}"
+    # `--bundles app` skips Tauri's bundle_dmg.sh step, which is fragile (it
+    # depends on create-dmg / AppleScript timing and can fail mid-pipeline
+    # even when signing + notarization succeed). We still get a fully signed,
+    # notarized, stapled .app from Tauri; the DMG is then built manually
+    # with hdiutil — same path the UNIVERSAL=1 branch uses.
+    log "Building Atlas for ${target} (.app only — Tauri's DMG packager is skipped)"
+    bun run tauri build --target "${target}" --bundles app
 
-  # Build the DMG ourselves. Stage the .app + a /Applications symlink so
-  # the user gets the standard drag-to-install gesture without any custom
-  # AppleScript or layout JSON.
-  DMG_DIR="${BUNDLE_ROOT}/dmg"
-  mkdir -p "${DMG_DIR}"
-  DMG_PATH="${DMG_DIR}/Atlas_$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')_$(echo "${TARGET}" | cut -d- -f1).dmg"
-  rm -f "${DMG_PATH}"
+    local app_path="${bundle_root}/macos/Atlas.app"
+    if [[ ! -d "${app_path}" ]]; then
+      err ".app not found at ${app_path}"
+      exit 1
+    fi
+    ok "Tauri built + signed + notarized + stapled ${app_path}"
 
-  STAGING=$(mktemp -d)
-  cp -R "${APP_PATH}" "${STAGING}/Atlas.app"
-  ln -s /Applications "${STAGING}/Applications"
+    # Build the DMG ourselves. Stage the .app + a /Applications symlink so
+    # the user gets the standard drag-to-install gesture without any custom
+    # AppleScript or layout JSON.
+    local dmg_dir="${bundle_root}/dmg"
+    mkdir -p "${dmg_dir}"
+    local version arch dmg_path
+    version="$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')"
+    # The arch suffix is what makes two dmgs from one release distinguishable in
+    # a downloads folder: Atlas_0.3.0_aarch64.dmg vs Atlas_0.3.0_x86_64.dmg.
+    arch="$(echo "${target}" | cut -d- -f1)"
+    dmg_path="${dmg_dir}/Atlas_${version}_${arch}.dmg"
+    rm -f "${dmg_path}"
 
-  log "Building DMG at ${DMG_PATH}"
-  hdiutil create \
-    -volname "Atlas" \
-    -srcfolder "${STAGING}" \
-    -ov \
-    -format UDZO \
-    "${DMG_PATH}" >/dev/null
-  rm -rf "${STAGING}"
+    local staging
+    staging="$(mktemp -d)"
+    cp -R "${app_path}" "${staging}/Atlas.app"
+    ln -s /Applications "${staging}/Applications"
 
-  log "Setting DMG icon"
-  bash "$(dirname "$0")/set-dmg-icon.sh" src-tauri/icons/icon.icns "${DMG_PATH}"
+    log "Building DMG at ${dmg_path}"
+    hdiutil create \
+      -volname "Atlas" \
+      -srcfolder "${staging}" \
+      -ov \
+      -format UDZO \
+      "${dmg_path}" >/dev/null
+    rm -rf "${staging}"
 
-  log "Signing DMG"
-  codesign --force --sign "${APPLE_SIGNING_IDENTITY}" "${DMG_PATH}"
+    log "Setting DMG icon"
+    bash "$(dirname "$0")/set-dmg-icon.sh" src-tauri/icons/icon.icns "${dmg_path}"
 
-  if [[ "${SKIP_NOTARIZE}" != "1" ]]; then
-    log "Submitting DMG for notarization (.app inside is already notarized — this is fast)"
-    xcrun notarytool submit "${DMG_PATH}" \
-      --apple-id "${APPLE_ID}" \
-      --password "${APPLE_PASSWORD}" \
-      --team-id "${APPLE_TEAM_ID}" \
-      --wait
-    log "Stapling DMG ticket"
-    xcrun stapler staple "${DMG_PATH}"
-  fi
-fi
+    log "Signing DMG"
+    codesign --force --sign "${APPLE_SIGNING_IDENTITY}" "${dmg_path}"
 
-# ── 6. Verify artifacts exist ───────────────────────────────────────────────
-if [[ ! -d "${APP_PATH}" ]]; then
-  err ".app not found at ${APP_PATH}"
-  exit 1
-fi
-if [[ -z "${DMG_PATH:-}" || ! -f "${DMG_PATH}" ]]; then
-  err "No .dmg produced"
-  exit 1
-fi
-ok "Built ${APP_PATH}"
-ok "Built ${DMG_PATH}"
+    if [[ "${SKIP_NOTARIZE}" != "1" ]]; then
+      log "Submitting DMG for notarization (.app inside is already notarized — this is fast)"
+      xcrun notarytool submit "${dmg_path}" \
+        --apple-id "${APPLE_ID}" \
+        --password "${APPLE_PASSWORD}" \
+        --team-id "${APPLE_TEAM_ID}" \
+        --wait
+      log "Stapling DMG ticket"
+      xcrun stapler staple "${dmg_path}"
+    fi
 
-# ── 7. Verify signature + Gatekeeper ────────────────────────────────────────
-log "Verifying codesign on the .app"
-codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
-ok "Signature valid"
+    verify_artifacts "${app_path}" "${dmg_path}"
+    APP_PATHS+=("${app_path}")
+    DMG_PATHS+=("${dmg_path}")
+  }
 
-if [[ "${SKIP_NOTARIZE}" != "1" ]]; then
-  log "Verifying Gatekeeper acceptance"
-  if spctl --assess --type execute --verbose "${APP_PATH}"; then
-    ok "Gatekeeper accepts the .app"
-  else
-    err "Gatekeeper rejected the .app — notarization probably failed"
-    err "Check the build log above for the notarytool submission ID + log URL"
-    exit 1
-  fi
-
-  log "Verifying the .dmg has a stapled ticket"
-  if xcrun stapler validate "${DMG_PATH}"; then
-    ok "Stapled ticket on .dmg"
-  else
-    err "Stapler validation failed on ${DMG_PATH}"
-    exit 1
-  fi
+  for t in "${TARGETS[@]}"; do
+    log ""
+    log "═══ ${t} ═══"
+    build_signed_dmg "${t}"
+  done
 fi
 
 # ── 8. Done ─────────────────────────────────────────────────────────────────
-SIZE_MB=$(du -m "${DMG_PATH}" | awk '{print $1}')
 log ""
 ok "Atlas is ready to ship:"
-printf "      %s  (%s MB)\n" "${DMG_PATH}" "${SIZE_MB}"
+for dmg in "${DMG_PATHS[@]}"; do
+  printf "      %s  (%s MB)\n" "${dmg}" "$(du -m "${dmg}" | awk '{print $1}')"
+done
 log ""
 log "Upload the .dmg directly to beta users. They drag it to Applications,"
 log "the stapled ticket lets Gatekeeper accept it offline."
+if [[ ${#DMG_PATHS[@]} -gt 1 ]]; then
+  log ""
+  log "Two architectures: the aarch64 dmg is for Apple Silicon, x86_64 for Intel."
+  log "An Intel dmg also runs on Apple Silicon under Rosetta, but slower — publish"
+  log "both and let the download page pick, rather than shipping only x86_64."
+fi

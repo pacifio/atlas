@@ -2947,6 +2947,11 @@ pub async fn pack_install_skill(
     // is a public GitHub `owner/repo` slug; `scope` is "global"/"project".
     let source_ev = source.clone();
     let scope_ev = scope.clone();
+    // The REGISTRY id, which `skill` (the installed SKILL.md's frontmatter name)
+    // is not: the two can differ, so a per-skill install rollup keyed on `skill`
+    // could not be joined back to the registry row the Discover table renders.
+    // `(source, skill_id)` is that row's identity.
+    let skill_id_ev = skill_id.clone();
     let res = tokio::task::spawn_blocking(move || {
         let (owner, repo) = parse_owner_repo(&source)?;
         let (tmp, _commit) = fetch_repo_to_temp(&owner, &repo)?;
@@ -2959,7 +2964,12 @@ pub async fn pack_install_skill(
     if let Ok(meta) = &res {
         app.state::<Arc<crate::telemetry::TelemetryClient>>().capture(
             "skill_downloaded",
-            serde_json::json!({ "skill": meta.name, "source": source_ev, "scope": scope_ev }),
+            serde_json::json!({
+                "skill": meta.name,
+                "skill_id": skill_id_ev,
+                "source": source_ev,
+                "scope": scope_ev,
+            }),
         );
     }
     res

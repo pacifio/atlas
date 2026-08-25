@@ -330,7 +330,10 @@ export function AgentsMarketplace() {
       </div>
 
       {/* Card list. */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+      {/* hide-scrollbar: the grid is two/three columns of fixed-width cards, so
+          a gutter-reserving scrollbar costs real card width. Matches the skills
+          Discover table next door. */}
+      <div className="hide-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {registryEntries.length === 0 && (!loaded || refreshing) ? (
           // Nothing cached yet AND still working — the only case that earns a
           // blocking spinner. With a cache in hand we always paint the cache.

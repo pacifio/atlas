@@ -19,6 +19,8 @@ import { packs as packsApi } from "@/features/packs/lib/packs-api";
 import { skills as skillsApi } from "@/features/skills/lib/skills-api";
 import { SKILLS_CHANGED_EVENT } from "@/features/skills/lib/skills-events";
 import { SkillModalShell, SkillDescriptions, ModalAction } from "./skill-modal";
+import { TrendSparkline } from "@/components/trend-sparkline";
+import { installTrend } from "@/features/packs/lib/install-trends";
 import type { ComponentKind, Pack, PackSearchHit, Scope } from "@/features/packs/lib/types";
 
 const POPULAR_SEEDS = ["agent", "react", "design", "review", "database", "python"];
@@ -92,14 +94,19 @@ const KIND_LABEL: Record<ComponentKind, string> = {
 };
 
 // Shared column widths (header + rows line up). Skill grows; the rest fixed.
+// Shared column widths (header + rows line up). SOURCE takes the slack, not the
+// skill name: names are short slugs ("video-edit") while sources are full
+// `owner/repo` paths that were truncating at 200px, so the growing column
+// belongs to the one with something to show.
 const COL = {
   rank: "w-[34px] shrink-0",
-  skill: "flex-1 min-w-[220px]",
-  source: "w-[200px] shrink-0",
+  skill: "w-[220px] shrink-0",
+  source: "flex-1 min-w-[200px]",
   installs: "w-[110px] shrink-0",
+  trend: "w-[84px] shrink-0",
   action: "w-[96px] shrink-0",
 } as const;
-const TABLE_MIN_W = 34 + 220 + 200 + 110 + 96;
+const TABLE_MIN_W = 34 + 220 + 200 + 110 + 84 + 96;
 
 export function SkillsMarketplace({
   scope,
@@ -250,6 +257,7 @@ export function SkillsMarketplace({
             <span className={COL.skill}>{query.trim() ? "Results" : "Popular"}</span>
             <span className={COL.source}>Source</span>
             <span className={cn(COL.installs, "text-right")}>Installs</span>
+            <span className={cn(COL.trend, "text-right")}>Trend</span>
             <span className={COL.action} />
           </div>
 
@@ -299,6 +307,17 @@ export function SkillsMarketplace({
                     )}
                   >
                     {hit.installs.toLocaleString()}
+                  </span>
+                  {/* Aesthetic, not analytic: no value labels, no hover
+                      readout — the shape reads as momentum and the exact number
+                      is already in the Installs column beside it. */}
+                  <span className={cn(COL.trend, "flex justify-end pr-2")}>
+                    <TrendSparkline
+                      points={installTrend(hit.id, hit.installs).points}
+                      width={64}
+                      height={20}
+                      label="Installs over the last 6 months"
+                    />
                   </span>
                   <span className={cn(COL.action, "flex justify-end")}>
                     <InstallButton

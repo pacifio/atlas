@@ -12,6 +12,7 @@ import {
   Cpu,
   ChevronDown,
   Search,
+  Plus,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useChatStore } from "../stores/chat-store";
@@ -58,7 +59,9 @@ import type {
 } from "./slash-command-picker";
 import { commandRequiresArgs } from "./slash-command-picker";
 import { PlanTasksPill } from "./plan-tasks-pill";
+import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import { ComposerOptionsPill } from "./composer-options-pill";
+import { FeaturedAgentOffers } from "./featured-agent-offers";
 import { RetryPill } from "./retry-pill";
 import { ComposerAddMenu } from "./composer-add-menu";
 import type { GithubRepo } from "@/features/github/types";
@@ -473,29 +476,52 @@ function ComposerGroupsMenu({
             className={cn(dir > 0 ? "atlas-group-slide-left" : "atlas-group-slide-right")}
           >
             {openGroup === "agent" && (
-              <div className="max-h-[300px] overflow-y-auto hide-scrollbar p-1">
-                {switchableAgents.map((a) => {
-                  const active = a === currentAgent;
-                  return (
-                    <button
-                      key={a}
-                      onClick={() => {
-                        if (!active) onSwitchAgent(a as SwitchableAgent);
-                        close();
-                      }}
-                      className={cn(
-                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                        active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
-                      )}
-                    >
-                      <AgentMark agentType={a} className="!h-4 !w-4 !text-[9px] !rounded" />
-                      <span className="flex-1 truncate text-[11px] font-medium text-[var(--text-primary)]">
-                        {agentMeta(a).label}
-                      </span>
-                      {active && <Check size={11} className="text-[var(--accent-primary)]" />}
-                    </button>
-                  );
-                })}
+              <div>
+                {/* What you have, and can switch to right now. */}
+                <div className="max-h-[240px] overflow-y-auto hide-scrollbar p-1">
+                  {switchableAgents.map((a) => {
+                    const active = a === currentAgent;
+                    return (
+                      <button
+                        key={a}
+                        onClick={() => {
+                          if (!active) onSwitchAgent(a as SwitchableAgent);
+                          close();
+                        }}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
+                          active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]",
+                        )}
+                      >
+                        <AgentMark agentType={a} className="!h-4 !w-4 !text-[9px] !rounded" />
+                        <span className="flex-1 truncate text-[11px] font-medium text-[var(--text-primary)]">
+                          {agentMeta(a).label}
+                        </span>
+                        {active && <Check size={11} className="text-[var(--accent-primary)]" />}
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* And what you could have. Atlas ships no ACP agents (ADR-0002),
+                    so without this a fresh profile's picker lists exactly one
+                    thing and reads like Atlas supports one agent. */}
+                <FeaturedAgentOffers
+                  onInstalled={(agentType) => {
+                    onSwitchAgent(agentType as SwitchableAgent);
+                    close();
+                  }}
+                />
+                <div className="h-px bg-[var(--border-default)]" />
+                <button
+                  onClick={() => {
+                    close();
+                    openSettingsSection("agents");
+                  }}
+                  className="flex w-full items-center gap-1.5 px-3 py-2 text-[11px] text-[var(--text-secondary)] transition-colors cursor-pointer hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                >
+                  <Plus size={11} className="shrink-0" />
+                  Add more agents
+                </button>
               </div>
             )}
 
@@ -1852,8 +1878,6 @@ export function MessageInput({
                 onCloneRepo={(repo) => void handleCloneRepo(repo)}
                 onPickSession={handlePickSession}
                 onPickWorkspace={handlePickWorkspace}
-                currentAgent={switchableAgent}
-                onSwitchAgent={handleSwitchAgent}
               />
               {/* Agent / mode / model as one grouped, animated picker — the
                   pills double as its tab strip. Cycling shortcuts (⌥/ agents,
