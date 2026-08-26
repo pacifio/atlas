@@ -63,7 +63,7 @@ Agents now write a large share of the code and keep none of the reasoning behind
 
 Atlas runs your agents as they are, and enriches what they see.
 
-Claude Code and Codex run as external subprocesses over [ACP](https://github.com/zed-industries/agent-client-protocol), the most-used, most-tested path. The Atlas agent runs in-process on [Cersei](https://cersei.tryatlas.cc/docs), our Rust agent framework.
+Claude Code and Codex run as external subprocesses over [ACP](https://github.com/zed-industries/agent-client-protocol), the most-used, most-tested path. The Atlas agent runs in-process on [Cersei](https://docs.tryatlas.cc/), our Rust agent framework.
 
 Beyond those, Atlas can spawn any agent in the ACP registry (Cursor, OpenCode, Kilo Code, and more), pulling in each one's official binary automatically. All of them go through the same send path, so everything below applies whichever one you pick.
 
@@ -216,7 +216,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). One thing catches people out:
 ## Links
 
 - **Website:** [tryatlas.cc](https://www.tryatlas.cc/)
-- **Cersei docs:** [cersei.tryatlas.cc/docs](https://cersei.tryatlas.cc/docs)
+- **Docs:** [docs.tryatlas.cc](https://docs.tryatlas.cc/)
 - **Discord:** [discord.gg/GmnFggaPfP](https://discord.gg/GmnFggaPfP)
 - **Issues:** [github.com/pacifio/atlas/issues](https://github.com/pacifio/atlas/issues)
 - **Telemetry:** [what Atlas collects, and how to turn it off](TELEMETRY.md)
