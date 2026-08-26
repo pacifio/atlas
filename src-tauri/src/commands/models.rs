@@ -100,6 +100,7 @@ pub fn builtin_catalog() -> Vec<ModelEntry> {
     vec![
         // ── Embedding (BERT-family) ──
         embed_repo("all-MiniLM-L6-v2", "MiniLM-L6-v2", "sentence-transformers/all-MiniLM-L6-v2", 384, 90, "Fast, tiny general-purpose embeddings. The default."),
+        embed_repo("all-MiniLM-L12-v2", "MiniLM-L12-v2", "sentence-transformers/all-MiniLM-L12-v2", 384, 130, "Higher-quality MiniLM (12 layers); still fast and 384-d."),
         embed_repo("bge-small-en-v1.5", "BGE-small-en v1.5", "BAAI/bge-small-en-v1.5", 384, 130, "Strong retrieval quality at 384-d; drop-in for MiniLM."),
         embed_repo("gte-small", "GTE-small", "thenlper/gte-small", 384, 70, "General Text Embeddings, small (384-d)."),
         embed_repo("e5-small-v2", "E5-small v2", "intfloat/e5-small-v2", 384, 130, "E5 retrieval embeddings (384-d)."),
