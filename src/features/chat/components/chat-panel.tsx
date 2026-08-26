@@ -115,7 +115,14 @@ async function rebindDisconnectedSession(tabId: string): Promise<boolean> {
   const pluginId = pluginIdForAgent(sess.agentType);
   try {
     const agent = await ensureAgent(pluginId);
-    const cwd = sess.workingDirectory || useProjectStore.getState().currentProject?.path || "/";
+    // The session's own binding first, then the TAB's workspace. `currentProject`
+    // is the active workspace's — wrong for a background workspace's chat panel,
+    // which stays mounted and can rebind while another workspace is in front.
+    const cwd =
+      sess.workingDirectory ||
+      workspacePathForTab(tabId) ||
+      useProjectStore.getState().currentProject?.path ||
+      "/";
     let key: SessionKey;
     if (sess.acpSessionId) {
       try {
@@ -176,7 +183,9 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         await openAgentSession({
           acpSessionId: forked,
           title: `${sess.title ?? "Session"} (branch)`,
-          cwd: useProjectStore.getState().currentProject?.path ?? "",
+          // A branch belongs to the SOURCE session's project, not to whichever
+          // workspace happens to be active when the fork button is pressed.
+          cwd: sess.workingDirectory || workspacePathForTab(tabId) || "",
           agentType: sess.agentType,
         });
       } catch (err) {

@@ -146,8 +146,8 @@ export async function openAgentSession({
   setResumePending(targetTabId, true);
   setTranscriptLoading(targetTabId, true);
   try {
-    // Two-stage: paint from disk in ~50ms, bind the agent concurrently. See
-    // `resumeSessionFast` for why the old single-await chain felt slow.
+    // One paint, once the session is loaded and complete. See
+    // `resumeSessionFast` for why the old paint-from-disk-first stage went.
     const { agent, snapshot } = await resumeSessionFast({
       sessionId: acpSessionId,
       cwd,

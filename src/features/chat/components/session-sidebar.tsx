@@ -65,7 +65,7 @@ export function sidebarAgentOf(agentType: string | undefined): SidebarAgent {
 /** One history row, as the list renders it. Used by the sidebar's own list and
  *  by the history view handing a row back to be opened — one builder, so the
  *  two cannot disagree about what a row is. */
-function itemFromThread(thread: ThreadRow, projectName: string, cwd: string): SidebarItem {
+function itemFromThread(thread: ThreadRow, projectName: string, isCurrent: boolean): SidebarItem {
   return {
     // Never a draft: `threads_projects` lists only threads that have been sent
     // to, so the session id is always there.
@@ -77,7 +77,11 @@ function itemFromThread(thread: ThreadRow, projectName: string, cwd: string): Si
     projectName,
     lastUpdated: thread.updatedAt,
     agent: sidebarAgentOf(thread.agentId),
-    elsewhere: !thread.folderPaths.includes(cwd),
+    // From the project's own `isCurrent`, not a path-string compare here: the
+    // stored paths are canonicalised and the UI's `cwd` is not, so comparing
+    // them directly marked every row "elsewhere" the moment the two spellings
+    // diverged.
+    elsewhere: !isCurrent,
     // The thread's own directory — where it resumes.
     cwd: thread.folderPaths[0] ?? "",
   };
@@ -304,8 +308,8 @@ export const SessionSidebar = memo(function SessionSidebar({
     isLoading,
     isSuccess: historyReady,
   } = useQuery({
-    queryKey: THREAD_PROJECTS_KEY,
-    queryFn: threadProjects,
+    queryKey: [...THREAD_PROJECTS_KEY, cwd],
+    queryFn: () => threadProjects(cwd),
     staleTime: 30_000,
     refetchInterval: false,
     placeholderData: keepPreviousData,
@@ -323,19 +327,17 @@ export const SessionSidebar = memo(function SessionSidebar({
     };
   }, [queryClient]);
 
-  // The open project first, then everywhere else by how recently it was worked
-  // in. Threads from other worktrees are listed and resumable without
-  // switching to them — that is what an app-level store buys.
-  const items = useMemo<SidebarItem[]>(() => {
-    const ordered = [...projects].sort((a, b) => {
-      const aHere = a.paths.includes(cwd) ? 0 : 1;
-      const bHere = b.paths.includes(cwd) ? 0 : 1;
-      return aHere - bHere;
-    });
-    return ordered.flatMap((project) =>
-      project.threads.map((thread) => itemFromThread(thread, project.name, cwd)),
-    );
-  }, [projects, cwd]);
+  // The open project's threads, newest first. `threads_projects` is scoped to
+  // `cwd`, so this is normally a single group and needs no ordering of its own
+  // — Rust already sorted by recency. The flatMap still handles several groups
+  // because the unscoped case (no project open) returns them all.
+  const items = useMemo<SidebarItem[]>(
+    () =>
+      projects.flatMap((project) =>
+        project.threads.map((thread) => itemFromThread(thread, project.name, project.isCurrent)),
+      ),
+    [projects],
+  );
 
   // Self-heal the workspace panel's persisted "Chats" list for THIS project.
   // That list (`atlas-recent-chats`) is recorded on agent activity and never
@@ -367,6 +369,18 @@ export const SessionSidebar = memo(function SessionSidebar({
     }
   }, [cwd, historyReady, projects, tabSummaries]);
 
+  // Threads belonging to the open project. The all-history view lists rows from
+  // every project and has no `isCurrent` of its own, so it resolves one here
+  // rather than re-deriving it from paths.
+  const currentThreadIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const project of projects) {
+      if (!project.isCurrent) continue;
+      for (const thread of project.threads) set.add(thread.threadId);
+    }
+    return set;
+  }, [projects]);
+
   // Sessions currently running (used to show a spinner on the matching row).
   // Keys MUST match the `id`s used when constructing `items` above, otherwise
   // the spinner never lights up. Once an agent session is bound we key by
@@ -388,7 +402,14 @@ export const SessionSidebar = memo(function SessionSidebar({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const matching = q ? items.filter((it) => it.title.toLowerCase().includes(q)) : items;
-    const named = matching.length > 0 && new Set(matching.map((it) => it.projectName)).size > 1;
+    // Label the groups whenever more than one project is on screen, or when a
+    // row belongs to some other project. Scoped to the open project this is
+    // false and no headings are drawn — it earns its keep in the unscoped case
+    // (no project open), where an unlabelled mix reads as one project's list.
+    const named =
+      matching.length > 0 &&
+      (new Set(matching.map((it) => it.projectName)).size > 1 ||
+        matching.some((it) => it.elsewhere));
     let previous: string | null = null;
     return matching.map((item) => {
       const heading = named && item.projectName !== previous ? item.projectName : null;
@@ -505,9 +526,10 @@ export const SessionSidebar = memo(function SessionSidebar({
       setAcpBinding(targetTabId, key.agent_id, key.session_id, threadCwd);
       setResumePending(targetTabId, false);
       if (resumed.resumedWithoutHistory) {
-        // Honest rather than mysterious: this agent can continue the
-        // conversation but cannot replay it, so the thread opens empty.
-        toast.info("This agent can't replay past messages — the conversation continues from here.");
+        // Honest rather than mysterious. Any messages on screen came from
+        // Atlas's own transcript, so the user can still read the conversation —
+        // but the AGENT was handed none of it and won't refer back to it.
+        toast.info("This agent can't replay past messages — it won't remember what's above.");
       }
       hydrateSessionSnapshot(targetTabId, snapshot.status, snapshot.plan);
       setAcpModes(
@@ -654,7 +676,11 @@ export const SessionSidebar = memo(function SessionSidebar({
       <ThreadHistoryView
         open={historyOpen}
         onOpenChange={setHistoryOpen}
-        onOpenThread={(thread) => handleOpenAgent(itemFromThread(thread, thread.projectName, cwd))}
+        onOpenThread={(thread) =>
+          handleOpenAgent(
+            itemFromThread(thread, thread.projectName, currentThreadIds.has(thread.threadId)),
+          )
+        }
       />
 
       {/* List */}
@@ -664,7 +690,10 @@ export const SessionSidebar = memo(function SessionSidebar({
         )}
         {showEmpty && (
           <div className="text-[11px] text-[var(--text-tertiary)] px-3 py-3 leading-relaxed">
-            {search.trim() ? "No sessions match your search." : "No chats yet."}
+            {/* Names the scope: the list is this project's, so an empty one
+                means "nothing here yet", not "no chats anywhere". Other
+                projects' chats are behind the History button in the header. */}
+            {search.trim() ? "No sessions match your search." : "No chats in this project yet."}
           </div>
         )}
         {filtered.map((item, idx) => {
@@ -696,7 +725,14 @@ export const SessionSidebar = memo(function SessionSidebar({
                   !isLast && "border-b border-[var(--border-default)]",
                 )}
               >
-                <div className="flex items-start gap-2 min-w-0 pr-5">
+                {/* `pr-12` reserves the hover actions' full footprint: two 16px
+                    buttons + their 2px gap + the cluster's 6px offset is 40px,
+                    and the rest is breathing room. Reserved PERMANENTLY, not on
+                    hover — the actions sit on top of this row, and widening the
+                    title when they hide would reflow (and re-clamp) the text
+                    under the cursor. `pr-5` only cleared 20px, so the title's
+                    first line ran right up under the archive button. */}
+                <div className="flex items-start gap-2 min-w-0 pr-12">
                   <span
                     className="shrink-0 inline-flex h-[15px] items-center justify-center text-[var(--text-secondary)]"
                     title={

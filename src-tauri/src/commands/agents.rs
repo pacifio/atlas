@@ -323,14 +323,23 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for TranscriptMiddleware {
         let state = self.app.state::<Arc<super::agent_transcript::TranscriptState>>();
         match &envelope.delta {
             SessionDelta::MessageAppended { message } => {
-                // The user's own messages are recorded by `agents_send` (they
-                // never arrive as deltas), so this is assistant/system only.
-                if message.role == MessageRole::User {
-                    return;
-                }
                 // Cheap guard first: no buffer means no prompt was recorded for
                 // this session, so it isn't one we're recording.
                 if state.snapshot(&envelope.session_id).is_none() {
+                    return;
+                }
+                // `agents_send` records the user's own prompts, so a user
+                // message here is normally its echo — but not always. A queued
+                // send fires without passing through `agents_send`, and used to
+                // be dropped outright, leaving the transcript with the agent's
+                // half of an exchange and no question. `note_user_delta` keeps
+                // those and dedups the echo.
+                if message.role == MessageRole::User {
+                    state.note_user_delta(
+                        &envelope.session_id,
+                        &message.content,
+                        chrono::Utc::now().to_rfc3339(),
+                    );
                     return;
                 }
                 let role = match message.role {
@@ -508,16 +517,20 @@ struct RequestElicitation {
 /// sink, because their middleware resolves them on the first delta; the sink
 /// must exist before the host, because the host builds the projector around it.
 pub fn install_manager(app: &AppHandle) {
-    app.manage(Arc::new(AnalyticsState::new()));
-    app.manage(Arc::new(super::agent_transcript::TranscriptState::new()));
-    let sink: Arc<dyn DeltaSink> = Arc::new(TauriDeltaSink::new(app.clone()));
     // App config dir holds the native agent's own state
     // and `cersei-sessions/` (its persisted transcripts). Best-effort: fall
-    // back to a temp dir if the platform path is unavailable.
+    // back to a temp dir if the platform path is unavailable. Resolved up here
+    // because `TranscriptState` needs it to re-seed a session's buffer from the
+    // transcript already on disk.
     let config_dir = app
         .path()
         .app_config_dir()
         .unwrap_or_else(|_| std::env::temp_dir());
+    app.manage(Arc::new(AnalyticsState::new()));
+    app.manage(Arc::new(super::agent_transcript::TranscriptState::new(
+        config_dir.clone(),
+    )));
+    let sink: Arc<dyn DeltaSink> = Arc::new(TauriDeltaSink::new(app.clone()));
     // Let the memory corpus reader find native-agent transcripts (Chat/Graph).
     super::agent_memory::set_cersei_config_dir(config_dir.clone());
     let data_dir = app
@@ -1040,9 +1053,11 @@ pub async fn threads_delete(
 /// Every project the user has threads in — the sidebar's only source (#21).
 #[tauri::command]
 pub fn threads_projects(
+    cwd: Option<String>,
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<Vec<super::agent_host::ThreadProjectWire>, CmdError> {
-    host.thread_projects().map_err(CmdError::from)
+    host.thread_projects(cwd.as_deref())
+        .map_err(CmdError::from)
 }
 
 /// Every thread, archived or not, newest-started first — the history view.

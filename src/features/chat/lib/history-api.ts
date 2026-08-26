@@ -42,19 +42,29 @@ export interface ThreadRow {
 
 /** One project's threads, as the sidebar groups them. */
 export interface ThreadProject {
+  /** Already disambiguated: qualified with the parent directory when another
+   *  project shares its basename. */
   name: string;
   paths: string[];
+  /** This is the project passed as `cwd`. Decided in Rust against canonicalised
+   *  paths — never re-derive it here by comparing path strings, which is what
+   *  used to fail whenever the two spellings differed. */
+  isCurrent: boolean;
   threads: ThreadRow[];
 }
 
 /**
- * Every project the user has threads in — the sidebar's only source.
+ * The open project's threads — the chat history sidebar's only source.
  *
- * Across all projects, not just the open one: work in another worktree is
- * visible and resumable without switching to it first (ADR-0001).
+ * Scoped to `cwd`: the store holds every project's threads, but Atlas switches
+ * projects inside one window, so listing all of them here mixed unrelated
+ * conversations into the sidebar. {@link threadHistory} is the unscoped view.
+ *
+ * Passing an empty `cwd` (no project open) returns every project, since there
+ * is nothing to scope to.
  */
-export function threadProjects(): Promise<ThreadProject[]> {
-  return invoke<ThreadProject[]>("threads_projects");
+export function threadProjects(cwd: string): Promise<ThreadProject[]> {
+  return invoke<ThreadProject[]>("threads_projects", { cwd: cwd || null });
 }
 
 /** Every thread, archived or not, newest-started first — the history view. */

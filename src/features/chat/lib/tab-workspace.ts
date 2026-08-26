@@ -4,14 +4,23 @@ import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store"
 
 /**
  * Tab ↔ workspace resolution. Tab ids are unique across workspaces, so a tab
- * has exactly one owner: the active workspace if it's in the live layout
- * mirror, else whichever committed `viewsByWs` entry contains it, else (for a
- * bound chat) the workspace whose path matches the session's cwd.
+ * has exactly one owner: the workspace the live layout mirror represents if
+ * it's in the mirror, else whichever committed `viewsByWs` entry contains it,
+ * else (for a bound chat) the workspace whose path matches the session's cwd.
+ *
+ * The mirror's owner is `currentViewWsId`, NOT `activeWorkspaceId`. A switch
+ * sets `activeWorkspaceId` (step 2) well before it swaps the mirror via
+ * `loadWorkspaceView` (step 4) — there are awaited flushes in between. Reading
+ * `activeWorkspaceId` here answered "the incoming workspace" for tabs that
+ * still belonged to the outgoing one, so a bind landing mid-switch created the
+ * session with the WRONG cwd and filed its history row under the wrong project.
  */
 export function workspaceIdForTab(tabId: string): string | null {
   const layout = useLayoutStore.getState();
   const ws = useWorkspaceStore.getState();
-  if (layout.tabs.some((t) => t.id === tabId)) return ws.activeWorkspaceId;
+  if (layout.tabs.some((t) => t.id === tabId)) {
+    return layout.currentViewWsId ?? ws.activeWorkspaceId;
+  }
   for (const [wsId, view] of Object.entries(layout.viewsByWs)) {
     if (view.tabs.some((t) => t.id === tabId)) return wsId;
   }

@@ -118,10 +118,19 @@ impl PathList {
     /// to lexicographic order rather than failing the whole read
     /// (`path_list.rs:110-121`).
     pub fn deserialize(serialized: &SerializedPathList) -> Self {
+        // Normalised on the way IN, not just on the way out of `new`. Rows
+        // written before paths were canonicalised still hold the raw spelling;
+        // resolving here lands them in the same in-memory bucket as a freshly
+        // built list for the same project, so old history groups correctly
+        // without a schema migration or a rewrite of the table.
         let mut paths: Vec<PathBuf> = if serialized.paths.is_empty() {
             Vec::new()
         } else {
-            serialized.paths.split('\n').map(PathBuf::from).collect()
+            serialized
+                .paths
+                .split('\n')
+                .map(|p| normalize(Path::new(p)))
+                .collect()
         };
         let mut order: Vec<usize> = serialized
             .order
@@ -129,6 +138,9 @@ impl PathList {
             .filter_map(|s| s.parse().ok())
             .collect();
 
+        // Normalisation can reorder (and, if two spellings resolve to one path,
+        // shorten) the list, so the sorted/length invariant is re-checked after
+        // it rather than trusting what was serialised.
         if !paths.is_sorted() || order.len() != paths.len() {
             paths.sort();
             order = (0..paths.len()).collect();
@@ -230,12 +242,45 @@ impl std::fmt::Display for LengthMismatch {
 
 impl std::error::Error for LengthMismatch {}
 
+/// Canonical form of a path, for use as a grouping key.
+///
+/// Trailing-separator trim alone is NOT enough. The same project reaches this
+/// function spelled several ways — `/var/…` vs `/private/var/…` on macOS, a
+/// symlinked checkout vs its target, `.`/`..` segments from a shell-derived
+/// cwd — and every spelling used to hash to a DIFFERENT bucket. That split one
+/// project's history across several buckets and, because the sidebar's
+/// "current project first" test is an equality check against this same form, it
+/// silently matched NOTHING and fell back to global recency order — which is
+/// how another project's newest thread ended up at the top of this project's
+/// history.
+///
+/// `canonicalize` resolves symlinks and `..`, and needs the path to exist. A
+/// path that doesn't (a deleted or not-yet-mounted project) falls back to the
+/// trimmed spelling, which is exactly the old behaviour — so a missing project
+/// still groups with itself, just not with its canonical twin.
 fn normalize(path: &Path) -> PathBuf {
-    let text = path.to_string_lossy();
-    let trimmed = text.trim_end_matches(std::path::MAIN_SEPARATOR);
-    if trimmed.is_empty() {
-        path.to_path_buf()
-    } else {
-        PathBuf::from(trimmed)
+    let trimmed = {
+        let text = path.to_string_lossy();
+        let trimmed = text.trim_end_matches(std::path::MAIN_SEPARATOR);
+        if trimmed.is_empty() {
+            path.to_path_buf()
+        } else {
+            PathBuf::from(trimmed)
+        }
+    };
+    match std::fs::canonicalize(&trimmed) {
+        Ok(resolved) => strip_verbatim(resolved),
+        Err(_) => trimmed,
     }
+}
+
+/// Drop Windows' `\\?\` verbatim prefix, which `canonicalize` adds and which no
+/// other spelling of the path carries. No-op elsewhere.
+fn strip_verbatim(path: PathBuf) -> PathBuf {
+    if cfg!(windows) {
+        if let Some(rest) = path.to_string_lossy().strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
+    }
+    path
 }

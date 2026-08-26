@@ -1355,21 +1355,71 @@ impl AgentHost {
         Ok(())
     }
 
-    /// Every project the user has threads in, each with its own threads.
+    /// The open project's threads — the chat history sidebar's only source.
     ///
-    /// The sidebar's only source. Across all projects, because the store is
-    /// app-level and work in another worktree should be visible and resumable
-    /// without switching to it first.
-    pub fn thread_projects(&self) -> Result<Vec<ThreadProjectWire>> {
-        Ok(self
-            .history_or_err()?
-            .store()
-            .projects()
+    /// **Scoped to `cwd`.** The store is app-level and holds every project's
+    /// threads (ADR-0001), and this used to return all of them, Zed-style. That
+    /// suits Zed, where the window IS the project; Atlas switches projects
+    /// inside one window, so a list mixing every project's chats was noise the
+    /// user had to read past, and a thread from another project sitting at the
+    /// top read as if it belonged to the one in front. Everything is still
+    /// reachable — `thread_history` backs the "All history" view, unscoped.
+    ///
+    /// With no project open (`cwd` empty) there is nothing to scope to, so the
+    /// full list stands rather than showing an empty sidebar.
+    ///
+    /// Matching `cwd` happens HERE rather than in the UI: the comparison has to
+    /// run against the same canonicalised form the grouping key uses, and only
+    /// this side has it. The UI comparing its own raw path string silently
+    /// matched nothing whenever the two spellings differed (symlink,
+    /// `/private` prefix, trailing slash).
+    pub fn thread_projects(&self, cwd: Option<&str>) -> Result<Vec<ThreadProjectWire>> {
+        let projects = self.history_or_err()?.store().projects();
+
+        // Basenames collide: two checkouts both called `web` are one label. Any
+        // name shared by more than one project gets qualified with its parent
+        // directory, so the sidebar can always tell them apart.
+        let mut name_counts: HashMap<String, usize> = HashMap::new();
+        for project in &projects {
+            *name_counts.entry(project_name(&project.paths)).or_default() += 1;
+        }
+
+        let here = cwd
+            .filter(|c| !c.is_empty())
+            .map(|c| PathBuf::from(c.to_string()));
+
+        Ok(projects
             .into_iter()
-            .map(|project| ThreadProjectWire {
-                name: project_name(&project.paths),
-                paths: paths_of(&project.paths),
-                threads: project.threads.iter().map(thread_row).collect(),
+            // Group-level, not thread-level: a project opened in a linked git
+            // worktree groups under its main repository, and the threads from
+            // both halves belong to the project the user is looking at.
+            .filter(|project| {
+                let Some(path) = here.as_ref() else {
+                    return true;
+                };
+                // `contains` canonicalises its argument, so this compares like
+                // for like whatever spelling the caller passed.
+                project.paths.contains(path)
+                    || project
+                        .threads
+                        .iter()
+                        .any(|thread| thread.folder_paths().contains(path))
+            })
+            .map(|project| {
+                let plain = project_name(&project.paths);
+                let ambiguous = name_counts.get(&plain).copied().unwrap_or(0) > 1;
+                ThreadProjectWire {
+                    name: if ambiguous {
+                        qualified_project_name(&project.paths)
+                    } else {
+                        plain
+                    },
+                    paths: paths_of(&project.paths),
+                    // Everything that survives the filter is the open project,
+                    // except when nothing was scoped to in the first place.
+                    is_current: here.is_some(),
+                    threads: project.threads.iter().map(thread_row).collect(),
+                }
             })
             .collect())
     }
@@ -1738,6 +1788,9 @@ pub struct ThreadRow {
 pub struct ThreadProjectWire {
     pub name: String,
     pub paths: Vec<String>,
+    /// This project is the one the caller currently has open. Decided here so
+    /// the match runs against canonicalised paths — see `thread_projects`.
+    pub is_current: bool,
     pub threads: Vec<ThreadRow>,
 }
 
@@ -1765,15 +1818,34 @@ fn paths_of(paths: &PathList) -> Vec<String> {
 /// What to call a project: the name of its directory, or all of their names
 /// when it spans several.
 ///
-/// Two projects whose directories share a name read identically here. The row
-/// carries the full path as its tooltip, which is where the user disambiguates;
-/// Zed prefixes linked worktrees with their main project's name instead
-/// (`thread_metadata_store.rs:415-431`), a refinement Atlas has not needed yet.
+/// Two projects whose directories share a name read identically here;
+/// `thread_projects` detects that and falls back to
+/// [`qualified_project_name`], so the collision never reaches the user.
 fn project_name(paths: &PathList) -> String {
     let names: Vec<String> = paths
         .ordered_paths()
         .filter_map(|path| path.file_name())
         .map(|name| name.to_string_lossy().into_owned())
+        .collect();
+    if names.is_empty() {
+        return "No project".to_string();
+    }
+    names.join(", ")
+}
+
+/// `project_name` with each directory's parent in front (`teamA/web`), for the
+/// case where the bare names collide. Falls back to the bare name for a path
+/// with no parent.
+fn qualified_project_name(paths: &PathList) -> String {
+    let names: Vec<String> = paths
+        .ordered_paths()
+        .filter_map(|path| {
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            Some(match path.parent().and_then(|p| p.file_name()) {
+                Some(parent) => format!("{}/{}", parent.to_string_lossy(), name),
+                None => name,
+            })
+        })
         .collect();
     if names.is_empty() {
         return "No project".to_string();
