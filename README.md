@@ -197,9 +197,8 @@ bun run build:app:dmg   # .app + .dmg installer
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Two things catch people out:
+See [CONTRIBUTING.md](CONTRIBUTING.md). One thing catches people out:
 
-- **Everyone forks.** Nobody has direct push access, including the core team. Fork, branch, open a PR.
 - **Feature work targets the current version branch**, not `main`. `main` only receives a finished version branch, and that merge is the release.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) covers how Atlas is built. [SECURITY.md](SECURITY.md) covers reporting vulnerabilities.
