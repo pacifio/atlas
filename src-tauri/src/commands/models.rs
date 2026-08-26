@@ -100,9 +100,11 @@ pub fn builtin_catalog() -> Vec<ModelEntry> {
     vec![
         // ── Embedding (BERT-family) ──
         embed_repo("all-MiniLM-L6-v2", "MiniLM-L6-v2", "sentence-transformers/all-MiniLM-L6-v2", 384, 90, "Fast, tiny general-purpose embeddings. The default."),
+        embed_repo("all-MiniLM-L12-v2", "MiniLM-L12-v2", "sentence-transformers/all-MiniLM-L12-v2", 384, 130, "Higher-quality MiniLM (12 layers); still fast and 384-d."),
         embed_repo("bge-small-en-v1.5", "BGE-small-en v1.5", "BAAI/bge-small-en-v1.5", 384, 130, "Strong retrieval quality at 384-d; drop-in for MiniLM."),
         embed_repo("gte-small", "GTE-small", "thenlper/gte-small", 384, 70, "General Text Embeddings, small (384-d)."),
         embed_repo("e5-small-v2", "E5-small v2", "intfloat/e5-small-v2", 384, 130, "E5 retrieval embeddings (384-d)."),
+        embed_repo("mdbr-leaf-ir", "MDRB-leaf-ir", "MongoDB/mdbr-leaf-ir", 384, 86, "MongoDB's retrieval-focused distillate; #1 open model on BEIR under 100M."),
         embed_repo("bge-base-en-v1.5", "BGE-base-en v1.5", "BAAI/bge-base-en-v1.5", 768, 440, "Higher-quality 768-d embeddings (rebuilds the index)."),
         embed_repo("gte-base", "GTE-base", "thenlper/gte-base", 768, 220, "General Text Embeddings, base (768-d, rebuilds the index)."),
     ]
