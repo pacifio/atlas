@@ -55,10 +55,8 @@ pub enum AppServerRpcTransport {
     InProcess,
 }
 
-#[derive(Serialize)]
-pub(crate) struct TrackEventsRequest {
-    pub(crate) events: Vec<TrackEventRequest>,
-}
+// `TrackEventsRequest` — the POST body envelope — lived here. Removed with the
+// upload it wrapped (#43, spec D2).
 
 #[derive(Serialize)]
 #[serde(untagged)]
@@ -150,22 +148,12 @@ pub(crate) fn codex_artifact_operation_event_request(
     }
 }
 
-impl TrackEventRequest {
-    pub(crate) fn should_send_in_isolated_request(&self) -> bool {
-        matches!(self, Self::AcceptedLineFingerprints(_))
-    }
-
-    pub(crate) fn can_send_with_api_key_auth(&self) -> bool {
-        match self {
-            Self::PluginUsed(event) => event.event_params.plugin.plugin_id.is_some(),
-            Self::SkillInvocation(event) => event.event_params.plugin_id.is_some(),
-            Self::McpToolCall(event) => event.event_params.plugin_id.is_some(),
-            Self::ArtifactOperation(event) => !event.event_params.plugin_id.is_empty(),
-            Self::PluginMeasurement(event) => !event.event_params.plugin_id.is_empty(),
-            _ => false,
-        }
-    }
-}
+// Two methods lived here, both purely about how events reached the network:
+// `should_send_in_isolated_request` (batching) and `can_send_with_api_key_auth`.
+// The second is the one the fork-seam research called out — it is what let a
+// subset of events upload *even under plain API-key auth*, i.e. for users who
+// had never signed into the ChatGPT backend at all. Both are removed with the
+// upload (#43, spec D2).
 
 #[derive(Serialize)]
 pub(crate) struct CodexAcceptedLineFingerprintsEventParams {

@@ -1,34 +1,17 @@
 use crate::config::OtelExporter;
 use crate::metrics::Result;
-use crate::metrics::names::API_CALL_COUNT_METRIC;
-use crate::metrics::names::API_CALL_DURATION_METRIC;
-use crate::metrics::names::RESPONSES_API_ENGINE_IAPI_TTFT_DURATION_METRIC;
-use crate::metrics::names::RESPONSES_API_ENGINE_SERVICE_TBT_DURATION_METRIC;
-use crate::metrics::names::RESPONSES_API_ENGINE_SERVICE_TTFT_DURATION_METRIC;
-use crate::metrics::names::TOOL_CALL_COUNT_METRIC;
-use crate::metrics::names::TOOL_CALL_DURATION_METRIC;
-use crate::metrics::names::TURN_TOKEN_USAGE_METRIC;
 use crate::metrics::validation::validate_tag_key;
 use crate::metrics::validation::validate_tag_value;
 use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-const CONVERSATION_TURN_COUNT_METRIC: &str = "codex.conversation.turn.count";
-
-// Metrics intentionally not sent through Codex's built-in Statsig route.
-// Keep this as an exact-name list so custom OTLP exporters still receive them.
-const STATSIG_DISABLED_METRICS: &[&str] = &[
-    API_CALL_COUNT_METRIC,
-    API_CALL_DURATION_METRIC,
-    CONVERSATION_TURN_COUNT_METRIC,
-    RESPONSES_API_ENGINE_IAPI_TTFT_DURATION_METRIC,
-    RESPONSES_API_ENGINE_SERVICE_TBT_DURATION_METRIC,
-    RESPONSES_API_ENGINE_SERVICE_TTFT_DURATION_METRIC,
-    TOOL_CALL_COUNT_METRIC,
-    TOOL_CALL_DURATION_METRIC,
-    TURN_TOKEN_USAGE_METRIC,
-];
+// Upstream carried `STATSIG_DISABLED_METRICS` here — a suppression list applied
+// only when the exporter was the built-in Statsig one, so that route received a
+// narrower set of metrics than a user's own OTLP endpoint would. With that
+// exporter removed (#43, spec D2) the list was always empty and every guard on
+// it always false, so both are gone. A configured OTLP exporter receives every
+// metric, which is what it always did.
 
 #[derive(Clone, Debug)]
 pub enum MetricsExporter {
@@ -44,7 +27,6 @@ pub struct MetricsConfig {
     pub(crate) exporter: MetricsExporter,
     pub(crate) export_interval: Option<Duration>,
     pub(crate) runtime_reader: bool,
-    pub(crate) statsig_disabled_metrics: &'static [&'static str],
     pub(crate) default_tags: BTreeMap<String, String>,
 }
 
@@ -55,11 +37,6 @@ impl MetricsConfig {
         service_version: impl Into<String>,
         exporter: OtelExporter,
     ) -> Self {
-        let statsig_disabled_metrics = if matches!(exporter, OtelExporter::Statsig) {
-            STATSIG_DISABLED_METRICS
-        } else {
-            &[]
-        };
         Self {
             environment: environment.into(),
             service_name: service_name.into(),
@@ -67,7 +44,6 @@ impl MetricsConfig {
             exporter: MetricsExporter::Otlp(exporter),
             export_interval: None,
             runtime_reader: false,
-            statsig_disabled_metrics,
             default_tags: BTreeMap::new(),
         }
     }
@@ -86,7 +62,6 @@ impl MetricsConfig {
             exporter: MetricsExporter::InMemory(exporter),
             export_interval: None,
             runtime_reader: false,
-            statsig_disabled_metrics: &[],
             default_tags: BTreeMap::new(),
         }
     }

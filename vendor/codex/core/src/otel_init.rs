@@ -21,7 +21,6 @@ pub fn build_provider(
 ) -> Result<Option<OtelProvider>, Box<dyn Error>> {
     let to_otel_exporter = |kind: &Kind| match kind {
         Kind::None => OtelExporter::None,
-        Kind::Statsig => OtelExporter::Statsig,
         Kind::OtlpHttp {
             endpoint,
             headers,

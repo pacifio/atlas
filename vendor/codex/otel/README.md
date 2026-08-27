@@ -103,10 +103,12 @@ Modes:
 - OTLP: exports metrics via the OpenTelemetry OTLP exporter (HTTP or gRPC).
 - In-memory: records via `opentelemetry_sdk::metrics::InMemoryMetricExporter` for tests/assertions; call `shutdown()` to flush.
 
-`codex-otel` also provides `OtelExporter::Statsig`, a shorthand for exporting OTLP/HTTP JSON metrics
-to Statsig using Codex-internal defaults.
+> **Modified from upstream.** `OtelExporter::Statsig` — a shorthand exporting to a
+> hardcoded ingestion endpoint with a hardcoded client key, and the default for
+> metrics — was removed in this fork (#43, spec D2). Metrics export nowhere unless
+> you configure an endpoint yourself.
 
-Statsig ingestion (OTLP/HTTP JSON) example:
+OTLP/HTTP JSON example:
 
 ```rust
 use codex_otel::config::{OtelExporter, OtelHttpProtocol};
@@ -116,10 +118,10 @@ let metrics = MetricsClient::new(MetricsConfig::otlp(
     "codex-cli",
     env!("CARGO_PKG_VERSION"),
     OtelExporter::OtlpHttp {
-        endpoint: "https://api.statsig.com/otlp".to_string(),
+        endpoint: std::env::var("OTLP_ENDPOINT")?,
         headers: std::collections::HashMap::from([(
-            "statsig-api-key".to_string(),
-            std::env::var("STATSIG_SERVER_SDK_SECRET")?,
+            "authorization".to_string(),
+            std::env::var("OTLP_API_KEY")?,
         )]),
         protocol: OtelHttpProtocol::Json,
         tls: None,

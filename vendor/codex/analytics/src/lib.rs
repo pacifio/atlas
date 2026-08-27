@@ -1,6 +1,4 @@
 mod accepted_lines;
-#[cfg(debug_assertions)]
-mod analytics_capture;
 mod client;
 mod events;
 mod facts;

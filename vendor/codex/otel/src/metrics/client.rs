@@ -107,7 +107,6 @@ pub(super) struct MetricsClientInner {
     histograms: Mutex<HashMap<String, Histogram<f64>>>,
     duration_histograms: Mutex<HashMap<InstrumentKey, Histogram<f64>>>,
     runtime_reader: Option<Arc<ManualReader>>,
-    statsig_disabled_metrics: &'static [&'static str],
     default_tags: BTreeMap<String, String>,
 }
 
@@ -127,10 +126,6 @@ impl MetricsClientInner {
             });
         }
         let attributes = self.attributes(tags)?;
-
-        if self.statsig_disabled_metrics.contains(&name) {
-            return Ok(());
-        }
 
         let mut counters = self
             .counters
@@ -156,10 +151,6 @@ impl MetricsClientInner {
         validate_metric_name(name)?;
         let attributes = self.attributes(tags)?;
 
-        if self.statsig_disabled_metrics.contains(&name) {
-            return Ok(());
-        }
-
         let mut histograms = self
             .histograms
             .lock()
@@ -180,10 +171,6 @@ impl MetricsClientInner {
     ) -> Result<()> {
         validate_metric_name(name)?;
         let attributes = self.attributes(tags)?;
-
-        if self.statsig_disabled_metrics.contains(&name) {
-            return Ok(());
-        }
 
         let mut gauges = self
             .gauges
@@ -215,10 +202,6 @@ impl MetricsClientInner {
         validate_metric_name(name)?;
         let attributes = self.attributes(tags)?;
 
-        if self.statsig_disabled_metrics.contains(&name) {
-            return Ok(());
-        }
-
         let _gauge = self
             .meter
             .i64_observable_gauge(name.to_string())
@@ -239,10 +222,6 @@ impl MetricsClientInner {
     ) -> Result<()> {
         validate_metric_name(name)?;
         let attributes = self.attributes(tags)?;
-
-        if self.statsig_disabled_metrics.contains(&name) {
-            return Ok(());
-        }
 
         let mut histograms = self
             .duration_histograms
@@ -318,7 +297,6 @@ impl MetricsClient {
             exporter,
             export_interval,
             runtime_reader,
-            statsig_disabled_metrics,
             default_tags,
         } = config;
 
@@ -364,7 +342,6 @@ impl MetricsClient {
                 histograms: Mutex::new(HashMap::new()),
                 duration_histograms: Mutex::new(HashMap::new()),
                 runtime_reader,
-                statsig_disabled_metrics,
                 default_tags,
             }),
             active: None,
@@ -558,10 +535,6 @@ fn build_otlp_metric_exporter(
 ) -> Result<opentelemetry_otlp::MetricExporter> {
     match exporter {
         OtelExporter::None => Err(MetricsError::ExporterDisabled),
-        OtelExporter::Statsig => build_otlp_metric_exporter(
-            crate::config::resolve_exporter(&OtelExporter::Statsig),
-            temporality,
-        ),
         OtelExporter::OtlpGrpc {
             endpoint,
             headers,

@@ -3,37 +3,20 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use codex_utils_absolute_path::AbsolutePathBuf;
-use serde::Deserialize;
-use serde::Serialize;
 
-pub(crate) const STATSIG_OTLP_HTTP_ENDPOINT: &str = "https://ab.chatgpt.com/otlp/v1/metrics";
-pub(crate) const STATSIG_API_KEY_HEADER: &str = "statsig-api-key";
-pub(crate) const STATSIG_API_KEY: &str = "client-MkRuleRQBd6qakfnDYqJVR9JuXcY57Ljly3vi5JVUIO";
-
-pub(crate) fn resolve_exporter(exporter: &OtelExporter) -> OtelExporter {
-    match exporter {
-        OtelExporter::Statsig => {
-            // Keep the built-in Statsig default off in debug builds so
-            // incremental local development and test runs do not emit
-            // best-effort OTEL traffic unless a test or binary opts into an
-            // explicit exporter configuration.
-            if cfg!(debug_assertions) {
-                return OtelExporter::None;
-            }
-
-            OtelExporter::OtlpHttp {
-                endpoint: STATSIG_OTLP_HTTP_ENDPOINT.to_string(),
-                headers: HashMap::from([(
-                    STATSIG_API_KEY_HEADER.to_string(),
-                    STATSIG_API_KEY.to_string(),
-                )]),
-                protocol: OtelHttpProtocol::Json,
-                tls: None,
-            }
-        }
-        _ => exporter.clone(),
-    }
-}
+// Upstream shipped a built-in `Statsig` exporter here: a hardcoded ingestion
+// endpoint and client key, resolved into an OTLP/HTTP exporter and gated only
+// on `cfg!(debug_assertions)` — live in exactly the builds that ship. It was
+// removed wholesale for Atlas (#43, spec D2), along with `resolve_exporter`,
+// which existed only to expand that one variant and became the identity
+// function without it.
+//
+// What remains is opt-in and carries no default: `OtlpGrpc` and `OtlpHttp` do
+// nothing until a user configures an endpoint of their own, and the metrics
+// exporter now defaults to `None` (codex-rs `core/src/config/otel.rs`). That
+// distinction is the whole point of D2 — the rule is "no phone-home", not
+// "no telemetry the user asked for". `tests/codex-no-phone-home.test.ts`
+// holds this.
 
 /// Validates configured span attributes before they are attached to exported spans.
 pub fn validate_span_attributes(attributes: &BTreeMap<String, String>) -> std::io::Result<()> {
@@ -61,14 +44,6 @@ pub struct OtelSettings {
     pub tracestate: BTreeMap<String, BTreeMap<String, String>>,
 }
 
-/// Resolved Statsig metrics settings that another process can use to recreate
-/// the built-in metrics exporter configuration without receiving generic
-/// exporter credentials in-process.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StatsigMetricsSettings {
-    pub environment: String,
-}
-
 #[derive(Clone, Debug)]
 pub enum OtelHttpProtocol {
     /// HTTP protocol with binary protobuf
@@ -87,10 +62,6 @@ pub struct OtelTlsConfig {
 #[derive(Clone, Debug)]
 pub enum OtelExporter {
     None,
-    /// Statsig metrics ingestion exporter using Codex-internal defaults.
-    ///
-    /// This is intended for metrics only.
-    Statsig,
     OtlpGrpc {
         endpoint: String,
         headers: HashMap<String, String>,
@@ -102,18 +73,4 @@ pub enum OtelExporter {
         protocol: OtelHttpProtocol,
         tls: Option<OtelTlsConfig>,
     },
-}
-
-#[cfg(test)]
-mod tests {
-    use super::OtelExporter;
-    use super::resolve_exporter;
-
-    #[test]
-    fn statsig_default_metrics_exporter_is_disabled_in_debug_builds() {
-        assert!(matches!(
-            resolve_exporter(&OtelExporter::Statsig),
-            OtelExporter::None
-        ));
-    }
 }

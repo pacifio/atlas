@@ -5,7 +5,6 @@ use anyhow::Context;
 use anyhow::Result;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use codex_otel::StatsigMetricsSettings;
 use codex_windows_sandbox::SETUP_VERSION;
 use codex_windows_sandbox::SetupErrorCode;
 use codex_windows_sandbox::SetupErrorReport;
@@ -94,8 +93,6 @@ struct Payload {
     proxy_ports: Vec<u16>,
     #[serde(default)]
     allow_local_binding: bool,
-    #[serde(default)]
-    otel: Option<StatsigMetricsSettings>,
     real_user: String,
     #[serde(default)]
     mode: SetupMode,
@@ -620,14 +617,9 @@ fn configure_offline_sandbox_network(
             format!("ensure offline outbound block failed: {err}"),
         )));
     }
-    install_wfp_filters(
-        &payload.codex_home,
-        &payload.offline_username,
-        payload.otel.as_ref(),
-        |message| {
-            let _ = log_line(log, message);
-        },
-    );
+    install_wfp_filters(&payload.offline_username, |message| {
+        let _ = log_line(log, message);
+    });
     Ok(())
 }
 
@@ -1021,8 +1013,7 @@ mod tests {
     use super::WRITE_ROOT_ALLOW_MASK;
     use super::convert_string_sid_to_sid;
     use super::workspace_write_cap_sids_for_path;
-    use codex_otel::StatsigMetricsSettings;
-    use codex_windows_sandbox::ensure_allow_mask_aces;
+        use codex_windows_sandbox::ensure_allow_mask_aces;
     use codex_windows_sandbox::ensure_allow_write_aces;
     use codex_windows_sandbox::load_or_create_cap_sids;
     use codex_windows_sandbox::path_mask_allows;
@@ -1050,35 +1041,12 @@ mod tests {
     }
 
     #[test]
-    fn payload_defaults_otel_absent() {
-        let payload: Payload = serde_json::from_value(payload_json()).expect("payload");
-
-        assert_eq!(payload.otel, None);
-    }
-
-    #[test]
     fn payload_accepts_provision_only_mode() {
         let mut payload = payload_json();
         payload["mode"] = json!("provision-only");
         let payload: Payload = serde_json::from_value(payload).expect("payload");
 
         assert_eq!(payload.mode, super::SetupMode::ProvisionOnly);
-    }
-
-    #[test]
-    fn payload_accepts_otel_settings() {
-        let mut payload = payload_json();
-        payload["otel"] = json!({
-            "environment": "prod",
-        });
-        let payload: Payload = serde_json::from_value(payload).expect("payload");
-
-        assert_eq!(
-            payload.otel,
-            Some(StatsigMetricsSettings {
-                environment: "prod".to_string(),
-            })
-        );
     }
 
     #[test]

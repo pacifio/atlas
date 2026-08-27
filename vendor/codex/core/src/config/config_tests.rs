@@ -9148,8 +9148,15 @@ async fn legacy_profile_selection_is_rejected() -> std::io::Result<()> {
     Ok(())
 }
 
+/// The default must stay `None`, and this test is upstream's own inverted.
+///
+/// It asserted `Statsig` — the built-in exporter posting to a hardcoded endpoint
+/// with a hardcoded client key, on unless a user turned it off. #43 removed that
+/// exporter (spec D2), so the assertion is flipped rather than deleted: a config
+/// path that silently starts exporting again fails here, in Rust, and not only
+/// in `tests/codex-no-phone-home.test.ts`.
 #[tokio::test]
-async fn metrics_exporter_defaults_to_statsig_when_missing() -> std::io::Result<()> {
+async fn metrics_exporter_defaults_to_none_when_missing() -> std::io::Result<()> {
     let fixture = create_test_fixture()?;
 
     let config = Config::load_from_base_config_with_overrides(
@@ -9162,7 +9169,7 @@ async fn metrics_exporter_defaults_to_statsig_when_missing() -> std::io::Result<
     )
     .await?;
 
-    assert_eq!(config.otel.metrics_exporter, OtelExporterKind::Statsig);
+    assert_eq!(config.otel.metrics_exporter, OtelExporterKind::None);
     Ok(())
 }
 

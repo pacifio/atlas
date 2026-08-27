@@ -18,7 +18,10 @@ pub(crate) fn resolve_config(
     // OTLP HTTP endpoints are signal-specific in our config, so enabling log
     // export must not implicitly send spans to a /v1/logs endpoint.
     let trace_exporter = config.trace_exporter.unwrap_or(OtelExporterKind::None);
-    let metrics_exporter = config.metrics_exporter.unwrap_or(OtelExporterKind::Statsig);
+    // Defaults to `None`, not to the built-in Statsig exporter upstream shipped
+    // here: that one posted to a hardcoded endpoint with a hardcoded client key
+    // and was on unless a user turned it off (#43, spec D2).
+    let metrics_exporter = config.metrics_exporter.unwrap_or(OtelExporterKind::None);
     // Provider initialization installs process-global OTEL state. Sanitize
     // user-editable trace metadata here so malformed config is reported as a
     // startup warning instead of making startup fail.
