@@ -45,7 +45,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Bundled so the Codex history reader (in-process, WAL-concurrent) is
 # self-contained and doesn't shell out to the `sqlite3` CLI.
-rusqlite = { version = "0.32", features = ["bundled"] }
+# Pinned to rusqlite 0.39 because its `libsqlite3-sys` is 0.37, the major the
+# ported Codex engine pins; `links = "sqlite3"` admits exactly one. Full
+# rationale — and the reason 0.38 and 0.40 are both wrong — lives on the same
+# declaration in `crates/atlas-thread-metadata/Cargo.toml`. Issue #39.
+rusqlite = { version = "0.39", features = ["bundled"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
