@@ -23,8 +23,19 @@ Glossary of domain terms as this project uses them. Decisions with lasting conse
 
 ## Adjacent subsystems
 
-- **Cersei** — Atlas's native agent. Its threads live in the same thread-metadata store as external agents', distinguished only by agent id.
+- **Atlas Agent** — the native agent: the single first-party agent that ships with Atlas rather than being installed from the Marketplace. Its engine is a one-time port of Codex that lives in this repo and is maintained by us (ADR-0003). Exactly one native agent exists at a time; every other agent is an ACP agent. "Native agent" and "Atlas Agent" are synonyms from cutover onward. Its threads live in the same thread-metadata store as external agents', distinguished only by agent id — and that stored agent id remains the literal string `"cersei"`: it is a storage key, deliberately kept stable across the engine swap so existing rows keep resolving, and it outlives the retirement of the Cersei *name*. *(Until the port lands, the shipping native agent is still the Cersei path — see "Retiring the name Cersei" below.)*
 - **Timeline / checkpoint** — the per-workspace observational record (`atlas-checkpoint`). Separate from the thread-metadata store; its importer may read CLIs' transcript files under its own contract, which the history model explicitly preserves.
 - **Marketplace / registry** — where agents are installed from; the installed-agents map is what import enumerates.
-- **Installed-agents map** — the one record of which ACP agents exist. Installing writes an entry, uninstalling removes it, and nothing else makes an agent runnable. A fresh install has an empty map and offers only Cersei. See ADR-0002.
+- **Installed-agents map** — the one record of which ACP agents exist. Installing writes an entry, uninstalling removes it, and nothing else makes an agent runnable. A fresh install has an empty map and offers only the native agent. See ADR-0002.
 - **Detection** — an agent found on the user's `PATH` that Atlas has *not* installed. An offer, never a spawn candidate: **accepting a detection** is a user action that writes an installed-agents-map entry pointing at their own binary, downloading nothing. Finding a binary installs nothing by itself.
+
+## Retiring the name "Cersei" (transition-scoped)
+
+*Delete this whole section when the Codex port (ADR-0003) lands — the name goes with it.*
+
+"Cersei" is overloaded across three things, plus a look-alike that is none of them. During the transition, bare "Cersei" is banned in tickets — always use one of:
+
+- **Cersei SDK** — the upstream crates.io `cersei*` crates plus the vendored patch forks `vendor/cersei-provider` and `vendor/cersei-agent`. Deleted at cutover.
+- **atlas-cersei wrapper** — `crates/atlas-cersei`, Atlas's runtime wrapper over the Cersei SDK. Deleted at cutover.
+- **Cersei (UI name)** — the user-facing label of the native agent. Becomes **Atlas Agent** at cutover.
+- **atlas-native-agent seam** — *not Cersei*, despite its `CerseiConnection` type: it is the `AgentConnection` adapter the app plugs into. Its fate is decided by the integration research — the interface may survive with the Codex engine behind it. It never belongs on a "delete everything Cersei" list; deleting it breaks the build.
