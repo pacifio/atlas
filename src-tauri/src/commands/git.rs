@@ -427,13 +427,6 @@ pub(crate) fn git_refs_compute(path: &str) -> Result<GitRefs, String> {
 }
 
 #[tauri::command]
-pub async fn git_refs(path: String) -> Result<GitRefs, String> {
-    tokio::task::spawn_blocking(move || git_refs_compute(&path))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
 pub async fn git_graph_signature(path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let head = git_read()
@@ -596,16 +589,6 @@ pub async fn git_unstage(path: String, files: Vec<String>) -> Result<(), GitErro
 }
 
 #[tauri::command]
-pub async fn git_commit(path: String, message: String) -> Result<(), GitErrorPayload> {
-    tokio::task::spawn_blocking(move || {
-        GitCommand::new(&path, &["commit", "-m", &message]).run()?;
-        Ok(())
-    })
-    .await
-    .map_err(join_err)?
-}
-
-#[tauri::command]
 pub async fn git_list_branches(path: String) -> Result<Vec<GitBranch>, String> {
     tokio::task::spawn_blocking(move || {
         let output = git_read()
@@ -644,16 +627,6 @@ pub async fn git_checkout(path: String, branch: String) -> Result<(), GitErrorPa
 pub async fn git_create_branch(path: String, name: String) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         GitCommand::new(&path, &["checkout", "-b", &name]).run()?;
-        Ok(())
-    })
-    .await
-    .map_err(join_err)?
-}
-
-#[tauri::command]
-pub async fn git_delete_branch(path: String, name: String) -> Result<(), GitErrorPayload> {
-    tokio::task::spawn_blocking(move || {
-        GitCommand::new(&path, &["branch", "-d", &name]).run()?;
         Ok(())
     })
     .await

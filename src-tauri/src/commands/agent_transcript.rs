@@ -106,8 +106,8 @@ impl TranscriptState {
     /// started empty would persist only the turns seen since it was created and
     /// destroy every earlier one. That is what happened on every resume: reopen
     /// a session, send one message, and the file was left holding that message
-    /// alone. The buffer is only ever dropped by [`TranscriptState::forget`],
-    /// so re-seeding here is the one place that can happen.
+    /// alone. The buffer lives for the
+    /// process, so re-seeding here is the one place that can happen.
     pub fn note_prompt(
         &self,
         session_id: &str,
@@ -207,10 +207,6 @@ impl TranscriptState {
         self.open.lock().get(session_id).cloned()
     }
 
-    /// Release a session's buffer (tab closed / session dropped).
-    pub fn forget(&self, session_id: &str) {
-        self.open.lock().remove(session_id);
-    }
 }
 
 /// `<config>/agent-transcripts/<cwd-hash>/`.
@@ -285,15 +281,6 @@ pub fn read(config_dir: &Path, cwd: &str, session_id: &str) -> Option<StoredTran
     let path = dir_for(config_dir, cwd).join(format!("{}.json", sanitize_id(session_id)));
     let bytes = std::fs::read(path).ok()?;
     serde_json::from_slice(&bytes).ok()
-}
-
-/// Delete a session's transcript (sidebar delete).
-pub fn remove(config_dir: &Path, cwd: &str, session_id: &str) -> std::io::Result<()> {
-    let path = dir_for(config_dir, cwd).join(format!("{}.json", sanitize_id(session_id)));
-    match std::fs::remove_file(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        other => other,
-    }
 }
 
 #[cfg(test)]
@@ -469,16 +456,6 @@ mod tests {
         save(&dir, &st.snapshot("ses_1").unwrap()).unwrap();
         assert_eq!(read(&dir, "/w", "ses_1").unwrap().messages.len(), 3);
         assert_eq!(list(&dir, "/w").len(), 1, "still one session, not two");
-    }
-
-    #[test]
-    fn removing_is_idempotent() {
-        let dir = tmp();
-        let (_st, t) = state_with_turn();
-        save(&dir, &t).unwrap();
-        remove(&dir, "/w", "ses_1").unwrap();
-        assert!(list(&dir, "/w").is_empty());
-        remove(&dir, "/w", "ses_1").expect("second remove must not error");
     }
 
     #[test]

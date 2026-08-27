@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentChoiceLabel, modelSelectOf, parseConfigOptions } from "./acp-config-options";
+import { modelSelectOf, parseConfigOptions } from "./acp-config-options";
 
 describe("parseConfigOptions", () => {
   it("reads a boolean knob", () => {
@@ -202,41 +202,5 @@ describe("modelSelectOf", () => {
   /// An empty list is a dead picker, same rule as the generic knobs.
   it("is null when the model select offers nothing", () => {
     expect(modelSelectOf([{ ...modelOption, currentValue: "", options: [] }])).toBeNull();
-  });
-});
-
-describe("currentChoiceLabel", () => {
-  it("labels booleans", () => {
-    expect(
-      currentChoiceLabel({ kind: "boolean", id: "a", name: "A", description: null, value: true }),
-    ).toBe("On");
-  });
-
-  it("resolves a select's current choice to its name", () => {
-    expect(
-      currentChoiceLabel({
-        kind: "select",
-        id: "t",
-        name: "T",
-        description: null,
-        currentValue: "hi",
-        choices: [{ id: "hi", name: "High", description: null }],
-      }),
-    ).toBe("High");
-  });
-
-  /// An agent can report a current value that is not in its own options list;
-  /// showing the raw id beats showing nothing.
-  it("falls back to the raw id when the choice is unknown", () => {
-    expect(
-      currentChoiceLabel({
-        kind: "select",
-        id: "t",
-        name: "T",
-        description: null,
-        currentValue: "mystery",
-        choices: [{ id: "hi", name: "High", description: null }],
-      }),
-    ).toBe("mystery");
   });
 });

@@ -388,14 +388,6 @@ impl AgentHost {
         metas
     }
 
-    pub fn native_delete_session(
-        &self,
-        cwd: &str,
-        session_id: &str,
-    ) -> std::result::Result<(), String> {
-        self.native_runtime.delete_session(cwd, session_id)
-    }
-
     /// Re-probe `PATH` for registry agents the user already has.
     pub fn probe_detected(&self) {
         let agents = self.registry().agents();
@@ -1573,46 +1565,6 @@ impl AgentHost {
 
     // ---- the agent's own session store -----------------------------------
 
-    pub async fn agent_sessions(
-        &self,
-        plugin_id: &str,
-        cwd: &str,
-    ) -> Result<Option<Vec<serde_json::Value>>> {
-        let agent = self.agent_for(plugin_id)?;
-        let Some(connection) = self.connected(&agent) else {
-            return Ok(None);
-        };
-        let Some(list) = connection.session_list() else {
-            return Ok(None);
-        };
-        let request = atlas_acp_thread::AgentSessionListRequest {
-            cwd: Some(PathBuf::from(cwd)),
-            cursor: None,
-            meta: None,
-        };
-        let response = list.list_sessions(request).await.map_err(HostError::from)?;
-        Ok(Some(
-            response.sessions.iter().map(session_info_json).collect(),
-        ))
-    }
-
-    pub async fn delete_agent_session(&self, plugin_id: &str, session_id: &str) -> Result<bool> {
-        let agent = self.agent_for(plugin_id)?;
-        let Some(connection) = self.connected(&agent) else {
-            return Ok(false);
-        };
-        let Some(list) = connection.session_list() else {
-            return Ok(false);
-        };
-        if !list.supports_delete() {
-            return Ok(false);
-        }
-        list.delete_session(&acp::SessionId::new(session_id))
-            .await
-            .map_err(HostError::from)?;
-        Ok(true)
-    }
-
     // ---- auth ------------------------------------------------------------
 
     pub async fn auth_methods(&self, agent_id: AgentId) -> Result<Vec<AuthMethodWire>> {
@@ -2071,25 +2023,6 @@ fn parse_env_var(v: &serde_json::Value) -> Option<AuthEnvVar> {
         label: obj.get("label").and_then(|l| l.as_str()).map(str::to_string),
         secret: obj.get("secret").and_then(|s| s.as_bool()).unwrap_or(true),
         optional: obj.get("optional").and_then(|o| o.as_bool()).unwrap_or(false),
-    })
-}
-
-/// One of the agent's own stored sessions, as the sidebar reads it.
-///
-/// Hand-built rather than derived: `AgentSessionInfo` is the ported thread's
-/// type and carries no `Serialize`, and the frontend has always read these
-/// four fields.
-fn session_info_json(session: &atlas_acp_thread::AgentSessionInfo) -> serde_json::Value {
-    serde_json::json!({
-        "sessionId": session.session_id.to_string(),
-        "title": session.title.as_ref().map(|t| t.to_string()),
-        "cwd": session
-            .work_dirs
-            .as_ref()
-            .and_then(|dirs| dirs.first())
-            .map(|dir| dir.to_string_lossy().into_owned()),
-        "updatedAt": session.updated_at.map(|t| t.to_rfc3339()),
-        "createdAt": session.created_at.map(|t| t.to_rfc3339()),
     })
 }
 

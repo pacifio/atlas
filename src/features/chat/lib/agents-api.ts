@@ -279,9 +279,6 @@ export const listenAgentElicitationResolved = (
 // first prompt doesn't pay npx/node cold-start (10–30s); a chat bound to a
 // different agent (e.g. Codex) spawns that agent the first time it's used.
 
-/** Atlas's native in-process agent (atlas-cersei). */
-export const CERSEI_PLUGIN_ID = "cersei";
-
 // Route with `pluginIdForAgent(agentType)` — the agent the SESSION carries.
 // New chats get theirs from `defaultAgentForNewSession`.
 
@@ -327,12 +324,6 @@ export function resetAgentByAgentId(agentId: string): void {
       return;
     }
   }
-}
-
-/** Drop a cached agent (or all) so the next ensure re-spawns. */
-export function resetAgent(pluginId?: string): void {
-  if (pluginId) cachedAgents.delete(pluginId);
-  else cachedAgents.clear();
 }
 
 // Back-compat thin wrappers (default = Claude) for existing callers.

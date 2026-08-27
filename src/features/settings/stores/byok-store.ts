@@ -104,8 +104,3 @@ export const useByokStore = createSelectors(
     };
   }),
 );
-
-/** Convenience for callers that just need "is any provider usable". */
-export function hasAnyProviderKey(): boolean {
-  return Object.keys(useByokStore.getState().keys).length > 0;
-}

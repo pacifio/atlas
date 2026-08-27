@@ -275,25 +275,6 @@ pub async fn knowledge_cover_upload(
     .map_err(|e| e.to_string())?
 }
 
-/// Resolve a cover ref (relative path or `gradient:*` synthetic) to a
-/// readable string. Gradients pass through; relative paths become
-/// `convertFileSrc()`-friendly absolute paths the frontend turns into
-/// asset:// URLs.
-#[tauri::command]
-pub async fn knowledge_cover_resolve(
-    project_path: String,
-    cover: String,
-) -> Result<String, String> {
-    if cover.starts_with("gradient:") {
-        return Ok(cover);
-    }
-    let abs = Path::new(&project_path)
-        .join(".atlas")
-        .join("knowledge")
-        .join(&cover);
-    Ok(abs.to_string_lossy().to_string())
-}
-
 /// Read a cover image and return it as a `data:` URL (base64). Covers live
 /// under the hidden `.atlas/` directory, which Tauri's asset-protocol scope
 /// won't serve (the webview 403s the `asset://` request). A data URL embeds
@@ -366,27 +347,6 @@ pub async fn log_interaction(
             })
             .map_err(|e| e.to_string())?;
         Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// Get recent interactions for context building
-#[tauri::command]
-pub async fn get_recent_interactions(
-    project_path: String,
-    limit: Option<u32>,
-) -> Result<Vec<String>, String> {
-    tokio::task::spawn_blocking(move || {
-        let log_path = Path::new(&project_path).join(".atlas").join("interactions.jsonl");
-        if !log_path.exists() {
-            return Ok(vec![]);
-        }
-        let content = fs::read_to_string(&log_path).map_err(|e| e.to_string())?;
-        let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
-        let n = limit.unwrap_or(20) as usize;
-        let start = if lines.len() > n { lines.len() - n } else { 0 };
-        Ok(lines[start..].to_vec())
     })
     .await
     .map_err(|e| e.to_string())?

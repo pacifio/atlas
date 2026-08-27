@@ -17,26 +17,12 @@ export interface SessionInit {
   current_mode: string | null;
   available_modes: SessionModeInfo[];
 }
-
-export type TranscriptKind = { kind: "none" } | { kind: "claude_jsonl" } | { kind: "cersei_json" };
-
 /** One image attached to an outbound prompt. Mirrors atlas-acp's
  *  `ImageAttachment` (serde camelCase). `dataBase64` is raw base64 — no
  *  `data:` URI prefix. */
 export interface ImageAttachment {
   mimeType: string;
   dataBase64: string;
-}
-
-export interface PluginSpec {
-  plugin_id: string;
-  display_name: string;
-  command: string;
-  transcript: TranscriptKind;
-  supports_modes: boolean;
-  supports_models: boolean;
-  /** Registry-installed third-party agent (not first-party, not cersei). */
-  external: boolean;
 }
 
 export type SessionStatus = "idle" | "running" | "waiting" | "error";

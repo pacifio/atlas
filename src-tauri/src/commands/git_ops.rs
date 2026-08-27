@@ -410,50 +410,6 @@ pub async fn git_publish_branch(
     .map_err(join_err)?
 }
 
-/// Clone `url` into `dest` with streamed progress (previously missing from
-/// the source-control surface entirely — only the GitHub panel's shallow
-/// clone existed).
-#[tauri::command]
-pub async fn git_clone(
-    url: String,
-    dest: String,
-    op_id: String,
-    app: AppHandle,
-) -> Result<(), GitErrorPayload> {
-    tokio::task::spawn_blocking(move || {
-        let parent = Path::new(&dest)
-            .parent()
-            .map(|p| p.to_path_buf())
-            .filter(|p| !p.as_os_str().is_empty())
-            .ok_or_else(|| GitErrorPayload::internal("invalid clone destination"))?;
-        std::fs::create_dir_all(&parent)
-            .map_err(|e| GitErrorPayload::internal(format!("cannot create {}: {e}", parent.display())))?;
-
-        let emitter = OpEmitter::new(app.clone(), op_id, dest.clone(), "clone");
-        emitter.started();
-        let sink = ProgressSink {
-            emitter: &emitter,
-            parser: std::sync::Mutex::new(atlas_git::progress::ProgressParser::new(
-                &atlas_git::progress::steps_for("clone"),
-            )),
-        };
-        let result = GitCommand::new(&parent, &["clone", "--recursive", "--progress", "--", &url, &dest])
-            .run_streaming(&sink);
-        match result {
-            Ok(_) => {
-                emitter.done(None);
-                Ok(())
-            }
-            Err(e) => {
-                emitter.done(Some(&e));
-                Err(e)
-            }
-        }
-    })
-    .await
-    .map_err(join_err)?
-}
-
 /// Rebase the current branch onto `base`, streaming output (`Rebasing
 /// (n/m)` lines land in the live strip). Conflicts pause the rebase — the
 /// in-progress banner + conflicts view take over, and continue/abort go
@@ -655,34 +611,6 @@ pub async fn git_stash_push(
     .map_err(join_err)?
 }
 
-/// Stash only the given paths (e.g. a single file flagged in a review).
-/// Only affects working-tree/index changes for those paths.
-#[tauri::command]
-pub async fn git_stash_paths(
-    path: String,
-    paths: Vec<String>,
-    message: Option<String>,
-    app: AppHandle,
-) -> Result<(), GitErrorPayload> {
-    if paths.is_empty() {
-        return Err(GitErrorPayload::internal("no paths to stash"));
-    }
-    tokio::task::spawn_blocking(move || {
-        let mut args = vec!["stash".to_string(), "push".to_string()];
-        if let Some(m) = message.filter(|m| !m.trim().is_empty()) {
-            args.push("-m".into());
-            args.push(m);
-        }
-        args.push("--".into());
-        args.extend(paths);
-        let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        git_mut(&app, &path, &argv)?;
-        Ok(())
-    })
-    .await
-    .map_err(join_err)?
-}
-
 #[tauri::command]
 pub async fn git_stash_apply(path: String, index: u32, app: AppHandle) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
@@ -813,48 +741,6 @@ pub async fn git_revert(path: String, sha: String, app: AppHandle) -> Result<Str
 #[tauri::command]
 pub async fn git_cherry_pick(path: String, sha: String, app: AppHandle) -> Result<String, GitErrorPayload> {
     tokio::task::spawn_blocking(move || git_mut(&app, &path, &["cherry-pick", &sha]))
-        .await
-        .map_err(join_err)?
-}
-
-/// Extended commit: summary + optional description, optional `--amend`.
-#[tauri::command]
-pub async fn git_commit_ex(
-    path: String,
-    summary: String,
-    description: Option<String>,
-    amend: bool,
-    app: AppHandle,
-) -> Result<(), GitErrorPayload> {
-    tokio::task::spawn_blocking(move || {
-        let mut args = vec!["commit".to_string()];
-        if amend {
-            args.push("--amend".into());
-        }
-        args.push("-m".into());
-        args.push(summary);
-        if let Some(d) = description.filter(|d| !d.trim().is_empty()) {
-            args.push("-m".into());
-            args.push(d);
-        }
-        let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        git_mut(&app, &path, &argv)?;
-        Ok(())
-    })
-    .await
-    .map_err(join_err)?
-}
-
-#[tauri::command]
-pub async fn git_diff_staged(path: String) -> Result<String, GitErrorPayload> {
-    tokio::task::spawn_blocking(move || git_out(&path, &["diff", "--cached"]))
-        .await
-        .map_err(join_err)?
-}
-
-#[tauri::command]
-pub async fn git_diff_unstaged(path: String) -> Result<String, GitErrorPayload> {
-    tokio::task::spawn_blocking(move || git_out(&path, &["diff"]))
         .await
         .map_err(join_err)?
 }

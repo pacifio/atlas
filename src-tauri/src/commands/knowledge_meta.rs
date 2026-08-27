@@ -317,16 +317,3 @@ pub fn knowledge_meta_delete(
     Ok(())
 }
 
-/// Project close hook — drop the in-memory snapshot so a re-open reads
-/// from disk fresh. Optional: callers that care can wire this from the
-/// existing project-switch flow.
-#[tauri::command]
-pub fn knowledge_meta_drop_project(
-    project_path: String,
-    state: State<'_, Arc<KnowledgeMetaState>>,
-) -> Result<(), String> {
-    let mut by_proj = state.by_project.lock();
-    by_proj.remove(&project_path);
-    Ok(())
-}
-

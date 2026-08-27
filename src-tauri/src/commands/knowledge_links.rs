@@ -359,26 +359,6 @@ pub async fn knowledge_backlinks(
 }
 
 #[tauri::command]
-pub async fn knowledge_forwardlinks(
-    project_path: String,
-    entry_id: String,
-    state: State<'_, Arc<KnowledgeLinksState>>,
-) -> Result<Vec<String>, String> {
-    let state = Arc::clone(state.inner());
-    tokio::task::spawn_blocking(move || {
-        ensure_graph(&state, &project_path);
-        let by_proj = state.by_project.read();
-        let graph = match by_proj.get(&project_path) {
-            Some(Some(g)) => g,
-            _ => return Ok(Vec::new()),
-        };
-        Ok(graph.forwardlinks.get(&entry_id).cloned().unwrap_or_default())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
 pub async fn knowledge_link_counts(
     project_path: String,
     entry_id: String,
@@ -417,16 +397,6 @@ pub async fn knowledge_links_invalidate(
         "atlas:knowledge:links-changed",
         serde_json::json!({ "projectPath": project_path }),
     );
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn knowledge_links_drop_project(
-    project_path: String,
-    state: State<'_, Arc<KnowledgeLinksState>>,
-) -> Result<(), String> {
-    let mut by_proj = state.by_project.write();
-    by_proj.remove(&project_path);
     Ok(())
 }
 

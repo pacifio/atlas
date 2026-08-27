@@ -1873,78 +1873,12 @@ fn promote(project_root: &Path, home: &Path, name: &str) -> Result<SkillMeta, St
 // `SkillMeta`/`list_skills`: that type's `managed`/`enabled_agents` fields
 // describe things Atlas can toggle, which is exactly what these are not.
 
-/// Metadata for one read-only plugin-bundled skill.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginSkillMeta {
-    pub name: String,
-    pub description: String,
-    /// Which plugin host this came from, e.g. `"claude-code"`.
-    pub source: String,
-    /// The marketplace (or equivalent grouping) this skill was bundled in.
-    pub marketplace: String,
-    /// Absolute path to the plugin's `SKILL.md`, for display only — never
-    /// written to, never used as a projection source.
-    pub path: String,
-}
-
-/// `~/.claude/plugins/marketplaces` — each child dir is one installed
-/// marketplace; each marketplace may have a `skills/` dir of its own.
-fn claude_plugin_marketplaces_dir(home: &Path) -> PathBuf {
-    home.join(".claude").join("plugins").join("marketplaces")
-}
-
-/// Scan Claude Code's plugin marketplaces for bundled skills. Best-effort and
-/// read-only: a marketplace or skill dir that can't be read is silently
-/// skipped, never an error (this channel is informational, not authoritative).
-fn list_claude_plugin_skills(home: &Path) -> Vec<PluginSkillMeta> {
-    let mut out = Vec::new();
-    let Ok(marketplaces) = fs::read_dir(claude_plugin_marketplaces_dir(home)) else {
-        return out;
-    };
-    for marketplace_entry in marketplaces.flatten() {
-        if !marketplace_entry.path().is_dir() {
-            continue;
-        }
-        let marketplace = marketplace_entry.file_name().to_string_lossy().to_string();
-        let skills_dir = marketplace_entry.path().join("skills");
-        let Ok(entries) = fs::read_dir(&skills_dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            if !entry.path().is_dir() {
-                continue;
-            }
-            let skill_md = entry.path().join("SKILL.md");
-            let Ok(raw) = fs::read_to_string(&skill_md) else {
-                continue;
-            };
-            let (fm, _body) = parse_frontmatter(&raw);
-            let raw_name = entry.file_name().to_string_lossy().to_string();
-            out.push(PluginSkillMeta {
-                name: fm.name.unwrap_or(raw_name),
-                description: fm.description.unwrap_or_default(),
-                source: "claude-code".to_string(),
-                marketplace: marketplace.clone(),
-                path: skill_md.to_string_lossy().to_string(),
-            });
-        }
-    }
-    out.sort_by(|a, b| (&a.marketplace, &a.name).cmp(&(&b.marketplace, &b.name)));
-    out
-}
-
 // TODO(codex plugin skills): Codex's plugin directory layout is unverified —
 // `~/.codex/plugins/` exists on the maintainer's machine but contains only a
 // `cache/` dir, not a `marketplaces/*/skills` tree like Claude Code's. Add a
 // `list_codex_plugin_skills(home)` here (same read-only pattern, folded into
 // `list_plugin_skills` below) once a real Codex plugin install reveals the
 // actual layout — don't guess at a path that might be wrong.
-
-/// All plugin-bundled skills across every supported host.
-fn list_plugin_skills(home: &Path) -> Vec<PluginSkillMeta> {
-    list_claude_plugin_skills(home)
-}
 
 // ── Tauri commands ─────────────────────────────────────────────────────────────
 
@@ -2056,19 +1990,6 @@ pub async fn agents_list_skill_targets(
     let root = root_for(&scope, project_path.as_deref())?;
     Ok(
         tokio::task::spawn_blocking(move || list_targets(&root, &scope))
-            .await
-            .map_err(|e| e.to_string())?,
-    )
-}
-
-/// List read-only plugin-bundled skills (Claude Code plugin marketplaces today;
-/// Codex TODO) for the Skills UI's browsing surface. Never installable or
-/// projectable through Atlas — see the "Plugin skills" module section.
-#[tauri::command]
-pub async fn skills_list_plugins() -> Result<Vec<PluginSkillMeta>, String> {
-    let home = home_dir().ok_or_else(|| "could not resolve home directory".to_string())?;
-    Ok(
-        tokio::task::spawn_blocking(move || list_plugin_skills(&home))
             .await
             .map_err(|e| e.to_string())?,
     )
@@ -4337,36 +4258,6 @@ mod tests {
         assert!(meta.enabled_agents.contains(&"codex".to_string()));
         assert!(root.join(".claude/skills/foo").symlink_metadata().is_ok());
         fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn list_plugin_skills_discovers_claude_marketplace_skills() {
-        let home = tmp_root();
-        let skill_dir = claude_plugin_marketplaces_dir(&home)
-            .join("some-marketplace")
-            .join("skills")
-            .join("bundled-skill");
-        fs::create_dir_all(&skill_dir).unwrap();
-        fs::write(
-            skill_dir.join("SKILL.md"),
-            "---\nname: bundled-skill\ndescription: ships with the plugin\n---\n\nbody\n",
-        )
-        .unwrap();
-
-        let found = list_plugin_skills(&home);
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].name, "bundled-skill");
-        assert_eq!(found[0].description, "ships with the plugin");
-        assert_eq!(found[0].source, "claude-code");
-        assert_eq!(found[0].marketplace, "some-marketplace");
-        fs::remove_dir_all(&home).ok();
-    }
-
-    #[test]
-    fn list_plugin_skills_empty_when_no_marketplaces_dir() {
-        let home = tmp_root();
-        assert!(list_plugin_skills(&home).is_empty());
-        fs::remove_dir_all(&home).ok();
     }
 
     // ── Phase 0: pack model + tool homes ─────────────────────────────────────

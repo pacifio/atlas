@@ -33,9 +33,5 @@ export interface CodexMemory {
   global_agents_md: string | null;
   threads: CodexThread[];
 }
-export interface AgentMemory {
-  claude: ClaudeMemory;
-  codex: CodexMemory;
-}
 
 export type MemorySubTab = "graph" | "policy" | "timeline" | "shared";
