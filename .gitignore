@@ -20,9 +20,6 @@ Thumbs.db
 .env
 .env.local
 
-# Tauri
-src-tauri/target/
-
 .claude/
 .atlas/
 .agents/

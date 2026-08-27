@@ -74,9 +74,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # One cargo workspace since #38: the lockfile and the target dir both
+      # live at the repo root, so that is what the cache keys off.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: .
       - name: Configure git identity for test repos
         run: |
           git config --global user.name "CI"
@@ -87,10 +89,14 @@ jobs:
         run: cargo test
 
   crates:
-    # Every crate is a standalone package with its own Cargo.lock, so each gets
-    # its own job and its own cache. Adding a crate here is a one-line change,
-    # and `tests/ci-coverage.test.ts` fails the build if a new crate is left
-    # out of this list.
+    # Every crate gets its own job so a failure names the crate rather than the
+    # workspace. Adding a crate here is a one-line change, and
+    # `tests/ci-coverage.test.ts` fails the build if a new crate is left out of
+    # this list.
+    #
+    # Since #38 all of these except `atlas-kb-server` are members of the root
+    # workspace: `cargo test` inside a member directory still selects only that
+    # package, but the lockfile and target dir are the root's.
     #
     # `clippy: true` marks the crates that are currently warning-clean under
     # `-D warnings`. The rest are not yet; flip the flag as each is cleaned up
@@ -138,9 +144,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # Workspace members share the root lockfile and target dir;
+      # `atlas-kb-server` is excluded from the workspace (it keeps its own
+      # profile and is built on demand at runtime) and so keeps its own cache.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates/${{ matrix.crate }}
+          workspaces: ${{ matrix.crate == 'atlas-kb-server' && 'crates/atlas-kb-server' || '.' }}
       # Several suites build real git repositories in a tempdir, and `git
       # commit` refuses to run without an identity. Set for every crate so
       # adding such a test to another crate doesn't fail mysteriously.

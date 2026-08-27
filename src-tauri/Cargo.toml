@@ -63,7 +63,8 @@ anyhow = "1"
 # `agent-client-protocol` 1.3 with its schema crate pinned EXACTLY (`=1.4.0`),
 # the ported one pins 2.0 / `=1.5.0`, and no single Cargo resolution can
 # contain two exact 1.x pins of the same crate. That collision is also why this
-# repo still has no `[workspace]`.
+# repo had no `[workspace]` for so long; with the old stack gone it is gone too,
+# and the root `Cargo.toml` now owns the workspace (issue #38).
 atlas-acp-thread = { path = "../crates/atlas-acp-thread" }
 atlas-agent-servers = { path = "../crates/atlas-agent-servers" }
 atlas-agent-store = { path = "../crates/atlas-agent-store" }
@@ -78,10 +79,22 @@ atlas-cersei = { path = "../crates/atlas-cersei" }
 atlas-bus = { path = "../crates/atlas-bus" }
 agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
 atlas-terminal = { path = "../crates/atlas-terminal" }
-# Already in the tree transitively (via atlas-cersei → cersei). Promoted to a
-# direct dep ONLY so src/lib.rs can reference cersei_provider::utf8::
-# ATLAS_UTF8_PATCH — a compile-time guard that fails `cargo check` if the
-# [patch.crates-io] vendor override (end of this file) stops applying.
+# ─── Cersei SDK ───────────────────────────────────────────────────────────────
+# cersei-* crates come from crates.io (0.2.6) EXCEPT cersei-provider and
+# cersei-agent, which are patched to `vendor/`: the published SSE decoders
+# corrupt multi-byte characters split across HTTP chunk boundaries, and the
+# published runner never raced `tool.execute()` against the cancel token.
+#
+# Those `[patch.crates-io]` entries — and the release/dev profiles that used to
+# sit at the bottom of this file — live in the root `Cargo.toml` since this
+# package became a workspace member (issue #38, spec D4). Cargo honors both
+# ONLY in the manifest it was invoked on, which in a workspace is always the
+# root; a copy left here would be config cargo ignores in silence.
+#
+# cersei-provider is already in the tree transitively (via atlas-cersei →
+# cersei). It is promoted to a direct dep ONLY so src/lib.rs can reference
+# `cersei_provider::utf8::ATLAS_UTF8_PATCH` — the `_CERSEI_UTF8_PATCH_GUARD`
+# const, which fails `cargo check` if the vendored override stops applying.
 cersei-provider = "0.2.6"
 atlas-embed = { path = "../crates/atlas-embed" }
 # On-device RAG/memory engine (MiniLM → usearch HNSW + manifest). The Tauri
@@ -167,62 +180,3 @@ objc2 = "0.6"
 # Turn on atlas-embed's Metal backend so the on-device embedder runs on the
 # Apple-Silicon GPU. Feature is additive over the base path dep in `[dependencies]`.
 atlas-embed = { path = "../crates/atlas-embed", features = ["metal"] }
-
-# Release profile — Atlas previously shipped with Cargo defaults
-# (lto = false, codegen-units = 16, no strip), which means the bundled .app
-# binary was substantially larger and slower than necessary. Matches the
-# profile Athas uses for its 1 s cold launches.
-#
-# Trade-off: `bun run build:app` link time roughly doubles on clean builds
-# (~30 s → ~60–90 s). Dev (`tauri dev`) is unaffected — these are
-# release-only settings.
-# ─── Cersei SDK ──────────────────────────────────────────────────────────────
-# cersei-* crates are sourced from crates.io (0.2.6), EXCEPT cersei-provider,
-# which is patched to vendor/cersei-provider (see [patch.crates-io] at the end
-# of this file): the published SSE decoders corrupt multi-byte characters split
-# across HTTP chunk boundaries. Guard: the `_CERSEI_UTF8_PATCH_GUARD` const in
-# src/lib.rs fails to compile if the patch stops applying.
-
-[profile.release]
-codegen-units = 1   # Single codegen unit → better cross-function inlining
-lto = "fat"         # Fat LTO: maximum cross-crate dead-code elimination +
-                    # inlining (smaller binary; ~2× link time vs thin)
-strip = "symbols"   # Smaller .app bundle, faster dyld load
-panic = "unwind"    # REQUIRED — three independent `catch_unwind` guards depend on
-                    # it, so this survived the local-LLM removal:
-                    #  1. atlas-embed's EMBEDDER catches candle's Metal
-                    #     kernel-compile panic (at load AND per forward) to fall
-                    #     back to CPU rather than crash.
-                    #  2. commands/capture.rs guards its worker threads — a
-                    #     panicking worker is silent capture loss.
-                    #  3. atlas-checkpoint wraps atlas-redact, so a redaction
-                    #     panic can never leak unredacted text.
-                    # `abort` would turn each of these into an app crash. Costs a
-                    # little binary size for unwind tables.
-opt-level = 3       # Default for release, restated for clarity
-
-# Dev profile — Atlas's own app crate is small (~170 LOC + a handful of
-# command modules). Keep it at the default `opt-level = 0` so incremental
-# rebuilds stay snappy.
-[profile.dev]
-
-# Optimize ALL transitive dependencies in dev mode at `opt-level = 1`
-# (Tauri, wry, tao, the ported ACP crates, atlas-terminal, tokio, serde,
-# reqwest, etc.). First clean build pays a one-time ~3–5 minute cost;
-# subsequent rebuilds only recompile the app crate and are unaffected.
-# Net effect: `bunx tauri dev` startup drops noticeably because Tauri's
-# runtime is no longer running unoptimized debug code.
-[profile.dev.package."*"]
-opt-level = 1
-
-[patch.crates-io]
-# ATLAS PATCH (Phase 0, plans/atlas-agent-stack-zed-parity.md): incremental
-# UTF-8 decoding in the SSE stream decoders — the published crate corrupts
-# multi-byte chars split across HTTP chunk boundaries (from_utf8_lossy on raw
-# chunks). Guard: cersei_provider::utf8::ATLAS_UTF8_PATCH (see src/lib.rs).
-cersei-provider = { path = "../vendor/cersei-provider" }
-# Phase 2: cersei-agent vendored for the tool-cancel race fix — the published
-# runner never raced tool.execute() against the cancel token (writes landed
-# after Stop) and left orphaned tool_use blocks in provider history on cancel.
-# Guard: cersei_agent::ATLAS_CANCEL_PATCH.
-cersei-agent = { path = "../vendor/cersei-agent" }

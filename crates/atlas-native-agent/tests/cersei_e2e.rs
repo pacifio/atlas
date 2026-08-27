@@ -15,10 +15,11 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::v1 as acp;
 use atlas_acp_thread::{
-    AcpThread, AcpThreadHandle, AgentConnection, AgentThreadEntry, ToolCallStatus,
+    AcpThread, AcpThreadHandle, AgentConnection, AgentId, AgentThreadEntry, ToolCallStatus,
 };
 use atlas_agent_servers::{
-    AcpConnectionDefaults, AgentServer, AgentServerDelegate, ConnectOptions, ThreadEventSink,
+    AcpConnectionDefaults, AgentServer, AgentServerDelegate, ConnectOptions,
+    RequestElicitationSink, ThreadEventSink,
 };
 use atlas_cersei::CerseiRuntime;
 use atlas_native_agent::{CerseiAgentServer, CERSEI_AGENT_ID};
@@ -70,10 +71,20 @@ fn connect_options() -> ConnectOptions {
         sinks.lock().unwrap().push(rx);
         tx
     });
+    // The native agent raises no request-scoped elicitations (it advertises no
+    // auth methods), but `ConnectOptions` still requires a sink. Same shape as
+    // `atlas-agent-servers/tests/connect.rs`: leak the receiver so sends never
+    // fail for a reason unrelated to the test.
+    let request_elicitation_events: RequestElicitationSink = Arc::new(|_agent_id: &AgentId| {
+        let (tx, rx) = atlas_acp_thread::event_channel();
+        Box::leak(Box::new(rx));
+        tx
+    });
     ConnectOptions {
         root_dir: None,
         defaults: AcpConnectionDefaults::default(),
         thread_events,
+        request_elicitation_events,
         client_name: "atlas-test",
         client_version: "0.0.0".to_string(),
     }

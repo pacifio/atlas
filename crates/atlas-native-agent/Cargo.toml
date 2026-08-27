@@ -33,15 +33,7 @@ cersei = { version = "0.2.6", default-features = false }
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
 
-[patch.crates-io]
-# Same vendored Cersei patches every consumer of `atlas-cersei` must apply — a
-# `[patch]` section only takes effect in the manifest cargo is invoked on, so
-# each package that reaches the SDK has to repeat it.
-#
-# UTF-8: the published SSE decoders corrupt multi-byte chars split across HTTP
-# chunk boundaries. Guard: `cersei_provider::utf8::ATLAS_UTF8_PATCH`.
-cersei-provider = { path = "../../vendor/cersei-provider" }
-# Cancel: the published runner never raced `tool.execute()` against the cancel
-# token, so writes landed after Stop and cancelled rounds left orphaned
-# `tool_use` blocks. Guard: `cersei_agent::ATLAS_CANCEL_PATCH`.
-cersei-agent = { path = "../../vendor/cersei-agent" }
+# The vendored Cersei SDK patch forks this crate's SDK reach requires
+# (`cersei-provider` UTF-8, `cersei-agent` cancel) live in the root
+# `Cargo.toml`'s `[patch.crates-io]` — honored there and nowhere else once the
+# repo became a workspace (issue #38 / spec D4).

@@ -10,15 +10,20 @@
 //!
 //! # Why this is a separate crate from `atlas-cersei`
 //!
-//! It should not be, and eventually will not be. `atlas-cersei` holds the
-//! runtime and must stay linkable from the old stack until that stack is
-//! deleted (port plan, stage 5). The old stack is on `agent-client-protocol`
-//! 1.3 and this seam is on 2.0, and those cannot share a Cargo graph: the
-//! protocol crate pins its schema crate exactly (`=1.4.0` / `=1.5.0`), so a
-//! single resolution containing both is impossible. Keeping the runtime
-//! protocol-free and putting *this* protocol's adapter in its own crate is what
-//! lets one Cersei serve both stacks during the port. When `atlas-acp` and
-//! the old stack went, this crate could fold into `atlas-cersei`.
+//! It should not be, and eventually will not be. The split existed because
+//! `atlas-cersei` had to stay linkable from the old ACP stack while that stack
+//! was still shipping: the old one was on `agent-client-protocol` 1.3 and this
+//! seam is on 2.0, and those could not share a Cargo graph — the protocol crate
+//! pins its schema crate exactly (`=1.4.0` / `=1.5.0`), so a single resolution
+//! containing both was impossible. Keeping the runtime protocol-free and
+//! putting *this* protocol's adapter in its own crate is what let one runtime
+//! serve both stacks during the port.
+//!
+//! **That constraint is history.** The old stack is deleted, every consumer
+//! pins `=2.0.0`, and the repo is a single cargo workspace (issue #38). This
+//! crate could fold into `atlas-cersei` — but it will not: it is the
+//! `AgentConnection` seam the app plugs into, and the Codex port keeps it
+//! while replacing the engine behind it (ADR-0003).
 //!
 //! # What the native agent does not implement, and why
 //!

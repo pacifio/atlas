@@ -57,18 +57,11 @@ libc = "0.2"
 
 [dev-dependencies]
 # Direct dev-dep ONLY for tests/utf8_patch_guard.rs: referencing
-# cersei_provider::utf8::ATLAS_UTF8_PATCH fails to compile if the
-# [patch.crates-io] vendor override below stops applying.
+# cersei_provider::utf8::ATLAS_UTF8_PATCH fails to compile if the vendored
+# override stops applying.
 cersei-provider = "0.2.6"
 
-[patch.crates-io]
-# ATLAS PATCH (Phase 0, plans/atlas-agent-stack-zed-parity.md): incremental
-# UTF-8 decoding in the SSE stream decoders — the published crate corrupts
-# multi-byte chars split across HTTP chunk boundaries (from_utf8_lossy on raw
-# chunks). Guard: cersei_provider::utf8::ATLAS_UTF8_PATCH.
-cersei-provider = { path = "../../vendor/cersei-provider" }
-# Phase 2: cersei-agent vendored for the tool-cancel race fix — the published
-# runner never raced tool.execute() against the cancel token (writes landed
-# after Stop) and left orphaned tool_use blocks in provider history on cancel.
-# Guard: cersei_agent::ATLAS_CANCEL_PATCH.
-cersei-agent = { path = "../../vendor/cersei-agent" }
+# The vendored Cersei SDK patch forks (`cersei-provider` UTF-8, `cersei-agent`
+# cancel) live in the root `Cargo.toml`'s `[patch.crates-io]`. A patch table is
+# honored only in the manifest cargo was invoked on, which is the workspace
+# root — see issue #38 / spec D4.

@@ -194,7 +194,7 @@ Deltas return over the single `atlas:agents` channel, payload-typed by `kind`.
 
 ## Crates (`crates/`)
 
-All wired in as `path` dependencies from `src-tauri/Cargo.toml`. **There is no `[workspace]`** — the ported stack pins `agent-client-protocol` 2.0 with its schema crate pinned exactly, and no single Cargo resolution could hold that alongside the old stack's exact `=1.4.0` pin. That collision is why the port had to land as one change rather than gradually, and why the repo still resolves each crate on its own.
+All wired in as `path` dependencies from `src-tauri/Cargo.toml`, and all members of the **root `[workspace]`** bar one (`atlas-kb-server`, below). The repo went without one for a long time, for a real reason: the ported stack pins `agent-client-protocol` 2.0 with its schema crate pinned exactly, and no single Cargo resolution could hold that alongside the old stack's exact `=1.4.0` pin. That collision is why the port had to land as one change rather than gradually. With the old stack gone the collision is gone, and the workspace landed (issue #38) so the vendored Codex engine resolves against the same graph as the app. Consequences worth knowing: one `Cargo.lock` and one `target/` at the repo root, and `[patch.crates-io]` plus every `[profile.*]` live in the root `Cargo.toml` — cargo honors both only there. `crates/atlas-kb-server` is deliberately excluded (it is built on demand at runtime under its own profile).
 
 ### The ported ACP stack
 
@@ -297,9 +297,9 @@ atlas/
 │   ├── bin/, resources/           bundled helper scripts (atlas-cli.sh, nvm.sh)
 │   ├── build.rs                   build script
 │   ├── tauri.conf.json            bundle config, CSP, window
-│   └── Cargo.toml                 path deps + [patch.crates-io] + release profile
+│   └── Cargo.toml                 path deps (patches + profiles live at the root)
 │
-├── crates/                        Rust crates (path deps; no [workspace])
+├── crates/                        Rust crates (workspace members)
 │   ├── atlas-acp-thread           session model + the AgentConnection seam
 │   ├── atlas-agent-servers        external ACP transport + launcher + host env
 │   ├── atlas-agent-store          where an agent comes from (Marketplace)

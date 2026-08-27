@@ -1,0 +1,176 @@
+# Atlas's root cargo workspace.
+#
+# The repo had no `[workspace]` until now, and the reason was real: the old ACP
+# stack pinned `agent-client-protocol` 1.3 whose schema crate is pinned exactly
+# (`=1.4.0`), the ported stack pins 2.0 / `=1.5.0`, and no single cargo
+# resolution can hold two exact pins of the same crate. The old stack is gone
+# and every remaining consumer is on `=2.0.0`, so the collision is gone with it
+# (spec `docs/atlas-agent-codex-port-spec.md`, decision D4 and its premise
+# correction; issue #38).
+#
+# The workspace exists so the vendored Codex engine (#42) lands in the same
+# dependency graph as the app instead of a parallel one. Nothing about how
+# Atlas builds today changes: the patch tables and profiles below are the ones
+# that were in `src-tauri/Cargo.toml`, moved rather than rewritten, because
+# cargo honors both ONLY in the manifest it was invoked on — which, in a
+# workspace, is always this file.
+#
+# `tests/cargo-workspace.test.ts` enforces the invariants that have no compile
+# error to announce them: patches and profiles nowhere but here, and a dev
+# opt-level restated for every member (see `[profile.dev.package."*"]` below).
+
+[workspace]
+resolver = "2"
+
+members = [
+  "crates/atlas-acp-thread",
+  "crates/atlas-agent-delta",
+  "crates/atlas-agent-manager",
+  "crates/atlas-agent-servers",
+  "crates/atlas-agent-store",
+  "crates/atlas-agent-transcript",
+  "crates/atlas-agent-wire",
+  "crates/atlas-bus",
+  "crates/atlas-cersei",
+  "crates/atlas-checkpoint",
+  "crates/atlas-codeindex",
+  "crates/atlas-embed",
+  "crates/atlas-git",
+  "crates/atlas-gitdiff",
+  "crates/atlas-memory",
+  "crates/atlas-native-agent",
+  "crates/atlas-redact",
+  "crates/atlas-terminal",
+  "crates/atlas-thread-metadata",
+  "src-tauri",
+]
+
+# Deliberately outside the workspace. Each is built on its own, with its own
+# lockfile and its own profile, and joining the workspace would change that
+# silently. Profiles are workspace-global — the root's `[profile.release]` is
+# the only one cargo reads — so a member cannot keep a release profile of its
+# own, whatever the per-package override table (bottom of this file) can express.
+exclude = [
+  # Not in the app's dependency graph at all: a template binary that
+  # `commands::knowledge_export` compiles on demand at runtime with
+  # `--manifest-path`, carrying its own `[profile.release]` (`panic = "abort"`,
+  # thin LTO). As a member it would rebuild under the app's fat-LTO/unwind
+  # profile instead.
+  "crates/atlas-kb-server",
+  # The vendored Cersei SDK patch forks. They enter the graph through
+  # `[patch.crates-io]` below, i.e. as dependencies — which is what keeps them
+  # covered by the `[profile.dev.package."*"]` opt-level 1 override that
+  # workspace members fall out of. They also each build standalone.
+  "vendor/cersei-agent",
+  "vendor/cersei-provider",
+]
+
+# ─── Cersei SDK ──────────────────────────────────────────────────────────────
+# The Cersei SDK's cersei-* crates are sourced from crates.io (0.2.6), EXCEPT
+# the two vendored here. A `[patch]` section takes effect only in the manifest
+# cargo is invoked on, which is why these entries used to be repeated in `src-tauri`,
+# `crates/atlas-cersei` and `crates/atlas-native-agent`: three copies of one
+# fact. In a workspace the root is the only manifest cargo resolves from, so
+# one copy is both necessary and sufficient.
+#
+# These die with the Cersei SDK at cutover (spec Phase 5, issue #54) — not
+# before, and not as part of this change.
+[patch.crates-io]
+# ATLAS PATCH (Phase 0, agent-stack Zed-parity work): incremental UTF-8
+# decoding in the SSE stream decoders — the published crate corrupts multi-byte
+# chars split across HTTP chunk boundaries (from_utf8_lossy on raw chunks).
+# Guard: `cersei_provider::utf8::ATLAS_UTF8_PATCH` (see src-tauri/src/lib.rs).
+cersei-provider = { path = "vendor/cersei-provider" }
+# Phase 2: cersei-agent vendored for the tool-cancel race fix — the published
+# runner never raced `tool.execute()` against the cancel token (writes landed
+# after Stop) and left orphaned `tool_use` blocks in provider history on cancel.
+# Guard: `cersei_agent::ATLAS_CANCEL_PATCH`.
+cersei-agent = { path = "vendor/cersei-agent" }
+
+# Release profile — Atlas previously shipped with Cargo defaults
+# (lto = false, codegen-units = 16, no strip), which means the bundled .app
+# binary was substantially larger and slower than necessary.
+#
+# Trade-off: `bun run build:app` link time roughly doubles on clean builds
+# (~30 s → ~60–90 s). Dev (`tauri dev`) is unaffected — these are
+# release-only settings.
+[profile.release]
+codegen-units = 1   # Single codegen unit → better cross-function inlining
+lto = "fat"         # Fat LTO: maximum cross-crate dead-code elimination +
+                    # inlining (smaller binary; ~2× link time vs thin)
+strip = "symbols"   # Smaller .app bundle, faster dyld load
+panic = "unwind"    # REQUIRED — three independent `catch_unwind` guards depend on
+                    # it, so this survived the local-LLM removal:
+                    #  1. atlas-embed's EMBEDDER catches candle's Metal
+                    #     kernel-compile panic (at load AND per forward) to fall
+                    #     back to CPU rather than crash.
+                    #  2. commands/capture.rs guards its worker threads — a
+                    #     panicking worker is silent capture loss.
+                    #  3. atlas-checkpoint wraps atlas-redact, so a redaction
+                    #     panic can never leak unredacted text.
+                    # `abort` would turn each of these into an app crash. Costs a
+                    # little binary size for unwind tables.
+opt-level = 3       # Default for release, restated for clarity
+
+# Dev profile — Atlas's own app crate is small (~170 LOC + a handful of
+# command modules). Keep it at the default `opt-level = 0` so incremental
+# rebuilds stay snappy. Its per-package stanza is deliberately absent below.
+[profile.dev]
+
+# Optimize ALL transitive dependencies in dev mode at `opt-level = 1`
+# (Tauri, wry, tao, tokio, serde, reqwest, the vendored cersei forks, etc.).
+# First clean build pays a one-time ~3–5 minute cost; subsequent rebuilds only
+# recompile the app crate and are unaffected. Net effect: `bunx tauri dev`
+# startup drops noticeably because Tauri's runtime is no longer running
+# unoptimized debug code.
+[profile.dev.package."*"]
+opt-level = 1
+
+# `"*"` above reaches dependencies ONLY — workspace members are excluded from
+# it by cargo. Before the workspace, every `crates/atlas-*` package was a plain
+# path dependency of src-tauri and therefore covered; as members they would
+# silently drop to opt-level 0 and `tauri dev` would run the ACP stack, the
+# terminal, the embedder and the RAG engine unoptimized. Restating the level
+# per member is the only way to express "unchanged" (D4: "preserve dev-profile
+# opt-levels for workspace members explicitly").
+#
+# Adding a member means adding a stanza here; `tests/cargo-workspace.test.ts`
+# fails if one is missing.
+[profile.dev.package.atlas-acp-thread]
+opt-level = 1
+[profile.dev.package.atlas-agent-delta]
+opt-level = 1
+[profile.dev.package.atlas-agent-manager]
+opt-level = 1
+[profile.dev.package.atlas-agent-servers]
+opt-level = 1
+[profile.dev.package.atlas-agent-store]
+opt-level = 1
+[profile.dev.package.atlas-agent-transcript]
+opt-level = 1
+[profile.dev.package.atlas-agent-wire]
+opt-level = 1
+[profile.dev.package.atlas-bus]
+opt-level = 1
+[profile.dev.package.atlas-cersei]
+opt-level = 1
+[profile.dev.package.atlas-checkpoint]
+opt-level = 1
+[profile.dev.package.atlas-codeindex]
+opt-level = 1
+[profile.dev.package.atlas-embed]
+opt-level = 1
+[profile.dev.package.atlas-git]
+opt-level = 1
+[profile.dev.package.atlas-gitdiff]
+opt-level = 1
+[profile.dev.package.atlas-memory]
+opt-level = 1
+[profile.dev.package.atlas-native-agent]
+opt-level = 1
+[profile.dev.package.atlas-redact]
+opt-level = 1
+[profile.dev.package.atlas-terminal]
+opt-level = 1
+[profile.dev.package.atlas-thread-metadata]
+opt-level = 1
