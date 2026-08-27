@@ -1,0 +1,1193 @@
+use std::collections::HashMap;
+use std::string::String;
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::Context;
+use anyhow::Result;
+use anyhow::anyhow;
+use anyhow::bail;
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use codex_exec_server::HttpClient;
+use rmcp::transport::AuthorizationManager;
+use rmcp::transport::AuthorizationSession;
+use rmcp::transport::auth::OAuthClientConfig;
+use rmcp::transport::auth::OAuthHttpClient;
+use rmcp::transport::auth::OAuthState;
+use sha2::Digest;
+use sha2::Sha256;
+use tiny_http::Response;
+use tiny_http::Server;
+use tokio::sync::oneshot;
+use tokio::time::timeout;
+use url::Url;
+use urlencoding::decode;
+
+use crate::StoredOAuthTokens;
+use crate::WrappedOAuthTokenResponse;
+use crate::http_client_adapter::StreamableHttpRedirectMode;
+use crate::oauth::compute_expires_at_millis;
+use crate::oauth_client_registration::McpOAuthClientRegistration;
+use crate::oauth_client_registration::start_authorization as start_client_registration;
+use crate::oauth_http_client::OAuthHttpClientAdapter;
+use crate::save_oauth_tokens;
+use crate::utils::build_default_headers;
+use codex_config::types::AuthKeyringBackendKind;
+use codex_config::types::OAuthCredentialsStoreMode;
+
+struct OAuthHttpContext {
+    http_headers: Option<HashMap<String, String>>,
+    env_http_headers: Option<HashMap<String, String>>,
+    http_client: Arc<dyn HttpClient>,
+    redirect_mode: StreamableHttpRedirectMode,
+}
+
+struct CallbackServerGuard {
+    server: Arc<Server>,
+}
+
+impl Drop for CallbackServerGuard {
+    fn drop(&mut self) {
+        self.server.unblock();
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OAuthProviderError {
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
+impl OAuthProviderError {
+    pub fn new(error: Option<String>, error_description: Option<String>) -> Self {
+        Self {
+            error,
+            error_description,
+        }
+    }
+}
+
+impl std::fmt::Display for OAuthProviderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (self.error.as_deref(), self.error_description.as_deref()) {
+            (Some(error), Some(error_description)) => {
+                write!(f, "OAuth provider returned `{error}`: {error_description}")
+            }
+            (Some(error), None) => write!(f, "OAuth provider returned `{error}`"),
+            (None, Some(error_description)) => write!(f, "OAuth error: {error_description}"),
+            (None, None) => write!(f, "OAuth provider returned an error"),
+        }
+    }
+}
+
+impl std::error::Error for OAuthProviderError {}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn perform_oauth_login(
+    server_name: &str,
+    server_url: &str,
+    store_mode: OAuthCredentialsStoreMode,
+    keyring_backend_kind: AuthKeyringBackendKind,
+    http_headers: Option<HashMap<String, String>>,
+    env_http_headers: Option<HashMap<String, String>>,
+    scopes: &[String],
+    oauth_client_id: Option<&str>,
+    client_registration: McpOAuthClientRegistration,
+    oauth_resource: Option<&str>,
+    callback_port: Option<u16>,
+    callback_url: Option<&str>,
+    http_client: Arc<dyn HttpClient>,
+) -> Result<()> {
+    perform_oauth_login_with_browser_output(
+        server_name,
+        server_url,
+        store_mode,
+        keyring_backend_kind,
+        http_headers,
+        env_http_headers,
+        scopes,
+        oauth_client_id,
+        client_registration,
+        oauth_resource,
+        callback_port,
+        callback_url,
+        http_client,
+        /*emit_browser_url*/ true,
+        StreamableHttpRedirectMode::Legacy,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn perform_oauth_login_silent(
+    server_name: &str,
+    server_url: &str,
+    store_mode: OAuthCredentialsStoreMode,
+    keyring_backend_kind: AuthKeyringBackendKind,
+    http_headers: Option<HashMap<String, String>>,
+    env_http_headers: Option<HashMap<String, String>>,
+    scopes: &[String],
+    oauth_client_id: Option<&str>,
+    client_registration: McpOAuthClientRegistration,
+    oauth_resource: Option<&str>,
+    callback_port: Option<u16>,
+    callback_url: Option<&str>,
+    http_client: Arc<dyn HttpClient>,
+    redirect_mode: StreamableHttpRedirectMode,
+) -> Result<()> {
+    perform_oauth_login_with_browser_output(
+        server_name,
+        server_url,
+        store_mode,
+        keyring_backend_kind,
+        http_headers,
+        env_http_headers,
+        scopes,
+        oauth_client_id,
+        client_registration,
+        oauth_resource,
+        callback_port,
+        callback_url,
+        http_client,
+        /*emit_browser_url*/ false,
+        redirect_mode,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn perform_oauth_login_with_browser_output(
+    server_name: &str,
+    server_url: &str,
+    store_mode: OAuthCredentialsStoreMode,
+    keyring_backend_kind: AuthKeyringBackendKind,
+    http_headers: Option<HashMap<String, String>>,
+    env_http_headers: Option<HashMap<String, String>>,
+    scopes: &[String],
+    oauth_client_id: Option<&str>,
+    client_registration: McpOAuthClientRegistration,
+    oauth_resource: Option<&str>,
+    callback_port: Option<u16>,
+    callback_url: Option<&str>,
+    http_client: Arc<dyn HttpClient>,
+    emit_browser_url: bool,
+    redirect_mode: StreamableHttpRedirectMode,
+) -> Result<()> {
+    let http_context = OAuthHttpContext {
+        http_headers,
+        env_http_headers,
+        http_client,
+        redirect_mode,
+    };
+    OauthLoginFlow::new(
+        server_name,
+        server_url,
+        store_mode,
+        keyring_backend_kind,
+        http_context,
+        scopes,
+        oauth_client_id,
+        client_registration,
+        oauth_resource,
+        /*launch_browser*/ true,
+        callback_port,
+        callback_url,
+        /*timeout_secs*/ None,
+    )
+    .await?
+    .finish(emit_browser_url)
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn perform_oauth_login_return_url(
+    server_name: &str,
+    server_url: &str,
+    store_mode: OAuthCredentialsStoreMode,
+    keyring_backend_kind: AuthKeyringBackendKind,
+    http_headers: Option<HashMap<String, String>>,
+    env_http_headers: Option<HashMap<String, String>>,
+    scopes: &[String],
+    oauth_client_id: Option<&str>,
+    client_registration: McpOAuthClientRegistration,
+    oauth_resource: Option<&str>,
+    timeout_secs: Option<i64>,
+    callback_port: Option<u16>,
+    callback_url: Option<&str>,
+    http_client: Arc<dyn HttpClient>,
+    redirect_mode: StreamableHttpRedirectMode,
+) -> Result<OauthLoginHandle> {
+    let http_context = OAuthHttpContext {
+        http_headers,
+        env_http_headers,
+        http_client,
+        redirect_mode,
+    };
+    let flow = OauthLoginFlow::new(
+        server_name,
+        server_url,
+        store_mode,
+        keyring_backend_kind,
+        http_context,
+        scopes,
+        oauth_client_id,
+        client_registration,
+        oauth_resource,
+        /*launch_browser*/ false,
+        callback_port,
+        callback_url,
+        timeout_secs,
+    )
+    .await?;
+
+    let authorization_url = flow.authorization_url();
+    let completion = flow.spawn();
+
+    Ok(OauthLoginHandle::new(authorization_url, completion))
+}
+
+fn spawn_callback_server(
+    server: Arc<Server>,
+    tx: oneshot::Sender<CallbackResult>,
+    expected_callback_path: String,
+) {
+    tokio::task::spawn_blocking(move || {
+        while let Ok(request) = server.recv() {
+            let path = request.url().to_string();
+            match parse_oauth_callback(&path, &expected_callback_path) {
+                CallbackOutcome::Success(OauthCallbackResult {
+                    code,
+                    state,
+                    issuer,
+                }) => {
+                    let response = Response::from_string(
+                        "Authentication complete. You may close this window.",
+                    );
+                    if let Err(err) = request.respond(response) {
+                        eprintln!("Failed to respond to OAuth callback: {err}");
+                    }
+                    if let Err(err) = tx.send(CallbackResult::Success(OauthCallbackResult {
+                        code,
+                        state,
+                        issuer,
+                    })) {
+                        eprintln!("Failed to send OAuth callback: {err:?}");
+                    }
+                    break;
+                }
+                CallbackOutcome::Error(error) => {
+                    let response = Response::from_string(error.to_string()).with_status_code(400);
+                    if let Err(err) = request.respond(response) {
+                        eprintln!("Failed to respond to OAuth callback: {err}");
+                    }
+                    if let Err(err) = tx.send(CallbackResult::Error(error)) {
+                        eprintln!("Failed to send OAuth callback error: {err:?}");
+                    }
+                    break;
+                }
+                CallbackOutcome::Invalid => {
+                    let response =
+                        Response::from_string("Invalid OAuth callback").with_status_code(400);
+                    if let Err(err) = request.respond(response) {
+                        eprintln!("Failed to respond to OAuth callback: {err}");
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OauthCallbackResult {
+    code: String,
+    state: String,
+    issuer: Option<String>,
+}
+
+#[derive(Debug)]
+enum CallbackResult {
+    Success(OauthCallbackResult),
+    Error(OAuthProviderError),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum CallbackOutcome {
+    Success(OauthCallbackResult),
+    Error(OAuthProviderError),
+    Invalid,
+}
+
+fn parse_oauth_callback(path: &str, expected_callback_path: &str) -> CallbackOutcome {
+    let Some((route, query)) = path.split_once('?') else {
+        return CallbackOutcome::Invalid;
+    };
+    if route != expected_callback_path {
+        return CallbackOutcome::Invalid;
+    }
+
+    let mut code = None;
+    let mut state = None;
+    let mut error = None;
+    let mut error_description = None;
+    let mut issuer = None;
+
+    for pair in query.split('&') {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        let Ok(decoded) = decode(value) else {
+            continue;
+        };
+        let decoded = decoded.into_owned();
+        match key {
+            "code" => code = Some(decoded),
+            "state" => state = Some(decoded),
+            "error" => error = Some(decoded),
+            "error_description" => error_description = Some(decoded),
+            "iss" => issuer = Some(decoded),
+            _ => {}
+        }
+    }
+
+    if let (Some(code), Some(state)) = (code, state) {
+        return CallbackOutcome::Success(OauthCallbackResult {
+            code,
+            state,
+            issuer,
+        });
+    }
+
+    if error.is_some() || error_description.is_some() {
+        return CallbackOutcome::Error(OAuthProviderError::new(error, error_description));
+    }
+
+    CallbackOutcome::Invalid
+}
+
+pub struct OauthLoginHandle {
+    authorization_url: String,
+    completion: oneshot::Receiver<Result<()>>,
+}
+
+impl OauthLoginHandle {
+    fn new(authorization_url: String, completion: oneshot::Receiver<Result<()>>) -> Self {
+        Self {
+            authorization_url,
+            completion,
+        }
+    }
+
+    pub fn authorization_url(&self) -> &str {
+        &self.authorization_url
+    }
+
+    pub fn into_parts(self) -> (String, oneshot::Receiver<Result<()>>) {
+        (self.authorization_url, self.completion)
+    }
+
+    pub async fn wait(self) -> Result<()> {
+        self.completion
+            .await
+            .map_err(|err| anyhow!("OAuth login task was cancelled: {err}"))?
+    }
+}
+
+struct OauthLoginFlow {
+    auth_url: String,
+    oauth_state: OAuthState,
+    rx: oneshot::Receiver<CallbackResult>,
+    guard: CallbackServerGuard,
+    server_name: String,
+    server_url: String,
+    store_mode: OAuthCredentialsStoreMode,
+    keyring_backend_kind: AuthKeyringBackendKind,
+    launch_browser: bool,
+    timeout: Duration,
+}
+
+fn resolve_callback_port(callback_port: Option<u16>) -> Result<Option<u16>> {
+    if let Some(config_port) = callback_port {
+        if config_port == 0 {
+            bail!(
+                "invalid MCP OAuth callback port `{config_port}`: port must be between 1 and 65535"
+            );
+        }
+        return Ok(Some(config_port));
+    }
+
+    Ok(None)
+}
+
+fn local_redirect_uri(server: &Server) -> Result<String> {
+    match server.server_addr() {
+        tiny_http::ListenAddr::IP(std::net::SocketAddr::V4(addr)) => {
+            let ip = addr.ip();
+            let port = addr.port();
+            Ok(format!("http://{ip}:{port}/callback"))
+        }
+        tiny_http::ListenAddr::IP(std::net::SocketAddr::V6(addr)) => {
+            let ip = addr.ip();
+            let port = addr.port();
+            Ok(format!("http://[{ip}]:{port}/callback"))
+        }
+        #[cfg(not(target_os = "windows"))]
+        _ => Err(anyhow!("unable to determine callback address")),
+    }
+}
+
+fn resolve_redirect_uri(server: &Server, callback_url: Option<&str>) -> Result<String> {
+    let Some(callback_url) = callback_url else {
+        return local_redirect_uri(server);
+    };
+    Url::parse(callback_url)
+        .with_context(|| format!("invalid MCP OAuth callback URL `{callback_url}`"))?;
+    Ok(callback_url.to_string())
+}
+
+fn callback_id_from_server_url(server_url: &str) -> Result<String> {
+    // Native Codex callback IDs intentionally hash the complete MCP URL (minus its fragment)
+    // with SHA-256. Python connector callback IDs use SHAKE-256 over the origin and are distinct.
+    let mut parsed =
+        Url::parse(server_url).with_context(|| format!("invalid MCP server URL `{server_url}`"))?;
+    parsed
+        .host_str()
+        .ok_or_else(|| anyhow!("MCP server URL `{server_url}` must include a host"))?;
+    parsed.set_fragment(None);
+
+    let digest = Sha256::digest(parsed.as_str().as_bytes());
+    Ok(URL_SAFE_NO_PAD.encode(&digest[..9]))
+}
+
+fn append_callback_id_to_redirect_uri(redirect_uri: &str, callback_id: &str) -> Result<String> {
+    let mut parsed = Url::parse(redirect_uri)
+        .with_context(|| format!("invalid redirect URI `{redirect_uri}`"))?;
+    let path = parsed.path();
+    let new_path = if path.ends_with('/') {
+        format!("{path}{callback_id}")
+    } else {
+        format!("{path}/{callback_id}")
+    };
+    parsed.set_path(&new_path);
+    Ok(parsed.to_string())
+}
+
+fn callback_path_from_redirect_uri(redirect_uri: &str) -> Result<String> {
+    let parsed = Url::parse(redirect_uri)
+        .with_context(|| format!("invalid redirect URI `{redirect_uri}`"))?;
+    Ok(parsed.path().to_string())
+}
+
+fn callback_bind_host(callback_url: Option<&str>) -> &'static str {
+    let Some(callback_url) = callback_url else {
+        return "127.0.0.1";
+    };
+
+    let Ok(parsed) = Url::parse(callback_url) else {
+        return "127.0.0.1";
+    };
+
+    match parsed.host_str() {
+        Some("localhost" | "127.0.0.1" | "::1") | None => "127.0.0.1",
+        Some(_) => "0.0.0.0",
+    }
+}
+
+impl OauthLoginFlow {
+    #[allow(clippy::too_many_arguments)]
+    async fn new(
+        server_name: &str,
+        server_url: &str,
+        store_mode: OAuthCredentialsStoreMode,
+        keyring_backend_kind: AuthKeyringBackendKind,
+        http_context: OAuthHttpContext,
+        scopes: &[String],
+        oauth_client_id: Option<&str>,
+        client_registration: McpOAuthClientRegistration,
+        oauth_resource: Option<&str>,
+        launch_browser: bool,
+        callback_port: Option<u16>,
+        callback_url: Option<&str>,
+        timeout_secs: Option<i64>,
+    ) -> Result<Self> {
+        const DEFAULT_OAUTH_TIMEOUT_SECS: i64 = 300;
+
+        let bind_host = callback_bind_host(callback_url);
+        let callback_port = resolve_callback_port(callback_port)?;
+        let bind_addr = match callback_port {
+            Some(port) => format!("{bind_host}:{port}"),
+            None => format!("{bind_host}:0"),
+        };
+
+        let server = Arc::new(Server::http(&bind_addr).map_err(|err| anyhow!(err))?);
+        let guard = CallbackServerGuard {
+            server: Arc::clone(&server),
+        };
+
+        let redirect_uri = resolve_redirect_uri(&server, callback_url)?;
+        let callback_id = callback_id_from_server_url(server_url)?;
+        let redirect_uri = append_callback_id_to_redirect_uri(&redirect_uri, &callback_id)?;
+        let callback_path = callback_path_from_redirect_uri(&redirect_uri)?;
+
+        let (tx, rx) = oneshot::channel();
+        spawn_callback_server(server, tx, callback_path);
+
+        let OAuthHttpContext {
+            http_headers,
+            env_http_headers,
+            http_client,
+            redirect_mode,
+        } = http_context;
+        let has_configured_headers = http_headers
+            .as_ref()
+            .is_some_and(|headers| !headers.is_empty())
+            || env_http_headers
+                .as_ref()
+                .is_some_and(|headers| !headers.is_empty());
+        let default_headers = build_default_headers(http_headers, env_http_headers)?;
+        let oauth_http_client = Arc::new(OAuthHttpClientAdapter::new_with_redirect_mode(
+            http_client,
+            default_headers,
+            has_configured_headers,
+            redirect_mode,
+        ));
+
+        let scope_refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
+        let oauth_state = if let Some(oauth_client_id) =
+            oauth_client_id.filter(|client_id| !client_id.trim().is_empty())
+        {
+            start_authorization(
+                server_url,
+                oauth_http_client,
+                &scope_refs,
+                &redirect_uri,
+                oauth_client_id,
+            )
+            .await?
+        } else {
+            start_client_registration(
+                server_url,
+                oauth_http_client,
+                &scope_refs,
+                &redirect_uri,
+                &callback_id,
+                client_registration,
+            )
+            .await?
+        };
+        let auth_url = append_query_param(
+            &oauth_state.get_authorization_url().await?,
+            "resource",
+            oauth_resource,
+        );
+        let timeout_secs = timeout_secs.unwrap_or(DEFAULT_OAUTH_TIMEOUT_SECS).max(1);
+        let timeout = Duration::from_secs(timeout_secs as u64);
+
+        Ok(Self {
+            auth_url,
+            oauth_state,
+            rx,
+            guard,
+            server_name: server_name.to_string(),
+            server_url: server_url.to_string(),
+            store_mode,
+            keyring_backend_kind,
+            launch_browser,
+            timeout,
+        })
+    }
+
+    fn authorization_url(&self) -> String {
+        self.auth_url.clone()
+    }
+
+    async fn finish(mut self, emit_browser_url: bool) -> Result<()> {
+        if self.launch_browser {
+            let server_name = &self.server_name;
+            let auth_url = &self.auth_url;
+            if emit_browser_url {
+                println!(
+                    "Authorize `{server_name}` by opening this URL in your browser:\n{auth_url}\n"
+                );
+            }
+
+            if webbrowser::open(auth_url).is_err() {
+                if !emit_browser_url {
+                    eprintln!(
+                        "Authorize `{server_name}` by opening this URL in your browser:\n{auth_url}\n"
+                    );
+                }
+                eprintln!("(Browser launch failed; please copy the URL above manually.)");
+            }
+        }
+
+        let result = async {
+            let callback = timeout(self.timeout, &mut self.rx)
+                .await
+                .context("timed out waiting for OAuth callback")?
+                .context("OAuth callback was cancelled")?;
+            let OauthCallbackResult {
+                code,
+                state: csrf_state,
+                issuer,
+            } = match callback {
+                CallbackResult::Success(callback) => callback,
+                CallbackResult::Error(error) => return Err(anyhow!(error)),
+            };
+
+            self.oauth_state
+                .handle_callback_with_issuer(&code, &csrf_state, issuer.as_deref())
+                .await
+                .context("failed to handle OAuth callback")?;
+
+            let (client_id, credentials_opt) = self
+                .oauth_state
+                .get_credentials()
+                .await
+                .context("failed to retrieve OAuth credentials")?;
+            let credentials = credentials_opt
+                .ok_or_else(|| anyhow!("OAuth provider did not return credentials"))?;
+
+            let expires_at = compute_expires_at_millis(&credentials);
+            let stored = StoredOAuthTokens {
+                server_name: self.server_name.clone(),
+                url: self.server_url.clone(),
+                client_id,
+                token_response: WrappedOAuthTokenResponse(credentials),
+                expires_at,
+            };
+            save_oauth_tokens(
+                &self.server_name,
+                &stored,
+                self.store_mode,
+                self.keyring_backend_kind,
+            )?;
+
+            Ok(())
+        }
+        .await;
+
+        drop(self.guard);
+        result
+    }
+
+    fn spawn(self) -> oneshot::Receiver<Result<()>> {
+        let server_name_for_logging = self.server_name.clone();
+        let (tx, rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let result = self.finish(/*emit_browser_url*/ false).await;
+
+            if let Err(err) = &result {
+                eprintln!(
+                    "Failed to complete OAuth login for '{server_name_for_logging}': {err:#}"
+                );
+            }
+
+            let _ = tx.send(result);
+        });
+
+        rx
+    }
+}
+
+async fn start_authorization(
+    server_url: &str,
+    http_client: Arc<dyn OAuthHttpClient>,
+    scopes: &[&str],
+    redirect_uri: &str,
+    oauth_client_id: &str,
+) -> Result<OAuthState> {
+    let mut auth_manager =
+        AuthorizationManager::new_with_oauth_http_client(server_url, http_client).await?;
+    auth_manager.set_allow_missing_issuer(true);
+    let metadata = auth_manager.resolve_metadata().await?.metadata;
+    auth_manager.set_metadata(metadata);
+    auth_manager.configure_client(
+        OAuthClientConfig::new(oauth_client_id, redirect_uri)
+            .with_scopes(scopes.iter().map(|scope| (*scope).to_string()).collect()),
+    )?;
+    let auth_url = auth_manager.get_authorization_url(scopes).await?;
+
+    Ok(OAuthState::Session(
+        AuthorizationSession::for_scope_upgrade(auth_manager, auth_url, redirect_uri),
+    ))
+}
+
+fn append_query_param(url: &str, key: &str, value: Option<&str>) -> String {
+    let Some(value) = value else {
+        return url.to_string();
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return url.to_string();
+    }
+    if let Ok(mut parsed) = Url::parse(url) {
+        parsed.query_pairs_mut().append_pair(key, value);
+        return parsed.to_string();
+    }
+    let encoded = urlencoding::encode(value);
+    let separator = if url.contains('?') { "&" } else { "?" };
+    format!("{url}{separator}{key}={encoded}")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    use axum::Json;
+    use axum::Router;
+    use axum::routing::get;
+    use axum::routing::post;
+    use codex_config::types::AuthKeyringBackendKind;
+    use codex_config::types::OAuthCredentialsStoreMode;
+    use codex_exec_server::ExecServerError;
+    use codex_exec_server::HttpClient;
+    use codex_exec_server::HttpRequestParams;
+    use codex_exec_server::HttpRequestResponse;
+    use codex_exec_server::HttpResponseBodyStream;
+    use codex_exec_server::RouteAwareHttpClient;
+    use codex_http_client::HttpClientFactory;
+    use codex_http_client::OutboundProxyPolicy;
+    use futures::future::BoxFuture;
+    use http::HeaderMap;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+    use tokio::net::TcpListener;
+    use url::Url;
+
+    use super::CallbackOutcome;
+    use super::McpOAuthClientRegistration;
+    use super::OAuthHttpClientAdapter;
+    use super::OAuthProviderError;
+    use super::StreamableHttpRedirectMode;
+    use super::append_callback_id_to_redirect_uri;
+    use super::append_query_param;
+    use super::callback_id_from_server_url;
+    use super::callback_path_from_redirect_uri;
+    use super::parse_oauth_callback;
+    use super::perform_oauth_login;
+    use super::perform_oauth_login_silent;
+    use super::start_authorization;
+
+    #[derive(Default)]
+    struct RecordingHttpClient {
+        requests: AtomicUsize,
+    }
+
+    impl HttpClient for RecordingHttpClient {
+        fn http_request(
+            &self,
+            _params: HttpRequestParams,
+        ) -> BoxFuture<'_, Result<HttpRequestResponse, ExecServerError>> {
+            Box::pin(async {
+                Err(ExecServerError::HttpRequest(
+                    "unexpected buffered OAuth request".to_string(),
+                ))
+            })
+        }
+
+        fn http_request_stream(
+            &self,
+            _params: HttpRequestParams,
+        ) -> BoxFuture<'_, Result<(HttpRequestResponse, HttpResponseBodyStream), ExecServerError>>
+        {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {
+                Err(ExecServerError::HttpRequest(
+                    "configured OAuth client was used".to_string(),
+                ))
+            })
+        }
+    }
+
+    async fn spawn_oauth_metadata_server() -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind metadata listener");
+        let addr = listener.local_addr().expect("read metadata listener addr");
+        let base_url = format!("http://{addr}");
+        let metadata = json!({
+            "issuer": format!("{base_url}/mcp"),
+            "authorization_endpoint": format!("{base_url}/oauth/authorize"),
+            "token_endpoint": format!("{base_url}/oauth/token"),
+            "registration_endpoint": format!("{base_url}/oauth/register"),
+            "scopes_supported": ["read", "offline_access"],
+        });
+        let registration_requests = Arc::new(AtomicUsize::new(0));
+        let captured_registration_requests = Arc::clone(&registration_requests);
+        let path_scoped_metadata = metadata.clone();
+        let app = Router::new()
+            .route(
+                "/.well-known/oauth-authorization-server/mcp",
+                get(move || {
+                    let metadata = path_scoped_metadata.clone();
+                    async move { Json(metadata) }
+                }),
+            )
+            .route(
+                "/.well-known/oauth-authorization-server",
+                get(move || {
+                    let metadata = metadata.clone();
+                    async move { Json(metadata) }
+                }),
+            )
+            .route(
+                "/oauth/register",
+                post(move || {
+                    let registration_requests = Arc::clone(&captured_registration_requests);
+                    async move {
+                        registration_requests.fetch_add(1, Ordering::SeqCst);
+                        Json(json!({"client_id": "unexpected-dynamic-client"}))
+                    }
+                }),
+            );
+
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve oauth metadata");
+        });
+
+        (base_url, registration_requests)
+    }
+
+    #[tokio::test]
+    async fn configured_client_preserves_exact_scopes_and_redirect_without_registration() {
+        for (scopes, expected_scope) in [(&[][..], None), (&["read"][..], Some("read"))] {
+            let (base_url, registration_requests) = spawn_oauth_metadata_server().await;
+            let redirect_uri = "http://127.0.0.1:43123/callback/configured-client";
+            let oauth_state = start_authorization(
+                &format!("{base_url}/mcp"),
+                Arc::new(OAuthHttpClientAdapter::new(
+                    Arc::new(RouteAwareHttpClient::new(HttpClientFactory::new(
+                        OutboundProxyPolicy::ReqwestDefault,
+                    ))),
+                    HeaderMap::new(),
+                )),
+                scopes,
+                redirect_uri,
+                "eci-prd-pub-codex-123",
+            )
+            .await
+            .expect("start pre-registered OAuth authorization");
+
+            let authorization_url = oauth_state
+                .get_authorization_url()
+                .await
+                .expect("read authorization URL");
+            let query = Url::parse(&authorization_url)
+                .expect("authorization URL should parse")
+                .query_pairs()
+                .into_owned()
+                .collect::<HashMap<String, String>>();
+
+            assert_eq!(
+                query.get("client_id").map(String::as_str),
+                Some("eci-prd-pub-codex-123")
+            );
+            assert_eq!(
+                query.get("redirect_uri").map(String::as_str),
+                Some(redirect_uri)
+            );
+            assert_eq!(query.get("scope").map(String::as_str), expected_scope);
+            assert_eq!(registration_requests.load(Ordering::SeqCst), 0);
+        }
+    }
+    #[tokio::test]
+    async fn oauth_callback_validates_rfc_9207_issuer_before_token_exchange() {
+        for (supports_issuer, callback_issuer, expected_token_requests) in [
+            (true, Some("matching"), 1),
+            (true, Some("mismatched"), 0),
+            (true, None, 0),
+            (false, Some("mismatched"), 0),
+            (false, None, 1),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind authorization metadata listener");
+            let issuer = format!(
+                "http://{}",
+                listener.local_addr().expect("read listener address")
+            );
+            let token_requests = Arc::new(AtomicUsize::new(0));
+            let captured_token_requests = Arc::clone(&token_requests);
+            let authorization_issuer = format!("{issuer}/mcp");
+            let metadata = json!({
+                "issuer": authorization_issuer,
+                "authorization_endpoint": format!("{issuer}/authorize"),
+                "token_endpoint": format!("{issuer}/token"),
+                "authorization_response_iss_parameter_supported": supports_issuer,
+            });
+            let scoped_metadata = metadata.clone();
+            let app = Router::new()
+                .route(
+                    "/.well-known/oauth-authorization-server/mcp",
+                    get(move || {
+                        let metadata = scoped_metadata.clone();
+                        async move { Json(metadata) }
+                    }),
+                )
+                .route(
+                    "/.well-known/oauth-authorization-server",
+                    get(move || {
+                        let metadata = metadata.clone();
+                        async move { Json(metadata) }
+                    }),
+                )
+                .route(
+                    "/token",
+                    post(move || {
+                        let token_requests = Arc::clone(&captured_token_requests);
+                        async move {
+                            token_requests.fetch_add(1, Ordering::SeqCst);
+                            Json(json!({"access_token":"test-token","token_type":"Bearer"}))
+                        }
+                    }),
+                );
+            let server = tokio::spawn(async move {
+                axum::serve(listener, app)
+                    .await
+                    .expect("serve authorization metadata fixture");
+            });
+            let mut state = start_authorization(
+                &format!("{issuer}/mcp"),
+                Arc::new(OAuthHttpClientAdapter::new(
+                    Arc::new(RouteAwareHttpClient::new(HttpClientFactory::new(
+                        OutboundProxyPolicy::ReqwestDefault,
+                    ))),
+                    HeaderMap::new(),
+                )),
+                &[],
+                "http://127.0.0.1/callback",
+                "test-client",
+            )
+            .await
+            .expect("start issuer-aware authorization");
+            let csrf_state = Url::parse(
+                &state
+                    .get_authorization_url()
+                    .await
+                    .expect("retrieve authorization URL"),
+            )
+            .expect("parse authorization URL")
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .map(|(_, value)| value.into_owned())
+            .expect("authorization URL should contain state");
+            let callback_issuer = match callback_issuer {
+                Some("matching") => Some(authorization_issuer.as_str()),
+                Some(_) => Some("https://unexpected.example"),
+                None => None,
+            };
+            let result = state
+                .handle_callback_with_issuer("test-code", &csrf_state, callback_issuer)
+                .await;
+
+            assert_eq!(
+                token_requests.load(Ordering::SeqCst),
+                expected_token_requests
+            );
+            assert_eq!(result.is_ok(), expected_token_requests == 1);
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn interactive_oauth_login_uses_supplied_http_client() {
+        let http_client = Arc::new(RecordingHttpClient::default());
+        perform_oauth_login(
+            "configured-client",
+            "http://127.0.0.1:1/mcp",
+            OAuthCredentialsStoreMode::default(),
+            AuthKeyringBackendKind::default(),
+            /*http_headers*/ None,
+            /*env_http_headers*/ None,
+            &[],
+            /*oauth_client_id*/ None,
+            McpOAuthClientRegistration::Auto,
+            /*oauth_resource*/ None,
+            /*callback_port*/ None,
+            /*callback_url*/ None,
+            http_client.clone(),
+        )
+        .await
+        .expect_err("OAuth metadata discovery should fail through the supplied client");
+
+        assert!(http_client.requests.load(Ordering::SeqCst) > 0);
+    }
+
+    #[tokio::test]
+    async fn silent_oauth_login_uses_supplied_http_client() {
+        let http_client = Arc::new(RecordingHttpClient::default());
+        perform_oauth_login_silent(
+            "configured-client",
+            "http://127.0.0.1:1/mcp",
+            OAuthCredentialsStoreMode::default(),
+            AuthKeyringBackendKind::default(),
+            /*http_headers*/ None,
+            /*env_http_headers*/ None,
+            &[],
+            /*oauth_client_id*/ None,
+            McpOAuthClientRegistration::Auto,
+            /*oauth_resource*/ None,
+            /*callback_port*/ None,
+            /*callback_url*/ None,
+            http_client.clone(),
+            StreamableHttpRedirectMode::Legacy,
+        )
+        .await
+        .expect_err("OAuth metadata discovery should fail through the supplied client");
+
+        assert!(http_client.requests.load(Ordering::SeqCst) > 0);
+    }
+
+    #[test]
+    fn parse_oauth_callback_accepts_default_path() {
+        let parsed = parse_oauth_callback("/callback?code=abc&state=xyz", "/callback");
+        assert!(matches!(parsed, CallbackOutcome::Success(_)));
+    }
+
+    #[test]
+    fn parse_oauth_callback_preserves_rfc_9207_issuer() {
+        let parsed = parse_oauth_callback(
+            "/callback?code=abc&state=xyz&iss=https%3A%2F%2Fissuer.example",
+            "/callback",
+        );
+        assert_eq!(
+            parsed,
+            CallbackOutcome::Success(super::OauthCallbackResult {
+                code: "abc".to_string(),
+                state: "xyz".to_string(),
+                issuer: Some("https://issuer.example".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_oauth_callback_accepts_custom_path() {
+        let parsed = parse_oauth_callback("/oauth/callback?code=abc&state=xyz", "/oauth/callback");
+        assert!(matches!(parsed, CallbackOutcome::Success(_)));
+    }
+
+    #[test]
+    fn parse_oauth_callback_accepts_callback_id_path() {
+        let parsed =
+            parse_oauth_callback("/callback/abc123?code=abc&state=xyz", "/callback/abc123");
+        assert!(matches!(parsed, CallbackOutcome::Success(_)));
+    }
+
+    #[test]
+    fn parse_oauth_callback_rejects_missing_callback_id_path() {
+        let parsed = parse_oauth_callback("/callback?code=abc&state=xyz", "/callback/abc123");
+        assert!(matches!(parsed, CallbackOutcome::Invalid));
+    }
+
+    #[test]
+    fn parse_oauth_callback_rejects_wrong_path() {
+        let parsed = parse_oauth_callback("/callback?code=abc&state=xyz", "/oauth/callback");
+        assert!(matches!(parsed, CallbackOutcome::Invalid));
+    }
+
+    #[test]
+    fn parse_oauth_callback_returns_provider_error() {
+        let parsed = parse_oauth_callback(
+            "/callback?error=invalid_scope&error_description=scope%20rejected",
+            "/callback",
+        );
+
+        assert_eq!(
+            parsed,
+            CallbackOutcome::Error(OAuthProviderError::new(
+                Some("invalid_scope".to_string()),
+                Some("scope rejected".to_string()),
+            ))
+        );
+    }
+
+    #[test]
+    fn callback_path_comes_from_redirect_uri() {
+        let path = callback_path_from_redirect_uri("https://example.com/oauth/callback")
+            .expect("redirect URI should parse");
+        assert_eq!(path, "/oauth/callback");
+    }
+
+    #[test]
+    fn callback_id_is_bound_to_server_url() {
+        let callback_id = callback_id_from_server_url("https://mcp.example.com/mcp?tenant=one")
+            .expect("server URL should parse");
+        let same_without_fragment =
+            callback_id_from_server_url("https://mcp.example.com/mcp?tenant=one#unused")
+                .expect("server URL should parse");
+        let different_path = callback_id_from_server_url("https://mcp.example.com/sse?tenant=one")
+            .expect("server URL should parse");
+        let different_query = callback_id_from_server_url("https://mcp.example.com/mcp?tenant=two")
+            .expect("server URL should parse");
+        let different_origin = callback_id_from_server_url("https://mcp.example.com:8443/mcp")
+            .expect("server URL should parse");
+
+        assert_eq!(callback_id, same_without_fragment);
+        assert_ne!(callback_id, different_path);
+        assert_ne!(callback_id, different_query);
+        assert_ne!(callback_id, different_origin);
+        assert_eq!(callback_id, "XuuuHAzzHOni");
+    }
+
+    #[test]
+    fn callback_id_is_appended_to_redirect_uri_path() {
+        let redirect_uri =
+            append_callback_id_to_redirect_uri("http://127.0.0.1:1234/callback", "abc123")
+                .expect("redirect URI should parse");
+
+        assert_eq!(redirect_uri, "http://127.0.0.1:1234/callback/abc123");
+    }
+
+    #[test]
+    fn callback_id_is_appended_before_redirect_uri_query() {
+        let redirect_uri = append_callback_id_to_redirect_uri(
+            "https://callbacks.example.com/oauth/callback?provider=github",
+            "abc123",
+        )
+        .expect("redirect URI should parse");
+
+        assert_eq!(
+            redirect_uri,
+            "https://callbacks.example.com/oauth/callback/abc123?provider=github"
+        );
+    }
+
+    #[test]
+    fn append_query_param_adds_resource_to_absolute_url() {
+        let url = append_query_param(
+            "https://example.com/authorize?scope=read",
+            "resource",
+            Some("https://api.example.com"),
+        );
+
+        assert_eq!(
+            url,
+            "https://example.com/authorize?scope=read&resource=https%3A%2F%2Fapi.example.com"
+        );
+    }
+
+    #[test]
+    fn append_query_param_ignores_empty_values() {
+        let url = append_query_param(
+            "https://example.com/authorize?scope=read",
+            "resource",
+            Some("   "),
+        );
+
+        assert_eq!(url, "https://example.com/authorize?scope=read");
+    }
+
+    #[test]
+    fn append_query_param_handles_unparseable_url() {
+        let url = append_query_param("not a url", "resource", Some("api/resource"));
+
+        assert_eq!(url, "not a url?resource=api%2Fresource");
+    }
+}

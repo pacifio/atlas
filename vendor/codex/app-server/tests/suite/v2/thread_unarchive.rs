@@ -1,0 +1,355 @@
+use anyhow::Result;
+use app_test_support::MockResponsesConfig;
+use app_test_support::TestAppServer;
+use app_test_support::create_mock_responses_server_repeating_assistant;
+use app_test_support::to_response;
+use codex_app_server::in_process;
+use codex_app_server::in_process::InProcessStartArgs;
+use codex_app_server_protocol::ClientInfo;
+use codex_app_server_protocol::ClientRequest;
+use codex_app_server_protocol::InitializeCapabilities;
+use codex_app_server_protocol::InitializeParams;
+use codex_app_server_protocol::JSONRPCResponse;
+use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::ThreadArchiveParams;
+use codex_app_server_protocol::ThreadArchiveResponse;
+use codex_app_server_protocol::ThreadReadParams;
+use codex_app_server_protocol::ThreadReadResponse;
+use codex_app_server_protocol::ThreadSection;
+use codex_app_server_protocol::ThreadSectionMoveParams;
+use codex_app_server_protocol::ThreadSectionMoveResponse;
+use codex_app_server_protocol::ThreadStartParams;
+use codex_app_server_protocol::ThreadStartResponse;
+use codex_app_server_protocol::ThreadStatus;
+use codex_app_server_protocol::ThreadUnarchiveParams;
+use codex_app_server_protocol::ThreadUnarchiveResponse;
+use codex_app_server_protocol::ThreadUnarchivedNotification;
+use codex_app_server_protocol::TurnStartParams;
+use codex_app_server_protocol::TurnStartResponse;
+use codex_app_server_protocol::UserInput;
+use codex_arg0::Arg0DispatchPaths;
+use codex_config::CloudConfigBundleLoader;
+use codex_config::LoaderOverrides;
+use codex_core::config::ConfigBuilder;
+use codex_core::find_archived_thread_path_by_id_str;
+use codex_core::find_thread_path_by_id_str;
+use codex_exec_server::EnvironmentManager;
+use codex_feedback::CodexFeedback;
+use codex_protocol::ThreadId;
+use codex_protocol::models::BaseInstructions;
+use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::ThreadMemoryMode;
+use codex_state::PINNED_THREAD_SECTION_ID;
+use codex_state::PINNED_THREAD_SECTION_NAME;
+use codex_thread_store::CreateThreadParams;
+use codex_thread_store::InMemoryThreadStore;
+use codex_thread_store::ThreadMetadataPatch;
+use codex_thread_store::ThreadPersistenceMetadata;
+use codex_thread_store::ThreadStore;
+use codex_thread_store::UpdateThreadMetadataParams;
+use pretty_assertions::assert_eq;
+use serde_json::Value;
+use std::fs::FileTimes;
+use std::fs::OpenOptions;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+use std::time::SystemTime;
+use tempfile::TempDir;
+use tokio::time::timeout;
+use uuid::Uuid;
+
+const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+#[tokio::test]
+async fn thread_unarchive_moves_rollout_back_into_sessions_directory() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
+
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
+        .await?;
+
+    let start_id = mcp
+        .send_thread_start_request_with_auto_env(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let ThreadStartResponse { thread, .. } =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(start_id)).await??;
+
+    let rollout_path = thread.path.clone().expect("thread path");
+
+    let turn_start_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            client_user_message_id: None,
+            input: vec![UserInput::Text {
+                text: "materialize".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let _: TurnStartResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(turn_start_id)).await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let pinned_section = ThreadSection {
+        id: PINNED_THREAD_SECTION_ID.to_string(),
+        name: PINNED_THREAD_SECTION_NAME.to_string(),
+        appearance: None,
+    };
+    let pin_id = mcp
+        .send_thread_section_move_request(ThreadSectionMoveParams {
+            thread_id: thread.id.clone(),
+            section_id: Some(PINNED_THREAD_SECTION_ID.to_string()),
+            before_thread_id: None,
+        })
+        .await?;
+    let _: ThreadSectionMoveResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(pin_id)).await??;
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id.clone(),
+            include_turns: false,
+        })
+        .await?;
+    let ThreadReadResponse {
+        thread: pinned_thread,
+    } = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(read_id)).await??;
+    assert_eq!(pinned_thread.section, Some(pinned_section.clone()));
+    let pinned_entered_at = pinned_thread
+        .section_entered_at
+        .expect("pinned thread should have a section entry timestamp");
+
+    let found_rollout_path =
+        find_thread_path_by_id_str(codex_home.path(), &thread.id, /*state_db_ctx*/ None)
+            .await?
+            .expect("expected rollout path for thread id to exist");
+    assert_paths_match_on_disk(&found_rollout_path, &rollout_path)?;
+
+    let archive_id = mcp
+        .send_thread_archive_request(ThreadArchiveParams {
+            thread_id: thread.id.clone(),
+        })
+        .await?;
+    let _: ThreadArchiveResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(archive_id)).await??;
+
+    let archived_path = find_archived_thread_path_by_id_str(
+        codex_home.path(),
+        &thread.id,
+        /*state_db_ctx*/ None,
+    )
+    .await?
+    .expect("expected archived rollout path for thread id to exist");
+    let archived_path_display = archived_path.display();
+    assert!(
+        archived_path.exists(),
+        "expected {archived_path_display} to exist"
+    );
+    let old_time = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+    let old_timestamp = old_time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("old timestamp")
+        .as_secs() as i64;
+    let times = FileTimes::new().set_modified(old_time);
+    OpenOptions::new()
+        .append(true)
+        .open(&archived_path)?
+        .set_times(times)?;
+
+    let unarchive_id = mcp
+        .send_thread_unarchive_request(ThreadUnarchiveParams {
+            thread_id: thread.id.clone(),
+        })
+        .await?;
+    let unarchive_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(unarchive_id)),
+    )
+    .await??;
+    let unarchive_result = unarchive_resp.result.clone();
+    let ThreadUnarchiveResponse {
+        thread: unarchived_thread,
+    } = to_response::<ThreadUnarchiveResponse>(unarchive_resp)?;
+    let unarchived_notification: ThreadUnarchivedNotification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_notification("thread/unarchived"),
+    )
+    .await??;
+    assert_eq!(unarchived_notification.thread_id, thread.id);
+    assert_eq!(unarchived_thread.section, Some(pinned_section.clone()));
+    assert_eq!(
+        unarchived_thread.section_entered_at,
+        Some(pinned_entered_at)
+    );
+    assert!(
+        unarchived_thread.updated_at > old_timestamp,
+        "expected updated_at to be bumped on unarchive"
+    );
+    assert_eq!(unarchived_thread.status, ThreadStatus::NotLoaded);
+
+    // Wire contract: thread title field is `name`, serialized as null when unset.
+    let thread_json = unarchive_result
+        .get("thread")
+        .and_then(Value::as_object)
+        .expect("thread/unarchive result.thread must be an object");
+    assert_eq!(unarchived_thread.name, None);
+    assert_eq!(
+        thread_json.get("section"),
+        Some(&serde_json::to_value(&pinned_section)?)
+    );
+    assert_eq!(
+        thread_json.get("sectionEnteredAt"),
+        Some(&Value::from(pinned_entered_at))
+    );
+    assert_eq!(
+        thread_json.get("name"),
+        Some(&Value::Null),
+        "thread/unarchive must serialize `name: null` when unset"
+    );
+
+    let rollout_path_display = rollout_path.display();
+    assert!(
+        rollout_path.exists(),
+        "expected rollout path {rollout_path_display} to be restored"
+    );
+    assert!(
+        !archived_path.exists(),
+        "expected archived rollout path {archived_path_display} to be moved"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_unarchive_preserves_pathless_store_metadata() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let store_id = Uuid::new_v4().to_string();
+    MockResponsesConfig::new("http://127.0.0.1:1")
+        .with_root_config(&format!(
+            r#"experimental_thread_store = {{ type = "in_memory", id = "{store_id}" }}"#
+        ))
+        .write(codex_home.path())?;
+    let store = InMemoryThreadStore::for_id(store_id.clone());
+    let _in_memory_store = InMemoryThreadStoreId { store_id };
+    let thread_id = ThreadId::from_string("00000000-0000-4000-8000-000000000126")?;
+    let parent_thread_id = ThreadId::from_string("00000000-0000-4000-8000-000000000127")?;
+    store
+        .create_thread(CreateThreadParams {
+            session_id: thread_id.into(),
+            thread_id,
+            extra_config: None,
+            forked_from_id: Some(parent_thread_id),
+            parent_thread_id: None,
+            source: SessionSource::Cli,
+            thread_source: None,
+            originator: "test_originator".to_string(),
+            base_instructions: BaseInstructions::default(),
+            dynamic_tools: Vec::new(),
+            selected_capability_roots: Vec::new(),
+            multi_agent_version: None,
+            history_mode: Default::default(),
+            history_base: None,
+            subagent_history_start_ordinal: None,
+            initial_window_id: Uuid::now_v7().to_string(),
+            metadata: ThreadPersistenceMetadata {
+                cwd: None,
+                model_provider: "test-provider".to_string(),
+                memory_mode: ThreadMemoryMode::Disabled,
+            },
+        })
+        .await?;
+    store
+        .update_thread_metadata(UpdateThreadMetadataParams {
+            thread_id,
+            patch: ThreadMetadataPatch {
+                name: Some(Some("named pathless thread".to_string())),
+                ..Default::default()
+            },
+            include_archived: true,
+        })
+        .await?;
+
+    let loader_overrides = LoaderOverrides::without_managed_config_for_tests();
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .loader_overrides(loader_overrides.clone())
+        .build()
+        .await?;
+    let client = in_process::start(InProcessStartArgs {
+        arg0_paths: Arg0DispatchPaths::default(),
+        config: Arc::new(config),
+        cli_overrides: Vec::new(),
+        loader_overrides,
+        strict_config: false,
+        cloud_config_bundle: CloudConfigBundleLoader::default(),
+        thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+        feedback: CodexFeedback::new(),
+        log_db: None,
+        state_db: None,
+        environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
+        config_warnings: Vec::new(),
+        session_source: SessionSource::Cli,
+        enable_codex_api_key_env: false,
+        initialize: InitializeParams {
+            client_info: ClientInfo {
+                name: "codex-app-server-tests".to_string(),
+                title: None,
+                version: "0.1.0".to_string(),
+            },
+            capabilities: Some(InitializeCapabilities {
+                experimental_api: true,
+                ..Default::default()
+            }),
+        },
+        channel_capacity: in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+    })
+    .await?;
+
+    let result = client
+        .request(ClientRequest::ThreadUnarchive {
+            request_id: RequestId::Integer(1),
+            params: ThreadUnarchiveParams {
+                thread_id: thread_id.to_string(),
+            },
+        })
+        .await?
+        .expect("thread/unarchive should succeed");
+    let ThreadUnarchiveResponse { thread } = serde_json::from_value(result)?;
+
+    assert_eq!(thread.id, thread_id.to_string());
+    assert_eq!(thread.path, None);
+    assert_eq!(thread.forked_from_id, Some(parent_thread_id.to_string()));
+    assert_eq!(thread.name, Some("named pathless thread".to_string()));
+
+    client.shutdown().await?;
+    Ok(())
+}
+
+struct InMemoryThreadStoreId {
+    store_id: String,
+}
+
+impl Drop for InMemoryThreadStoreId {
+    fn drop(&mut self) {
+        InMemoryThreadStore::remove_id(&self.store_id);
+    }
+}
+
+fn assert_paths_match_on_disk(actual: &Path, expected: &Path) -> std::io::Result<()> {
+    let actual = actual.canonicalize()?;
+    let expected = expected.canonicalize()?;
+    assert_eq!(actual, expected);
+    Ok(())
+}

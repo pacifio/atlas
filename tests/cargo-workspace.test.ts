@@ -141,7 +141,20 @@ describe("root cargo workspace", () => {
   });
 
   it("names every crate and src-tauri as a member", () => {
-    expect(workspaceList("members")).toEqual(expectedMembers());
+    // Subset, not equality: since #42 the members list also carries the
+    // vendored Codex engine. What matters here is that none of Atlas's own
+    // packages fell out of it.
+    const members = workspaceList("members");
+    expect(expectedMembers().filter((m) => !members.includes(m))).toEqual([]);
+  });
+
+  it("adds nothing to the members list but Atlas crates and the vendored engine", () => {
+    // The complement of the assertion above: a member that is neither ours nor
+    // under `vendor/codex/` is someone wiring in a third tree without saying so.
+    const stray = workspaceList("members").filter(
+      (m) => !expectedMembers().includes(m) && !m.startsWith("vendor/codex/"),
+    );
+    expect(stray).toEqual([]);
   });
 
   it("declares the crates it deliberately leaves out", () => {
@@ -206,6 +219,11 @@ describe("dev-profile opt-levels survive the move into the workspace", () => {
     );
   });
 
+  // Scoped to Atlas's own members on purpose. The vendored engine (#42) is
+  // deliberately NOT given per-member opt-level stanzas: it is quarantined, on
+  // no runtime path until the seam is rewired (#45), and paying opt-level 1 on
+  // ~600k LOC would slow every dev build for a runtime benefit nothing can yet
+  // collect. Revisit in #45, when the engine starts doing work.
   it("restates opt-level 1 for every member the `*` override no longer reaches", () => {
     const missing: string[] = [];
     for (const rel of expectedMembers()) {

@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "canPublishToWorkspace": {
+      "default": null,
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "remotePluginId": {
+      "type": "string"
+    },
+    "shareUrl": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "remotePluginId",
+    "shareUrl"
+  ],
+  "title": "PluginShareSaveResponse",
+  "type": "object"
+}
