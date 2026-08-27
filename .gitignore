@@ -41,6 +41,9 @@ skills-lock.json
 !CODE_OF_CONDUCT.md
 !CONTEXT.md
 !docs/adr/*.md
+!docs/atlas-agent-codex-port-spec.md
+!docs/research/*.md
+!docs/reference/*.md
 graphify-out/
 # Local-only working folders (plans/specs + helper scripts)
 plans/
