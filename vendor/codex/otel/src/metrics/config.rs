@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use crate::config::OtelExporter;
 use crate::metrics::Result;
 use crate::metrics::validation::validate_tag_key;

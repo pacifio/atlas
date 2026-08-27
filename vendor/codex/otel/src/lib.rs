@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 pub(crate) mod config;
 mod events;
 pub(crate) mod metrics;

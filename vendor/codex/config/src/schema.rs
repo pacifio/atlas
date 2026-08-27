@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use crate::config_toml::ConfigToml;
 use crate::types::RawMcpServerConfig;
 use codex_features::FEATURES;
@@ -220,11 +221,28 @@ pub fn canonicalize(value: &Value) -> Value {
     }
 }
 
+/// The Apache-2.0 §4(b) change notice carried by `config.schema.json`.
+///
+/// It is injected here rather than hand-written into the fixture because the
+/// fixture is *generated*: a header typed into the file would be silently
+/// dropped by the next `write_config_schema`, and `config_schema_matches_fixture`
+/// would then fail for a reason that looks nothing like its cause. `$comment` is
+/// a draft-07 keyword that validators ignore. See CONTEXT.md, "Vendored engine
+/// licensing".
+const ATLAS_CHANGE_NOTICE: &str =
+    "Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.";
+
 /// Render the config schema as pretty-printed JSON.
 pub fn config_schema_json() -> anyhow::Result<Vec<u8>> {
     let schema = config_schema();
     let value = serde_json::to_value(schema)?;
-    let value = canonicalize(&value);
+    let mut value = canonicalize(&value);
+    if let Some(root) = value.as_object_mut() {
+        root.insert(
+            "$comment".to_string(),
+            serde_json::Value::String(ATLAS_CHANGE_NOTICE.to_string()),
+        );
+    }
     let json = serde_json::to_vec_pretty(&value)?;
     Ok(json)
 }

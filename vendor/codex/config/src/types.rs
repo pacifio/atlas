@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 //! Types used to define loaded and effective Codex configuration values.
 
 // Note this file should generally be restricted to simple struct/enum
