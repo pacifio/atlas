@@ -370,6 +370,13 @@ impl EngineConnection {
         // but advertising a capability before its path is wired is how an
         // attachment gets silently dropped instead of degraded to a mention.
         thread.set_prompt_capabilities(acp::PromptCapabilities::default());
+        // Publish the slash commands on EVERY thread this connection makes.
+        // This used to happen in `new_session` only, which left a resumed
+        // session — the restored tab a user actually types "/" into — with an
+        // empty picker while a fresh chat's was full.
+        let _ = thread.handle_session_update(acp::SessionUpdate::AvailableCommandsUpdate(
+            acp::AvailableCommandsUpdate::new(crate::engine::commands::available()),
+        ));
         Arc::new(Mutex::new(thread))
     }
 }
@@ -715,16 +722,6 @@ impl AgentConnection for EngineConnection {
             // this runs on the engine's own defaults, so the picker would show
             // a mode the engine is not in.
             self.apply_mode(&session_id, &mode).await?;
-
-            // Publish the slash commands. Without this the native agent's
-            // picker is empty while every external agent's is full — the app
-            // has always had the mechanism and the seam never used it.
-            let _ = thread
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .handle_session_update(acp::SessionUpdate::AvailableCommandsUpdate(
-                    acp::AvailableCommandsUpdate::new(crate::engine::commands::available()),
-                ));
             Ok(thread)
         }
         .boxed()
@@ -863,7 +860,14 @@ impl AgentConnection for EngineConnection {
         let requests = self.requests.clone();
         let turns = self.turns.clone();
         let request_id = self.request_ids.next();
-        let model = self.settings.model.clone();
+        // The session's picked model, or the configured default. Reading the
+        // per-session state is what makes the picker real: this request-level
+        // `model` overrides the engine-side thread setting every turn, so
+        // sending the default here silently undid every selection.
+        let model = self
+            .sessions
+            .selected_model(&params.session_id)
+            .unwrap_or_else(|| self.settings.model.clone());
 
         // A slash command is not something to say to the model — sent as a
         // turn it would arrive as the literal text "/compact", which the
@@ -892,6 +896,58 @@ impl AgentConnection for EngineConnection {
             // write. Substitute the canned prompt and fall through.
             Some(crate::engine::commands::Command::Init) => {
                 text = crate::engine::commands::INIT_PROMPT.to_string();
+            }
+            // `/diff` and `/status` are answered from this side, exactly as the
+            // upstream TUI answered them — they were always frontend features.
+            // The reply is pushed into the thread as an assistant message and
+            // the turn ends; no model is consulted and nothing is billed.
+            Some(crate::engine::commands::Command::Diff) => {
+                let sessions = self.sessions.clone();
+                let session_id = params.session_id.clone();
+                return async move {
+                    let cwd = sessions
+                        .cwd(&session_id)
+                        .unwrap_or_else(|| ".".to_string());
+                    // git can chew on a large tree; keep it off the async
+                    // runtime's threads.
+                    let reply = tokio::task::spawn_blocking(move || {
+                        crate::engine::commands::diff_reply(&cwd)
+                    })
+                    .await
+                    .unwrap_or_else(|e| format!("Could not run git: {e}"));
+                    if let Some(thread) = sessions.thread(&session_id) {
+                        thread
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .push_assistant_content_block(
+                                acp::ContentBlock::Text(acp::TextContent::new(reply)),
+                                false,
+                            );
+                    }
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed();
+            }
+            Some(crate::engine::commands::Command::Status) => {
+                let sessions = self.sessions.clone();
+                let session_id = params.session_id.clone();
+                return async move {
+                    let cwd = sessions
+                        .cwd(&session_id)
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let reply = crate::engine::commands::status_reply(&model, &cwd);
+                    if let Some(thread) = sessions.thread(&session_id) {
+                        thread
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .push_assistant_content_block(
+                                acp::ContentBlock::Text(acp::TextContent::new(reply)),
+                                false,
+                            );
+                    }
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed();
             }
             None => {}
         }
@@ -956,7 +1012,7 @@ impl AgentConnection for EngineConnection {
             requests: self.requests.clone(),
             request_ids: self.request_ids.clone(),
             session_id: session_id.clone(),
-            selected: Mutex::new(AgentModelId::new(crate::engine::catalog::DEFAULT_MODEL)),
+            sessions: self.sessions.clone(),
         }))
     }
 
@@ -1272,12 +1328,13 @@ struct EngineModelSelector {
     requests: InProcessAppServerRequestHandle,
     request_ids: Arc<RequestIds>,
     session_id: acp::SessionId,
-    /// What the picker should show as current.
-    ///
-    /// Held here because the engine has no "read current model" call — the
-    /// setting is write-only from this side — so the alternative is a picker
-    /// whose tick mark never moves.
-    selected: Mutex<AgentModelId>,
+    /// The per-session state the selection is written to — the same state the
+    /// turn path reads its `model` from. It lives on `EngineSessions`, not
+    /// here, because the host constructs a fresh selector per call: state held
+    /// on the selector was forgotten the moment the call returned, which is
+    /// exactly how the picker's tick mark never moved and the choice never
+    /// reached a turn.
+    sessions: Arc<EngineSessions>,
 }
 
 impl EngineModelSelector {
@@ -1326,7 +1383,10 @@ impl AgentModelSelector for EngineModelSelector {
         let request_id = self.request_ids.next();
         let thread_id = self.session_id.to_string();
         let model = model_id.as_str().to_string();
-        *self.selected.lock().unwrap_or_else(|p| p.into_inner()) = model_id;
+        if known {
+            self.sessions
+                .set_selected_model(&self.session_id, model.clone());
+        }
         async move {
             if !known {
                 return Err(anyhow!("{model} is not a model this account can use"));
@@ -1347,7 +1407,12 @@ impl AgentModelSelector for EngineModelSelector {
     }
 
     fn selected_model(&self) -> BoxFuture<'static, Result<AgentModelInfo>> {
-        let selected = self.selected.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        // The per-session choice, or the catalogue default before any choice.
+        let selected = self
+            .sessions
+            .selected_model(&self.session_id)
+            .map(|m| AgentModelId::new(m.as_str()))
+            .unwrap_or_else(|| AgentModelId::new(crate::engine::catalog::DEFAULT_MODEL));
         let found = Self::catalogue().into_iter().find(|m| m.id == selected);
         async move {
             found.ok_or_else(|| anyhow!("the selected model is not in the catalogue"))

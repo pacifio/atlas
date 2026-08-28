@@ -46,6 +46,15 @@ pub struct EngineSession {
     /// tool-call request does not carry a cwd — it has no reason to, since the
     /// tool is Atlas's.
     cwd: String,
+    /// The model the composer's picker chose for this session, if it did.
+    ///
+    /// Held HERE, per session, because the state used to live inside the
+    /// `AgentModelSelector` — and the host constructs a fresh selector per
+    /// call, so a selection was forgotten the moment it was made. Worse, every
+    /// `turn/start` sent the configured default explicitly, overriding the
+    /// engine-side thread setting the selection had written: the picker
+    /// changed nothing about the next turn. The turn path reads this instead.
+    selected_model: Option<String>,
 }
 
 #[derive(Default)]
@@ -61,6 +70,7 @@ impl EngineSessions {
                 thread: Arc::downgrade(thread),
                 streamed: std::collections::HashSet::new(),
                 cwd,
+                selected_model: None,
             },
         );
     }
@@ -73,6 +83,20 @@ impl EngineSessions {
 
     pub fn cwd(&self, session_id: &acp::SessionId) -> Option<String> {
         self.lock().get(session_id).map(|s| s.cwd.clone())
+    }
+
+    /// The model the picker chose for this session — `None` until it chooses,
+    /// meaning "the configured default".
+    pub fn selected_model(&self, session_id: &acp::SessionId) -> Option<String> {
+        self.lock()
+            .get(session_id)
+            .and_then(|s| s.selected_model.clone())
+    }
+
+    pub fn set_selected_model(&self, session_id: &acp::SessionId, model: String) {
+        if let Some(session) = self.lock().get_mut(session_id) {
+            session.selected_model = Some(model);
+        }
     }
 
     /// Records that an item streamed, and answers whether this was the first

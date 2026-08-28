@@ -705,3 +705,120 @@ async fn the_paying_org_rides_every_request_and_follows_a_switch() {
         "the header must be present, and must follow the switch: {orgs:?}",
     );
 }
+
+#[tokio::test]
+async fn a_resumed_session_advertises_the_same_commands_a_new_one_does() {
+    // The bug this closes: commands were published in `new_session` only, so a
+    // restored tab — the place a user actually types "/" — resumed into a
+    // thread with an empty list, and the picker showed nothing while a fresh
+    // chat's showed everything. Resuming an id the engine does not know takes
+    // the fresh-thread fallback arm, which is exactly the restored-tab path.
+    let h = harness(vec![(None, sse_ok(answer("ok")))]).await;
+    let thread = match h
+        .connection
+        .clone()
+        .resume_session(
+            acp::SessionId::new("thread-from-before-the-cutover"),
+            vec![PathBuf::from(".")],
+            None,
+        )
+        .await
+    {
+        Ok(thread) => thread,
+        Err(err) => panic!("a stored row must open: {err:#}"),
+    };
+    let names: Vec<String> = thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .available_commands()
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+    assert!(
+        names.contains(&"compact".to_string()),
+        "a resumed session's picker must not be empty: {names:?}",
+    );
+}
+
+#[tokio::test]
+async fn the_picked_model_is_what_the_next_turn_requests() {
+    // The bug this closes: the selection was written to a selector the host
+    // throws away per call, and every `turn/start` sent the configured default
+    // explicitly — overriding the choice. The picker changed nothing.
+    use atlas_acp_thread::AgentModelId;
+
+    let h = harness(vec![(None, sse_ok(answer("ok")))]).await;
+    let session_id = h.open_thread().await;
+
+    let Some(selector) = h.connection.model_selector(&session_id) else {
+        panic!("the native agent must publish a model selector");
+    };
+    if let Err(err) = selector.select_model(AgentModelId::new("claude-opus-5")).await {
+        panic!("a catalogue model must be selectable: {err:#}");
+    }
+    // The picker's tick mark must move too — it used to reset to the default
+    // because the selection died with the throwaway selector.
+    let Some(selector) = h.connection.model_selector(&session_id) else {
+        panic!("selector");
+    };
+    let Ok(current) = selector.selected_model().await else {
+        panic!("the current model must be readable after a selection");
+    };
+    assert_eq!(current.id.as_str(), "claude-opus-5");
+
+    let _ = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("hello")))
+        .await;
+    let body = h.last_request_body().await;
+    assert_eq!(
+        body["model"], "claude-opus-5",
+        "the turn must run on the model the user picked",
+    );
+}
+
+#[tokio::test]
+async fn status_and_diff_answer_from_this_side_without_spending_a_turn() {
+    // `/status` and `/diff` were the upstream TUI's own features — no engine
+    // call, no model, nothing billed. The seam is Atlas's frontend to the same
+    // engine, so they answer here: an assistant message appears, the turn
+    // ends, and the gateway never hears about it.
+    let h = harness(vec![(None, sse_ok(answer("ok")))]).await;
+    let session_id = h.open_thread().await;
+
+    let response = match h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id.clone(), text("/status")))
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => panic!("/status must succeed: {err:#}"),
+    };
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    assert!(
+        h.assistant_text().contains("claude-sonnet-4-6"),
+        "the status reply must name the session's model",
+    );
+
+    let response = match h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("/diff")))
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => panic!("/diff must succeed: {err:#}"),
+    };
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+    let Some(received) = h.server.received_requests().await else {
+        panic!("the mock server must be recording requests");
+    };
+    let completions = received
+        .iter()
+        .filter(|r| r.url.path().ends_with("/chat/completions"))
+        .count();
+    assert_eq!(
+        completions, 0,
+        "a frontend command must not reach the gateway or be billed",
+    );
+}

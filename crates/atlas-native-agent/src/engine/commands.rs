@@ -8,53 +8,55 @@
 //! mechanism all along (`SessionUpdate::AvailableCommandsUpdate`), and nobody
 //! sent it anything.
 //!
-//! # Why the list is short
+//! # What made the cut
 //!
-//! It is not a translation of the upstream CLI's menu. Those were a *terminal
-//! frontend's* commands, and most of them do things Atlas already does with a
-//! button — switching model, switching mode, signing in. Publishing them would
-//! give the user two ways to do the same thing, one of which is worse.
+//! The request was "codex's defaults, minus login". The upstream menu splits
+//! three ways, and each third lands differently here:
 //!
-//! What is here is what the engine exposes as a real protocol call **and**
-//! Atlas has no better affordance for. Everything advertised is executed;
-//! nothing is advertised that would arrive as prose the engine ignores.
+//! - **Commands the engine executes** — `/compact` (a protocol call) and
+//!   `/init` (a canned turn). Advertised and executed.
+//! - **Commands the upstream *frontend* executed itself** — `/diff` and
+//!   `/status` never had an engine call behind them; the TUI ran git and read
+//!   its own settings. This seam is Atlas's frontend to the engine, so it does
+//!   exactly what the TUI did, in the same place the TUI did it. Advertised
+//!   and executed.
+//! - **Commands whose better surface Atlas already has** — everything else:
+//!   - **`/login`, `/logout`** — signing into Atlas *is* signing into the
+//!     agent (D10); a login command would be a second, broken way to do
+//!     something already done.
+//!   - **`/model`, `/approvals`** — the composer's model picker and mode
+//!     picker. Same control, better surface.
+//!   - **`/new`, `/quit`** — terminal-session management. Atlas has tabs.
+//!   - **`/mention`** — the composer's `@` mention flow.
+//!   - **`/review`** — real (`review/start`), but it opens a second model
+//!     session pinned to hardwired sub-task model names the gateway does not
+//!     serve, so today it is an advertised `403 model_not_allowed`. It joins
+//!     the list the day the reviewer model is configurable to a catalogue
+//!     model.
 //!
-//! # The upstream CLI's menu, item by item
-//!
-//! The request was "codex's defaults, minus login" — so here is where each one
-//! went, because most of them were never *agent* commands at all:
-//!
-//! - **`/login`, `/logout`** — signing into Atlas *is* signing into the agent:
-//!   the credential is the account's own token (D10) and the engine's login
-//!   surface is off. A login command would be a second, broken way to do
-//!   something already done.
-//! - **`/model`, `/approvals`** — the composer's model picker and mode picker.
-//!   Same control, better surface; a command duplicating a visible button is
-//!   two ways to do one thing.
-//! - **`/new`, `/quit`** — terminal-session management. Atlas has tabs.
-//! - **`/diff`, `/status`, `/mention`** — TUI display features with no engine
-//!   call behind them; the engine cannot execute them, so advertising them
-//!   would put rows in the picker that arrive as prose and do nothing.
-//! - **`/review`** — real (`review/start`), but it opens a second model session
-//!   pinned to hardwired sub-task model names the gateway does not serve, so
-//!   today it is an advertised `403 model_not_allowed`. It joins the list the
-//!   day the reviewer model is configurable to a catalogue model.
-//! - **`/compact`, `/init`** — the two with a real execution path, below.
+//! Everything advertised is executed; nothing is advertised that would arrive
+//! as prose the engine ignores.
 
 use agent_client_protocol::schema::v1 as acp;
 
 /// What a slash command resolves to.
 ///
-/// Two kinds, because the engine has two ways of doing things: a **protocol
+/// Three kinds, because there are three ways of doing things: a **protocol
 /// call** (compaction is `thread/compact/start`, not something you say to the
-/// model) and a **canned prompt** (init is a normal turn whose text the user
-/// did not have to write — upstream's CLI implemented it the same way).
+/// model), a **canned prompt** (init is a normal turn whose text the user did
+/// not have to write — upstream's CLI implemented it the same way), and a
+/// **frontend reply** (diff and status answer from this side without a model
+/// turn — upstream's CLI implemented those the same way too).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
     /// Summarise the conversation — `thread/compact/start`.
     Compact,
     /// Set up an AGENTS.md for this repository — a canned turn.
     Init,
+    /// Show the working tree's uncommitted changes — answered locally.
+    Diff,
+    /// Show this session's model and working directory — answered locally.
+    Status,
 }
 
 /// The prompt `/init` runs.
@@ -76,8 +78,60 @@ pub fn available() -> Vec<acp::AvailableCommand> {
             "compact",
             "Summarise the conversation so far to free up context",
         ),
+        acp::AvailableCommand::new("diff", "Show the uncommitted changes in this repository"),
         acp::AvailableCommand::new("init", "Create or improve AGENTS.md for this repository"),
+        acp::AvailableCommand::new(
+            "status",
+            "Show this session's model and working directory",
+        ),
     ]
+}
+
+/// The `/diff` reply: `git diff HEAD` in the session's working directory.
+///
+/// Same command the upstream TUI ran for its `/diff`. Capped, because a
+/// mid-refactor tree can produce megabytes and the transcript is not a pager —
+/// the cap note says how to see the rest.
+pub fn diff_reply(cwd: &str) -> String {
+    const CAP: usize = 40_000;
+    let output = std::process::Command::new("git")
+        .args(["diff", "HEAD"])
+        .current_dir(cwd)
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(e) => return format!("Could not run git in {cwd}: {e}"),
+    };
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let err = err.trim();
+        // The common case is "not a git repository"; git already says it well.
+        return if err.is_empty() {
+            format!("git diff failed in {cwd}")
+        } else {
+            format!("git diff failed: {err}")
+        };
+    }
+    let diff = String::from_utf8_lossy(&output.stdout);
+    let diff = diff.trim_end();
+    if diff.is_empty() {
+        return "No uncommitted changes.".to_string();
+    }
+    let (shown, note) = match diff.char_indices().nth(CAP) {
+        Some((cut, _)) => (
+            &diff[..cut],
+            "\n\n(Truncated — run `git diff HEAD` in a terminal for the rest.)",
+        ),
+        None => (diff, ""),
+    };
+    format!("```diff\n{shown}\n```{note}")
+}
+
+/// The `/status` reply. Only what this side actually knows — the model the
+/// next turn will request and where the session is working — because a status
+/// line that guesses is worse than a short one.
+pub fn status_reply(model: &str, cwd: &str) -> String {
+    format!("**Model:** {model}\n**Directory:** {cwd}")
 }
 
 /// The command a prompt is asking for, if it is asking for one.
@@ -89,7 +143,9 @@ pub fn available() -> Vec<acp::AvailableCommand> {
 pub fn command_of(prompt: &str) -> Option<Command> {
     match prompt.trim() {
         "/compact" => Some(Command::Compact),
+        "/diff" => Some(Command::Diff),
         "/init" => Some(Command::Init),
+        "/status" => Some(Command::Status),
         _ => None,
     }
 }
@@ -140,6 +196,26 @@ mod tests {
         assert_eq!(command_of("/compact this function for me"), None);
         assert_eq!(command_of("please compact"), None);
         assert_eq!(command_of(""), None);
+    }
+
+    #[test]
+    fn a_diff_outside_a_repository_reports_instead_of_pretending() {
+        // The reply is the user's answer, so a failure has to say what
+        // happened — an empty message or a fake "no changes" would read as
+        // "your tree is clean", which is false.
+        let dir = tempfile::tempdir().unwrap();
+        let reply = diff_reply(&dir.path().to_string_lossy());
+        assert!(
+            reply.contains("failed") || reply.contains("Could not run"),
+            "a non-repo must produce an error message, got: {reply}",
+        );
+    }
+
+    #[test]
+    fn the_status_reply_carries_the_model_and_the_directory() {
+        let reply = status_reply("claude-sonnet-4-6", "/tmp/repo");
+        assert!(reply.contains("claude-sonnet-4-6"));
+        assert!(reply.contains("/tmp/repo"));
     }
 
     #[test]
