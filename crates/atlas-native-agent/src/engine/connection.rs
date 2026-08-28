@@ -62,6 +62,7 @@ use tokio::sync::oneshot;
 
 use crate::engine::config::EngineSettings;
 use crate::engine::approvals;
+use crate::engine::memory::{self, MemorySearch};
 use crate::engine::modes;
 use crate::engine::runtime::start_engine;
 use crate::engine::runtime::EngineRuntime;
@@ -224,6 +225,12 @@ pub struct EngineConnection {
     /// fact to remember.
     session_modes: Arc<Mutex<HashMap<acp::SessionId, acp::SessionModeId>>>,
     default_mode: Option<acp::SessionModeId>,
+    /// Atlas's on-device retrieval, if the host injected it.
+    ///
+    /// `None` means the index is not ready; the tool is then not advertised at
+    /// all rather than advertised and failing, because a tool the model is
+    /// told about and cannot use is worse than one it never sees.
+    memory_search: Option<MemorySearch>,
 }
 
 struct PumpHandle(tokio::task::JoinHandle<()>);
@@ -251,6 +258,17 @@ impl EngineConnection {
         external_auth: Option<Arc<dyn ExternalAuth>>,
         default_mode: Option<acp::SessionModeId>,
     ) -> Result<Arc<Self>> {
+        Self::connect_full(id, settings, thread_events, external_auth, default_mode, None).await
+    }
+
+    pub async fn connect_full(
+        id: AgentId,
+        settings: EngineSettings,
+        thread_events: ThreadEventSink,
+        external_auth: Option<Arc<dyn ExternalAuth>>,
+        default_mode: Option<acp::SessionModeId>,
+        memory_search: Option<MemorySearch>,
+    ) -> Result<Arc<Self>> {
         let (runtime, client) = start_engine(&settings, external_auth).await?;
         let max_retries = settings.stream_max_retries;
         let requests = client.request_handle();
@@ -259,14 +277,13 @@ impl EngineConnection {
 
         // On the engine's runtime, not the host's: the pump owns the client,
         // and the client's `next_event` is fed by engine tasks.
-        let pump = runtime
-            .handle()
-            .spawn(pump_events(
-                client,
-                sessions.clone(),
-                turns.clone(),
-                max_retries,
-            ));
+        let pump = runtime.handle().spawn(pump_events(
+            client,
+            sessions.clone(),
+            turns.clone(),
+            max_retries,
+            memory_search.clone(),
+        ));
 
         Ok(Arc::new(Self {
             id,
@@ -280,6 +297,7 @@ impl EngineConnection {
             _runtime: Arc::new(runtime),
             session_modes: Arc::new(Mutex::new(HashMap::new())),
             default_mode,
+            memory_search,
         }))
     }
 
@@ -371,6 +389,7 @@ async fn pump_events(
     sessions: Arc<EngineSessions>,
     turns: Arc<TurnWaiters>,
     max_retries: usize,
+    memory_search: Option<MemorySearch>,
 ) {
     let (answers_tx, mut answers_rx) = tokio::sync::mpsc::unbounded_channel::<ServerAnswer>();
 
@@ -407,7 +426,7 @@ async fn pump_events(
                         apply_notification(&sessions, &turns, max_retries, *notification);
                     }
                     InProcessServerEvent::ServerRequest(request) => {
-                        handle_server_request(&sessions, *request, &answers_tx);
+                        handle_server_request(&sessions, *request, &answers_tx, &memory_search);
                     }
                     InProcessServerEvent::Lagged { skipped } => {
                         // Transport health, not an application event. Worth
@@ -433,8 +452,24 @@ fn handle_server_request(
     sessions: &Arc<EngineSessions>,
     request: ServerRequest,
     answers: &tokio::sync::mpsc::UnboundedSender<ServerAnswer>,
+    memory_search: &Option<MemorySearch>,
 ) {
     use codex_app_server_protocol::ServerRequest as Req;
+
+    // A tool Atlas implements itself, rather than a question for the user.
+    if let Req::DynamicToolCall { request_id, params } = &request {
+        let cwd = sessions
+            .cwd(&acp::SessionId::new(params.thread_id.as_str()))
+            .unwrap_or_default();
+        serve_dynamic_tool(
+            request_id.clone(),
+            params.clone(),
+            cwd,
+            memory_search.clone(),
+            answers.clone(),
+        );
+        return;
+    }
 
     let (request_id, thread_id, prompt) = match &request {
         Req::CommandExecutionRequestApproval { request_id, params } => (
@@ -551,6 +586,50 @@ fn handle_server_request(
     });
 }
 
+/// Answers a tool the engine asked Atlas to run.
+///
+/// Always answers. A dynamic tool call left unanswered is a turn that stops
+/// with no error and no explanation, which is the worst shape a tool failure
+/// can take — so an unknown tool and a failed search both come back as a
+/// result the model can read and move on from.
+fn serve_dynamic_tool(
+    request_id: RequestId,
+    params: v2::DynamicToolCallParams,
+    cwd: String,
+    memory_search: Option<MemorySearch>,
+    answers: tokio::sync::mpsc::UnboundedSender<ServerAnswer>,
+) {
+    tokio::spawn(async move {
+        let (text, success) = if params.tool != memory::TOOL_NAME {
+            (
+                format!("Atlas does not implement the tool {:?}.", params.tool),
+                false,
+            )
+        } else {
+            match (memory_search, memory::parse_arguments(&params.arguments)) {
+                (None, _) => (
+                    "Memory search is unavailable (the index is not ready).".to_string(),
+                    false,
+                ),
+                (_, None) => ("`query` is required.".to_string(), false),
+                (Some(search), Some((query, limit))) => {
+                    let docs = search(cwd, query, limit).await;
+                    (memory::render(&docs), true)
+                }
+            }
+        };
+
+        let result = serde_json::to_value(v2::DynamicToolCallResponse {
+            content_items: memory::output(text, success),
+            success,
+        });
+        let _ = answers.send(ServerAnswer {
+            request_id,
+            result: result.map_err(|e| format!("could not encode the tool result: {e}")),
+        });
+    });
+}
+
 /// Maps the engine's turn outcome onto the protocol's stop reason.
 ///
 /// `Failed` is deliberately not a stop reason: the protocol has no failure
@@ -604,6 +683,13 @@ impl AgentConnection for EngineConnection {
                         model: Some(self.settings.model.clone()),
                         model_provider: Some(self.settings.provider.id.clone()),
                         cwd: Some(cwd.to_string_lossy().into_owned()),
+                        // Declared only when retrieval exists. Advertising a
+                        // tool the host cannot serve teaches the model to call
+                        // something that always fails.
+                        dynamic_tools: self
+                            .memory_search
+                            .as_ref()
+                            .map(|_| vec![memory::tool_spec()]),
                         ..Default::default()
                     },
                 })
@@ -614,7 +700,11 @@ impl AgentConnection for EngineConnection {
             // stored row resolve without a translation table.
             let session_id = acp::SessionId::new(response.thread.id.as_str());
             let thread = self.new_thread(session_id.clone(), work_dirs, None);
-            self.sessions.insert(session_id.clone(), &thread);
+            self.sessions.insert(
+                session_id.clone(),
+                &thread,
+                cwd.to_string_lossy().into_owned(),
+            );
 
             let mode = self
                 .default_mode

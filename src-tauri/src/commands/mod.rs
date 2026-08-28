@@ -7,7 +7,6 @@ pub mod agents;
 pub mod app_state;
 pub mod browser;
 pub mod byok;
-pub mod cersei;
 pub mod cli;
 pub mod modelchat;
 pub mod compose_prompt;

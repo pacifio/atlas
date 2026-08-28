@@ -29,21 +29,43 @@ use crate::engine::connection::TurnWaiters;
 ///
 /// Weak, for the reason the Cersei-path sink gives: a thread the host dropped
 /// must not be kept alive by a session table still listing it.
+pub struct EngineSession {
+    thread: Weak<Mutex<AcpThread>>,
+    /// The session's working directory.
+    ///
+    /// Kept because `search_memory` retrieves per project and the engine's
+    /// tool-call request does not carry a cwd — it has no reason to, since the
+    /// tool is Atlas's.
+    cwd: String,
+}
+
 #[derive(Default)]
 pub struct EngineSessions {
-    sessions: Mutex<HashMap<acp::SessionId, Weak<Mutex<AcpThread>>>>,
+    sessions: Mutex<HashMap<acp::SessionId, EngineSession>>,
 }
 
 impl EngineSessions {
-    pub fn insert(&self, session_id: acp::SessionId, thread: &AcpThreadHandle) {
-        self.lock().insert(session_id, Arc::downgrade(thread));
+    pub fn insert(&self, session_id: acp::SessionId, thread: &AcpThreadHandle, cwd: String) {
+        self.lock().insert(
+            session_id,
+            EngineSession {
+                thread: Arc::downgrade(thread),
+                cwd,
+            },
+        );
     }
 
     pub fn thread(&self, session_id: &acp::SessionId) -> Option<AcpThreadHandle> {
-        self.lock().get(session_id).and_then(Weak::upgrade)
+        self.lock()
+            .get(session_id)
+            .and_then(|s| s.thread.upgrade())
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<acp::SessionId, Weak<Mutex<AcpThread>>>> {
+    pub fn cwd(&self, session_id: &acp::SessionId) -> Option<String> {
+        self.lock().get(session_id).map(|s| s.cwd.clone())
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<acp::SessionId, EngineSession>> {
         self.sessions.lock().unwrap_or_else(|p| p.into_inner())
     }
 }
@@ -208,7 +230,7 @@ mod tests {
         let id = acp::SessionId::new("thread-1");
         {
             let thread = crate::engine::test_support::detached_thread(id.clone());
-            sessions.insert(id.clone(), &thread);
+            sessions.insert(id.clone(), &thread, "/tmp".to_string());
             assert!(sessions.thread(&id).is_some());
         }
         assert!(

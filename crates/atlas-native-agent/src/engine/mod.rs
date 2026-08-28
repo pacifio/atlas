@@ -24,6 +24,7 @@ pub mod approvals;
 pub mod auth;
 pub mod config;
 pub mod connection;
+pub mod memory;
 pub mod modes;
 pub mod runtime;
 pub mod server;

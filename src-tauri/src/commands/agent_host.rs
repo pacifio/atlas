@@ -253,6 +253,7 @@ pub struct AgentHost {
     /// session: its own stored-session list, replay and delete, which the chat
     /// sidebar calls with no agent connected.
     native_runtime: atlas_cersei::CerseiRuntime,
+    native_engine: NativeEngine,
     /// Atlas's session history.
     ///
     /// `None` only when the store could not be opened — a corrupt or
@@ -279,6 +280,17 @@ struct RequestElicitations {
     answered_by: Mutex<HashMap<Uuid, (ThreadAgentId, ElicitationEntryId)>>,
 }
 
+/// Which engine is behind the native agent for this run.
+///
+/// Recorded because a few src-tauri surfaces still read the Cersei runtime's
+/// own session files directly, and on the ported path those files describe an
+/// engine that is not running. See `AgentHost::native_sessions`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeEngine {
+    Cersei,
+    Ported,
+}
+
 /// Which engine backs the native agent (issue #45, spec Phase 2, ADR-0004).
 ///
 /// The Cersei path and the ported engine implement the same `AgentServer`
@@ -292,8 +304,8 @@ struct RequestElicitations {
 fn select_native_agent(
     cersei: CerseiAgentServer,
     _config_dir: &Path,
-) -> Arc<dyn atlas_agent_servers::AgentServer> {
-    Arc::new(cersei)
+) -> (Arc<dyn atlas_agent_servers::AgentServer>, NativeEngine) {
+    (Arc::new(cersei), NativeEngine::Cersei)
 }
 
 /// See the sibling above. With the engine linked, `ATLAS_AGENT_ENGINE` picks:
@@ -306,12 +318,12 @@ fn select_native_agent(
 fn select_native_agent(
     cersei: CerseiAgentServer,
     config_dir: &Path,
-) -> Arc<dyn atlas_agent_servers::AgentServer> {
+) -> (Arc<dyn atlas_agent_servers::AgentServer>, NativeEngine) {
     use atlas_native_agent::engine::{EngineAgentServer, EngineSettings};
 
     if std::env::var("ATLAS_AGENT_ENGINE").as_deref() == Ok("cersei") {
         tracing::info!("native agent: Cersei path (ATLAS_AGENT_ENGINE=cersei)");
-        return Arc::new(cersei);
+        return (Arc::new(cersei), NativeEngine::Cersei);
     }
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| config_dir.to_path_buf());
@@ -322,7 +334,10 @@ fn select_native_agent(
         home = %settings.home.path().display(),
         "native agent: ported engine",
     );
-    Arc::new(EngineAgentServer::new(settings))
+    (
+        Arc::new(EngineAgentServer::new(settings)),
+        NativeEngine::Ported,
+    )
 }
 
 impl AgentHost {
@@ -342,7 +357,7 @@ impl AgentHost {
         };
         let native_server = CerseiAgentServer::new(config_dir.clone());
         let native_runtime = native_server.runtime().clone();
-        let native = select_native_agent(native_server, &config_dir);
+        let (native, native_engine) = select_native_agent(native_server, &config_dir);
         let (elicitation_tx, elicitation_rx) = mpsc::unbounded_channel();
         let options = ConnectOptions {
             root_dir: None,
@@ -381,6 +396,7 @@ impl AgentHost {
             sessions: Mutex::new(HashMap::new()),
             detected: Mutex::new(Vec::new()),
             native_runtime,
+            native_engine,
             history,
             request_elicitations: RequestElicitations {
                 stream: Mutex::new(Some(elicitation_rx)),
@@ -420,6 +436,16 @@ impl AgentHost {
     /// recorded the prompt it received, and a sidebar row titled after a
     /// `--- SHARED MEMORY ---` block would be nonsense.
     pub fn native_sessions(&self, cwd: &str) -> Vec<atlas_cersei::SessionMeta> {
+        // On the ported path this store describes an engine that is not
+        // running, so reading it would put another engine's sessions in the
+        // timeline. Returning nothing is D8's accepted narrowing: the
+        // memory-timeline's coverage of native sessions shrinks until it is
+        // re-sourced, and where from is spec open question 8 — a decision, not
+        // an omission. Rows the app owns are unaffected: they come from the
+        // thread-metadata store (ADR-0001), which both engines write through.
+        if self.native_engine == NativeEngine::Ported {
+            return Vec::new();
+        }
         let mut metas = self.native_runtime.list_sessions(cwd);
         for meta in &mut metas {
             let cleaned = atlas_agent_transcript::strip_injected_context(&meta.preview);

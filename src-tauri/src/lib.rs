@@ -562,8 +562,6 @@ pub fn run() {
             commands::agents::agents_run_auth_method,
             commands::agents::agents_authenticate,
             commands::agents::agents_drop_session,
-            commands::cersei::cersei_list_sessions,
-            commands::cersei::cersei_delete_session,
             commands::byok::byok_get,
             commands::byok::byok_env_list,
             commands::byok::byok_env_entries,

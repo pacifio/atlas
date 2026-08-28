@@ -136,6 +136,14 @@ async fn harness_configured(
     mocks: Vec<(Option<u64>, ResponseTemplate)>,
     tune: impl FnOnce(EngineSettings) -> EngineSettings,
 ) -> Harness {
+    harness_full(mocks, tune, None).await
+}
+
+async fn harness_full(
+    mocks: Vec<(Option<u64>, ResponseTemplate)>,
+    tune: impl FnOnce(EngineSettings) -> EngineSettings,
+    memory_search: Option<atlas_native_agent::engine::memory::MemorySearch>,
+) -> Harness {
     let server = MockServer::start().await;
     for (times, template) in mocks {
         let mock = Mock::given(method("POST"))
@@ -184,9 +192,16 @@ async fn harness_configured(
         thread_tx
     });
 
-    let connection = EngineConnection::connect(AgentId::new("cersei"), settings, sink, None)
-        .await
-        .expect("the engine should start in-process");
+    let connection = EngineConnection::connect_full(
+        AgentId::new("cersei"),
+        settings,
+        sink,
+        None,
+        None,
+        memory_search,
+    )
+    .await
+    .expect("the engine should start in-process");
 
     Harness {
         _server: server,
@@ -949,5 +964,138 @@ async fn control_an_approved_command_really_does_run() {
         marker.exists(),
         "an approved command did not run at all, so the cancel and retry tests \
          above prove nothing: they assert on a file that could never appear",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #48 — search_memory on the ported engine (acceptance bar item 11).
+// ---------------------------------------------------------------------------
+
+/// A turn that calls `search_memory`, then answers.
+fn memory_lookup_turn(arguments: serde_json::Value) -> String {
+    sse(vec![
+        json!({"type": "response.created", "response": {"id": "resp-1"}}),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call",
+                "call_id": "call-mem",
+                "name": "search_memory",
+                "arguments": arguments.to_string()
+            }
+        }),
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp-1",
+                "usage": {
+                    "input_tokens": 0, "input_tokens_details": null,
+                    "output_tokens": 0, "output_tokens_details": null,
+                    "total_tokens": 0
+                }
+            }
+        }),
+    ])
+}
+
+/// What one `search_memory` call was asked: cwd, query, limit.
+type SearchCall = (String, String, usize);
+type SearchLog = Arc<std::sync::Mutex<Vec<SearchCall>>>;
+
+/// Records what the tool was asked, and answers with one doc.
+fn recording_search() -> (atlas_native_agent::engine::memory::MemorySearch, SearchLog) {
+    let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = calls.clone();
+    let search: atlas_native_agent::engine::memory::MemorySearch =
+        Arc::new(move |cwd: String, query: String, limit: usize| {
+            seen.lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push((cwd, query.clone(), limit));
+            Box::pin(async move {
+                vec![atlas_native_agent::engine::memory::MemDoc {
+                    title: "ADR-0003".to_string(),
+                    source: "docs/adr".to_string(),
+                    text: format!("the answer to {query}"),
+                }]
+            })
+        });
+    (search, calls)
+}
+
+#[tokio::test]
+async fn search_memory_is_registered_and_returns_live_results() {
+    // Bar item 11. The retrieval itself never moved — `atlas-memory` depends on
+    // neither engine — so what this proves is the projection: the engine knows
+    // the tool exists, calls it, and Atlas answers from the live callback.
+    let (search, calls) = recording_search();
+    let h = harness_full(
+        vec![
+            (Some(1), sse_ok(memory_lookup_turn(json!({"query": "how does auth work", "limit": 3})))),
+            (None, sse_ok(assistant_turn("grounded answer"))),
+        ],
+        |s| s,
+        Some(search),
+    )
+    .await;
+    let session_id = h.open_thread().await;
+
+    let response = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("what do we know?")))
+        .await
+        .expect("the turn should complete");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+    let calls = calls.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    assert_eq!(calls.len(), 1, "the engine should have called search_memory once");
+    let (cwd, query, limit) = &calls[0];
+    assert_eq!(query, "how does auth work");
+    assert_eq!(*limit, 3);
+    assert!(
+        !cwd.is_empty(),
+        "retrieval is per project, so the session's cwd has to reach it — the \
+         engine's tool-call request does not carry one",
+    );
+}
+
+#[tokio::test]
+async fn the_memory_tool_is_not_advertised_when_there_is_no_retrieval() {
+    // A tool the model is told about and cannot use is worse than one it never
+    // sees: it will call it, fail, and often retry.
+    let h = harness(assistant_turn("ok")).await;
+    let session_id = h.open_thread().await;
+    let response = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("hello")))
+        .await
+        .expect("a turn without memory retrieval still works");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+}
+
+#[tokio::test]
+async fn a_memory_call_with_no_query_is_answered_rather_than_left_hanging() {
+    // The model can and does call this with an empty query. An unanswered
+    // dynamic tool call is a turn that stops with no error and no explanation.
+    let (search, calls) = recording_search();
+    let h = harness_full(
+        vec![
+            (Some(1), sse_ok(memory_lookup_turn(json!({"query": "   "})))),
+            (None, sse_ok(assistant_turn("asked instead"))),
+        ],
+        |s| s,
+        Some(search),
+    )
+    .await;
+    let session_id = h.open_thread().await;
+
+    let response = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("what do we know?")))
+        .await
+        .expect("an empty query must not hang the turn");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    assert!(
+        calls.lock().unwrap_or_else(|p| p.into_inner()).is_empty(),
+        "an empty query should never reach retrieval",
     );
 }

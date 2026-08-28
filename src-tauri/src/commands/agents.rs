@@ -668,6 +668,29 @@ pub fn install_manager(app: &AppHandle) {
 
     // Wire the native agent's `search_memory` tool to Atlas's on-device memory
     // retrieval, mapping the retrieved docs into the agent's shape.
+    // The ported engine's `search_memory`, wired to the same retrieval (#48,
+    // acceptance bar item 11). Registered rather than passed in because these
+    // types are behind a cargo feature, and a constructor parameter would
+    // `cfg`-gate `AgentHost::new`'s signature and every caller of it.
+    #[cfg(feature = "ported-engine")]
+    {
+        let app_for_engine = app.clone();
+        atlas_native_agent::engine::memory::register_search(Arc::new(move |cwd, query, k| {
+            let app = app_for_engine.clone();
+            Box::pin(async move {
+                crate::commands::memory_retrieve::retrieve(&app, &cwd, &query, k)
+                    .await
+                    .into_iter()
+                    .map(|d| atlas_native_agent::engine::memory::MemDoc {
+                        title: d.title,
+                        source: d.source,
+                        text: d.text,
+                    })
+                    .collect()
+            })
+        }));
+    }
+
     let app_for_search = app.clone();
     atlas_cersei::register_memory_search(Arc::new(move |cwd, query, k| {
         let app = app_for_search.clone();
