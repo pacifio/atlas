@@ -504,3 +504,44 @@ async fn a_turn_still_completes_after_switching_into_plan_mode() {
         .expect("a turn in plan mode should still run");
     assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
 }
+
+#[tokio::test]
+async fn per_session_controls_share_the_connection_request_id_counter() {
+    // Regression, with an honest caveat about how strong it is.
+    //
+    // The bug: the mode and effort controls minted request ids from their own
+    // counters, each starting at zero, so they collided with the connection's.
+    // The engine rejects a repeat outright — `duplicate request id` — and the
+    // symptom was a prompt after a mode or effort change failing to start.
+    //
+    // **This test exercises the path but does not deterministically reproduce
+    // the collision**, because the engine only rejects ids that are
+    // concurrently *in flight*, and that needs the fire-and-forget effort
+    // updates to still be outstanding when the prompt goes out. Reintroducing
+    // the bug does not reliably fail this test. The invariant is stated where
+    // it can be seen instead — on `RequestIds` in `engine::connection` — and
+    // what this covers is the ordinary sequence a user produces: change some
+    // settings, then send a message.
+    let h = harness(assistant_turn("ok")).await;
+    let session_id = h.open_thread().await;
+
+    let modes = h.connection.session_modes(&session_id).expect("modes");
+    let effort = h.connection.session_effort(&session_id).expect("effort");
+
+    for mode in ["acceptEdits", "plan", "default"] {
+        modes
+            .set_mode(acp::SessionModeId::new(mode))
+            .await
+            .expect("mode should be accepted");
+    }
+    for level in ["high", "low", "medium"] {
+        effort.set_effort(Some(level.to_string())).expect("effort");
+    }
+
+    let response = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("after all that")))
+        .await
+        .expect("a prompt after mode and effort changes must still start");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+}

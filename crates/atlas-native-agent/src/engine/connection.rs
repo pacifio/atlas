@@ -67,7 +67,14 @@ use crate::engine::sink::apply_notification;
 /// Request ids Atlas mints for the engine.
 ///
 /// The in-process transport still speaks the JSON-RPC envelope, so every
-/// request needs an id. They only have to be unique within this connection.
+/// request needs an id, and the engine rejects a repeat with
+/// `duplicate request id`.
+///
+/// **There is exactly one of these per connection, shared.** Every per-session
+/// control handed out — modes, effort — mints from this same counter. Giving
+/// them their own counters is the obvious-looking thing and it is wrong: each
+/// starts at zero, so the first prompt after a mode or effort change collides
+/// and the turn fails to start.
 #[derive(Default)]
 struct RequestIds(std::sync::atomic::AtomicI64);
 
@@ -198,7 +205,7 @@ pub struct EngineConnection {
     sessions: Arc<EngineSessions>,
     turns: Arc<TurnWaiters>,
     thread_events: ThreadEventSink,
-    request_ids: RequestIds,
+    request_ids: Arc<RequestIds>,
     settings: EngineSettings,
     /// The pump. Held so it is aborted when the connection is dropped rather
     /// than outliving it against a dead runtime.
@@ -263,7 +270,7 @@ impl EngineConnection {
             sessions,
             turns,
             thread_events,
-            request_ids: RequestIds::default(),
+            request_ids: Arc::new(RequestIds::default()),
             settings,
             _pump: Arc::new(PumpHandle(pump)),
             _runtime: Arc::new(runtime),
@@ -318,7 +325,7 @@ impl EngineConnection {
         Some(Arc::new(EngineSessionControls {
             requests: self.requests.clone(),
             session_id: session_id.clone(),
-            request_ids: Arc::new(RequestIds::default()),
+            request_ids: self.request_ids.clone(),
         }))
     }
 
@@ -766,7 +773,7 @@ impl EngineConnection {
     fn clone_handle(&self) -> ConnectionHandle {
         ConnectionHandle {
             requests: self.requests.clone(),
-            request_ids: Arc::new(RequestIds::default()),
+            request_ids: self.request_ids.clone(),
             session_modes: self.session_modes.clone(),
         }
     }
