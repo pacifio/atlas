@@ -1946,17 +1946,9 @@ export function MessageInput({
           onClose={() => setSlashTrigger(null)}
           commands={agentSlashCommands}
           loading={slashCommandsLoading}
-          footerLabel={
-            agentType === "codex"
-              ? "Codex commands"
-              : agentType === "opencode"
-                ? "OpenCode commands"
-                : agentType === "cursor"
-                  ? "Cursor commands"
-                  : agentType === "claude-code"
-                    ? "Claude Code commands"
-                    : undefined
-          }
+          // One resolver instead of an if-ladder that missed the native agent
+          // (it fell through to the picker's "Claude Code commands" default).
+          footerLabel={`${agentMeta(agentType).label} commands`}
         />
       )}
     </div>

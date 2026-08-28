@@ -138,18 +138,13 @@ pub fn no_grant_message() -> &'static str {
 /// IPC contract guard, which cannot see that they are mutually exclusive.
 #[tauri::command]
 pub async fn native_agent_entitlement(
-    #[allow(unused_variables)] state: tauri::State<'_, crate::commands::auth::AuthState>,
+    state: tauri::State<'_, crate::commands::auth::AuthState>,
 ) -> Result<Entitlement, String> {
-    // Without the engine the native agent does not talk to the gateway at all,
-    // so there is no grant to have and the pill must never appear.
-    #[cfg(not(feature = "ported-engine"))]
-    {
-        return Ok(Entitlement::Unknown {
-            reason: "the native agent does not use the Atlas gateway in this build".to_string(),
-        });
-    }
-
-    #[cfg(feature = "ported-engine")]
+    // Unconditional since #54: the engine is the only native agent, so there is
+    // always a gateway to ask. (The `ported-engine` branch this used to hide
+    // behind was silently dead after the feature was deleted — a cfg on a
+    // feature that no longer exists compiles to nothing — which made this
+    // command answer Unknown forever and the no-grant pill unable to appear.)
     {
         let core = state.core();
         let token = match core.mint_access_token().await {

@@ -555,7 +555,13 @@ zeroize = "1.8.2"
 
 [workspace.lints]
 
-rust = {}
+# `unexpected_cfgs` is a deny because its warning form already cost a live
+# failure: #54 deleted the `ported-engine` feature, four blocks stayed behind
+# `#[cfg(feature = "ported-engine")]`, and a cfg on a feature that no longer
+# exists compiles to NOTHING — the token-source registration vanished and the
+# first real gateway turn went out with no Authorization header. Cargo warned;
+# nobody greps warnings. Now it fails the build.
+rust = { unexpected_cfgs = "deny" }
 
 [workspace.lints.clippy]
 

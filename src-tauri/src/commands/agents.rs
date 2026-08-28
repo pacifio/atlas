@@ -679,7 +679,13 @@ pub fn install_manager(app: &AppHandle) {
     // time rather than construction — `AgentHost` is built before the auth
     // state exists, so a source resolved in its constructor would always be
     // absent and every turn would go out with no credential.
-    #[cfg(feature = "ported-engine")]
+    //
+    // No cfg gate. This block used to sit behind `ported-engine`, and when #54
+    // deleted that feature the gate did not fail the build — a cfg on a feature
+    // that no longer exists silently compiles to NOTHING, so the registration
+    // vanished and the first live turn went out with no Authorization header at
+    // all ("Missing bearer token", straight from the gateway). Cargo does warn
+    // (`unexpected_cfgs`), but only as a warning.
     {
         let core = app.state::<crate::commands::auth::AuthState>().core();
         atlas_native_agent::engine::auth::register_token_source(Arc::new(AccountTokenSource {
@@ -687,7 +693,6 @@ pub fn install_manager(app: &AppHandle) {
         }));
     }
 
-    #[cfg(feature = "ported-engine")]
     {
         let app_for_engine = app.clone();
         atlas_native_agent::engine::memory::register_search(Arc::new(move |cwd, query, k| {
@@ -1857,12 +1862,10 @@ mod auth_url_tests {
 /// is *correct* for its other callers: they mint at the point of use, so their
 /// token is never near expiry. It is the engine's long-lived session, holding a
 /// credential across a multi-minute turn, that needs the caching layer above.
-#[cfg(feature = "ported-engine")]
 struct AccountTokenSource {
     core: Arc<crate::auth::AuthCore>,
 }
 
-#[cfg(feature = "ported-engine")]
 impl atlas_native_agent::engine::auth::AtlasTokenSource for AccountTokenSource {
     fn mint(&self) -> atlas_native_agent::engine::auth::ExternalAuthFuture<'_, String> {
         Box::pin(async move {

@@ -276,7 +276,7 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
           )}
         </div>
         <div className="border-t border-[var(--border-default)] px-3 h-[24px] flex items-center justify-between text-[9px] text-[var(--text-tertiary)] uppercase tracking-wider shrink-0">
-          <span>{footerLabel ?? "Claude Code commands"}</span>
+          <span>{footerLabel ?? "Commands"}</span>
           <span>↑↓ · ↵ run · ⎋ close</span>
         </div>
       </div>,
