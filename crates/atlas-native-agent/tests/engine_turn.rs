@@ -115,6 +115,23 @@ impl Harness {
         id
     }
 
+    /// The assistant text currently rendered in the newest thread.
+    fn assistant_text(&self) -> String {
+        let thread = self.thread();
+        let thread = thread.lock().unwrap_or_else(|p| p.into_inner());
+        thread
+            .entries()
+            .iter()
+            .filter_map(|e| match e {
+                atlas_acp_thread::AgentThreadEntry::AssistantMessage(m) => Some(m),
+                _ => None,
+            })
+            .flat_map(|m| m.chunks.iter())
+            .map(|c| format!("{c:?}"))
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
     fn thread(&self) -> atlas_acp_thread::AcpThreadHandle {
         self.threads
             .lock()
@@ -1097,5 +1114,168 @@ async fn a_memory_call_with_no_query_is_answered_rather_than_left_hanging() {
     assert!(
         calls.lock().unwrap_or_else(|p| p.into_inner()).is_empty(),
         "an empty query should never reach retrieval",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #49 — history continuity across the engine swap (D6/D7).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_row_from_before_the_engine_changed_opens_instead_of_erroring() {
+    // Bar item 2. A stored row the engine has never heard of — every native
+    // row is one, in Phase 2. It must open. A row that refuses to open is
+    // worse than one that opens empty, and "this is from before the engine
+    // changed" is not something the user did wrong.
+    let h = harness(assistant_turn("continuing")).await;
+
+    let thread = h
+        .connection
+        .clone()
+        .resume_session(
+            acp::SessionId::new("a-cersei-era-session-id"),
+            vec![PathBuf::from(".")],
+            Some("An old conversation".into()),
+        )
+        .await
+        .expect("a pre-cutover row must open rather than error");
+
+    let session_id = thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .session_id()
+        .clone();
+    h.threads
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .push(thread);
+
+    // And the conversation continues from there, which is what the notice
+    // promises the user.
+    let response = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("still here?")))
+        .await
+        .expect("the reopened row should take a new turn");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+}
+
+#[tokio::test]
+async fn the_engine_advertises_resume_not_load_so_the_user_is_told() {
+    // This is what produces D6's notice, and it is load-bearing rather than a
+    // detail: the manager picks the resume mode by *capability*, so
+    // advertising load would report every reopened row as replayed — opening
+    // pre-cutover rows empty and silent, leaving the user to wonder where the
+    // conversation went.
+    let h = harness(assistant_turn("ok")).await;
+    assert!(
+        !h.connection.supports_load_session(),
+        "advertising load would suppress the no-history notice",
+    );
+    assert!(h.connection.supports_resume_session());
+    assert!(h.connection.supports_session_history());
+}
+
+#[tokio::test]
+async fn the_native_agent_keeps_the_stored_agent_id_across_the_swap() {
+    // D7: the stored agent id is a storage key, not a display name. Both
+    // engines answer to "cersei" so every row written before the switch still
+    // resolves after it.
+    let h = harness(assistant_turn("ok")).await;
+    assert_eq!(h.connection.agent_id().as_str(), "cersei");
+}
+
+#[tokio::test]
+async fn a_turn_emits_the_events_the_live_thread_feed_records_on() {
+    // Bar item 3, at the seam. The recorder is not changed by the port — it
+    // observes `AcpThreadEvent`s, and both engines produce them through the
+    // same `AcpThread`. What has to hold is that an engine turn still emits
+    // events the feed acts on; if it did not, rows would silently stop
+    // updating and nothing would fail.
+    //
+    // It asks the recorder's own predicate rather than listing events, so this
+    // cannot drift away from what the feed actually keys on.
+    let h = harness(assistant_turn("hello")).await;
+    let session_id = h.open_thread().await;
+
+    h.connection
+        .prompt(acp::PromptRequest::new(session_id, text("say something")))
+        .await
+        .expect("the turn should complete");
+
+    let recorded: Vec<_> = h
+        .drained()
+        .into_iter()
+        .filter(atlas_thread_metadata::affects_thread_metadata)
+        .collect();
+
+    assert!(
+        !recorded.is_empty(),
+        "an engine turn produced no event the live feed records on, so its \
+         store row would never be created or updated",
+    );
+}
+
+#[tokio::test]
+async fn the_models_answer_actually_reaches_the_transcript() {
+    // The user-visible half of the same bug the live-feed test found: the sink
+    // mapped streaming deltas only, so an answer delivered as a completed item
+    // — which is every answer from a provider that does not stream — vanished.
+    // The turn completed, the stop reason was right, and the chat stayed empty.
+    let h = harness(assistant_turn("the answer is 42")).await;
+    let session_id = h.open_thread().await;
+
+    h.connection
+        .prompt(acp::PromptRequest::new(session_id, text("what is it?")))
+        .await
+        .expect("the turn should complete");
+
+    assert!(
+        h.assistant_text().contains("the answer is 42"),
+        "the model's answer never reached the transcript; rendered: {}",
+        h.assistant_text(),
+    );
+}
+
+#[tokio::test]
+async fn a_streamed_answer_is_not_rendered_twice() {
+    // The other side of it. The engine sends deltas *and* a completed item
+    // carrying the whole text, so rendering both shows the answer twice.
+    let streamed = sse(vec![
+        json!({"type": "response.created", "response": {"id": "resp-1"}}),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "id": "msg-1",
+                "content": [{"type": "output_text", "text": "unique-marker-xyz"}]
+            }
+        }),
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp-1",
+                "usage": {
+                    "input_tokens": 0, "input_tokens_details": null,
+                    "output_tokens": 0, "output_tokens_details": null,
+                    "total_tokens": 0
+                }
+            }
+        }),
+    ]);
+    let h = harness(streamed).await;
+    let session_id = h.open_thread().await;
+
+    h.connection
+        .prompt(acp::PromptRequest::new(session_id, text("say it once")))
+        .await
+        .expect("the turn should complete");
+
+    let rendered = h.assistant_text();
+    assert_eq!(
+        rendered.matches("unique-marker-xyz").count(),
+        1,
+        "the answer was rendered more than once: {rendered}",
     );
 }

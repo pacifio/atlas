@@ -68,6 +68,9 @@ ported-engine = [
 atlas-cersei = { path = "../atlas-cersei", features = ["test-support"] }
 async-trait = "0.1"
 cersei = { version = "0.2.6", default-features = false }
+# The live thread feed's own predicate, so the history test asserts "the
+# recorder will fire" rather than guessing which events matter.
+atlas-thread-metadata = { path = "../atlas-thread-metadata" }
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
 # Seam-1 contract tests drive a real turn against a local mock model, so the

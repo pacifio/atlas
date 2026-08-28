@@ -22,6 +22,7 @@ use atlas_acp_thread::AcpThread;
 use atlas_acp_thread::AcpThreadHandle;
 use atlas_acp_thread::RetryStatus;
 use codex_app_server_protocol::ServerNotification;
+use codex_app_server_protocol::ThreadItem;
 
 use crate::engine::connection::TurnWaiters;
 
@@ -31,6 +32,14 @@ use crate::engine::connection::TurnWaiters;
 /// must not be kept alive by a session table still listing it.
 pub struct EngineSession {
     thread: Weak<Mutex<AcpThread>>,
+    /// Item ids whose text already arrived as deltas.
+    ///
+    /// The engine sends both: deltas while the model writes, and a completed
+    /// item carrying the whole thing. Rendering both shows the answer twice.
+    /// Rendering only the deltas loses any item that never streamed — which is
+    /// every item from a provider that does not stream, and the case the first
+    /// version of this sink silently dropped.
+    streamed: std::collections::HashSet<String>,
     /// The session's working directory.
     ///
     /// Kept because `search_memory` retrieves per project and the engine's
@@ -50,6 +59,7 @@ impl EngineSessions {
             session_id,
             EngineSession {
                 thread: Arc::downgrade(thread),
+                streamed: std::collections::HashSet::new(),
                 cwd,
             },
         );
@@ -63,6 +73,21 @@ impl EngineSessions {
 
     pub fn cwd(&self, session_id: &acp::SessionId) -> Option<String> {
         self.lock().get(session_id).map(|s| s.cwd.clone())
+    }
+
+    /// Records that an item streamed, and answers whether this was the first
+    /// delta for it.
+    fn mark_streamed(&self, session_id: &acp::SessionId, item_id: &str) {
+        if let Some(session) = self.lock().get_mut(session_id) {
+            session.streamed.insert(item_id.to_string());
+        }
+    }
+
+    /// Whether this item's text has already been rendered from deltas.
+    fn already_streamed(&self, session_id: &acp::SessionId, item_id: &str) -> bool {
+        self.lock()
+            .get(session_id)
+            .is_some_and(|s| s.streamed.contains(item_id))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<acp::SessionId, EngineSession>> {
@@ -127,8 +152,50 @@ pub fn apply_notification(
         // them, which is what makes text appear as it is produced rather than
         // in one block at the end.
         ServerNotification::AgentMessageDelta(params) => {
-            if let Some(thread) = sessions.thread(&session_id(&params.thread_id)) {
+            let id = session_id(&params.thread_id);
+            if let Some(thread) = sessions.thread(&id) {
+                sessions.mark_streamed(&id, &params.item_id);
                 lock(&thread).push_assistant_content_block(text_block(&params.delta), false);
+            }
+        }
+
+        // The finished item. For a streaming provider this is a duplicate of
+        // what the deltas already rendered, so it is skipped; for one that does
+        // not stream it is the only place the answer ever appears.
+        ServerNotification::ItemCompleted(params) => {
+            let id = session_id(&params.thread_id);
+            let Some(thread) = sessions.thread(&id) else {
+                return;
+            };
+            match &params.item {
+                ThreadItem::AgentMessage { id: item_id, text, .. } => {
+                    if sessions.already_streamed(&id, item_id) || text.is_empty() {
+                        return;
+                    }
+                    lock(&thread).push_assistant_content_block(text_block(text), false);
+                }
+                ThreadItem::Reasoning { id: item_id, summary, content, .. } => {
+                    if sessions.already_streamed(&id, item_id) {
+                        return;
+                    }
+                    // Summary first: it is what the user reads. Content is the
+                    // raw trace, and only some models emit it.
+                    let text = if summary.is_empty() {
+                        content.join("\n")
+                    } else {
+                        summary.join("\n")
+                    };
+                    if text.trim().is_empty() {
+                        return;
+                    }
+                    lock(&thread).push_assistant_content_block(text_block(&text), true);
+                }
+                other => {
+                    tracing::debug!(
+                        target: "atlas_native_agent::engine",
+                        "thread item not rendered yet: {}", item_kind(other),
+                    );
+                }
             }
         }
 
@@ -180,6 +247,14 @@ pub fn apply_notification(
             );
         }
     }
+}
+
+/// A thread item's variant name, for the trace above.
+fn item_kind(item: &ThreadItem) -> String {
+    serde_json::to_value(item)
+        .ok()
+        .and_then(|v| v.get("type").and_then(|t| t.as_str().map(str::to_owned)))
+        .unwrap_or_else(|| "<unknown>".to_string())
 }
 
 /// The notification's wire method name, for the trace above.

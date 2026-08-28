@@ -1119,6 +1119,7 @@ dependencies = [
  "atlas-acp-thread",
  "atlas-agent-servers",
  "atlas-cersei",
+ "atlas-thread-metadata",
  "base64 0.22.1",
  "cersei",
  "codex-app-server",

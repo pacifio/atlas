@@ -719,6 +719,116 @@ impl AgentConnection for EngineConnection {
         .boxed()
     }
 
+    /// Load is deliberately **not** advertised, and that is what produces D6's
+    /// notice.
+    ///
+    /// The manager picks the resume mode by capability, not per session: if
+    /// load is advertised, every reopened row is reported as `Replayed`. Atlas
+    /// cannot tell a row the engine could replay from a pre-cutover Cersei row
+    /// it has never seen — and in Phase 2 *every* stored native row is the
+    /// latter. Reporting `Replayed` for those would open an empty thread and
+    /// say nothing, leaving the user to wonder where their conversation went.
+    ///
+    /// Advertising resume instead reports `WithoutHistory`, which the sidebar
+    /// already renders as "this agent can't replay past messages — the
+    /// conversation continues from here". That is exactly D6's one-line
+    /// notice, and it needs no new UI.
+    fn supports_load_session(&self) -> bool {
+        false
+    }
+
+    fn supports_resume_session(&self) -> bool {
+        true
+    }
+
+    fn supports_session_history(&self) -> bool {
+        true
+    }
+
+    /// Reopen a stored row without replaying it (D6).
+    ///
+    /// Two cases reach here and both end the same way for the user. A thread
+    /// the engine knows resumes; a pre-cutover row it has never heard of does
+    /// not, and gets a fresh thread instead. Neither replays into the
+    /// transcript, because no converter from the old format exists and D6
+    /// accepts that loss rather than owning one forever.
+    ///
+    /// The failure is not treated as an error: a stored row that will not open
+    /// is worse than one that opens empty, and "the row is from before the
+    /// engine changed" is not something the user did wrong.
+    fn resume_session(
+        self: Arc<Self>,
+        session_id: acp::SessionId,
+        work_dirs: Vec<PathBuf>,
+        title: Option<Arc<str>>,
+    ) -> BoxFuture<'static, Result<AcpThreadHandle>> {
+        async move {
+            let cwd = work_dirs
+                .first()
+                .cloned()
+                .unwrap_or_else(|| self.settings.cwd.clone());
+
+            let resumed: Result<v2::ThreadResumeResponse> = self
+                .call(|request_id| ClientRequest::ThreadResume {
+                    request_id,
+                    params: v2::ThreadResumeParams {
+                        thread_id: session_id.to_string(),
+                        cwd: Some(cwd.to_string_lossy().into_owned()),
+                        model: Some(self.settings.model.clone()),
+                        model_provider: Some(self.settings.provider.id.clone()),
+                        ..Default::default()
+                    },
+                })
+                .await;
+
+            let engine_thread_id = match resumed {
+                Ok(response) => response.thread.id,
+                Err(e) => {
+                    tracing::info!(
+                        target: "atlas_native_agent::engine",
+                        "the engine does not know thread {session_id}; opening it fresh \
+                         (a row from before the engine changed): {e}",
+                    );
+                    let started: v2::ThreadStartResponse = self
+                        .call(|request_id| ClientRequest::ThreadStart {
+                            request_id,
+                            params: v2::ThreadStartParams {
+                                model: Some(self.settings.model.clone()),
+                                model_provider: Some(self.settings.provider.id.clone()),
+                                cwd: Some(cwd.to_string_lossy().into_owned()),
+                                dynamic_tools: self
+                                    .memory_search
+                                    .as_ref()
+                                    .map(|_| vec![memory::tool_spec()]),
+                                ..Default::default()
+                            },
+                        })
+                        .await?;
+                    started.thread.id
+                }
+            };
+
+            // Keyed by the id the engine will stamp on its events, which is
+            // the only id the sink can match. For a pre-cutover row that is a
+            // new id, and the live feed rebinds the store row to it — the same
+            // path a draft takes.
+            let engine_session_id = acp::SessionId::new(engine_thread_id.as_str());
+            let thread = self.new_thread(engine_session_id.clone(), work_dirs, title);
+            self.sessions.insert(
+                engine_session_id.clone(),
+                &thread,
+                cwd.to_string_lossy().into_owned(),
+            );
+            let mode = self
+                .default_mode
+                .clone()
+                .unwrap_or_else(|| acp::SessionModeId::new(modes::DEFAULT_MODE_ID));
+            self.apply_mode(&engine_session_id, &mode).await?;
+            Ok(thread)
+        }
+        .boxed()
+    }
+
     /// The native agent authenticates with the user's Atlas account, through
     /// the D10 token provider — not with an ACP auth method. Advertising none
     /// is what keeps the sign-in flow from offering one, and D10 requires the
