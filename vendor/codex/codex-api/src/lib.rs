@@ -1,4 +1,6 @@
 // Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
+// Atlas's Chat Completions dialect for the Atlas gateway (spec D3).
+pub mod atlas_chat;
 // Atlas's gateway error-classification arm (spec D13).
 pub mod atlas_gateway;
 pub(crate) mod api_bridge;

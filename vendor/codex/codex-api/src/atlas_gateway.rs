@@ -175,6 +175,38 @@ pub fn classify(status: StatusCode, body: &str, retry_after_header: Option<&str>
     }
 }
 
+/// Classifies the gateway's **in-stream** `{"error":…}` frame.
+///
+/// A mid-stream failure carries no status of its own — the response was already
+/// a `200` when the stream opened — so the frame's `code` is the only thing
+/// that names it. The gateway documents this case as travelling "the same
+/// `502`-frame-and-withhold-`[DONE]` path as any other provider failure", and
+/// that is the default here.
+///
+/// The codes listed below are read back to the status they belong to instead.
+/// None of them can reach a stream in the gateway as documented — a filled cap
+/// is refused before the provider is called — but the failure of guessing wrong
+/// is asymmetric: treating a terminal condition as a cautious retry is the
+/// retry storm this whole file exists to stop, while treating a provider blip
+/// as terminal costs one turn.
+pub fn classify_stream_frame(frame: &str) -> Disposition {
+    let code = serde_json::from_str::<GatewayEnvelope>(frame)
+        .ok()
+        .and_then(|envelope| envelope.error)
+        .and_then(|error| error.code)
+        .unwrap_or_default();
+    let status = match code.as_str() {
+        "cap_exceeded" => StatusCode::PAYMENT_REQUIRED,
+        "token_expired" | "unauthorized" => StatusCode::UNAUTHORIZED,
+        "rate_limited" => StatusCode::TOO_MANY_REQUESTS,
+        "no_entitlement" | "org_not_covered" | "model_not_allowed" => StatusCode::FORBIDDEN,
+        "request_too_large" | "prompt_too_large" => StatusCode::PAYLOAD_TOO_LARGE,
+        "atlas_backstop_tripped" => StatusCode::SERVICE_UNAVAILABLE,
+        _ => StatusCode::BAD_GATEWAY,
+    };
+    classify(status, frame, None)
+}
+
 impl Disposition {
     /// Whether the engine should try this request again.
     ///
@@ -199,10 +231,14 @@ impl Disposition {
     /// The engine's own error type.
     pub fn into_api_error(self) -> ApiError {
         match self {
-            Self::Terminal { message } => ApiError::Api {
-                status: StatusCode::BAD_REQUEST,
-                message,
-            },
+            // `InvalidRequest`, not `Api { status }`, and the difference is the
+            // whole point of this file: `ApiError::Api` becomes
+            // `CodexErr::UnexpectedStatus`, which the turn loop treats as
+            // **retryable** — so a "terminal" disposition would still have been
+            // retried five times. `InvalidRequest` is the non-retryable variant
+            // that keeps its message, and the message is where the cap detail
+            // lives. Pinned by `a_terminal_disposition_is_not_retryable_once_it_is_an_engine_error`.
+            Self::Terminal { message } => ApiError::InvalidRequest { message },
             Self::RefreshAuthThenRetryOnce { message } | Self::RetryCautiously { message } => {
                 ApiError::Retryable {
                     message,
@@ -391,5 +427,82 @@ mod tests {
         assert!(!d.is_retryable());
         let d = classify(StatusCode::TOO_MANY_REQUESTS, "", Some("1"));
         assert!(d.is_retryable());
+    }
+
+    #[test]
+    fn a_terminal_disposition_is_not_retryable_once_it_is_an_engine_error() {
+        // The bug this catches shipped in the first cut of this file, and every
+        // test above passed while it was there: `Disposition::is_retryable`
+        // said false, `into_api_error` produced `ApiError::Api { status }`, and
+        // the bridge turns that into `CodexErr::UnexpectedStatus` — which the
+        // turn loop retries. A 402 was still being re-sent five times.
+        //
+        // So the assertion has to run the whole way through the bridge. Asking
+        // the disposition alone is what missed it.
+        for (status, code) in [
+            (402, "cap_exceeded"),
+            (401, "unauthorized"),
+            (403, "no_entitlement"),
+            (413, "prompt_too_large"),
+            (503, "atlas_backstop_tripped"),
+            (400, "invalid_parameter"),
+        ] {
+            let engine_error = crate::map_api_error(classify_code(status, code).into_api_error());
+            assert!(
+                !engine_error.is_retryable(),
+                "{status} {code} is still retryable after the bridge: {engine_error:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_cap_error_keeps_its_detail_all_the_way_through_the_bridge() {
+        // Non-retryable is not enough on its own: the variant also has to be
+        // one that carries a message, or the user is told nothing but "error".
+        let body = r#"{"error":{"message":"The org monthly AI budget is spent.",
+            "code":"cap_exceeded","window":"monthly","scope":"org",
+            "used":307425,"cap":350000,"reset":"2026-09-01T00:00:00.000Z"}}"#;
+        let engine_error =
+            crate::map_api_error(classify(StatusCode::PAYMENT_REQUIRED, body, None).into_api_error());
+        let rendered = engine_error.to_string();
+        assert!(rendered.contains("307425"), "cap detail lost: {rendered}");
+        assert!(rendered.contains("2026-09-01"), "reset lost: {rendered}");
+    }
+
+    #[test]
+    fn a_retryable_disposition_stays_retryable_through_the_bridge() {
+        // The other direction, so the fix above cannot be "make everything
+        // terminal".
+        for (status, code) in [(429, "rate_limited"), (502, "provider_error")] {
+            let engine_error = crate::map_api_error(classify_code(status, code).into_api_error());
+            assert!(
+                engine_error.is_retryable(),
+                "{status} {code} should be retried: {engine_error:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn an_in_stream_error_frame_is_the_gateways_own_502_path() {
+        // A mid-stream failure has no status of its own; the gateway documents
+        // it as the same 502-frame-and-withhold-[DONE] path. Cautious retry,
+        // and the frame's own message rather than a generic one.
+        let frame = r#"{"error":{"type":"provider_error","code":"provider_error","message":"upstream hung up"}}"#;
+        let d = classify_stream_frame(frame);
+        assert!(matches!(d, Disposition::RetryCautiously { .. }));
+        assert_eq!(d.message(), "upstream hung up");
+    }
+
+    #[test]
+    fn an_in_stream_frame_carrying_a_terminal_code_is_still_terminal() {
+        // The frame is classified by its code first, so a cap that somehow
+        // surfaced mid-stream does not become a retry because of where it
+        // arrived.
+        let frame = r#"{"error":{"code":"cap_exceeded","message":"budget spent"}}"#;
+        let d = classify_stream_frame(frame);
+        assert!(
+            !d.is_retryable(),
+            "a cap must not become retryable by arriving mid-stream: {d:?}",
+        );
     }
 }
