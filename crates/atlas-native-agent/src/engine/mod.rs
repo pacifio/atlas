@@ -20,6 +20,7 @@
 //!   in `src-tauri`: the seam is the only place that knows both Atlas's settings
 //!   and the engine's shape
 
+pub mod approvals;
 pub mod auth;
 pub mod config;
 pub mod connection;

@@ -40,7 +40,9 @@ use std::sync::Mutex;
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::anyhow;
 use anyhow::Result;
-use atlas_acp_thread::{AcpThread, AcpThreadHandle, AgentConnection, AgentId, AgentSessionModes};
+use atlas_acp_thread::{
+    AcpThread, AcpThreadHandle, AgentConnection, AgentId, AgentSessionModes, AuthorizationKind,
+};
 use crate::connection::AgentSessionEffort;
 use atlas_agent_servers::ThreadEventSink;
 use codex_app_server_client::InProcessAppServerClient;
@@ -50,6 +52,7 @@ use codex_app_server_client::InProcessAppServerRequestHandle;
 use codex_app_server_protocol as v2;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::ServerRequest;
 use codex_app_server::in_process::InProcessServerEvent;
 use codex_login::auth::ExternalAuth;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -58,6 +61,7 @@ use futures::FutureExt;
 use tokio::sync::oneshot;
 
 use crate::engine::config::EngineSettings;
+use crate::engine::approvals;
 use crate::engine::modes;
 use crate::engine::runtime::start_engine;
 use crate::engine::runtime::EngineRuntime;
@@ -351,50 +355,200 @@ impl EngineConnection {
     }
 }
 
+/// An answer to an engine server request, on its way back to the pump.
+///
+/// Dialog answers cannot be sent straight to the client: the pump owns it, and
+/// `next_event` borrows it mutably for as long as it is waiting. So a dialog
+/// task sends its answer here and the pump, which is the only thing that can
+/// touch the client, delivers it.
+struct ServerAnswer {
+    request_id: RequestId,
+    result: std::result::Result<serde_json::Value, String>,
+}
+
 async fn pump_events(
     mut client: InProcessAppServerClient,
     sessions: Arc<EngineSessions>,
     turns: Arc<TurnWaiters>,
     max_retries: usize,
 ) {
-    while let Some(event) = client.next_event().await {
-        match event {
-            InProcessServerEvent::ServerNotification(notification) => {
-                apply_notification(&sessions, &turns, max_retries, *notification);
+    let (answers_tx, mut answers_rx) = tokio::sync::mpsc::unbounded_channel::<ServerAnswer>();
+
+    loop {
+        tokio::select! {
+            // Biased so answers are delivered promptly: a turn is blocked on
+            // every one of them.
+            biased;
+
+            Some(answer) = answers_rx.recv() => {
+                match answer.result {
+                    Ok(value) => {
+                        let _ = client.resolve_server_request(answer.request_id, value).await;
+                    }
+                    Err(message) => {
+                        let _ = client
+                            .reject_server_request(
+                                answer.request_id,
+                                codex_app_server_protocol::JSONRPCErrorError {
+                                    code: -32603,
+                                    message,
+                                    data: None,
+                                },
+                            )
+                            .await;
+                    }
+                }
             }
-            InProcessServerEvent::ServerRequest(request) => {
-                // Approvals and elicitations round-trip here, and wiring them
-                // is #47's job. Until then every server request is refused
-                // rather than ignored: an unanswered request is a turn that
-                // hangs with no way for the user to see why.
-                let id = request.id().clone();
-                tracing::warn!(
-                    target: "atlas_native_agent::engine",
-                    "refusing an engine server request: {request:?}",
-                );
-                let _ = client
-                    .reject_server_request(
-                        id,
-                        codex_app_server_protocol::JSONRPCErrorError {
-                            code: -32601,
-                            message: "Atlas does not serve engine server requests yet (#47)"
-                                .to_string(),
-                            data: None,
-                        },
-                    )
-                    .await;
-            }
-            InProcessServerEvent::Lagged { skipped } => {
-                // Transport health, not an application event. Worth saying out
-                // loud: dropped notifications show up to a user as a turn that
-                // rendered incompletely.
-                tracing::warn!(
-                    target: "atlas_native_agent::engine",
-                    "the engine event stream lagged; {skipped} notifications dropped",
-                );
+
+            event = client.next_event() => {
+                let Some(event) = event else { return };
+                match event {
+                    InProcessServerEvent::ServerNotification(notification) => {
+                        apply_notification(&sessions, &turns, max_retries, *notification);
+                    }
+                    InProcessServerEvent::ServerRequest(request) => {
+                        handle_server_request(&sessions, *request, &answers_tx);
+                    }
+                    InProcessServerEvent::Lagged { skipped } => {
+                        // Transport health, not an application event. Worth
+                        // saying out loud: dropped notifications show up to a
+                        // user as a turn that rendered incompletely.
+                        tracing::warn!(
+                            target: "atlas_native_agent::engine",
+                            "the engine event stream lagged; {skipped} notifications dropped",
+                        );
+                    }
+                }
             }
         }
     }
+}
+
+/// Routes an engine server request to the user, or refuses it.
+///
+/// Never blocks the pump. The dialog stays open for as long as the user takes,
+/// and the pump has to keep draining events the whole time — the turn's own
+/// progress arrives on the same stream.
+fn handle_server_request(
+    sessions: &Arc<EngineSessions>,
+    request: ServerRequest,
+    answers: &tokio::sync::mpsc::UnboundedSender<ServerAnswer>,
+) {
+    use codex_app_server_protocol::ServerRequest as Req;
+
+    let (request_id, thread_id, prompt) = match &request {
+        Req::CommandExecutionRequestApproval { request_id, params } => (
+            request_id.clone(),
+            params.thread_id.clone(),
+            approvals::tool_call(
+                &params.item_id,
+                acp::ToolKind::Execute,
+                params.command.clone(),
+                params.reason.clone(),
+            ),
+        ),
+        Req::FileChangeRequestApproval { request_id, params } => (
+            request_id.clone(),
+            params.thread_id.clone(),
+            approvals::tool_call(
+                &params.item_id,
+                acp::ToolKind::Edit,
+                None,
+                params.reason.clone(),
+            ),
+        ),
+        Req::PermissionsRequestApproval { request_id, params } => (
+            request_id.clone(),
+            params.thread_id.clone(),
+            approvals::tool_call(
+                &params.item_id,
+                acp::ToolKind::Execute,
+                None,
+                params.reason.clone(),
+            ),
+        ),
+        other => {
+            // Elicitations, dynamic tool calls, attestation. Refused rather
+            // than ignored: an unanswered request is a turn that hangs with no
+            // way for the user to see why.
+            tracing::warn!(
+                target: "atlas_native_agent::engine",
+                "refusing an engine server request Atlas does not serve yet: {other:?}",
+            );
+            let _ = answers.send(ServerAnswer {
+                request_id: other.id().clone(),
+                result: Err("Atlas does not serve this engine request yet".to_string()),
+            });
+            return;
+        }
+    };
+
+    let Some(thread) = sessions.thread(&acp::SessionId::new(thread_id.as_str())) else {
+        let _ = answers.send(ServerAnswer {
+            request_id,
+            result: Err("no open thread for this approval".to_string()),
+        });
+        return;
+    };
+
+    // Take the waiter out under the lock, then await it on its own task.
+    let waiter = {
+        let mut thread = thread.lock().unwrap_or_else(|p| p.into_inner());
+        thread.request_tool_call_authorization(
+            prompt,
+            approvals::options(),
+            AuthorizationKind::PermissionGrant,
+        )
+    };
+    let waiter = match waiter {
+        Ok(waiter) => waiter,
+        Err(e) => {
+            let _ = answers.send(ServerAnswer {
+                request_id,
+                result: Err(format!("the approval could not be raised: {e}")),
+            });
+            return;
+        }
+    };
+
+    let answers = answers.clone();
+    tokio::spawn(async move {
+        let decision = approvals::decision_for(&waiter.await);
+        // Shaped per request kind: the engine's two approval surfaces take
+        // different response types even though the user answered one question.
+        let result = match &request {
+            Req::CommandExecutionRequestApproval { .. } => serde_json::to_value(
+                v2::CommandExecutionRequestApprovalResponse {
+                    decision: decision.for_command(),
+                },
+            ),
+            Req::FileChangeRequestApproval { .. } => {
+                serde_json::to_value(v2::FileChangeRequestApprovalResponse {
+                    decision: decision.for_file_change(),
+                })
+            }
+            // The permissions surface grants capabilities rather than
+            // answering yes/no, and Atlas has no UI for choosing *which*
+            // capabilities. Approving grants nothing extra, which lets the
+            // engine proceed under the sandbox it already has rather than
+            // silently widening it on a click the user did not understand.
+            _ => serde_json::to_value(v2::PermissionsRequestApprovalResponse {
+                permissions: v2::GrantedPermissionProfile {
+                    network: None,
+                    file_system: None,
+                },
+                scope: match decision {
+                    approvals::Decision::AcceptForSession => v2::PermissionGrantScope::Session,
+                    _ => v2::PermissionGrantScope::Turn,
+                },
+                strict_auto_review: None,
+            }),
+        };
+        let _ = answers.send(ServerAnswer {
+            request_id,
+            result: result.map_err(|e| format!("could not encode the approval: {e}")),
+        });
+    });
 }
 
 /// Maps the engine's turn outcome onto the protocol's stop reason.

@@ -76,6 +76,8 @@ struct Harness {
     _server: MockServer,
     _home: tempfile::TempDir,
     connection: Arc<EngineConnection>,
+    /// Open threads, kept alive for the test's lifetime.
+    threads: std::sync::Mutex<Vec<atlas_acp_thread::AcpThreadHandle>>,
     /// Everything the app would have been told about the thread.
     ///
     /// One channel shared by every session: these tests use one session each,
@@ -90,6 +92,10 @@ impl Harness {
         self.events.try_iter().collect()
     }
 
+    /// Opens a thread and keeps it alive.
+    ///
+    /// The session table holds threads weakly, so a test that dropped its
+    /// handle would silently stop receiving every update for that session.
     async fn open_thread(&self) -> acp::SessionId {
         let thread = self
             .connection
@@ -102,10 +108,20 @@ impl Harness {
             .unwrap_or_else(|p| p.into_inner())
             .session_id()
             .clone();
-        // The thread must stay alive: the session table holds it weakly, so
-        // dropping it here would silently stop every update for this session.
-        std::mem::forget(thread);
+        self.threads
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(thread);
         id
+    }
+
+    fn thread(&self) -> atlas_acp_thread::AcpThreadHandle {
+        self.threads
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .last()
+            .cloned()
+            .expect("a thread must be open")
     }
 }
 
@@ -176,6 +192,7 @@ async fn harness_configured(
         _server: server,
         _home: home,
         connection,
+        threads: std::sync::Mutex::new(Vec::new()),
         events,
     }
 }
@@ -544,4 +561,174 @@ async fn per_session_controls_share_the_connection_request_id_counter() {
         .await
         .expect("a prompt after mode and effort changes must still start");
     assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+}
+
+// ---------------------------------------------------------------------------
+// #47 — the approval round-trip.
+//
+// Acceptance bar item 7. The engine asks; the request has to surface on the
+// thread as a tool-call authorization with Atlas's own option vocabulary; the
+// user's answer has to get back to the engine as its own decision.
+// ---------------------------------------------------------------------------
+
+/// A turn that asks to run a command, then finishes.
+///
+/// **The command must be one the engine does not trust.** "Ask" mode is
+/// `UnlessTrusted`, and a trusted command — `echo` among them — runs without
+/// ever raising an approval. The first version of these tests used `echo` and
+/// silently proved nothing: the turn completed, no dialog appeared, and the
+/// only symptom was a helper timing out.
+fn command_then_done(command: &str) -> String {
+    let args = serde_json::to_string(&json!({
+        "command": command,
+        "workdir": null,
+        "timeout_ms": 1000,
+    }))
+    .expect("arguments");
+    sse(vec![
+        json!({"type": "response.created", "response": {"id": "resp-1"}}),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call",
+                "call_id": "call-1",
+                "name": "shell_command",
+                "arguments": args
+            }
+        }),
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp-1",
+                "usage": {
+                    "input_tokens": 0, "input_tokens_details": null,
+                    "output_tokens": 0, "output_tokens_details": null,
+                    "total_tokens": 0
+                }
+            }
+        }),
+    ])
+}
+
+/// Answers the first authorization the thread announces, and reports the
+/// options the user was shown.
+async fn answer_first_authorization(
+    h: &Harness,
+    pick: acp::PermissionOptionKind,
+) -> Option<Vec<acp::PermissionOptionKind>> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let mut seen: Vec<String> = Vec::new();
+    while std::time::Instant::now() < deadline {
+        for event in h.drained() {
+            seen.push(format!("{event:?}"));
+            if let AcpThreadEvent::ToolAuthorizationRequested { id, options } = event {
+                let atlas_acp_thread::PermissionOptions::Flat(options) = options else {
+                    panic!("the engine's prompts are a flat option list");
+                };
+                let kinds: Vec<_> = options.iter().map(|o| o.kind).collect();
+                let chosen = options
+                    .iter()
+                    .find(|o| o.kind == pick)
+                    .unwrap_or_else(|| panic!("no {pick:?} option was offered"));
+                h.thread()
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .authorize_tool_call(
+                        id,
+                        atlas_acp_thread::SelectedPermissionOutcome::new(
+                            chosen.option_id.clone(),
+                            chosen.kind,
+                        ),
+                    );
+                return Some(kinds);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // Say what did arrive. "No approval" and "an approval that never reached
+    // the thread" look identical from the assertion alone.
+    eprintln!("no authorization within 20s; thread events were: {seen:#?}");
+    None
+}
+
+#[tokio::test]
+async fn a_command_approval_reaches_the_dialog_with_atlas_own_option_vocabulary() {
+    // Bar item 7. In "Ask" mode the engine must stop before a command, and the
+    // stop has to arrive as a tool-call authorization on the thread — the same
+    // event an external ACP agent produces, so the existing dialog renders it.
+    let h = harness_with(vec![
+        (Some(1), sse_ok(command_then_done("rm -rf /tmp/atlas-approval-probe"))),
+        (None, sse_ok(assistant_turn("done"))),
+    ])
+    .await;
+    let session_id = h.open_thread().await;
+
+    let connection = h.connection.clone();
+    let prompting = {
+        let session_id = session_id.clone();
+        tokio::spawn(async move {
+            connection
+                .prompt(acp::PromptRequest::new(session_id, text("run something")))
+                .await
+        })
+    };
+
+    let kinds = answer_first_authorization(&h, acp::PermissionOptionKind::AllowOnce)
+        .await
+        .expect("the engine should have asked for approval");
+
+    assert_eq!(
+        kinds,
+        [
+            acp::PermissionOptionKind::AllowOnce,
+            acp::PermissionOptionKind::AllowAlways,
+            acp::PermissionOptionKind::RejectOnce,
+        ],
+        "the dialog must offer Atlas's own three options",
+    );
+
+    let response = tokio::time::timeout(Duration::from_secs(30), prompting)
+        .await
+        .expect("the turn should not hang once the dialog is answered")
+        .expect("the prompt task should not panic")
+        .expect("the turn should complete");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+}
+
+#[tokio::test]
+async fn declining_a_command_lets_the_turn_finish_rather_than_killing_it() {
+    // The engine's own distinction, and the reason decline and cancel are not
+    // the same answer: "the agent will continue the turn". A decline that
+    // aborted would lose whatever the agent was going to say next.
+    let h = harness_with(vec![
+        (Some(1), sse_ok(command_then_done("rm -rf /tmp/atlas-approval-probe"))),
+        (None, sse_ok(assistant_turn("understood"))),
+    ])
+    .await;
+    let session_id = h.open_thread().await;
+
+    let connection = h.connection.clone();
+    let prompting = {
+        let session_id = session_id.clone();
+        tokio::spawn(async move {
+            connection
+                .prompt(acp::PromptRequest::new(session_id, text("run something")))
+                .await
+        })
+    };
+
+    answer_first_authorization(&h, acp::PermissionOptionKind::RejectOnce)
+        .await
+        .expect("the engine should have asked for approval");
+
+    let response = tokio::time::timeout(Duration::from_secs(30), prompting)
+        .await
+        .expect("a declined command must not hang the turn")
+        .expect("the prompt task should not panic")
+        .expect("a declined command is an outcome, not an error");
+    assert_eq!(
+        response.stop_reason,
+        acp::StopReason::EndTurn,
+        "declining one action must not abort the whole turn",
+    );
 }
