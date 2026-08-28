@@ -686,12 +686,15 @@ pub fn install_manager(app: &AppHandle) {
     // vanished and the first live turn went out with no Authorization header at
     // all ("Missing bearer token", straight from the gateway). Cargo does warn
     // (`unexpected_cfgs`), but only as a warning.
-    {
-        let core = app.state::<crate::commands::auth::AuthState>().core();
-        atlas_native_agent::engine::auth::register_token_source(Arc::new(AccountTokenSource {
-            core,
-        }));
-    }
+    //
+    // The handle is captured and the auth state resolved **per mint**, not
+    // here: `install_manager` runs at line ~176 of setup and `AuthState` is
+    // managed at ~193, so an eager `app.state::<AuthState>()` panics the app
+    // at launch — `state() called before manage()`. The old feature gate hid
+    // exactly this ordering bug by never letting the line run.
+    atlas_native_agent::engine::auth::register_token_source(Arc::new(AccountTokenSource {
+        app: app.clone(),
+    }));
 
     // The paying org, on every gateway request. Resolved from the live auth
     // snapshot per request rather than captured once: the user can switch org
@@ -701,9 +704,14 @@ pub fn install_manager(app: &AppHandle) {
     // on its organisation is refused `403 no_entitlement` while that org sits
     // fully entitled.
     {
-        let core = app.state::<crate::commands::auth::AuthState>().core();
+        let app_for_org = app.clone();
         atlas_native_agent::engine::set_org_source(Arc::new(move || {
-            match core.snapshot() {
+            // `try_state`, lazily: this closure can in principle run before
+            // `AuthState` is managed (same launch-ordering hazard as the token
+            // source above), and "no org yet" is the honest answer then —
+            // personal attribution, never a panic.
+            let state = app_for_org.try_state::<crate::commands::auth::AuthState>()?;
+            match state.core().snapshot() {
                 crate::auth::AuthSnapshot::SignedIn { active_org_id, .. } => active_org_id,
                 _ => None,
             }
@@ -1880,13 +1888,22 @@ mod auth_url_tests {
 /// token is never near expiry. It is the engine's long-lived session, holding a
 /// credential across a multi-minute turn, that needs the caching layer above.
 struct AccountTokenSource {
-    core: Arc<crate::auth::AuthCore>,
+    /// The app handle, not the auth core: this source is registered during
+    /// setup, *before* `AuthState` is managed, so the core cannot be captured
+    /// at construction. It is resolved per mint — by which time a turn is in
+    /// flight and the state has long existed.
+    app: AppHandle,
 }
 
 impl atlas_native_agent::engine::auth::AtlasTokenSource for AccountTokenSource {
     fn mint(&self) -> atlas_native_agent::engine::auth::ExternalAuthFuture<'_, String> {
         Box::pin(async move {
-            self.core.mint_access_token().await.map_err(|err| {
+            let Some(state) = self.app.try_state::<crate::commands::auth::AuthState>() else {
+                return Err(std::io::Error::other(
+                    "Atlas auth state is not ready yet — try again in a moment",
+                ));
+            };
+            state.core().mint_access_token().await.map_err(|err| {
                 // The engine's trait speaks `io::Error`, so the reason has to
                 // survive as text or the user is told only that auth failed.
                 // Signed-out is the common case and reads very differently from

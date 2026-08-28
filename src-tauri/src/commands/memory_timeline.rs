@@ -323,11 +323,7 @@ fn build_git(path: &str) -> Result<(Vec<TimelineBranch>, Vec<TimelineCommit>), S
     Ok((branches, commits))
 }
 
-fn parse_iso_ms(s: Option<&str>) -> i64 {
-    s.and_then(|x| chrono::DateTime::parse_from_rfc3339(x).ok())
-        .map(|dt| dt.timestamp_millis())
-        .unwrap_or(0)
-}
+// `parse_iso_ms` lived here for the native-session pass removed in #54.
 
 fn collapse(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")

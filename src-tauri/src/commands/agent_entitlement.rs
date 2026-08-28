@@ -125,11 +125,6 @@ pub fn classify(status: u16, body: &str) -> Entitlement {
     }
 }
 
-/// The words shown when there is no grant.
-pub fn no_grant_message() -> &'static str {
-    NO_GRANT_MESSAGE
-}
-
 
 /// Asks the gateway what this account may use.
 ///
@@ -220,7 +215,7 @@ mod tests {
             panic!("403 no_entitlement must be a setup state");
         };
         assert_eq!(message, "No AI grant for this organisation.");
-        assert!(no_grant_message().contains("admin"));
+        assert!(NO_GRANT_MESSAGE.contains("admin"));
     }
 
     #[test]
