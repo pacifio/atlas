@@ -25,6 +25,7 @@
 pub mod approvals;
 pub mod auth;
 pub mod catalog;
+pub mod commands;
 pub mod config;
 pub mod connection;
 pub mod memory;

@@ -569,3 +569,89 @@ async fn a_rate_limited_turn_shows_one_countdown_and_then_gives_the_turn_back() 
         "and it must be the interval the gateway actually asked for",
     );
 }
+
+#[tokio::test]
+async fn the_model_picker_offers_the_gateway_catalogue_and_nothing_else() {
+    // The bug this closes: the seam returned no model selector, so the composer
+    // fell back to the BYOK picker — the user's own provider keys. That is a
+    // list of models this agent cannot use, priced at rates that do not apply,
+    // and picking one sends a slug the gateway answers with 403.
+    use atlas_acp_thread::{AgentModelId, AgentModelList};
+
+    let h = harness(vec![(None, sse_ok(answer("ok")))]).await;
+    let session_id = h.open_thread().await;
+
+    let Some(selector) = h.connection.model_selector(&session_id) else {
+        panic!("the native agent must publish a model list, or the app falls back to BYOK");
+    };
+    let Ok(AgentModelList::Flat(models)) = selector.list_models().await else {
+        panic!("the catalogue should list as a flat set");
+    };
+
+    let ids: Vec<String> = models.iter().map(|m| m.id.as_str().to_string()).collect();
+    assert_eq!(
+        ids,
+        [
+            "claude-sonnet-4-6",
+            "claude-opus-5",
+            "claude-opus-4-8",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash-lite",
+        ],
+        "the picker must offer exactly what the gateway serves",
+    );
+    assert!(
+        !ids.iter().any(|id| id.starts_with("gpt-")),
+        "a model the gateway does not serve must never be offerable: {ids:?}",
+    );
+    // No prices. The BYOK picker shows per-million provider rates, which are
+    // not what an Atlas turn costs — it is metered against the account's cap.
+    assert!(models.iter().all(|m| m.cost.is_none()));
+
+    // And a model outside the catalogue is refused here rather than becoming a
+    // 403 on the next turn, well after the click that caused it.
+    assert!(
+        selector.select_model(AgentModelId::new("gpt-5.1")).await.is_err(),
+        "selecting a model the account cannot use must fail at the click",
+    );
+}
+
+#[tokio::test]
+async fn a_new_session_advertises_its_commands_and_no_login() {
+    // The native agent published nothing, so its slash picker was empty while
+    // every external agent's was full. And signing into Atlas *is* signing into
+    // the agent, so a login command would be a second, broken way to do
+    // something already done.
+    //
+    // Asserted on the thread's own state rather than on the event: that is what
+    // the composer reads, and it does not race the event forwarder.
+    let h = harness(vec![(None, sse_ok(answer("ok")))]).await;
+    let _ = h.open_thread().await;
+
+    let Some(thread) = h
+        .threads
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .last()
+        .cloned()
+    else {
+        panic!("a thread must be open");
+    };
+    let names: Vec<String> = thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .available_commands()
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+
+    assert!(
+        !names.is_empty(),
+        "a new session must publish its command list, or the picker is empty",
+    );
+    assert!(names.contains(&"compact".to_string()), "{names:?}");
+    assert!(
+        !names.iter().any(|n| n.contains("login")),
+        "the account's own sign-in is the agent's sign-in: {names:?}",
+    );
+}

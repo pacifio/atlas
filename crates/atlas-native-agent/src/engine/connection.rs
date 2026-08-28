@@ -41,7 +41,8 @@ use agent_client_protocol::schema::v1 as acp;
 use anyhow::anyhow;
 use anyhow::Result;
 use atlas_acp_thread::{
-    AcpThread, AcpThreadHandle, AgentConnection, AgentId, AgentSessionModes, AuthorizationKind,
+    AcpThread, AcpThreadHandle, AgentConnection, AgentId, AgentModelId, AgentModelInfo,
+    AgentModelList, AgentModelSelector, AgentSessionModes, AuthorizationKind,
 };
 use crate::AgentSessionEffort;
 use atlas_agent_servers::ThreadEventSink;
@@ -714,6 +715,16 @@ impl AgentConnection for EngineConnection {
             // this runs on the engine's own defaults, so the picker would show
             // a mode the engine is not in.
             self.apply_mode(&session_id, &mode).await?;
+
+            // Publish the slash commands. Without this the native agent's
+            // picker is empty while every external agent's is full — the app
+            // has always had the mechanism and the seam never used it.
+            let _ = thread
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .handle_session_update(acp::SessionUpdate::AvailableCommandsUpdate(
+                    acp::AvailableCommandsUpdate::new(crate::engine::commands::available()),
+                ));
             Ok(thread)
         }
         .boxed()
@@ -854,6 +865,29 @@ impl AgentConnection for EngineConnection {
         let request_id = self.request_ids.next();
         let model = self.settings.model.clone();
 
+        // A slash command is a protocol call, not something to say to the
+        // model. Sent as a turn it would arrive as the literal text "/compact",
+        // which the engine has no reason to interpret — the command would look
+        // offered and do nothing.
+        if let Some(command) = crate::engine::commands::command_of(&text) {
+            let thread_id = thread_id.clone();
+            return async move {
+                debug_assert_eq!(command, crate::engine::commands::COMPACT);
+                let _: v2::ThreadCompactStartResponse = requests
+                    .request_typed(ClientRequest::ThreadCompactStart {
+                        request_id,
+                        params: v2::ThreadCompactStartParams { thread_id },
+                    })
+                    .await?;
+                // Compaction is not a turn: nothing streams, and there is no
+                // turn id to wait on. Ending it here rather than parking is
+                // what stops the composer spinning on a turn that was never
+                // started.
+                Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+            }
+            .boxed();
+        }
+
         async move {
             let started: v2::TurnStartResponse = requests
                 .request_typed(ClientRequest::TurnStart {
@@ -896,6 +930,25 @@ impl AgentConnection for EngineConnection {
         Some(Arc::new(EngineSessionModes {
             connection: self.clone_handle(),
             session_id: session_id.clone(),
+        }))
+    }
+
+    /// The models the gateway will actually serve (D3).
+    ///
+    /// Returning `None` here — which this did until now — is why the composer
+    /// fell back to the **BYOK** picker: with no model list from the agent, the
+    /// only list the app had was the user's own provider keys. That is a list
+    /// of models this agent cannot use, priced at rates that do not apply, and
+    /// picking one sends a slug the gateway answers with `403
+    /// model_not_allowed`. The catalogue was authored and reaching the engine
+    /// the whole time; nothing published it.
+    fn model_selector(&self, session_id: &acp::SessionId) -> Option<Arc<dyn AgentModelSelector>> {
+        self.sessions.thread(session_id)?;
+        Some(Arc::new(EngineModelSelector {
+            requests: self.requests.clone(),
+            request_ids: self.request_ids.clone(),
+            session_id: session_id.clone(),
+            selected: Mutex::new(AgentModelId::new(crate::engine::catalog::DEFAULT_MODEL)),
         }))
     }
 
@@ -1196,6 +1249,100 @@ impl AgentSessionModes for EngineSessionModes {
                 .unwrap_or_else(|p| p.into_inner())
                 .insert(session_id, mode);
             Ok(())
+        }
+        .boxed()
+    }
+}
+
+/// The composer's model picker, backed by the authored catalogue.
+///
+/// The list is Atlas's, not the engine's: the engine would fetch one from
+/// `{base}/models`, and the gateway's reply is stock-OpenAI shaped where the
+/// engine expects its own rich record, so that fetch cannot parse (D3). The
+/// catalogue is the source of truth for both.
+struct EngineModelSelector {
+    requests: InProcessAppServerRequestHandle,
+    request_ids: Arc<RequestIds>,
+    session_id: acp::SessionId,
+    /// What the picker should show as current.
+    ///
+    /// Held here because the engine has no "read current model" call — the
+    /// setting is write-only from this side — so the alternative is a picker
+    /// whose tick mark never moves.
+    selected: Mutex<AgentModelId>,
+}
+
+impl EngineModelSelector {
+    fn catalogue() -> Vec<AgentModelInfo> {
+        let Ok(catalog) = crate::engine::catalog::atlas_catalog() else {
+            // The catalogue is authored in this repo and covered by its own
+            // tests, so this is a build-time impossibility rather than a
+            // runtime condition — but an empty picker is a better failure than
+            // a panic in the composer.
+            tracing::error!("the authored model catalogue failed to parse");
+            return Vec::new();
+        };
+        catalog
+            .models
+            .into_iter()
+            .map(|model| AgentModelInfo {
+                id: AgentModelId::new(model.slug.as_str()),
+                name: model.display_name.as_str().into(),
+                description: model.description.as_deref().map(Into::into),
+                icon: None,
+                is_latest: false,
+                // Deliberately blank. The BYOK picker shows per-million
+                // provider rates, which are not what an Atlas turn costs — a
+                // turn is metered against the account's own weighted cap. A
+                // number here would be a wrong number.
+                cost: None,
+                disabled: None,
+            })
+            .collect()
+    }
+}
+
+impl AgentModelSelector for EngineModelSelector {
+    fn list_models(&self) -> BoxFuture<'static, Result<AgentModelList>> {
+        let models = Self::catalogue();
+        async move { Ok(AgentModelList::Flat(models)) }.boxed()
+    }
+
+    fn select_model(&self, model_id: AgentModelId) -> BoxFuture<'static, Result<()>> {
+        // Refused rather than sent. The gateway answers an unknown slug with
+        // `403 model_not_allowed`, which arrives as a failed turn well after
+        // the user made the choice; saying no here keeps the cause next to the
+        // click.
+        let known = Self::catalogue().into_iter().any(|m| m.id == model_id);
+        let requests = self.requests.clone();
+        let request_id = self.request_ids.next();
+        let thread_id = self.session_id.to_string();
+        let model = model_id.as_str().to_string();
+        *self.selected.lock().unwrap_or_else(|p| p.into_inner()) = model_id;
+        async move {
+            if !known {
+                return Err(anyhow!("{model} is not a model this account can use"));
+            }
+            let _: v2::ThreadSettingsUpdateResponse = requests
+                .request_typed(ClientRequest::ThreadSettingsUpdate {
+                    request_id,
+                    params: v2::ThreadSettingsUpdateParams {
+                        thread_id,
+                        model: Some(model),
+                        ..Default::default()
+                    },
+                })
+                .await?;
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn selected_model(&self) -> BoxFuture<'static, Result<AgentModelInfo>> {
+        let selected = self.selected.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let found = Self::catalogue().into_iter().find(|m| m.id == selected);
+        async move {
+            found.ok_or_else(|| anyhow!("the selected model is not in the catalogue"))
         }
         .boxed()
     }
