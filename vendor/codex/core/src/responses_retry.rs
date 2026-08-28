@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 //! Shared retry and transport fallback decisions for Responses requests.
 
 use std::time::Duration;
@@ -71,8 +72,13 @@ pub(crate) async fn handle_retryable_response_stream_error(
             ?retry_delay,
             "stream connection failed; waiting to retry"
         );
-        sess.notify_stream_error(turn_context, "Reconnecting... waiting for network", err)
-            .await;
+        sess.notify_stream_error(
+            turn_context,
+            "Reconnecting... waiting for network",
+            err,
+            Some(retry_delay),
+        )
+        .await;
         retry_state.connection_retries = retry_state.connection_retries.saturating_add(1);
         codex_client::record_retry!(retry_state.connection_retries, retry_delay, operation);
         tokio::time::sleep(retry_delay).await;
@@ -117,6 +123,10 @@ pub(crate) async fn handle_retryable_response_stream_error(
                 turn_context,
                 format!("Reconnecting... {retry_count}/{max_retries}"),
                 err,
+                // The wait this notice is announcing. On the Atlas gateway a
+                // `429` puts the gateway's own `Retry-After` here, which is the
+                // interval it instructs clients to honour.
+                Some(delay),
             )
             .await;
         }

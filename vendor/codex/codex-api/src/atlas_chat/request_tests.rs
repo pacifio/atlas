@@ -460,3 +460,95 @@ fn not_one_of_the_ten_responses_fields_reaches_the_wire() {
     assert!(rendered.contains("\"tool_calls\"") && rendered.contains("\"messages\""));
     assert!(rendered.contains("\"type\":\"text\""), "content parts still use `text`");
 }
+
+fn image_message(text: &str, url: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![
+            ContentItem::InputText {
+                text: text.to_string(),
+            },
+            ContentItem::InputImage {
+                image_url: url.to_string(),
+                detail: None,
+            },
+        ],
+        phase: None,
+        internal_chat_message_metadata_passthrough: None,
+    }
+}
+
+fn assistant(text: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+            text: text.to_string(),
+        }],
+        phase: None,
+        internal_chat_message_metadata_passthrough: None,
+    }
+}
+
+#[test]
+fn an_image_survives_the_turn_it_was_attached_to_and_the_one_after() {
+    // D15(c). The engine is stateless and replays the whole conversation every
+    // turn, so an image attached once is re-uploaded on every later turn of
+    // that thread. Evicting it too eagerly would take it away while the user is
+    // still asking about it.
+    let items = [
+        image_message("what is this", "data:image/png;base64,AAAA"),
+        assistant("a cat"),
+        message("user", "and what colour"),
+    ];
+    let built = build("claude-sonnet-4-6", &items, &[]);
+    let rendered = serde_json::to_string(&built.request)
+        .unwrap_or_else(|err| panic!("serialize: {err}"));
+    assert!(
+        rendered.contains("AAAA"),
+        "the image is still one turn old and is still being discussed",
+    );
+}
+
+#[test]
+fn an_older_image_is_described_rather_than_re_uploaded() {
+    // The gateway's body cap is 2 MB counted *before parsing*, which a handful
+    // of screenshots crosses long before any token ceiling — and past it the
+    // thread 413s forever, with no escape but starting a new one.
+    let items = [
+        image_message("what is this", "data:image/png;base64,OLDBYTES"),
+        assistant("a cat"),
+        message("user", "and what colour"),
+        assistant("grey"),
+        message("user", "thanks"),
+    ];
+    let built = build("claude-sonnet-4-6", &items, &[]);
+    let rendered = serde_json::to_string(&built.request)
+        .unwrap_or_else(|err| panic!("serialize: {err}"));
+
+    assert!(
+        !rendered.contains("OLDBYTES"),
+        "an image two turns back must not be re-uploaded: {rendered}",
+    );
+    // Described, not vanished: a message that silently loses its image reads as
+    // if it referred to something that was never there.
+    assert!(
+        rendered.contains("earlier image omitted"),
+        "the evicted image needs a placeholder: {rendered}",
+    );
+    // And the words around it survive untouched.
+    assert!(rendered.contains("what is this"));
+}
+
+#[test]
+fn eviction_never_takes_the_only_image_in_a_first_turn() {
+    // The commonest case by far: one image, one prompt, no history. Evicting
+    // here would mean the model never sees the thing it was asked about.
+    let items = [image_message("what is this", "data:image/png;base64,ONLYONE")];
+    let built = build("claude-sonnet-4-6", &items, &[]);
+    let rendered = serde_json::to_string(&built.request)
+        .unwrap_or_else(|err| panic!("serialize: {err}"));
+    assert!(rendered.contains("ONLYONE"));
+    assert!(!rendered.contains("earlier image omitted"));
+}

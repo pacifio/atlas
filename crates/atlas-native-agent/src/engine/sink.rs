@@ -220,10 +220,21 @@ pub fn apply_notification(
                 attempt,
                 max_attempts: max_retries,
                 started_at: std::time::Instant::now(),
-                // The engine does not publish its backoff delay (D8), so the
-                // pill counts up from now rather than down to a deadline. A
-                // fabricated duration would be a countdown to nothing.
-                duration: std::time::Duration::ZERO,
+                // The wait the engine is actually about to take, so the pill
+                // counts *down* to the attempt rather than up from the notice.
+                //
+                // D8 recorded this as an accepted loss because upstream
+                // computed the delay and then dropped it on the floor; the
+                // gateway made it worth fixing, since a `429` carries a
+                // `Retry-After` the contract instructs clients to honour and a
+                // minute-long wait with no visible end reads as a hang. Zero
+                // when the engine did not say — still better than inventing a
+                // duration, which would be a countdown to nothing.
+                duration: params
+                    .error
+                    .retry_delay_ms
+                    .map(std::time::Duration::from_millis)
+                    .unwrap_or(std::time::Duration::ZERO),
                 meta: None,
             });
         }

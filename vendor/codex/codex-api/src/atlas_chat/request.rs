@@ -207,8 +207,9 @@ pub fn build_chat_request(input: ChatRequestInput<'_>) -> Result<BuiltChatReques
             content: input.instructions.to_string(),
         });
     }
-    for item in input.items {
-        push_item(&mut messages, item);
+    let keep_images_from = first_turn_keeping_images(input.items);
+    for (index, item) in input.items.iter().enumerate() {
+        push_item(&mut messages, item, index >= keep_images_from);
     }
     let messages = merge_adjacent(messages);
 
@@ -278,7 +279,42 @@ fn parts_of(content: &[ContentItem]) -> Vec<ContentPart> {
         .collect()
 }
 
-fn push_item(messages: &mut Vec<ChatMessage>, item: &ResponseItem) {
+/// The index from which replayed images keep their bytes (D15c).
+///
+/// Everything before it is described rather than re-sent. The engine is
+/// stateless — it replays the whole conversation on every request — so an image
+/// attached once is re-uploaded on every subsequent turn of that thread. The
+/// gateway's body cap is **2 MB, counted before parsing**, which a handful of
+/// screenshots crosses long before any token ceiling; past that point the
+/// thread `413`s forever and the only escape is starting a new one.
+///
+/// The boundary is the **immediately-preceding user turn**, so the model still
+/// sees an image while it is being discussed, and stops carrying it once the
+/// conversation has moved on. A placeholder goes in its place rather than
+/// nothing, because an image that silently vanishes makes the surrounding
+/// messages read as if they referred to something that was never there.
+fn first_turn_keeping_images(items: &[ResponseItem]) -> usize {
+    let user_turns: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| {
+            matches!(item, ResponseItem::Message { role, .. } if role != "assistant" && role != "system" && role != "developer")
+        })
+        .map(|(index, _)| index)
+        .collect();
+    // The current turn and the one before it.
+    user_turns
+        .len()
+        .checked_sub(2)
+        .and_then(|i| user_turns.get(i))
+        .copied()
+        .unwrap_or(0)
+}
+
+/// The text that stands in for an evicted image.
+const EVICTED_IMAGE: &str = "[earlier image omitted to stay within the request size limit]";
+
+fn push_item(messages: &mut Vec<ChatMessage>, item: &ResponseItem, keep_images: bool) {
     match item {
         ResponseItem::Message { role, content, .. } => match role.as_str() {
             // The Responses API's "developer" role is the system prompt's own
@@ -300,7 +336,10 @@ fn push_item(messages: &mut Vec<ChatMessage>, item: &ResponseItem) {
                 }
             }
             _ => {
-                let parts = parts_of(content);
+                let mut parts = parts_of(content);
+                if !keep_images {
+                    evict_images(&mut parts);
+                }
                 if !parts.is_empty() {
                     messages.push(ChatMessage::User { content: parts });
                 }
@@ -370,6 +409,21 @@ fn push_item(messages: &mut Vec<ChatMessage>, item: &ResponseItem) {
         other => {
             warn!(item = ?std::mem::discriminant(other), "item dropped: no Chat Completions shape");
         }
+    }
+}
+
+/// Replaces image parts with a placeholder, keeping the turn's text intact.
+fn evict_images(parts: &mut Vec<ContentPart>) {
+    let mut evicted = false;
+    parts.retain(|part| {
+        let is_image = matches!(part, ContentPart::ImageUrl { .. });
+        evicted |= is_image;
+        !is_image
+    });
+    if evicted {
+        parts.push(ContentPart::Text {
+            text: EVICTED_IMAGE.to_string(),
+        });
     }
 }
 

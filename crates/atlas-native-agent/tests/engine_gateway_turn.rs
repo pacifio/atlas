@@ -510,3 +510,64 @@ async fn an_unauthorized_token_is_not_retried_at_all() {
         "an unauthorized credential must not be retried in a loop, saw {attempts} attempts",
     );
 }
+
+#[tokio::test]
+async fn a_rate_limited_turn_shows_one_countdown_and_then_gives_the_turn_back() {
+    // D15(b) and acceptance bar item 13. Two properties, and the ticket needs
+    // both:
+    //
+    //  * the wait is *visible* — the retry notice carries the gateway's own
+    //    `Retry-After`, so the pill counts down to the attempt instead of up
+    //    from the notice. A minute-long wait with no visible end is
+    //    indistinguishable from a hang, which is the complaint;
+    //  * there is exactly *one* of them. The engine's default of five retries
+    //    at the gateway's stated 60s is a five-minute stall inside one turn.
+    //
+    // The mock answers 429 every time, so the only thing that stops it is the
+    // bound.
+    let limited = ResponseTemplate::new(429)
+        .insert_header("retry-after", "1")
+        .set_body_raw(
+            r#"{"error":{"message":"too many requests","type":"rate_limit_error","code":"rate_limited"}}"#,
+            "application/json",
+        );
+    let h = harness(vec![(None, limited)]).await;
+    let session_id = h.open_thread().await;
+
+    let outcome = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("hi")))
+        .await;
+    assert!(
+        outcome.is_err(),
+        "after its one retry the turn must surface, not keep waiting",
+    );
+
+    let retries: Vec<_> = h
+        .drained()
+        .into_iter()
+        .filter_map(|event| match event {
+            AcpThreadEvent::Retry(status) => Some(status),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        retries.len(),
+        1,
+        "exactly one visible retry, got {}: {retries:#?}",
+        retries.len(),
+    );
+    let status = &retries[0];
+    assert_eq!(status.max_attempts, 1, "the pill must not promise more");
+    assert!(
+        status.duration > std::time::Duration::ZERO,
+        "the countdown needs the gateway's stated interval, not zero — a pill \
+         that cannot count down is the hang this test exists to prevent",
+    );
+    assert_eq!(
+        status.duration,
+        std::time::Duration::from_secs(1),
+        "and it must be the interval the gateway actually asked for",
+    );
+}

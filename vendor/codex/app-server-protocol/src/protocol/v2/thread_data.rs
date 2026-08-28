@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use super::CodexErrorInfo;
 use super::ThreadItem;
 use super::ThreadStatus;
@@ -309,4 +310,13 @@ pub struct TurnError {
     pub codex_error_info: Option<CodexErrorInfo>,
     #[serde(default)]
     pub additional_details: Option<String>,
+    /// How long the engine will wait before the retry this error announces,
+    /// when it is a retry at all (`willRetry`).
+    ///
+    /// **Added by Atlas.** Without it a client can say a retry is coming but
+    /// not when, so a progress indicator counts up from the notice instead of
+    /// down to the attempt — and a wait with no visible end is what makes a
+    /// rate-limit pause indistinguishable from a hang.
+    #[serde(default)]
+    pub retry_delay_ms: Option<u64>,
 }

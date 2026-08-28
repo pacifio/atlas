@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use super::thread_enrichment::enrich_loaded_threads;
 use super::thread_fork_goal::inherit_thread_goal_snapshot;
 use super::turn_processor::can_accept_direct_input;
@@ -5313,6 +5314,9 @@ fn stored_turn_to_api_turn(
         message: error.message,
         codex_error_info: error.codex_error_info,
         additional_details: error.additional_details,
+        // A stored turn being read back. Whatever wait its error announced
+        // finished long ago.
+        retry_delay_ms: None,
     });
     let items = turn
         .items

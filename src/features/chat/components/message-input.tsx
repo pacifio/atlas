@@ -63,6 +63,7 @@ import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import { ComposerOptionsPill } from "./composer-options-pill";
 import { FeaturedAgentOffers } from "./featured-agent-offers";
 import { RetryPill } from "./retry-pill";
+import { QUALITY_LADDER, exceedsBudget, targetDimensions } from "../lib/image-policy";
 import { ComposerAddMenu } from "./composer-add-menu";
 import type { GithubRepo } from "@/features/github/types";
 import { imageMimeFromPath } from "@/lib/byok/model-capabilities";
@@ -114,10 +115,54 @@ async function fileToImageAttachment(file: File): Promise<ImageAttachment | null
   }).catch(() => null);
   if (!dataUrl) return null;
   const comma = dataUrl.indexOf(",");
-  return {
+  return downscaleAttachment({
     mimeType: file.type,
     dataBase64: comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl,
-  };
+  });
+}
+
+/**
+ * Shrink an attachment that would not fit the gateway's body cap (D15c).
+ *
+ * Done once, here, rather than on every turn: the engine replays the whole
+ * conversation on each request, so an image re-encoded on the way out would be
+ * re-encoded for as long as the thread lives.
+ *
+ * Failure is not fatal. A browser that cannot decode the image, or a canvas
+ * that will not export, leaves the original in place — a too-large attachment
+ * that the gateway refuses with a clear `413` is a better outcome than an
+ * attachment silently dropped on the floor here.
+ */
+async function downscaleAttachment(image: ImageAttachment): Promise<ImageAttachment> {
+  if (!exceedsBudget(image.dataBase64.length)) return image;
+  try {
+    const source = `data:${image.mimeType};base64,${image.dataBase64}`;
+    const bitmap = await createImageBitmap(await (await fetch(source)).blob());
+    const target = targetDimensions(bitmap.width, bitmap.height);
+    const width = target?.width ?? bitmap.width;
+    const height = target?.height ?? bitmap.height;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return image;
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close?.();
+
+    // Down the quality ladder until it fits. A legible 400 KB JPEG beats a
+    // pristine 6 MB PNG the gateway refuses outright.
+    for (const quality of QUALITY_LADDER) {
+      const encoded = canvas.toDataURL("image/jpeg", quality);
+      const data = encoded.slice(encoded.indexOf(",") + 1);
+      if (!exceedsBudget(data.length)) {
+        return { mimeType: "image/jpeg", dataBase64: data };
+      }
+    }
+    return image;
+  } catch {
+    return image;
+  }
 }
 
 interface MessageInputProps {
@@ -1152,7 +1197,7 @@ export function MessageInput({
         if (mime) {
           try {
             const data = await invoke<string>("read_file_base64", { path: p });
-            images.push({ mimeType: mime, dataBase64: data });
+            images.push(await downscaleAttachment({ mimeType: mime, dataBase64: data }));
             continue;
           } catch {
             // Unreadable as base64 → fall through to a path mention.
@@ -1214,7 +1259,7 @@ export function MessageInput({
         if (mime) {
           try {
             const data = await invoke<string>("read_file_base64", { path: p });
-            images.push({ mimeType: mime, dataBase64: data });
+            images.push(await downscaleAttachment({ mimeType: mime, dataBase64: data }));
             continue;
           } catch {
             // Unreadable as base64 → fall through to a path mention.
@@ -1248,10 +1293,13 @@ export function MessageInput({
         } | null>("capture_screenshot", { mode, projectPath: proj });
         if (!res) return; // cancelled (Esc during region select)
         if (imageSupported) {
-          setStagedImages((prev) => [
-            ...prev,
-            { mimeType: res.mimeType, dataBase64: res.dataBase64 },
-          ]);
+          // Shrunk before it is staged, not inside the updater — the state
+          // callback is synchronous and cannot await.
+          const shrunk = await downscaleAttachment({
+            mimeType: res.mimeType,
+            dataBase64: res.dataBase64,
+          });
+          setStagedImages((prev) => [...prev, shrunk]);
         } else {
           handleDropFiles([res.path]);
         }

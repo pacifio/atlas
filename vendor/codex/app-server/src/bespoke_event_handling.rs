@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use crate::outgoing_message::ClientRequestResult;
@@ -948,6 +949,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 message: ev.message,
                 codex_error_info: ev.codex_error_info.map(V2CodexErrorInfo::from),
                 additional_details: None,
+                retry_delay_ms: None
             };
             handle_error_notification(
                 conversation_id,
@@ -965,6 +967,9 @@ pub(crate) async fn apply_bespoke_event_handling(
                 message: ev.message,
                 codex_error_info: ev.codex_error_info.map(V2CodexErrorInfo::from),
                 additional_details: ev.additional_details,
+                // The only site with a wait to report: this is the notice that
+                // announces a retry, so it is the one a client can count down.
+                retry_delay_ms: ev.retry_delay_ms,
             };
             outgoing
                 .send_server_notification(ServerNotification::Error(ErrorNotification {
@@ -1814,6 +1819,7 @@ async fn on_request_permissions_response(
                     message,
                     codex_error_info: None,
                     additional_details: None,
+                retry_delay_ms: None
                 },
                 &outgoing,
                 &thread_state,
@@ -3284,6 +3290,7 @@ mod tests {
                 message: "boom".to_string(),
                 codex_error_info: Some(V2CodexErrorInfo::InternalServerError),
                 additional_details: None,
+                retry_delay_ms: None
             },
             &thread_state,
         )
@@ -3296,6 +3303,7 @@ mod tests {
                 message: "boom".to_string(),
                 codex_error_info: Some(V2CodexErrorInfo::InternalServerError),
                 additional_details: None,
+                retry_delay_ms: None
             })
         );
         Ok(())
@@ -3682,6 +3690,7 @@ mod tests {
                 message: "oops".to_string(),
                 codex_error_info: None,
                 additional_details: None,
+                retry_delay_ms: None
             },
             &thread_state,
         )
@@ -3732,6 +3741,7 @@ mod tests {
                 message: "bad".to_string(),
                 codex_error_info: Some(V2CodexErrorInfo::Other),
                 additional_details: None,
+                retry_delay_ms: None
             },
             &thread_state,
         )
@@ -3767,6 +3777,7 @@ mod tests {
                         message: "bad".to_string(),
                         codex_error_info: Some(V2CodexErrorInfo::Other),
                         additional_details: None,
+                retry_delay_ms: None
                     })
                 );
                 assert_eq!(n.turn.completed_at, Some(TEST_TURN_COMPLETED_AT));
@@ -3979,6 +3990,7 @@ mod tests {
                 message: "a1".to_string(),
                 codex_error_info: Some(V2CodexErrorInfo::BadRequest),
                 additional_details: None,
+                retry_delay_ms: None
             },
             &thread_state,
         )
@@ -4000,6 +4012,7 @@ mod tests {
                 message: "b1".to_string(),
                 codex_error_info: None,
                 additional_details: None,
+                retry_delay_ms: None
             },
             &thread_state,
         )
@@ -4036,6 +4049,7 @@ mod tests {
                         message: "a1".to_string(),
                         codex_error_info: Some(V2CodexErrorInfo::BadRequest),
                         additional_details: None,
+                retry_delay_ms: None
                     })
                 );
             }
@@ -4054,6 +4068,7 @@ mod tests {
                         message: "b1".to_string(),
                         codex_error_info: None,
                         additional_details: None,
+                retry_delay_ms: None
                     })
                 );
             }

@@ -981,6 +981,7 @@ mod tests {
             message: "the model refused".to_string(),
             codex_error_info: None,
             additional_details: None,
+            retry_delay_ms: None,
         });
         let err = stop_reason(&failed).expect_err("a failed turn must not be a stop reason");
         assert!(err.to_string().contains("the model refused"));

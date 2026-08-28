@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -4025,11 +4026,15 @@ impl Session {
         self.ensure_rollout_materialized(persist_context).await;
     }
 
+    /// `retry_delay` is how long the caller is about to wait, when it knows.
+    /// Added by Atlas: the retry sites compute this and upstream dropped it, so
+    /// a client could tell the user a retry was coming but not when.
     pub(crate) async fn notify_stream_error(
         &self,
         turn_context: &TurnContext,
         message: impl Into<String>,
         codex_error: CodexErr,
+        retry_delay: Option<std::time::Duration>,
     ) {
         let additional_details = codex_error.to_string();
         let codex_error_info = CodexErrorInfo::ResponseStreamDisconnected {
@@ -4039,6 +4044,7 @@ impl Session {
             message: message.into(),
             codex_error_info: Some(codex_error_info),
             additional_details: Some(additional_details),
+            retry_delay_ms: retry_delay.map(|d| d.as_millis() as u64),
         });
         self.send_event(turn_context, event).await;
     }

@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use anyhow::Result;
 use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
@@ -140,6 +141,9 @@ async fn cyber_policy_response_emits_typed_error_notification_v2() -> Result<()>
                 message: CYBER_POLICY_MESSAGE.to_string(),
                 codex_error_info: Some(CodexErrorInfo::CyberPolicy),
                 additional_details: None,
+                // A terminal refusal — `willRetry` is false below, so there is
+                // no wait for a client to count down.
+                retry_delay_ms: None,
             },
             will_retry: false,
             thread_id: thread.id,

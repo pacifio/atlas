@@ -117,6 +117,21 @@ pub const GATEWAY_BASE_URL: &str = "https://ai.tryatlas.cc/v1";
 /// The id the gateway provider is registered under.
 pub const GATEWAY_PROVIDER_ID: &str = "atlas";
 
+/// How many times a turn against the gateway retries before it surfaces.
+///
+/// **One**, and that is D15(b) rather than a tuning choice. The gateway's
+/// `Retry-After` on a rate limit is `60`, so the engine's default of five
+/// retries is a five-minute stall inside a single turn that from the outside
+/// looks exactly like a hang — the shape the UX decision was written to bound.
+/// After one visible wait the user gets a terminal notice and their turn back,
+/// which is a worse outcome per-turn and a much better one per-user.
+///
+/// It applies to every transient class, not just rate limits, because the
+/// engine has one retry budget rather than one per error kind. That costs the
+/// dropped-stream case four of its five attempts — acceptable here, where the
+/// server states how long to wait and a second blind attempt buys little.
+pub const GATEWAY_STREAM_MAX_RETRIES: usize = 1;
+
 impl EngineProvider {
     /// A developer-configured provider for the Phase 2 tracer bullet.
     pub fn dev(id: impl Into<String>, base_url: impl Into<String>, env_key: Option<String>) -> Self {
@@ -175,6 +190,7 @@ pub struct EngineSettings {
 
 impl EngineSettings {
     pub fn new(home: EngineHome, provider: EngineProvider, model: impl Into<String>, cwd: PathBuf) -> Self {
+        let wire = provider.wire;
         Self {
             home,
             provider,
@@ -187,7 +203,15 @@ impl EngineSettings {
             // anything else routed to the approval dialog Atlas already has.
             approval_policy: AskForApproval::OnRequest,
             sandbox_mode: SandboxMode::WorkspaceWrite,
-            stream_max_retries: DEFAULT_STREAM_MAX_RETRIES,
+            // Keyed on the wire, not on which constructor was used. "A turn
+            // against the gateway retries once" is a property of talking to the
+            // gateway (D15b); hanging it off one code path left every other way
+            // of building these settings — the tests included — quietly on the
+            // engine's default of five.
+            stream_max_retries: match wire {
+                WireDialect::Chat => GATEWAY_STREAM_MAX_RETRIES,
+                WireDialect::Responses => DEFAULT_STREAM_MAX_RETRIES,
+            },
         }
     }
 

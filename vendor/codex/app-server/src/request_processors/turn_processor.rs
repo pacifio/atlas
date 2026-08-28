@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use super::*;
 use codex_agent_extension::AgentInvocation;
 use codex_agent_extension::AgentRun;
@@ -1006,6 +1007,9 @@ impl TurnRequestProcessor {
                                 turn_kind: turn_kind.into(),
                             }),
                             additional_details: None,
+                            // A refusal, not a retry: nothing is going to be
+                            // attempted again for this to count down to.
+                            retry_delay_ms: None,
                         };
                         let data = match serde_json::to_value(error) {
                             Ok(data) => Some(data),

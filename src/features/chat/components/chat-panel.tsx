@@ -44,6 +44,7 @@ const signInAttempted = new Set<string>();
 import { composePrompt, type MentionData } from "../lib/mentions";
 import { usePaneFind } from "../lib/use-pane-find";
 import { MessageInput } from "./message-input";
+import { AiGrantPill } from "./ai-grant-pill";
 import { SessionSidebar } from "./session-sidebar";
 import { ChatHeader } from "./chat-header";
 import { openAgentSession, openNewAgentChat } from "../lib/open-agent-session";
@@ -1183,6 +1184,15 @@ const ChatComposer = memo(function ChatComposer({
             rendered (each gets its own slide-up + fade-in animation
             via `.atlas-pill-in`); when the row is empty it doesn't
             paint at all so it never blocks pointer events. */}
+        {/* The no-grant setup state (D15a). It renders itself only when the
+            gateway says this account has no AI grant, so it costs nothing on
+            every other path — and it is a pill rather than a disabled
+            composer, because the agent switcher lives inside the composer. */}
+        <div className="pointer-events-none absolute bottom-full inset-x-0 mb-2 z-20 flex justify-center">
+          <div className="pointer-events-auto">
+            <AiGrantPill />
+          </div>
+        </div>
         {showJumpToBottom && (
           <div className="pointer-events-none absolute bottom-full inset-x-0 mb-2 z-20 flex justify-center">
             <div className="pointer-events-auto flex items-center gap-2">

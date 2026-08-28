@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 //! Defines the protocol for a Codex session between a client and an agent.
 //!
 //! Uses a SQ (Submission Queue) / EQ (Event Queue) pattern to asynchronously communicate
@@ -3404,6 +3405,17 @@ pub struct StreamErrorEvent {
     /// are exhausted).
     #[serde(default)]
     pub additional_details: Option<String>,
+    /// How long the client will wait before the retry this event announces.
+    ///
+    /// **Added by Atlas.** Upstream computes this delay and then drops it, so a
+    /// client is told a retry is coming but not when — which leaves a progress
+    /// indicator counting *up* from the notice rather than *down* to the
+    /// attempt. Against the Atlas gateway that matters more than it does
+    /// upstream: a `429` carries a `Retry-After` the gateway explicitly
+    /// instructs clients to honour, and a wait the user cannot see the end of
+    /// is indistinguishable from a hang.
+    #[serde(default)]
+    pub retry_delay_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]

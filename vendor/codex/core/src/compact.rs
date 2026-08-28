@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -330,6 +331,7 @@ async fn run_compact_task_inner_impl(
                         turn_context.as_ref(),
                         format!("Reconnecting... {retries}/{max_retries}"),
                         e,
+                        Some(delay),
                     )
                     .await;
                     tokio::time::sleep(delay).await;

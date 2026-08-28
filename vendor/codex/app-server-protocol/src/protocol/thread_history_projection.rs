@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 //! Stateless projection from canonical paginated rollout records to thread-history changes.
 //!
 //! This module is only for the new paginated rollout format that persists canonical
@@ -43,6 +44,9 @@ pub fn project_rollout_line(line: &RolloutLine) -> ThreadHistoryChangeSet {
                     message: error.message.clone(),
                     codex_error_info: error.codex_error_info.clone().map(Into::into),
                     additional_details: None,
+                    // Replayed history: whatever wait this error announced is
+                    // long over, so there is nothing left to count down to.
+                    retry_delay_ms: None
                 }),
                 started_at: event.started_at,
                 completed_at: event.completed_at,

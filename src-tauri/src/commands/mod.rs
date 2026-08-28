@@ -1,3 +1,4 @@
+pub mod agent_entitlement;
 pub mod agent_host;
 pub mod agent_analytics;
 pub mod agent_memory;
