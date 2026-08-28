@@ -51,12 +51,14 @@ const EXCLUDED_CRATE_DIRS = new Set(["atlas-kb-server"]);
 /**
  * Path dependencies that live inside the workspace directory become *implicit*
  * members unless excluded — and members fall out of `[profile.dev.package."*"]`
- * (rule 3 above). The two vendored Cersei SDK patch forks reach the graph
- * through the root's `[patch.crates-io]`, i.e. as path dependencies, so their
- * `exclude` entries are what keeps them at opt-level 1. Load-bearing, and
- * invisible: dropping them costs `tauri dev` speed with nothing to announce it.
+ * (rule 3 above), which costs `tauri dev` speed with nothing to announce it.
+ *
+ * Empty since #54: the two entries here were the vendored Cersei SDK patch
+ * forks, and they went with the SDK. The list stays because the hazard has not
+ * — the next `[patch.crates-io]` entry pointing inside this directory needs an
+ * exclude, and this is where it goes.
  */
-const EXCLUDED_PATCH_PATHS = ["vendor/cersei-provider", "vendor/cersei-agent"];
+const EXCLUDED_PATCH_PATHS: string[] = [];
 
 /** The one member allowed to have no dev opt-level override: the app crate is
  *  deliberately opt-level 0 so incremental rebuilds stay snappy. Keyed on
@@ -178,13 +180,17 @@ describe("root cargo workspace", () => {
 });
 
 describe("patch tables live only at the workspace root", () => {
-  it("the root carries the vendored cersei overrides", () => {
+  it("the root is where a patch table lives, and the cersei overrides are gone", () => {
     const src = uncommented(read(ROOT_MANIFEST));
+    // The table itself stays: the vendored engine's own git forks are in it,
+    // and a `[patch]` section is honoured only in the manifest cargo was
+    // invoked on — which in a workspace is always the root.
     expect(src).toMatch(/^\s*\[patch\.crates-io\]/m);
-    // The two vendored Cersei SDK patch forks the native agent still ships
-    // on. They die with the SDK at cutover (#54), not before.
-    expect(src).toMatch(/^\s*cersei-provider\s*=.*vendor\/cersei-provider/m);
-    expect(src).toMatch(/^\s*cersei-agent\s*=.*vendor\/cersei-agent/m);
+    // The Cersei SDK overrides went with the SDK (#54). Asserted absent rather
+    // than simply not asserted, because a resurrected patch entry pointing at a
+    // directory that no longer exists fails resolution for the whole workspace.
+    expect(src).not.toMatch(/^\s*cersei-provider\s*=/m);
+    expect(src).not.toMatch(/^\s*cersei-agent\s*=/m);
   });
 
   it("no member manifest keeps an orphaned patch table", () => {

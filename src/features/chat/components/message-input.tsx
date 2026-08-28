@@ -33,7 +33,7 @@ import { canSignIn, promptSignIn } from "../lib/agent-signin";
 import { switchAgentForTab } from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
 import { ProviderModelPills } from "./provider-model-pills";
-import { loadCerseiEffort, loadCerseiCompress } from "../lib/cersei-model-pref";
+import { loadCerseiEffort } from "../lib/cersei-model-pref";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
 import { modelLabel } from "../lib/model-label";
 // `ChatInput` pulls in CodeMirror (~870 KB) via `cm-mention-extension`.
@@ -778,7 +778,6 @@ export function MessageInput({
     setCerseiProvider,
     setCerseiModel,
     setCerseiEffort,
-    setCerseiCompress,
   } = useChatStore.use.actions();
   // Show the picker as soon as the agent is non-Claude — even before its modes
   // load — so the composer can render a loading pill instead of nothing during
@@ -897,14 +896,9 @@ export function MessageInput({
     if (cerseiBound || cerseiEffort === undefined) setCerseiEffort(tabId, eff);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, agentType, cerseiBound]);
-  // Same seed/re-push for the RTK compression toggle.
-  const cerseiCompress = useChatStore((s) => s.sessions[tabId]?.cerseiCompress);
-  useEffect(() => {
-    if (agentType !== "cersei") return;
-    const on = cerseiCompress ?? loadCerseiCompress();
-    if (cerseiBound || cerseiCompress === undefined) setCerseiCompress(tabId, on);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabId, agentType, cerseiBound]);
+  // The RTK compression toggle was seeded and re-pushed here. It is gone with
+  // the runtime that implemented it (#54) — the ported engine has no
+  // tool-output compressor, so the control had nothing to switch (D8).
   // ACP-reported slash commands for this session. Both adapters advertise
   // their real command list via `available_commands_update` — Codex's arrives
   // with the binding, Claude's a few seconds after session/new (the SDK
@@ -1942,8 +1936,6 @@ export function MessageInput({
                   model={cerseiModel}
                   onProvider={onCerseiProvider}
                   onModel={onCerseiModel}
-                  compress={cerseiCompress ?? true}
-                  onCompress={(on) => setCerseiCompress(tabId, on)}
                 />
               )}
               {agentType === "cersei" && <EffortPill tabId={tabId} />}

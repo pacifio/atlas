@@ -31,7 +31,6 @@ members = [
   "crates/atlas-agent-transcript",
   "crates/atlas-agent-wire",
   "crates/atlas-bus",
-  "crates/atlas-cersei",
   "crates/atlas-checkpoint",
   "crates/atlas-codeindex",
   "crates/atlas-embed",
@@ -169,12 +168,6 @@ exclude = [
   # thin LTO). As a member it would rebuild under the app's fat-LTO/unwind
   # profile instead.
   "crates/atlas-kb-server",
-  # The vendored Cersei SDK patch forks. They enter the graph through
-  # `[patch.crates-io]` below, i.e. as dependencies — which is what keeps them
-  # covered by the `[profile.dev.package."*"]` opt-level 1 override that
-  # workspace members fall out of. They also each build standalone.
-  "vendor/cersei-agent",
-  "vendor/cersei-provider",
 ]
 
 # ─── Vendored Codex engine (ADR-0003 fork point `42b5f05`) ───────────────────
@@ -606,27 +599,16 @@ unwrap_used = "deny"
 # cargo-shear cannot see the platform-specific openssl-sys usage, so we
 # silence the false positive here instead of deleting a real dependency.
 
-# ─── Cersei SDK ──────────────────────────────────────────────────────────────
-# The Cersei SDK's cersei-* crates are sourced from crates.io (0.2.6), EXCEPT
-# the two vendored here. A `[patch]` section takes effect only in the manifest
-# cargo is invoked on, which is why these entries used to be repeated in `src-tauri`,
-# `crates/atlas-cersei` and `crates/atlas-native-agent`: three copies of one
-# fact. In a workspace the root is the only manifest cargo resolves from, so
-# one copy is both necessary and sufficient.
+# ─── Cersei SDK — gone (#54) ─────────────────────────────────────────────────
+# The `cersei-provider` and `cersei-agent` patch entries lived here. They
+# carried two fixes the published crates lacked: incremental UTF-8 decoding in
+# the SSE decoders, and racing `tool.execute()` against the cancel token.
 #
-# These die with the Cersei SDK at cutover (spec Phase 5, issue #54) — not
-# before, and not as part of this change.
+# Both failures are still guarded, by tests against the engine that replaced
+# them rather than by a patch table: a chunk-split fixture that splits an SSE
+# frame at every byte position, and a cancel test that asserts on the
+# filesystem — the killed command's marker file never appears.
 [patch.crates-io]
-# ATLAS PATCH (Phase 0, agent-stack Zed-parity work): incremental UTF-8
-# decoding in the SSE stream decoders — the published crate corrupts multi-byte
-# chars split across HTTP chunk boundaries (from_utf8_lossy on raw chunks).
-# Guard: `cersei_provider::utf8::ATLAS_UTF8_PATCH` (see src-tauri/src/lib.rs).
-cersei-provider = { path = "vendor/cersei-provider" }
-# Phase 2: cersei-agent vendored for the tool-cancel race fix — the published
-# runner never raced `tool.execute()` against the cancel token (writes landed
-# after Stop) and left orphaned `tool_use` blocks in provider history on cancel.
-# Guard: `cersei_agent::ATLAS_CANCEL_PATCH`.
-cersei-agent = { path = "vendor/cersei-agent" }
 
 # ─── The vendored engine's own git forks ─────────────────────────────────────
 # Copied from the fork point's `[patch.crates-io]`. A patch table is honored
@@ -710,8 +692,6 @@ opt-level = 1
 [profile.dev.package.atlas-agent-wire]
 opt-level = 1
 [profile.dev.package.atlas-bus]
-opt-level = 1
-[profile.dev.package.atlas-cersei]
 opt-level = 1
 [profile.dev.package.atlas-checkpoint]
 opt-level = 1

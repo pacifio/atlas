@@ -25,13 +25,17 @@ import { fileURLToPath } from "node:url";
  * manifests permitted to name the dependency, enforced over every manifest
  * Atlas owns.
  *
- * **#45 opened the first hole in it, on purpose.** The seam crate now links the
- * engine — that is what "rewire the seam" means — so `crates/atlas-native-agent`
- * is allowlisted below. What is *not* relaxed is the rule that matters: the
- * engine reaches no shipping binary. It is behind the `ported-engine` cargo
- * feature, which is off by default, so a default build of the app resolves
- * exactly as it did before the port. The last assertion here is what holds that
- * line, and it is now the load-bearing one.
+ * **#45 opened the first hole in it, on purpose**, and **#54 widened it to its
+ * final shape.** The seam crate links the engine — that is what "rewire the
+ * seam" meant — so `crates/atlas-native-agent` is allowlisted below. It used to
+ * be additionally gated behind the `ported-engine` feature so a shipping build
+ * contained no engine at all; that gate is gone with the Cersei path it existed
+ * to protect, because the engine *is* the native agent now.
+ *
+ * What survives, and is the whole of the rule that still matters: **exactly one
+ * manifest may name a `codex-*` crate.** The engine reaching one crate on
+ * purpose is the architecture. It reaching a second by accident is the leak,
+ * and that is what this file catches.
  */
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -159,23 +163,34 @@ describe("nothing that ships depends on the vendored engine", () => {
     expect(CODEX_DEP.test(app)).toBe(false);
   });
 
-  it("every allowlisted codex dependency is optional, behind an off-by-default feature", () => {
-    // The allowlist grants the seam the right to *name* the engine, not to
-    // link it into a default build. Without this, dropping `optional = true`
-    // from one line would ship 105 crates of engine and nothing would notice:
-    // it compiles, it passes clippy, and the only symptom is in the binary.
+  it("the seam links the engine, and it is the only thing that does", () => {
+    // This assertion is inverted from what it was, and the inversion is the
+    // point of #54. The engine used to be `optional = true` behind a feature
+    // `default = []` left off, so a shipping build contained none of it and the
+    // Cersei path carried every turn. That path is deleted: the engine is now
+    // the native agent, so gating it would gate the agent.
+    //
+    // What the quarantine still enforces, and what actually matters, is the
+    // rule above — exactly one manifest in the repo may name a `codex-*` crate.
+    // The engine reaching *one* crate on purpose is the architecture; it
+    // reaching a second by accident is the leak.
     const manifest = read(path.join(REPO_ROOT, "crates", "atlas-native-agent", "Cargo.toml"));
     const declarations = uncommented(manifest)
       .split("\n")
       .filter((l) => /^\s*codex-[a-z0-9-]+\s*=/.test(l));
 
     expect(declarations.length, "the seam should declare the engine crates").toBeGreaterThan(5);
-    const notOptional = declarations.filter((l) => !/optional\s*=\s*true/.test(l));
-    expect(notOptional, "a codex dependency the seam links unconditionally").toEqual([]);
+    const stillGated = declarations.filter((l) => /optional\s*=\s*true/.test(l));
+    expect(
+      stillGated,
+      "a codex dependency left optional after the switch was removed — it would " +
+        "resolve out of the build and take the native agent with it",
+    ).toEqual([]);
 
-    // And the feature that turns them on is not in `default`.
-    const defaultFeature = /^\s*default\s*=\s*\[(.*?)\]/m.exec(manifest);
-    expect(defaultFeature, "atlas-native-agent must declare a default feature list").not.toBeNull();
-    expect(defaultFeature?.[1].trim(), "the ported engine must not be a default feature").toBe("");
+    // And no feature turns the engine on or off any more.
+    expect(
+      /ported-engine/.test(uncommented(manifest)),
+      "the `ported-engine` feature was deleted with the path it switched away from",
+    ).toBe(false);
   });
 });

@@ -67,18 +67,11 @@ export function ProviderModelPills({
   model,
   onProvider,
   onModel,
-  compress = false,
-  onCompress,
-  showCompress = true,
 }: {
   provider: string;
   model: string;
   onProvider: (id: string) => void;
   onModel: (id: string) => void;
-  /** RTK compression toggle — agent-composer only. Omit for plain BYOK pickers. */
-  compress?: boolean;
-  onCompress?: (on: boolean) => void;
-  showCompress?: boolean;
 }) {
   const keys = useByokStore.use.keys();
   const loaded = useByokStore.use.loaded();
@@ -352,26 +345,10 @@ export function ProviderModelPills({
             </div>
           </div>
 
-          {/* RTK compression toggle (Cursor "MAX Mode"-style footer). */}
-          {showCompress && (
-            <button
-              onClick={() => onCompress?.(!compress)}
-              className="flex w-full items-center gap-2 border-t border-[var(--border-subtle)] px-2.5 py-2 text-left text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer outline-none"
-              title="Tool-output compression — shrinks tool results to save tokens"
-            >
-              <span className="flex-1">Compress Tokens</span>
-              <span
-                className={cn(
-                  "flex h-3.5 w-6 items-center rounded-full px-0.5 transition-colors",
-                  compress
-                    ? "bg-[var(--accent-primary)] justify-end"
-                    : "bg-[var(--bg-base)] justify-start",
-                )}
-              >
-                <span className="h-2.5 w-2.5 rounded-full bg-[var(--bg-elevated)]" />
-              </span>
-            </button>
-          )}
+          {/* The "Compress Tokens" toggle stood here. It drove the Cersei
+              runtime's RTK tool-output compressor, which the ported engine has
+              no counterpart for (#54, D8) — so the control is gone rather than
+              left switching nothing. */}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

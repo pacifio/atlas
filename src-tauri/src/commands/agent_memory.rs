@@ -427,44 +427,22 @@ fn read_knowledge_docs(project_path: &str) -> Vec<MemoryDoc> {
         .collect()
 }
 
-/// Fold native Atlas (cersei) session transcripts into the corpus so the
-/// agent's conversations are searchable in Memory ▸ Chat / Graph — parity with
-/// Codex threads. Atlas-injected context (memory blocks, mention bodies) is
-/// stripped so the index holds the user's actual words, not the scaffolding.
-fn read_cersei_docs(project_path: &str) -> Vec<MemoryDoc> {
-    use atlas_agent_transcript::strip_injected_context;
-    let Some(config_dir) = CERSEI_CONFIG_DIR.get() else {
-        return Vec::new();
-    };
-    let mut out: Vec<MemoryDoc> = Vec::new();
-    for s in atlas_cersei::corpus_sessions(config_dir, project_path) {
-        let title_raw = strip_injected_context(&s.first_user);
-        let title_raw = title_raw.trim();
-        if title_raw.is_empty() {
-            continue;
-        }
-        let body = strip_injected_context(&s.transcript);
-        let ts = chrono::DateTime::parse_from_rfc3339(&s.updated_at)
-            .map(|dt| dt.timestamp_millis())
-            .unwrap_or(0);
-        out.push(MemoryDoc {
-            id: format!("cersei:{}", s.id),
-            title: short_title(title_raw),
-            summary: short_title(title_raw),
-            kind: "thread".into(),
-            source: "cersei".into(),
-            file_path: None, // Native sessions live in cersei-sessions JSON, not an editable file.
-            timestamp_ms: ts,
-            text: if body.trim().is_empty() {
-                title_raw.to_string()
-            } else {
-                body
-            },
-            aliases: vec![],
-            links: vec![],
-        });
-    }
-    out
+/// Native session transcripts, for the memory corpus.
+///
+/// Empty since #54. It read the Cersei runtime's own session JSON, which no
+/// longer exists — the ported engine keeps its working storage in a different
+/// shape, and pointing this at it would recreate the scrape-reader pattern
+/// ADR-0001 removed.
+///
+/// The narrowing is D8's and accepted: the agent's own conversations drop out
+/// of Memory ▸ Chat / Graph until the corpus is re-sourced from engine
+/// rollouts, which is spec open question 8 — a decision, not an omission. Every
+/// other corpus source (Claude, Codex, shared memory, files) is untouched.
+///
+/// Kept as a named function rather than deleted at the call site so the gap has
+/// somewhere to be documented, and somewhere obvious to be filled.
+fn read_cersei_docs(_project_path: &str) -> Vec<MemoryDoc> {
+    Vec::new()
 }
 
 /// v3 Write half — surface the project's Shared Cross-Agent Memory (working

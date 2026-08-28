@@ -1,9 +1,8 @@
 //! The launcher for the native agent, on the ported engine.
 //!
-//! The counterpart of `crate::server::CerseiAgentServer`, implementing the same
-//! `AgentServer` trait against the same agent id. That sameness is the switch:
-//! `src-tauri` registers one of these two and cannot tell the difference
-//! afterwards, because everything downstream of `connect` is the trait.
+//! The only implementation of `AgentServer` for the native agent. It was one of
+//! two while the port was being proved; the Cersei one is gone (#54), and what
+//! made the swap invisible was that both answered to the same agent id.
 //!
 //! Like the Cersei one, `connect` starts no process — the engine runs in this
 //! one (ADR-0004) — and ignores the delegate, because there is no command to
@@ -22,7 +21,7 @@ use futures::FutureExt;
 
 use crate::engine::config::EngineSettings;
 use crate::engine::connection::EngineConnection;
-use crate::server::CERSEI_AGENT_ID;
+use crate::CERSEI_AGENT_ID;
 
 /// The native agent, on the ported engine.
 #[derive(Clone)]
@@ -152,14 +151,15 @@ mod tests {
     }
 
     #[test]
-    fn both_engines_occupy_the_same_agent_id() {
-        // The switch only works if the app cannot tell them apart, and the
-        // stored id is a storage key: a new id here would orphan every native
-        // history row written before the switch (D7).
+    fn the_agent_id_is_the_storage_key_the_history_was_written_under() {
+        // Not a name. Every recorded thread resolves through this string, so
+        // changing it is a data migration rather than a rename — which is why
+        // it survived the deletion of the path it was named after (D7).
         assert_eq!(server().agent_id().as_str(), CERSEI_AGENT_ID);
         assert_eq!(
-            server().agent_id(),
-            crate::server::CerseiAgentServer::new(PathBuf::from("/tmp")).agent_id(),
+            CERSEI_AGENT_ID, "cersei",
+            "the stored id is a storage key, not a name — every recorded thread \
+             resolves through it, so it outlives the retirement of the name (D7)",
         );
     }
 

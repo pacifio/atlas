@@ -32,11 +32,7 @@ import { loadCachedAcpModels, saveCachedAcpModels } from "../lib/acp-models-cach
 import { resolveModelLabel } from "../lib/model-label";
 import { defaultAgentForNewSession } from "../lib/default-agent";
 import { loadCachedContextUsage, saveCachedContextUsage } from "../lib/context-usage-cache";
-import {
-  saveCerseiModelPref,
-  saveCerseiEffort,
-  saveCerseiCompress,
-} from "../lib/cersei-model-pref";
+import { saveCerseiModelPref, saveCerseiEffort } from "../lib/cersei-model-pref";
 import { invoke } from "@tauri-apps/api/core";
 import { extractPlanMarkdown, type PlanRecord } from "../lib/plans";
 import { extractNextSteps } from "../lib/next-steps";
@@ -233,16 +229,9 @@ function pushCerseiEffortToAgent(state: ChatState, sessionId: string): void {
   }).catch((err) => console.warn("agents_set_effort failed:", err));
 }
 
-/** Push the native agent's RTK compression toggle via `agents_set_compress`. */
-function pushCerseiCompressToAgent(state: ChatState, sessionId: string): void {
-  const session = state.sessions[sessionId];
-  if (!session?.acpAgentId || !session.acpSessionId) return;
-  if (session.agentType !== "cersei") return;
-  void invoke("agents_set_compress", {
-    key: { agent_id: session.acpAgentId, session_id: session.acpSessionId },
-    on: session.cerseiCompress ?? true,
-  }).catch((err) => console.warn("agents_set_compress failed:", err));
-}
+// `pushCerseiCompressToAgent` stood here, pushing the RTK compression toggle
+// through `agents_set_compress`. Both are gone (#54): the ported engine has no
+// tool-output compressor, so there was nothing on the other end of the command.
 
 /** Convert an atlas-agents wire ToolCall into the in-store ChatMessage shape. */
 function toChatToolCall(tc: AgentToolCall): ChatMessage["toolCalls"][number] {
@@ -392,7 +381,6 @@ interface ChatActions {
     /** Native Cersei agent: set the reasoning-effort level and push it. */
     setCerseiEffort: (sessionId: string, effort: string) => void;
     /** Native Cersei agent: toggle RTK tool-output compression and push it. */
-    setCerseiCompress: (sessionId: string, on: boolean) => void;
     replaceMessages: (
       sessionId: string,
       messages: Array<{
@@ -1200,14 +1188,6 @@ export const useChatStore = createSelectors(
           });
           saveCerseiEffort(effort);
           pushCerseiEffortToAgent(get(), sessionId);
-        },
-        setCerseiCompress: (sessionId, on) => {
-          set((s) => {
-            const session = s.sessions[sessionId];
-            if (session) session.cerseiCompress = on;
-          });
-          saveCerseiCompress(on);
-          pushCerseiCompressToAgent(get(), sessionId);
         },
         replaceMessages: (sessionId, messages) =>
           set((s) => {

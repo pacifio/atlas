@@ -706,21 +706,6 @@ pub fn install_manager(app: &AppHandle) {
         }));
     }
 
-    let app_for_search = app.clone();
-    atlas_cersei::register_memory_search(Arc::new(move |cwd, query, k| {
-        let app = app_for_search.clone();
-        Box::pin(async move {
-            crate::commands::memory_retrieve::retrieve(&app, &cwd, &query, k)
-                .await
-                .into_iter()
-                .map(|d| atlas_cersei::MemDoc {
-                    title: d.title,
-                    source: d.source,
-                    text: d.text,
-                })
-                .collect()
-        })
-    }));
 }
 
 // ── Commands ────────────────────────────────────────────────────────────────
@@ -1461,14 +1446,10 @@ pub fn agents_set_effort(
     host.set_effort(&key, effort).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn agents_set_compress(
-    key: SessionKey,
-    on: bool,
-    host: State<'_, Arc<AgentHost>>,
-) -> Result<(), String> {
-    host.set_compress(&key, on).map_err(|e| e.to_string())
-}
+// `agents_set_compress` is gone (#54). Tool-output compression was a knob on
+// the Cersei runtime's RTK compressor and the engine has no counterpart — a
+// named casualty (D8). Removed rather than stubbed, so the toggle disappears
+// instead of sitting there doing nothing.
 
 #[tauri::command]
 pub fn agents_respond_permission(

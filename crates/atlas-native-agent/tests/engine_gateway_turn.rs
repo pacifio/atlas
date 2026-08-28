@@ -13,8 +13,6 @@
 //! the forwarded allowlist — because the gateway answers one stray field with a
 //! `400` and there is no partial credit.
 
-#![cfg(feature = "ported-engine")]
-
 use std::path::PathBuf;
 use std::sync::Arc;
 

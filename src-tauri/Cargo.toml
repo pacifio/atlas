@@ -12,17 +12,9 @@ tauri-build = { version = "2", features = [] }
 
 [features]
 default = []
-# The Phase 2 development-time switch (issue #45, ADR-0004).
-#
-# Off by default, so a release build of Atlas contains no engine code at all —
-# the Cersei path keeps shipping until the acceptance bar is green (spec,
-# Cutover Sequence). Turn it on to build the ported engine in:
-#
-#     cargo build --features ported-engine
-#
-# With it on, `ATLAS_AGENT_ENGINE=cersei` still selects the old path at run
-# time, so one binary can be checked on both sides of the switch.
-ported-engine = ["atlas-native-agent/ported-engine"]
+# The `ported-engine` switch is gone with the path it switched away from (#54).
+# The ported engine is now the only implementation of the native agent, so
+# there is nothing left to select and every build contains it.
 
 [dependencies]
 # Devtools intentionally NOT enabled here. Release builds ship without
@@ -93,27 +85,9 @@ atlas-agent-transcript = { path = "../crates/atlas-agent-transcript" }
 atlas-native-agent = { path = "../crates/atlas-native-agent" }
 # Atlas's session history — the only source for the sidebar (ADR-0001).
 atlas-thread-metadata = { path = "../crates/atlas-thread-metadata" }
-atlas-cersei = { path = "../crates/atlas-cersei" }
 atlas-bus = { path = "../crates/atlas-bus" }
 agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
 atlas-terminal = { path = "../crates/atlas-terminal" }
-# ─── Cersei SDK ───────────────────────────────────────────────────────────────
-# cersei-* crates come from crates.io (0.2.6) EXCEPT cersei-provider and
-# cersei-agent, which are patched to `vendor/`: the published SSE decoders
-# corrupt multi-byte characters split across HTTP chunk boundaries, and the
-# published runner never raced `tool.execute()` against the cancel token.
-#
-# Those `[patch.crates-io]` entries — and the release/dev profiles that used to
-# sit at the bottom of this file — live in the root `Cargo.toml` since this
-# package became a workspace member (issue #38, spec D4). Cargo honors both
-# ONLY in the manifest it was invoked on, which in a workspace is always the
-# root; a copy left here would be config cargo ignores in silence.
-#
-# cersei-provider is already in the tree transitively (via atlas-cersei →
-# cersei). It is promoted to a direct dep ONLY so src/lib.rs can reference
-# `cersei_provider::utf8::ATLAS_UTF8_PATCH` — the `_CERSEI_UTF8_PATCH_GUARD`
-# const, which fails `cargo check` if the vendored override stops applying.
-cersei-provider = "0.2.6"
 atlas-embed = { path = "../crates/atlas-embed" }
 # On-device RAG/memory engine (MiniLM → usearch HNSW + manifest). The Tauri
 # layer owns the per-project engine registry + background indexer

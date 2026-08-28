@@ -45,7 +45,7 @@ use atlas_agent_transcript::TranscriptKind;
 use atlas_agent_wire::{
     classify_message, AgentId, ErrorClass, Message, PlanEntry, SessionStatus, Usage,
 };
-use atlas_native_agent::{CerseiAgentServer, CERSEI_AGENT_ID};
+use atlas_native_agent::CERSEI_AGENT_ID;
 use atlas_thread_metadata::{
     affects_thread_metadata, collect_all_sessions, importable_threads, PathList, ThreadFilter,
     ThreadId, ThreadMetadata, ThreadMetadataStore, ThreadRecorder, ThreadSnapshot,
@@ -249,11 +249,6 @@ pub struct AgentHost {
     /// finding a binary never makes an agent runnable and never auto-spawns
     /// anything (ADR-0002). Refreshed by `agents_catalog_refresh`.
     detected: Mutex<Vec<atlas_agent_store::DetectedAgent>>,
-    /// The native agent's runtime, for the reads that do not go through a
-    /// session: its own stored-session list, replay and delete, which the chat
-    /// sidebar calls with no agent connected.
-    native_runtime: atlas_cersei::CerseiRuntime,
-    native_engine: NativeEngine,
     /// Atlas's session history.
     ///
     /// `None` only when the store could not be opened — a corrupt or
@@ -280,62 +275,24 @@ struct RequestElicitations {
     answered_by: Mutex<HashMap<Uuid, (ThreadAgentId, ElicitationEntryId)>>,
 }
 
-/// Which engine is behind the native agent for this run.
+/// Builds the native agent.
 ///
-/// Recorded because a few src-tauri surfaces still read the Cersei runtime's
-/// own session files directly, and on the ported path those files describe an
-/// engine that is not running. See `AgentHost::native_sessions`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NativeEngine {
-    Cersei,
-    Ported,
-}
-
-/// Which engine backs the native agent (issue #45, spec Phase 2, ADR-0004).
+/// There is no longer a switch here. It existed so the Cersei path could keep
+/// shipping while the ported engine was proved (#45); that path is deleted
+/// (#54), so this constructs the one implementation there is.
 ///
-/// The Cersei path and the ported engine implement the same `AgentServer`
-/// against the same agent id, so this returns one trait object and nothing
-/// downstream knows which it got. That is the switch.
-///
-/// Without the `ported-engine` feature the engine is not linked at all, so
-/// this is not a run-time choice a release build can make — which is the
-/// point. The Cersei path keeps shipping until the acceptance bar is green.
-#[cfg(not(feature = "ported-engine"))]
-fn select_native_agent(
-    cersei: CerseiAgentServer,
-    _config_dir: &Path,
-) -> (Arc<dyn atlas_agent_servers::AgentServer>, NativeEngine) {
-    (Arc::new(cersei), NativeEngine::Cersei)
-}
-
-/// See the sibling above. With the engine linked, `ATLAS_AGENT_ENGINE` picks
-/// between three paths, and the default is the shipping one:
-///
-/// - unset (or anything unrecognised) — the ported engine against the **Atlas
-///   gateway** (D3), authenticated by the D10 token provider;
-/// - `cersei` — the old path, so "unchanged when the switch selects Cersei" is
-///   checkable without a rebuild between the two halves;
-/// - `dev` — the ported engine against a provider read from the environment.
-///   Phase 2's tracer bullet, kept for debugging the engine without an Atlas
-///   account. Explicit opt-in rather than a fallback: a build that silently
-///   sent turns to whatever `ATLAS_ENGINE_BASE_URL` happened to hold would be a
-///   traffic redirect nobody asked for.
-#[cfg(feature = "ported-engine")]
-fn select_native_agent(
-    cersei: CerseiAgentServer,
-    config_dir: &Path,
-) -> (Arc<dyn atlas_agent_servers::AgentServer>, NativeEngine) {
+/// `ATLAS_AGENT_ENGINE=dev` still points it at a provider read from the
+/// environment — Phase 2's tracer bullet, kept for working on the engine
+/// without an Atlas account. It stays an explicit opt-in rather than a
+/// fallback: a build that silently sent turns to whatever
+/// `ATLAS_ENGINE_BASE_URL` happened to hold would be a traffic redirect nobody
+/// asked for.
+fn select_native_agent(config_dir: &Path) -> Arc<dyn atlas_agent_servers::AgentServer> {
     use atlas_native_agent::engine::{EngineAgentServer, EngineSettings};
 
-    let selected = std::env::var("ATLAS_AGENT_ENGINE").unwrap_or_default();
-    if selected == "cersei" {
-        tracing::info!("native agent: Cersei path (ATLAS_AGENT_ENGINE=cersei)");
-        return (Arc::new(cersei), NativeEngine::Cersei);
-    }
-
     let cwd = std::env::current_dir().unwrap_or_else(|_| config_dir.to_path_buf());
-    let settings = if selected == "dev" {
-        tracing::warn!("native agent: ported engine on a DEV provider (ATLAS_AGENT_ENGINE=dev)");
+    let settings = if std::env::var("ATLAS_AGENT_ENGINE").as_deref() == Ok("dev") {
+        tracing::warn!("native agent: DEV provider (ATLAS_AGENT_ENGINE=dev)");
         EngineSettings::from_env(config_dir, cwd)
     } else {
         EngineSettings::gateway(config_dir, cwd)
@@ -344,12 +301,9 @@ fn select_native_agent(
         provider = %settings.provider.base_url,
         model = %settings.model,
         home = %settings.home.path().display(),
-        "native agent: ported engine",
+        "native agent: Atlas Agent",
     );
-    (
-        Arc::new(EngineAgentServer::new(settings)),
-        NativeEngine::Ported,
-    )
+    Arc::new(EngineAgentServer::new(settings))
 }
 
 impl AgentHost {
@@ -367,9 +321,7 @@ impl AgentHost {
                 None
             }
         };
-        let native_server = CerseiAgentServer::new(config_dir.clone());
-        let native_runtime = native_server.runtime().clone();
-        let (native, native_engine) = select_native_agent(native_server, &config_dir);
+        let native = select_native_agent(&config_dir);
         let (elicitation_tx, elicitation_rx) = mpsc::unbounded_channel();
         let options = ConnectOptions {
             root_dir: None,
@@ -407,8 +359,6 @@ impl AgentHost {
             by_plugin: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
             detected: Mutex::new(Vec::new()),
-            native_runtime,
-            native_engine,
             history,
             request_elicitations: RequestElicitations {
                 stream: Mutex::new(Some(elicitation_rx)),
@@ -442,44 +392,16 @@ impl AgentHost {
         &self.registry
     }
 
-    /// The native agent's stored sessions for `cwd`, newest first.
-    ///
-    /// Previews are stripped of Atlas's own injected memory blocks: the agent
-    /// recorded the prompt it received, and a sidebar row titled after a
-    /// `--- SHARED MEMORY ---` block would be nonsense.
-    pub fn native_sessions(&self, cwd: &str) -> Vec<atlas_cersei::SessionMeta> {
-        // On the ported path this store describes an engine that is not
-        // running, so reading it would put another engine's sessions in the
-        // timeline. Returning nothing is D8's accepted narrowing: the
-        // memory-timeline's coverage of native sessions shrinks until it is
-        // re-sourced, and where from is spec open question 8 — a decision, not
-        // an omission. Rows the app owns are unaffected: they come from the
-        // thread-metadata store (ADR-0001), which both engines write through.
-        if self.native_engine == NativeEngine::Ported {
-            return Vec::new();
-        }
-        let mut metas = self.native_runtime.list_sessions(cwd);
-        for meta in &mut metas {
-            let cleaned = atlas_agent_transcript::strip_injected_context(&meta.preview);
-            let cleaned = cleaned.trim();
-            meta.preview = if cleaned.is_empty() {
-                // Nothing but scaffolding — keep a sane truncation of the raw
-                // text rather than an empty title.
-                meta.preview.chars().take(80).collect()
-            } else {
-                cleaned.chars().take(80).collect()
-            };
-        }
-        metas
-    }
-
-    pub fn native_delete_session(
-        &self,
-        cwd: &str,
-        session_id: &str,
-    ) -> std::result::Result<(), String> {
-        self.native_runtime.delete_session(cwd, session_id)
-    }
+    // `native_sessions` and `native_delete_session` are gone with the Cersei
+    // runtime that owned those files (#54). They read a second, engine-private
+    // session store; the ported engine keeps its own under a different shape,
+    // and pointing the timeline at it would recreate exactly the scrape-reader
+    // pattern ADR-0001 removed.
+    //
+    // The memory timeline's coverage of native sessions narrows as a result —
+    // D8's accepted narrowing, with where it gets re-sourced from left as spec
+    // open question 8. Rows the app owns are unaffected: they come from the
+    // thread-metadata store, which is the only source the sidebar has ever had.
 
     /// Re-probe `PATH` for registry agents the user already has.
     pub fn probe_detected(&self) {
@@ -1104,10 +1026,15 @@ impl AgentHost {
     }
 
     /// Reasoning effort — a native-agent-only knob, as in Zed.
+    ///
+    /// Accepted by the engine, and **inert against the Atlas gateway**: the
+    /// gateway's forwarded allowlist carries no reasoning parameter, so the
+    /// authored catalogue advertises no effort levels and the picker offers
+    /// none. Kept because the engine still honours it on any other provider.
     pub fn set_effort(&self, key: &SessionKey, effort: String) -> Result<()> {
         let session_id = acp::SessionId::new(key.session_id.as_str());
-        let cersei = self.native_connection(&key.session_id)?;
-        let control = cersei.session_effort(&session_id).ok_or_else(|| {
+        let native = self.native_connection(&key.session_id)?;
+        let control = native.session_effort(&session_id).ok_or_else(|| {
             HostError::new("this session has no effort control", ErrorClass::Fatal)
         })?;
         control
@@ -1115,22 +1042,15 @@ impl AgentHost {
             .map_err(|e| HostError::classified(e.to_string()))
     }
 
-    /// Tool-output compression — likewise native-only.
-    pub fn set_compress(&self, key: &SessionKey, on: bool) -> Result<()> {
-        let session_id = acp::SessionId::new(key.session_id.as_str());
-        let cersei = self.native_connection(&key.session_id)?;
-        let control = cersei.session_compression(&session_id).ok_or_else(|| {
-            HostError::new("this session has no compression control", ErrorClass::Fatal)
-        })?;
-        control
-            .set_compress(on)
-            .map_err(|e| HostError::classified(e.to_string()))
-    }
+    // Tool-output compression is gone (#54). It was a knob on the Cersei
+    // runtime's RTK tool-output compressor, and the engine has no counterpart —
+    // a named casualty (D8). The command and its toggle went with it, rather
+    // than leaving a control that silently does nothing.
 
-    fn native_connection(&self, session_id: &str) -> Result<Arc<atlas_native_agent::CerseiConnection>> {
+    fn native_connection(&self, session_id: &str) -> Result<Arc<atlas_native_agent::EngineConnection>> {
         let connection = lock_thread(&self.thread(session_id)?).connection().clone();
         connection
-            .downcast::<atlas_native_agent::CerseiConnection>()
+            .downcast::<atlas_native_agent::EngineConnection>()
             .ok_or_else(|| {
                 HostError::new(
                     "this control is only available on the native agent",

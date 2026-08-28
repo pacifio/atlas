@@ -2,10 +2,23 @@
 name = "atlas-native-agent"
 version = "0.1.0"
 edition = "2021"
-description = "Cersei, Atlas's in-process agent, on the ported AgentConnection seam."
+description = "Atlas Agent — the native agent — on the ported AgentConnection seam."
+
+# Integration tests are declared, not auto-discovered. Cargo builds every
+# `tests/*.rs` it finds, which means a stale file left behind by a deletion is a
+# build failure rather than dead weight — and the two below are the whole suite.
+autotests = false
 
 [lib]
 name = "atlas_native_agent"
+
+[[test]]
+name = "engine_turn"
+path = "tests/engine_turn.rs"
+
+[[test]]
+name = "engine_gateway_turn"
+path = "tests/engine_gateway_turn.rs"
 
 [dependencies]
 # The seam. Same exact pin as every other crate in the ported stack
@@ -15,9 +28,6 @@ atlas-acp-thread = { path = "../atlas-acp-thread" }
 # For the `AgentServer` trait: the native agent occupies the same slot an
 # external one does, exactly as Zed's `NativeAgentServer` does.
 atlas-agent-servers = { path = "../atlas-agent-servers" }
-# The runtime itself. It names no protocol version — that is what makes it
-# linkable from here as well as from the old stack; see `atlas_cersei::events`.
-atlas-cersei = { path = "../atlas-cersei" }
 anyhow = "1"
 futures = "0.3"
 serde_json = "1"
@@ -25,53 +35,29 @@ tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
 tracing = "0.1"
 
 # --- The ported engine (#45, ADR-0004) --------------------------------------
-# Optional, and off by default: the `ported-engine` feature is the development
-# -time switch of spec Phase 2. With it off, this crate resolves exactly as it
-# did before the port and the shipped app is untouched.
-base64 = { version = "0.22", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-toml = { version = "0.9", optional = true }
-codex-app-server = { path = "../../vendor/codex/app-server", optional = true }
-codex-app-server-client = { path = "../../vendor/codex/app-server-client", optional = true }
-codex-app-server-protocol = { path = "../../vendor/codex/app-server-protocol", optional = true }
-codex-arg0 = { path = "../../vendor/codex/arg0", optional = true }
-codex-config = { path = "../../vendor/codex/config", optional = true }
-codex-core = { path = "../../vendor/codex/core", optional = true }
-codex-exec-server = { path = "../../vendor/codex/exec-server", optional = true }
-codex-feedback = { path = "../../vendor/codex/feedback", optional = true }
-codex-login = { path = "../../vendor/codex/login", optional = true }
+# No longer optional. These sat behind the `ported-engine` feature so the Cersei
+# path could keep shipping while the port was proved; that path is gone (#54),
+# so gating them would gate the whole crate.
+base64 = { version = "0.22" }
+serde = { version = "1", features = ["derive"] }
+toml = { version = "0.9" }
+codex-app-server = { path = "../../vendor/codex/app-server" }
+codex-app-server-client = { path = "../../vendor/codex/app-server-client" }
+codex-app-server-protocol = { path = "../../vendor/codex/app-server-protocol" }
+codex-arg0 = { path = "../../vendor/codex/arg0" }
+codex-config = { path = "../../vendor/codex/config" }
+codex-core = { path = "../../vendor/codex/core" }
+codex-exec-server = { path = "../../vendor/codex/exec-server" }
+codex-feedback = { path = "../../vendor/codex/feedback" }
+codex-login = { path = "../../vendor/codex/login" }
 # For the engine's bundled base prompt, which the authored catalogue (D3) uses as
 # every row's `instructions_template`.
-codex-models-manager = { path = "../../vendor/codex/models-manager", optional = true }
-codex-protocol = { path = "../../vendor/codex/protocol", optional = true }
-codex-rollout = { path = "../../vendor/codex/rollout", optional = true }
-
-[features]
-default = []
-ported-engine = [
-  "dep:base64",
-  "dep:serde",
-  "dep:toml",
-  "dep:codex-app-server",
-  "dep:codex-app-server-client",
-  "dep:codex-app-server-protocol",
-  "dep:codex-arg0",
-  "dep:codex-config",
-  "dep:codex-core",
-  "dep:codex-exec-server",
-  "dep:codex-feedback",
-  "dep:codex-login",
-  "dep:codex-models-manager",
-  "dep:codex-protocol",
-  "dep:codex-rollout",
-]
+codex-models-manager = { path = "../../vendor/codex/models-manager" }
+codex-protocol = { path = "../../vendor/codex/protocol" }
+codex-rollout = { path = "../../vendor/codex/rollout" }
 
 [dev-dependencies]
-# `test-support` lets a test point a real turn at a scripted model, which is the
-# only part of the native agent a test cannot otherwise run.
-atlas-cersei = { path = "../atlas-cersei", features = ["test-support"] }
 async-trait = "0.1"
-cersei = { version = "0.2.6", default-features = false }
 # The live thread feed's own predicate, so the history test asserts "the
 # recorder will fire" rather than guessing which events matter.
 atlas-thread-metadata = { path = "../atlas-thread-metadata" }
@@ -80,8 +66,3 @@ tokio = { version = "1", features = ["full", "test-util"] }
 # Seam-1 contract tests drive a real turn against a local mock model, so the
 # streaming path is exercised without a live provider or a credential.
 wiremock = "0.6"
-
-# The vendored Cersei SDK patch forks this crate's SDK reach requires
-# (`cersei-provider` UTF-8, `cersei-agent` cancel) live in the root
-# `Cargo.toml`'s `[patch.crates-io]` — honored there and nowhere else once the
-# repo became a workspace (issue #38 / spec D4).

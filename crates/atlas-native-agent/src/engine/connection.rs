@@ -1,6 +1,6 @@
 //! The `AgentConnection` the app plugs into, over the ported engine.
 //!
-//! This is the counterpart of `crate::connection::CerseiConnection`, and it
+//! This was the counterpart of the Cersei connection, now deleted (#54), and it
 //! implements the same trait, because that is the whole point of the seam: the
 //! app cannot tell which engine is behind it.
 //!
@@ -43,7 +43,7 @@ use anyhow::Result;
 use atlas_acp_thread::{
     AcpThread, AcpThreadHandle, AgentConnection, AgentId, AgentSessionModes, AuthorizationKind,
 };
-use crate::connection::AgentSessionEffort;
+use crate::AgentSessionEffort;
 use atlas_agent_servers::ThreadEventSink;
 use codex_app_server_client::InProcessAppServerClient;
 use codex_app_server_client::InProcessAppServerRequestHandle;

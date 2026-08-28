@@ -18,8 +18,6 @@
 //! default stack size on purpose: setting `RUST_MIN_STACK` here would hide
 //! exactly the regression it exists to catch. See `engine::runtime` for why.
 
-#![cfg(feature = "ported-engine")]
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;

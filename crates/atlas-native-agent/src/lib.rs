@@ -1,49 +1,69 @@
-//! Cersei — Atlas's in-process agent — on the ported `AgentConnection` seam.
+//! Atlas Agent — the native agent — on the `AgentConnection` seam.
 //!
-//! This is Atlas's answer to Zed's `NativeAgentServer` / `NativeAgentConnection`
-//! (`zed-ref/crates/agent/src/native_agent_server.rs`): the native agent
-//! occupies the same slot an external ACP agent does, so the manager, the
-//! thread model, and eventually the UI treat it identically. Everything
-//! specific to it — reasoning effort, tool-output compression, its own model
-//! list — hangs off native-only sub-traits, which is Zed's pattern too
-//! (research §D12-5).
+//! This is Atlas's answer to Zed's `NativeAgentServer` / `NativeAgentConnection`:
+//! the native agent occupies the same slot an external ACP agent does, so the
+//! manager, the thread model and the UI treat it identically. Everything
+//! specific to it — reasoning effort, its own model list — hangs off
+//! native-only sub-traits, which is Zed's pattern too.
 //!
-//! # Why this is a separate crate from `atlas-cersei`
+//! # One engine, no switch
 //!
-//! It should not be, and eventually will not be. The split existed because
-//! `atlas-cersei` had to stay linkable from the old ACP stack while that stack
-//! was still shipping: the old one was on `agent-client-protocol` 1.3 and this
-//! seam is on 2.0, and those could not share a Cargo graph — the protocol crate
-//! pins its schema crate exactly (`=1.4.0` / `=1.5.0`), so a single resolution
-//! containing both was impossible. Keeping the runtime protocol-free and
-//! putting *this* protocol's adapter in its own crate is what let one runtime
-//! serve both stacks during the port.
+//! The Cersei runtime that used to back this seam is gone (#54). The ported
+//! Codex engine in [`engine`] is the only implementation, and it is no longer
+//! behind a cargo feature — the development-time switch existed so the Cersei
+//! path could keep shipping while the port was proved, and there is no longer
+//! a second path for it to select.
 //!
-//! **That constraint is history.** The old stack is deleted, every consumer
-//! pins `=2.0.0`, and the repo is a single cargo workspace (issue #38). This
-//! crate could fold into `atlas-cersei` — but it will not: it is the
-//! `AgentConnection` seam the app plugs into, and the Codex port keeps it
-//! while replacing the engine behind it (ADR-0003).
+//! What survived the deletion, deliberately:
+//!
+//! - **[`CERSEI_AGENT_ID`]** — the stored agent id, still the literal string
+//!   `"cersei"`. It is a **storage key**, not a name: every recorded thread
+//!   resolves through it, so changing it would orphan history that already
+//!   exists. It outlives the retirement of the name (D7).
+//! - **[`AgentSessionEffort`]** — the native-only control the app reaches for
+//!   through a downcast.
+//!
+//! What did not: tool-output compression. It had no engine counterpart and is
+//! a named casualty (D8), so the trait, its command and its toggle are gone
+//! rather than left as a control that does nothing.
 //!
 //! # What the native agent does not implement, and why
 //!
-//! - **`AgentSessionTruncate`.** Rewinding to a user message needs the runtime
-//!   to map a client message id onto a history index; it stores neither. Adding
-//!   that is a change to the runtime's persistence, not an adapter concern.
+//! - **`AgentSessionTruncate`.** Rewinding to a user message needs a map from
+//!   client message id to history index; the engine stores neither.
 //! - **`auth_methods` / `authenticate`.** The native agent authenticates with
-//!   BYOK keys from Atlas's settings, not with an ACP auth method. It advertises
-//!   none, which is what makes the sign-in flow skip it.
-//! - **Elicitations.** The runtime never asks the user anything mid-turn except
-//!   for tool permission, which has its own path.
+//!   the user's Atlas account through the D10 token provider, not with an ACP
+//!   auth method. It advertises none, which is what makes the sign-in flow skip
+//!   it.
+//! - **Elicitations.** Nothing is asked of the user mid-turn except tool
+//!   permission, which has its own path.
 
-#[cfg(feature = "ported-engine")]
 pub mod engine;
 
-pub mod connection;
-pub mod server;
-pub mod sink;
+use anyhow::Result;
 
-pub use connection::{
-    AgentSessionCompression, AgentSessionEffort, CerseiConnection, NativeSessionEvent,
-};
-pub use server::{CerseiAgentServer, CERSEI_AGENT_ID};
+/// The native agent's stored id.
+///
+/// **Still `"cersei"`, and that is not an oversight.** The name is retired; the
+/// id is a storage key that every recorded thread resolves through, and it is
+/// deliberately stable across the engine swap so existing rows keep working
+/// (D7, CONTEXT.md). Renaming it is a data migration, not a rename.
+pub const CERSEI_AGENT_ID: &str = "cersei";
+
+/// Per-session reasoning effort — a native-only control.
+///
+/// Reached by downcasting the connection, because it is not part of the ACP
+/// surface every agent shares.
+///
+/// **Inert on the Atlas gateway.** The gateway's forwarded allowlist has no
+/// reasoning parameter and names a thinking budget as its own example of a
+/// rejected key, so the authored catalogue advertises no effort levels and the
+/// picker offers none. The trait stays because the engine still accepts the
+/// setting and a non-gateway provider would honour it.
+pub trait AgentSessionEffort: Send + Sync {
+    /// `None` clears the override and uses the model's own default.
+    fn set_effort(&self, level: Option<String>) -> Result<()>;
+}
+
+pub use engine::EngineAgentServer;
+pub use engine::connection::EngineConnection;

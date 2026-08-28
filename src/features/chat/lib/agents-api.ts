@@ -169,7 +169,6 @@ export const agents = {
     invoke<void>("agents_set_model", { key, modelId }),
   setEffort: (key: SessionKey, effort: string) =>
     invoke<void>("agents_set_effort", { key, effort }),
-  setCompress: (key: SessionKey, on: boolean) => invoke<void>("agents_set_compress", { key, on }),
 
   respondPermission: (
     agentId: AgentId,

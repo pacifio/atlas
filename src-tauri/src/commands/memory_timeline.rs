@@ -124,29 +124,16 @@ pub async fn memory_timeline(
             });
         }
     }
-    // The native agent's own list still contributes its size detail, which the
-    // store does not hold. Deduped against the store rows by session id.
-    let known: std::collections::HashSet<String> =
-        sessions.iter().map(|s| s.id.clone()).collect();
-    for s in host.native_sessions(&pp).into_iter().filter(|s| !known.contains(&s.id)) {
-        let ts = parse_iso_ms(s.started_at.as_deref().or(s.last_modified.as_deref()));
-        let end = parse_iso_ms(s.last_modified.as_deref()).max(ts);
-        let detail = if s.total_tokens > 0 {
-            format!("{} msgs · {} tok", s.message_count, s.total_tokens)
-        } else {
-            format!("{} msgs", s.message_count)
-        };
-        sessions.push(TimelineSession {
-            id: s.id,
-            title: collapse(&s.preview),
-            agent: "cersei".into(),
-            branch: None,
-            sha: None,
-            ts_ms: ts,
-            end_ms: end,
-            detail,
-        });
-    }
+    // A second pass over the native agent's own session files used to run here,
+    // contributing the message/token detail the store does not hold. It is gone
+    // with the Cersei runtime that wrote those files (#54): the engine keeps its
+    // own working storage in a different shape, and reading it would recreate
+    // the scrape-reader pattern ADR-0001 removed.
+    //
+    // The narrowing is D8's, and accepted: native rows still appear here, from
+    // the thread-metadata store above, without the size detail. Where that
+    // detail gets re-sourced from is spec open question 8.
+
     // Capture-backed agents (opencode/cursor/kilo/future plugins) — sessions
     // from Atlas's own capture store; skip agents that already have a dedicated
     // loop above so nothing lands twice.
