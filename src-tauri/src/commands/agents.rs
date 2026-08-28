@@ -693,6 +693,23 @@ pub fn install_manager(app: &AppHandle) {
         }));
     }
 
+    // The paying org, on every gateway request. Resolved from the live auth
+    // snapshot per request rather than captured once: the user can switch org
+    // mid-session, and the next message must bill — and be admitted by — the
+    // org they switched to. Without this header the gateway attributes every
+    // request to the caller *personally*, and an account whose AI grant lives
+    // on its organisation is refused `403 no_entitlement` while that org sits
+    // fully entitled.
+    {
+        let core = app.state::<crate::commands::auth::AuthState>().core();
+        atlas_native_agent::engine::set_org_source(Arc::new(move || {
+            match core.snapshot() {
+                crate::auth::AuthSnapshot::SignedIn { active_org_id, .. } => active_org_id,
+                _ => None,
+            }
+        }));
+    }
+
     {
         let app_for_engine = app.clone();
         atlas_native_agent::engine::memory::register_search(Arc::new(move |cwd, query, k| {

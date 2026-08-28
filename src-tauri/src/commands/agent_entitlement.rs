@@ -162,13 +162,23 @@ pub async fn native_agent_entitlement(
             "{}/models",
             atlas_native_agent::engine::config::GATEWAY_BASE_URL.trim_end_matches('/'),
         );
-        let response = match reqwest::Client::new()
+        let mut request = reqwest::Client::new()
             .get(&url)
             .bearer_auth(&token)
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await
+            .timeout(std::time::Duration::from_secs(10));
+        // The grant that filters this list belongs to the PAYER, not the user:
+        // without the org header the gateway checks the caller's personal
+        // grant, and an account whose access comes through its organisation
+        // reads as having none — the pill would tell an entitled user to ask
+        // their admin.
+        if let crate::auth::AuthSnapshot::SignedIn {
+            active_org_id: Some(org),
+            ..
+        } = core.snapshot()
         {
+            request = request.header("atlas-org", org);
+        }
+        let response = match request.send().await {
             Ok(response) => response,
             Err(err) => {
                 return Ok(Entitlement::Unknown {

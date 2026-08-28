@@ -39,6 +39,10 @@ pub(crate) mod test_support;
 
 pub use auth::{AtlasExternalAuth, AtlasTokenSource, Clock, SystemClock};
 pub use catalog::{atlas_catalog, DEFAULT_MODEL};
+// Re-exported so `src-tauri` names only this crate (the quarantine rule):
+// the org source lives in the vendored API layer because that is where the
+// header is attached, but the host registers it from Atlas's auth state.
+pub use codex_api::atlas_chat::org::set_org_source;
 pub use config::{EngineHome, EngineProvider, EngineSettings, WireDialect};
 pub use connection::EngineConnection;
 pub use runtime::{start_engine, ATLAS_CLIENT_NAME};

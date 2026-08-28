@@ -41,6 +41,8 @@ tracing = "0.1"
 base64 = { version = "0.22" }
 serde = { version = "1", features = ["derive"] }
 toml = { version = "0.9" }
+# For the gateway-dialect surfaces the seam re-exports (the org source).
+codex-api = { path = "../../vendor/codex/codex-api" }
 codex-app-server = { path = "../../vendor/codex/app-server" }
 codex-app-server-client = { path = "../../vendor/codex/app-server-client" }
 codex-app-server-protocol = { path = "../../vendor/codex/app-server-protocol" }

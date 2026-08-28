@@ -1095,6 +1095,7 @@ dependencies = [
  "atlas-agent-servers",
  "atlas-thread-metadata",
  "base64 0.22.1",
+ "codex-api",
  "codex-app-server",
  "codex-app-server-client",
  "codex-app-server-protocol",

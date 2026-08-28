@@ -19,6 +19,7 @@
 //! dialect produces, which is what lets the turn loop, resumption and history
 //! stay exactly as they are.
 
+pub mod org;
 pub mod request;
 pub mod sse;
 

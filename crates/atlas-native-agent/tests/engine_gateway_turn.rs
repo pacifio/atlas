@@ -655,3 +655,53 @@ async fn a_new_session_advertises_its_commands_and_no_login() {
         "the account's own sign-in is the agent's sign-in: {names:?}",
     );
 }
+
+#[tokio::test]
+async fn the_paying_org_rides_every_request_and_follows_a_switch() {
+    // The gateway's `Atlas-Org` header names who pays, and the grant that
+    // admits a request belongs to the payer — omitted, the request is
+    // attributed personally, and an account whose AI access comes through its
+    // organisation is refused on every turn while the org sits entitled.
+    //
+    // Two assertions in one test because the second is the reason for the
+    // design: the org is read per request, so switching org mid-session bills
+    // — and is admitted by — the new one on the very next message.
+    let org = Arc::new(std::sync::Mutex::new(Some("org_first".to_string())));
+    let reader = org.clone();
+    atlas_native_agent::engine::set_org_source(Arc::new(move || {
+        reader.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }));
+
+    let h = harness(vec![(None, sse_ok(answer("ok")))]).await;
+    let session_id = h.open_thread().await;
+    let _ = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id.clone(), text("one")))
+        .await;
+
+    *org.lock().unwrap_or_else(|p| p.into_inner()) = Some("org_second".to_string());
+    let _ = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("two")))
+        .await;
+
+    let Some(received) = h.server.received_requests().await else {
+        panic!("the mock server must be recording requests");
+    };
+    let orgs: Vec<String> = received
+        .iter()
+        .filter(|r| r.url.path().ends_with("/chat/completions"))
+        .map(|r| {
+            r.headers
+                .get("atlas-org")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("<absent>")
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        orgs,
+        ["org_first", "org_second"],
+        "the header must be present, and must follow the switch: {orgs:?}",
+    );
+}
