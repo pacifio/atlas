@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use std::collections::HashMap;
 use std::io;
 use std::num::NonZeroUsize;
@@ -1333,7 +1334,21 @@ impl ResponseItem {
     }
 }
 
-pub const BASE_INSTRUCTIONS_DEFAULT: &str = include_str!("prompts/base_instructions/default.md");
+/// The fallback system prompt, with its Apache-2.0 change notice stripped.
+///
+/// Same collision as `codex_models_manager::model_info::BASE_INSTRUCTIONS`:
+/// §4(b) wants the notice **in the file**, and the file is `include_str!`d
+/// straight into a model's context, so it is an HTML comment on line 1 and is
+/// removed here rather than shipped to the model on every turn.
+pub static BASE_INSTRUCTIONS_DEFAULT: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| {
+        let raw = include_str!("prompts/base_instructions/default.md");
+        raw.trim_start()
+            .strip_prefix("<!--")
+            .and_then(|rest| rest.split_once("-->"))
+            .map(|(_, body)| body.trim_start().to_string())
+            .unwrap_or_else(|| raw.to_string())
+    });
 
 /// Describes whether persisted base instructions were supplied by the user or generated for a model.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
@@ -1360,7 +1375,7 @@ pub struct BaseInstructions {
 impl Default for BaseInstructions {
     fn default() -> Self {
         Self {
-            text: BASE_INSTRUCTIONS_DEFAULT.to_string(),
+            text: BASE_INSTRUCTIONS_DEFAULT.clone(),
             provenance: None,
         }
     }

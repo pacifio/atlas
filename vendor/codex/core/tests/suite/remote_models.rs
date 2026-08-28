@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 #![cfg(not(target_os = "windows"))]
 use anyhow::Result;
 use codex_core::TurnInputRequest;
@@ -78,7 +79,7 @@ async fn unknown_model_sends_builtin_instructions() -> Result<()> {
 
     assert_eq!(
         response.single_request().instructions_text(),
-        BASE_INSTRUCTIONS
+        *BASE_INSTRUCTIONS
     );
     Ok(())
 }

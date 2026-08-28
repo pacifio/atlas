@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use super::*;
 use crate::ModelsManagerConfig;
 use codex_protocol::config_types::Personality;
@@ -258,7 +259,7 @@ fn unknown_model_uses_builtin_instruction_template() {
 
     assert_eq!(
         model.get_model_instructions(/*personality*/ None),
-        BASE_INSTRUCTIONS
+        *BASE_INSTRUCTIONS
     );
     assert!(model.used_fallback_model_metadata);
 }

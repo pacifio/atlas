@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::openai_models::ConfigShellToolType;
@@ -14,8 +15,31 @@ use crate::config::ModelsManagerConfig;
 use codex_utils_output_truncation::approx_bytes_for_tokens;
 use tracing::warn;
 
-pub const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
-const DEFAULT_PERSONALITY_HEADER: &str = "You are Codex, a coding agent based on GPT-5. You and the user share the same workspace and collaborate to achieve the user's goals.";
+/// The baked system prompt.
+///
+/// A `LazyLock<String>` rather than a `&'static str` because of one awkward
+/// collision: Apache-2.0 §4(b) requires the change notice to be **in the
+/// file**, and the file is `include_str!`d verbatim into a model's context — so
+/// left alone, every turn would carry a licence header addressed to nobody. The
+/// notice is an HTML comment on line 1 and is stripped here.
+pub static BASE_INSTRUCTIONS: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| strip_change_notice(include_str!("../prompt.md")));
+
+/// Removes a leading HTML comment, keeping everything after it.
+///
+/// Only the first, and only when the file opens with one: a prompt that happens
+/// to contain a comment further down keeps it.
+fn strip_change_notice(raw: &str) -> String {
+    let trimmed = raw.trim_start();
+    let Some(rest) = trimmed.strip_prefix("<!--") else {
+        return raw.to_string();
+    };
+    match rest.split_once("-->") {
+        Some((_, body)) => body.trim_start().to_string(),
+        None => raw.to_string(),
+    }
+}
+const DEFAULT_PERSONALITY_HEADER: &str = "You are Atlas Agent, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals.";
 const LOCAL_FRIENDLY_TEMPLATE: &str =
     "You optimize for team morale and being a supportive teammate as much as code quality.";
 const LOCAL_PRAGMATIC_TEMPLATE: &str = "You are a deeply pragmatic, effective software engineer.";
@@ -82,7 +106,7 @@ pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig)
             && let Some(model_messages) = model.model_messages.as_mut()
         {
             if uses_local_personality_template {
-                model_messages.instructions_template = Some(BASE_INSTRUCTIONS.to_string());
+                model_messages.instructions_template = Some(BASE_INSTRUCTIONS.clone());
             } else {
                 let personality_default = model_messages
                     .get_personality_message(/*personality*/ None)
@@ -188,7 +212,8 @@ fn local_model_messages_for_slug(slug: &str) -> ModelMessages {
     match slug {
         "gpt-5.2-codex" | "exp-codex-personality" => ModelMessages {
             instructions_template: Some(format!(
-                "{DEFAULT_PERSONALITY_HEADER}\n\n{PERSONALITY_PLACEHOLDER}\n\n{BASE_INSTRUCTIONS}"
+                "{DEFAULT_PERSONALITY_HEADER}\n\n{PERSONALITY_PLACEHOLDER}\n\n{}",
+                *BASE_INSTRUCTIONS
             )),
             instructions_variables: Some(ModelInstructionsVariables {
                 personality_default: Some(String::new()),
@@ -203,7 +228,7 @@ fn local_model_messages_for_slug(slug: &str) -> ModelMessages {
             token_budget: None,
         },
         _ => ModelMessages {
-            instructions_template: Some(BASE_INSTRUCTIONS.to_string()),
+            instructions_template: Some(BASE_INSTRUCTIONS.clone()),
             instructions_variables: None,
             approvals: None,
             collaboration_modes: None,

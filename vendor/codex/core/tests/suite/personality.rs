@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use codex_config::types::Personality;
 use codex_core::TurnInputRequest;
 use codex_features::Feature;
@@ -586,7 +587,7 @@ async fn user_turn_personality_skips_if_feature_disabled() -> anyhow::Result<()>
     assert!(
         requests
             .iter()
-            .all(|request| request.instructions_text() == BASE_INSTRUCTIONS)
+            .all(|request| request.instructions_text() == *BASE_INSTRUCTIONS)
     );
     let request = requests
         .last()

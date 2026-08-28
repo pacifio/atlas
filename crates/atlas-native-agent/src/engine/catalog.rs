@@ -152,7 +152,7 @@ fn row(slug: &str, display_name: &str, description: &str, priority: i32) -> Valu
         // is wrong on every row here — the trademark scrub that fixes it is its
         // own gated piece of work, and doing it inside the catalogue would put
         // a rewritten system prompt in a commit about model metadata.
-        "model_messages": { "instructions_template": codex_models_manager::model_info::BASE_INSTRUCTIONS },
+        "model_messages": { "instructions_template": codex_models_manager::model_info::BASE_INSTRUCTIONS.as_str() },
         "include_skills_usage_instructions": true,
         // Both name surfaces that belong to the upstream product, not to Atlas.
         "include_plugin_usage_instructions": false,

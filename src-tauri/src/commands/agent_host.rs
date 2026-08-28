@@ -497,7 +497,11 @@ impl AgentHost {
 
     pub fn display_name(&self, plugin_id: &str) -> String {
         if plugin_id == CERSEI_AGENT_ID {
-            return "Cersei".to_string();
+            // The name changes here; the id above does not. `CERSEI_AGENT_ID`
+            // is a storage key every recorded thread resolves through (D7), so
+            // the two deliberately disagree — this is the only place the user
+            // ever sees either of them.
+            return "Atlas Agent".to_string();
         }
         self.store
             .agent_display_name(&atlas_acp_thread::AgentId::new(plugin_id))
