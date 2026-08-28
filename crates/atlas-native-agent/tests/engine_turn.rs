@@ -732,3 +732,222 @@ async fn declining_a_command_lets_the_turn_finish_rather_than_killing_it() {
         "declining one action must not abort the whole turn",
     );
 }
+
+// ---------------------------------------------------------------------------
+// #46, second half — the tool-execution clauses of bar items 4 and 5.
+//
+// These were owed by #46 and blocked on #47: a tool call cannot reach the seam
+// until approvals round-trip, because in Ask mode an untrusted command raises
+// a dialog and waits.
+//
+// Both assert on the *filesystem*, not on protocol chatter. A turn can report
+// "cancelled" while the command it started keeps running, and a retried turn
+// can look identical whether the tool ran once or twice. The side effect is
+// the only witness that tells those apart.
+// ---------------------------------------------------------------------------
+
+/// A turn that runs `command`, then finishes on the next response.
+fn command_turn(command: &str) -> String {
+    command_then_done_with(command)
+}
+
+fn command_then_done_with(command: &str) -> String {
+    let args = serde_json::to_string(&json!({
+        "command": command,
+        "workdir": null,
+        "timeout_ms": 60000,
+    }))
+    .expect("arguments");
+    sse(vec![
+        json!({"type": "response.created", "response": {"id": "resp-1"}}),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call",
+                "call_id": "call-1",
+                "name": "shell_command",
+                "arguments": args
+            }
+        }),
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp-1",
+                "usage": {
+                    "input_tokens": 0, "input_tokens_details": null,
+                    "output_tokens": 0, "output_tokens_details": null,
+                    "total_tokens": 0
+                }
+            }
+        }),
+    ])
+}
+
+#[tokio::test]
+async fn cancelling_mid_tool_stops_the_command_it_started() {
+    // Bar item 4's tool clause. The turn reporting `Cancelled` is not enough:
+    // an orphaned child keeps writing to the user's disk after the UI says the
+    // turn stopped. The marker file is what distinguishes "the turn ended" from
+    // "the work ended".
+    let dir = tempfile::tempdir().expect("tempdir");
+    let marker = dir.path().join("survived-the-cancel");
+    let command = format!(
+        "sleep 5; touch {}",
+        marker.to_string_lossy(),
+    );
+
+    let h = harness_with(vec![
+        (Some(1), sse_ok(command_turn(&command))),
+        (None, sse_ok(assistant_turn("done"))),
+    ])
+    .await;
+    let session_id = h.open_thread().await;
+
+    let connection = h.connection.clone();
+    let prompting = {
+        let session_id = session_id.clone();
+        tokio::spawn(async move {
+            connection
+                .prompt(acp::PromptRequest::new(session_id, text("do the slow thing")))
+                .await
+        })
+    };
+
+    answer_first_authorization(&h, acp::PermissionOptionKind::AllowOnce)
+        .await
+        .expect("the engine should ask before an untrusted command");
+
+    // Let it get started, then cancel while it is genuinely running.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let cancelled = tokio::time::timeout(Duration::from_secs(20), async {
+        while !prompting.is_finished() {
+            h.connection.cancel(&session_id);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
+    assert!(cancelled.is_ok(), "the cancel never took effect");
+
+    let response = prompting
+        .await
+        .expect("the prompt task should not panic")
+        .expect("a cancelled turn is an outcome, not an error");
+    assert_eq!(response.stop_reason, acp::StopReason::Cancelled);
+
+    // Past when the command would have finished had it survived.
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    assert!(
+        !marker.exists(),
+        "the cancelled command kept running and touched {} — the turn was \
+         reported as cancelled while its child process was still working",
+        marker.display(),
+    );
+}
+
+#[tokio::test]
+async fn a_retried_turn_does_not_re_run_a_tool_call_that_already_executed() {
+    // Bar item 5's tool clause. This is the failure that costs real money and
+    // real damage: the stream drops after a command has run, the engine
+    // retries, and the command runs a second time. An `rm`, a deploy, a
+    // payment — anything not idempotent.
+    //
+    // The counter file is the witness. Protocol events cannot tell the two
+    // cases apart, because a correct retry and a double-execution produce the
+    // same visible turn.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let counter = dir.path().join("executions");
+    let command = format!("echo ran >> {}", counter.to_string_lossy());
+
+    let h = harness_with(vec![
+        // The command runs, and then the stream dies before completing the
+        // turn — so the engine retries the *turn*.
+        (Some(1), sse_ok(command_turn(&command))),
+        (Some(1), killed_stream()),
+        (None, sse_ok(assistant_turn("finished"))),
+    ])
+    .await;
+    let session_id = h.open_thread().await;
+
+    let connection = h.connection.clone();
+    let prompting = {
+        let session_id = session_id.clone();
+        tokio::spawn(async move {
+            connection
+                .prompt(acp::PromptRequest::new(session_id, text("append once")))
+                .await
+        })
+    };
+
+    answer_first_authorization(&h, acp::PermissionOptionKind::AllowOnce)
+        .await
+        .expect("the engine should ask before an untrusted command");
+
+    let response = tokio::time::timeout(Duration::from_secs(60), prompting)
+        .await
+        .expect("the retried turn should not hang")
+        .expect("the prompt task should not panic")
+        .expect("the turn should survive the dropped stream");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+    // The turn must actually have been retried, or "ran once" is trivially
+    // true and this proves nothing about retries at all.
+    let retried = h
+        .drained()
+        .into_iter()
+        .any(|e| matches!(e, AcpThreadEvent::Retry(_)));
+    assert!(
+        retried,
+        "no retry was announced, so this turn never exercised the retry path",
+    );
+
+    let runs = std::fs::read_to_string(&counter).unwrap_or_default();
+    let runs = runs.lines().filter(|l| !l.trim().is_empty()).count();
+    assert_eq!(
+        runs, 1,
+        "the command ran {runs} times across the retry; a non-idempotent \
+         command run twice is the failure this clause exists to prevent",
+    );
+}
+
+#[tokio::test]
+async fn control_an_approved_command_really_does_run() {
+    // The control for the two tests above. Both of them assert that a file
+    // does *not* appear, or appears once — and both would pass just as well if
+    // approved commands never ran at all, which is exactly what a
+    // workspace-write sandbox does to a path outside the workspace.
+    //
+    // Without this, "the cancel killed the command" and "the command was never
+    // able to run" are indistinguishable.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let marker = dir.path().join("it-ran");
+    let command = format!("touch {}", marker.to_string_lossy());
+
+    let h = harness_with(vec![
+        (Some(1), sse_ok(command_turn(&command))),
+        (None, sse_ok(assistant_turn("done"))),
+    ])
+    .await;
+    let session_id = h.open_thread().await;
+
+    let connection = h.connection.clone();
+    let prompting = {
+        let session_id = session_id.clone();
+        tokio::spawn(async move {
+            connection
+                .prompt(acp::PromptRequest::new(session_id, text("touch it")))
+                .await
+        })
+    };
+
+    answer_first_authorization(&h, acp::PermissionOptionKind::AllowOnce)
+        .await
+        .expect("the engine should ask before an untrusted command");
+
+    let _ = tokio::time::timeout(Duration::from_secs(60), prompting).await;
+
+    assert!(
+        marker.exists(),
+        "an approved command did not run at all, so the cancel and retry tests \
+         above prove nothing: they assert on a file that could never appear",
+    );
+}
