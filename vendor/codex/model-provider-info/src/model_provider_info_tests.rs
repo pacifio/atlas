@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use super::*;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
@@ -110,17 +111,41 @@ supports_standalone_web_search = true
     assert_eq!(expected_provider, provider);
 }
 
+/// Upstream's test asserted the opposite: that `wire_api = "chat"` fails with a
+/// message pointing at the removal discussion. Atlas reinstated the variant
+/// (D3) because its gateway speaks that dialect, so the test is inverted rather
+/// than deleted — the string is the config spelling Atlas's own provider uses,
+/// and it needs a test that fails if it ever stops resolving.
 #[test]
-fn test_deserialize_chat_wire_api_shows_helpful_error() {
+fn test_deserialize_chat_wire_api_selects_the_atlas_gateway_dialect() {
     let provider_toml = r#"
-name = "OpenAI using Chat Completions"
-base_url = "https://api.openai.com/v1"
-env_key = "OPENAI_API_KEY"
+name = "Atlas"
+base_url = "https://ai.tryatlas.cc/v1"
 wire_api = "chat"
         "#;
 
-    let err = toml::from_str::<ModelProviderInfo>(provider_toml).unwrap_err();
-    assert!(err.to_string().contains(CHAT_WIRE_API_REMOVED_ERROR));
+    let provider = toml::from_str::<ModelProviderInfo>(provider_toml)
+        .unwrap_or_else(|err| panic!("`wire_api = \"chat\"` must resolve: {err}"));
+    assert_eq!(provider.wire_api, WireApi::Chat);
+    assert_eq!(provider.wire_api.to_string(), "chat");
+}
+
+#[test]
+fn test_deserialize_unknown_wire_api_names_both_dialects() {
+    // A typo should say what the two choices are, not just that this was not
+    // one of them.
+    let provider_toml = r#"
+name = "Nope"
+base_url = "https://example.invalid/v1"
+wire_api = "completions"
+        "#;
+
+    let Err(err) = toml::from_str::<ModelProviderInfo>(provider_toml) else {
+        panic!("an unknown wire api must not deserialize");
+    };
+    let rendered = err.to_string();
+    assert!(rendered.contains("responses"), "{rendered}");
+    assert!(rendered.contains("chat"), "{rendered}");
 }
 
 #[test]

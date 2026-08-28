@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::num::NonZeroU64;
@@ -292,6 +293,13 @@ fn proto_string_map(values: HashMap<String, String>) -> proto::StringMap {
 fn proto_wire_api(wire_api: WireApi) -> proto::WireApi {
     match wire_api {
         WireApi::Responses => proto::WireApi::Responses,
+        // Atlas's gateway dialect has no proto spelling and does not need one:
+        // remote thread config is a hosted surface Atlas does not use, and the
+        // decoder above refuses a wire api it cannot name rather than guessing
+        // — so an id invented here would only be one the other side rejects.
+        WireApi::Chat => {
+            panic!("the Atlas gateway dialect is not carried in remote thread config")
+        }
     }
 }
 

@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use std::fmt;
 use std::future::Future;
 use std::path::PathBuf;
@@ -291,9 +292,54 @@ impl ConfiguredModelProvider {
     }
 }
 
+impl ConfiguredModelProvider {
+    /// Whether this provider's errors speak Atlas's gateway vocabulary (D13).
+    ///
+    /// Keyed on the wire, not on the provider id or base URL: the dialect and
+    /// the error vocabulary are the same contract, and a provider configured to
+    /// speak one while being classified by the other is precisely the mismatch
+    /// this arm exists to remove.
+    fn uses_atlas_gateway_errors(&self) -> bool {
+        self.info.wire_api == codex_model_provider_info::WireApi::Chat
+    }
+}
+
 impl ModelProvider for ConfiguredModelProvider {
     fn info(&self) -> &ModelProviderInfo {
         &self.info
+    }
+
+    /// Added by Atlas (D13). Upstream's classifier is calibrated to OpenAI's
+    /// error vocabulary and puts every Atlas-specific code in the wrong bucket
+    /// — most damagingly a `402 cap_exceeded`, which it retries against a wall
+    /// that cannot clear for weeks. Without this hook the arm in
+    /// `codex_api::atlas_gateway` is a library nothing calls.
+    fn map_api_error(&self, error: codex_api::ApiError) -> CodexErr {
+        let codex_api::ApiError::Transport(codex_api::TransportError::Http {
+            status,
+            headers,
+            body,
+            ..
+        }) = &error
+        else {
+            // Not an HTTP refusal — a transport failure, or an error the
+            // stream machine already typed. Nothing for the gateway table to
+            // say about those.
+            return codex_api::map_api_error(error);
+        };
+        if !self.uses_atlas_gateway_errors() {
+            return codex_api::map_api_error(error);
+        }
+        let retry_after = headers
+            .as_ref()
+            .and_then(|map| map.get(http::header::RETRY_AFTER))
+            .and_then(|value| value.to_str().ok());
+        let disposition = codex_api::atlas_gateway::classify(
+            *status,
+            body.as_deref().unwrap_or_default(),
+            retry_after,
+        );
+        codex_api::map_api_error(disposition.into_api_error())
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
@@ -486,6 +532,94 @@ mod tests {
 
     use super::*;
     use crate::auth::AgentIdentitySessionFallback;
+
+
+    /// A gateway error, as the transport hands it up.
+    fn gateway_http_error(status: u16, body: &str, retry_after: Option<&str>) -> codex_api::ApiError {
+        let Ok(status) = http::StatusCode::from_u16(status) else {
+            panic!("{status} is not a status code");
+        };
+        let mut headers = http::HeaderMap::new();
+        if let Some(value) = retry_after {
+            let Ok(value) = http::HeaderValue::from_str(value) else {
+                panic!("bad Retry-After fixture");
+            };
+            headers.insert(http::header::RETRY_AFTER, value);
+        }
+        codex_api::ApiError::Transport(codex_api::TransportError::Http {
+            status,
+            url: None,
+            headers: Some(headers),
+            body: Some(body.to_string()),
+        })
+    }
+
+    fn provider_on_wire(wire_api: WireApi) -> SharedModelProvider {
+        create_model_provider(
+            ModelProviderInfo {
+                name: "Atlas".to_string(),
+                base_url: Some("https://ai.tryatlas.cc/v1".to_string()),
+                wire_api,
+                requires_openai_auth: false,
+                ..Default::default()
+            },
+            /*auth_manager*/ None,
+        )
+    }
+
+    #[test]
+    fn a_filled_cap_on_the_gateway_wire_is_not_retried() {
+        // The whole reason the D13 arm exists. Without this hook the arm is a
+        // library nothing calls, and upstream's classifier answers a 402 with
+        // `UnexpectedStatus` — which the turn loop retries against a wall that
+        // cannot clear for weeks.
+        let body = r#"{"error":{"message":"The org monthly AI budget is spent.","code":"cap_exceeded","window":"monthly","scope":"org","used":307425,"cap":350000}}"#;
+        let err = provider_on_wire(WireApi::Chat).map_api_error(gateway_http_error(402, body, None));
+        assert!(!err.is_retryable(), "a filled cap must produce zero retries: {err:?}");
+        assert!(
+            err.to_string().contains("307425"),
+            "the cap detail has to survive: {err}",
+        );
+    }
+
+    #[test]
+    fn a_rate_limit_on_the_gateway_wire_waits_the_interval_it_was_given() {
+        // Upstream reads `Retry-After` nowhere at all, and maps a non-ChatGPT
+        // 429 body to a terminal error — the opposite of what the gateway asks
+        // for on the one status where waiting is instructed.
+        let body = r#"{"error":{"message":"too many requests","code":"rate_limited"}}"#;
+        let err =
+            provider_on_wire(WireApi::Chat).map_api_error(gateway_http_error(429, body, Some("1")));
+        assert!(err.is_retryable());
+        assert_eq!(err.retry_delay(), Some(std::time::Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn the_responses_wire_keeps_upstreams_classification() {
+        // The arm is keyed on the wire, and must not reach a provider that does
+        // not speak the gateway's error vocabulary — a 402 from some other
+        // OpenAI-compatible endpoint means whatever that endpoint says it does.
+        let body = r#"{"error":{"code":"cap_exceeded"}}"#;
+        let err = provider_on_wire(WireApi::Responses)
+            .map_api_error(gateway_http_error(402, body, None));
+        assert!(
+            err.is_retryable(),
+            "upstream classifies a 402 as UnexpectedStatus; changing that is not this arm's job",
+        );
+    }
+
+    #[test]
+    fn an_error_the_stream_already_typed_is_left_alone() {
+        // Not every ApiError is an HTTP refusal. A typed stream error carries a
+        // decision the SSE machine already made, and re-classifying it by
+        // status would throw that away.
+        let err = provider_on_wire(WireApi::Chat)
+            .map_api_error(codex_api::ApiError::ContextWindowExceeded);
+        assert!(matches!(
+            err.details(),
+            codex_protocol::error::CodexErrorDetails::ContextWindowExceeded,
+        ));
+    }
 
     fn provider_info_with_command_auth() -> ModelProviderInfo {
         ModelProviderInfo {

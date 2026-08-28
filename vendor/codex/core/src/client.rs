@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 //! Session- and turn-scoped helpers for talking to model provider APIs.
 //!
 //! `ModelClient` is intended to live for the lifetime of a Codex session and holds the stable
@@ -33,7 +34,11 @@ use std::sync::atomic::Ordering;
 use codex_api::AgentIdentityTelemetry;
 use codex_api::ApiError;
 use codex_api::AuthProvider;
+use codex_api::ChatCompletionsClient as ApiChatCompletionsClient;
+use codex_api::ChatDialect;
+use codex_api::ChatRequestInput;
 use codex_api::CompactClient as ApiCompactClient;
+use codex_api::build_chat_request;
 use codex_api::CompactionInput as ApiCompactionInput;
 use codex_api::Compression;
 use codex_api::MemoriesClient as ApiMemoriesClient;
@@ -159,6 +164,8 @@ const X_OPENAI_INTERNAL_CODEX_RESPONSES_LITE_HEADER: &str =
     "x-openai-internal-codex-responses-lite";
 const REALTIME_CALLS_ENDPOINT: &str = "/realtime/calls";
 const RESPONSES_ENDPOINT: &str = "/responses";
+/// The Atlas gateway's completion route (D3).
+const CHAT_COMPLETIONS_ENDPOINT: &str = "/chat/completions";
 const RESPONSES_COMPACT_ENDPOINT: &str = "/responses/compact";
 // `/responses/compact` is unary, so the timeout covers the full response rather than one idle
 // period between stream events.
@@ -1419,6 +1426,134 @@ impl ModelClientSession {
         }
     }
 
+    /// Streams a turn through the Atlas gateway's Chat Completions dialect (D3).
+    ///
+    /// Added by Atlas. Deliberately smaller than its Responses sibling, and
+    /// each absence is a decision rather than a gap:
+    ///
+    /// - **No routing hint, no compression, no subagent or turn-state headers.**
+    ///   Every one of them is an OpenAI-backend convention, and the gateway
+    ///   rejects anything it does not recognise rather than ignoring it.
+    /// - **No reasoning, verbosity or service-tier plumbing.** Those ride
+    ///   Responses-only request fields that are off the gateway's allowlist.
+    ///   The knobs that survive — the model and the permission mode — are
+    ///   carried elsewhere.
+    ///
+    /// The 401 loop is kept verbatim, because it is the half of D10 that makes
+    /// a long session survive its own token: the gateway's `token_expired` is
+    /// answered by minting a new one and retrying exactly once.
+    async fn stream_chat_completions(
+        &self,
+        prompt: &Prompt,
+        model_info: &ModelInfo,
+        session_telemetry: &SessionTelemetry,
+        inference_trace: &InferenceTraceContext,
+    ) -> Result<ResponseStream> {
+        let auth_manager = self.client.state.provider.auth_manager();
+        let mut auth_recovery = auth_manager
+            .as_ref()
+            .map(AuthManager::unauthorized_recovery);
+        let mut pending_retry = PendingUnauthorizedRetry::default();
+
+        let tools = create_tools_json_for_responses_api(&prompt.tools)?;
+
+        loop {
+            let client_setup = self.client.current_client_setup().await?;
+            let transport = self
+                .client
+                .build_api_transport(&client_setup.api_provider, CHAT_COMPLETIONS_ENDPOINT)?;
+            let request_auth_context = AuthRequestTelemetryContext::new(
+                client_setup.auth.as_ref().map(CodexAuth::auth_mode),
+                client_setup.api_auth.as_ref(),
+                client_setup.agent_identity_telemetry.clone(),
+                pending_retry,
+            );
+            let (request_telemetry, sse_telemetry) = Self::build_streaming_telemetry(
+                session_telemetry,
+                request_auth_context,
+                RequestRouteTelemetry::for_endpoint(CHAT_COMPLETIONS_ENDPOINT),
+                self.client.state.auth_env_telemetry.clone(),
+            );
+
+            let mut items = prompt.get_formatted_input_for_request(/*use_responses_lite*/ false);
+            self.client.prepare_response_items_for_request(&mut items);
+            let built = build_chat_request(ChatRequestInput {
+                model: &model_info.slug,
+                instructions: &prompt.base_instructions.text,
+                items: &items,
+                tools: &tools,
+                max_output_tokens: codex_api::DEFAULT_MAX_OUTPUT_TOKENS,
+                output_schema: prompt.output_schema.as_ref(),
+            });
+
+            let inference_trace_attempt = inference_trace.start_attempt();
+            let mut extra_headers = http::HeaderMap::new();
+            inference_trace_attempt.add_request_headers(&mut extra_headers);
+            inference_trace_attempt.record_started(&built.request);
+
+            let client = ApiChatCompletionsClient::new(
+                transport,
+                client_setup.api_provider,
+                client_setup.api_auth,
+            )
+            .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
+
+            let stream_result = client
+                .stream_request(
+                    built.request,
+                    extra_headers,
+                    ChatDialect {
+                        freeform_tools: built.freeform_tools,
+                    },
+                )
+                .await;
+
+            match stream_result {
+                Ok(stream) => {
+                    let (stream, _) = map_response_stream(
+                        stream,
+                        session_telemetry.clone(),
+                        inference_trace_attempt,
+                        Arc::clone(&self.client.state.provider),
+                    );
+                    return Ok(stream);
+                }
+                Err(ApiError::Transport(
+                    unauthorized_transport @ TransportError::Http { status, .. },
+                )) if status == StatusCode::UNAUTHORIZED => {
+                    let response_debug_context =
+                        extract_response_debug_context(&unauthorized_transport);
+                    inference_trace_attempt.record_failed(
+                        &unauthorized_transport,
+                        response_debug_context.request_id.as_deref(),
+                        /*output_items*/ &[],
+                    );
+                    pending_retry = PendingUnauthorizedRetry::from_recovery(
+                        handle_unauthorized(
+                            unauthorized_transport,
+                            &mut auth_recovery,
+                            session_telemetry,
+                            &self.client.state.provider,
+                        )
+                        .await?,
+                    );
+                    continue;
+                }
+                Err(err) => {
+                    let response_debug_context =
+                        extract_response_debug_context_from_api_error(&err);
+                    let err = self.client.state.provider.map_api_error(err);
+                    inference_trace_attempt.record_failed(
+                        &err,
+                        response_debug_context.request_id.as_deref(),
+                        /*output_items*/ &[],
+                    );
+                    return Err(err);
+                }
+            }
+        }
+    }
+
     /// Streams a turn via the OpenAI Responses API.
     ///
     /// Handles reasoning summaries, verbosity, and the `text` controls used for output schemas.
@@ -1897,6 +2032,14 @@ impl ModelClientSession {
                     inference_trace,
                 )
                 .await
+            }
+            // Atlas's gateway dialect (D3). No WebSocket arm: the gateway
+            // serves one route, and `supports_websockets` is false for it, so
+            // the transport question the Responses arm has to ask does not
+            // arise here.
+            WireApi::Chat => {
+                self.stream_chat_completions(prompt, model_info, session_telemetry, inference_trace)
+                    .await
             }
         }
     }
