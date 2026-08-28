@@ -123,7 +123,6 @@ jobs:
           - crate: atlas-agent-wire
             clippy: true
           - crate: atlas-bus
-          - crate: atlas-cersei
           - crate: atlas-checkpoint
             clippy: true
           - crate: atlas-codeindex
