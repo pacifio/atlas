@@ -395,3 +395,112 @@ async fn cancelling_with_nothing_running_is_a_no_op_rather_than_a_panic() {
     h.connection.cancel(&session_id);
     h.connection.cancel(&acp::SessionId::new("no-such-thread"));
 }
+
+// ---------------------------------------------------------------------------
+// #47 — modes and the effort knob, verified against the engine.
+//
+// The mapping itself is unit-tested in `engine::modes`. What these add is the
+// half a unit test cannot reach: that the engine *accepts* each policy pair.
+// A mode that maps cleanly and is then refused at the protocol is a mode that
+// silently does nothing.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn all_four_permission_modes_are_accepted_by_the_engine() {
+    // Acceptance bar item 8, first half. Each mode is pushed through the same
+    // `AgentSessionModes` surface the mode picker drives.
+    let h = harness(assistant_turn("ok")).await;
+    let session_id = h.open_thread().await;
+
+    let modes = h
+        .connection
+        .session_modes(&session_id)
+        .expect("the native agent must offer modes");
+
+    assert_eq!(
+        modes.all_modes().len(),
+        4,
+        "the picker offers four modes on both engines",
+    );
+
+    for mode in modes.all_modes() {
+        modes
+            .set_mode(mode.id.clone())
+            .await
+            .unwrap_or_else(|e| panic!("the engine refused mode {:?}: {e}", mode.id));
+        assert_eq!(
+            modes.current_mode(),
+            mode.id,
+            "the picker must report the mode that was actually set",
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_new_session_starts_in_a_mode_the_engine_has_been_told_about() {
+    // Recording a mode without pushing it would leave the picker showing one
+    // thing while the engine ran on its own defaults — the failure mode where
+    // "Plan" is displayed and the agent edits files anyway.
+    let h = harness(assistant_turn("ok")).await;
+    let session_id = h.open_thread().await;
+    let modes = h.connection.session_modes(&session_id).expect("modes");
+    assert_eq!(modes.current_mode().to_string(), "default");
+}
+
+#[tokio::test]
+async fn the_effort_knob_reaches_the_engine_and_rejects_a_level_it_does_not_know() {
+    // Acceptance bar item 8, second half, and spec open question 4: the
+    // per-session effort knob is `thread/settings/update`'s `effort` field.
+    let h = harness(assistant_turn("ok")).await;
+    let session_id = h.open_thread().await;
+
+    let effort = h
+        .connection
+        .session_effort(&session_id)
+        .expect("the native agent must offer the effort knob");
+
+    for level in ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] {
+        effort
+            .set_effort(Some(level.to_string()))
+            .unwrap_or_else(|e| panic!("{level} should be a valid effort: {e}"));
+    }
+    effort.set_effort(None).expect("clearing the override is valid");
+
+    // Rejected rather than silently defaulted: a level that quietly became
+    // "medium" would look like the knob doing nothing.
+    assert!(
+        effort.set_effort(Some("enthusiastic".to_string())).is_err(),
+        "an unknown effort level must be refused, not rounded to a default",
+    );
+
+    // And the session still works afterwards — the settings updates did not
+    // leave the thread in a state the engine refuses to run.
+    let response = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("still there?")))
+        .await
+        .expect("the turn should still complete after settings updates");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+}
+
+#[tokio::test]
+async fn a_turn_still_completes_after_switching_into_plan_mode() {
+    // Plan pairs read-only with `Never`, the most restrictive combination
+    // Atlas can ask for. If the engine rejected that pair, the symptom would
+    // be a mode that appears to switch and then breaks the next turn.
+    let h = harness(assistant_turn("read-only answer")).await;
+    let session_id = h.open_thread().await;
+    let modes = h.connection.session_modes(&session_id).expect("modes");
+
+    modes
+        .set_mode(acp::SessionModeId::new("plan"))
+        .await
+        .expect("plan mode should be accepted");
+
+    let response = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("what would you do?")))
+        .await
+        .expect("a turn in plan mode should still run");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+}

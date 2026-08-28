@@ -40,7 +40,8 @@ use std::sync::Mutex;
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::anyhow;
 use anyhow::Result;
-use atlas_acp_thread::{AcpThread, AcpThreadHandle, AgentConnection, AgentId};
+use atlas_acp_thread::{AcpThread, AcpThreadHandle, AgentConnection, AgentId, AgentSessionModes};
+use crate::connection::AgentSessionEffort;
 use atlas_agent_servers::ThreadEventSink;
 use codex_app_server_client::InProcessAppServerClient;
 use codex_app_server_client::InProcessAppServerRequestHandle;
@@ -51,11 +52,13 @@ use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::RequestId;
 use codex_app_server::in_process::InProcessServerEvent;
 use codex_login::auth::ExternalAuth;
+use codex_protocol::openai_models::ReasoningEffort;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use tokio::sync::oneshot;
 
 use crate::engine::config::EngineSettings;
+use crate::engine::modes;
 use crate::engine::runtime::start_engine;
 use crate::engine::runtime::EngineRuntime;
 use crate::engine::sink::EngineSessions;
@@ -202,6 +205,14 @@ pub struct EngineConnection {
     _pump: Arc<PumpHandle>,
     /// The engine's runtime. Dropped last, after the pump it hosts.
     _runtime: Arc<EngineRuntime>,
+    /// The mode each session is in.
+    ///
+    /// Held here because the engine has no "Atlas mode" concept to read back —
+    /// it has an approval policy and a sandbox policy, and several modes could
+    /// in principle produce the same pair. The mode the user picked is Atlas's
+    /// fact to remember.
+    session_modes: Arc<Mutex<HashMap<acp::SessionId, acp::SessionModeId>>>,
+    default_mode: Option<acp::SessionModeId>,
 }
 
 struct PumpHandle(tokio::task::JoinHandle<()>);
@@ -218,6 +229,16 @@ impl EngineConnection {
         settings: EngineSettings,
         thread_events: ThreadEventSink,
         external_auth: Option<Arc<dyn ExternalAuth>>,
+    ) -> Result<Arc<Self>> {
+        Self::connect_with_mode(id, settings, thread_events, external_auth, None).await
+    }
+
+    pub async fn connect_with_mode(
+        id: AgentId,
+        settings: EngineSettings,
+        thread_events: ThreadEventSink,
+        external_auth: Option<Arc<dyn ExternalAuth>>,
+        default_mode: Option<acp::SessionModeId>,
     ) -> Result<Arc<Self>> {
         let (runtime, client) = start_engine(&settings, external_auth).await?;
         let max_retries = settings.stream_max_retries;
@@ -246,6 +267,8 @@ impl EngineConnection {
             settings,
             _pump: Arc::new(PumpHandle(pump)),
             _runtime: Arc::new(runtime),
+            session_modes: Arc::new(Mutex::new(HashMap::new())),
+            default_mode,
         }))
     }
 
@@ -258,6 +281,45 @@ impl EngineConnection {
             .request_typed::<T>(request)
             .await
             .map_err(|e| anyhow!("{e}"))
+    }
+
+    /// Pushes a mode onto a thread and records it.
+    ///
+    /// `thread/settings/update` is the engine's only per-thread lever for this,
+    /// and it takes the approval policy and the sandbox policy separately —
+    /// both are needed, because sandbox alone cannot express "ask first" and
+    /// approval alone cannot stop a command that never asks.
+    async fn apply_mode(&self, session_id: &acp::SessionId, mode: &acp::SessionModeId) -> Result<()> {
+        let (approval_policy, sandbox_policy) = modes::engine_policy(&mode.0);
+        let _: v2::ThreadSettingsUpdateResponse = self
+            .call(|request_id| ClientRequest::ThreadSettingsUpdate {
+                request_id,
+                params: v2::ThreadSettingsUpdateParams {
+                    thread_id: session_id.to_string(),
+                    approval_policy: Some(approval_policy),
+                    sandbox_policy: Some(sandbox_policy),
+                    ..Default::default()
+                },
+            })
+            .await?;
+        self.session_modes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(session_id.clone(), mode.clone());
+        Ok(())
+    }
+
+    /// Reasoning effort for one session — native-only, like the Cersei path.
+    pub fn session_effort(
+        &self,
+        session_id: &acp::SessionId,
+    ) -> Option<Arc<dyn AgentSessionEffort>> {
+        self.sessions.thread(session_id)?;
+        Some(Arc::new(EngineSessionControls {
+            requests: self.requests.clone(),
+            session_id: session_id.clone(),
+            request_ids: Arc::new(RequestIds::default()),
+        }))
     }
 
     fn new_thread(
@@ -391,7 +453,16 @@ impl AgentConnection for EngineConnection {
             // stored row resolve without a translation table.
             let session_id = acp::SessionId::new(response.thread.id.as_str());
             let thread = self.new_thread(session_id.clone(), work_dirs, None);
-            self.sessions.insert(session_id, &thread);
+            self.sessions.insert(session_id.clone(), &thread);
+
+            let mode = self
+                .default_mode
+                .clone()
+                .unwrap_or_else(|| acp::SessionModeId::new(modes::DEFAULT_MODE_ID));
+            // Applied rather than merely recorded: a thread started without
+            // this runs on the engine's own defaults, so the picker would show
+            // a mode the engine is not in.
+            self.apply_mode(&session_id, &mode).await?;
             Ok(thread)
         }
         .boxed()
@@ -457,6 +528,14 @@ impl AgentConnection for EngineConnection {
             Ok(acp::PromptResponse::new(stop_reason(&turn)?))
         }
         .boxed()
+    }
+
+    fn session_modes(&self, session_id: &acp::SessionId) -> Option<Arc<dyn AgentSessionModes>> {
+        self.sessions.thread(session_id)?;
+        Some(Arc::new(EngineSessionModes {
+            connection: self.clone_handle(),
+            session_id: session_id.clone(),
+        }))
     }
 
     fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
@@ -668,5 +747,158 @@ mod tests {
     fn request_ids_are_unique_within_a_connection() {
         let ids = RequestIds::default();
         assert_ne!(ids.next(), ids.next());
+    }
+}
+
+/// A handle onto the connection that a per-session control can hold.
+///
+/// `AgentSessionModes` is handed out from `&self`, not from `Arc<Self>`, so the
+/// controls cannot hold the connection itself. They hold what they need
+/// instead: the request handle and the shared mode table.
+#[derive(Clone)]
+struct ConnectionHandle {
+    requests: InProcessAppServerRequestHandle,
+    request_ids: Arc<RequestIds>,
+    session_modes: Arc<Mutex<HashMap<acp::SessionId, acp::SessionModeId>>>,
+}
+
+impl EngineConnection {
+    fn clone_handle(&self) -> ConnectionHandle {
+        ConnectionHandle {
+            requests: self.requests.clone(),
+            request_ids: Arc::new(RequestIds::default()),
+            session_modes: self.session_modes.clone(),
+        }
+    }
+}
+
+impl ConnectionHandle {
+    async fn update_settings(
+        &self,
+        session_id: &acp::SessionId,
+        build: impl FnOnce(&mut v2::ThreadSettingsUpdateParams),
+    ) -> Result<()> {
+        let mut params = v2::ThreadSettingsUpdateParams {
+            thread_id: session_id.to_string(),
+            ..Default::default()
+        };
+        build(&mut params);
+        let _: v2::ThreadSettingsUpdateResponse = self
+            .requests
+            .request_typed(ClientRequest::ThreadSettingsUpdate {
+                request_id: self.request_ids.next(),
+                params,
+            })
+            .await
+            .map_err(|e| anyhow!("{e}"))?;
+        Ok(())
+    }
+}
+
+struct EngineSessionModes {
+    connection: ConnectionHandle,
+    session_id: acp::SessionId,
+}
+
+impl AgentSessionModes for EngineSessionModes {
+    fn current_mode(&self) -> acp::SessionModeId {
+        self.connection
+            .session_modes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&self.session_id)
+            .cloned()
+            .unwrap_or_else(|| acp::SessionModeId::new(modes::DEFAULT_MODE_ID))
+    }
+
+    fn all_modes(&self) -> Vec<acp::SessionMode> {
+        modes::mode_state(&self.current_mode().0).available_modes
+    }
+
+    fn set_mode(&self, mode: acp::SessionModeId) -> BoxFuture<'static, Result<()>> {
+        let connection = self.connection.clone();
+        let session_id = self.session_id.clone();
+        async move {
+            let (approval_policy, sandbox_policy) = modes::engine_policy(&mode.0);
+            connection
+                .update_settings(&session_id, |params| {
+                    params.approval_policy = Some(approval_policy);
+                    params.sandbox_policy = Some(sandbox_policy);
+                })
+                .await?;
+            // Recorded only after the engine accepted it. Recording first would
+            // leave the picker showing a mode the engine refused.
+            connection
+                .session_modes
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(session_id, mode);
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
+struct EngineSessionControls {
+    requests: InProcessAppServerRequestHandle,
+    session_id: acp::SessionId,
+    request_ids: Arc<RequestIds>,
+}
+
+impl AgentSessionEffort for EngineSessionControls {
+    /// Spec open question 4, resolved: the per-session effort knob is
+    /// `thread/settings/update`'s `effort` field. `None` clears the override
+    /// and returns the model to its own default, which is what the trait's
+    /// `None` means.
+    fn set_effort(&self, level: Option<String>) -> Result<()> {
+        let effort = match level.as_deref() {
+            Some(level) => Some(parse_effort(level)?),
+            None => None,
+        };
+        let requests = self.requests.clone();
+        let request_id = self.request_ids.next();
+        let thread_id = self.session_id.to_string();
+        // The trait is synchronous and the call is not, so this is fire-and-
+        // forget like the Cersei path's. A rejected update is logged rather
+        // than surfaced, because the caller has already moved on.
+        tokio::spawn(async move {
+            let result = requests
+                .request_typed::<v2::ThreadSettingsUpdateResponse>(
+                    ClientRequest::ThreadSettingsUpdate {
+                        request_id,
+                        params: v2::ThreadSettingsUpdateParams {
+                            thread_id,
+                            effort,
+                            ..Default::default()
+                        },
+                    },
+                )
+                .await;
+            if let Err(e) = result {
+                tracing::warn!(
+                    target: "atlas_native_agent::engine",
+                    "setting reasoning effort failed: {e}",
+                );
+            }
+        });
+        Ok(())
+    }
+}
+
+/// Atlas's effort vocabulary onto the engine's.
+///
+/// Rejected rather than silently defaulted: a mistyped level that quietly
+/// became "medium" would look like the knob doing nothing.
+fn parse_effort(level: &str) -> Result<ReasoningEffort> {
+    match level.to_ascii_lowercase().as_str() {
+        "none" => Ok(ReasoningEffort::None),
+        "minimal" => Ok(ReasoningEffort::Minimal),
+        "low" => Ok(ReasoningEffort::Low),
+        "medium" => Ok(ReasoningEffort::Medium),
+        "high" => Ok(ReasoningEffort::High),
+        "xhigh" | "x-high" => Ok(ReasoningEffort::XHigh),
+        "max" => Ok(ReasoningEffort::Max),
+        "ultra" => Ok(ReasoningEffort::Ultra),
+        other => Err(anyhow!("unknown reasoning effort {other:?}")),
     }
 }

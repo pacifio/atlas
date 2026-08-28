@@ -207,7 +207,16 @@ async fn start_engine_inner(
         enable_codex_api_key_env: false,
         client_name: ATLAS_CLIENT_NAME.to_string(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
-        experimental_api: false,
+        // On, deliberately. 76 protocol methods are gated behind this flag,
+        // and the ones Atlas cannot do without are among them —
+        // `thread/settings/update` is the only per-thread lever for permission
+        // modes and reasoning effort, and it refuses outright without this.
+        //
+        // "Experimental" upstream means "may change upstream", which is a risk
+        // Atlas does not carry: ADR-0003 makes this a hard fork with no
+        // upstream tracking, so nothing changes under us. Upstream's own
+        // client tests set it too.
+        experimental_api: true,
         mcp_server_openai_form_elicitation: false,
         opt_out_notification_methods: Vec::new(),
         channel_capacity: codex_app_server::in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,

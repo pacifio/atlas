@@ -23,6 +23,7 @@
 pub mod auth;
 pub mod config;
 pub mod connection;
+pub mod modes;
 pub mod runtime;
 pub mod server;
 pub mod sink;
