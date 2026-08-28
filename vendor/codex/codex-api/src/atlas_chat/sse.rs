@@ -155,12 +155,20 @@ struct ChatFunctionDelta {
     arguments: Option<String>,
 }
 
+/// The usage block, with both counts optional **on purpose**.
+///
+/// The gateway's rule, and the reason these are not `#[serde(default)]` zeros:
+/// "A `usage` block missing either count is reported as **no usage at all**
+/// rather than as zero — a fabricated zero would read downstream as a
+/// measurement and settle the request at nothing." Defaulting to `0` here would
+/// hand the engine a turn that cost nothing, which is both wrong and
+/// unfalsifiable: it is indistinguishable from a genuinely free turn.
 #[derive(Debug, Default, Deserialize)]
 struct ChatUsage {
     #[serde(default)]
-    prompt_tokens: i64,
+    prompt_tokens: Option<i64>,
     #[serde(default)]
-    total_tokens: i64,
+    total_tokens: Option<i64>,
     #[serde(default)]
     prompt_tokens_details: Option<ChatPromptTokensDetails>,
 }
@@ -171,27 +179,29 @@ struct ChatPromptTokensDetails {
     cached_tokens: i64,
 }
 
-impl From<ChatUsage> for TokenUsage {
-    fn from(usage: ChatUsage) -> Self {
-        let cached = usage
+impl ChatUsage {
+    /// The usage, or `None` when the block is missing a count.
+    fn into_token_usage(self) -> Option<TokenUsage> {
+        let (prompt_tokens, total_tokens) = (self.prompt_tokens?, self.total_tokens?);
+        let cached = self
             .prompt_tokens_details
             .map(|details| details.cached_tokens)
             .unwrap_or(0);
-        TokenUsage {
-            input_tokens: usage.prompt_tokens,
+        Some(TokenUsage {
+            input_tokens: prompt_tokens,
             cached_input_tokens: cached,
             // The gateway folds cache writes into `prompt_tokens` and reports
             // no separate figure, so there is nothing honest to put here.
             cache_write_input_tokens: 0,
             // Derived, not read. See the module docs.
-            output_tokens: (usage.total_tokens - usage.prompt_tokens).max(0),
+            output_tokens: (total_tokens - prompt_tokens).max(0),
             // Claude's output count already includes thinking tokens and the
             // gateway does not break them out, so this stays 0 rather than
             // guessing at a split.
             reasoning_output_tokens: 0,
-            total_tokens: usage.total_tokens,
+            total_tokens,
             codex_rollout_budget_units: None,
-        }
+        })
     }
 }
 
@@ -202,9 +212,24 @@ struct PartialToolCall {
     arguments: String,
 }
 
+/// Which item the deltas arriving right now belong to.
+///
+/// The engine's turn loop refuses a delta with no item open — literally
+/// `error_or_panic("OutputTextDelta without active item")` — because a delta
+/// has nowhere to be rendered until something says what it is part of. The
+/// Responses wire announces each item with its own event; this wire announces
+/// nothing, so the item boundaries have to be inferred from which field the
+/// delta arrived in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActiveItem {
+    Reasoning,
+    Message,
+}
+
 #[derive(Default)]
 struct TurnState {
     response_id: Option<String>,
+    active: Option<ActiveItem>,
     text: String,
     reasoning: String,
     tool_calls: BTreeMap<u32, PartialToolCall>,
@@ -304,8 +329,8 @@ async fn process_chat_sse(
         if state.response_id.is_none() {
             state.response_id = chunk.id.clone();
         }
-        if let Some(usage) = chunk.usage {
-            state.usage = Some(usage.into());
+        if let Some(usage) = chunk.usage.and_then(ChatUsage::into_token_usage) {
+            state.usage = Some(usage);
         }
 
         for choice in chunk.choices {
@@ -313,6 +338,9 @@ async fn process_chat_sse(
                 state.finish_reason = Some(reason);
             }
             if let Some(delta) = choice.delta.reasoning_content.filter(|d| !d.is_empty()) {
+                if !open_item(&tx_event, &mut state, ActiveItem::Reasoning).await {
+                    return;
+                }
                 state.reasoning.push_str(&delta);
                 if tx_event
                     .send(Ok(ResponseEvent::ReasoningContentDelta {
@@ -326,6 +354,9 @@ async fn process_chat_sse(
                 }
             }
             if let Some(delta) = choice.delta.content.filter(|d| !d.is_empty()) {
+                if !open_item(&tx_event, &mut state, ActiveItem::Message).await {
+                    return;
+                }
                 state.text.push_str(&delta);
                 if tx_event
                     .send(Ok(ResponseEvent::OutputTextDelta(delta)))
@@ -361,57 +392,94 @@ fn is_error_frame(data: &str) -> bool {
         .is_some_and(|error| !error.is_null())
 }
 
-async fn emit_turn(
+/// Announces the item a delta is about to belong to, closing whatever was open.
+///
+/// Returns false when the receiver is gone.
+async fn open_item(
     tx_event: &mpsc::Sender<Result<ResponseEvent, ApiError>>,
-    state: TurnState,
-    dialect: &ChatDialect,
-) {
-    let TurnState {
-        response_id,
-        text,
-        reasoning,
-        tool_calls,
-        finish_reason,
-        usage,
-    } = state;
-
-    // Thinking first, then the answer, then the calls — the order the model
-    // produced them, and the order the Responses machine reports them in.
-    if !reasoning.is_empty() {
-        let item = ResponseItem::Reasoning {
+    state: &mut TurnState,
+    kind: ActiveItem,
+) -> bool {
+    if state.active == Some(kind) {
+        return true;
+    }
+    if !close_item(tx_event, state).await {
+        return false;
+    }
+    // Empty, and deliberately so: the content arrives as deltas and the closing
+    // item carries the whole of it. Ids are left unset — the turn loop assigns
+    // one and then reuses it for the close, which is how it pairs the two
+    // without this wire having any id of its own to offer.
+    let item = match kind {
+        ActiveItem::Reasoning => ResponseItem::Reasoning {
             id: None,
             summary: Vec::new(),
-            content: Some(vec![ReasoningItemContent::ReasoningText { text: reasoning }]),
+            content: None,
             encrypted_content: None,
             internal_chat_message_metadata_passthrough: None,
-        };
-        if tx_event
-            .send(Ok(ResponseEvent::OutputItemDone(item)))
-            .await
-            .is_err()
-        {
-            return;
-        }
-    }
-
-    if !text.is_empty() {
-        let item = ResponseItem::Message {
+        },
+        ActiveItem::Message => ResponseItem::Message {
             id: None,
             role: "assistant".to_string(),
-            content: vec![codex_protocol::models::ContentItem::OutputText { text }],
+            content: Vec::new(),
             phase: None,
             internal_chat_message_metadata_passthrough: None,
-        };
-        if tx_event
-            .send(Ok(ResponseEvent::OutputItemDone(item)))
-            .await
-            .is_err()
-        {
-            return;
-        }
+        },
+    };
+    state.active = Some(kind);
+    tx_event
+        .send(Ok(ResponseEvent::OutputItemAdded(item)))
+        .await
+        .is_ok()
+}
+
+/// Finishes the open item, if there is one, carrying everything it accumulated.
+async fn close_item(
+    tx_event: &mpsc::Sender<Result<ResponseEvent, ApiError>>,
+    state: &mut TurnState,
+) -> bool {
+    let Some(kind) = state.active.take() else {
+        return true;
+    };
+    let item = match kind {
+        ActiveItem::Reasoning => ResponseItem::Reasoning {
+            id: None,
+            summary: Vec::new(),
+            content: Some(vec![ReasoningItemContent::ReasoningText {
+                text: std::mem::take(&mut state.reasoning),
+            }]),
+            encrypted_content: None,
+            internal_chat_message_metadata_passthrough: None,
+        },
+        ActiveItem::Message => ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![codex_protocol::models::ContentItem::OutputText {
+                text: std::mem::take(&mut state.text),
+            }],
+            phase: None,
+            internal_chat_message_metadata_passthrough: None,
+        },
+    };
+    tx_event
+        .send(Ok(ResponseEvent::OutputItemDone(item)))
+        .await
+        .is_ok()
+}
+
+async fn emit_turn(
+    tx_event: &mpsc::Sender<Result<ResponseEvent, ApiError>>,
+    mut state: TurnState,
+    dialect: &ChatDialect,
+) {
+    if !close_item(tx_event, &mut state).await {
+        return;
     }
 
-    for (index, call) in tool_calls {
+    // Tool calls are announced only when they are whole. Nothing streams their
+    // arguments here, so an `OutputItemAdded` first would open an item with
+    // nothing to put in it.
+    for (index, call) in std::mem::take(&mut state.tool_calls) {
         let Some(name) = call.name else {
             debug!(index, "tool call fragment never named a function; dropped");
             continue;
@@ -451,9 +519,9 @@ async fn emit_turn(
 
     let _ = tx_event
         .send(Ok(ResponseEvent::Completed {
-            response_id: response_id.unwrap_or_default(),
-            token_usage: usage,
-            end_turn: end_turn_for(finish_reason.as_deref()),
+            response_id: state.response_id.unwrap_or_default(),
+            token_usage: state.usage,
+            end_turn: end_turn_for(state.finish_reason.as_deref()),
         }))
         .await;
 }

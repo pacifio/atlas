@@ -90,7 +90,6 @@ pub use crate::images::ImageResponse;
 pub use crate::images::ImageUrl;
 pub use crate::atlas_chat::BuiltChatRequest;
 pub use crate::atlas_chat::DEFAULT_MAX_OUTPUT_TOKENS;
-pub use crate::atlas_chat::OUTPUT_TOKEN_CLAMP;
 pub use crate::atlas_chat::ChatDialect;
 pub use crate::atlas_chat::ChatRequestInput;
 pub use crate::atlas_chat::build_chat_request;

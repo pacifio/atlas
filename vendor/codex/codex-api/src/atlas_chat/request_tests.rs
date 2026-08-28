@@ -41,14 +41,17 @@ fn output(call_id: &str, text: &str) -> ResponseItem {
 }
 
 fn build<'a>(model: &'a str, items: &'a [ResponseItem], tools: &'a [Value]) -> BuiltChatRequest {
-    build_chat_request(ChatRequestInput {
+    match build_chat_request(ChatRequestInput {
         model,
         instructions: "You are an agent.",
         items,
         tools,
         max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
         output_schema: None,
-    })
+    }) {
+        Ok(built) => built,
+        Err(err) => panic!("the request must build: {err}"),
+    }
 }
 
 fn body_of(built: &BuiltChatRequest) -> Value {
@@ -82,20 +85,9 @@ fn the_body_carries_nothing_the_gateway_would_refuse() {
 
 #[test]
 fn none_of_the_six_parameters_claude_refuses_is_ever_emitted() {
-    // Five of these the builder simply never sets. `response_format` it would,
-    // and does not — the default model is a Claude, so an unconditional
-    // allowlist would fail every default-model request.
+    // Five of these the builder simply never sets, on any model.
     let items = [message("user", "hello")];
-    let schema = json!({"type": "object"});
-    let built = build_chat_request(ChatRequestInput {
-        model: "claude-sonnet-4-6",
-        instructions: "",
-        items: &items,
-        tools: &[],
-        max_output_tokens: 1024,
-        output_schema: Some(&schema),
-    });
-    let body = body_of(&built);
+    let body = body_of(&build("claude-sonnet-4-6", &items, &[]));
     for param in REFUSED_BY_CLAUDE {
         assert!(
             body.get(param).is_none(),
@@ -105,19 +97,51 @@ fn none_of_the_six_parameters_claude_refuses_is_ever_emitted() {
 }
 
 #[test]
-fn a_schema_constrained_turn_still_gets_its_schema_on_a_model_that_accepts_one() {
-    // The other half of the gate. Dropping `response_format` everywhere would
-    // be a safe-looking way to lose a feature on the models that support it.
+fn a_schema_constrained_turn_on_claude_is_refused_rather_than_quietly_unconstrained() {
+    // The sixth parameter, and the one the builder would otherwise send. The
+    // gateway's own rule is that silently dropping is the failure the allowlist
+    // exists to prevent: a turn that asked for JSON and comes back as prose is
+    // billed, wrong, and gives the caller nothing to connect the two.
     let items = [message("user", "hello")];
-    let schema = json!({"type": "object", "properties": {}});
-    let built = build_chat_request(ChatRequestInput {
-        model: "gemini-3.6-flash",
+    let schema = json!({"type": "object"});
+    let outcome = build_chat_request(ChatRequestInput {
+        model: "claude-sonnet-4-6",
         instructions: "",
         items: &items,
         tools: &[],
         max_output_tokens: 1024,
         output_schema: Some(&schema),
     });
+    let Err(err) = outcome else {
+        panic!("a schema-constrained turn on Claude must be refused, not degraded");
+    };
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("response_format"),
+        "the error must name the parameter: {rendered}",
+    );
+    assert!(
+        rendered.contains("Gemini"),
+        "and say what would work instead: {rendered}",
+    );
+}
+
+#[test]
+fn a_schema_constrained_turn_still_gets_its_schema_on_a_model_that_accepts_one() {
+    // The other half of the gate. Dropping `response_format` everywhere would
+    // be a safe-looking way to lose a feature on the models that support it.
+    let items = [message("user", "hello")];
+    let schema = json!({"type": "object", "properties": {}});
+    let Ok(built) = build_chat_request(ChatRequestInput {
+        model: "gemini-3.6-flash",
+        instructions: "",
+        items: &items,
+        tools: &[],
+        max_output_tokens: 1024,
+        output_schema: Some(&schema),
+    }) else {
+        panic!("a model that accepts a schema must get one");
+    };
     let body = body_of(&built);
     assert_eq!(body["response_format"]["type"], json!("json_schema"));
     assert_eq!(body["response_format"]["json_schema"]["schema"], schema);
@@ -131,14 +155,16 @@ fn max_tokens_is_always_there_and_never_above_the_clamp() {
     let body = body_of(&build("claude-sonnet-4-6", &items, &[]));
     assert_eq!(body["max_tokens"], json!(DEFAULT_MAX_OUTPUT_TOKENS));
 
-    let built = build_chat_request(ChatRequestInput {
+    let Ok(built) = build_chat_request(ChatRequestInput {
         model: "claude-sonnet-4-6",
         instructions: "",
         items: &items,
         tools: &[],
         max_output_tokens: 999_999,
         output_schema: None,
-    });
+    }) else {
+        panic!("the request must build");
+    };
     assert_eq!(built.request.max_tokens, OUTPUT_TOKEN_CLAMP);
 }
 
@@ -160,14 +186,16 @@ fn the_baked_instructions_lead_as_a_system_message() {
 #[test]
 fn a_developer_message_is_a_system_message_here() {
     let items = [message("developer", "extra rules")];
-    let built = build_chat_request(ChatRequestInput {
+    let Ok(built) = build_chat_request(ChatRequestInput {
         model: "claude-sonnet-4-6",
         instructions: "",
         items: &items,
         tools: &[],
         max_output_tokens: 1024,
         output_schema: None,
-    });
+    }) else {
+        panic!("the request must build");
+    };
     assert_eq!(
         built.request.messages,
         vec![ChatMessage::System {
@@ -369,4 +397,66 @@ fn the_claude_family_is_recognised_from_the_slug_the_catalogue_authors() {
 fn stream_is_on_because_the_usage_chunk_is_how_the_turn_is_metered() {
     let items = [message("user", "hi")];
     assert!(build("claude-sonnet-4-6", &items, &[]).request.stream);
+}
+
+#[test]
+fn not_one_of_the_ten_responses_fields_reaches_the_wire() {
+    // Named rather than inferred. These are exactly the fields the engine's own
+    // Responses builder sends today, each of which the gateway answers with a
+    // 400. The allowlist test above says "only these keys are allowed"; this one
+    // says "and specifically not these", which is what fails loudly if the
+    // allowlist itself is ever widened by mistake.
+    const REFUSED_AT_TOP_LEVEL: &[&str] = &[
+        "instructions",
+        "input",
+        "parallel_tool_calls",
+        "reasoning",
+        "store",
+        "include",
+        "service_tier",
+        "prompt_cache_key",
+        "text",
+        "client_metadata",
+        "n",
+        "user",
+    ];
+
+    let items = [
+        message("user", "hello"),
+        call("c1", "shell", r#"{"cmd":"ls"}"#),
+        output("c1", "done"),
+    ];
+    let tools = [json!({
+        "type": "function",
+        "name": "shell",
+        "description": "run a command",
+        "parameters": {"type": "object", "properties": {}},
+    })];
+    let built = build("claude-sonnet-4-6", &items, &tools);
+    let body = body_of(&built);
+
+    for field in REFUSED_AT_TOP_LEVEL {
+        assert!(
+            body.get(field).is_none(),
+            "`{field}` reached the wire; the gateway answers that with a 400",
+        );
+    }
+
+    // `stream_options` is the one that has to be absent at *any* depth: the
+    // contract rejects nested unknowns just as hard as top-level ones — its own
+    // worked example is `stream_options.thinking_budget` — and the Responses
+    // builder populates that object with `reasoning_summary_delivery`, a key
+    // legal nowhere here. A top-level key check would not catch it coming back
+    // as a nested field of something else.
+    let rendered = serde_json::to_string(&built.request)
+        .unwrap_or_else(|err| panic!("serialize: {err}"));
+    assert!(
+        !rendered.contains("stream_options"),
+        "`stream_options` must not appear at any depth: {rendered}",
+    );
+
+    // Not vacuous: the body really did carry a turn with a tool round trip, so
+    // the assertions above ran against a fully populated request.
+    assert!(rendered.contains("\"tool_calls\"") && rendered.contains("\"messages\""));
+    assert!(rendered.contains("\"type\":\"text\""), "content parts still use `text`");
 }

@@ -439,3 +439,70 @@ fn an_unparseable_frame_is_skipped_rather_than_killing_the_turn() {
     ]));
     assert_eq!(assistant_text(&events).as_deref(), Some("still here"));
 }
+
+#[test]
+fn every_delta_is_inside_an_item_the_engine_was_told_about() {
+    // Found by the seam test, not by inspection: the engine's turn loop
+    // *panics* on a delta with no item open — `error_or_panic("OutputTextDelta
+    // without active item")` — because a delta has nowhere to be rendered until
+    // something says what it belongs to. The Responses wire announces each item
+    // with its own event; this one announces nothing, so the boundaries have to
+    // be inferred from which field the delta arrived in.
+    let events = tokio_test::block_on(play(&[
+        r#"{"id":"c1","choices":[{"index":0,"delta":{"reasoning_content":"thinking"},"finish_reason":null}]}"#,
+        &text_delta("answer"),
+        FINISH_STOP,
+        "[DONE]",
+    ]));
+
+    let mut open: Option<&'static str> = None;
+    for event in &events {
+        match event {
+            Ok(ResponseEvent::OutputItemAdded(item)) => {
+                assert!(open.is_none(), "an item was opened while another was open");
+                open = Some(match item {
+                    ResponseItem::Reasoning { .. } => "reasoning",
+                    ResponseItem::Message { .. } => "message",
+                    other => panic!("unexpected opened item: {other:?}"),
+                });
+            }
+            Ok(ResponseEvent::ReasoningContentDelta { .. }) => {
+                assert_eq!(open, Some("reasoning"), "a thinking delta with no item open");
+            }
+            Ok(ResponseEvent::OutputTextDelta(_)) => {
+                assert_eq!(open, Some("message"), "a text delta with no item open");
+            }
+            Ok(ResponseEvent::OutputItemDone(_)) => open = None,
+            _ => {}
+        }
+    }
+    assert_eq!(open, None, "the last item was never closed");
+
+    // Not vacuous: both kinds of delta really were produced.
+    assert_eq!(deltas(&events), "answer");
+    assert_eq!(assistant_text(&events).as_deref(), Some("answer"));
+}
+
+#[test]
+fn a_usage_block_missing_a_count_is_no_usage_rather_than_a_zero() {
+    // The gateway's own rule, and the reason the counts are optional: "a
+    // fabricated zero would read downstream as a measurement and settle the
+    // request at nothing". A defaulted 0 here is indistinguishable from a turn
+    // that genuinely cost nothing, so nothing downstream can ever notice.
+    let partial = r#"{"id":"c1","choices":[],"usage":{"prompt_tokens":100}}"#;
+    let events = tokio_test::block_on(play(&[&text_delta("hi"), FINISH_STOP, partial, "[DONE]"]));
+    let Some((usage, _)) = completion(&events) else {
+        panic!("the turn completes");
+    };
+    assert!(
+        usage.is_none(),
+        "a usage block missing `total_tokens` must report no usage, got {usage:?}",
+    );
+
+    // And the complete block still reports, so this is not "usage never works".
+    let events = tokio_test::block_on(play(&[&text_delta("hi"), FINISH_STOP, USAGE_ONLY, "[DONE]"]));
+    let Some((usage, _)) = completion(&events) else {
+        panic!("the turn completes");
+    };
+    assert!(usage.is_some());
+}

@@ -43,6 +43,15 @@ pub enum Disposition {
     /// Stop. Nothing about retrying this makes it succeed.
     Terminal { message: String },
     /// The access token expired mid-session. Mint a new one and retry **once**.
+    ///
+    /// On the streaming path this variant is a *label*, not the mechanism: the
+    /// dialect intercepts a `401` before the error is ever classified and runs
+    /// the engine's own `UnauthorizedRecovery`, which is what asks the D10 token
+    /// provider for a fresh token and retries exactly once. The variant carries
+    /// the distinction for the unary calls that have no such interception,
+    /// where "retryable" is what lets the auth provider re-resolve on the next
+    /// attempt. Keeping the two `401`s apart is the point either way — the
+    /// other one must not be retried at all.
     RefreshAuthThenRetryOnce { message: String },
     /// Wait, then retry. The delay is the gateway's, not ours.
     RetryAfter { message: String, delay: Duration },

@@ -40,6 +40,9 @@ codex-core = { path = "../../vendor/codex/core", optional = true }
 codex-exec-server = { path = "../../vendor/codex/exec-server", optional = true }
 codex-feedback = { path = "../../vendor/codex/feedback", optional = true }
 codex-login = { path = "../../vendor/codex/login", optional = true }
+# For the engine's bundled base prompt, which the authored catalogue (D3) uses as
+# every row's `instructions_template`.
+codex-models-manager = { path = "../../vendor/codex/models-manager", optional = true }
 codex-protocol = { path = "../../vendor/codex/protocol", optional = true }
 codex-rollout = { path = "../../vendor/codex/rollout", optional = true }
 
@@ -58,6 +61,7 @@ ported-engine = [
   "dep:codex-exec-server",
   "dep:codex-feedback",
   "dep:codex-login",
+  "dep:codex-models-manager",
   "dep:codex-protocol",
   "dep:codex-rollout",
 ]

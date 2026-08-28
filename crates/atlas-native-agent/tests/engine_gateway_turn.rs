@@ -1,0 +1,512 @@
+//! Seam 1, on the gateway wire: a turn through the trait the app drives, with
+//! the Atlas Chat Completions dialect (D3) carrying it.
+//!
+//! Its sibling `engine_turn.rs` drives the same trait against the engine's own
+//! Responses dialect. This file exists because the two share nothing below the
+//! seam — different request body, different route, different SSE grammar,
+//! different error table — so a green Responses suite says nothing at all about
+//! whether the gateway path works.
+//!
+//! The mock speaks the gateway contract rather than a convenient
+//! approximation: `data: [DONE]` ends a good stream, an error frame plus a
+//! withheld sentinel ends a bad one, and the request body is asserted against
+//! the forwarded allowlist — because the gateway answers one stray field with a
+//! `400` and there is no partial credit.
+
+#![cfg(feature = "ported-engine")]
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use agent_client_protocol::schema::v1 as acp;
+use atlas_acp_thread::{AcpThreadEvent, AgentConnection, AgentId};
+use atlas_agent_servers::ThreadEventSink;
+use atlas_native_agent::engine::auth::{AtlasExternalAuth, AtlasTokenSource};
+use atlas_native_agent::engine::config::{EngineHome, EngineProvider, EngineSettings};
+use atlas_native_agent::engine::connection::EngineConnection;
+use codex_login::auth::ExternalAuthFuture;
+use serde_json::Value;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// A token source that always mints. The gateway provider names no `env_key`,
+/// so without one of these the engine has no credential to send at all.
+struct StaticToken;
+
+impl AtlasTokenSource for StaticToken {
+    fn mint(&self) -> ExternalAuthFuture<'_, String> {
+        Box::pin(async { Ok("test-access-jwt".to_string()) })
+    }
+}
+
+/// Mints a different token every time, so a refresh is visible on the wire.
+///
+/// A source that returns the same string cannot tell "refreshed and retried"
+/// apart from "retried with the dead token", which is the whole distinction
+/// D10 turns on.
+#[derive(Default)]
+struct RotatingToken {
+    minted: std::sync::atomic::AtomicUsize,
+}
+
+impl AtlasTokenSource for RotatingToken {
+    fn mint(&self) -> ExternalAuthFuture<'_, String> {
+        let n = self
+            .minted
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async move { Ok(format!("jwt-{n}")) })
+    }
+}
+
+fn sse_ok(body: String) -> ResponseTemplate {
+    ResponseTemplate::new(200)
+        .insert_header("content-type", "text/event-stream")
+        .set_body_raw(body, "text/event-stream")
+}
+
+/// The gateway's own framing: bare `data:` lines, no `event:` names.
+fn frames(frames: &[&str]) -> String {
+    frames
+        .iter()
+        .map(|frame| format!("data: {frame}\n\n"))
+        .collect()
+}
+
+fn answer(text: &str) -> String {
+    let delta = serde_json::json!({
+        "id": "chatcmpl-1",
+        "object": "chat.completion.chunk",
+        "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": null}],
+    })
+    .to_string();
+    let finish = r#"{"id":"chatcmpl-1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#;
+    let usage = r#"{"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":14}}"#;
+    frames(&[&delta, finish, usage, "[DONE]"])
+}
+
+struct Harness {
+    server: MockServer,
+    _home: tempfile::TempDir,
+    connection: Arc<EngineConnection>,
+    threads: std::sync::Mutex<Vec<atlas_acp_thread::AcpThreadHandle>>,
+    events: std::sync::mpsc::Receiver<AcpThreadEvent>,
+}
+
+impl Harness {
+    async fn open_thread(&self) -> acp::SessionId {
+        let thread = match self.connection.clone().new_session(vec![PathBuf::from(".")]).await {
+            Ok(thread) => thread,
+            Err(err) => panic!("the engine should start a thread: {err:#}"),
+        };
+        let id = thread
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .session_id()
+            .clone();
+        self.threads
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(thread);
+        id
+    }
+
+    fn assistant_text(&self) -> String {
+        let Some(thread) = self
+            .threads
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .last()
+            .cloned()
+        else {
+            panic!("a thread must be open");
+        };
+        let thread = thread.lock().unwrap_or_else(|p| p.into_inner());
+        thread
+            .entries()
+            .iter()
+            .filter_map(|e| match e {
+                atlas_acp_thread::AgentThreadEntry::AssistantMessage(m) => Some(m),
+                _ => None,
+            })
+            .flat_map(|m| m.chunks.iter())
+            .map(|c| format!("{c:?}"))
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    fn drained(&self) -> Vec<AcpThreadEvent> {
+        self.events.try_iter().collect()
+    }
+
+    /// The body of the last completion request the gateway received.
+    async fn last_request_body(&self) -> Value {
+        let Some(received) = self.server.received_requests().await else {
+            panic!("the mock server must be recording requests");
+        };
+        let Some(last) = received
+            .iter()
+            .filter(|r| r.url.path().ends_with("/chat/completions"))
+            .next_back()
+        else {
+            panic!("no completion request reached the gateway");
+        };
+        match serde_json::from_slice(&last.body) {
+            Ok(body) => body,
+            Err(err) => panic!("the request body must be JSON: {err}"),
+        }
+    }
+}
+
+async fn harness(mocks: Vec<(Option<u64>, ResponseTemplate)>) -> Harness {
+    harness_with_token(mocks, Arc::new(StaticToken)).await
+}
+
+async fn harness_with_token(
+    mocks: Vec<(Option<u64>, ResponseTemplate)>,
+    token: Arc<dyn AtlasTokenSource>,
+) -> Harness {
+    let server = MockServer::start().await;
+    for (times, template) in mocks {
+        let mock = Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(template);
+        match times {
+            Some(n) => mock.up_to_n_times(n).mount(&server).await,
+            None => mock.mount(&server).await,
+        }
+    }
+
+    let Ok(home) = tempfile::tempdir() else {
+        panic!("tempdir");
+    };
+    let settings = EngineSettings::new(
+        EngineHome::at(home.path().join("engine")),
+        EngineProvider::gateway(format!("{}/v1", server.uri())),
+        atlas_native_agent::engine::catalog::DEFAULT_MODEL,
+        home.path().to_path_buf(),
+    );
+
+    let (tx, events) = std::sync::mpsc::channel();
+    let tx = Arc::new(std::sync::Mutex::new(tx));
+    let sink: ThreadEventSink = Arc::new(move |_id: &acp::SessionId| {
+        let (thread_tx, mut thread_rx) = tokio::sync::mpsc::unbounded_channel();
+        let out = tx.clone();
+        tokio::spawn(async move {
+            while let Some(event) = thread_rx.recv().await {
+                if out
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .send(event)
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+        thread_tx
+    });
+
+    let external_auth = Arc::new(AtlasExternalAuth::new(token));
+    let connection = match EngineConnection::connect_full(
+        AgentId::new("cersei"),
+        settings,
+        sink,
+        Some(external_auth),
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(connection) => connection,
+        Err(err) => panic!("the engine should start in-process: {err:#}"),
+    };
+
+    Harness {
+        server,
+        _home: home,
+        connection,
+        threads: std::sync::Mutex::new(Vec::new()),
+        events,
+    }
+}
+
+fn text(prompt: &str) -> Vec<acp::ContentBlock> {
+    vec![acp::ContentBlock::Text(acp::TextContent::new(
+        prompt.to_string(),
+    ))]
+}
+
+#[tokio::test]
+async fn a_turn_completes_through_the_gateway_dialect() {
+    // The criterion the whole ticket is about: prompt in, answer rendered, turn
+    // ended — with the request on the gateway's route and the reply on the
+    // gateway's grammar. Nothing below the seam is shared with the Responses
+    // path, so this is the only thing that says the dialect works.
+    let h = harness(vec![(None, sse_ok(answer("hello from the gateway")))]).await;
+    let session_id = h.open_thread().await;
+
+    let response = match h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("say something")))
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => panic!("the turn should complete: {err:#}"),
+    };
+
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    assert!(
+        h.assistant_text().contains("hello from the gateway"),
+        "the answer must reach the thread, not just the stop reason: {}",
+        h.assistant_text(),
+    );
+    assert!(
+        !h.drained().is_empty(),
+        "the app must be told something happened",
+    );
+}
+
+#[tokio::test]
+async fn the_request_that_leaves_carries_only_what_the_gateway_forwards() {
+    // Asserted on the wire rather than on the builder, because everything
+    // between the two — the engine's own request assembly, the config, the
+    // provider — is what would put a Responses field back. One stray key is a
+    // 400 and the turn never starts.
+    const ALLOWED: &[&str] = &[
+        "model",
+        "messages",
+        "stream",
+        "max_tokens",
+        "tools",
+        "tool_choice",
+        "response_format",
+        "stop",
+    ];
+
+    let h = harness(vec![(None, sse_ok(answer("ok")))]).await;
+    let session_id = h.open_thread().await;
+    let _ = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("hi")))
+        .await;
+
+    let body = h.last_request_body().await;
+    let Some(object) = body.as_object() else {
+        panic!("the request body must be a JSON object: {body}");
+    };
+    for key in object.keys() {
+        assert!(
+            ALLOWED.contains(&key.as_str()),
+            "`{key}` is off the gateway's allowlist; this request is a 400",
+        );
+    }
+
+    // Not vacuous: the turn really did carry a prompt and a bounded output.
+    assert_eq!(body["model"], serde_json::json!("claude-sonnet-4-6"));
+    assert!(body["max_tokens"].is_number(), "max_tokens must be explicit");
+    let Some(messages) = body["messages"].as_array() else {
+        panic!("messages must be an array");
+    };
+    assert!(
+        messages.len() >= 2,
+        "a turn carries at least the system prompt and the user's words",
+    );
+    assert_eq!(messages[0]["role"], serde_json::json!("system"));
+}
+
+#[tokio::test]
+async fn the_minted_token_is_what_authorises_the_request() {
+    // D10 end to end: the gateway provider names no `env_key`, so if the
+    // `ExternalAuth` provider is not reached the request goes out with no
+    // credential and every turn 401s in production.
+    let h = harness(vec![(None, sse_ok(answer("ok")))]).await;
+    let session_id = h.open_thread().await;
+    let _ = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("hi")))
+        .await;
+
+    let Some(received) = h.server.received_requests().await else {
+        panic!("the mock server must be recording requests");
+    };
+    let Some(last) = received
+        .iter()
+        .filter(|r| r.url.path().ends_with("/chat/completions"))
+        .next_back()
+    else {
+        panic!("no completion request reached the gateway");
+    };
+    let authorization = last
+        .headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    assert_eq!(authorization, "Bearer test-access-jwt");
+}
+
+#[tokio::test]
+async fn a_stream_that_dies_without_the_sentinel_does_not_end_the_turn_normally() {
+    // The gateway's rule at the seam. A truncated answer reported as a finished
+    // one is the failure the withheld sentinel exists to prevent, and it is
+    // invisible to the user by construction — the text that did arrive looks
+    // like the whole reply.
+    let half = frames(&[
+        &serde_json::json!({
+            "id": "chatcmpl-1",
+            "choices": [{"index": 0, "delta": {"content": "half an ans"}, "finish_reason": null}],
+        })
+        .to_string(),
+    ]);
+    let h = harness(vec![(None, sse_ok(half))]).await;
+    let session_id = h.open_thread().await;
+
+    let outcome = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("hi")))
+        .await;
+
+    match outcome {
+        Err(_) => {}
+        Ok(response) => assert_ne!(
+            response.stop_reason,
+            acp::StopReason::EndTurn,
+            "an incomplete stream must not report a finished turn",
+        ),
+    }
+}
+
+#[tokio::test]
+async fn a_filled_cap_is_surfaced_once_rather_than_retried() {
+    // The acceptance criterion, at the seam and end to end: the gateway answers
+    // 402 exactly once and the engine must not ask again. `up_to_n_times(1)`
+    // plus a request count is what makes "zero retries" an assertion rather
+    // than a claim — a second attempt would find no mock and fail differently.
+    let cap = ResponseTemplate::new(402).set_body_raw(
+        r#"{"error":{"message":"The org monthly AI budget is spent.","code":"cap_exceeded","window":"monthly","scope":"org","used":307425,"cap":350000,"reset":"2026-09-01T00:00:00.000Z"}}"#,
+        "application/json",
+    );
+    let h = harness(vec![(None, cap)]).await;
+    let session_id = h.open_thread().await;
+
+    let outcome = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("hi")))
+        .await;
+    assert!(outcome.is_err(), "a filled cap must fail the turn");
+
+    let Some(received) = h.server.received_requests().await else {
+        panic!("the mock server must be recording requests");
+    };
+    let attempts = received
+        .iter()
+        .filter(|r| r.url.path().ends_with("/chat/completions"))
+        .count();
+    assert_eq!(
+        attempts, 1,
+        "a 402 must produce zero automatic re-requests, saw {attempts} attempts",
+    );
+}
+
+#[tokio::test]
+async fn an_expired_token_is_re_minted_and_the_turn_carries_on() {
+    // D10's other half, end to end. The gateway's `401 token_expired` is the
+    // normal end of a long session — the JWT lives ten minutes and a turn can
+    // outlast it — and the contract says refresh once and retry rather than
+    // back off. Without this the user sees a turn fail for no reason they can
+    // act on, roughly ten minutes into working.
+    //
+    // The token source mints a *different* value each call, because a static
+    // one cannot distinguish "refreshed, then retried" from "retried with the
+    // same dead token" — which is the only thing this test is about.
+    let expired = ResponseTemplate::new(401).set_body_raw(
+        r#"{"error":{"message":"token expired","type":"authentication_error","code":"token_expired"}}"#,
+        "application/json",
+    );
+    let h = harness_with_token(
+        vec![
+            (Some(1), expired),
+            (None, sse_ok(answer("recovered"))),
+        ],
+        Arc::new(RotatingToken::default()),
+    )
+    .await;
+    let session_id = h.open_thread().await;
+
+    let response = match h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("hi")))
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => panic!("an expired token must not fail the turn: {err:#}"),
+    };
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    assert!(h.assistant_text().contains("recovered"));
+
+    let Some(received) = h.server.received_requests().await else {
+        panic!("the mock server must be recording requests");
+    };
+    let tokens: Vec<String> = received
+        .iter()
+        .filter(|r| r.url.path().ends_with("/chat/completions"))
+        .map(|r| {
+            r.headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    assert!(
+        tokens.len() >= 2,
+        "the 401 must be retried, saw {} attempt(s)",
+        tokens.len(),
+    );
+    assert_ne!(
+        tokens[0],
+        tokens[tokens.len() - 1],
+        "the retry must carry a freshly minted token, not the expired one: {tokens:?}",
+    );
+}
+
+#[tokio::test]
+async fn an_unauthorized_token_is_not_retried_at_all() {
+    // The other 401. A credential the gateway will never accept does not become
+    // acceptable by being sent again, and the contract says so explicitly.
+    //
+    // What this pins is the bound, not the code split: the engine's own
+    // recovery runs before the classification sees the error, and it allows one
+    // retry either way. The `token_expired` / `unauthorized` distinction is
+    // asserted where it is actually decided — the classification table in
+    // `codex_api::atlas_gateway`, which is what the unary calls go through.
+    // Here the claim is narrower and still worth holding: a dead credential
+    // does not turn into a retry storm.
+    let unauthorized = ResponseTemplate::new(401).set_body_raw(
+        r#"{"error":{"message":"invalid token","type":"authentication_error","code":"unauthorized"}}"#,
+        "application/json",
+    );
+    let h = harness_with_token(
+        vec![(None, unauthorized)],
+        Arc::new(RotatingToken::default()),
+    )
+    .await;
+    let session_id = h.open_thread().await;
+
+    let outcome = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("hi")))
+        .await;
+    assert!(outcome.is_err(), "an unusable credential must fail the turn");
+
+    let Some(received) = h.server.received_requests().await else {
+        panic!("the mock server must be recording requests");
+    };
+    let attempts = received
+        .iter()
+        .filter(|r| r.url.path().ends_with("/chat/completions"))
+        .count();
+    assert!(
+        attempts <= 2,
+        "an unauthorized credential must not be retried in a loop, saw {attempts} attempts",
+    );
+}

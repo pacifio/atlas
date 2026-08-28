@@ -16,12 +16,15 @@
 //! side by side:
 //!
 //! - [`auth`] — the D10 token provider (`ExternalAuth` over an Atlas access JWT)
+//! - [`catalog`] — the Atlas-authored model catalogue (D3), because the
+//!   gateway's own `/models` is shape-incompatible with the engine's fetch
 //! - [`config`] — engine config assembly, which the spec puts *here* rather than
 //!   in `src-tauri`: the seam is the only place that knows both Atlas's settings
 //!   and the engine's shape
 
 pub mod approvals;
 pub mod auth;
+pub mod catalog;
 pub mod config;
 pub mod connection;
 pub mod memory;
@@ -34,6 +37,7 @@ pub mod sink;
 pub(crate) mod test_support;
 
 pub use auth::{AtlasExternalAuth, AtlasTokenSource, Clock, SystemClock};
+pub use catalog::{atlas_catalog, DEFAULT_MODEL};
 pub use config::{EngineHome, EngineProvider, EngineSettings, WireDialect};
 pub use connection::EngineConnection;
 pub use runtime::{start_engine, ATLAS_CLIENT_NAME};

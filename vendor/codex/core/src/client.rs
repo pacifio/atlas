@@ -1477,6 +1477,8 @@ impl ModelClientSession {
 
             let mut items = prompt.get_formatted_input_for_request(/*use_responses_lite*/ false);
             self.client.prepare_response_items_for_request(&mut items);
+            // Fallible: a schema-constrained turn against a Claude model is
+            // refused here rather than sent and quietly answered in prose.
             let built = build_chat_request(ChatRequestInput {
                 model: &model_info.slug,
                 instructions: &prompt.base_instructions.text,
@@ -1484,7 +1486,8 @@ impl ModelClientSession {
                 tools: &tools,
                 max_output_tokens: codex_api::DEFAULT_MAX_OUTPUT_TOKENS,
                 output_schema: prompt.output_schema.as_ref(),
-            });
+            })
+            .map_err(|err| self.client.state.provider.map_api_error(err))?;
 
             let inference_trace_attempt = inference_trace.start_attempt();
             let mut extra_headers = http::HeaderMap::new();

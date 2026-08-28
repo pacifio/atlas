@@ -1131,6 +1131,7 @@ dependencies = [
  "codex-exec-server",
  "codex-feedback",
  "codex-login",
+ "codex-models-manager",
  "codex-protocol",
  "codex-rollout",
  "futures",

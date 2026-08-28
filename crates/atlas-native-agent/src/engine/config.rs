@@ -72,20 +72,21 @@ impl EngineHome {
 
 /// Which wire format a provider speaks.
 ///
-/// Only the Responses dialect exists today — the engine speaks exactly one wire
-/// format, and Chat Completions was deliberately *removed* upstream rather than
-/// never built. The gateway dialect (D3) adds the second arm in Phase 3; this
-/// enum is where it will land, which is why a one-variant enum is worth having
-/// now instead of a bare bool later.
+/// Both arms exist now. `Responses` is the engine's own dialect, which the
+/// Phase 2 dev provider uses; `Chat` is the Atlas gateway dialect authored in
+/// Phase 3 (D3), reinstated in the engine as `WireApi::Chat` after upstream
+/// removed it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireDialect {
     Responses,
+    Chat,
 }
 
 impl WireDialect {
     fn as_config_value(self) -> &'static str {
         match self {
             Self::Responses => "responses",
+            Self::Chat => "chat",
         }
     }
 }
@@ -110,6 +111,12 @@ pub struct EngineProvider {
     pub env_key: Option<String>,
 }
 
+/// Where the gateway lives.
+pub const GATEWAY_BASE_URL: &str = "https://ai.tryatlas.cc/v1";
+
+/// The id the gateway provider is registered under.
+pub const GATEWAY_PROVIDER_ID: &str = "atlas";
+
 impl EngineProvider {
     /// A developer-configured provider for the Phase 2 tracer bullet.
     pub fn dev(id: impl Into<String>, base_url: impl Into<String>, env_key: Option<String>) -> Self {
@@ -120,6 +127,22 @@ impl EngineProvider {
             base_url: base_url.into(),
             wire: WireDialect::Responses,
             env_key,
+        }
+    }
+
+    /// The Atlas gateway (D3), authenticated by the D10 token provider.
+    ///
+    /// No `env_key`: naming one would give the engine a second place to look
+    /// for a credential, and the one it found there would be static — no
+    /// refresh, no `401` recovery, and therefore a session that dies at the
+    /// ten-minute token TTL.
+    pub fn gateway(base_url: impl Into<String>) -> Self {
+        Self {
+            id: GATEWAY_PROVIDER_ID.to_string(),
+            name: "Atlas".to_string(),
+            base_url: base_url.into(),
+            wire: WireDialect::Chat,
+            env_key: None,
         }
     }
 }
@@ -250,8 +273,45 @@ impl EngineSettings {
         if let Some(env_key) = &p.env_key {
             out.push((key("env_key"), TomlValue::String(env_key.clone())));
         }
+        if p.wire == WireDialect::Chat {
+            // The transport layer retries every 5xx blindly, up to four times,
+            // *inside* each turn-level retry — which is how a `503` meaning
+            // "Atlas's own spend backstop tripped" gets hit around thirty times
+            // by a client that was told to stop. The D13 arm is what decides
+            // whether a gateway error is worth another request, and it cannot
+            // decide anything the transport already did. Zero here means one
+            // attempt, and the classification owns the rest.
+            //
+            // This also switches off transport-level retry of *connection*
+            // failures, which is a real loss and an accepted one: a dropped
+            // connection surfaces as `ConnectionFailed`, which the turn loop
+            // already treats as retryable, so the retry still happens — one
+            // layer up, where the retry pill can show it.
+            out.push((key("request_max_retries"), TomlValue::Integer(0)));
+            // The gateway's `/models` is stock-OpenAI shaped and the engine's
+            // fetch cannot read it, so the catalogue is authored and read from
+            // disk (D3). `build_config` writes the file before this path is
+            // used, because a missing one fails config load outright.
+            out.push((
+                "model_catalog_json".to_string(),
+                TomlValue::String(self.home.path().join("models.json").display().to_string()),
+            ));
+        }
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
+    }
+
+    /// Settings for the shipped agent: the Atlas gateway, on the D3 dialect.
+    ///
+    /// The credential is not here and never will be — it arrives through the
+    /// D10 `ExternalAuth` provider, resolved per request.
+    pub fn gateway(config_dir: &Path, cwd: PathBuf) -> Self {
+        Self::new(
+            EngineHome::under_config_dir(config_dir),
+            EngineProvider::gateway(GATEWAY_BASE_URL),
+            crate::engine::catalog::DEFAULT_MODEL,
+            cwd,
+        )
     }
 
     /// Loads the engine's `Config` with everything above applied.
@@ -264,6 +324,13 @@ impl EngineSettings {
                     self.home.path().display()
                 )
             })?;
+
+        if self.provider.wire == WireDialect::Chat {
+            // Written before the config is loaded, not after: `model_catalog_json`
+            // names a path the loader reads immediately, and a missing file is a
+            // config-load failure rather than a fallback to the bundled catalogue.
+            crate::engine::catalog::write_catalog(self.home.path()).await?;
+        }
 
         ConfigBuilder::default()
             .codex_home(self.home.path().to_path_buf())
@@ -413,5 +480,86 @@ mod tests {
             "the engine's own login surface must stay off (D10)",
         );
         assert_eq!(config.analytics_enabled, Some(false));
+    }
+
+    #[test]
+    fn the_gateway_provider_speaks_the_chat_dialect_and_names_no_key() {
+        // D3 and D10 in one row. An `env_key` here would give the engine a
+        // second, static place to find a credential — and static means no
+        // refresh and no 401 recovery, so every session would die at the
+        // ten-minute token TTL.
+        let s = EngineSettings::gateway(Path::new("/tmp/atlas"), PathBuf::from("/tmp"));
+        let overrides = s.cli_overrides();
+        let get = |k: &str| {
+            overrides
+                .iter()
+                .find(|(key, _)| key == k)
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(
+            get("model_providers.atlas.wire_api"),
+            Some(TomlValue::String("chat".into())),
+        );
+        assert!(
+            !overrides.iter().any(|(k, _)| k.ends_with(".env_key")),
+            "the gateway authenticates by minted token, never by a stored key",
+        );
+        assert_eq!(s.model, crate::engine::catalog::DEFAULT_MODEL);
+    }
+
+    #[test]
+    fn the_transport_does_not_retry_underneath_the_classification_arm() {
+        // The trap this closes: the transport retries every 5xx blindly, four
+        // times, *inside* each turn-level retry. So a 503 meaning "Atlas's own
+        // spend backstop tripped" — the one status whose meaning is that every
+        // retry makes it worse — gets hit about thirty times by a client that
+        // was told to stop.
+        let s = EngineSettings::gateway(Path::new("/tmp/atlas"), PathBuf::from("/tmp"));
+        assert_eq!(
+            s.cli_overrides()
+                .iter()
+                .find(|(k, _)| k == "model_providers.atlas.request_max_retries")
+                .map(|(_, v)| v.clone()),
+            Some(TomlValue::Integer(0)),
+        );
+
+        // And not on the dev provider, which classifies errors upstream's way.
+        let dev = EngineSettings::from_env(Path::new("/tmp/atlas"), PathBuf::from("/tmp"));
+        assert!(
+            !dev.cli_overrides()
+                .iter()
+                .any(|(k, _)| k.ends_with(".request_max_retries")),
+        );
+    }
+
+    #[tokio::test]
+    async fn the_authored_catalogue_is_on_disk_before_the_config_reads_it() {
+        // `model_catalog_json` names a path the loader reads immediately; a
+        // missing file is a config-load failure, not a quiet fallback to the
+        // bundled catalogue. So the write has to happen first, and the failure
+        // if it does not is "the agent will not start" rather than "the wrong
+        // models are listed".
+        let Ok(tmp) = tempfile::tempdir() else {
+            panic!("tempdir");
+        };
+        let mut s = EngineSettings::gateway(tmp.path(), tmp.path().to_path_buf());
+        s.home = EngineHome::at(tmp.path().join("engine"));
+
+        let config = match s.build_config().await {
+            Ok(config) => config,
+            Err(err) => panic!("the gateway config must load: {err:#}"),
+        };
+        assert!(s.home.path().join("models.json").is_file());
+
+        let Some(catalog) = config.model_catalog else {
+            panic!("the engine must have loaded the authored catalogue");
+        };
+        assert!(
+            catalog
+                .models
+                .iter()
+                .any(|m| m.slug == crate::engine::catalog::DEFAULT_MODEL),
+            "the default model has to be selectable",
+        );
     }
 }

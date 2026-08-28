@@ -29,6 +29,27 @@ Glossary of domain terms as this project uses them. Decisions with lasting conse
 - **Installed-agents map** — the one record of which ACP agents exist. Installing writes an entry, uninstalling removes it, and nothing else makes an agent runnable. A fresh install has an empty map and offers only the native agent. See ADR-0002.
 - **Detection** — an agent found on the user's `PATH` that Atlas has *not* installed. An offer, never a spawn candidate: **accepting a detection** is a user action that writes an installed-agents-map entry pointing at their own binary, downloading nothing. Finding a binary installs nothing by itself.
 
+## Talking to a model (Atlas Agent)
+
+- **Atlas gateway** — Atlas's own LLM broker (`docs/reference/atlas-ai-api.md`), an
+  OpenAI-Chat-Completions-compatible front door to Google Vertex. It is the *only* provider the
+  native agent talks to: it holds the provider credentials, meters usage, and enforces the spend
+  cap, so no provider key is ever on the device. Not to be confused with **BYOK**, which is a
+  user's own key for a *non-native* agent and is untouched by any of this.
+- **Wire dialect** — the request-and-response grammar a provider speaks. The engine was forked
+  speaking exactly one, the **Responses** dialect; the port authors a second, **Chat Completions**
+  against the gateway contract (`codex_api::atlas_chat`, spec D3). The two share the engine's
+  internal item and event vocabulary and nothing below it — different route, different body,
+  different stream grammar, different error table. A green suite on one says nothing about the
+  other.
+- **Spend cap** — the ceiling on what an account may spend, denominated in weighted tokens and
+  reserved *before* the provider is called. A filled cap answers `402`, deliberately not `429`,
+  because stock SDKs auto-retry `429` and a monthly ceiling cannot clear for weeks.
+- **Disposition** — what the client should do about a gateway error, as decided from its status
+  and `error.code` (`codex_api::atlas_gateway`, spec D13): stop, wait a stated interval, refresh
+  the credential and try once, or retry cautiously. Deliberately not a boolean — "retryable"
+  collapses three behaviours the gateway keeps apart.
+
 ## Vendored engine licensing (Apache-2.0)
 
 `vendor/codex/` is a hard fork of OpenAI Codex under **Apache-2.0** (ADR-0003). Atlas's own

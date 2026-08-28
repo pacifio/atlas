@@ -29,8 +29,16 @@
 //! `response_format` are on the forwarded list but are a `400 invalid_parameter`
 //! on Claude models — which the default `claude-sonnet-4-6` is. Five of them
 //! this builder never emits at all. `response_format` it *would* emit, for a
-//! schema-constrained turn, so that one is gated on the model family
-//! ([`is_claude_model`]) instead of sent and hoped for.
+//! schema-constrained turn — so a schema-constrained turn against a Claude
+//! model is **refused here**, with an error naming the limit.
+//!
+//! Refusing is the harder-looking choice and the right one. Dropping the schema
+//! and sending the turn anyway returns free text where the caller asked for
+//! JSON, bills them for it, and gives them nothing to connect the two — the
+//! precise failure the gateway's own allowlist rule exists to prevent
+//! ("Silently dropping is the failure this rule exists to prevent"). The
+//! gateway would answer the same request with a `400` anyway; this says so one
+//! round trip earlier, and says which parameter and why.
 
 use std::collections::BTreeSet;
 
@@ -40,6 +48,8 @@ use serde::Serialize;
 use serde_json::Value;
 use serde_json::json;
 use tracing::warn;
+
+use crate::error::ApiError;
 
 /// The gateway's hard clamp on `max_tokens`. Asking for more is not an error,
 /// but nothing above this is honoured.
@@ -92,9 +102,11 @@ pub const REFUSED_BY_CLAUDE: &[&str] = &[
 
 /// Whether the gateway will serve this slug through Anthropic's Messages API.
 ///
-/// The catalogue ids are `claude-…`; the gateway's translation layer is what
-/// makes the difference invisible everywhere except the parameters it has
-/// nowhere to put.
+/// Read off the slug rather than off a capability the catalogue authors,
+/// because it is a fact about the *gateway*, not about the model: the contract
+/// names the Claude family as the set whose six sampling parameters are
+/// refused. A capability row would restate that one layer away from the
+/// document that decides it, and the two would drift.
 pub fn is_claude_model(slug: &str) -> bool {
     slug.to_ascii_lowercase().starts_with("claude")
 }
@@ -188,7 +200,7 @@ pub struct BuiltChatRequest {
     pub freeform_tools: BTreeSet<String>,
 }
 
-pub fn build_chat_request(input: ChatRequestInput<'_>) -> BuiltChatRequest {
+pub fn build_chat_request(input: ChatRequestInput<'_>) -> Result<BuiltChatRequest, ApiError> {
     let mut messages: Vec<ChatMessage> = Vec::new();
     if !input.instructions.trim().is_empty() {
         messages.push(ChatMessage::System {
@@ -203,25 +215,27 @@ pub fn build_chat_request(input: ChatRequestInput<'_>) -> BuiltChatRequest {
     let (tools, freeform_tools) = reshape_tools(input.tools);
 
     // The one allowlisted parameter this builder would otherwise send blind.
-    // On Claude it is a `400`, so a schema-constrained turn degrades to an
-    // unconstrained one rather than failing — the alternative is that every
-    // guardian-style turn against the default model dies at the gateway.
     let response_format = match input.output_schema {
         Some(schema) if !is_claude_model(input.model) => Some(json!({
             "type": "json_schema",
             "json_schema": { "name": "response", "strict": true, "schema": schema },
         })),
+        // Refused, not dropped. See the module docs: a schema-constrained turn
+        // that quietly comes back as prose is worse than one that does not run.
         Some(_) => {
-            warn!(
-                model = input.model,
-                "output schema dropped: response_format is refused on Claude models"
-            );
-            None
+            return Err(ApiError::InvalidRequest {
+                message: format!(
+                    "{} cannot answer with a fixed JSON schema. The gateway serves Claude \
+                     through Anthropic's API, which refuses `response_format` with \
+                     400 invalid_parameter. Choose a Gemini model for this turn.",
+                    input.model,
+                ),
+            });
         }
         None => None,
     };
 
-    BuiltChatRequest {
+    Ok(BuiltChatRequest {
         request: ChatCompletionsRequest {
             model: input.model.to_string(),
             messages,
@@ -232,7 +246,7 @@ pub fn build_chat_request(input: ChatRequestInput<'_>) -> BuiltChatRequest {
             response_format,
         },
         freeform_tools,
-    }
+    })
 }
 
 fn text_of(content: &[ContentItem]) -> String {
