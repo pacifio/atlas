@@ -57,6 +57,12 @@ interface TerminalActions {
     addTerminalToPane: (tabId: string, paneId: string) => void;
     splitPane: (tabId: string, paneId: string, direction: SplitDirection) => void;
     closeTerminalInPane: (tabId: string, paneId: string, ptyId: string) => void;
+    /** Close one terminal wherever it lives.
+     *
+     *  The opener of a command terminal knows the terminal it minted but not
+     *  which pane the panel put it in, and by the time it wants to close it the
+     *  user may have moved or split things. */
+    closeTerminalById: (ptyId: string) => void;
     closePane: (tabId: string, paneId: string) => void;
     setActiveTerminalInPane: (tabId: string, paneId: string, ptyId: string) => void;
     setActivePane: (tabId: string, paneId: string) => void;
@@ -219,6 +225,21 @@ export const useTerminalStore = createSelectors(
               const nextIdx = Math.min(Math.max(0, closedIdx - 1), pane.terminals.length - 1);
               pane.activeTerminalId = pane.terminals[nextIdx];
             }
+          });
+        },
+
+        closeTerminalById: (ptyId) => {
+          for (const [tabId, t] of Object.entries(get().tabs)) {
+            const pane = collectPanes(t.root).find((p) => p.terminals.includes(ptyId));
+            if (pane) {
+              get().actions.closeTerminalInPane(tabId, pane.id, ptyId);
+              return;
+            }
+          }
+          // Never mounted, or already closed — the queued command must still go
+          // (it can hold an agent's login).
+          set((s) => {
+            delete s.pendingCommands[ptyId];
           });
         },
 
