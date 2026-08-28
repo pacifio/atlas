@@ -93,6 +93,12 @@ const UNCLAIMED_COMPLETIONS: usize = 16;
 pub struct TurnWaiters {
     waiters: Mutex<HashMap<String, oneshot::Sender<v2::Turn>>>,
     active: Mutex<HashMap<String, String>>,
+    /// Retry notices seen for a turn, so the pill can say *which* attempt.
+    ///
+    /// Counted here rather than read off the event, because the engine's
+    /// stream-error notification carries a message and a `will_retry` flag and
+    /// no attempt number (D8). The count is the honest reconstruction.
+    attempts: Mutex<HashMap<String, usize>>,
     /// Completions that arrived before anyone asked for them. See the module
     /// docs: this is what closes the register-after-response race.
     unclaimed: Mutex<std::collections::VecDeque<v2::Turn>>,
@@ -130,6 +136,11 @@ impl TurnWaiters {
         }
         drop(active);
 
+        self.attempts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&turn.id);
+
         if let Some(tx) = self.waiters().remove(&turn.id) {
             let _ = tx.send(turn);
             return;
@@ -141,6 +152,15 @@ impl TurnWaiters {
         while unclaimed.len() > UNCLAIMED_COMPLETIONS {
             unclaimed.pop_front();
         }
+    }
+
+    /// Records one retry notice for a turn and returns its attempt number,
+    /// counting from 1.
+    pub(crate) fn note_retry(&self, turn_id: &str) -> usize {
+        let mut attempts = self.attempts.lock().unwrap_or_else(|p| p.into_inner());
+        let counter = attempts.entry(turn_id.to_string()).or_insert(0);
+        *counter += 1;
+        *counter
     }
 
     fn unclaimed(&self) -> std::sync::MutexGuard<'_, std::collections::VecDeque<v2::Turn>> {
@@ -200,6 +220,7 @@ impl EngineConnection {
         external_auth: Option<Arc<dyn ExternalAuth>>,
     ) -> Result<Arc<Self>> {
         let (runtime, client) = start_engine(&settings, external_auth).await?;
+        let max_retries = settings.stream_max_retries;
         let requests = client.request_handle();
         let sessions = Arc::new(EngineSessions::default());
         let turns = Arc::new(TurnWaiters::default());
@@ -208,7 +229,12 @@ impl EngineConnection {
         // and the client's `next_event` is fed by engine tasks.
         let pump = runtime
             .handle()
-            .spawn(pump_events(client, sessions.clone(), turns.clone()));
+            .spawn(pump_events(
+                client,
+                sessions.clone(),
+                turns.clone(),
+                max_retries,
+            ));
 
         Ok(Arc::new(Self {
             id,
@@ -260,11 +286,12 @@ async fn pump_events(
     mut client: InProcessAppServerClient,
     sessions: Arc<EngineSessions>,
     turns: Arc<TurnWaiters>,
+    max_retries: usize,
 ) {
     while let Some(event) = client.next_event().await {
         match event {
             InProcessServerEvent::ServerNotification(notification) => {
-                apply_notification(&sessions, &turns, *notification);
+                apply_notification(&sessions, &turns, max_retries, *notification);
             }
             InProcessServerEvent::ServerRequest(request) => {
                 // Approvals and elicitations round-trip here, and wiring them

@@ -20,6 +20,7 @@ use std::sync::Weak;
 use agent_client_protocol::schema::v1 as acp;
 use atlas_acp_thread::AcpThread;
 use atlas_acp_thread::AcpThreadHandle;
+use atlas_acp_thread::RetryStatus;
 use codex_app_server_protocol::ServerNotification;
 
 use crate::engine::connection::TurnWaiters;
@@ -88,9 +89,15 @@ fn lock(thread: &AcpThreadHandle) -> std::sync::MutexGuard<'_, AcpThread> {
 }
 
 /// Applies one engine notification.
+///
+/// `max_retries` is the provider's configured stream-retry ceiling. It is
+/// passed in rather than guessed because the seam is what set it, and the
+/// retry pill renders "attempt N of M" — an unknown M would render as
+/// `1/0`.
 pub fn apply_notification(
     sessions: &EngineSessions,
     turns: &TurnWaiters,
+    max_retries: usize,
     notification: ServerNotification,
 ) {
     match notification {
@@ -109,10 +116,35 @@ pub fn apply_notification(
             turns.complete(&params.thread_id, params.turn);
         }
 
+        // A stream error. `will_retry` is the engine telling us whether it is
+        // about to try again, and it is the difference between a retry pill
+        // and a dead turn: a retrying turn has NOT ended, so the only correct
+        // response is to show progress. Dropping this is what makes a retry
+        // look like a hang.
+        ServerNotification::Error(params) if params.will_retry => {
+            let Some(thread) = sessions.thread(&session_id(&params.thread_id)) else {
+                return;
+            };
+            let attempt = turns.note_retry(&params.turn_id);
+            lock(&thread).report_retry(RetryStatus {
+                last_error: params.error.message.clone().into(),
+                attempt,
+                max_attempts: max_retries,
+                started_at: std::time::Instant::now(),
+                // The engine does not publish its backoff delay (D8), so the
+                // pill counts up from now rather than down to a deadline. A
+                // fabricated duration would be a countdown to nothing.
+                duration: std::time::Duration::ZERO,
+                meta: None,
+            });
+        }
+
+        // A terminal error. The turn is ending, and `TurnCompleted` carries
+        // the outcome `prompt` reports, so this only needs to be visible.
         ServerNotification::Error(params) => {
             tracing::warn!(
                 target: "atlas_native_agent::engine",
-                "the engine reported an error: {}", params.error.message,
+                "the engine reported a terminal error: {}", params.error.message,
             );
         }
 

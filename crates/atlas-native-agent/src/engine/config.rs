@@ -29,6 +29,10 @@ use codex_protocol::config_types::SandboxMode;
 use codex_protocol::protocol::AskForApproval;
 use toml::Value as TomlValue;
 
+/// The engine's own `DEFAULT_STREAM_MAX_RETRIES`, restated so the seam can
+/// report it without reaching into the provider crate's private constant.
+pub const DEFAULT_STREAM_MAX_RETRIES: usize = 5;
+
 /// The engine's private working directory.
 ///
 /// A newtype because getting this wrong is silent and bad. Starting the runtime
@@ -137,6 +141,13 @@ pub struct EngineSettings {
     pub self_exe: Option<PathBuf>,
     pub approval_policy: AskForApproval,
     pub sandbox_mode: SandboxMode,
+    /// How many times the engine retries a dropped stream.
+    ///
+    /// Held here as well as in the provider config because the retry pill
+    /// renders "attempt N of M" and the seam is the only thing that knows M
+    /// — the engine's stream-error notification does not carry it (D8).
+    /// `5` is the engine's own `DEFAULT_STREAM_MAX_RETRIES`.
+    pub stream_max_retries: usize,
 }
 
 impl EngineSettings {
@@ -153,7 +164,15 @@ impl EngineSettings {
             // anything else routed to the approval dialog Atlas already has.
             approval_policy: AskForApproval::OnRequest,
             sandbox_mode: SandboxMode::WorkspaceWrite,
+            stream_max_retries: DEFAULT_STREAM_MAX_RETRIES,
         }
+    }
+
+    /// Lowers the stream-retry ceiling, so a test can reach exhaustion without
+    /// waiting out five backoffs.
+    pub fn with_stream_max_retries(mut self, retries: usize) -> Self {
+        self.stream_max_retries = retries;
+        self
     }
 
     /// Settings for a development-time run, read from the environment.
@@ -220,6 +239,13 @@ impl EngineSettings {
             // but a config that says "off" is what makes the intent legible to
             // the next person reading it.
             ("analytics.enabled".to_string(), TomlValue::Boolean(false)),
+            // Set explicitly so the number the retry pill shows is the number
+            // the engine actually uses. Left implicit, the two could drift and
+            // the pill would count past its own maximum.
+            (
+                key("stream_max_retries"),
+                TomlValue::Integer(self.stream_max_retries as i64),
+            ),
         ];
         if let Some(env_key) = &p.env_key {
             out.push((key("env_key"), TomlValue::String(env_key.clone())));
