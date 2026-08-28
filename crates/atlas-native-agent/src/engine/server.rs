@@ -30,9 +30,9 @@ pub struct EngineAgentServer {
     settings: EngineSettings,
     /// The D10 token provider.
     ///
-    /// `None` runs the engine against a developer-configured provider that
-    /// authenticates some other way — which is exactly the Phase 2 tracer
-    /// bullet, before the gateway dialect exists to need an account.
+    /// `None` falls back to whatever token source the host registered, and
+    /// failing that runs against a provider that authenticates some other way
+    /// — the Phase 2 dev provider, which resolves a key from the environment.
     external_auth: Option<Arc<dyn ExternalAuth>>,
     default_mode: Option<acp::SessionModeId>,
     /// Retrieval for `search_memory`, when the caller supplies one directly.
@@ -92,7 +92,15 @@ impl AgentServer for EngineAgentServer {
         options: ConnectOptions,
     ) -> BoxFuture<'static, Result<Arc<dyn AgentConnection>>> {
         let id = self.agent_id();
-        let external_auth = self.external_auth.clone();
+        // Resolved here rather than in the constructor: `AgentHost` is built
+        // during startup, before the auth state exists, so a source read at
+        // construction would always be absent and every turn would go out with
+        // no credential.
+        let external_auth = self.external_auth.clone().or_else(|| {
+            crate::engine::auth::registered_token_source().map(|source| {
+                Arc::new(crate::engine::auth::AtlasExternalAuth::new(source)) as Arc<dyn ExternalAuth>
+            })
+        });
         let default_mode = self.default_mode.clone().or_else(|| options.defaults.mode.clone());
         let memory_search = self
             .memory_search
@@ -159,4 +167,32 @@ mod tests {
     fn the_token_provider_is_optional_so_a_dev_provider_can_carry_the_turn() {
         assert!(server().external_auth.is_none());
     }
+
+    #[test]
+    fn a_registered_token_source_reaches_a_server_that_was_built_without_one() {
+        // The ordering this pins: `AgentHost` builds the server during startup,
+        // before the auth state exists. If the credential were resolved in the
+        // constructor it would always be absent here, and every turn would go
+        // out unauthenticated against a gateway that answers 401 — a failure
+        // that looks like a broken account rather than a broken wiring order.
+        struct Fake;
+        impl crate::engine::auth::AtlasTokenSource for Fake {
+            fn mint(&self) -> crate::engine::auth::ExternalAuthFuture<'_, String> {
+                Box::pin(async { Ok("registered-jwt".to_string()) })
+            }
+        }
+        crate::engine::auth::register_token_source(Arc::new(Fake));
+
+        // Built with no credential of its own, exactly as `select_native_agent`
+        // builds it.
+        assert!(
+            server().external_auth.is_none(),
+            "the server is constructed without a credential",
+        );
+        assert!(
+            crate::engine::auth::registered_token_source().is_some(),
+            "and finds one at connect time",
+        );
+    }
+
 }

@@ -31,7 +31,7 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use codex_login::CodexAuth;
-use codex_login::ExternalAuthFuture;
+pub use codex_login::ExternalAuthFuture;
 use codex_login::auth::ExternalAuth;
 use codex_login::auth::ExternalAuthRefreshContext;
 
@@ -53,8 +53,37 @@ const ASSUMED_TTL: Duration = Duration::from_secs(600);
 /// Implemented by `src-tauri` over `AuthCore::mint_access_token`. It is a trait
 /// rather than a closure so a test can drive expiry and count calls, and so
 /// this crate does not depend on the auth module.
+///
+/// The future type is re-exported alongside it ([`ExternalAuthFuture`]) so an
+/// implementor names only this crate. `src-tauri` taking a direct dependency on
+/// a vendored engine crate to spell one type would put a `codex-*` entry in the
+/// app's manifest, which the quarantine guard exists to prevent.
 pub trait AtlasTokenSource: Send + Sync {
     fn mint(&self) -> ExternalAuthFuture<'_, String>;
+}
+
+/// The token source the host installed, for connections not handed one.
+///
+/// Registered rather than passed in, for the same reason `search_memory` is
+/// (#48): minting needs the Tauri app's auth state, and these types live behind
+/// a cargo feature — so a constructor parameter would `cfg`-gate
+/// `AgentHost::new`'s signature and every caller of it.
+///
+/// It is read at **connect** time, not at construction. That ordering is
+/// load-bearing: `AgentHost` is built during startup, before the auth state
+/// exists, so a source resolved in the constructor would always be `None` and
+/// every turn would go out unauthenticated.
+static REGISTERED_TOKEN_SOURCE: std::sync::OnceLock<Arc<dyn AtlasTokenSource>> =
+    std::sync::OnceLock::new();
+
+/// Installs the host's token source. Called once, at startup.
+pub fn register_token_source(source: Arc<dyn AtlasTokenSource>) {
+    let _ = REGISTERED_TOKEN_SOURCE.set(source);
+}
+
+/// The registered token source, if the host installed one.
+pub fn registered_token_source() -> Option<Arc<dyn AtlasTokenSource>> {
+    REGISTERED_TOKEN_SOURCE.get().cloned()
 }
 
 /// Wall clock, injectable so the expiry logic is testable without sleeping.
@@ -299,6 +328,40 @@ mod tests {
             2,
             "T-60s is the re-mint point, not T-0 — waiting for expiry is what \
              leaves a request holding a dead token",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_outliving_several_token_lifetimes_never_fails_a_resolve() {
+        // Acceptance bar item 9, at the unit that decides it: "a native session
+        // older than the JWT TTL continues across token rotation with no
+        // user-visible auth failure".
+        //
+        // One rotation is covered above. This is the shape of the actual
+        // complaint — an agent left running for an hour, crossing the ten-minute
+        // boundary five times — where the failure would not be a wrong answer
+        // but a turn that refuses to start, an hour in, for no reason the user
+        // did anything to cause.
+        let (auth, source, now) = harness(600);
+        let mut bearers = Vec::new();
+        for _ in 0..6 {
+            let resolved = auth
+                .resolve()
+                .await
+                .expect("every resolve across a long session must succeed");
+            bearers.push(bearer(&resolved));
+            // Past the 60s margin each time, so every lap re-mints.
+            now.fetch_add(550, Ordering::SeqCst);
+        }
+
+        assert_eq!(source.calls(), 6, "each lap crosses the margin and re-mints");
+        // Not vacuous: the credential really did rotate rather than the same
+        // string being handed back six times.
+        let distinct: std::collections::BTreeSet<_> = bearers.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            bearers.len(),
+            "a rotation that returns the same bearer is not a rotation: {bearers:?}",
         );
     }
 

@@ -308,12 +308,18 @@ fn select_native_agent(
     (Arc::new(cersei), NativeEngine::Cersei)
 }
 
-/// See the sibling above. With the engine linked, `ATLAS_AGENT_ENGINE` picks:
-/// `cersei` returns the old path, anything else (including unset) uses the
-/// ported engine, because a build that asked for the engine wants it.
+/// See the sibling above. With the engine linked, `ATLAS_AGENT_ENGINE` picks
+/// between three paths, and the default is the shipping one:
 ///
-/// Keeping both reachable from one binary is what makes "unchanged when the
-/// switch selects Cersei" checkable without a rebuild between the two halves.
+/// - unset (or anything unrecognised) — the ported engine against the **Atlas
+///   gateway** (D3), authenticated by the D10 token provider;
+/// - `cersei` — the old path, so "unchanged when the switch selects Cersei" is
+///   checkable without a rebuild between the two halves;
+/// - `dev` — the ported engine against a provider read from the environment.
+///   Phase 2's tracer bullet, kept for debugging the engine without an Atlas
+///   account. Explicit opt-in rather than a fallback: a build that silently
+///   sent turns to whatever `ATLAS_ENGINE_BASE_URL` happened to hold would be a
+///   traffic redirect nobody asked for.
 #[cfg(feature = "ported-engine")]
 fn select_native_agent(
     cersei: CerseiAgentServer,
@@ -321,13 +327,19 @@ fn select_native_agent(
 ) -> (Arc<dyn atlas_agent_servers::AgentServer>, NativeEngine) {
     use atlas_native_agent::engine::{EngineAgentServer, EngineSettings};
 
-    if std::env::var("ATLAS_AGENT_ENGINE").as_deref() == Ok("cersei") {
+    let selected = std::env::var("ATLAS_AGENT_ENGINE").unwrap_or_default();
+    if selected == "cersei" {
         tracing::info!("native agent: Cersei path (ATLAS_AGENT_ENGINE=cersei)");
         return (Arc::new(cersei), NativeEngine::Cersei);
     }
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| config_dir.to_path_buf());
-    let settings = EngineSettings::from_env(config_dir, cwd);
+    let settings = if selected == "dev" {
+        tracing::warn!("native agent: ported engine on a DEV provider (ATLAS_AGENT_ENGINE=dev)");
+        EngineSettings::from_env(config_dir, cwd)
+    } else {
+        EngineSettings::gateway(config_dir, cwd)
+    };
     tracing::info!(
         provider = %settings.provider.base_url,
         model = %settings.model,

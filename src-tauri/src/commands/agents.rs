@@ -672,6 +672,21 @@ pub fn install_manager(app: &AppHandle) {
     // acceptance bar item 11). Registered rather than passed in because these
     // types are behind a cargo feature, and a constructor parameter would
     // `cfg`-gate `AgentHost::new`'s signature and every caller of it.
+    // The D10 token provider (#51): the native agent authenticates with the
+    // user's Atlas account, minting a short-TTL access JWT per request.
+    //
+    // Registered for the same reason `search_memory` is, and read at *connect*
+    // time rather than construction — `AgentHost` is built before the auth
+    // state exists, so a source resolved in its constructor would always be
+    // absent and every turn would go out with no credential.
+    #[cfg(feature = "ported-engine")]
+    {
+        let core = app.state::<crate::commands::auth::AuthState>().core();
+        atlas_native_agent::engine::auth::register_token_source(Arc::new(AccountTokenSource {
+            core,
+        }));
+    }
+
     #[cfg(feature = "ported-engine")]
     {
         let app_for_engine = app.clone();
@@ -1846,5 +1861,37 @@ mod auth_url_tests {
             first_url("https://first.example.com and https://second.example.com").as_deref(),
             Some("https://first.example.com")
         );
+    }
+}
+
+/// The native agent's credential: an Atlas access JWT from the signed-in
+/// account (#51, spec D10/D14).
+///
+/// A thin adapter and deliberately so — the caching, the proactive re-mint at
+/// `exp − 60s` and the refresh-once-on-401 all live in the seam's
+/// `AtlasExternalAuth`, which is where the engine can drive them. This only has
+/// to answer "mint me one now".
+///
+/// `mint_access_token` is a bare `GET /token` with no cache of its own, which
+/// is *correct* for its other callers: they mint at the point of use, so their
+/// token is never near expiry. It is the engine's long-lived session, holding a
+/// credential across a multi-minute turn, that needs the caching layer above.
+#[cfg(feature = "ported-engine")]
+struct AccountTokenSource {
+    core: Arc<crate::auth::AuthCore>,
+}
+
+#[cfg(feature = "ported-engine")]
+impl atlas_native_agent::engine::auth::AtlasTokenSource for AccountTokenSource {
+    fn mint(&self) -> atlas_native_agent::engine::auth::ExternalAuthFuture<'_, String> {
+        Box::pin(async move {
+            self.core.mint_access_token().await.map_err(|err| {
+                // The engine's trait speaks `io::Error`, so the reason has to
+                // survive as text or the user is told only that auth failed.
+                // Signed-out is the common case and reads very differently from
+                // a rejected credential, so it keeps its own words.
+                std::io::Error::other(format!("Atlas account token unavailable: {err:?}"))
+            })
+        })
     }
 }
