@@ -1,3 +1,4 @@
+# Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 [package]
 name = "codex-app-server-client"
 version.workspace = true
@@ -20,6 +21,8 @@ codex-config = { workspace = true }
 codex-core = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-feedback = { workspace = true }
+# Atlas: the `ExternalAuth` trait in `start_with_external_auth`'s signature.
+codex-login = { workspace = true }
 codex-protocol = { workspace = true }
 codex-uds = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

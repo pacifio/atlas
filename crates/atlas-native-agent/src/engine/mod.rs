@@ -22,6 +22,16 @@
 
 pub mod auth;
 pub mod config;
+pub mod connection;
+pub mod runtime;
+pub mod server;
+pub mod sink;
+
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub use auth::{AtlasExternalAuth, AtlasTokenSource, Clock, SystemClock};
 pub use config::{EngineHome, EngineProvider, EngineSettings, WireDialect};
+pub use connection::EngineConnection;
+pub use runtime::{start_engine, ATLAS_CLIENT_NAME};
+pub use server::EngineAgentServer;

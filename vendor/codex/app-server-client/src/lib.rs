@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 //! Shared in-process app-server client facade for CLI surfaces.
 //!
 //! This crate wraps [`codex_app_server::in_process`] behind a single async API
@@ -25,6 +26,7 @@ use std::io::Error as IoError;
 use std::io::ErrorKind;
 use std::io::Result as IoResult;
 use std::sync::Arc;
+use codex_login::auth::ExternalAuth;
 use std::time::Duration;
 
 pub use codex_app_server::app_server_control_socket_path;
@@ -335,9 +337,25 @@ impl InProcessAppServerClient {
     /// The returned client is ready for requests and ordered event consumption.
     /// Request queues remain bounded without blocking on unread notifications.
     pub async fn start(args: InProcessClientStartArgs) -> IoResult<Self> {
+        Self::start_with_external_auth(args, None).await
+    }
+
+    /// [`start`](Self::start), with an auth provider installed before the
+    /// handshake.
+    ///
+    /// Added by Atlas; see `codex_app_server::in_process::start_with_external_auth`
+    /// for why the injection point had to exist. Passing `None` is exactly
+    /// `start`.
+    pub async fn start_with_external_auth(
+        args: InProcessClientStartArgs,
+        external_auth: Option<Arc<dyn ExternalAuth>>,
+    ) -> IoResult<Self> {
         let channel_capacity = args.channel_capacity.max(1);
-        let mut handle =
-            codex_app_server::in_process::start(args.into_runtime_start_args()).await?;
+        let mut handle = codex_app_server::in_process::start_with_external_auth(
+            args.into_runtime_start_args(),
+            external_auth,
+        )
+        .await?;
         let request_sender = handle.sender();
         let (command_tx, mut command_rx) = mpsc::channel::<ClientCommand>(channel_capacity);
         // e9996ec62a preserved transcript events by awaiting a bounded queue, but that can

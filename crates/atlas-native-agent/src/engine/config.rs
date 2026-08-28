@@ -156,13 +156,42 @@ impl EngineSettings {
         }
     }
 
+    /// Settings for a development-time run, read from the environment.
+    ///
+    /// Phase 2's tracer bullet is carried by "a dev-configured provider … until
+    /// the gateway dialect lands", so the provider is a developer's choice
+    /// rather than a product decision, and the environment is where a developer
+    /// makes it. Every value has a working default so the switch does something
+    /// sensible with nothing set.
+    ///
+    /// This is deliberately **not** how the shipped agent will be configured.
+    /// In Phase 3 the provider becomes the Atlas gateway and the credential
+    /// becomes the D10 token provider; these variables go away with the switch.
+    pub fn from_env(config_dir: &Path, cwd: PathBuf) -> Self {
+        let base_url = std::env::var("ATLAS_ENGINE_BASE_URL")
+            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+        let model =
+            std::env::var("ATLAS_ENGINE_MODEL").unwrap_or_else(|_| "gpt-5-codex".to_string());
+        // Named rather than read: the engine resolves the variable itself, so
+        // the key never passes through Atlas.
+        let env_key = std::env::var("ATLAS_ENGINE_API_KEY_ENV")
+            .unwrap_or_else(|_| "OPENAI_API_KEY".to_string());
+
+        Self::new(
+            EngineHome::under_config_dir(config_dir),
+            EngineProvider::dev("atlas-dev", base_url, Some(env_key)),
+            model,
+            cwd,
+        )
+    }
+
     /// The overrides that have no config-file spelling.
     pub fn config_overrides(&self) -> ConfigOverrides {
         ConfigOverrides {
             model: Some(self.model.clone()),
             model_provider: Some(self.provider.id.clone()),
             cwd: Some(self.cwd.clone()),
-            approval_policy: Some(self.approval_policy.clone()),
+            approval_policy: Some(self.approval_policy),
             sandbox_mode: Some(self.sandbox_mode),
             codex_self_exe: self.self_exe.clone(),
             ..Default::default()
@@ -320,6 +349,25 @@ mod tests {
         let s = settings(&tmp);
         assert_eq!(s.sandbox_mode, SandboxMode::WorkspaceWrite);
         assert!(matches!(s.approval_policy, AskForApproval::OnRequest));
+    }
+
+    #[test]
+    fn the_dev_provider_names_an_env_key_rather_than_reading_one() {
+        // The engine resolves the variable itself. Reading the key here would
+        // put a live credential through Atlas's own memory for no reason.
+        let s = EngineSettings::from_env(Path::new("/tmp/atlas"), PathBuf::from("/tmp"));
+        let overrides = s.cli_overrides();
+        let env_key = overrides
+            .iter()
+            .find(|(k, _)| k.ends_with(".env_key"))
+            .map(|(_, v)| v.clone());
+        assert!(env_key.is_some(), "a dev provider authenticates by env key");
+        assert!(
+            !overrides
+                .iter()
+                .any(|(_, v)| matches!(v, TomlValue::String(s) if s.starts_with("sk-"))),
+            "no credential value may appear in the engine's config",
+        );
     }
 
     #[tokio::test]

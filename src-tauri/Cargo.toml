@@ -10,6 +10,20 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+default = []
+# The Phase 2 development-time switch (issue #45, ADR-0004).
+#
+# Off by default, so a release build of Atlas contains no engine code at all —
+# the Cersei path keeps shipping until the acceptance bar is green (spec,
+# Cutover Sequence). Turn it on to build the ported engine in:
+#
+#     cargo build --features ported-engine
+#
+# With it on, `ATLAS_AGENT_ENGINE=cersei` still selects the old path at run
+# time, so one binary can be checked on both sides of the switch.
+ported-engine = ["atlas-native-agent/ported-engine"]
+
 [dependencies]
 # Devtools intentionally NOT enabled here. Release builds ship without
 # right-click → Inspect Element / Cmd+Option+I; `tauri dev` still auto-

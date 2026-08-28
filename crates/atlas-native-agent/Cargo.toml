@@ -31,6 +31,7 @@ tracing = "0.1"
 base64 = { version = "0.22", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 toml = { version = "0.9", optional = true }
+codex-app-server = { path = "../../vendor/codex/app-server", optional = true }
 codex-app-server-client = { path = "../../vendor/codex/app-server-client", optional = true }
 codex-app-server-protocol = { path = "../../vendor/codex/app-server-protocol", optional = true }
 codex-arg0 = { path = "../../vendor/codex/arg0", optional = true }
@@ -48,6 +49,7 @@ ported-engine = [
   "dep:base64",
   "dep:serde",
   "dep:toml",
+  "dep:codex-app-server",
   "dep:codex-app-server-client",
   "dep:codex-app-server-protocol",
   "dep:codex-arg0",
@@ -68,6 +70,9 @@ async-trait = "0.1"
 cersei = { version = "0.2.6", default-features = false }
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
+# Seam-1 contract tests drive a real turn against a local mock model, so the
+# streaming path is exercised without a live provider or a credential.
+wiremock = "0.6"
 
 # The vendored Cersei SDK patch forks this crate's SDK reach requires
 # (`cersei-provider` UTF-8, `cersei-agent` cancel) live in the root

@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 //! In-process app-server runtime host for local embedders.
 //!
 //! This module runs the existing [`MessageProcessor`] and outbound routing logic
@@ -86,6 +87,7 @@ use codex_core::resolve_installation_id;
 use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
 use codex_login::AuthManager;
+use codex_login::auth::ExternalAuth;
 use codex_protocol::protocol::SessionSource;
 pub use codex_rollout::StateDbHandle;
 pub use codex_state::log_db::LogDbLayer;
@@ -353,7 +355,28 @@ impl InProcessClientHandle {
 /// This function sends `initialize` followed by `initialized` before returning
 /// the handle, so callers receive a ready-to-use runtime. If initialize fails,
 /// the runtime is shut down and an `InvalidData` error is returned.
-pub async fn start(mut args: InProcessStartArgs) -> IoResult<InProcessClientHandle> {
+pub async fn start(args: InProcessStartArgs) -> IoResult<InProcessClientHandle> {
+    start_with_external_auth(args, None).await
+}
+
+/// [`start`], with an auth provider installed before the handshake.
+///
+/// Added by Atlas. The engine's `ExternalAuth` trait is the injection point an
+/// embedder needs to authenticate with its own account system, but neither
+/// start-args struct exposed it: upstream's only in-protocol route to
+/// `AuthManager::set_external_auth` is ChatGPT-shaped, gated on
+/// `ForcedLoginMethod::Chatgpt`, and refreshes over a server→client
+/// `ChatgptAuthTokensRefresh` round trip. Atlas removes that login path
+/// entirely, so it needed a way in that does not pretend to be ChatGPT.
+///
+/// This is a second entry point rather than a field on [`InProcessStartArgs`]
+/// deliberately: a new field would have to be written at all ten of upstream's
+/// construction sites, most of them tests, for no behavioural reason. `start`
+/// passes `None` and behaves exactly as it did.
+pub async fn start_with_external_auth(
+    mut args: InProcessStartArgs,
+    external_auth: Option<Arc<dyn ExternalAuth>>,
+) -> IoResult<InProcessClientHandle> {
     if let Ok(Some(err)) = check_execpolicy_for_warnings(&args.config.config_layer_stack).await {
         let (path, range) = crate::exec_policy_warning_location(&err);
         args.config_warnings.push(ConfigWarningNotification {
@@ -364,7 +387,7 @@ pub async fn start(mut args: InProcessStartArgs) -> IoResult<InProcessClientHand
         });
     }
     let initialize = args.initialize.clone();
-    let client = start_uninitialized(args).await?;
+    let client = start_uninitialized(args, external_auth).await?;
 
     let initialize_response = client
         .request(ClientRequest::Initialize {
@@ -403,7 +426,10 @@ async fn run_outbound_router(
     }
 }
 
-async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClientHandle> {
+async fn start_uninitialized(
+    args: InProcessStartArgs,
+    external_auth: Option<Arc<dyn ExternalAuth>>,
+) -> IoResult<InProcessClientHandle> {
     args.config.auth_config().validate()?;
     let channel_capacity = args.channel_capacity.max(1);
     let installation_id = resolve_installation_id(&args.config.codex_home).await?;
@@ -411,6 +437,15 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
         AuthManager::shared_from_config(args.config.as_ref(), args.enable_codex_api_key_env)
             .await
             .map_err(IoError::other)?;
+    // Atlas: installed before the runtime starts, so the first request already
+    // resolves through the provider rather than through whatever
+    // `shared_from_config` found on disk.
+    if let Some(external_auth) = external_auth {
+        auth_manager
+            .set_external_auth(external_auth)
+            .await
+            .map_err(IoError::from)?;
+    }
     let (client_tx, mut client_rx) = mpsc::channel::<InProcessClientMessage>(channel_capacity);
     let (event_tx, event_rx) = mpsc::channel::<InProcessServerEvent>(channel_capacity);
 

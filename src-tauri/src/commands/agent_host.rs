@@ -27,6 +27,7 @@
 //! [`AgentHost::agent_for`] is the whole of that policy, and it is four lines.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -278,6 +279,52 @@ struct RequestElicitations {
     answered_by: Mutex<HashMap<Uuid, (ThreadAgentId, ElicitationEntryId)>>,
 }
 
+/// Which engine backs the native agent (issue #45, spec Phase 2, ADR-0004).
+///
+/// The Cersei path and the ported engine implement the same `AgentServer`
+/// against the same agent id, so this returns one trait object and nothing
+/// downstream knows which it got. That is the switch.
+///
+/// Without the `ported-engine` feature the engine is not linked at all, so
+/// this is not a run-time choice a release build can make — which is the
+/// point. The Cersei path keeps shipping until the acceptance bar is green.
+#[cfg(not(feature = "ported-engine"))]
+fn select_native_agent(
+    cersei: CerseiAgentServer,
+    _config_dir: &Path,
+) -> Arc<dyn atlas_agent_servers::AgentServer> {
+    Arc::new(cersei)
+}
+
+/// See the sibling above. With the engine linked, `ATLAS_AGENT_ENGINE` picks:
+/// `cersei` returns the old path, anything else (including unset) uses the
+/// ported engine, because a build that asked for the engine wants it.
+///
+/// Keeping both reachable from one binary is what makes "unchanged when the
+/// switch selects Cersei" checkable without a rebuild between the two halves.
+#[cfg(feature = "ported-engine")]
+fn select_native_agent(
+    cersei: CerseiAgentServer,
+    config_dir: &Path,
+) -> Arc<dyn atlas_agent_servers::AgentServer> {
+    use atlas_native_agent::engine::{EngineAgentServer, EngineSettings};
+
+    if std::env::var("ATLAS_AGENT_ENGINE").as_deref() == Ok("cersei") {
+        tracing::info!("native agent: Cersei path (ATLAS_AGENT_ENGINE=cersei)");
+        return Arc::new(cersei);
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| config_dir.to_path_buf());
+    let settings = EngineSettings::from_env(config_dir, cwd);
+    tracing::info!(
+        provider = %settings.provider.base_url,
+        model = %settings.model,
+        home = %settings.home.path().display(),
+        "native agent: ported engine",
+    );
+    Arc::new(EngineAgentServer::new(settings))
+}
+
 impl AgentHost {
     pub fn new(
         sink: Arc<dyn DeltaSink>,
@@ -293,9 +340,9 @@ impl AgentHost {
                 None
             }
         };
-        let native_server = CerseiAgentServer::new(config_dir);
+        let native_server = CerseiAgentServer::new(config_dir.clone());
         let native_runtime = native_server.runtime().clone();
-        let native: Arc<dyn atlas_agent_servers::AgentServer> = Arc::new(native_server);
+        let native = select_native_agent(native_server, &config_dir);
         let (elicitation_tx, elicitation_rx) = mpsc::unbounded_channel();
         let options = ConnectOptions {
             root_dir: None,
