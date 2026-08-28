@@ -99,15 +99,15 @@ You don't have to read the raw transcript to get the context back: select a chec
 
 ### Agents
 
-| Capability | Description |
-|---|---|
-| **Multi-agent sessions** | Claude Code, Codex, and Atlas's native agent, selectable per session and running in parallel across tabs. Sessions are independent of tabs, so switching never drops a run in flight |
-| **Shared agent memory** | On-device semantic index (local embeddings, HNSW search) that every agent reads from and writes to |
-| **`@` mentions** | Local resolution of files, folders, symbols, branches, commits, notes, skills, papers, and past sessions |
-| **Skills** | `SKILL.md` files scoped globally or per project, enabled per agent by symlinking into that agent's own skills directory |
-| **Packs** | Install a GitHub repo of skills, subagents, commands, hooks, rules, and scripts, discovered through the skills.sh index |
-| **Model chat** | Talk to a model directly in its own tab, with no agent loop around it |
-| **Organisations** | Sign in, create an organisation, and sync across devices and teammates |
+| Capability | Description | Link |
+|---|---|---|
+| Multi-agent sessions | Claude Code, Codex, and Atlas's native agent, selectable per session and running in parallel across tabs. Sessions are independent of tabs, so switching never drops a run in flight | [Chat & Sessions](https://docs.tryatlas.cc/docs/product/chat) |
+| Shared agent memory | On-device semantic index (local embeddings, HNSW search) that every agent reads from and writes to | [Memory](https://docs.tryatlas.cc/docs/context/memory) |
+| @ mentions | Local resolution of files, folders, symbols, branches, commits, notes, skills, papers, and past sessions | [Chat & Sessions](https://docs.tryatlas.cc/docs/product/chat) |
+| Skills | SKILL.md files scoped globally or per project, enabled per agent by symlinking into that agent's own skills directory | [Skills](https://docs.tryatlas.cc/docs/context/skills) |
+| Packs | Install a GitHub repo of skills, subagents, commands, hooks, rules, and scripts, discovered through the skills.sh index | [Skills](https://docs.tryatlas.cc/docs/context/skills) |
+| Model chat | Talk to a model directly in its own tab, with no agent loop around it | [Chat & Sessions](https://docs.tryatlas.cc/docs/product/chat) |
+| Organisations | Sign in, create an organisation, and sync across devices and teammates | [Organisations](https://docs.tryatlas.cc/docs/organisation/organisations) |
 
 ### Agent history
 
