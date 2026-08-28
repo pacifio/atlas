@@ -1,0 +1,343 @@
+//! Assembling the engine's configuration.
+//!
+//! The spec puts this **in the seam**, not in `src-tauri` and not in the
+//! engine: the seam is the only place that knows both Atlas's settings and the
+//! engine's shape, and keeping it here is what lets `src-tauri` go on calling
+//! nothing but the `AgentConnection` trait.
+//!
+//! Config reaches the engine two ways, and the split is not arbitrary:
+//!
+//! - **`ConfigOverrides`** for the things that have no config-file spelling.
+//!   `codex_self_exe` is the load-bearing one — the engine's own docs say it
+//!   "cannot be set in the config file: it must be set in code via
+//!   `ConfigOverrides`". Sandbox and approval defaults ride along here too.
+//! - **TOML overrides** for everything that *is* a config key: the provider
+//!   definition and the analytics switch. Going through the documented key path
+//!   means the engine's own `validate_model_providers` runs over what we built,
+//!   so a malformed provider fails at config load with the engine's error rather
+//!   than at the first request with ours.
+
+use std::path::Path;
+use std::path::PathBuf;
+
+use anyhow::Context;
+use anyhow::Result;
+use codex_core::config::Config;
+use codex_core::config::ConfigBuilder;
+use codex_core::config::ConfigOverrides;
+use codex_protocol::config_types::SandboxMode;
+use codex_protocol::protocol::AskForApproval;
+use toml::Value as TomlValue;
+
+/// The engine's private working directory.
+///
+/// A newtype because getting this wrong is silent and bad. Starting the runtime
+/// calls `resolve_installation_id`, which is **not a read**: it `create_dir_all`s
+/// this path and creates a `0644` installation-id file inside it. So this must
+/// be a directory Atlas owns.
+///
+/// It is emphatically **not** `~/.codex`. Pointing it there would have the app
+/// adopt, and write into, the user's real Codex CLI state.
+///
+/// Everything under here is engine-private working storage in D9's sense: the
+/// engine may keep rollouts and its own SQLite here, and no history or sidebar
+/// reader is ever pointed at it. Those keep reading the app-owned
+/// thread-metadata store (ADR-0001).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineHome(PathBuf);
+
+impl EngineHome {
+    /// The engine's home inside Atlas's own config directory.
+    ///
+    /// `config_dir` is what the Cersei path is handed today, so both engines
+    /// keep their state under the same Atlas-owned root and a profile wipe
+    /// takes both.
+    pub fn under_config_dir(config_dir: &Path) -> Self {
+        Self(config_dir.join("atlas-agent").join("engine"))
+    }
+
+    /// An explicit path, for tests that want a tempdir.
+    pub fn at(path: impl Into<PathBuf>) -> Self {
+        Self(path.into())
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+/// Which wire format a provider speaks.
+///
+/// Only the Responses dialect exists today — the engine speaks exactly one wire
+/// format, and Chat Completions was deliberately *removed* upstream rather than
+/// never built. The gateway dialect (D3) adds the second arm in Phase 3; this
+/// enum is where it will land, which is why a one-variant enum is worth having
+/// now instead of a bare bool later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WireDialect {
+    Responses,
+}
+
+impl WireDialect {
+    fn as_config_value(self) -> &'static str {
+        match self {
+            Self::Responses => "responses",
+        }
+    }
+}
+
+/// The provider the engine talks to.
+///
+/// In Phase 2 this is a developer-configured provider carrying the turn. In
+/// Phase 3 it becomes the Atlas gateway on the Chat Completions dialect.
+#[derive(Debug, Clone)]
+pub struct EngineProvider {
+    /// The key this provider is registered under in `model_providers`.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    pub base_url: String,
+    pub wire: WireDialect,
+    /// The environment variable holding the key, when the provider is
+    /// key-authenticated rather than account-authenticated.
+    ///
+    /// `None` is the D10 shape: auth arrives through the `ExternalAuth`
+    /// provider instead, resolved per request.
+    pub env_key: Option<String>,
+}
+
+impl EngineProvider {
+    /// A developer-configured provider for the Phase 2 tracer bullet.
+    pub fn dev(id: impl Into<String>, base_url: impl Into<String>, env_key: Option<String>) -> Self {
+        let id = id.into();
+        Self {
+            name: id.clone(),
+            id,
+            base_url: base_url.into(),
+            wire: WireDialect::Responses,
+            env_key,
+        }
+    }
+}
+
+/// Everything the seam decides about how the engine runs.
+#[derive(Debug, Clone)]
+pub struct EngineSettings {
+    pub home: EngineHome,
+    pub provider: EngineProvider,
+    pub model: String,
+    /// The session's working directory.
+    pub cwd: PathBuf,
+    /// The path to Atlas's own executable.
+    ///
+    /// Sandboxed execution on macOS re-enters this binary, so the engine has to
+    /// be told what it is. This is the single process-level assumption in the
+    /// whole embedding, and it has an explicit code-level seam precisely so an
+    /// embedder can satisfy it without adopting the engine's argv0 dispatch.
+    pub self_exe: Option<PathBuf>,
+    pub approval_policy: AskForApproval,
+    pub sandbox_mode: SandboxMode,
+}
+
+impl EngineSettings {
+    pub fn new(home: EngineHome, provider: EngineProvider, model: impl Into<String>, cwd: PathBuf) -> Self {
+        Self {
+            home,
+            provider,
+            model: model.into(),
+            cwd,
+            self_exe: std::env::current_exe().ok(),
+            // D5: the sandbox is on from day one on macOS, in the engine's own
+            // default approval/sandbox mode. `WorkspaceWrite` plus
+            // `OnRequest` is that default — writes confined to the workspace,
+            // anything else routed to the approval dialog Atlas already has.
+            approval_policy: AskForApproval::OnRequest,
+            sandbox_mode: SandboxMode::WorkspaceWrite,
+        }
+    }
+
+    /// The overrides that have no config-file spelling.
+    pub fn config_overrides(&self) -> ConfigOverrides {
+        ConfigOverrides {
+            model: Some(self.model.clone()),
+            model_provider: Some(self.provider.id.clone()),
+            cwd: Some(self.cwd.clone()),
+            approval_policy: Some(self.approval_policy.clone()),
+            sandbox_mode: Some(self.sandbox_mode),
+            codex_self_exe: self.self_exe.clone(),
+            ..Default::default()
+        }
+    }
+
+    /// The config-file-shaped overrides: the provider, and analytics off.
+    ///
+    /// Ordered and deterministic so a test can assert on the whole vector.
+    pub fn cli_overrides(&self) -> Vec<(String, TomlValue)> {
+        let p = &self.provider;
+        let key = |suffix: &str| format!("model_providers.{}.{suffix}", p.id);
+        let mut out = vec![
+            (key("name"), TomlValue::String(p.name.clone())),
+            (key("base_url"), TomlValue::String(p.base_url.clone())),
+            (
+                key("wire_api"),
+                TomlValue::String(p.wire.as_config_value().to_string()),
+            ),
+            // D10: the engine's own login surface stays off. With this false
+            // the engine never presents a login screen, and auth comes from
+            // whatever the seam installed.
+            (key("requires_openai_auth"), TomlValue::Boolean(false)),
+            // D2. The analytics client's upload paths are gone from the fork
+            // outright, so this is belt-and-braces rather than the mechanism —
+            // but a config that says "off" is what makes the intent legible to
+            // the next person reading it.
+            ("analytics.enabled".to_string(), TomlValue::Boolean(false)),
+        ];
+        if let Some(env_key) = &p.env_key {
+            out.push((key("env_key"), TomlValue::String(env_key.clone())));
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    /// Loads the engine's `Config` with everything above applied.
+    pub async fn build_config(&self) -> Result<Config> {
+        tokio::fs::create_dir_all(self.home.path())
+            .await
+            .with_context(|| {
+                format!(
+                    "creating the engine's private home at {}",
+                    self.home.path().display()
+                )
+            })?;
+
+        ConfigBuilder::default()
+            .codex_home(self.home.path().to_path_buf())
+            .cli_overrides(self.cli_overrides())
+            .harness_overrides(self.config_overrides())
+            .fallback_cwd(Some(self.cwd.clone()))
+            .build()
+            .await
+            .map_err(anyhow::Error::from)
+            .context("loading the ported engine's configuration")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings(tmp: &Path) -> EngineSettings {
+        EngineSettings::new(
+            EngineHome::at(tmp.join("engine")),
+            EngineProvider::dev("atlas-dev", "https://example.invalid/v1", None),
+            "gpt-5-codex",
+            tmp.to_path_buf(),
+        )
+    }
+
+    #[test]
+    fn the_engine_home_is_atlas_owned_and_never_the_users_codex_cli_state() {
+        // Starting the runtime writes an installation-id file into this
+        // directory. Pointing it at ~/.codex would make Atlas write into the
+        // user's real Codex CLI state.
+        let home = EngineHome::under_config_dir(Path::new("/Users/somebody/Library/atlas"));
+        assert!(home.path().starts_with("/Users/somebody/Library/atlas"));
+        assert!(!home.path().to_string_lossy().contains(".codex"));
+    }
+
+    #[test]
+    fn the_provider_is_registered_under_its_own_key_with_the_login_surface_off() {
+        let tmp = std::env::temp_dir();
+        let overrides = settings(&tmp).cli_overrides();
+        let get = |k: &str| {
+            overrides
+                .iter()
+                .find(|(key, _)| key == k)
+                .map(|(_, v)| v.clone())
+        };
+
+        assert_eq!(
+            get("model_providers.atlas-dev.base_url"),
+            Some(TomlValue::String("https://example.invalid/v1".into())),
+        );
+        assert_eq!(
+            get("model_providers.atlas-dev.wire_api"),
+            Some(TomlValue::String("responses".into())),
+        );
+        // D10: never show the engine's own login screen.
+        assert_eq!(
+            get("model_providers.atlas-dev.requires_openai_auth"),
+            Some(TomlValue::Boolean(false)),
+        );
+        // D2.
+        assert_eq!(get("analytics.enabled"), Some(TomlValue::Boolean(false)));
+    }
+
+    #[test]
+    fn an_account_authenticated_provider_declares_no_env_key() {
+        // The D10 shape: no `env_key`, because auth arrives through the
+        // ExternalAuth provider rather than the environment. An env_key here
+        // would give the engine a second, staler place to find a credential.
+        let tmp = std::env::temp_dir();
+        let overrides = settings(&tmp).cli_overrides();
+        assert!(
+            !overrides.iter().any(|(k, _)| k.ends_with(".env_key")),
+            "an account-authenticated provider must not name an env key",
+        );
+
+        let keyed = EngineSettings::new(
+            EngineHome::at(tmp.join("engine")),
+            EngineProvider::dev("byok", "https://example.invalid/v1", Some("DEV_KEY".into())),
+            "gpt-5-codex",
+            tmp.clone(),
+        );
+        assert!(
+            keyed
+                .cli_overrides()
+                .iter()
+                .any(|(k, v)| k == "model_providers.byok.env_key"
+                    && v == &TomlValue::String("DEV_KEY".into())),
+        );
+    }
+
+    #[test]
+    fn the_self_exe_path_is_injected_because_the_config_file_cannot_carry_it() {
+        // The engine re-enters this binary for sandboxed execution and the key
+        // has no config-file spelling, so it has to arrive through
+        // ConfigOverrides or not at all.
+        let tmp = std::env::temp_dir();
+        let overrides = settings(&tmp).config_overrides();
+        assert_eq!(overrides.codex_self_exe, std::env::current_exe().ok());
+        assert!(overrides.codex_self_exe.is_some(), "current_exe must resolve in a test binary");
+    }
+
+    #[test]
+    fn the_sandbox_is_on_by_default() {
+        // D5: on from day one, in the engine's default mode. A regression here
+        // is a silently unsandboxed agent, which no test failure would
+        // otherwise announce.
+        let tmp = std::env::temp_dir();
+        let s = settings(&tmp);
+        assert_eq!(s.sandbox_mode, SandboxMode::WorkspaceWrite);
+        assert!(matches!(s.approval_policy, AskForApproval::OnRequest));
+    }
+
+    #[tokio::test]
+    async fn build_config_creates_the_home_and_resolves_the_provider() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let s = settings(tmp.path());
+        let config = s.build_config().await.expect("config should load");
+
+        assert!(s.home.path().is_dir(), "the engine home must exist after build");
+        assert_eq!(config.model.as_deref(), Some("gpt-5-codex"));
+        assert_eq!(
+            config.model_provider.base_url.as_deref(),
+            Some("https://example.invalid/v1"),
+        );
+        assert!(
+            !config.model_provider.requires_openai_auth,
+            "the engine's own login surface must stay off (D10)",
+        );
+        assert_eq!(config.analytics_enabled, Some(false));
+    }
+}

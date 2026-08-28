@@ -36,6 +36,9 @@
 //! - **Elicitations.** The runtime never asks the user anything mid-turn except
 //!   for tool permission, which has its own path.
 
+#[cfg(feature = "ported-engine")]
+pub mod engine;
+
 pub mod connection;
 pub mod server;
 pub mod sink;

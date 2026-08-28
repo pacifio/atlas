@@ -23,8 +23,15 @@ import { fileURLToPath } from "node:url";
  *
  * This is the same shape as `cersei-containment.test.ts`: an allowlist of
  * manifests permitted to name the dependency, enforced over every manifest
- * Atlas owns. When #45 rewires the seam, add `crates/atlas-native-agent` here
- * in the same commit — this test failing on that day is it working.
+ * Atlas owns.
+ *
+ * **#45 opened the first hole in it, on purpose.** The seam crate now links the
+ * engine — that is what "rewire the seam" means — so `crates/atlas-native-agent`
+ * is allowlisted below. What is *not* relaxed is the rule that matters: the
+ * engine reaches no shipping binary. It is behind the `ported-engine` cargo
+ * feature, which is off by default, so a default build of the app resolves
+ * exactly as it did before the port. The last assertion here is what holds that
+ * line, and it is now the load-bearing one.
  */
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -33,10 +40,12 @@ const VENDOR = path.join(REPO_ROOT, "vendor", "codex");
 /**
  * Manifests allowed to declare a `codex-*` dependency.
  *
- * Empty on purpose. The engine is referenced by nothing outside its own tree,
- * which is what "quarantined" means in #42's acceptance criteria.
+ * Exactly one, and it earns it: the seam is where ADR-0004 puts the engine.
+ * Every dependency it declares is `optional = true` behind `ported-engine`,
+ * which `default = []` leaves off — enforced below, because "optional" in a
+ * manifest is a claim and this test is what checks it.
  */
-const ALLOWED_CODEX_CONSUMERS = new Set<string>([]);
+const ALLOWED_CODEX_CONSUMERS = new Set<string>(["crates/atlas-native-agent/Cargo.toml"]);
 
 function read(file: string): string {
   return readFileSync(file, "utf8");
@@ -141,7 +150,32 @@ describe("nothing that ships depends on the vendored engine", () => {
   it("the engine is reachable from no shipping binary", () => {
     // src-tauri is the only thing that becomes the app. Checked separately from
     // the sweep above so a failure names the app rather than "some manifest".
+    //
+    // Still absolute after #45: src-tauri depends on the *seam*, and the seam's
+    // engine dependencies are off unless someone asks for them. A direct
+    // `codex-*` line here would put the engine in the shipped binary no matter
+    // what the feature says.
     const app = uncommented(read(path.join(REPO_ROOT, "src-tauri", "Cargo.toml")));
     expect(CODEX_DEP.test(app)).toBe(false);
+  });
+
+  it("every allowlisted codex dependency is optional, behind an off-by-default feature", () => {
+    // The allowlist grants the seam the right to *name* the engine, not to
+    // link it into a default build. Without this, dropping `optional = true`
+    // from one line would ship 105 crates of engine and nothing would notice:
+    // it compiles, it passes clippy, and the only symptom is in the binary.
+    const manifest = read(path.join(REPO_ROOT, "crates", "atlas-native-agent", "Cargo.toml"));
+    const declarations = uncommented(manifest)
+      .split("\n")
+      .filter((l) => /^\s*codex-[a-z0-9-]+\s*=/.test(l));
+
+    expect(declarations.length, "the seam should declare the engine crates").toBeGreaterThan(5);
+    const notOptional = declarations.filter((l) => !/optional\s*=\s*true/.test(l));
+    expect(notOptional, "a codex dependency the seam links unconditionally").toEqual([]);
+
+    // And the feature that turns them on is not in `default`.
+    const defaultFeature = /^\s*default\s*=\s*\[(.*?)\]/m.exec(manifest);
+    expect(defaultFeature, "atlas-native-agent must declare a default feature list").not.toBeNull();
+    expect(defaultFeature?.[1].trim(), "the ported engine must not be a default feature").toBe("");
   });
 });

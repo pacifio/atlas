@@ -24,6 +24,42 @@ serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
 tracing = "0.1"
 
+# --- The ported engine (#45, ADR-0004) --------------------------------------
+# Optional, and off by default: the `ported-engine` feature is the development
+# -time switch of spec Phase 2. With it off, this crate resolves exactly as it
+# did before the port and the shipped app is untouched.
+base64 = { version = "0.22", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+toml = { version = "0.9", optional = true }
+codex-app-server-client = { path = "../../vendor/codex/app-server-client", optional = true }
+codex-app-server-protocol = { path = "../../vendor/codex/app-server-protocol", optional = true }
+codex-arg0 = { path = "../../vendor/codex/arg0", optional = true }
+codex-config = { path = "../../vendor/codex/config", optional = true }
+codex-core = { path = "../../vendor/codex/core", optional = true }
+codex-exec-server = { path = "../../vendor/codex/exec-server", optional = true }
+codex-feedback = { path = "../../vendor/codex/feedback", optional = true }
+codex-login = { path = "../../vendor/codex/login", optional = true }
+codex-protocol = { path = "../../vendor/codex/protocol", optional = true }
+codex-rollout = { path = "../../vendor/codex/rollout", optional = true }
+
+[features]
+default = []
+ported-engine = [
+  "dep:base64",
+  "dep:serde",
+  "dep:toml",
+  "dep:codex-app-server-client",
+  "dep:codex-app-server-protocol",
+  "dep:codex-arg0",
+  "dep:codex-config",
+  "dep:codex-core",
+  "dep:codex-exec-server",
+  "dep:codex-feedback",
+  "dep:codex-login",
+  "dep:codex-protocol",
+  "dep:codex-rollout",
+]
+
 [dev-dependencies]
 # `test-support` lets a test point a real turn at a scripted model, which is the
 # only part of the native agent a test cannot otherwise run.
