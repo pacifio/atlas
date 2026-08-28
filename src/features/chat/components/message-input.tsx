@@ -32,7 +32,6 @@ import {
 import { canSignIn, promptSignIn } from "../lib/agent-signin";
 import { switchAgentForTab } from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
-import { ProviderModelPills } from "./provider-model-pills";
 import { loadCerseiEffort } from "../lib/cersei-model-pref";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
 import { modelLabel } from "../lib/model-label";
@@ -470,7 +469,12 @@ function ComposerGroupsMenu({
   const isClaude = agentType === "claude-code";
   const hasAcpModes = !!availableModes && availableModes.length > 0;
   const showMode = isClaude || hasAcpModes || modesPending;
-  const showModel = agentType !== "cersei" && models.length > 0;
+  // The native agent shows the same model pill as everyone else. It used to be
+  // excluded here because its picker was the BYOK ProviderModelPills — a list
+  // of the user's own provider keys, which the gateway agent cannot use. The
+  // seam now publishes the gateway catalogue through the standard snapshot, so
+  // the exclusion would hide the right list to keep showing the wrong one.
+  const showModel = models.length > 0;
 
   const toggle = (g: ComposerGroup) => {
     setQ("");
@@ -770,15 +774,8 @@ export function MessageInput({
   disabled = false,
   placeholder = "Message Atlas... (@ to mention, / for commands)",
 }: MessageInputProps) {
-  const {
-    enqueueMessage,
-    removeQueueItem,
-    setAcpModes,
-    setAcpModesPending,
-    setCerseiProvider,
-    setCerseiModel,
-    setCerseiEffort,
-  } = useChatStore.use.actions();
+  const { enqueueMessage, removeQueueItem, setAcpModes, setAcpModesPending, setCerseiEffort } =
+    useChatStore.use.actions();
   // Show the picker as soon as the agent is non-Claude — even before its modes
   // load — so the composer can render a loading pill instead of nothing during
   // the agent spawn + new_session boot.
@@ -852,34 +849,11 @@ export function MessageInput({
   // external ids through and collapses only the legacy "custom" placeholder,
   // which is what the transcript and sidebar already did.
   const switchableAgent: SwitchableAgent = switchableAgentOf(agentType);
-  // Native Cersei agent only: BYOK provider + model selection for the composer.
-  const cerseiProvider = useChatStore((s) => s.sessions[tabId]?.cerseiProvider ?? "");
-  const cerseiModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel ?? "");
-  const onCerseiProvider = useCallback(
-    (id: string) => setCerseiProvider(tabId, id),
-    [tabId, setCerseiProvider],
-  );
-  const onCerseiModel = useCallback(
-    (id: string) => setCerseiModel(tabId, id),
-    [tabId, setCerseiModel],
-  );
-  // The composer may settle on a provider/model before the session is bound
-  // (the `agents_set_model` push no-ops until then). Re-push once the binding
-  // lands and a full selection exists — idempotent, mirrors the ACP mode
-  // self-heal above. Without this the agent silently falls back to the server's
-  // default model whenever the user's pick raced ahead of the bind.
-  const cerseiBinding = useChatStore((s) => {
-    const sess = s.sessions[tabId];
-    if (sess?.agentType !== "cersei") return null;
-    if (!sess.acpAgentId || !sess.acpSessionId) return null;
-    if (!sess.cerseiProvider || !sess.acpCurrentModel) return null;
-    return `${sess.acpAgentId}::${sess.acpSessionId}::${sess.acpCurrentModel}`;
-  });
-  useEffect(() => {
-    if (!cerseiBinding) return;
-    const model = cerseiBinding.split("::")[2];
-    setCerseiModel(tabId, model);
-  }, [tabId, cerseiBinding, setCerseiModel]);
+  // The BYOK provider/model bindings for the native agent stood here — the
+  // provider pick, the model re-push on bind, the whole BYOK selection path.
+  // Gone: the native agent's model comes from the seam's published catalogue
+  // through the same `setAcpModel` path every other agent uses, and its
+  // "provider" is the Atlas gateway, which is not a choice.
   // Seed the reasoning-effort from the saved preference once per cersei session,
   // then re-push it whenever the session is bound (mirrors the model re-push).
   const cerseiEffort = useChatStore((s) => s.sessions[tabId]?.cerseiEffort);
@@ -899,22 +873,20 @@ export function MessageInput({
   // The RTK compression toggle was seeded and re-pushed here. It is gone with
   // the runtime that implemented it (#54) — the ported engine has no
   // tool-output compressor, so the control had nothing to switch (D8).
-  // ACP-reported slash commands for this session. Both adapters advertise
-  // their real command list via `available_commands_update` — Codex's arrives
-  // with the binding, Claude's a few seconds after session/new (the SDK
-  // discovers skills/plugins/MCP prompts first). Per ADR 0003 there is no
-  // fallback catalogue: the picker shows a loading state (see
-  // `slashCommandsLoading` below) during that gap instead. The native agent
-  // has no slash commands; its trigger is suppressed at the wiring site
-  // below.
+  // ACP-reported slash commands for this session. Every agent advertises its
+  // real command list via `available_commands_update` — Codex's arrives with
+  // the binding, Claude's a few seconds after session/new (the SDK discovers
+  // skills/plugins/MCP prompts first), and the native agent's with its
+  // session, published by the seam. Per ADR 0003 there is no fallback
+  // catalogue: the picker shows a loading state (see `slashCommandsLoading`
+  // below) during that gap instead.
   const availableCommands = useChatStore((s) => s.sessions[tabId]?.availableCommands);
   const slashCommandsLoading = availableCommands === undefined;
   const agentSlashCommands = useMemo<SlashCommand[]>(() => {
-    // Every ACP-transport agent gets its advertised commands — first-party AND
-    // registry-installed externals (their agentType IS their plugin id). Only
-    // the native cersei agent (no slash commands) and the legacy "custom"
-    // placeholder bail out.
-    if (agentType === "cersei" || agentType === "custom") return [];
+    // Every agent gets its advertised commands — the native agent included,
+    // whose list the seam now publishes. Only the legacy "custom" placeholder
+    // bails out.
+    if (agentType === "custom") return [];
     const fromAgent: SlashCommand[] = (availableCommands ?? [])
       .map((c) => {
         const o = (c ?? {}) as {
@@ -1059,10 +1031,10 @@ export function MessageInput({
 
   // ── Slash-command picker orchestration ────────────────────────────────
   const [slashTrigger, setSlashTrigger] = useState<SlashTrigger | null>(null);
-  // Close a picker left open across an agent switch — the new agent's
-  // catalogue (or lack of one, for cersei) must not inherit the open state.
+  // A picker left open across an agent switch must not inherit the open
+  // state; each agent's catalogue swaps in via `agentSlashCommands` above.
   useEffect(() => {
-    if (agentType === "cersei") setSlashTrigger(null);
+    setSlashTrigger(null);
   }, [agentType]);
   const slashPickerRef = useRef<SlashCommandPickerHandle>(null);
   const slashTriggerRef = useRef<SlashTrigger | null>(null);
@@ -1844,10 +1816,7 @@ export function MessageInput({
                   onSubmit={submit}
                   enterToSend={enterToSend}
                   onMentionTrigger={setTrigger}
-                  // The native agent has no slash commands — suppressing the
-                  // trigger here (rather than showing an empty picker) keeps "/"
-                  // as plain text for cersei.
-                  onSlashTrigger={agentType === "cersei" ? undefined : setSlashTrigger}
+                  onSlashTrigger={setSlashTrigger}
                   onPasteImages={handlePasteImages}
                   keyInterceptor={keyInterceptor}
                 />
@@ -1930,14 +1899,11 @@ export function MessageInput({
                 currentAgent={switchableAgent}
                 onSwitchAgent={handleSwitchAgent}
               />
-              {agentType === "cersei" && (
-                <ProviderModelPills
-                  provider={cerseiProvider}
-                  model={cerseiModel}
-                  onProvider={onCerseiProvider}
-                  onModel={onCerseiModel}
-                />
-              )}
+              {/* The BYOK ProviderModelPills used to render here for the
+                  native agent — the user's own provider keys, which the
+                  gateway agent cannot use. Model choice now goes through the
+                  same ACP model pill as every other agent, fed by the seam's
+                  published catalogue. */}
               {agentType === "cersei" && <EffortPill tabId={tabId} />}
               {agentType === "cersei" && <CerseiMemoryPill />}
               {agentType === "cersei" && <CerseiUsagePill tabId={tabId} />}

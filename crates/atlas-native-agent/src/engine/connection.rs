@@ -858,34 +858,42 @@ impl AgentConnection for EngineConnection {
     }
 
     fn prompt(&self, params: acp::PromptRequest) -> BoxFuture<'static, Result<acp::PromptResponse>> {
-        let text = crate::engine::sink::flatten_prompt(&params.prompt);
+        let mut text = crate::engine::sink::flatten_prompt(&params.prompt);
         let thread_id = params.session_id.to_string();
         let requests = self.requests.clone();
         let turns = self.turns.clone();
         let request_id = self.request_ids.next();
         let model = self.settings.model.clone();
 
-        // A slash command is a protocol call, not something to say to the
-        // model. Sent as a turn it would arrive as the literal text "/compact",
-        // which the engine has no reason to interpret — the command would look
-        // offered and do nothing.
-        if let Some(command) = crate::engine::commands::command_of(&text) {
-            let thread_id = thread_id.clone();
-            return async move {
-                debug_assert_eq!(command, crate::engine::commands::COMPACT);
-                let _: v2::ThreadCompactStartResponse = requests
-                    .request_typed(ClientRequest::ThreadCompactStart {
-                        request_id,
-                        params: v2::ThreadCompactStartParams { thread_id },
-                    })
-                    .await?;
-                // Compaction is not a turn: nothing streams, and there is no
-                // turn id to wait on. Ending it here rather than parking is
-                // what stops the composer spinning on a turn that was never
-                // started.
-                Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+        // A slash command is not something to say to the model — sent as a
+        // turn it would arrive as the literal text "/compact", which the
+        // engine has no reason to interpret. Each resolves to what it really
+        // is: a protocol call, or a canned turn.
+        match crate::engine::commands::command_of(&text) {
+            Some(crate::engine::commands::Command::Compact) => {
+                let thread_id = thread_id.clone();
+                return async move {
+                    let _: v2::ThreadCompactStartResponse = requests
+                        .request_typed(ClientRequest::ThreadCompactStart {
+                            request_id,
+                            params: v2::ThreadCompactStartParams { thread_id },
+                        })
+                        .await?;
+                    // Compaction is not a turn: nothing streams, and there is
+                    // no turn id to wait on. Ending it here rather than
+                    // parking is what stops the composer spinning on a turn
+                    // that was never started.
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed();
             }
-            .boxed();
+            // `/init` IS a turn — agent work with the usual approval flow
+            // around the file write — whose text the user did not have to
+            // write. Substitute the canned prompt and fall through.
+            Some(crate::engine::commands::Command::Init) => {
+                text = crate::engine::commands::INIT_PROMPT.to_string();
+            }
+            None => {}
         }
 
         async move {

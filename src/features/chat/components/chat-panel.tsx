@@ -569,7 +569,9 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     const agentId = session?.acpAgentId;
     const acpSessionId = session?.acpSessionId;
     if (!agentId || !acpSessionId) return;
-    if (session?.agentType === "cersei") return;
+    // The native agent is not excluded: its models come from the seam's
+    // published catalogue via this same snapshot, exactly like an external
+    // agent's. The old exclusion existed because its picker was BYOK.
     if ((session?.acpAvailableModels?.length ?? 0) > 0) return;
     let cancelled = false;
     void (async () => {
