@@ -1,3 +1,6 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
+// Atlas's gateway error-classification arm (spec D13).
+pub mod atlas_gateway;
 pub(crate) mod api_bridge;
 pub(crate) mod auth;
 pub(crate) mod common;
