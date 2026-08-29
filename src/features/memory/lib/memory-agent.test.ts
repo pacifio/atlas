@@ -20,7 +20,7 @@ vi.mock("@/features/agents/stores/agent-registry-store", () => ({
   }),
 }));
 
-import { agentMetaForSource, isAgentSource, pluginIdForSource } from "./memory-agent";
+import { agentMetaForSource, pluginIdForSource } from "./memory-agent";
 
 beforeEach(() => {
   registryState.plugins = [];
@@ -55,22 +55,6 @@ describe("pluginIdForSource", () => {
 
   it("leaves the native agent alone", () => {
     expect(pluginIdForSource("cersei")).toBe("cersei");
-  });
-});
-
-describe("isAgentSource", () => {
-  it("rejects the corpus's non-agent doc kinds", () => {
-    // These are kinds of memory, not agents — rendering an agent badge for a
-    // codebase doc would invent an identity that does not exist.
-    for (const s of ["codebase", "shared", "note", "policy", "", null, undefined]) {
-      expect(isAgentSource(s)).toBe(false);
-    }
-  });
-
-  it("accepts first-party and registry-installed agents alike", () => {
-    for (const s of ["claude", "codex", "cersei", "amp-acp", "kilo"]) {
-      expect(isAgentSource(s)).toBe(true);
-    }
   });
 });
 

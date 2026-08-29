@@ -6,7 +6,9 @@
 //! Instead:
 //!
 //! 1. On startup (and every few hours) a non-blocking check queries PostHog
-//!    remote config for `{version, uri}` ([`check_in_background`]).
+//!    remote config for `{version, uri}` ([`check_in_background`]), where the
+//!    URI comes from the key matching this machine's architecture —
+//!    `uri_mac_arm` or `uri_mac_intel` (see `telemetry::update_uri_flag`).
 //! 2. If newer, the DMG is **downloaded in the background** (resumable) to a
 //!    staging dir — the app stays fully usable, only a titlebar arc shows.
 //! 3. The DMG's Apple signature is verified and the `.app` is unpacked into a

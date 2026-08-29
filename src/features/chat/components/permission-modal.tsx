@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils";
 import { Kbd } from "@/ui/kbd";
 import { Markdown } from "@/lib/markdown";
 import { extractPlanMarkdown } from "../lib/plans";
-import { extractQuestions } from "../lib/questions";
-import { ApprovalCard } from "./approval-card";
+import { composeAnswers, extractQuestions } from "../lib/questions";
+import { ApprovalCard, type Answer } from "./approval-card";
 import type { PermissionOptionRef, PendingPermission } from "@/types/acp";
 import { type AgentType } from "@/types/agent";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
@@ -151,6 +151,30 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
     onSendMessage?.(text);
   };
 
+  // Answers → the permission wire. A single single-select answer that names a
+  // real ACP option resolves it properly, so the tool call completes with an
+  // answer. Anything else (several questions, multiSelect, typed text, or the
+  // adapter only offering generic allow/reject) cancels the request and sends
+  // the composed answers as a message — the agent reads them from there.
+  const submitQuestionAnswers = (answers: Answer[]) => {
+    const specs = questions ?? [];
+    if (specs.length === 1 && !specs[0].multiSelect) {
+      const a = answers[0];
+      if (a && !a.custom.trim() && a.selected.length === 1) {
+        const want = a.selected[0].trim().toLowerCase();
+        const match = current.options.find((o) => o.name.trim().toLowerCase() === want);
+        if (match) {
+          resolve(match.optionId);
+          return;
+        }
+      }
+    }
+    const text = composeAnswers(specs, answers);
+    if (!text) return;
+    cancel();
+    onSendMessage?.(text);
+  };
+
   const title = current.toolCall.title ?? current.toolCall.kind ?? "Tool call";
   const planMarkdown = extractPlanMarkdown(current.toolCall);
   const questions = extractQuestions(current.toolCall);
@@ -241,13 +265,8 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
         <ApprovalCard
           key={current.requestId}
           questions={questions}
-          acpOptions={current.options}
           queueNote={queueNote}
-          onResolveOption={resolve}
-          onAnswerText={(text) => {
-            cancel();
-            onSendMessage?.(text);
-          }}
+          onSubmit={submitQuestionAnswers}
         />
       </div>
     );

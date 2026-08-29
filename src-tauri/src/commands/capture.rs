@@ -1174,21 +1174,6 @@ pub async fn capture_import_confirm(project_path: String, app: AppHandle) -> Res
     .map_err(|e| e.to_string())?
 }
 
-/// Re-read the identity signals for an already-bound Workspace.
-///
-/// Called after the inline `git init` offer: the Workspace must start producing
-/// Checkpoints without a restart, which it can only do once the fingerprint it
-/// had no way to know is filled in.
-#[tauri::command]
-pub async fn capture_refresh(
-    project_path: String,
-    app: AppHandle,
-) -> Result<Option<atlas_checkpoint::Binding>, String> {
-    tauri::async_runtime::spawn_blocking(move || refresh_inner(&project_path, &app))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
 fn refresh_inner(
     project_path: &str,
     app: &AppHandle,
@@ -1453,29 +1438,6 @@ fn off_health(summary: &str) -> atlas_checkpoint::CaptureHealth {
         failed_rows: 0,
         pending_rows: 0,
     }
-}
-
-/// Every Session captured in this Workspace, newest first.
-///
-/// The whole point of the recorder. Reading is safe from any window — the
-/// writer lock guards writes only — so this deliberately does not check
-/// `is_writer`: a second Atlas window cannot record, but it can still read back
-/// what the first one did.
-#[tauri::command]
-pub async fn artifacts_sessions(
-    project_path: String,
-    workspace_id: Option<String>,
-) -> Result<Vec<atlas_checkpoint::SessionSummary>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let Some(store) = open_reader(&project_path)? else {
-            return Ok(Vec::new());
-        };
-        let workspace_id = workspace_id
-            .unwrap_or_else(|| workspace_id_for(std::path::Path::new(&project_path)));
-        atlas_checkpoint::session_summaries(&store, &workspace_id).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
 }
 
 /// One Session as an ordered timeline.

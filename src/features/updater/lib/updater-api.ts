@@ -14,11 +14,6 @@ export interface UpdaterSnapshot {
   currentVersion: string;
 }
 
-export interface UpdateAvailable {
-  version: string;
-  currentVersion: string;
-}
-
 export interface UpdateProgress {
   version: string;
   downloaded: number;

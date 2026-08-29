@@ -91,6 +91,10 @@ export class BlockStreamParser {
   private nextId = 1;
   blocks: TerminalBlock[] = [];
   altScreen = false;
+  /** DECCKM — application cursor keys. Decides how arrows must be ENCODED when
+   *  we forward them: `CSI A` normally, `SS3 A` once an app has enabled this.
+   *  Prompts that turn it on ignore the CSI form entirely. */
+  appCursorKeys = false;
   private current: TerminalBlock | null = null;
   private preambleId = 0;
   private integrated = false;
@@ -262,6 +266,9 @@ export class BlockStreamParser {
           changed = true;
         } else if (body === "?1049" && s[j] === "l") {
           this.altScreen = false;
+          changed = true;
+        } else if (body === "?1" && (s[j] === "h" || s[j] === "l")) {
+          this.appCursorKeys = s[j] === "h";
           changed = true;
         } else appendOut(seq); // keep SGR / other CSI in the block output
         i = j + 1;

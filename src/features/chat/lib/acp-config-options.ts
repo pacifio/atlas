@@ -184,11 +184,3 @@ function parseChoices(raw: unknown): Choice[] {
   }
   return flat;
 }
-
-/** The label for a select's current choice, falling back to the raw id. */
-export function currentChoiceLabel(option: AcpConfigOption): string {
-  if (option.kind === "boolean") return option.value ? "On" : "Off";
-  return (
-    option.choices.find((c) => c.id === option.currentValue)?.name ?? (option.currentValue || "—")
-  );
-}

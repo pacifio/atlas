@@ -37,7 +37,7 @@
 pub mod device;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use parking_lot::RwLock;
@@ -163,8 +163,56 @@ impl OrgIdentity {
 pub struct RemoteUpdateConfig {
     /// Latest version, raw string (e.g. `"0.1.21"`).
     pub version: String,
-    /// Direct download URL of the release DMG.
+    /// Direct download URL of the release DMG **for this machine's
+    /// architecture** — see [`update_uri_flag`].
     pub uri: String,
+}
+
+/// Which remote-config key holds the DMG this machine should download.
+///
+/// Atlas builds one DMG per architecture (`scripts/build-dmg.sh arm|intel`),
+/// so PostHog carries one URI for each: `uri_mac_arm` and `uri_mac_intel`.
+/// There is deliberately no plain `uri` fallback — a single URL cannot be right
+/// for both, and silently serving an x86 DMG to an Apple Silicon Mac (or the
+/// reverse) produces an app that either runs translated or does not run at all.
+/// A missing key means no update is offered, which is the safe answer.
+///
+/// Compile-time architecture is *almost* the whole story, since each build is
+/// single-arch. The exception is an Intel build running under **Rosetta** on
+/// Apple Silicon: that machine can run the native ARM app, and keying off the
+/// binary alone would pin it to the translated build forever.
+fn update_uri_flag() -> &'static str {
+    // Short-circuit: an ARM build is only ever on ARM hardware, so the sysctl
+    // below never runs there.
+    if cfg!(target_arch = "aarch64") || running_under_rosetta() {
+        "uri_mac_arm"
+    } else {
+        "uri_mac_intel"
+    }
+}
+
+/// Is this x86 process being translated onto Apple Silicon?
+///
+/// `sysctl.proc_translated` is macOS's own answer: `1` under Rosetta, `0` for a
+/// native process, and the key is absent entirely on Intel hardware (so a
+/// failed lookup correctly reads as "not translated"). Cached — it cannot
+/// change while the process is alive.
+#[cfg(target_os = "macos")]
+fn running_under_rosetta() -> bool {
+    static TRANSLATED: OnceLock<bool> = OnceLock::new();
+    *TRANSLATED.get_or_init(|| {
+        std::process::Command::new("/usr/sbin/sysctl")
+            .args(["-n", "sysctl.proc_translated"])
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .is_some_and(|out| String::from_utf8_lossy(&out.stdout).trim() == "1")
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn running_under_rosetta() -> bool {
+    false
 }
 
 /// Coerce a PostHog `featureFlagPayloads` value into a plain string. Payloads
@@ -369,7 +417,8 @@ impl TelemetryClient {
         }
     }
 
-    /// Fetch the two auto-update remote-config values (`version`, `uri`) from
+    /// Fetch the two auto-update remote-config values — `version`, and the
+    /// architecture's own URI key (`uri_mac_arm` / `uri_mac_intel`) — from
     /// PostHog using the official `posthog-rs` SDK's feature-flag evaluation
     /// (`evaluate_flags` → `/flags/?v=2`), keyed on the project token + anon
     /// distinct id. Both values are stored as PostHog **remote-config flag
@@ -392,8 +441,15 @@ impl TelemetryClient {
             .await
             .ok()?;
         let version = flags.get_flag_payload("version").as_ref().and_then(payload_string)?;
-        let uri = flags.get_flag_payload("uri").as_ref().and_then(payload_string)?;
+        // Architecture-specific: `uri_mac_arm` or `uri_mac_intel`, never a
+        // shared `uri` — see `update_uri_flag`.
+        let uri_flag = update_uri_flag();
+        let uri = flags.get_flag_payload(uri_flag).as_ref().and_then(payload_string)?;
         if version.trim().is_empty() || uri.trim().is_empty() {
+            tracing::warn!(
+                target: "atlas::updater",
+                "remote config has no usable {uri_flag} — no update offered"
+            );
             return None;
         }
         Some(RemoteUpdateConfig { version, uri })
@@ -804,6 +860,37 @@ async fn send_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_update_uri_key_matches_the_architecture_that_can_run_the_dmg() {
+        let flag = update_uri_flag();
+        // Never the old shared key: one URL cannot serve both architectures.
+        assert_ne!(flag, "uri");
+        assert!(matches!(flag, "uri_mac_arm" | "uri_mac_intel"), "unexpected key {flag}");
+
+        if cfg!(target_arch = "aarch64") {
+            // An ARM build only ever runs on ARM hardware.
+            assert_eq!(flag, "uri_mac_arm");
+        } else if running_under_rosetta() {
+            // Translated on Apple Silicon: offer the native build, so a Rosetta
+            // install migrates instead of being pinned to x86 forever.
+            assert_eq!(flag, "uri_mac_arm");
+        } else {
+            assert_eq!(flag, "uri_mac_intel");
+        }
+    }
+
+    #[test]
+    fn rosetta_detection_is_stable_and_false_on_native_hardware() {
+        // Cached behind a `OnceLock`, so it must not change between calls.
+        assert_eq!(running_under_rosetta(), running_under_rosetta());
+        // An ARM build is native by definition; on Intel hardware the sysctl
+        // key is absent, which must read as "not translated" rather than
+        // panicking or defaulting to true.
+        if cfg!(target_arch = "aarch64") {
+            assert!(!running_under_rosetta());
+        }
+    }
 
     #[test]
     fn redact_strips_paths_urls_and_truncates() {

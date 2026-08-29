@@ -8,6 +8,11 @@ import { MemoryTimelineCalendar } from "./memory-timeline-calendar";
 import { MemoryTimelinePanel, type PanelItem } from "./memory-timeline-panel";
 import { memoryGraph } from "../lib/memory-graph-api";
 import type { MemoryTimeline, TimelineCommit, TimelineMemory } from "../lib/memory-timeline-api";
+import {
+  loadMemoryTimelineDayCount,
+  saveMemoryTimelineDayCount,
+  type MemoryTimelineDayCount,
+} from "./memory-timeline-view-prefs";
 
 // ── Influence chain over the timeline (memory → session → commit) ──
 function buildChain(t: MemoryTimeline) {
@@ -104,7 +109,11 @@ export function MemoryTimelineView() {
   const [highlightIds, setHighlightIds] = useState<Set<string> | null>(null);
 
   // Day-range columns; 4 by default, user-selectable via the header toggle.
-  const [dayCount, setDayCount] = useState<3 | 4 | 7>(4);
+  const [dayCount, setDayCount] = useState<MemoryTimelineDayCount>(loadMemoryTimelineDayCount);
+  const setPersistedDayCount = (nextDayCount: MemoryTimelineDayCount) => {
+    setDayCount(nextDayCount);
+    saveMemoryTimelineDayCount(nextDayCount);
+  };
 
   useEffect(() => {
     ensureProject(projectPath);
@@ -254,7 +263,7 @@ export function MemoryTimelineView() {
           {([3, 4, 7] as const).map((n) => (
             <button
               key={n}
-              onClick={() => setDayCount(n)}
+              onClick={() => setPersistedDayCount(n)}
               className={cn(
                 "px-2 h-6 text-[10px] tabular-nums transition-colors cursor-pointer border-l border-[var(--border-default)] first:border-l-0",
                 dayCount === n

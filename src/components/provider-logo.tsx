@@ -62,10 +62,6 @@ const LOGOS: Record<string, IconComp> = {
   elevenlabs: ElevenLabs,
 };
 
-export function hasProviderLogo(id: string): boolean {
-  return id in LOGOS;
-}
-
 /**
  * Renders a provider's brand logo by BYOK id, centered in a fixed box so rows
  * align. Falls back to a neutral lucide glyph for providers without a brand

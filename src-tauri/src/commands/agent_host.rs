@@ -213,12 +213,19 @@ fn elicitation_response(
     action: &str,
     content: Option<serde_json::Value>,
 ) -> Result<Option<acp::CreateElicitationResponse>> {
+    // `{"action": "accept"}`, NOT `{"outcome": "accepted"}`. `ElicitationAction`
+    // is an internally tagged enum on `action` with snake_case variants, and its
+    // catch-all `Other` arm is `#[serde(untagged)]` — so a wrong tag does not
+    // fall through to it, it fails the whole union. This built an
+    // `outcome`-shaped object that could never deserialize, so EVERY elicitation
+    // answer died here with `Fatal`, the webview logged a warning and dismissed
+    // the card, and the agent went on awaiting a reply that was never sent.
     let value = match action {
         "accept" => serde_json::json!({
-            "outcome": "accepted",
+            "action": "accept",
             "content": content.unwrap_or(serde_json::json!({})),
         }),
-        "decline" => serde_json::json!({ "outcome": "declined" }),
+        "decline" => serde_json::json!({ "action": "decline" }),
         // Anything else cancels. That is the caller's intent, not a failure.
         _ => return Ok(None),
     };
@@ -402,6 +409,12 @@ impl AgentHost {
     // D8's accepted narrowing, with where it gets re-sourced from left as spec
     // open question 8. Rows the app owns are unaffected: they come from the
     // thread-metadata store, which is the only source the sidebar has ever had.
+    //
+    // 0.3.1 taught the deleted `native_sessions` to strip Atlas's injected
+    // memory blocks out of sidebar previews. That fix does not transfer: it
+    // cleaned previews read from the engine-private store this path no longer
+    // touches. `strip_injected_context` itself survives and still guards the
+    // app-owned rows.
 
     /// Re-probe `PATH` for registry agents the user already has.
     pub fn probe_detected(&self) {
@@ -1383,21 +1396,71 @@ impl AgentHost {
         Ok(())
     }
 
-    /// Every project the user has threads in, each with its own threads.
+    /// The open project's threads — the chat history sidebar's only source.
     ///
-    /// The sidebar's only source. Across all projects, because the store is
-    /// app-level and work in another worktree should be visible and resumable
-    /// without switching to it first.
-    pub fn thread_projects(&self) -> Result<Vec<ThreadProjectWire>> {
-        Ok(self
-            .history_or_err()?
-            .store()
-            .projects()
+    /// **Scoped to `cwd`.** The store is app-level and holds every project's
+    /// threads (ADR-0001), and this used to return all of them, Zed-style. That
+    /// suits Zed, where the window IS the project; Atlas switches projects
+    /// inside one window, so a list mixing every project's chats was noise the
+    /// user had to read past, and a thread from another project sitting at the
+    /// top read as if it belonged to the one in front. Everything is still
+    /// reachable — `thread_history` backs the "All history" view, unscoped.
+    ///
+    /// With no project open (`cwd` empty) there is nothing to scope to, so the
+    /// full list stands rather than showing an empty sidebar.
+    ///
+    /// Matching `cwd` happens HERE rather than in the UI: the comparison has to
+    /// run against the same canonicalised form the grouping key uses, and only
+    /// this side has it. The UI comparing its own raw path string silently
+    /// matched nothing whenever the two spellings differed (symlink,
+    /// `/private` prefix, trailing slash).
+    pub fn thread_projects(&self, cwd: Option<&str>) -> Result<Vec<ThreadProjectWire>> {
+        let projects = self.history_or_err()?.store().projects();
+
+        // Basenames collide: two checkouts both called `web` are one label. Any
+        // name shared by more than one project gets qualified with its parent
+        // directory, so the sidebar can always tell them apart.
+        let mut name_counts: HashMap<String, usize> = HashMap::new();
+        for project in &projects {
+            *name_counts.entry(project_name(&project.paths)).or_default() += 1;
+        }
+
+        let here = cwd
+            .filter(|c| !c.is_empty())
+            .map(|c| PathBuf::from(c.to_string()));
+
+        Ok(projects
             .into_iter()
-            .map(|project| ThreadProjectWire {
-                name: project_name(&project.paths),
-                paths: paths_of(&project.paths),
-                threads: project.threads.iter().map(thread_row).collect(),
+            // Group-level, not thread-level: a project opened in a linked git
+            // worktree groups under its main repository, and the threads from
+            // both halves belong to the project the user is looking at.
+            .filter(|project| {
+                let Some(path) = here.as_ref() else {
+                    return true;
+                };
+                // `contains` canonicalises its argument, so this compares like
+                // for like whatever spelling the caller passed.
+                project.paths.contains(path)
+                    || project
+                        .threads
+                        .iter()
+                        .any(|thread| thread.folder_paths().contains(path))
+            })
+            .map(|project| {
+                let plain = project_name(&project.paths);
+                let ambiguous = name_counts.get(&plain).copied().unwrap_or(0) > 1;
+                ThreadProjectWire {
+                    name: if ambiguous {
+                        qualified_project_name(&project.paths)
+                    } else {
+                        plain
+                    },
+                    paths: paths_of(&project.paths),
+                    // Everything that survives the filter is the open project,
+                    // except when nothing was scoped to in the first place.
+                    is_current: here.is_some(),
+                    threads: project.threads.iter().map(thread_row).collect(),
+                }
             })
             .collect())
     }
@@ -1550,46 +1613,6 @@ impl AgentHost {
     }
 
     // ---- the agent's own session store -----------------------------------
-
-    pub async fn agent_sessions(
-        &self,
-        plugin_id: &str,
-        cwd: &str,
-    ) -> Result<Option<Vec<serde_json::Value>>> {
-        let agent = self.agent_for(plugin_id)?;
-        let Some(connection) = self.connected(&agent) else {
-            return Ok(None);
-        };
-        let Some(list) = connection.session_list() else {
-            return Ok(None);
-        };
-        let request = atlas_acp_thread::AgentSessionListRequest {
-            cwd: Some(PathBuf::from(cwd)),
-            cursor: None,
-            meta: None,
-        };
-        let response = list.list_sessions(request).await.map_err(HostError::from)?;
-        Ok(Some(
-            response.sessions.iter().map(session_info_json).collect(),
-        ))
-    }
-
-    pub async fn delete_agent_session(&self, plugin_id: &str, session_id: &str) -> Result<bool> {
-        let agent = self.agent_for(plugin_id)?;
-        let Some(connection) = self.connected(&agent) else {
-            return Ok(false);
-        };
-        let Some(list) = connection.session_list() else {
-            return Ok(false);
-        };
-        if !list.supports_delete() {
-            return Ok(false);
-        }
-        list.delete_session(&acp::SessionId::new(session_id))
-            .await
-            .map_err(HostError::from)?;
-        Ok(true)
-    }
 
     // ---- auth ------------------------------------------------------------
 
@@ -1766,6 +1789,9 @@ pub struct ThreadRow {
 pub struct ThreadProjectWire {
     pub name: String,
     pub paths: Vec<String>,
+    /// This project is the one the caller currently has open. Decided here so
+    /// the match runs against canonicalised paths — see `thread_projects`.
+    pub is_current: bool,
     pub threads: Vec<ThreadRow>,
 }
 
@@ -1793,15 +1819,34 @@ fn paths_of(paths: &PathList) -> Vec<String> {
 /// What to call a project: the name of its directory, or all of their names
 /// when it spans several.
 ///
-/// Two projects whose directories share a name read identically here. The row
-/// carries the full path as its tooltip, which is where the user disambiguates;
-/// Zed prefixes linked worktrees with their main project's name instead
-/// (`thread_metadata_store.rs:415-431`), a refinement Atlas has not needed yet.
+/// Two projects whose directories share a name read identically here;
+/// `thread_projects` detects that and falls back to
+/// [`qualified_project_name`], so the collision never reaches the user.
 fn project_name(paths: &PathList) -> String {
     let names: Vec<String> = paths
         .ordered_paths()
         .filter_map(|path| path.file_name())
         .map(|name| name.to_string_lossy().into_owned())
+        .collect();
+    if names.is_empty() {
+        return "No project".to_string();
+    }
+    names.join(", ")
+}
+
+/// `project_name` with each directory's parent in front (`teamA/web`), for the
+/// case where the bare names collide. Falls back to the bare name for a path
+/// with no parent.
+fn qualified_project_name(paths: &PathList) -> String {
+    let names: Vec<String> = paths
+        .ordered_paths()
+        .filter_map(|path| {
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            Some(match path.parent().and_then(|p| p.file_name()) {
+                Some(parent) => format!("{}/{}", parent.to_string_lossy(), name),
+                None => name,
+            })
+        })
         .collect();
     if names.is_empty() {
         return "No project".to_string();
@@ -2030,25 +2075,6 @@ fn parse_env_var(v: &serde_json::Value) -> Option<AuthEnvVar> {
     })
 }
 
-/// One of the agent's own stored sessions, as the sidebar reads it.
-///
-/// Hand-built rather than derived: `AgentSessionInfo` is the ported thread's
-/// type and carries no `Serialize`, and the frontend has always read these
-/// four fields.
-fn session_info_json(session: &atlas_acp_thread::AgentSessionInfo) -> serde_json::Value {
-    serde_json::json!({
-        "sessionId": session.session_id.to_string(),
-        "title": session.title.as_ref().map(|t| t.to_string()),
-        "cwd": session
-            .work_dirs
-            .as_ref()
-            .and_then(|dirs| dirs.first())
-            .map(|dir| dir.to_string_lossy().into_owned()),
-        "updatedAt": session.updated_at.map(|t| t.to_rfc3339()),
-        "createdAt": session.created_at.map(|t| t.to_rfc3339()),
-    })
-}
-
 /// The wire token for an auth method's kind (`agent` | `env_var` | `terminal`).
 ///
 /// Read off the serialized form rather than matched on the enum: the typed
@@ -2130,6 +2156,66 @@ pub fn save_installed(
     let json = serde_json::to_string_pretty(settings)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     std::fs::write(path, json)
+}
+
+#[cfg(test)]
+mod elicitation_response_tests {
+    use super::*;
+
+    /// The tag is `action` with snake_case variants, and the catch-all `Other`
+    /// arm is `#[serde(untagged)]` — so a wrong tag fails the whole union
+    /// rather than landing in it. This shipped as `{"outcome": "accepted"}`,
+    /// which meant no elicitation answer ever deserialized: the command
+    /// returned `Fatal`, the card was dismissed anyway, and the agent waited on
+    /// a reply that was never sent. Pin the wire.
+    #[test]
+    fn accept_carries_the_answers_under_the_action_tag() {
+        let content = serde_json::json!({ "question_0": "TypeScript", "question_1": ["DMs"] });
+        let response = elicitation_response("accept", Some(content))
+            .expect("a well-formed accept is not an error")
+            .expect("accept is a response, not a cancel");
+        assert!(matches!(response.action, acp::ElicitationAction::Accept(_)));
+        assert_eq!(
+            serde_json::to_value(&response).unwrap(),
+            serde_json::json!({
+                "action": "accept",
+                "content": { "question_0": "TypeScript", "question_1": ["DMs"] },
+            })
+        );
+    }
+
+    #[test]
+    fn accept_with_no_content_is_still_an_accept() {
+        let response = elicitation_response("accept", None).unwrap().unwrap();
+        assert!(matches!(response.action, acp::ElicitationAction::Accept(_)));
+    }
+
+    /// Declining is an ANSWER — the agent is told the user skipped and carries
+    /// on — so it must reach the wire, unlike a cancel.
+    #[test]
+    fn decline_is_a_response() {
+        let response = elicitation_response("decline", None).unwrap().unwrap();
+        assert_eq!(
+            serde_json::to_value(&response).unwrap(),
+            serde_json::json!({ "action": "decline" })
+        );
+    }
+
+    /// Cancel is `None` on purpose: the caller cancels the entry instead of
+    /// sending an answer the user never gave.
+    #[test]
+    fn cancel_sends_nothing() {
+        assert!(elicitation_response("cancel", None).unwrap().is_none());
+        assert!(elicitation_response("anything-else", None).unwrap().is_none());
+    }
+
+    /// A value the schema does not allow (a nested object) must be a loud
+    /// error, not a silently truncated answer.
+    #[test]
+    fn a_malformed_accept_is_an_error() {
+        let content = serde_json::json!({ "q": { "nested": "object" } });
+        assert!(elicitation_response("accept", Some(content)).is_err());
+    }
 }
 
 #[cfg(test)]

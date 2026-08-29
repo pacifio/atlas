@@ -59,7 +59,7 @@ import { collectTurnEdits } from "../lib/turn-edits";
  *  this much so the first row clears the bar. Must match `ChatHeader`'s bar. */
 const HEADER_INSET = 46;
 import { PermissionModal } from "./permission-modal";
-import { ElicitationModal } from "./elicitation-modal";
+import { SessionElicitation } from "./session-elicitation";
 
 // Both panels are modal-style and never visible on first paint. Lazy so
 // they don't add to the initial chunk.
@@ -117,7 +117,14 @@ async function rebindDisconnectedSession(tabId: string): Promise<boolean> {
   const pluginId = pluginIdForAgent(sess.agentType);
   try {
     const agent = await ensureAgent(pluginId);
-    const cwd = sess.workingDirectory || useProjectStore.getState().currentProject?.path || "/";
+    // The session's own binding first, then the TAB's workspace. `currentProject`
+    // is the active workspace's — wrong for a background workspace's chat panel,
+    // which stays mounted and can rebind while another workspace is in front.
+    const cwd =
+      sess.workingDirectory ||
+      workspacePathForTab(tabId) ||
+      useProjectStore.getState().currentProject?.path ||
+      "/";
     let key: SessionKey;
     if (sess.acpSessionId) {
       try {
@@ -161,6 +168,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   /** Fork the bound session and open the branch in a new tab, so the thread
    *  that got here stays intact — which is the entire point of forking. */
   // Shared with the composer's `/fork` command — one fork flow, two doors.
+  // 0.3.1's source-project fix for the branch cwd lives inside the helper.
   const onForkSessionStable = useCallback(() => forkSessionToNewTab(tabId), [tabId]);
   const [roleFilter, setRoleFilter] = useState<"all" | "user" | "assistant">("all");
   const [bashPanelOpen, setBashPanelOpen] = useState(false);
@@ -996,7 +1004,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
               composer (plan reviews still render as a centered modal). */}
           <PermissionModal tabId={tabId} onSendMessage={onPermissionSend} />
           {pendingElicitation && (
-            <ElicitationModal
+            <SessionElicitation
               key={pendingElicitation.requestId}
               pending={pendingElicitation}
               onClose={() => clearElicitation(tabId)}

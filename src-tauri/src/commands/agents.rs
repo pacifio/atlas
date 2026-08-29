@@ -47,7 +47,7 @@ use atlas_agent_wire::{
 use atlas_bus::{OutboundMiddleware, OutboundPipeline};
 
 use super::agent_host::{
-    AgentHost, AgentInfo, AuthMethodWire, HostError, PermissionDecision, PluginSpec, SessionInit,
+    AgentHost, AgentInfo, AuthMethodWire, HostError, PermissionDecision, SessionInit,
     SessionKey, SessionSnapshot,
 };
 use super::agent_analytics::AnalyticsState;
@@ -323,14 +323,23 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for TranscriptMiddleware {
         let state = self.app.state::<Arc<super::agent_transcript::TranscriptState>>();
         match &envelope.delta {
             SessionDelta::MessageAppended { message } => {
-                // The user's own messages are recorded by `agents_send` (they
-                // never arrive as deltas), so this is assistant/system only.
-                if message.role == MessageRole::User {
-                    return;
-                }
                 // Cheap guard first: no buffer means no prompt was recorded for
                 // this session, so it isn't one we're recording.
                 if state.snapshot(&envelope.session_id).is_none() {
+                    return;
+                }
+                // `agents_send` records the user's own prompts, so a user
+                // message here is normally its echo — but not always. A queued
+                // send fires without passing through `agents_send`, and used to
+                // be dropped outright, leaving the transcript with the agent's
+                // half of an exchange and no question. `note_user_delta` keeps
+                // those and dedups the echo.
+                if message.role == MessageRole::User {
+                    state.note_user_delta(
+                        &envelope.session_id,
+                        &message.content,
+                        chrono::Utc::now().to_rfc3339(),
+                    );
                     return;
                 }
                 let role = match message.role {
@@ -523,16 +532,20 @@ struct RequestElicitation {
 /// sink, because their middleware resolves them on the first delta; the sink
 /// must exist before the host, because the host builds the projector around it.
 pub fn install_manager(app: &AppHandle) {
-    app.manage(Arc::new(AnalyticsState::new()));
-    app.manage(Arc::new(super::agent_transcript::TranscriptState::new()));
-    let sink: Arc<dyn DeltaSink> = Arc::new(TauriDeltaSink::new(app.clone()));
     // App config dir holds the native agent's own state
     // and `cersei-sessions/` (its persisted transcripts). Best-effort: fall
-    // back to a temp dir if the platform path is unavailable.
+    // back to a temp dir if the platform path is unavailable. Resolved up here
+    // because `TranscriptState` needs it to re-seed a session's buffer from the
+    // transcript already on disk.
     let config_dir = app
         .path()
         .app_config_dir()
         .unwrap_or_else(|_| std::env::temp_dir());
+    app.manage(Arc::new(AnalyticsState::new()));
+    app.manage(Arc::new(super::agent_transcript::TranscriptState::new(
+        config_dir.clone(),
+    )));
+    let sink: Arc<dyn DeltaSink> = Arc::new(TauriDeltaSink::new(app.clone()));
     // Let the memory corpus reader find native-agent transcripts (Chat/Graph).
     super::agent_memory::set_cersei_config_dir(config_dir.clone());
     let data_dir = app
@@ -756,11 +769,6 @@ pub fn install_manager(app: &AppHandle) {
 // ── Commands ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn agents_list_plugins(host: State<'_, Arc<AgentHost>>) -> Vec<PluginSpec> {
-    host.list_plugins()
-}
-
-#[tauri::command]
 pub fn agents_list_running(host: State<'_, Arc<AgentHost>>) -> Vec<AgentInfo> {
     host.list_agents()
 }
@@ -856,36 +864,6 @@ pub async fn agents_authenticate(
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<(), String> {
     host.authenticate(agent_id, method_id)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// The agent's OWN stored sessions for `cwd` (ACP `session/list`).
-///
-/// `null` when the agent is not connected or never advertised
-/// `sessionCapabilities.list` — the sidebar then keeps using whatever bespoke
-/// reader Atlas has for it. This is the path that gives a brand-new ACP agent
-/// sidebar history without anyone writing a transcript parser for it.
-#[tauri::command]
-pub async fn agents_agent_sessions(
-    plugin_id: String,
-    cwd: String,
-    host: State<'_, Arc<AgentHost>>,
-) -> Result<Option<Vec<serde_json::Value>>, String> {
-    host.agent_sessions(&plugin_id, &cwd)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Ask the agent to forget a stored session (ACP `session/delete`).
-/// Returns whether the agent actually handled it.
-#[tauri::command]
-pub async fn agents_delete_agent_session(
-    plugin_id: String,
-    session_id: String,
-    host: State<'_, Arc<AgentHost>>,
-) -> Result<bool, String> {
-    host.delete_agent_session(&plugin_id, &session_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -1048,24 +1026,6 @@ pub async fn agent_transcripts_read(
     .unwrap_or_default()
 }
 
-/// Delete one Atlas-recorded transcript (sidebar delete). Idempotent.
-#[tauri::command]
-pub async fn agent_transcripts_delete(
-    cwd: String,
-    session_id: String,
-    app: AppHandle,
-) -> Result<(), String> {
-    app.state::<Arc<super::agent_transcript::TranscriptState>>()
-        .forget(&session_id);
-    let dir = app.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir());
-    tauri::async_runtime::spawn_blocking(move || {
-        super::agent_transcript::remove(&dir, &cwd, &session_id)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())
-}
-
 #[tauri::command]
 pub async fn agents_load_session(
     agent_id: AgentId,
@@ -1107,9 +1067,11 @@ pub async fn threads_delete(
 /// Every project the user has threads in — the sidebar's only source (#21).
 #[tauri::command]
 pub fn threads_projects(
+    cwd: Option<String>,
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<Vec<super::agent_host::ThreadProjectWire>, CmdError> {
-    host.thread_projects().map_err(CmdError::from)
+    host.thread_projects(cwd.as_deref())
+        .map_err(CmdError::from)
 }
 
 /// Every thread, archived or not, newest-started first — the history view.

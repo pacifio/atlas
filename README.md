@@ -7,7 +7,7 @@
 [![Latest release](https://img.shields.io/github/v/release/pacifio/atlas?include_prereleases&label=Release&style=for-the-badge)](https://github.com/pacifio/atlas/releases)
 [![Contributors](https://img.shields.io/github/contributors/pacifio/atlas?style=for-the-badge)](https://github.com/pacifio/atlas/graphs/contributors)
 
-**[Download](https://github.com/pacifio/atlas/releases)** · **[Discord](https://discord.gg/GmnFggaPfP)** · **[Docs](https://docs.tryatlas.cc/)** · **[Contributing](CONTRIBUTING.md)** · **[Issues](https://github.com/pacifio/atlas/issues)** · **[Roadmap](#roadmap)**
+**[Download](https://github.com/pacifio/atlas/releases)** · **[Discord](https://discord.gg/GmnFggaPfP)** · **[Docs](https://docs.tryatlas.cc/)** · **[Contributing](CONTRIBUTING.md)** · **[Issues](https://github.com/pacifio/atlas/issues)**
 
 <a href="https://github.com/pacifio/atlas"><img src="https://img.shields.io/github/stars/pacifio/atlas?style=social" alt="GitHub stars"></a>
 <a href="https://github.com/pacifio/atlas"><img alt="GitHub forks" src="https://img.shields.io/github/forks/pacifio/atlas"></a>
@@ -45,7 +45,6 @@ Start with [CONTRIBUTING.md](CONTRIBUTING.md) to send a change, or [open an issu
 - [Download](#download)
 - [Build from source](#build-from-source)
 - [Contributing](#contributing)
-- [Roadmap](#roadmap)
 - [Local by default](#local-by-default)
 - [Links](#links)
 
@@ -64,7 +63,7 @@ Agents now write a large share of the code and keep none of the reasoning behind
 
 Atlas runs your agents as they are, and enriches what they see.
 
-Claude Code and Codex run as external subprocesses over [ACP](https://github.com/zed-industries/agent-client-protocol), the most-used, most-tested path. The Atlas agent runs in-process on [Cersei](https://cersei.tryatlas.cc/docs), our Rust agent framework.
+Claude Code and Codex run as external subprocesses over [ACP](https://github.com/zed-industries/agent-client-protocol), the most-used, most-tested path. The Atlas agent runs in-process on [Cersei](https://docs.tryatlas.cc/), our Rust agent framework.
 
 Beyond those, Atlas can spawn any agent in the ACP registry (Cursor, OpenCode, Kilo Code, and more), pulling in each one's official binary automatically. All of them go through the same send path, so everything below applies whichever one you pick.
 
@@ -198,24 +197,13 @@ bun run build:app:dmg   # .app + .dmg installer
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Two things catch people out:
+See [CONTRIBUTING.md](CONTRIBUTING.md). One thing catches people out:
 
-- **Everyone forks.** Nobody has direct push access, including the core team. Fork, branch, open a PR.
 - **Feature work targets the current version branch**, not `main`. `main` only receives a finished version branch, and that merge is the release.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) covers how Atlas is built. [SECURITY.md](SECURITY.md) covers reporting vulnerabilities.
 
 ---
-
-## Roadmap
-
-- **Team timeline.** Agent history from every machine on the team, rolled into one queryable record: the multiplayer half of source control for agents. Client-side groundwork (checkpoints surviving rebase/amend/squash, session capture, the Cloud path) is built; the ingest service isn't live yet.
-- **AI gateway via Atlas accounts.** Route any provider through your Atlas account, with usage and spend visible per person and per agent.
-- **Timeline boards covering how team members are changing code.** A shared view of what each person's agents shipped, and when.
-- **Organisational agents.** Agents scoped to a team, carrying the organisation's own memory, skills, and conventions.
-- **Pick up work from any device.** Sessions, notes, and workspace state follow you to the next machine.
-- **Issue tracking.** Issues that carry the agent sessions and commits that resolved them.
-- **Shared documentation.** One knowledge base across the team, readable by every agent in it.
 
 ## Local by default
 
@@ -228,7 +216,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Two things catch people out:
 ## Links
 
 - **Website:** [tryatlas.cc](https://www.tryatlas.cc/)
-- **Cersei docs:** [cersei.tryatlas.cc/docs](https://cersei.tryatlas.cc/docs)
+- **Docs:** [docs.tryatlas.cc](https://docs.tryatlas.cc/)
 - **Discord:** [discord.gg/GmnFggaPfP](https://discord.gg/GmnFggaPfP)
 - **Issues:** [github.com/pacifio/atlas/issues](https://github.com/pacifio/atlas/issues)
 - **Telemetry:** [what Atlas collects, and how to turn it off](TELEMETRY.md)

@@ -6,7 +6,6 @@
 
 use std::sync::Arc;
 
-use serde_json::Value;
 use tauri::{AppHandle, Manager, State};
 
 use crate::telemetry::{OrgIdentity, TelemetryClient, TelemetryConfig};
@@ -80,15 +79,3 @@ pub fn resolve_org(app: &AppHandle, org_id: Option<&str>) -> Option<OrgIdentity>
     })
 }
 
-/// Escape hatch so the frontend can route a metadata-only event through the
-/// Rust emitter (primary frontend path is `posthog-js` direct). No-op unless
-/// telemetry is enabled. Callers must pass **metadata only** — this is the same
-/// contract as every Rust call site.
-#[tauri::command]
-pub fn telemetry_capture(
-    event: String,
-    properties: Option<Value>,
-    client: State<'_, Arc<TelemetryClient>>,
-) {
-    client.capture(&event, properties.unwrap_or_else(|| serde_json::json!({})));
-}

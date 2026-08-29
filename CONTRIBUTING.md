@@ -69,7 +69,7 @@ bun run dev:app
 
 The first Rust compile takes a few minutes; after that, seconds. `bun run dev:app` hot-reloads the frontend on save — Rust changes need a restart.
 
-That's enough to build and run Atlas. If you're planning to submit a change, clone your **fork** instead of `pacifio/atlas` directly — see "Fork, branch, PR" below.
+That's enough to build and run Atlas. If you're planning to submit a change and don't have write access, clone your **fork** instead of `pacifio/atlas` directly — see "Fork, branch, PR" below.
 
 Other commands you'll use:
 
@@ -87,7 +87,7 @@ If you're working on the **Claude Code** agent specifically, you also need the `
 
 ## Fork, branch, PR
 
-Every change comes in through a fork and a pull request.
+Every change comes in through a pull request. Maintainers branch directly on `pacifio/atlas`; everyone else forks first. The rest of the flow is identical either way.
 
 ```bash
 # 1. Fork pacifio/atlas on GitHub, then clone your fork

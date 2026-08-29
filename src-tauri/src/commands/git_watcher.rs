@@ -282,40 +282,6 @@ pub fn git_watch_stop(workspace_id: String, state: State<'_, GitWatcherState>) {
     state.watchers.write().remove(&workspace_id);
 }
 
-/// Drop every watcher. Application teardown only.
-#[tauri::command]
-pub fn git_watch_stop_all(state: State<'_, GitWatcherState>) {
-    state.watchers.write().clear();
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct GitWatcherStatus {
-    pub watching: bool,
-    pub root: Option<String>,
-}
-
-#[tauri::command]
-pub fn git_watch_status(
-    workspace_id: Option<String>,
-    state: State<'_, GitWatcherState>,
-) -> GitWatcherStatus {
-    let guard = state.watchers.read();
-    let watcher = match workspace_id {
-        Some(id) => guard.get(&id),
-        None => guard.values().next(),
-    };
-    match watcher {
-        Some(w) => GitWatcherStatus {
-            watching: true,
-            root: Some(w.root.to_string_lossy().into_owned()),
-        },
-        None => GitWatcherStatus {
-            watching: false,
-            root: None,
-        },
-    }
-}
-
 /// Where a repository's git metadata actually lives.
 struct GitDirs {
     /// The repository's own gitdir: `.git/` for an ordinary checkout, or the

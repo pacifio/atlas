@@ -8,30 +8,35 @@ import type { SessionKey, SessionMessage, SessionSnapshot } from "@/types/agents
 type WireMessage = ReturnType<typeof snapshotMessageToWire>;
 
 /**
- * Two-stage session resume, shared by every "open a past chat" path
+ * Session resume, shared by every "open a past chat" path
  * (`session-sidebar.handleOpenAgent`, `openAgentSession`).
  *
- * The problem it solves: `agents.loadSession` computes the visible transcript in
- * its first few milliseconds and then blocks for SECONDS on the agent handshake
- * plus the ACP `session/load` replay. Awaiting it before painting meant the user
- * watched a skeleton while the content was already sitting in memory. Measured
- * on a 34 MB / 6.7k-line Claude transcript: the disk replay is ~42 ms, the JSON
- * that crosses IPC is 1.28 MB, and `JSON.parse` + the wire map cost under 4 ms —
- * so first paint is bounded by ~50 ms of real work and everything beyond that
- * was pure waiting on the agent.
+ * **One paint, after the session is loaded** — Zed's model
+ * (`conversation_view.rs:1149-1206`: the view is not built until `session/load`
+ * resolves, and the thread accumulates replayed entries invisibly until then).
  *
- * So we split it:
- *   - **stage 1 (fast, disk-only)** — `agents.replayTranscript` paints the thread.
- *   - **stage 2 (slow, concurrent)** — `ensureAgent` + `agents.loadSession` make
- *     the session sendable, then `agents.snapshot` reconciles.
+ * This replaced a two-stage resume that painted the on-disk transcript first
+ * and the authoritative snapshot second. The idea was that the disk content was
+ * already there and the agent handshake was pure waiting — true, but the disk
+ * transcript stores prose ONLY. It has no tool calls, no thinking, no plan
+ * (`agent_transcript.rs` stores role/content/timestamp/model, and
+ * `transcript_to_messages` hard-codes `tool_calls: Vec::new()`). So the first
+ * paint was *guaranteed* to be an incomplete render of the same conversation,
+ * and the second paint — a whole-list replace that re-keyed every message —
+ * remounted the transcript seconds later. That is exactly the "messages and
+ * tool calls are missing and then suddenly they all load" the user reported;
+ * it was the design working as written, not a race.
  *
- * Both stages start in the SAME tick, so stage 2 is never delayed by stage 1.
+ * A skeleton for the length of the agent handshake is the honest trade: nothing
+ * is shown until what is shown is complete and correct.
+ *
+ * The disk transcript still has one job here — see `paintableMessages`.
  */
 export interface ResumeCallbacks {
-  /** Paint messages into the thread. Called once for the fast replay, and again
-   *  from the snapshot ONLY if the snapshot actually differs. */
+  /** Paint messages into the thread. Called exactly ONCE, after the session is
+   *  loaded and its full transcript is known. */
   paint: (messages: WireMessage[]) => void;
-  /** Drop the skeleton. Fired as soon as anything is painted. */
+  /** Drop the skeleton. Fired with the paint. */
   onPainted: () => void;
   /** True when a newer click/open has superseded this one — polled before every
    *  mutation so a superseded resume never repaints a tab the user has already
@@ -39,23 +44,30 @@ export interface ResumeCallbacks {
   isStale: () => boolean;
 }
 
-/** Cheap equality probe between the fast-path replay and the authoritative
- *  snapshot. Both come from the same parser over the same file, so on a normal
- *  resume they match exactly and we can skip the second paint entirely — which
- *  matters because a repaint re-runs the virtualizer's measurement pass over
- *  every mounted row. We compare length plus the last message's shape rather
- *  than deep-equality: the only realistic divergence is a session that grew (a
- *  live turn landed) or a manager cache hit carrying live state the disk lacks. */
-function sameThread(a: SessionMessage[], b: SessionMessage[]): boolean {
-  if (a.length !== b.length) return false;
-  if (a.length === 0) return true;
-  const x = a[a.length - 1];
-  const y = b[b.length - 1];
-  return (
-    x.role === y.role &&
-    x.content.length === y.content.length &&
-    x.tool_calls.length === y.tool_calls.length
-  );
+/**
+ * What to show for a loaded session: the agent's own replayed transcript when
+ * there is one, else Atlas's recording of it.
+ *
+ * The snapshot is authoritative whenever it has content — it comes from the
+ * ACP thread the agent just replayed into, so it carries tool calls and
+ * thinking that Atlas's transcript never stored. But an agent that only
+ * supports `session/resume` (no history replay), or one that failed to replay,
+ * hands back an EMPTY thread. For those, Atlas's own transcript is the only
+ * surviving record of the conversation, and showing nothing would read as data
+ * loss. Prose-only history beats a blank thread.
+ */
+async function paintableMessages(
+  snapshot: SessionSnapshot,
+  sessionId: string,
+  cwd: string,
+): Promise<SessionMessage[]> {
+  if (snapshot.messages.length > 0) return snapshot.messages;
+  try {
+    return await agents.replayTranscript(sessionId, cwd);
+  } catch {
+    // Best-effort: an unreadable transcript just means the empty thread stands.
+    return [];
+  }
 }
 
 /** Which stage of the resume failed. Callers map this to their own message +
@@ -89,18 +101,14 @@ export class ResumeError extends Error {
 }
 
 export interface ResumeResult {
-  /** Whether the fast path painted before the bind resolved. */
-  fastPainted: boolean;
   agent: AgentInfo;
   key: SessionKey;
   snapshot: SessionSnapshot;
 }
 
 /**
- * Run the two-stage resume. Throws whatever `ensure`/`loadSession` throws so
- * callers keep their existing error handling (toast + rollback); a failure in the
- * FAST stage is swallowed, since it's an optimisation and the slow stage remains
- * authoritative.
+ * Load a session, then paint it once. Throws whatever `ensure`/`loadSession`
+ * throws so callers keep their existing error handling (toast + rollback).
  */
 export async function resumeSessionFast(opts: {
   sessionId: string;
@@ -110,46 +118,22 @@ export async function resumeSessionFast(opts: {
 }): Promise<ResumeResult> {
   const { sessionId, cwd, ensure, cb } = opts;
 
-  // Kick off the SLOW chain first so it owns the full wall-clock window — the
-  // fast replay must never sit in front of the agent spawn.
-  const slow = (async () => {
-    let agent: AgentInfo;
-    try {
-      agent = await ensure();
-    } catch (err) {
-      throw new ResumeError("spawn", err);
-    }
-    try {
-      const key = await agents.loadSession(agent.agent_id, sessionId, cwd);
-      return { agent, key };
-    } catch (err) {
-      throw new ResumeError("load", err);
-    }
-  })();
-  // The fast stage awaits its own promise below; without this the slow chain
-  // could reject before anyone is awaiting it and surface as an unhandled
-  // rejection in the window between the two stages.
-  slow.catch(() => {});
-
-  // Stage 1 — disk replay. Best-effort: any failure (unknown plugin, missing
-  // file) just means we fall through to the snapshot paint below. Empty is the
-  // documented "no on-disk transcript" answer for Codex, not an error.
-  let fastMessages: SessionMessage[] = [];
-  let fastPainted = false;
+  let agent: AgentInfo;
   try {
-    fastMessages = await agents.replayTranscript(sessionId, cwd);
-    if (fastMessages.length > 0 && !cb.isStale()) {
-      cb.paint(fastMessages.map(snapshotMessageToWire));
-      cb.onPainted();
-      fastPainted = true;
-    }
-  } catch {
-    // Optimisation only — the authoritative path below still runs.
+    agent = await ensure();
+  } catch (err) {
+    throw new ResumeError("spawn", err);
   }
 
-  // Stage 2 — the real bind. Errors propagate to the caller's handler, tagged
-  // with the stage that failed.
-  const { agent, key } = await slow;
+  let key: SessionKey;
+  try {
+    // Resolves after the agent has replayed the session, so the thread behind
+    // `key` is already complete when we read it.
+    key = await agents.loadSession(agent.agent_id, sessionId, cwd);
+  } catch (err) {
+    throw new ResumeError("load", err);
+  }
+
   let snapshot: SessionSnapshot;
   try {
     snapshot = await agents.snapshot(key);
@@ -157,25 +141,13 @@ export async function resumeSessionFast(opts: {
     throw new ResumeError("snapshot", err);
   }
 
-  // Only repaint when the snapshot actually says something different. On a clean
-  // resume it doesn't, and skipping saves a full virtualizer re-measure.
-  //
-  // And never let a SHORTER snapshot replace the fast paint: stage 1 read the
-  // JSONL just now, so it is strictly fresher disk truth. The manager's
-  // load_session is an idempotent cache — a session whose transcript grew
-  // while cached hands back a stale, shorter snapshot, and repainting from it
-  // deleted the newest user messages from the visible thread.
-  const snapshotIsStale = fastPainted && snapshot.messages.length < fastMessages.length;
-  if (
-    !cb.isStale() &&
-    !snapshotIsStale &&
-    (!fastPainted || !sameThread(fastMessages, snapshot.messages))
-  ) {
-    cb.paint(snapshot.messages.map(snapshotMessageToWire));
+  const messages = await paintableMessages(snapshot, sessionId, cwd);
+  if (!cb.isStale()) {
+    cb.paint(messages.map(snapshotMessageToWire));
     cb.onPainted();
   }
 
-  return { fastPainted, agent, key, snapshot };
+  return { agent, key, snapshot };
 }
 
 /** What opening a history row produced. */
@@ -189,17 +161,15 @@ export interface ResumedThreadResult extends Omit<ResumeResult, "agent"> {
 }
 
 /**
- * Open a history row: the same two stages as [`resumeSessionFast`], with the
- * slow half driven by the thread rather than by a session id.
+ * Open a history row: same single-paint shape as [`resumeSessionFast`], with
+ * the load driven by the thread rather than by a session id.
  *
  * The difference that matters is which protocol call is made. `threads_resume`
  * starts the agent if it is not running and then picks `session/load` or
  * `session/resume` by what that agent advertised, so this path works for an
- * agent that can only continue a conversation — and says so when it did.
- *
- * The fast stage still paints from whatever transcript is on disk, because
- * `session/load`'s replay arrives over seconds and the content is usually
- * already there.
+ * agent that can only continue a conversation — and says so when it did. When
+ * it did, the thread comes back empty and `paintableMessages` falls back to
+ * Atlas's own transcript.
  */
 export async function resumeThreadFast(opts: {
   threadId: string;
@@ -213,31 +183,13 @@ export async function resumeThreadFast(opts: {
 }): Promise<ResumedThreadResult> {
   const { threadId, cwd, sessionId, cb } = opts;
 
-  const slow = (async () => {
-    try {
-      return await resumeThread(threadId);
-    } catch (err) {
-      throw new ResumeError("resume", err);
-    }
-  })();
-  slow.catch(() => {});
-
-  let fastMessages: SessionMessage[] = [];
-  let fastPainted = false;
-  if (sessionId) {
-    try {
-      fastMessages = await agents.replayTranscript(sessionId, cwd);
-      if (fastMessages.length > 0 && !cb.isStale()) {
-        cb.paint(fastMessages.map(snapshotMessageToWire));
-        cb.onPainted();
-        fastPainted = true;
-      }
-    } catch {
-      // Optimisation only — the authoritative path below still runs.
-    }
+  let resumed: Awaited<ReturnType<typeof resumeThread>>;
+  try {
+    resumed = await resumeThread(threadId);
+  } catch (err) {
+    throw new ResumeError("resume", err);
   }
 
-  const resumed = await slow;
   let snapshot: SessionSnapshot;
   try {
     snapshot = await agents.snapshot(resumed.key);
@@ -245,18 +197,15 @@ export async function resumeThreadFast(opts: {
     throw new ResumeError("snapshot", err);
   }
 
-  const snapshotIsStale = fastPainted && snapshot.messages.length < fastMessages.length;
-  if (
-    !cb.isStale() &&
-    !snapshotIsStale &&
-    (!fastPainted || !sameThread(fastMessages, snapshot.messages))
-  ) {
-    cb.paint(snapshot.messages.map(snapshotMessageToWire));
+  const messages = sessionId
+    ? await paintableMessages(snapshot, sessionId, cwd)
+    : snapshot.messages;
+  if (!cb.isStale()) {
+    cb.paint(messages.map(snapshotMessageToWire));
     cb.onPainted();
   }
 
   return {
-    fastPainted,
     key: resumed.key,
     snapshot,
     resumedWithoutHistory: resumed.resumedWithoutHistory,

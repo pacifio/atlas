@@ -31,15 +31,6 @@ const SOURCE_TO_PLUGIN_ID: Record<string, string> = {
   codex: "codex-acp",
 };
 
-/** Non-agent doc sources the corpus also emits. These are kinds of memory, not
- *  agents, and must never be rendered with an agent identity. */
-const NON_AGENT_SOURCES = new Set(["codebase", "shared", "note", "policy", ""]);
-
-/** Whether `source` names an agent at all (vs. a codebase/shared/note doc). */
-export function isAgentSource(source: string | null | undefined): boolean {
-  return typeof source === "string" && !NON_AGENT_SOURCES.has(source);
-}
-
 /** Canonical registry id for a memory-corpus source. Unknown sources pass
  *  through untouched — a registry-installed agent already tags its capture rows
  *  with its own plugin id, which is exactly what `agentMeta` wants. */

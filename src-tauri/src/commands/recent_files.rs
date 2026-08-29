@@ -262,19 +262,6 @@ pub async fn recent_files_rename(
 }
 
 #[tauri::command]
-pub fn recent_files_list(
-    workspace_id: String,
-    state: State<'_, RecentFilesState>,
-) -> Vec<RecentFile> {
-    state
-        .per_workspace
-        .read()
-        .get(&workspace_id)
-        .map(|p| p.items.read().clone())
-        .unwrap_or_default()
-}
-
-#[tauri::command]
 pub async fn recent_files_clear(
     workspace_id: String,
     state: State<'_, RecentFilesState>,
