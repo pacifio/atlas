@@ -908,20 +908,19 @@ pub fn agents_respond_elicitation(
         .map_err(|e| e.to_string())
 }
 
-/// Branch a session from its current state (ACP `session/fork`).
+/// Branch a session from its current state.
 ///
-/// Always `null` on the ported seam: Zed does not implement `session/fork`, so
-/// the trait has no method for it and there is nothing to delegate to. The
-/// command stays registered and keeps its "this agent cannot fork" answer so
-/// the frontend's capability check (`supportsFork`, likewise false) is what
-/// hides the affordance, rather than an error the user has to read.
+/// Real for the native agent — the engine's `thread/fork` copies the stored
+/// conversation into a new thread, and the frontend opens the returned id
+/// through the normal reopen path (which replays the forked history). Still
+/// `null` for every ACP agent: Zed does not implement `session/fork`, the
+/// trait has no method for it, and `supportsFork` hides the affordance there.
 #[tauri::command]
 pub async fn agents_fork_session(
     key: SessionKey,
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<Option<String>, String> {
-    let _ = (key, host);
-    Ok(None)
+    host.fork_session(&key).await.map_err(|e| e.to_string())
 }
 
 /// Set any agent-advertised config option.

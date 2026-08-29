@@ -592,9 +592,13 @@ impl AgentHost {
             supports_logout: connection.supports_logout(),
             supports_load_session: connection.supports_load_session(),
             supports_session_list: connection.session_list().is_some(),
-            // `session/fork` has no equivalent on the ported seam — Zed does not
-            // implement it — so this is honestly false rather than optimistic.
-            supports_fork: false,
+            // ACP has no fork, but the native engine does (`thread/fork`) —
+            // the capability is "is this the native connection", exactly the
+            // downcast `fork_session` performs.
+            supports_fork: connection
+                .clone()
+                .downcast::<atlas_native_agent::EngineConnection>()
+                .is_some(),
         }
     }
 
@@ -1050,6 +1054,21 @@ impl AgentHost {
     // runtime's RTK tool-output compressor, and the engine has no counterpart —
     // a named casualty (D8). The command and its toggle went with it, rather
     // than leaving a control that silently does nothing.
+
+    /// Branch a session into a new thread. `None` for agents that cannot —
+    /// the frontend's `supportsFork` hides the affordance for those, so this
+    /// answer is a belt over braces, not a user-facing error.
+    pub async fn fork_session(&self, key: &SessionKey) -> Result<Option<String>> {
+        let Ok(native) = self.native_connection(&key.session_id) else {
+            return Ok(None);
+        };
+        let session_id = acp::SessionId::new(key.session_id.as_str());
+        let forked = native
+            .fork_thread(&session_id)
+            .await
+            .map_err(|e| HostError::classified(e.to_string()))?;
+        Ok(Some(forked))
+    }
 
     fn native_connection(&self, session_id: &str) -> Result<Arc<atlas_native_agent::EngineConnection>> {
         let connection = lock_thread(&self.thread(session_id)?).connection().clone();

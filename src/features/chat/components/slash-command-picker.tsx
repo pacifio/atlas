@@ -36,7 +36,7 @@ import { cn } from "@/lib/utils";
  *  per-agent login handlers, the `/skills` settings row and the dimmed
  *  "unavailable" guard rows are gone; Atlas renders what ACP gives, nothing
  *  else. */
-export type SlashCommandHandler = "agent-login" | "passthrough";
+export type SlashCommandHandler = "agent-login" | "fork" | "queue" | "passthrough";
 
 export interface SlashCommand {
   /** Unique slug used both as the visible command name and matched query. */

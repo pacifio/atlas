@@ -46,6 +46,9 @@ pub struct EngineSession {
     /// tool-call request does not carry a cwd — it has no reason to, since the
     /// tool is Atlas's.
     cwd: String,
+    /// The skills the engine discovered for this session's cwd, in the shape
+    /// the command parser consumes. Per session because skills are cwd-scoped.
+    skills: Vec<crate::engine::commands::SkillRef>,
     /// The model the composer's picker chose for this session, if it did.
     ///
     /// Held HERE, per session, because the state used to live inside the
@@ -70,6 +73,7 @@ impl EngineSessions {
                 thread: Arc::downgrade(thread),
                 streamed: std::collections::HashSet::new(),
                 cwd,
+                skills: Vec::new(),
                 selected_model: None,
             },
         );
@@ -83,6 +87,23 @@ impl EngineSessions {
 
     pub fn cwd(&self, session_id: &acp::SessionId) -> Option<String> {
         self.lock().get(session_id).map(|s| s.cwd.clone())
+    }
+
+    pub fn skills(&self, session_id: &acp::SessionId) -> Vec<crate::engine::commands::SkillRef> {
+        self.lock()
+            .get(session_id)
+            .map(|s| s.skills.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn set_skills(
+        &self,
+        session_id: &acp::SessionId,
+        skills: Vec<crate::engine::commands::SkillRef>,
+    ) {
+        if let Some(session) = self.lock().get_mut(session_id) {
+            session.skills = skills;
+        }
     }
 
     /// The model the picker chose for this session — `None` until it chooses,

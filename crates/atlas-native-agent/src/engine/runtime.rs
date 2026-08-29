@@ -163,6 +163,9 @@ async fn start_engine_inner(
     .map_err(|e| anyhow::anyhow!("{e}"))
     .context("building the engine's environment manager")?;
 
+    // Before the struct literal: `config` moves into it a few fields earlier.
+    let state_db = Box::pin(codex_core::init_state_db(config.as_ref())).await;
+
     let args = InProcessClientStartArgs {
         // Atlas does not use the engine's argv0 dispatch: this is a plain
         // struct of Options, hand-constructible, which is what makes the engine
@@ -189,12 +192,14 @@ async fn start_engine_inner(
         strict_config: false,
         cloud_config_bundle: CloudConfigBundleLoader::default(),
         feedback: CodexFeedback::new(),
-        // No log db and no state db. Both are the caller's decision at this
-        // entry point, and Atlas supplies neither: engine-private persistence
-        // is not what feeds any Atlas surface (D9 / ADR-0001), so there is
-        // nothing yet that would read them back.
+        // No log db: engine-private logging feeds no Atlas surface (D9 /
+        // ADR-0001). The STATE db is supplied now, though — it stayed `None`
+        // while nothing read it, but thread goals (`/goal`) are stored there
+        // and answer "sqlite state db unavailable" without it. It lives under
+        // the engine home like every other engine-private file. Best-effort:
+        // an engine without goals is better than no engine.
         log_db: None,
-        state_db: None,
+        state_db,
         environment_manager: Arc::new(environment_manager),
         config_warnings: Vec::new(),
         // Threads the engine stores are stamped with this. `Custom` rather than

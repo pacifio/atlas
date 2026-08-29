@@ -181,6 +181,13 @@ export type AgentDelta =
       plan: PlanEntry[];
     }
   | {
+      kind: "history_rewound";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      /** Whole exchanges removed from the end, counted by user messages. */
+      turns: number;
+    }
+  | {
       kind: "mode_changed";
       agent_id: AgentId;
       session_id: AcpSessionId;

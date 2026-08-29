@@ -967,3 +967,202 @@ async fn a_reopened_session_replays_its_whole_conversation() {
         .expect("a turn on the reopened session should complete");
     assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
 }
+
+/// Mimic the host: the user's message is pushed into the thread before
+/// `prompt` runs (`AcpThread::send` does both). The seam tests drive `prompt`
+/// directly, so tests that care about user entries push one first.
+fn push_user(thread: &atlas_acp_thread::AcpThreadHandle, id: &str, text_content: &str) {
+    let _ = thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .handle_session_update(acp::SessionUpdate::UserMessageChunk(
+            acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
+                text_content.to_string(),
+            )))
+            .message_id(acp::MessageId::new(id)),
+        ));
+}
+
+#[tokio::test]
+async fn undo_rewinds_the_engine_and_trims_the_transcript_to_match() {
+    let h = harness(vec![(None, sse_ok(answer("a regrettable answer")))]).await;
+    let session_id = h.open_thread().await;
+    let thread = h
+        .threads
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .last()
+        .cloned()
+        .expect("thread");
+
+    push_user(&thread, "u1", "first question");
+    let _ = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id.clone(), text("first question")))
+        .await
+        .expect("the first turn should complete");
+
+    push_user(&thread, "u2", "/undo");
+    let response = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("/undo")))
+        .await
+        .expect("/undo should succeed");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+    let all = format!(
+        "{:?}",
+        thread.lock().unwrap_or_else(|p| p.into_inner()).entries()
+    );
+    assert!(
+        !all.contains("first question") && !all.contains("a regrettable answer"),
+        "the undone exchange must leave the transcript: {all}",
+    );
+    assert!(
+        all.contains("Rewound"),
+        "the user must be told what happened: {all}",
+    );
+}
+
+#[tokio::test]
+async fn goal_set_is_confirmed_and_readable_back() {
+    let h = harness(vec![(None, sse_ok(answer("ok")))]).await;
+    let session_id = h.open_thread().await;
+
+    let response = h
+        .connection
+        .prompt(acp::PromptRequest::new(
+            session_id.clone(),
+            text("/goal ship the port by friday"),
+        ))
+        .await
+        .expect("/goal should succeed");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    assert!(
+        h.assistant_text().contains("ship the port by friday"),
+        "setting must be confirmed: {}",
+        h.assistant_text(),
+    );
+
+    let _ = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("/goal")))
+        .await
+        .expect("bare /goal should succeed");
+    assert!(
+        h.assistant_text().matches("ship the port by friday").count() >= 2,
+        "bare /goal must read the goal back: {}",
+        h.assistant_text(),
+    );
+
+    let Some(received) = h.server.received_requests().await else {
+        panic!("recording");
+    };
+    assert_eq!(
+        received
+            .iter()
+            .filter(|r| r.url.path().ends_with("/chat/completions"))
+            .count(),
+        0,
+        "goal management must not spend a model turn",
+    );
+}
+
+#[tokio::test]
+async fn review_runs_inline_on_this_thread_and_this_model() {
+    // `review/start` with Inline delivery runs the review as a turn on the
+    // SAME thread — its findings stream through the pipeline every answer
+    // uses, which is what makes /review renderable with zero new UI. And on
+    // this thread's model: our engine config deliberately leaves
+    // `review_model` unset, so the engine falls back to the parent thread's
+    // model — the one the gateway serves — instead of an upstream reviewer
+    // model it would 403.
+    let h = harness(vec![(None, sse_ok(answer("looks fine, one nit")))]).await;
+    let session_id = h.open_thread().await;
+
+    let response = h
+        .connection
+        .prompt(acp::PromptRequest::new(
+            session_id,
+            text("/review focus on naming"),
+        ))
+        .await
+        .expect("/review should complete");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+    let body = h.last_request_body().await;
+    assert_eq!(
+        body["model"],
+        atlas_native_agent::engine::catalog::DEFAULT_MODEL,
+        "the review must run on the session's model, not a reviewer pin",
+    );
+    assert!(
+        h.assistant_text().contains("looks fine, one nit"),
+        "the review's findings must land in the transcript: {}",
+        h.assistant_text(),
+    );
+}
+
+#[tokio::test]
+async fn a_repo_skill_joins_the_picker_and_runs_as_a_skill_turn() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let cwd = tempfile::tempdir().expect("tempdir");
+    let skill_dir = cwd.path().join(".codex/skills/release-notes");
+    std::fs::create_dir_all(&skill_dir).expect("skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: release-notes\ndescription: Draft release notes from recent commits\n---\n\n\
+         # Release notes\n\nSummarise the latest changes as release notes.\n",
+    )
+    .expect("skill file");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_ok(answer("drafted")))
+        .mount(&server)
+        .await;
+    let (connection, _events) = connection_at(home.path(), &server).await;
+    let thread = connection
+        .clone()
+        .new_session(vec![cwd.path().to_path_buf()])
+        .await
+        .expect("session");
+    let session_id = thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .session_id()
+        .clone();
+
+    let names: Vec<String> = thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .available_commands()
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+    assert!(
+        names.contains(&"release-notes".to_string()),
+        "a discovered skill must join the picker: {names:?}",
+    );
+
+    let response = connection
+        .prompt(acp::PromptRequest::new(session_id, text("/release-notes")))
+        .await
+        .expect("the skill turn should complete");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    // The engine loads the skill itself; its content must be in what left for
+    // the gateway, or the "skill" was just the literal text "/release-notes".
+    let Some(received) = server.received_requests().await else {
+        panic!("recording");
+    };
+    let bodies: String = received
+        .iter()
+        .filter(|r| r.url.path().ends_with("/chat/completions"))
+        .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+        .collect();
+    assert!(
+        bodies.contains("release notes"),
+        "the skill's content must reach the model",
+    );
+}

@@ -26,10 +26,12 @@ import {
 } from "@/types/agent";
 import {
   agentMeta,
+  catalogEntry as agentCatalogEntry,
   switchableAgentOf,
   useSwitchableAgents,
 } from "@/features/agents/lib/agent-meta";
 import { canSignIn, promptSignIn } from "../lib/agent-signin";
+import { forkSessionToNewTab } from "../lib/fork-session";
 import { switchAgentForTab } from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
 import { loadCerseiEffort } from "../lib/cersei-model-pref";
@@ -927,7 +929,27 @@ export function MessageInput({
           handler: "agent-login" as const,
         }
       : null;
-    return [...(login ? [login] : []), ...fromAgent];
+    // The other Atlas-surface commands. Like /login, these drive app
+    // affordances rather than the agent — a new tab, the send queue — so the
+    // app is the honest place to synthesize them. /fork is gated on the same
+    // capability as the header's "branch from here"; /queue exists for every
+    // agent, because the queue does.
+    const local: SlashCommand[] = [];
+    if (agentCatalogEntry(agentType)?.supportsFork === true) {
+      local.push({
+        name: "fork",
+        signature: "/fork",
+        description: "Branch this conversation into a new tab",
+        handler: "fork" as const,
+      });
+    }
+    local.push({
+      name: "queue",
+      signature: "/queue <message>",
+      description: "Queue a message to run when the agent is free",
+      handler: "queue" as const,
+    });
+    return [...(login ? [login] : []), ...fromAgent, ...local];
   }, [agentType, availableCommands]);
   const queue = useChatStore((s) => s.queues[tabId] ?? EMPTY_QUEUE);
 
@@ -1368,7 +1390,7 @@ export function MessageInput({
       if (!t || !view) return;
 
       if (cmd.handler === "agent-login") {
-        // The one Atlas-handled command (S1): every agent opens the same
+        // An Atlas-handled command (S1): every agent opens the same
         // `AgentOAuthModal`. `reason` is passed so the modal can tell an
         // "agent wants a provider key" failure from a plain "not signed in".
         clearSlashRange(view, t.from, t.to);
@@ -1377,6 +1399,18 @@ export function MessageInput({
         inputRef.current?.focus();
         return;
       }
+      if (cmd.handler === "fork") {
+        // Same flow as the header's "branch from here" menu item.
+        clearSlashRange(view, t.from, t.to);
+        setSlashTrigger(null);
+        forkSessionToNewTab(tabId);
+        inputRef.current?.focus();
+        return;
+      }
+      // "queue" needs a message, so its signature carries `<message>` and the
+      // requires-args branch below inserts "/queue " for the user to fill in;
+      // the actual queueing happens in `submit`, which intercepts the typed
+      // form.
 
       // Passthrough: every other command is sent verbatim to the agent.
       // claude-agent-acp's SDK processes the slash command client-side
@@ -1430,7 +1464,7 @@ export function MessageInput({
       // submit path — trim/mentions/queueing behave exactly like a typed Enter.
       submitRef.current();
     },
-    [disabled, agentType],
+    [disabled, agentType, tabId],
   );
 
   // Forward Up/Down/Enter/Esc/Backspace/Tab from CodeMirror to whichever
@@ -1622,6 +1656,21 @@ export function MessageInput({
       if (running) onStop?.();
       return;
     }
+    // Atlas-surface commands, typed in full (the picker's Enter lands here
+    // too). They drive app affordances, so they never reach the agent.
+    if (trimmed === "/fork" && agentCatalogEntry(agentType)?.supportsFork === true) {
+      forkSessionToNewTab(tabId);
+      inputRef.current?.clear();
+      setValue("");
+      return;
+    }
+    if (trimmed === "/queue" || trimmed.startsWith("/queue ")) {
+      const queued = trimmed.slice("/queue".length).trim();
+      if (queued) enqueueMessage(tabId, queued);
+      inputRef.current?.clear();
+      setValue("");
+      return;
+    }
     const mentions = inputRef.current?.getMentions() ?? [];
     if (running) {
       // Queued messages don't carry mentions yet — the queue holds raw
@@ -1646,6 +1695,7 @@ export function MessageInput({
     onStop,
     enqueueMessage,
     tabId,
+    agentType,
     disabled,
     stagedImages,
     githubSyncing,

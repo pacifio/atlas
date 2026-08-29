@@ -1006,6 +1006,21 @@ impl AcpThread {
         let _ = self.events.send(event);
     }
 
+    /// Drop every entry from `from` to the end, announcing the removal.
+    ///
+    /// This is what a history rewind (the native agent's `/undo`, backed by
+    /// the engine's `thread/rollback`) uses to make the transcript match what
+    /// the model now remembers — leaving the undone exchange on screen would
+    /// show a conversation the agent no longer has.
+    pub fn remove_entries_from(&mut self, from: usize) {
+        let len = self.entries.len();
+        if from >= len {
+            return;
+        }
+        self.entries.truncate(from);
+        self.emit(AcpThreadEvent::EntriesRemoved(from..len));
+    }
+
     // ---- session/update -------------------------------------------------
 
     /// Ported from `AcpThread::handle_session_update` (`acp_thread.rs:2549-2652`).

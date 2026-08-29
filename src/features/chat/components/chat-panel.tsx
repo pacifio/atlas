@@ -47,7 +47,8 @@ import { MessageInput } from "./message-input";
 import { AiGrantPill } from "./ai-grant-pill";
 import { SessionSidebar } from "./session-sidebar";
 import { ChatHeader } from "./chat-header";
-import { openAgentSession, openNewAgentChat } from "../lib/open-agent-session";
+import { openNewAgentChat } from "../lib/open-agent-session";
+import { forkSessionToNewTab } from "../lib/fork-session";
 import { workspacePathForTab } from "../lib/tab-workspace";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchTextDiff } from "@/features/git/lib/git-diff-api";
@@ -159,32 +160,8 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
 
   /** Fork the bound session and open the branch in a new tab, so the thread
    *  that got here stays intact — which is the entire point of forking. */
-  const onForkSessionStable = useCallback(() => {
-    void (async () => {
-      const sess = useChatStore.getState().sessions[tabId];
-      if (!sess?.acpAgentId || !sess.acpSessionId) return;
-      try {
-        const forked = await agents.forkSession({
-          agent_id: sess.acpAgentId,
-          session_id: sess.acpSessionId,
-        });
-        if (!forked) {
-          toast.error("This agent cannot branch a session.");
-          return;
-        }
-        // Open the branch in its own tab so the thread that got here stays
-        // intact — which is the entire point of forking.
-        await openAgentSession({
-          acpSessionId: forked,
-          title: `${sess.title ?? "Session"} (branch)`,
-          cwd: useProjectStore.getState().currentProject?.path ?? "",
-          agentType: sess.agentType,
-        });
-      } catch (err) {
-        toast.error(errInfo(err).message);
-      }
-    })();
-  }, [tabId]);
+  // Shared with the composer's `/fork` command — one fork flow, two doors.
+  const onForkSessionStable = useCallback(() => forkSessionToNewTab(tabId), [tabId]);
   const [roleFilter, setRoleFilter] = useState<"all" | "user" | "assistant">("all");
   const [bashPanelOpen, setBashPanelOpen] = useState(false);
   const [plansPanelOpen, setPlansPanelOpen] = useState(false);

@@ -339,6 +339,93 @@ impl EngineConnection {
         Ok(())
     }
 
+    /// Branch a stored conversation into a new thread — `thread/fork`.
+    ///
+    /// Returns the new thread's id. Only the fork happens here: the host opens
+    /// the branch through the normal reopen path, which replays the forked
+    /// history the same way any reopened session's is replayed.
+    pub async fn fork_thread(&self, session_id: &acp::SessionId) -> Result<String> {
+        let model = self
+            .sessions
+            .selected_model(session_id)
+            .unwrap_or_else(|| self.settings.model.clone());
+        let response: v2::ThreadForkResponse = self
+            .call(|request_id| ClientRequest::ThreadFork {
+                request_id,
+                params: v2::ThreadForkParams {
+                    thread_id: session_id.to_string(),
+                    last_turn_id: None,
+                    before_turn_id: None,
+                    path: None,
+                    model: Some(model),
+                    model_provider: Some(self.settings.provider.id.clone()),
+                    service_tier: None,
+                    cwd: self.sessions.cwd(session_id),
+                    runtime_workspace_roots: None,
+                    approval_policy: None,
+                    approvals_reviewer: None,
+                    sandbox: None,
+                    permissions: None,
+                    config: None,
+                    base_instructions: None,
+                    developer_instructions: None,
+                    ephemeral: false,
+                    thread_source: None,
+                    exclude_turns: true,
+                    defer_goal_continuation: false,
+                },
+            })
+            .await?;
+        Ok(response.thread.id)
+    }
+
+    /// Discover the cwd's skills and re-publish the command list with them.
+    ///
+    /// User- and repo-scope only: the engine's bundled system skills lean on
+    /// upstream services the gateway does not serve, and a row that errors on
+    /// click is worse than no row. Best-effort by design — a session without
+    /// skills is a session with the static commands, not a failed session.
+    async fn discover_skills(&self, session_id: &acp::SessionId, cwd: &std::path::Path) {
+        let listed: Result<v2::SkillsListResponse> = self
+            .call(|request_id| ClientRequest::SkillsList {
+                request_id,
+                params: v2::SkillsListParams {
+                    cwds: vec![cwd.to_path_buf()],
+                    force_reload: false,
+                },
+            })
+            .await;
+        let Ok(listed) = listed else {
+            return;
+        };
+        let skills: Vec<crate::engine::commands::SkillRef> = listed
+            .data
+            .into_iter()
+            .flat_map(|entry| entry.skills)
+            .filter(|skill| {
+                skill.enabled
+                    && matches!(skill.scope, v2::SkillScope::User | v2::SkillScope::Repo)
+            })
+            .map(|skill| crate::engine::commands::SkillRef {
+                name: skill.name,
+                description: skill.description,
+                path: skill.path.as_path().to_path_buf(),
+            })
+            .collect();
+        if skills.is_empty() {
+            return;
+        }
+        self.sessions.set_skills(session_id, skills.clone());
+        if let Some(thread) = self.sessions.thread(session_id) {
+            let _ = thread
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .handle_session_update(acp::SessionUpdate::AvailableCommandsUpdate(
+                    acp::AvailableCommandsUpdate::new(crate::engine::commands::available(&skills)),
+                ));
+        }
+    }
+
     /// Reasoning effort for one session — native-only, like the Cersei path.
     pub fn session_effort(
         &self,
@@ -375,7 +462,9 @@ impl EngineConnection {
         // session — the restored tab a user actually types "/" into — with an
         // empty picker while a fresh chat's was full.
         let _ = thread.handle_session_update(acp::SessionUpdate::AvailableCommandsUpdate(
-            acp::AvailableCommandsUpdate::new(crate::engine::commands::available()),
+            // The static set. Skills are discovered right after the session
+            // registers (`discover_skills`) and re-publish the full list.
+            acp::AvailableCommandsUpdate::new(crate::engine::commands::available(&[])),
         ));
         Arc::new(Mutex::new(thread))
     }
@@ -775,6 +864,7 @@ impl AgentConnection for EngineConnection {
             // this runs on the engine's own defaults, so the picker would show
             // a mode the engine is not in.
             self.apply_mode(&session_id, &mode).await?;
+            self.discover_skills(&session_id, &cwd).await;
             Ok(thread)
         }
         .boxed()
@@ -932,6 +1022,7 @@ impl AgentConnection for EngineConnection {
                 .clone()
                 .unwrap_or_else(|| acp::SessionModeId::new(modes::DEFAULT_MODE_ID));
             self.apply_mode(&engine_session_id, &mode).await?;
+            self.discover_skills(&engine_session_id, &cwd).await;
             Ok(thread)
         }
         .boxed()
@@ -972,8 +1063,10 @@ impl AgentConnection for EngineConnection {
         // A slash command is not something to say to the model — sent as a
         // turn it would arrive as the literal text "/compact", which the
         // engine has no reason to interpret. Each resolves to what it really
-        // is: a protocol call, or a canned turn.
-        match crate::engine::commands::command_of(&text) {
+        // is: a protocol call, a canned turn, a local reply, or a skill turn.
+        let skills = self.sessions.skills(&params.session_id);
+        let mut turn_input: Option<Vec<v2::UserInput>> = None;
+        match crate::engine::commands::parse(&text, &skills) {
             Some(crate::engine::commands::Command::Compact) => {
                 let thread_id = thread_id.clone();
                 return async move {
@@ -1049,6 +1142,178 @@ impl AgentConnection for EngineConnection {
                 }
                 .boxed();
             }
+            // `/undo` — `thread/rollback` drops the last exchange from the
+            // engine's durable history, and the thread's entries are trimmed
+            // to match so the transcript shows what the model now remembers.
+            Some(crate::engine::commands::Command::Undo) => {
+                let sessions = self.sessions.clone();
+                let session_id = params.session_id.clone();
+                let thread_id = thread_id.clone();
+                return async move {
+                    let rolled = requests
+                        .request_typed::<v2::ThreadRollbackResponse>(ClientRequest::ThreadRollback {
+                            request_id,
+                            params: v2::ThreadRollbackParams {
+                                thread_id,
+                                num_turns: 1,
+                            },
+                        })
+                        .await;
+                    let reply = match rolled {
+                        Ok(_) => {
+                            if let Some(thread) = sessions.thread(&session_id) {
+                                let mut locked =
+                                    thread.lock().unwrap_or_else(|p| p.into_inner());
+                                // The LAST user entry is "/undo" itself — the
+                                // host pushed it before prompt() ran. The
+                                // exchange being undone starts at the user
+                                // entry BEFORE it; both go.
+                                let user_indices: Vec<usize> = locked
+                                    .entries()
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, entry)| {
+                                        matches!(
+                                            entry,
+                                            atlas_acp_thread::AgentThreadEntry::UserMessage(_)
+                                        )
+                                    })
+                                    .map(|(ix, _)| ix)
+                                    .collect();
+                                if let Some(from) =
+                                    user_indices.iter().rev().nth(1).copied()
+                                {
+                                    locked.remove_entries_from(from);
+                                } else if let Some(only) = user_indices.last().copied() {
+                                    locked.remove_entries_from(only);
+                                }
+                            }
+                            "Rewound the last exchange — the conversation continues from \
+                             before it."
+                                .to_string()
+                        }
+                        // The engine refuses when there is nothing to drop;
+                        // that is an answer, not a failure.
+                        Err(_) => "Nothing to rewind yet.".to_string(),
+                    };
+                    if let Some(thread) = sessions.thread(&session_id) {
+                        thread
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .push_assistant_content_block(
+                                acp::ContentBlock::Text(acp::TextContent::new(reply)),
+                                false,
+                            );
+                    }
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed();
+            }
+            // `/goal` — set with input, show without.
+            Some(crate::engine::commands::Command::Goal(objective)) => {
+                let sessions = self.sessions.clone();
+                let session_id = params.session_id.clone();
+                let thread_id = thread_id.clone();
+                return async move {
+                    let reply = match objective {
+                        Some(objective_text) => {
+                            let set = requests
+                                .request_typed::<v2::ThreadGoalSetResponse>(ClientRequest::ThreadGoalSet {
+                                    request_id,
+                                    params: v2::ThreadGoalSetParams {
+                                        thread_id,
+                                        objective: Some(objective_text.clone()),
+                                        ..Default::default()
+                                    },
+                                })
+                                .await;
+                            match set {
+                                Ok(_) => format!("**Goal set:** {objective_text}"),
+                                Err(e) => format!("Could not set the goal: {e}"),
+                            }
+                        }
+                        None => {
+                            let got = requests
+                                .request_typed::<v2::ThreadGoalGetResponse>(ClientRequest::ThreadGoalGet {
+                                    request_id,
+                                    params: v2::ThreadGoalGetParams { thread_id },
+                                })
+                                .await;
+                            match got {
+                                Ok(response) => response
+                                    .goal
+                                    .map(|goal| format!("**Goal:** {}", goal.objective))
+                                    .unwrap_or_else(|| {
+                                        "No goal set. `/goal <objective>` sets one."
+                                            .to_string()
+                                    }),
+                                Err(e) => format!("Could not read the goal: {e}"),
+                            }
+                        }
+                    };
+                    if let Some(thread) = sessions.thread(&session_id) {
+                        thread
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .push_assistant_content_block(
+                                acp::ContentBlock::Text(acp::TextContent::new(reply)),
+                                false,
+                            );
+                    }
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed();
+            }
+            // `/review` — `review/start`, INLINE on this thread, which is what
+            // makes it renderable with zero new UI: the review runs as a turn
+            // here, its findings stream through the same pipeline as any
+            // answer. On this thread's model too — our engine config leaves
+            // `review_model` unset on purpose, and the engine then uses the
+            // parent thread's model, which the gateway serves.
+            Some(crate::engine::commands::Command::Review(instructions)) => {
+                let thread_id = thread_id.clone();
+                return async move {
+                    let target = match instructions {
+                        Some(instructions) => v2::ReviewTarget::Custom { instructions },
+                        None => v2::ReviewTarget::UncommittedChanges,
+                    };
+                    let started: v2::ReviewStartResponse = requests
+                        .request_typed(ClientRequest::ReviewStart {
+                            request_id,
+                            params: v2::ReviewStartParams {
+                                thread_id: thread_id.clone(),
+                                target,
+                                delivery: Some(v2::ReviewDelivery::Inline),
+                            },
+                        })
+                        .await
+                        .map_err(|e| anyhow!("the review could not start: {e}"))?;
+                    if started.turn.status != v2::TurnStatus::InProgress {
+                        return Ok(acp::PromptResponse::new(stop_reason(&started.turn)?));
+                    }
+                    let waiter = turns.register(&thread_id, &started.turn.id);
+                    match waiter.await {
+                        Ok(turn) => Ok(acp::PromptResponse::new(stop_reason(&turn)?)),
+                        Err(_) => {
+                            turns.forget(&thread_id, &started.turn.id);
+                            Err(anyhow!("the engine stopped before the review completed"))
+                        }
+                    }
+                }
+                .boxed();
+            }
+            // A discovered skill runs as a turn whose input NAMES the skill —
+            // the engine loads it itself; any extra words ride along as text.
+            Some(crate::engine::commands::Command::Skill { name, path, args }) => {
+                let mut items = vec![v2::UserInput::Skill { name, path }];
+                if let Some(args) = args {
+                    items.push(v2::UserInput::Text {
+                        text: args,
+                        text_elements: Vec::new(),
+                    });
+                }
+                turn_input = Some(items);
+            }
             None => {}
         }
 
@@ -1058,10 +1323,12 @@ impl AgentConnection for EngineConnection {
                     request_id,
                     params: v2::TurnStartParams {
                         thread_id: thread_id.clone(),
-                        input: vec![v2::UserInput::Text {
-                            text,
-                            text_elements: Vec::new(),
-                        }],
+                        input: turn_input.unwrap_or_else(|| {
+                            vec![v2::UserInput::Text {
+                                text,
+                                text_elements: Vec::new(),
+                            }]
+                        }),
                         model: Some(model),
                         ..Default::default()
                     },

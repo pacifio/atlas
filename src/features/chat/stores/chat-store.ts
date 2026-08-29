@@ -1990,6 +1990,21 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       session.availableCommands = env.commands;
       return;
     }
+    case "history_rewound": {
+      // A rewind (the native agent's /undo). Drop trailing messages through
+      // the `turns`-th user message from the end, so the visible transcript
+      // matches what the agent now remembers. Counted in user messages
+      // because our user rows are optimistic — they carry no wire ids the
+      // backend could address individually.
+      let remaining = (env.turns as number) ?? 0;
+      let cut = session.messages.length;
+      while (cut > 0 && remaining > 0) {
+        cut -= 1;
+        if (session.messages[cut]?.role === "user") remaining -= 1;
+      }
+      if (remaining === 0) session.messages.splice(cut);
+      return;
+    }
     case "mode_changed": {
       session.acpCurrentMode = env.mode_id;
       // Reflect agent-driven permission-mode changes back into the composer
