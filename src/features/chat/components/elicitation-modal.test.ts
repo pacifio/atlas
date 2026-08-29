@@ -28,7 +28,76 @@ describe("parseElicitationSchema", () => {
       properties: { env: { type: "string", enum: ["dev", "prod"] } },
     });
     expect(f.kind).toBe("enum");
-    expect(f.choices).toEqual(["dev", "prod"]);
+    expect(f.choices).toEqual([
+      { value: "dev", label: "dev" },
+      { value: "prod", label: "prod" },
+    ]);
+  });
+
+  it("labels a bare enum from the parallel enumNames", () => {
+    const [f] = parseElicitationSchema({
+      properties: { env: { type: "string", enum: ["dev"], enumNames: ["Development"] } },
+    });
+    expect(f.choices).toEqual([{ value: "dev", label: "Development" }]);
+  });
+
+  /// The bug behind the empty box: AskUserQuestion arrives as a titled `oneOf`,
+  /// never a bare `enum`, so a parser that only reads `enum` renders the whole
+  /// question as a naked text input with its options nowhere.
+  it("reads choices from a titled oneOf", () => {
+    const [f] = parseElicitationSchema({
+      properties: {
+        question_0: {
+          type: "string",
+          title: "Client layer",
+          oneOf: [
+            { const: "Rust", title: "Rust", description: "Socket in Rust" },
+            { const: "TS", title: "TypeScript" },
+          ],
+        },
+      },
+    });
+    expect(f.kind).toBe("enum");
+    expect(f.multi).toBe(false);
+    expect(f.choices).toEqual([
+      { value: "Rust", label: "Rust", description: "Socket in Rust" },
+      { value: "TS", label: "TypeScript", description: undefined },
+    ]);
+  });
+
+  /// A `const` whose title differs is exactly why choices carry both: rendering
+  /// the value would show the user an internal token like `retry_fallback`.
+  it("keeps the wire value separate from the label", () => {
+    const [f] = parseElicitationSchema({
+      properties: {
+        choice: { type: "string", oneOf: [{ const: "retry_fallback", title: "Retry with Opus" }] },
+      },
+    });
+    expect(f.choices[0]).toMatchObject({ value: "retry_fallback", label: "Retry with Opus" });
+  });
+
+  it("reads a multi-select from array items.anyOf", () => {
+    const [f] = parseElicitationSchema({
+      properties: {
+        question_0: { type: "array", items: { anyOf: [{ const: "a", title: "A" }] } },
+      },
+    });
+    expect(f.kind).toBe("enum");
+    expect(f.multi).toBe(true);
+    expect(f.choices).toEqual([{ value: "a", label: "A", description: undefined }]);
+  });
+
+  it("marks the free-text companion so it is not shown as its own question", () => {
+    const fields = parseElicitationSchema({
+      properties: {
+        question_0_custom: {
+          type: "string",
+          title: "Other",
+          _meta: { _askUserQuestionCustomAnswer: { questionId: "question_0" } },
+        },
+      },
+    });
+    expect(fields[0].customFor).toBe("question_0");
   });
 
   it("maps integer and number alike", () => {
@@ -81,6 +150,7 @@ describe("elicitationComplete", () => {
     kind: "string" as const,
     required: true,
     choices: [],
+    multi: false,
     default: null,
     ...over,
   });

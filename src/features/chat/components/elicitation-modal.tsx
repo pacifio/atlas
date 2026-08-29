@@ -20,83 +20,20 @@ import { useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { HelpCircle, ExternalLink } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { agents } from "../lib/agents-api";
+import {
+  elicitationComplete,
+  parseElicitationSchema,
+  type ElicitationField,
+} from "../lib/elicitation-schema";
 
-/** One field the agent wants filled, projected from its JSON schema. */
-export interface ElicitationField {
-  name: string;
-  title: string;
-  description: string | null;
-  kind: "string" | "number" | "boolean" | "enum";
-  required: boolean;
-  /** `enum` only. */
-  choices: string[];
-  default: string | number | boolean | null;
-}
-
-/** Project `requestedSchema` (a JSON Schema object) into renderable fields.
- *
- *  Exported for tests: this is where a malformed or exotic schema either
- *  degrades gracefully or produces a form the user cannot complete. Anything
- *  whose type is unrecognised falls back to a text input rather than being
- *  dropped — a field the agent required but Atlas silently omitted would make
- *  the whole request unanswerable.
- */
-export function parseElicitationSchema(schema: unknown): ElicitationField[] {
-  if (!schema || typeof schema !== "object") return [];
-  const s = schema as Record<string, unknown>;
-  const props = s.properties;
-  if (!props || typeof props !== "object") return [];
-  const required = new Set(Array.isArray(s.required) ? (s.required as string[]) : []);
-  const out: ElicitationField[] = [];
-  for (const [name, rawProp] of Object.entries(props as Record<string, unknown>)) {
-    if (!rawProp || typeof rawProp !== "object") continue;
-    const prop = rawProp as Record<string, unknown>;
-    const choices = Array.isArray(prop.enum) ? prop.enum.map(String) : [];
-    const type = typeof prop.type === "string" ? prop.type : "";
-    const kind: ElicitationField["kind"] =
-      choices.length > 0
-        ? "enum"
-        : type === "boolean"
-          ? "boolean"
-          : type === "number" || type === "integer"
-            ? "number"
-            : "string";
-    out.push({
-      name,
-      title: typeof prop.title === "string" && prop.title ? prop.title : name,
-      description: typeof prop.description === "string" ? prop.description : null,
-      kind,
-      required: required.has(name),
-      choices,
-      default:
-        typeof prop.default === "string" ||
-        typeof prop.default === "number" ||
-        typeof prop.default === "boolean"
-          ? prop.default
-          : null,
-    });
-  }
-  return out;
-}
-
-/** Whether every required field has a usable answer.
- *
- *  Booleans are always answered (false IS an answer), which is why they are
- *  excluded rather than checked for truthiness — treating an unchecked required
- *  checkbox as "unanswered" would make it impossible to submit "no". */
-export function elicitationComplete(
-  fields: ElicitationField[],
-  values: Record<string, unknown>,
-): boolean {
-  return fields
-    .filter((f) => f.required && f.kind !== "boolean")
-    .every((f) => {
-      const v = values[f.name];
-      return v !== undefined && v !== null && String(v).trim().length > 0;
-    });
-}
+// The schema projection moved to `../lib/elicitation-schema` once the question
+// card needed it too. Re-exported so this file stays the one import site for
+// everything elicitation-shaped.
+export { elicitationComplete, parseElicitationSchema };
+export type { ElicitationField };
 
 export interface PendingElicitation {
   agentId: string;
@@ -135,10 +72,12 @@ export function ElicitationModal({
     setBusy(true);
     try {
       await agents.respondElicitation(pending.agentId, pending.requestId, action, content);
-    } catch (e) {
-      console.warn("respondElicitation failed:", e);
-    } finally {
       onClose();
+    } catch (e) {
+      // Stay open: the agent is still waiting on this reply, so dismissing on a
+      // failed send would strand it with nothing left to retry from.
+      setBusy(false);
+      toast.error(`Could not send your answer: ${e}`);
     }
   };
 
@@ -209,20 +148,40 @@ export function ElicitationModal({
                   </button>
                 ) : f.kind === "enum" ? (
                   <div className="flex flex-wrap gap-1">
-                    {f.choices.map((c) => (
-                      <button
-                        key={c}
-                        onClick={() => set(f.name, c)}
-                        className={cn(
-                          "rounded-sm border border-border-default px-2 py-1 text-[11px] transition-colors",
-                          values[f.name] === c
-                            ? "bg-bg-selected text-text-primary"
-                            : "text-text-secondary hover:bg-bg-hover",
-                        )}
-                      >
-                        {c}
-                      </button>
-                    ))}
+                    {f.choices.map((c) => {
+                      // Multi-select fields hold an array, so "picked" is
+                      // membership and clicking toggles rather than replaces.
+                      const picked = f.multi
+                        ? Array.isArray(values[f.name]) &&
+                          (values[f.name] as string[]).includes(c.value)
+                        : values[f.name] === c.value;
+                      return (
+                        <button
+                          key={c.value}
+                          title={c.description}
+                          onClick={() => {
+                            if (!f.multi) return set(f.name, c.value);
+                            const cur = Array.isArray(values[f.name])
+                              ? (values[f.name] as string[])
+                              : [];
+                            set(
+                              f.name,
+                              cur.includes(c.value)
+                                ? cur.filter((v) => v !== c.value)
+                                : [...cur, c.value],
+                            );
+                          }}
+                          className={cn(
+                            "rounded-sm border border-border-default px-2 py-1 text-[11px] transition-colors",
+                            picked
+                              ? "bg-bg-selected text-text-primary"
+                              : "text-text-secondary hover:bg-bg-hover",
+                          )}
+                        >
+                          {c.label}
+                        </button>
+                      );
+                    })}
                   </div>
                 ) : (
                   <input
