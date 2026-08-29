@@ -1270,3 +1270,83 @@ async fn compact_is_visible_in_the_thread_not_a_silent_shrug() {
     }
     assert!(seen, "compaction must be visible in the thread timeline");
 }
+
+#[tokio::test]
+async fn an_executed_command_appears_as_a_tool_call_with_its_output() {
+    // The #46 wiring, end to end: the model asks for `exec_command`, the
+    // engine actually runs it, and the ITEM notifications land in the thread
+    // as a tool-call row — kind, final status from the exit code, and the
+    // command's real output. This same upsert is what capture's write
+    // extraction reads, which is where Artifacts checkpoints come from: no
+    // tool rows meant no write set meant no checkpoint, ever.
+    let tool_turn = {
+        let call = serde_json::json!({
+            "id": "c1",
+            "choices": [{"index": 0, "delta": {"tool_calls": [{
+                "index": 0,
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "exec_command",
+                    "arguments": "{\"cmd\":\"echo checkpoint-proof\"}",
+                },
+            }]}, "finish_reason": null}],
+        })
+        .to_string();
+        let finish =
+            r#"{"id":"c1","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#;
+        frames(&[&call, finish, "[DONE]"])
+    };
+    // First completion answers with the tool call; every later one (the
+    // follow-up carrying the tool result) answers with text.
+    let h = harness(vec![
+        (Some(1), sse_ok(tool_turn)),
+        (None, sse_ok(answer("ran it"))),
+    ])
+    .await;
+    let session_id = h.open_thread().await;
+
+    // Bypass approvals: this test is about the item pipeline, not the dialog.
+    let modes = h
+        .connection
+        .session_modes(&session_id)
+        .expect("the native agent advertises modes");
+    modes
+        .set_mode(acp::SessionModeId::new("bypass"))
+        .await
+        .expect("bypass mode should apply");
+
+    let response = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("run it")))
+        .await
+        .expect("the tool turn should complete");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+    let thread = h
+        .threads
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .last()
+        .cloned()
+        .expect("thread");
+    let locked = thread.lock().unwrap_or_else(|p| p.into_inner());
+    let call = locked
+        .entries()
+        .iter()
+        .find_map(|entry| match entry {
+            atlas_acp_thread::AgentThreadEntry::ToolCall(call) => Some(call),
+            _ => None,
+        })
+        .expect("the executed command must appear as a tool-call row");
+    assert!(
+        matches!(call.status, atlas_acp_thread::ToolCallStatus::Completed),
+        "echo exits 0, so the row must settle as completed: {:?}",
+        call.status,
+    );
+    let rendered = format!("{call:?}");
+    assert!(
+        rendered.contains("checkpoint-proof"),
+        "the command's real output must be on the row: {rendered}",
+    );
+}
