@@ -73,3 +73,24 @@ export function extractQuestions(tc: ToolCallRef): QuestionSpec[] | null {
 
   return specs.length > 0 ? specs : null;
 }
+
+/** Compose the free-text form of every answer, one line per question.
+ *
+ *  The fallback when an answer cannot be expressed as a protocol option: the
+ *  agent reads it as an ordinary user message, so it has to name which question
+ *  each answer belongs to whenever there is more than one. */
+export function composeAnswers(
+  questions: QuestionSpec[],
+  answers: { selected: string[]; custom: string }[],
+): string {
+  const lines: string[] = [];
+  questions.forEach((q, i) => {
+    const a = answers[i];
+    if (!a) return;
+    const value = a.custom.trim() || a.selected.join(", ");
+    if (!value) return;
+    const label = q.header || q.question;
+    lines.push(questions.length === 1 ? value : `${label}: ${value}`);
+  });
+  return lines.join("\n");
+}

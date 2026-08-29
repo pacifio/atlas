@@ -212,12 +212,19 @@ fn elicitation_response(
     action: &str,
     content: Option<serde_json::Value>,
 ) -> Result<Option<acp::CreateElicitationResponse>> {
+    // `{"action": "accept"}`, NOT `{"outcome": "accepted"}`. `ElicitationAction`
+    // is an internally tagged enum on `action` with snake_case variants, and its
+    // catch-all `Other` arm is `#[serde(untagged)]` — so a wrong tag does not
+    // fall through to it, it fails the whole union. This built an
+    // `outcome`-shaped object that could never deserialize, so EVERY elicitation
+    // answer died here with `Fatal`, the webview logged a warning and dismissed
+    // the card, and the agent went on awaiting a reply that was never sent.
     let value = match action {
         "accept" => serde_json::json!({
-            "outcome": "accepted",
+            "action": "accept",
             "content": content.unwrap_or(serde_json::json!({})),
         }),
-        "decline" => serde_json::json!({ "outcome": "declined" }),
+        "decline" => serde_json::json!({ "action": "decline" }),
         // Anything else cancels. That is the caller's intent, not a failure.
         _ => return Ok(None),
     };
@@ -2107,6 +2114,66 @@ pub fn save_installed(
     let json = serde_json::to_string_pretty(settings)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     std::fs::write(path, json)
+}
+
+#[cfg(test)]
+mod elicitation_response_tests {
+    use super::*;
+
+    /// The tag is `action` with snake_case variants, and the catch-all `Other`
+    /// arm is `#[serde(untagged)]` — so a wrong tag fails the whole union
+    /// rather than landing in it. This shipped as `{"outcome": "accepted"}`,
+    /// which meant no elicitation answer ever deserialized: the command
+    /// returned `Fatal`, the card was dismissed anyway, and the agent waited on
+    /// a reply that was never sent. Pin the wire.
+    #[test]
+    fn accept_carries_the_answers_under_the_action_tag() {
+        let content = serde_json::json!({ "question_0": "TypeScript", "question_1": ["DMs"] });
+        let response = elicitation_response("accept", Some(content))
+            .expect("a well-formed accept is not an error")
+            .expect("accept is a response, not a cancel");
+        assert!(matches!(response.action, acp::ElicitationAction::Accept(_)));
+        assert_eq!(
+            serde_json::to_value(&response).unwrap(),
+            serde_json::json!({
+                "action": "accept",
+                "content": { "question_0": "TypeScript", "question_1": ["DMs"] },
+            })
+        );
+    }
+
+    #[test]
+    fn accept_with_no_content_is_still_an_accept() {
+        let response = elicitation_response("accept", None).unwrap().unwrap();
+        assert!(matches!(response.action, acp::ElicitationAction::Accept(_)));
+    }
+
+    /// Declining is an ANSWER — the agent is told the user skipped and carries
+    /// on — so it must reach the wire, unlike a cancel.
+    #[test]
+    fn decline_is_a_response() {
+        let response = elicitation_response("decline", None).unwrap().unwrap();
+        assert_eq!(
+            serde_json::to_value(&response).unwrap(),
+            serde_json::json!({ "action": "decline" })
+        );
+    }
+
+    /// Cancel is `None` on purpose: the caller cancels the entry instead of
+    /// sending an answer the user never gave.
+    #[test]
+    fn cancel_sends_nothing() {
+        assert!(elicitation_response("cancel", None).unwrap().is_none());
+        assert!(elicitation_response("anything-else", None).unwrap().is_none());
+    }
+
+    /// A value the schema does not allow (a nested object) must be a loud
+    /// error, not a silently truncated answer.
+    #[test]
+    fn a_malformed_accept_is_an_error() {
+        let content = serde_json::json!({ "q": { "nested": "object" } });
+        assert!(elicitation_response("accept", Some(content)).is_err());
+    }
 }
 
 #[cfg(test)]

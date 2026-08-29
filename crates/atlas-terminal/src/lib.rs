@@ -2,7 +2,7 @@ pub mod command;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -214,6 +214,56 @@ impl TerminalManager {
     /// PID of the session's login shell (for `cwd_of_pid`).
     pub fn pid(&self, id: &str) -> Option<u32> {
         self.sessions.get(id)?.pid
+    }
+
+    /// A handle for sampling this session's tty line discipline. See
+    /// [`TtyModeProbe`].
+    pub fn mode_probe(&self, id: &str) -> Option<TtyModeProbe> {
+        Some(TtyModeProbe {
+            master: Arc::downgrade(&self.sessions.get(id)?.master),
+        })
+    }
+}
+
+/// Samples whether the pty is in raw mode, so the UI can tell a full-screen /
+/// inline TUI apart from a program reading lines.
+///
+/// Reads the termios of the MASTER fd: on both macOS and Linux the master
+/// reports the slave's line discipline, so this sees an app's `tcsetattr` in
+/// the child without any cooperation from it.
+///
+/// Holds a `Weak` deliberately — the master must stay droppable by
+/// `TerminalManager::close` or the shell never gets its HUP, and a probe that
+/// outlived the session would otherwise ioctl a recycled fd.
+pub struct TtyModeProbe {
+    master: Weak<Mutex<Box<dyn MasterPty + Send>>>,
+}
+
+impl TtyModeProbe {
+    /// `Some(true)` when the tty is in raw mode (ICANON cleared); `None` once
+    /// the session is gone or the ioctl fails.
+    ///
+    /// Raw mode ALONE does not mean an interactive app is running: zsh's line
+    /// editor puts the tty in raw mode at every prompt, and a TUI that exits
+    /// without restoring leaves it raw. Callers must pair this with "a command
+    /// is currently running" — zsh restores cooked mode before it execs.
+    pub fn is_raw(&self) -> Option<bool> {
+        #[cfg(unix)]
+        {
+            let master = self.master.upgrade()?;
+            let guard = master.lock().ok()?;
+            let fd = guard.as_raw_fd()?;
+            let mut attrs: libc::termios = unsafe { std::mem::zeroed() };
+            if unsafe { libc::tcgetattr(fd, &mut attrs) } != 0 {
+                return None;
+            }
+            Some(attrs.c_lflag & libc::ICANON == 0)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = &self.master;
+            None
+        }
     }
 }
 

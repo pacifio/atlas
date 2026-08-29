@@ -50,11 +50,13 @@ pub async fn terminal_create(
 ) -> Result<String, String> {
     let (tx, mut rx) = mpsc::channel::<atlas_terminal::TerminalOutput>(READ_QUEUE_CHUNKS);
 
-    let id = {
+    let (id, probe) = {
         let mut manager = state.manager.lock().await;
-        manager
+        let id = manager
             .create_session(cols, rows, cwd.as_deref(), tx)
-            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        let probe = manager.mode_probe(&id);
+        (id, probe)
     };
 
     let window = Arc::new(AckWindow {
@@ -72,6 +74,7 @@ pub async fn terminal_create(
     let session_id = id.clone();
     tokio::spawn(async move {
         let mut buf: Vec<u8> = Vec::with_capacity(16 * 1024);
+        let mut last_raw: Option<bool> = None;
         'main: loop {
             if buf.is_empty() {
                 match rx.recv().await {
@@ -103,6 +106,22 @@ pub async fn terminal_create(
             window.in_flight.fetch_add(1, Ordering::AcqRel);
             if on_output.send(InvokeResponseBody::Raw(chunk)).is_err() {
                 break 'main;
+            }
+
+            // Sample the tty's line discipline on the back of the output that
+            // just arrived, and report only transitions. An app flipping the
+            // terminal into raw mode always redraws immediately afterwards, so
+            // output is a reliable carrier for the change — and hanging the
+            // check here costs one ioctl per emitted chunk and NOTHING while
+            // the terminal sits idle, unlike a polling timer per session.
+            if let Some(raw) = probe.as_ref().and_then(|p| p.is_raw()) {
+                if last_raw != Some(raw) {
+                    last_raw = Some(raw);
+                    let _ = app_handle.emit(
+                        "terminal-mode",
+                        serde_json::json!({ "id": session_id.clone(), "raw": raw }),
+                    );
+                }
             }
         }
         app_handle

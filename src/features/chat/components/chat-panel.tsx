@@ -57,7 +57,7 @@ import { collectTurnEdits } from "../lib/turn-edits";
  *  this much so the first row clears the bar. Must match `ChatHeader`'s bar. */
 const HEADER_INSET = 46;
 import { PermissionModal } from "./permission-modal";
-import { ElicitationModal } from "./elicitation-modal";
+import { SessionElicitation } from "./session-elicitation";
 
 // Both panels are modal-style and never visible on first paint. Lazy so
 // they don't add to the initial chunk.
@@ -1014,7 +1014,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
               composer (plan reviews still render as a centered modal). */}
           <PermissionModal tabId={tabId} onSendMessage={onPermissionSend} />
           {pendingElicitation && (
-            <ElicitationModal
+            <SessionElicitation
               key={pendingElicitation.requestId}
               pending={pendingElicitation}
               onClose={() => clearElicitation(tabId)}

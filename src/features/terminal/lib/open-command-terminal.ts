@@ -48,8 +48,20 @@ export function shellLine(
     .join(" ");
 }
 
-/** Open a terminal and run `command` in it. Returns the tab it landed in, or
- *  `null` when no terminal could be reached.
+/** A terminal opened to run one command, and enough to take it away again. */
+export interface CommandTerminal {
+  /** The layout tab the command landed in. */
+  tabId: string;
+  /** The terminal minted for the command — the one to close. */
+  terminalId: string;
+  /** Whether that tab was CREATED for this command. When it was, closing it
+   *  whole is right; when the user already had a terminal tab open, only our
+   *  own terminal may be taken. */
+  createdTab: boolean;
+}
+
+/** Open a terminal and run `command` in it, or `null` when no terminal could be
+ *  reached.
  *
  *  Deliberately reads back which tab is active instead of trusting the id it
  *  asked for. A terminal tab is a SINGLETON PER COLUMN: when one is already
@@ -58,9 +70,9 @@ export function shellLine(
  *  against the id we asked for therefore usually queued against a tab that
  *  would never exist — the terminal opened, and nothing ran in it.
  */
-export function openCommandTerminal(command: string, title: string): string | null {
-  const layout = useLayoutStore.getState();
-  layout.actions.addTab({
+export function openCommandTerminal(command: string, title: string): CommandTerminal | null {
+  const before = new Set(useLayoutStore.getState().tabs.map((t) => t.id));
+  useLayoutStore.getState().actions.addTab({
     id: `terminal-${Date.now()}`,
     type: "terminal",
     title,
@@ -78,5 +90,27 @@ export function openCommandTerminal(command: string, title: string): string | nu
   const terminalId = useTerminalStore.getState().actions.addTerminalForCommand(tab.id);
   useTerminalStore.getState().actions.setPendingCommand(terminalId, command);
   useTerminalStore.getState().actions.requestTerminalFocus(tab.id);
-  return tab.id;
+  return { tabId: tab.id, terminalId, createdTab: !before.has(tab.id) };
+}
+
+/** Take back what `openCommandTerminal` opened.
+ *
+ *  For a cancelled login this is not tidiness: the CLI is still ALIVE, mid-TUI,
+ *  and the surface that could answer it has just gone away. Closing the
+ *  terminal unmounts it, and that cleanup closes the PTY — the shell gets its
+ *  HUP and the login dies with it, rather than sitting there holding a prompt
+ *  nobody can reach.
+ */
+export function closeCommandTerminal(t: CommandTerminal): void {
+  const terminal = useTerminalStore.getState().actions;
+  if (t.createdTab) {
+    // Ours to begin with — take the whole tab. Close the layout tab FIRST so
+    // the panel unmounts: dropping the terminal tree while it is still mounted
+    // makes it re-seed itself with a fresh shell (`initTab`).
+    useLayoutStore.getState().actions.closeTab(t.tabId);
+    terminal.removeTabs([t.tabId]);
+    return;
+  }
+  // The tab was already the user's — only the terminal we added goes.
+  terminal.closeTerminalById(t.terminalId);
 }

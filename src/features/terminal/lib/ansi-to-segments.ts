@@ -183,8 +183,29 @@ export function resolveTerminalOutput(input: string): AnsiSegment[] {
         if (mode === 0) line.length = Math.min(line.length, col);
         else if (mode === 1) for (let k = 0; k < col && k < line.length; k++) line[k] = { ch: " " };
         else if (mode === 2) line.length = 0;
+      } else if (final === "J") {
+        // Erase in display. `ESC[J` is how a prompt library clears the frame it
+        // is about to redraw: cursor up to the top of the old frame, erase
+        // everything below, write the new one. Ignoring it (as this did) leaves
+        // every previous frame on screen under the new one — the taller old
+        // frame's tail survives as garbage on the right of the new lines.
+        const line = lineAt(row);
+        const mode = num(0);
+        if (mode === 0) {
+          // Cursor → end of display.
+          line.length = Math.min(line.length, col);
+          lines.length = row + 1;
+        } else if (mode === 1) {
+          // Start of display → cursor.
+          for (let r = 0; r < row; r++) lines[r] = [];
+          for (let k = 0; k < col && k < line.length; k++) line[k] = { ch: " " };
+        } else {
+          // 2 / 3 — the whole display. Blanked in place rather than removed:
+          // the cursor does not move, so the rows have to keep existing.
+          for (let r = 0; r < lines.length; r++) lines[r] = [];
+        }
       }
-      // Other CSI (J erase-display, scroll, etc.) ignored — block output.
+      // Other CSI (scroll regions, mode set/reset, etc.) ignored — block output.
       i = j + 1;
       continue;
     }

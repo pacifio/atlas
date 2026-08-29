@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   Loader2,
   CheckCircle2,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { safeUnlistenPromise } from "@/lib/safe-unlisten";
 import { openFileOrReveal } from "@/lib/open-file";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { resolveTerminalFont } from "../utils/resolve-font";
@@ -138,6 +140,9 @@ const XTERM_THEME = {
 export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTerminalProps) {
   const [blocks, setBlocks] = useState<TerminalBlock[]>([]);
   const [altScreen, setAltScreen] = useState(false);
+  // The running program put the tty in raw mode — see `TtyModeProbe` (Rust).
+  const [rawMode, setRawMode] = useState(false);
+  const [appCursorKeys, setAppCursorKeys] = useState(false);
   const [cwd, setCwd] = useState<string>("");
   const [surfaceReady, setSurfaceReady] = useState(false);
   const [git, setGit] = useState<TermGit | null>(null);
@@ -172,12 +177,14 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
 
   useEffect(() => {
     let disposed = false;
+    let modeUnlisten: Promise<UnlistenFn> | null = null;
     const initialCwd = useProjectStore.getState().currentProject?.path ?? "~";
 
     const parser = new BlockStreamParser(initialCwd, () => {
       if (disposed) return;
       setBlocks([...parser.blocks]);
       setAltScreen(parser.altScreen);
+      setAppCursorKeys(parser.appCursorKeys);
       setCwd(parser.currentCwd);
     });
     setCwd(initialCwd);
@@ -293,6 +300,14 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
       }
       ptyRef.current = id;
       sessionId = id;
+
+      // Rust reports tty raw-mode transitions for this session (one ioctl per
+      // output chunk, nothing at idle). Raw mode is only ACTED on while a
+      // command runs — at the prompt zsh's line editor holds the tty raw too,
+      // so raw-on-its-own says nothing about an app wanting the keyboard.
+      modeUnlisten = listen<{ id: string; raw: boolean }>("terminal-mode", (evt) => {
+        if (!disposed && evt.payload.id === id) setRawMode(evt.payload.raw);
+      });
       for (const chunk of earlyChunks) {
         void invoke("terminal_ack", { id }).catch(() => {});
         handleChunk(chunk);
@@ -366,6 +381,7 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
 
     return () => {
       disposed = true;
+      safeUnlistenPromise(modeUnlisten);
       xtermRef.current?.dispose();
       if (ptyRef.current) void invoke("terminal_close", { id: ptyRef.current }).catch(() => {});
     };
@@ -702,6 +718,8 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
             onInterrupt={interrupt}
             cwd={cwd}
             busy={busy}
+            rawMode={rawMode}
+            appCursorKeys={appCursorKeys}
             writeRaw={writeRaw}
           />
         )}

@@ -5,28 +5,19 @@
 // shape follows beui's ApprovalCard, rebuilt on Atlas tokens and with NO
 // motion library: the only animation is CSS transitions, per the house rules.
 //
-// Wire semantics (permission-request path — how BOTH agents deliver questions
-// today; codex-acp additionally routes MCP elicitations through the same
-// request):
-//   - Single question, single choice, no custom text, and the picked label
-//     matches an ACP permission option → resolve that option directly, so the
-//     tool call completes with a real answer.
-//   - Anything else (multiple questions, multiSelect, custom text, or no
-//     matching option — the adapter's generic fallback only offers
-//     allow/reject) → cancel the request and send the composed answers as a
-//     user message. That is the same contract the old card used; the agent
-//     reads the answers from the message.
-//
-// When the ACP elicitation path lands (session/create_elicitation), this card
-// is the renderer for it too — only the submit mapping changes.
+// The card is PURE: it collects answers and hands them back. Mapping an answer
+// onto a wire — resolving an ACP permission option, composing a user message,
+// or filling an elicitation's form fields — belongs to the caller, because the
+// three contracts genuinely differ and baking one of them in here is what made
+// this renderable for permissions only.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, CircleHelp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { PermissionOptionRef } from "@/types/acp";
 import type { QuestionSpec } from "../lib/questions";
 
-interface Answer {
+/** One question's answer, as the card reports it. */
+export interface Answer {
   selected: string[];
   custom: string;
 }
@@ -37,34 +28,21 @@ function isAnswered(a: Answer): boolean {
   return a.selected.length > 0 || a.custom.trim().length > 0;
 }
 
-/** Compose the free-text form of every answer, one line per question. */
-function composeAnswers(questions: QuestionSpec[], answers: Answer[]): string {
-  const lines: string[] = [];
-  questions.forEach((q, i) => {
-    const a = answers[i] ?? EMPTY;
-    const value = a.custom.trim() || a.selected.join(", ");
-    if (!value) return;
-    const label = q.header || q.question;
-    lines.push(questions.length === 1 ? value : `${label}: ${value}`);
-  });
-  return lines.join("\n");
-}
-
 export function ApprovalCard({
   questions,
-  acpOptions,
   queueNote,
-  onResolveOption,
-  onAnswerText,
+  onSubmit,
+  onSkip,
+  skipLabel = "Skip",
 }: {
   questions: QuestionSpec[];
-  /** The raw ACP permission options — used for the direct-resolve fast path. */
-  acpOptions: PermissionOptionRef[];
   queueNote?: string | null;
-  /** Resolve the permission with a concrete option id. */
-  onResolveOption: (optionId: string) => void;
-  /** Cancel the permission and send `text` as a user message. */
-  onAnswerText: (text: string) => void;
+  /** Every question's answer, in question order. */
+  onSubmit: (answers: Answer[]) => void;
+  /** Answer nothing and let the agent carry on. Omitted when the caller has no
+   *  way to say "no answer" on its wire. */
+  onSkip?: () => void;
+  skipLabel?: string;
 }) {
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<Answer[]>(() => questions.map(() => EMPTY));
@@ -74,11 +52,6 @@ export function ApprovalCard({
   const q = questions[Math.min(step, questions.length - 1)];
   const answer = answers[step] ?? EMPTY;
   const last = step === questions.length - 1;
-
-  const acpByName = useMemo(
-    () => new Map(acpOptions.map((o) => [o.name.trim().toLowerCase(), o] as const)),
-    [acpOptions],
-  );
 
   const setAnswer = useCallback(
     (next: Answer) => {
@@ -99,25 +72,7 @@ export function ApprovalCard({
   }, []);
   useEffect(() => clearAdvance, [clearAdvance]);
 
-  const submit = useCallback(
-    (finalAnswers: Answer[]) => {
-      // Fast path: a single single-select answer that maps onto a real ACP
-      // option resolves the permission properly instead of cancel+send.
-      if (questions.length === 1 && !questions[0].multiSelect) {
-        const a = finalAnswers[0] ?? EMPTY;
-        if (!a.custom.trim() && a.selected.length === 1) {
-          const match = acpByName.get(a.selected[0].trim().toLowerCase());
-          if (match) {
-            onResolveOption(match.optionId);
-            return;
-          }
-        }
-      }
-      const text = composeAnswers(questions, finalAnswers);
-      if (text) onAnswerText(text);
-    },
-    [questions, acpByName, onResolveOption, onAnswerText],
-  );
+  const submit = useCallback((finalAnswers: Answer[]) => onSubmit(finalAnswers), [onSubmit]);
 
   const goNext = useCallback(
     (fromAnswers?: Answer[]) => {
@@ -307,13 +262,27 @@ export function ApprovalCard({
             ))}
           </span>
 
+          {onSkip && (
+            <button
+              type="button"
+              onClick={() => {
+                clearAdvance();
+                onSkip();
+              }}
+              className="ml-auto cursor-pointer rounded-full px-2.5 py-1.5 text-[12px] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+            >
+              {skipLabel}
+            </button>
+          )}
+
           <button
             type="button"
             aria-label={last ? "Submit answers" : "Next question"}
             disabled={!isAnswered(answer)}
             onClick={() => goNext()}
             className={cn(
-              "ml-auto flex h-9 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium transition-colors",
+              "flex h-9 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium transition-colors",
+              onSkip ? "" : "ml-auto",
               isAnswered(answer)
                 ? "cursor-pointer bg-[var(--accent-primary)] text-[var(--bg-base)] hover:bg-[var(--accent-primary-hover)]"
                 : "cursor-default bg-[var(--bg-base)] text-[var(--text-ghost)]",

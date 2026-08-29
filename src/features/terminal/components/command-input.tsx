@@ -24,19 +24,87 @@ interface CommandInputProps {
   /** A command is currently running — the composer feeds its stdin (answering
    *  interactive prompts like create-next-app) instead of composing a command. */
   busy?: boolean;
+  /** The running command put the tty in RAW mode — it is a TUI doing its own
+   *  key handling (an agent login picker, say), not a program reading lines.
+   *  Every keystroke is forwarded as it is typed instead of being buffered
+   *  until Enter. Only meaningful together with `busy`. */
+  rawMode?: boolean;
+  /** DECCKM is on — arrows must be sent as SS3, not CSI. */
+  appCursorKeys?: boolean;
   /** Send raw bytes to the PTY (for forwarding nav keys to a running prompt). */
   writeRaw?: (data: number[]) => void;
 }
 
-// Escape sequences for keys a running interactive prompt expects.
+const ARROW_FINAL: Record<string, number> = {
+  ArrowUp: 0x41,
+  ArrowDown: 0x42,
+  ArrowRight: 0x43,
+  ArrowLeft: 0x44,
+};
+
+/** Arrow key → escape sequence, in the form the app asked for (see DECCKM). */
+function arrowBytes(key: string, appCursorKeys: boolean): number[] | null {
+  const final = ARROW_FINAL[key];
+  return final ? [0x1b, appCursorKeys ? 0x4f : 0x5b, final] : null;
+}
+
+// Non-arrow keys a running interactive prompt expects (arrows come from
+// `arrowBytes`, which has to account for DECCKM).
 const KEY_BYTES: Record<string, number[]> = {
-  ArrowUp: [0x1b, 0x5b, 0x41],
-  ArrowDown: [0x1b, 0x5b, 0x42],
-  ArrowRight: [0x1b, 0x5b, 0x43],
-  ArrowLeft: [0x1b, 0x5b, 0x44],
   Escape: [0x1b],
   Tab: [0x09],
 };
+
+const encoder = new TextEncoder();
+
+/**
+ * A keystroke as the bytes a real terminal would send, or `null` for keys that
+ * should be left to the browser.
+ *
+ * ENTER IS CR (0x0d), NOT LF. A terminal sends CR; the line discipline turns it
+ * into LF for programs reading lines (ICRNL), so CR is right in both modes —
+ * but a raw-mode TUI gets the byte untranslated, and the keypress decoders
+ * these CLIs are built on (Node's readline layer, under Ink and @clack) call
+ * `\r` "return" and only submit on that. Sending LF was invisible to them.
+ */
+function rawKeyBytes(
+  e: KeyboardEvent<HTMLTextAreaElement>,
+  appCursorKeys: boolean,
+): number[] | null {
+  const k = e.key;
+  const arrow = arrowBytes(k, appCursorKeys);
+  if (arrow) return arrow;
+  switch (k) {
+    case "Enter":
+      return [0x0d];
+    case "Tab":
+      return e.shiftKey ? [0x1b, 0x5b, 0x5a] : [0x09];
+    case "Escape":
+      return [0x1b];
+    // The tty's erase character is DEL, not BS — sending 0x08 leaves the
+    // typed character on screen in most prompts.
+    case "Backspace":
+      return [0x7f];
+    case "Delete":
+      return [0x1b, 0x5b, 0x33, 0x7e];
+    case "Home":
+      return [0x1b, 0x5b, 0x48];
+    case "End":
+      return [0x1b, 0x5b, 0x46];
+    case "PageUp":
+      return [0x1b, 0x5b, 0x35, 0x7e];
+    case "PageDown":
+      return [0x1b, 0x5b, 0x36, 0x7e];
+  }
+  if (k.length !== 1) return null; // Shift/Meta/F-keys/dead keys — not ours
+  if (e.ctrlKey) {
+    const c = k.toLowerCase().charCodeAt(0);
+    return c >= 0x61 && c <= 0x7a ? [c - 0x60] : null;
+  }
+  if (e.metaKey) return null; // ⌘C/⌘V stay with the webview
+  const bytes = Array.from(encoder.encode(k));
+  return e.altKey ? [0x1b, ...bytes] : bytes;
+}
 
 interface RawPathCompletion {
   name: string;
@@ -54,7 +122,7 @@ interface CycleState {
 }
 
 export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(function CommandInput(
-  { onSubmit, onInterrupt, cwd, busy, writeRaw },
+  { onSubmit, onInterrupt, cwd, busy, rawMode, appCursorKeys, writeRaw },
   ref,
 ) {
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -295,7 +363,21 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(fu
         onInterrupt();
         return;
       }
-      const bytes = KEY_BYTES[e.key];
+
+      // A raw-mode TUI does its own key handling and echoes what it wants: it
+      // needs every keystroke AS IT HAPPENS, not a line on Enter. Buffering
+      // here is what made single-key answers (y/n, space-to-toggle), live text
+      // fields and Backspace do nothing at all.
+      if (rawMode) {
+        const raw = rawKeyBytes(e, !!appCursorKeys);
+        if (!raw) return;
+        e.preventDefault();
+        if (open) closeSuggest();
+        writeRaw(raw);
+        return;
+      }
+
+      const bytes = arrowBytes(e.key, !!appCursorKeys) ?? KEY_BYTES[e.key];
       if (bytes && (e.key !== "Tab" || !value)) {
         // Forward nav keys (and Tab only when there's nothing typed, so Tab can
         // still answer a prompt's default). Esc closes any open suggestion first.
@@ -313,7 +395,8 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(fu
         // Send the typed answer straight to the process's stdin ("" → just a
         // newline = confirm the default). NOT through `onSubmit` — this is
         // stdin, not a shell command, so it skips clear/sudo command handling.
-        writeRaw([...new TextEncoder().encode(value), 0x0a]);
+        // CR, not LF: see `rawKeyBytes`. ICRNL converts it for a cooked reader.
+        writeRaw([...encoder.encode(value), 0x0d]);
         setValue("");
         closeSuggest();
         return;
@@ -406,12 +489,27 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(fu
           if (!busy) scheduleRecompute();
         }}
         onKeyDown={onKeyDown}
+        onPaste={(e) => {
+          // Keystrokes bypass the textarea in raw mode, so a paste has to be
+          // forwarded too — device-code logins exist to have a code pasted
+          // into them. Newlines become CR, the same as pressing Enter.
+          if (!busy || !rawMode || !writeRaw) return;
+          e.preventDefault();
+          const text = e.clipboardData.getData("text");
+          if (text) writeRaw(Array.from(encoder.encode(text.replace(/\r?\n/g, "\r"))));
+        }}
         onBlur={closeSuggest}
         rows={1}
         spellCheck={false}
         autoCapitalize="off"
         autoCorrect="off"
-        placeholder={busy ? "Type a response, then press Enter…" : "Run a command…"}
+        placeholder={
+          busy
+            ? rawMode
+              ? "Interactive prompt — keys go straight to it…"
+              : "Type a response, then press Enter…"
+            : "Run a command…"
+        }
         // `min-w-0` lets the textarea actually shrink inside the flex row on
         // narrow panes; the nowrap placeholder clips instead of wrapping onto
         // multiple lines (textarea placeholders wrap by default).
