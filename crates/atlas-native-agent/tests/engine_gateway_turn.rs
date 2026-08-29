@@ -822,3 +822,148 @@ async fn status_and_diff_answer_from_this_side_without_spending_a_turn() {
         "a frontend command must not reach the gateway or be billed",
     );
 }
+
+/// Build a connection over an EXISTING home directory — the piece the shared
+/// harness cannot do, and exactly what "the app was restarted" means to the
+/// engine: a new process, the same rollout files.
+async fn connection_at(
+    home: &std::path::Path,
+    server: &MockServer,
+) -> (Arc<EngineConnection>, std::sync::mpsc::Receiver<AcpThreadEvent>) {
+    let settings = EngineSettings::new(
+        EngineHome::at(home.join("engine")),
+        EngineProvider::gateway(format!("{}/v1", server.uri())),
+        atlas_native_agent::engine::catalog::DEFAULT_MODEL,
+        home.to_path_buf(),
+    );
+    let (tx, events) = std::sync::mpsc::channel();
+    let tx = Arc::new(std::sync::Mutex::new(tx));
+    let sink: ThreadEventSink = Arc::new(move |_id: &acp::SessionId| {
+        let (thread_tx, mut thread_rx) = tokio::sync::mpsc::unbounded_channel();
+        let out = tx.clone();
+        tokio::spawn(async move {
+            while let Some(event) = thread_rx.recv().await {
+                if out
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .send(event)
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+        thread_tx
+    });
+    let external_auth = Arc::new(AtlasExternalAuth::new(Arc::new(StaticToken)));
+    let connection = EngineConnection::connect_full(
+        AgentId::new("cersei"),
+        settings,
+        sink,
+        Some(external_auth),
+        None,
+        None,
+    )
+    .await
+    .unwrap_or_else(|err| panic!("the engine should start in-process: {err:#}"));
+    (connection, events)
+}
+
+fn thread_texts(thread: &atlas_acp_thread::AcpThreadHandle) -> Vec<(String, String)> {
+    let locked = thread.lock().unwrap_or_else(|p| p.into_inner());
+    locked
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry {
+            atlas_acp_thread::AgentThreadEntry::UserMessage(m) => {
+                Some(("user".to_string(), format!("{:?}", m.chunks)))
+            }
+            atlas_acp_thread::AgentThreadEntry::AssistantMessage(m) => {
+                Some(("assistant".to_string(), format!("{:?}", m.chunks)))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_reopened_session_replays_its_whole_conversation() {
+    // The two reopened-session bugs in one test. The engine's `thread/resume`
+    // response has always carried the thread's full stored history; the seam
+    // dropped it, so a reopened session repainted from a truncated byproduct
+    // record. Worse: for a thread the engine still has loaded — close the tab,
+    // click the row again, the common case — `thread/resume` answers "already
+    // has an active writer", and the old fallback treated that refusal as
+    // "unknown thread" and silently opened a FRESH one: the conversation
+    // restarted. This drives that exact path: one engine, one stored session,
+    // reopened while the engine still holds its writer.
+    let home = tempfile::tempdir().expect("tempdir");
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_ok(answer(
+            "the complete answer, every word of it, not a fragment",
+        )))
+        .mount(&server)
+        .await;
+
+    let (connection, _events) = connection_at(home.path(), &server).await;
+    let session_id = {
+        let thread = connection
+            .clone()
+            .new_session(vec![home.path().to_path_buf()])
+            .await
+            .expect("a session should open");
+        let id = thread
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .session_id()
+            .clone();
+        let response = connection
+            .prompt(acp::PromptRequest::new(id.clone(), text("what is the answer?")))
+            .await
+            .expect("the turn should complete");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+        id
+        // The tab's AcpThread handle drops here; the engine keeps the thread
+        // loaded, writer lock and all — exactly the state a reopened row
+        // finds.
+    };
+
+    let thread = connection
+        .clone()
+        .load_session(session_id.clone(), vec![home.path().to_path_buf()], None)
+        .await
+        .expect("a stored session should reopen");
+
+    let reopened_id = thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .session_id()
+        .clone();
+    assert_eq!(
+        reopened_id, session_id,
+        "a different id means the reopen silently RESTARTED the conversation",
+    );
+
+    let texts = thread_texts(&thread);
+    let all: String = texts
+        .iter()
+        .map(|(role, text)| format!("{role}: {text}\n"))
+        .collect();
+    assert!(
+        all.contains("what is the answer?"),
+        "the user's message must replay: {all}",
+    );
+    assert!(
+        all.contains("the complete answer, every word of it, not a fragment"),
+        "the assistant's message must replay WHOLE: {all}",
+    );
+
+    // And the reopened session is not a museum: a new turn still works.
+    let response = connection
+        .prompt(acp::PromptRequest::new(reopened_id, text("and again?")))
+        .await
+        .expect("a turn on the reopened session should complete");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+}

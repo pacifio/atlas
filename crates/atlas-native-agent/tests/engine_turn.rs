@@ -1159,16 +1159,18 @@ async fn a_row_from_before_the_engine_changed_opens_instead_of_erroring() {
 }
 
 #[tokio::test]
-async fn the_engine_advertises_resume_not_load_so_the_user_is_told() {
-    // This is what produces D6's notice, and it is load-bearing rather than a
-    // detail: the manager picks the resume mode by *capability*, so
-    // advertising load would report every reopened row as replayed — opening
-    // pre-cutover rows empty and silent, leaving the user to wonder where the
-    // conversation went.
+async fn the_engine_advertises_load_because_reopening_genuinely_replays() {
+    // This asserted the OPPOSITE through the cutover — resume-not-load — and
+    // that was correct then: the seam threw the engine's stored turns away, so
+    // "resumed without history" was the honest notice. The turns replay now
+    // (`engine::replay`), so advertising resume would show that notice over a
+    // fully repainted transcript: the notice lying the other way. The one row
+    // that still opens empty is a pre-cutover id the engine never saw, via the
+    // fresh-thread fallback (D6's accepted loss, now correctly narrow).
     let h = harness(assistant_turn("ok")).await;
     assert!(
-        !h.connection.supports_load_session(),
-        "advertising load would suppress the no-history notice",
+        h.connection.supports_load_session(),
+        "reopening replays, so load is the honest capability",
     );
     assert!(h.connection.supports_resume_session());
     assert!(h.connection.supports_session_history());

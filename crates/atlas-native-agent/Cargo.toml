@@ -25,6 +25,10 @@ path = "tests/engine_gateway_turn.rs"
 # (`zed-ref/Cargo.toml:518`).
 agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
 atlas-acp-thread = { path = "../atlas-acp-thread" }
+# `strip_injected_context`: the engine's rollout stores the WIRE prompt, and
+# replaying it without stripping would surface Atlas's injected memory blocks
+# as if the user typed them.
+atlas-agent-transcript = { path = "../atlas-agent-transcript" }
 # For the `AgentServer` trait: the native agent occupies the same slot an
 # external one does, exactly as Zed's `NativeAgentServer` does.
 atlas-agent-servers = { path = "../atlas-agent-servers" }
@@ -60,6 +64,7 @@ codex-rollout = { path = "../../vendor/codex/rollout" }
 
 [dev-dependencies]
 async-trait = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # The live thread feed's own predicate, so the history test asserts "the
 # recorder will fire" rather than guessing which events matter.
 atlas-thread-metadata = { path = "../atlas-thread-metadata" }

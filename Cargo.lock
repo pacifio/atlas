@@ -1093,6 +1093,7 @@ dependencies = [
  "async-trait",
  "atlas-acp-thread",
  "atlas-agent-servers",
+ "atlas-agent-transcript",
  "atlas-thread-metadata",
  "base64 0.22.1",
  "codex-api",
@@ -1115,6 +1116,7 @@ dependencies = [
  "tokio",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
+ "tracing-subscriber",
  "wiremock",
 ]
 

@@ -727,22 +727,33 @@ impl AgentConnection for EngineConnection {
         .boxed()
     }
 
-    /// Load is deliberately **not** advertised, and that is what produces D6's
-    /// notice.
+    /// Load IS advertised now, because reopening genuinely replays.
     ///
-    /// The manager picks the resume mode by capability, not per session: if
-    /// load is advertised, every reopened row is reported as `Replayed`. Atlas
-    /// cannot tell a row the engine could replay from a pre-cutover Cersei row
-    /// it has never seen — and in Phase 2 *every* stored native row is the
-    /// latter. Reporting `Replayed` for those would open an empty thread and
-    /// say nothing, leaving the user to wonder where their conversation went.
+    /// This was `false` through the cutover, which is what produced D6's
+    /// "resumed without history" notice — correct then, because the seam threw
+    /// the engine's stored turns away and every reopened session really did
+    /// continue from nothing. The turns are replayed now (`engine::replay`),
+    /// so reporting `WithoutHistory` over a fully repainted transcript would
+    /// be the notice lying in the other direction.
     ///
-    /// Advertising resume instead reports `WithoutHistory`, which the sidebar
-    /// already renders as "this agent can't replay past messages — the
-    /// conversation continues from here". That is exactly D6's one-line
-    /// notice, and it needs no new UI.
+    /// The one row that still opens empty is a pre-cutover id the engine has
+    /// never seen: the fresh-thread fallback inside [`Self::resume_session`].
+    /// D6 accepted that loss, and it now applies only where it is true.
     fn supports_load_session(&self) -> bool {
-        false
+        true
+    }
+
+    /// Same path as [`Self::resume_session`]: the engine's `thread/resume`
+    /// both continues the thread and returns its stored history, so load and
+    /// resume are one operation here — the split only matters for agents where
+    /// replaying is a separate, heavier call.
+    fn load_session(
+        self: Arc<Self>,
+        session_id: acp::SessionId,
+        work_dirs: Vec<PathBuf>,
+        title: Option<Arc<str>>,
+    ) -> BoxFuture<'static, Result<AcpThreadHandle>> {
+        self.resume_session(session_id, work_dirs, title)
     }
 
     fn supports_resume_session(&self) -> bool {
@@ -789,30 +800,56 @@ impl AgentConnection for EngineConnection {
                 })
                 .await;
 
-            let engine_thread_id = match resumed {
-                Ok(response) => response.thread.id,
-                Err(e) => {
-                    tracing::info!(
-                        target: "atlas_native_agent::engine",
-                        "the engine does not know thread {session_id}; opening it fresh \
-                         (a row from before the engine changed): {e}",
-                    );
-                    let started: v2::ThreadStartResponse = self
-                        .call(|request_id| ClientRequest::ThreadStart {
+            let (engine_thread_id, stored_turns) = match resumed {
+                Ok(response) => (response.thread.id, response.thread.turns),
+                Err(resume_err) => {
+                    // A resume refusal does NOT mean the thread is unknown.
+                    // The commonest refusal is the opposite: the thread is
+                    // still loaded in this engine — close a tab and reopen it
+                    // and the rollout writer is still held — and `thread/
+                    // resume` answers "already has an active writer". The old
+                    // arm treated every refusal as "never heard of it" and
+                    // silently opened a FRESH thread, which is exactly the
+                    // "my conversation restarted" bug. `thread/read` needs no
+                    // writer, so it is both the existence test and the
+                    // history: if it answers, the thread is real, keeps its
+                    // id, and its turns replay below.
+                    let read: Result<v2::ThreadReadResponse> = self
+                        .call(|request_id| ClientRequest::ThreadRead {
                             request_id,
-                            params: v2::ThreadStartParams {
-                                model: Some(self.settings.model.clone()),
-                                model_provider: Some(self.settings.provider.id.clone()),
-                                cwd: Some(cwd.to_string_lossy().into_owned()),
-                                dynamic_tools: self
-                                    .memory_search
-                                    .as_ref()
-                                    .map(|_| vec![memory::tool_spec()]),
-                                ..Default::default()
+                            params: v2::ThreadReadParams {
+                                thread_id: session_id.to_string(),
+                                include_turns: true,
                             },
                         })
-                        .await?;
-                    started.thread.id
+                        .await;
+                    match read {
+                        Ok(response) => (response.thread.id, response.thread.turns),
+                        Err(read_err) => {
+                            tracing::info!(
+                                target: "atlas_native_agent::engine",
+                                "the engine does not know thread {session_id}; opening it \
+                                 fresh (a row from before the engine changed): \
+                                 resume: {resume_err}; read: {read_err}",
+                            );
+                            let started: v2::ThreadStartResponse = self
+                                .call(|request_id| ClientRequest::ThreadStart {
+                                    request_id,
+                                    params: v2::ThreadStartParams {
+                                        model: Some(self.settings.model.clone()),
+                                        model_provider: Some(self.settings.provider.id.clone()),
+                                        cwd: Some(cwd.to_string_lossy().into_owned()),
+                                        dynamic_tools: self
+                                            .memory_search
+                                            .as_ref()
+                                            .map(|_| vec![memory::tool_spec()]),
+                                        ..Default::default()
+                                    },
+                                })
+                                .await?;
+                            (started.thread.id, Vec::new())
+                        }
+                    }
                 }
             };
 
@@ -822,6 +859,16 @@ impl AgentConnection for EngineConnection {
             // path a draft takes.
             let engine_session_id = acp::SessionId::new(engine_thread_id.as_str());
             let thread = self.new_thread(engine_session_id.clone(), work_dirs, title);
+            {
+                // The response carried the thread's whole stored history — the
+                // primary source for what a reopened session shows. Replayed
+                // before the handle leaves, so the first snapshot already has
+                // it (see `engine::replay`). A pre-cutover row took the
+                // fresh-thread arm above and has no turns; it opens empty,
+                // which D6 accepted, and now only that row does.
+                let mut locked = thread.lock().unwrap_or_else(|p| p.into_inner());
+                crate::engine::replay::replay_turns(&mut locked, &stored_turns);
+            }
             self.sessions.insert(
                 engine_session_id.clone(),
                 &thread,

@@ -30,6 +30,7 @@ pub mod config;
 pub mod connection;
 pub mod memory;
 pub mod modes;
+pub mod replay;
 pub mod runtime;
 pub mod server;
 pub mod sink;
