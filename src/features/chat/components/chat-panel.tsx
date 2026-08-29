@@ -428,9 +428,16 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             // nothing re-emits it — the snapshot is the recovery path, exactly
             // as for modes/models. Rust buffers pre-install notifications, so
             // by the time this snapshot lands the commands are in state.
+            // The source agent rides along so a snapshot that raced an agent
+            // switch is dropped instead of landing the OLD agent's commands
+            // (Claude's skills, most visibly) under the new agent's picker.
             useChatStore
               .getState()
-              .actions.setAcpAvailableCommands(tabId, snap.available_commands ?? []);
+              .actions.setAcpAvailableCommands(
+                tabId,
+                snap.available_commands ?? [],
+                agentTypeFromPluginId(snap.plugin_id),
+              );
             // And the config-option knobs (#32). The `session/new`
             // advertisement lives only in the backend cell — a follow-up
             // notification is optional and most agents never send one, so
@@ -608,7 +615,11 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         if (useChatStore.getState().sessions[tabId]?.availableCommands === undefined) {
           useChatStore
             .getState()
-            .actions.setAcpAvailableCommands(tabId, snap.available_commands ?? []);
+            .actions.setAcpAvailableCommands(
+              tabId,
+              snap.available_commands ?? [],
+              agentTypeFromPluginId(snap.plugin_id),
+            );
         }
         // And the knobs, for the same reasons (#32).
         if (useChatStore.getState().sessions[tabId]?.acpConfigOptions === undefined) {

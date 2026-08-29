@@ -342,6 +342,21 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for TranscriptMiddleware {
                     role,
                     &message.content,
                     message.model.as_deref(),
+                    Some(&message.id),
+                    chrono::Utc::now().to_rfc3339(),
+                );
+            }
+            // The rest of a streaming reply. `MessageAppended` carries only a
+            // run's FIRST fragment; ignoring the chunks — as this arm's absence
+            // did — recorded every assistant reply cut off after a few words.
+            // Invisible for agents whose own `session/load` replays history;
+            // the whole visible transcript for the native agent, which resumes
+            // without history and repaints from this record.
+            SessionDelta::TextChunk { message_id, delta } => {
+                state.note_text_chunk(
+                    &envelope.session_id,
+                    message_id,
+                    delta,
                     chrono::Utc::now().to_rfc3339(),
                 );
             }

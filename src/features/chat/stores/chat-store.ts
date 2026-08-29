@@ -367,7 +367,11 @@ interface ChatActions {
      *  deltas that raced ahead of the binding (or a resume) and were dropped
      *  by the session router. Never clobbers a non-empty live list with an
      *  empty snapshot. */
-    setAcpAvailableCommands: (sessionId: string, commands: unknown[]) => void;
+    setAcpAvailableCommands: (
+      sessionId: string,
+      commands: unknown[],
+      sourceAgentType?: AgentType,
+    ) => void;
     /** Apply a snapshot's config options — the ONLY way an agent's initial
      *  knobs reach the frontend, since `session/new`'s advertisement lives in
      *  the backend cell and a follow-up notification is optional (#32). */
@@ -1075,7 +1079,16 @@ export const useChatStore = createSelectors(
             console.warn("setConfigOption failed:", e);
           }
         },
-        setAcpAvailableCommands: (sessionId, commands) => {
+        setAcpAvailableCommands: (sessionId, commands, sourceAgentType) => {
+          // Same stale-snapshot hazard `setAcpModes`/`setAcpConfigOptions` are
+          // guarded for, with a worse symptom: a tab relabelled to another
+          // agent keeps its old binding until the rebind lands, so a snapshot
+          // fetched off that binding writes the OLD agent's commands under the
+          // new label. Claude advertises its *skills* as commands, which is
+          // how the native agent's picker showed the user's Claude skills and
+          // none of its own commands.
+          const at = get().sessions[sessionId]?.agentType;
+          if (sourceAgentType && at && sourceAgentType !== at) return;
           set((s) => {
             const session = s.sessions[sessionId];
             if (!session) return;

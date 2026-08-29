@@ -1,27 +1,27 @@
-//! Atlas-owned session transcripts for agents that keep none of their own.
+//! Atlas-owned session transcripts, recorded for every agent.
 //!
-//! Claude Code writes JSONL under `~/.claude/projects/`, the native agent writes
-//! its own JSON, and Kilo has a queryable DB — so all three appear in the
-//! session sidebar after a restart. Every OTHER agent (opencode, cursor, and
-//! every registry-installed one) is `TranscriptKind::None`: its conversation
-//! lived only in the renderer's memory, so the sidebar row vanished the moment
-//! the live session stopped matching, and the transcript was gone for good.
-//!
-//! This module is the missing half. Atlas records the conversation itself, so
+//! Atlas records the conversation itself, from its own delta stream, so
 //! history works for **every** agent — including ones that don't exist yet —
-//! without needing a bespoke reader per agent.
+//! without a bespoke reader per agent, and without reading any other
+//! program's private storage (ADR-0001).
+//!
+//! For most agents this record is the fast first paint and the agent's own
+//! `session/load` replay is the authoritative one. For the **native agent** it
+//! is the only one: the ported engine resumes without history (D6) and its
+//! rollout format has no Atlas reader (spec OQ8), so what this module recorded
+//! is exactly what a reopened session shows.
 //!
 //! Design notes:
 //! - **Text only.** Tool calls, plans and thinking are deliberately not stored.
 //!   The sidebar needs a title/preview and the reader needs the conversation;
 //!   faithfully re-serialising every tool call would multiply the write volume
 //!   on the streaming hot path for something replay doesn't render anyway.
+//! - **Streaming-aware.** `MessageAppended` carries only a run's first
+//!   fragment; the rest arrives as `TextChunk` deltas addressed to the run's
+//!   message id. Both halves are recorded — see `note_text_chunk`.
 //! - **Whole-file writes, atomic via temp+rename.** A session is small (a few
 //!   KB of prose) and writes are debounced to turn boundaries, so append-log
 //!   complexity buys nothing here.
-//! - **Only for `TranscriptKind::None` agents.** Duplicating Claude's or the
-//!   native agent's transcript would create two rows for one conversation and
-//!   two sources of truth for its title.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -39,6 +39,11 @@ pub struct StoredMessage {
     pub timestamp: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The delta stream's message id, while the session is live — the address
+    /// `TextChunk` growth is delivered to. In-memory only: ids are minted per
+    /// process, so a persisted one would be meaningless on reload.
+    #[serde(skip)]
+    pub live_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,21 +123,28 @@ impl TranscriptState {
             content: text.to_string(),
             timestamp: now,
             model: None,
+            live_id: None,
         });
     }
 
     /// Record an assistant/system message. Dropped when the session has no
     /// buffer yet: without a prompt we have no `cwd` to file it under, and a
     /// transcript that starts mid-answer has no usable title anyway.
+    ///
+    /// `live_id` is the delta stream's message id. It matters because for a
+    /// streaming agent this call carries only the FIRST fragment of the text —
+    /// the rest arrives as `TextChunk` deltas addressed to that id, delivered
+    /// through [`Self::note_text_chunk`].
     pub fn note_message(
         &self,
         session_id: &str,
         role: &str,
         content: &str,
         model: Option<&str>,
+        live_id: Option<&str>,
         now: String,
     ) {
-        if content.trim().is_empty() {
+        if content.trim().is_empty() && live_id.is_none() {
             return;
         }
         let mut open = self.open.lock();
@@ -145,7 +157,45 @@ impl TranscriptState {
             content: content.to_string(),
             timestamp: now,
             model: model.map(str::to_string),
+            live_id: live_id.map(str::to_string),
         });
+    }
+
+    /// Append streamed growth to the message it belongs to.
+    ///
+    /// This is the other half of recording a streaming agent. `note_message`
+    /// sees a run's first fragment; everything after arrives as `TextChunk`
+    /// deltas keyed by message id, and a recorder that ignored them — as this
+    /// one did — persisted every assistant reply cut off after its first few
+    /// words. Invisible for agents that replay their own history on resume;
+    /// the whole story for the native agent, which resumes without history and
+    /// repaints from THIS record.
+    ///
+    /// Searched from the end: the target is essentially always the message
+    /// still being streamed. An unknown id with a live buffer starts a new
+    /// assistant message — that is the run whose `note_message` was dropped
+    /// for arriving empty. No buffer means this session is not being recorded.
+    pub fn note_text_chunk(&self, session_id: &str, live_id: &str, delta: &str, now: String) {
+        let mut open = self.open.lock();
+        let Some(entry) = open.get_mut(session_id) else {
+            return;
+        };
+        entry.updated_at = now.clone();
+        match entry
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|m| m.live_id.as_deref() == Some(live_id))
+        {
+            Some(message) => message.content.push_str(delta),
+            None => entry.messages.push(StoredMessage {
+                role: "assistant".into(),
+                content: delta.to_string(),
+                timestamp: now,
+                model: None,
+                live_id: Some(live_id.to_string()),
+            }),
+        }
     }
 
     /// Snapshot for persisting. Kept in memory afterwards so the next turn
@@ -179,12 +229,20 @@ fn cwd_hash(cwd: &str) -> String {
 
 /// Persist one transcript. Atomic: temp file + rename, so a crash mid-write
 /// leaves the previous good copy rather than a truncated one.
+///
+/// Empty messages are dropped at this boundary, not at record time: a
+/// streaming run can legitimately sit empty in the buffer while its chunks are
+/// still arriving (see [`TranscriptState::note_text_chunk`]), but one that is
+/// still empty when the turn persists — a thought run whose text lives
+/// elsewhere — is nothing a replay could paint.
 pub fn save(config_dir: &Path, t: &StoredTranscript) -> std::io::Result<()> {
     let dir = dir_for(config_dir, &t.cwd);
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{}.json", sanitize_id(&t.id)));
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(t)?)?;
+    let mut filtered = t.clone();
+    filtered.messages.retain(|m| !m.content.trim().is_empty());
+    std::fs::write(&tmp, serde_json::to_vec_pretty(&filtered)?)?;
     std::fs::rename(&tmp, &path)
 }
 
@@ -266,7 +324,7 @@ mod tests {
     fn state_with_turn() -> (TranscriptState, StoredTranscript) {
         let st = TranscriptState::new();
         st.note_prompt("ses_1", "/w", "opencode", "hello there", "2026-01-01T00:00:00Z".into());
-        st.note_message("ses_1", "assistant", "hi back", Some("gpt-x"), "2026-01-01T00:00:01Z".into());
+        st.note_message("ses_1", "assistant", "hi back", Some("gpt-x"), None, "2026-01-01T00:00:01Z".into());
         let t = st.snapshot("ses_1").unwrap();
         (st, t)
     }
@@ -314,7 +372,7 @@ mod tests {
     fn an_assistant_message_without_a_prompt_is_dropped() {
         // No prompt means no cwd to file it under, and no usable title.
         let st = TranscriptState::new();
-        st.note_message("ghost", "assistant", "orphan", None, "t".into());
+        st.note_message("ghost", "assistant", "orphan", None, None, "t".into());
         assert!(st.snapshot("ghost").is_none());
     }
 
@@ -322,8 +380,51 @@ mod tests {
     fn empty_content_is_not_recorded() {
         let st = TranscriptState::new();
         st.note_prompt("s", "/w", "opencode", "q", "t".into());
-        st.note_message("s", "assistant", "   ", None, "t".into());
+        st.note_message("s", "assistant", "   ", None, None, "t".into());
         assert_eq!(st.snapshot("s").unwrap().messages.len(), 1);
+    }
+
+    #[test]
+    fn a_streamed_reply_is_recorded_whole_not_just_its_first_fragment() {
+        // The bug this closes: `MessageAppended` carries only a run's first
+        // fragment, growth arrives as `TextChunk`, and a recorder that ignored
+        // chunks persisted every assistant reply cut off after a few words —
+        // which is exactly how a reopened native-agent session painted.
+        let st = TranscriptState::new();
+        st.note_prompt("s", "/w", "cersei", "explain this", "t0".into());
+        st.note_message("s", "assistant", "The", None, Some("m1"), "t1".into());
+        st.note_text_chunk("s", "m1", " whole", "t2".into());
+        st.note_text_chunk("s", "m1", " answer.", "t3".into());
+        let snap = st.snapshot("s").unwrap();
+        assert_eq!(snap.messages[1].content, "The whole answer.");
+    }
+
+    #[test]
+    fn a_chunk_for_an_unseen_message_still_lands_rather_than_vanishing() {
+        // The run's `MessageAppended` can arrive with empty text and no
+        // recordable content; the chunks that follow are the reply.
+        let st = TranscriptState::new();
+        st.note_prompt("s", "/w", "cersei", "q", "t0".into());
+        st.note_text_chunk("s", "m9", "late text", "t1".into());
+        let snap = st.snapshot("s").unwrap();
+        assert_eq!(snap.messages[1].content, "late text");
+        assert_eq!(snap.messages[1].role, "assistant");
+    }
+
+    #[test]
+    fn a_message_still_empty_at_save_time_is_not_persisted() {
+        // A thought run appends an empty placeholder (its text lives in the
+        // thinking field, which this store deliberately drops). Replay cannot
+        // paint an empty bubble, so it must not reach disk.
+        let dir = tmp();
+        let st = TranscriptState::new();
+        st.note_prompt("s", "/w", "cersei", "q", "t0".into());
+        st.note_message("s", "assistant", "", None, Some("thought-1"), "t1".into());
+        st.note_message("s", "assistant", "real", None, Some("m2"), "t2".into());
+        save(&dir, &st.snapshot("s").unwrap()).unwrap();
+        let back = read(&dir, "/w", "s").unwrap();
+        let contents: Vec<&str> = back.messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(contents, ["q", "real"]);
     }
 
     #[test]
