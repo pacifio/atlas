@@ -221,6 +221,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). One thing catches people out:
 - **Issues:** [github.com/pacifio/atlas/issues](https://github.com/pacifio/atlas/issues)
 - **Telemetry:** [what Atlas collects, and how to turn it off](TELEMETRY.md)
 
+## Contributors
+<a href="https://github.com/pacifio/atlas/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=pacifio/atlas" />
+</a>
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
