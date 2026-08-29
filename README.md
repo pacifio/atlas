@@ -125,17 +125,17 @@ Works with no account and no network.
 
 ### The workspace
 
-| Capability | Description |
-|---|---|
-| **Editor** | CodeMirror editing surface, with per-project editor state restored across restarts |
-| **Git** | Real commit graph with lane assignment, stage/unstage/commit, branch operations, and file-level diffs |
-| **Terminal** | Block terminal where each command carries its own output, exit code, and duration, plus a full interactive surface for `vim`, `htop`, and friends |
-| **Knowledge base** | Plain markdown notes in `.atlas/knowledge/`, versioned next to the code, with backlinks, a link graph, and export to HTML or a standalone server binary |
-| **Research** | Search arXiv and Semantic Scholar, pull papers in, read them in-app, and `@`-mention them into a prompt |
-| **Browser** | Native WebKit webview in a tab, with real logins, cookies, and a reader mode |
-| **Spaces** | Spatial board for notes and their connections, persisted as JSON in the project |
-| **Split view** | Up to three resizable columns, each with its own tabs |
-| **Activity log** | Every significant event in the project, filterable, with rows you can pin across restarts |
+| Capability | Description | Link |
+|---|---|---|
+| **Editor** | CodeMirror editing surface, with per-project editor state restored across restarts | [Editor](https://docs.tryatlas.cc/docs/product/editor) |
+| **Git** | Real commit graph with lane assignment, stage/unstage/commit, branch operations, and file-level diffs | [Git & Diff](https://docs.tryatlas.cc/docs/source-control/git) |
+| **Terminal** | Block terminal where each command carries its own output, exit code, and duration, plus a full interactive surface for `vim`, `htop`, and friends | [Terminal](https://docs.tryatlas.cc/docs/product/terminal) |
+| **Knowledge base** | Plain markdown notes in `.atlas/knowledge/`, versioned next to the code, with backlinks, a link graph, and export to HTML or a standalone server binary | [Knowledge base](https://docs.tryatlas.cc/docs/context/knowledge-base) |
+| **Research** | Search arXiv and Semantic Scholar, pull papers in, read them in-app, and `@`-mention them into a prompt | [Research](https://docs.tryatlas.cc/docs/context/research) |
+| **Browser** | Native WebKit webview in a tab, with real logins, cookies, and a reader mode | [Explorer](https://docs.tryatlas.cc/docs/product/explorer) |
+| **Spaces** | Spatial board for notes and their connections, persisted as JSON in the project | [Chat & Sessions](https://docs.tryatlas.cc/docs/product/chat) |
+| **Split view** | Up to three resizable columns, each with its own tabs | [Editor](https://docs.tryatlas.cc/docs/product/editor) |
+| **Activity log** | Every significant event in the project, filterable, with rows you can pin across restarts | [Timeline](https://docs.tryatlas.cc/docs/source-control/timeline) |
 
 ---
 
