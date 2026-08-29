@@ -429,26 +429,79 @@ async fn pump_events(
 
             event = client.next_event() => {
                 let Some(event) = event else { return };
-                match event {
-                    InProcessServerEvent::ServerNotification(notification) => {
-                        apply_notification(&sessions, &turns, max_retries, *notification);
+                // Opportunistic burst drain. The model streams token-sized
+                // deltas, and each one that reaches the thread fans out into
+                // the whole downstream chain — thread lock, projector diff,
+                // a Tauri emit, a webview re-render. At token frequency that
+                // chain IS the UI jank. Draining whatever is already queued
+                // and merging consecutive message deltas for the same item
+                // collapses a burst into one application; when the stream is
+                // slower than the pump, `now_or_never` finds nothing and
+                // every delta still applies immediately — no timer, no added
+                // latency, backpressure-proportional batching.
+                let mut batch = vec![event];
+                while batch.len() < 256 {
+                    match futures::FutureExt::now_or_never(client.next_event()) {
+                        Some(Some(event)) => batch.push(event),
+                        _ => break,
                     }
-                    InProcessServerEvent::ServerRequest(request) => {
-                        handle_server_request(&sessions, *request, &answers_tx, &memory_search);
-                    }
-                    InProcessServerEvent::Lagged { skipped } => {
-                        // Transport health, not an application event. Worth
-                        // saying out loud: dropped notifications show up to a
-                        // user as a turn that rendered incompletely.
-                        tracing::warn!(
-                            target: "atlas_native_agent::engine",
-                            "the engine event stream lagged; {skipped} notifications dropped",
-                        );
+                }
+                for event in coalesce_message_deltas(batch) {
+                    match event {
+                        InProcessServerEvent::ServerNotification(notification) => {
+                            apply_notification(&sessions, &turns, max_retries, *notification);
+                        }
+                        InProcessServerEvent::ServerRequest(request) => {
+                            handle_server_request(&sessions, *request, &answers_tx, &memory_search);
+                        }
+                        InProcessServerEvent::Lagged { skipped } => {
+                            // Transport health, not an application event. Worth
+                            // saying out loud: dropped notifications show up to a
+                            // user as a turn that rendered incompletely.
+                            tracing::warn!(
+                                target: "atlas_native_agent::engine",
+                                "the engine event stream lagged; {skipped} notifications dropped",
+                            );
+                        }
                     }
                 }
             }
         }
     }
+}
+
+/// Merge ADJACENT message deltas for the same item into one.
+///
+/// Adjacent only, deliberately: reordering across other notifications could
+/// move a delta past the `ItemCompleted` that closes its item, or past a
+/// server request that must be answered in sequence. Within an unbroken run of
+/// deltas for one item, concatenation is exactly what the thread would have
+/// done one call at a time — minus the per-call fan-out.
+fn coalesce_message_deltas(events: Vec<InProcessServerEvent>) -> Vec<InProcessServerEvent> {
+    use codex_app_server_protocol::ServerNotification;
+    let mut out: Vec<InProcessServerEvent> = Vec::with_capacity(events.len());
+    for event in events {
+        if let (
+            Some(InProcessServerEvent::ServerNotification(last)),
+            InProcessServerEvent::ServerNotification(next),
+        ) = (out.last_mut(), &event)
+        {
+            if let (
+                ServerNotification::AgentMessageDelta(accumulated),
+                ServerNotification::AgentMessageDelta(delta),
+            ) = (last.as_mut(), next.as_ref())
+            {
+                if accumulated.thread_id == delta.thread_id
+                    && accumulated.item_id == delta.item_id
+                {
+                    accumulated.delta.push_str(&delta.delta);
+                    continue;
+                }
+            }
+        }
+        out.push(event);
+    }
+    out
 }
 
 /// Routes an engine server request to the user, or refuses it.
@@ -1104,6 +1157,59 @@ impl AgentConnection for EngineConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn message_delta(thread: &str, item: &str, delta: &str) -> InProcessServerEvent {
+        InProcessServerEvent::ServerNotification(Box::new(
+            codex_app_server_protocol::ServerNotification::AgentMessageDelta(
+                v2::AgentMessageDeltaNotification {
+                    thread_id: thread.to_string(),
+                    turn_id: "turn-1".to_string(),
+                    item_id: item.to_string(),
+                    delta: delta.to_string(),
+                },
+            ),
+        ))
+    }
+
+    fn delta_text(event: &InProcessServerEvent) -> Option<&str> {
+        match event {
+            InProcessServerEvent::ServerNotification(n) => match n.as_ref() {
+                codex_app_server_protocol::ServerNotification::AgentMessageDelta(p) => {
+                    Some(p.delta.as_str())
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_burst_of_token_deltas_collapses_into_one_application() {
+        // Each delta that reaches the thread fans out into a lock, a projector
+        // diff, a Tauri emit and a webview render — at token frequency that
+        // chain is the UI jank this closes.
+        let merged = coalesce_message_deltas(vec![
+            message_delta("t1", "i1", "the "),
+            message_delta("t1", "i1", "whole "),
+            message_delta("t1", "i1", "answer"),
+        ]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(delta_text(&merged[0]), Some("the whole answer"));
+    }
+
+    #[test]
+    fn deltas_for_different_items_or_threads_never_merge() {
+        // Merging across items would put one item's words in another's mouth.
+        let merged = coalesce_message_deltas(vec![
+            message_delta("t1", "i1", "a"),
+            message_delta("t1", "i2", "b"),
+            message_delta("t2", "i2", "c"),
+            // Adjacent same-item AFTER a break merges again from there.
+            message_delta("t2", "i2", "d"),
+        ]);
+        let texts: Vec<_> = merged.iter().filter_map(delta_text).collect();
+        assert_eq!(texts, ["a", "b", "cd"]);
+    }
 
     /// The protocol's `Turn` has no `Default`, so fixtures spell it out.
     fn turn_with_id(id: &str, status: v2::TurnStatus) -> v2::Turn {
