@@ -1166,3 +1166,107 @@ async fn a_repo_skill_joins_the_picker_and_runs_as_a_skill_turn() {
         "the skill's content must reach the model",
     );
 }
+
+#[tokio::test]
+async fn cancel_from_a_runtime_less_thread_interrupts_instead_of_aborting() {
+    // The stop button reaches `cancel()` on the MAIN thread — a sync path
+    // with no ambient tokio runtime. A bare `tokio::spawn` there panics
+    // ("there is no reactor running") inside a non-unwinding native frame,
+    // which aborts the entire app. This drives that exact shape: a running
+    // turn, then cancel from a plain std thread.
+    let h = harness(vec![(
+        None,
+        sse_ok(answer("slow")).set_delay(std::time::Duration::from_secs(20)),
+    )])
+    .await;
+    let session_id = h.open_thread().await;
+
+    let connection = h.connection.clone();
+    let prompt_session = session_id.clone();
+    let turn = tokio::spawn(async move {
+        connection
+            .prompt(acp::PromptRequest::new(prompt_session, text("take your time")))
+            .await
+    });
+
+    // The turn is live once the model call reaches the gateway.
+    for _ in 0..200 {
+        let arrived = h
+            .server
+            .received_requests()
+            .await
+            .map(|requests| {
+                requests
+                    .iter()
+                    .any(|r| r.url.path().ends_with("/chat/completions"))
+            })
+            .unwrap_or(false);
+        if arrived {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    let connection = h.connection.clone();
+    std::thread::spawn(move || {
+        // No runtime on this thread, exactly like the main thread.
+        connection.cancel(&session_id);
+    })
+    .join()
+    .expect("cancel must not panic off-runtime");
+
+    // And the interrupt actually lands: the turn ends promptly instead of
+    // waiting out the 20s response.
+    let result = tokio::time::timeout(std::time::Duration::from_secs(10), turn)
+        .await
+        .expect("the cancelled turn must end promptly")
+        .expect("the prompt task must not panic");
+    let _ = result; // Cancelled or Interrupted — either way it ended.
+}
+
+#[tokio::test]
+async fn compact_is_visible_in_the_thread_not_a_silent_shrug() {
+    // /compact returned EndTurn and the engine summarised in the background —
+    // with nothing on screen ever saying so, which is indistinguishable from
+    // the command being broken. The compaction item now lands in the thread
+    // (InProgress → Completed), which the projector renders as the pill.
+    let h = harness(vec![(None, sse_ok(answer("summary")))]).await;
+    let session_id = h.open_thread().await;
+    let _ = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id.clone(), text("hello there")))
+        .await
+        .expect("the first turn should complete");
+
+    let response = h
+        .connection
+        .prompt(acp::PromptRequest::new(session_id, text("/compact")))
+        .await
+        .expect("/compact should succeed");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+    let thread = h
+        .threads
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .last()
+        .cloned()
+        .expect("thread");
+    let mut seen = false;
+    for _ in 0..200 {
+        let has_compaction = thread
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .entries()
+            .iter()
+            .any(|entry| {
+                matches!(entry, atlas_acp_thread::AgentThreadEntry::ContextCompaction(_))
+            });
+        if has_compaction {
+            seen = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(seen, "compaction must be visible in the thread timeline");
+}

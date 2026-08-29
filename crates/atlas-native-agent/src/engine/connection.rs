@@ -216,8 +216,12 @@ pub struct EngineConnection {
     /// The pump. Held so it is aborted when the connection is dropped rather
     /// than outliving it against a dead runtime.
     _pump: Arc<PumpHandle>,
-    /// The engine's runtime. Dropped last, after the pump it hosts.
-    _runtime: Arc<EngineRuntime>,
+    /// The engine's runtime. Dropped last, after the pump it hosts. Also the
+    /// spawn target for fire-and-forget work started from SYNC entry points:
+    /// `cancel` is called on whatever thread the host is on — the composer's
+    /// stop button arrives on the MAIN thread — and a bare `tokio::spawn`
+    /// there panics ("no reactor running") and aborts the whole app.
+    runtime: Arc<EngineRuntime>,
     /// The mode each session is in.
     ///
     /// Held here because the engine has no "Atlas mode" concept to read back —
@@ -295,7 +299,7 @@ impl EngineConnection {
             request_ids: Arc::new(RequestIds::default()),
             settings,
             _pump: Arc::new(PumpHandle(pump)),
-            _runtime: Arc::new(runtime),
+            runtime: Arc::new(runtime),
             session_modes: Arc::new(Mutex::new(HashMap::new())),
             default_mode,
             memory_search,
@@ -436,6 +440,7 @@ impl EngineConnection {
             requests: self.requests.clone(),
             session_id: session_id.clone(),
             request_ids: self.request_ids.clone(),
+            runtime: self.runtime.handle(),
         }))
     }
 
@@ -1404,7 +1409,12 @@ impl AgentConnection for EngineConnection {
         // Fire and forget, like the Cersei path: the caller is awaiting the
         // turn's own completion, and the engine answers an interrupt by
         // finishing that turn as `Interrupted`.
-        tokio::spawn(async move {
+        //
+        // On the ENGINE's runtime, never a bare `tokio::spawn`: this sync
+        // method runs on the caller's thread, and the stop button's caller is
+        // the main thread, where there is no ambient runtime — a bare spawn
+        // there panicked and took the whole app down with it.
+        self.runtime.handle().spawn(async move {
             let result = requests
                 .request_typed::<v2::TurnInterruptResponse>(ClientRequest::TurnInterrupt {
                     request_id,
@@ -1845,6 +1855,10 @@ struct EngineSessionControls {
     requests: InProcessAppServerRequestHandle,
     session_id: acp::SessionId,
     request_ids: Arc<RequestIds>,
+    /// Spawn target for the fire-and-forget update — `set_effort` is a sync
+    /// trait method and runs on the caller's thread, where there may be no
+    /// ambient runtime (the same main-thread hazard `cancel` had).
+    runtime: tokio::runtime::Handle,
 }
 
 impl AgentSessionEffort for EngineSessionControls {
@@ -1861,9 +1875,10 @@ impl AgentSessionEffort for EngineSessionControls {
         let request_id = self.request_ids.next();
         let thread_id = self.session_id.to_string();
         // The trait is synchronous and the call is not, so this is fire-and-
-        // forget like the Cersei path's. A rejected update is logged rather
-        // than surfaced, because the caller has already moved on.
-        tokio::spawn(async move {
+        // forget like the Cersei path's — on the engine's runtime, because
+        // the caller's thread may have none. A rejected update is logged
+        // rather than surfaced, because the caller has already moved on.
+        self.runtime.spawn(async move {
             let result = requests
                 .request_typed::<v2::ThreadSettingsUpdateResponse>(
                     ClientRequest::ThreadSettingsUpdate {

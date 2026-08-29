@@ -235,10 +235,34 @@ pub fn apply_notification(
                     }
                     lock(&thread).push_assistant_content_block(text_block(&text), true);
                 }
+                // Compaction finishing. Without this arm /compact was
+                // invisible: the protocol call returned, the engine
+                // summarised in the background, and nothing on screen ever
+                // said so — indistinguishable from the command being broken.
+                ThreadItem::ContextCompaction { id } => {
+                    lock(&thread).upsert_context_compaction(
+                        atlas_acp_thread::ContextCompactionId(id.as_str().into()),
+                        atlas_acp_thread::ContextCompactionStatus::Completed,
+                    );
+                }
                 other => {
                     tracing::debug!(
                         target: "atlas_native_agent::engine",
                         "thread item not rendered yet: {}", item_kind(other),
+                    );
+                }
+            }
+        }
+
+        // Compaction beginning — the pill's "in progress" state, and the
+        // user's only sign that /compact took.
+        ServerNotification::ItemStarted(params) => {
+            if let ThreadItem::ContextCompaction { id } = &params.item {
+                let session = session_id(&params.thread_id);
+                if let Some(thread) = sessions.thread(&session) {
+                    lock(&thread).upsert_context_compaction(
+                        atlas_acp_thread::ContextCompactionId(id.as_str().into()),
+                        atlas_acp_thread::ContextCompactionStatus::InProgress,
                     );
                 }
             }
