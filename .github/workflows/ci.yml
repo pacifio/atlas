@@ -103,6 +103,25 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --locked --all-targets
 
+  engine-dialect:
+    # The Atlas-authored gateway dialect (~2,700 lines under
+    # vendor/codex/codex-api/src/atlas_chat/) is first-party code that happens
+    # to live in vendor/ — its request/SSE fixture suites are the primary
+    # evidence for the dialect's correctness, and until #64 they ran in no CI
+    # job at all. One package, deliberately not a blanket vendor job: several
+    # upstream suites are permanently red after the phone-home removals (#43),
+    # and re-greening crates Atlas does not ship is not the point.
+    name: engine dialect (codex-api)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+      - name: Test
+        run: cargo test --locked -p codex-api
+
   crates:
     # Every crate gets its own job so a failure names the crate rather than the
     # workspace. Adding a crate here is a one-line change, and

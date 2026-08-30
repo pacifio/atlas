@@ -52,8 +52,16 @@ pub fn current_org() -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Every test here writes the one global `ORG_SOURCE`, and cargo runs
+    /// tests concurrently by default — unserialised, the loser reads the
+    /// winner's source and the suite flakes with the schedule (#64). One
+    /// lock, taken first in each test; `into_inner` so one panicking test
+    /// does not poison the rest.
+    static ORG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn no_source_means_personal_attribution() {
+        let _serialised = ORG_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // Not an error: a caller with no org grant is the contract's
         // `org_none` case, and the header is simply absent.
         *ORG_SOURCE.write().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
@@ -62,6 +70,7 @@ mod tests {
 
     #[test]
     fn the_source_is_consulted_per_call_so_an_org_switch_takes_effect() {
+        let _serialised = ORG_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // The whole reason this is a callback and not a config value: the user
         // can switch org mid-session, and the *next* request must bill the new
         // one.
@@ -78,6 +87,7 @@ mod tests {
 
     #[test]
     fn an_empty_org_id_is_absent_rather_than_a_malformed_header() {
+        let _serialised = ORG_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         set_org_source(Arc::new(|| Some(String::new())));
         assert_eq!(current_org(), None);
     }
