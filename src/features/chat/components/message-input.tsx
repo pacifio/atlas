@@ -26,14 +26,15 @@ import {
 } from "@/types/agent";
 import {
   agentMeta,
+  catalogEntry as agentCatalogEntry,
   switchableAgentOf,
   useSwitchableAgents,
 } from "@/features/agents/lib/agent-meta";
 import { canSignIn, promptSignIn } from "../lib/agent-signin";
+import { forkSessionToNewTab } from "../lib/fork-session";
 import { switchAgentForTab } from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
-import { ProviderModelPills } from "./provider-model-pills";
-import { loadCerseiEffort, loadCerseiCompress } from "../lib/cersei-model-pref";
+import { loadCerseiEffort } from "../lib/cersei-model-pref";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
 import { modelLabel } from "../lib/model-label";
 // `ChatInput` pulls in CodeMirror (~870 KB) via `cm-mention-extension`.
@@ -63,6 +64,7 @@ import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import { ComposerOptionsPill } from "./composer-options-pill";
 import { FeaturedAgentOffers } from "./featured-agent-offers";
 import { RetryPill } from "./retry-pill";
+import { QUALITY_LADDER, exceedsBudget, targetDimensions } from "../lib/image-policy";
 import { ComposerAddMenu } from "./composer-add-menu";
 import type { GithubRepo } from "@/features/github/types";
 import { imageMimeFromPath } from "@/lib/byok/model-capabilities";
@@ -114,10 +116,54 @@ async function fileToImageAttachment(file: File): Promise<ImageAttachment | null
   }).catch(() => null);
   if (!dataUrl) return null;
   const comma = dataUrl.indexOf(",");
-  return {
+  return downscaleAttachment({
     mimeType: file.type,
     dataBase64: comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl,
-  };
+  });
+}
+
+/**
+ * Shrink an attachment that would not fit the gateway's body cap (D15c).
+ *
+ * Done once, here, rather than on every turn: the engine replays the whole
+ * conversation on each request, so an image re-encoded on the way out would be
+ * re-encoded for as long as the thread lives.
+ *
+ * Failure is not fatal. A browser that cannot decode the image, or a canvas
+ * that will not export, leaves the original in place — a too-large attachment
+ * that the gateway refuses with a clear `413` is a better outcome than an
+ * attachment silently dropped on the floor here.
+ */
+async function downscaleAttachment(image: ImageAttachment): Promise<ImageAttachment> {
+  if (!exceedsBudget(image.dataBase64.length)) return image;
+  try {
+    const source = `data:${image.mimeType};base64,${image.dataBase64}`;
+    const bitmap = await createImageBitmap(await (await fetch(source)).blob());
+    const target = targetDimensions(bitmap.width, bitmap.height);
+    const width = target?.width ?? bitmap.width;
+    const height = target?.height ?? bitmap.height;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return image;
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close?.();
+
+    // Down the quality ladder until it fits. A legible 400 KB JPEG beats a
+    // pristine 6 MB PNG the gateway refuses outright.
+    for (const quality of QUALITY_LADDER) {
+      const encoded = canvas.toDataURL("image/jpeg", quality);
+      const data = encoded.slice(encoded.indexOf(",") + 1);
+      if (!exceedsBudget(data.length)) {
+        return { mimeType: "image/jpeg", dataBase64: data };
+      }
+    }
+    return image;
+  } catch {
+    return image;
+  }
 }
 
 interface MessageInputProps {
@@ -425,7 +471,12 @@ function ComposerGroupsMenu({
   const isClaude = agentType === "claude-code";
   const hasAcpModes = !!availableModes && availableModes.length > 0;
   const showMode = isClaude || hasAcpModes || modesPending;
-  const showModel = agentType !== "cersei" && models.length > 0;
+  // The native agent shows the same model pill as everyone else. It used to be
+  // excluded here because its picker was the BYOK ProviderModelPills — a list
+  // of the user's own provider keys, which the gateway agent cannot use. The
+  // seam now publishes the gateway catalogue through the standard snapshot, so
+  // the exclusion would hide the right list to keep showing the wrong one.
+  const showModel = models.length > 0;
 
   const toggle = (g: ComposerGroup) => {
     setQ("");
@@ -725,16 +776,8 @@ export function MessageInput({
   disabled = false,
   placeholder = "Message Atlas... (@ to mention, / for commands)",
 }: MessageInputProps) {
-  const {
-    enqueueMessage,
-    removeQueueItem,
-    setAcpModes,
-    setAcpModesPending,
-    setCerseiProvider,
-    setCerseiModel,
-    setCerseiEffort,
-    setCerseiCompress,
-  } = useChatStore.use.actions();
+  const { enqueueMessage, removeQueueItem, setAcpModes, setAcpModesPending, setCerseiEffort } =
+    useChatStore.use.actions();
   // Show the picker as soon as the agent is non-Claude — even before its modes
   // load — so the composer can render a loading pill instead of nothing during
   // the agent spawn + new_session boot.
@@ -808,34 +851,11 @@ export function MessageInput({
   // external ids through and collapses only the legacy "custom" placeholder,
   // which is what the transcript and sidebar already did.
   const switchableAgent: SwitchableAgent = switchableAgentOf(agentType);
-  // Native Cersei agent only: BYOK provider + model selection for the composer.
-  const cerseiProvider = useChatStore((s) => s.sessions[tabId]?.cerseiProvider ?? "");
-  const cerseiModel = useChatStore((s) => s.sessions[tabId]?.acpCurrentModel ?? "");
-  const onCerseiProvider = useCallback(
-    (id: string) => setCerseiProvider(tabId, id),
-    [tabId, setCerseiProvider],
-  );
-  const onCerseiModel = useCallback(
-    (id: string) => setCerseiModel(tabId, id),
-    [tabId, setCerseiModel],
-  );
-  // The composer may settle on a provider/model before the session is bound
-  // (the `agents_set_model` push no-ops until then). Re-push once the binding
-  // lands and a full selection exists — idempotent, mirrors the ACP mode
-  // self-heal above. Without this the agent silently falls back to the server's
-  // default model whenever the user's pick raced ahead of the bind.
-  const cerseiBinding = useChatStore((s) => {
-    const sess = s.sessions[tabId];
-    if (sess?.agentType !== "cersei") return null;
-    if (!sess.acpAgentId || !sess.acpSessionId) return null;
-    if (!sess.cerseiProvider || !sess.acpCurrentModel) return null;
-    return `${sess.acpAgentId}::${sess.acpSessionId}::${sess.acpCurrentModel}`;
-  });
-  useEffect(() => {
-    if (!cerseiBinding) return;
-    const model = cerseiBinding.split("::")[2];
-    setCerseiModel(tabId, model);
-  }, [tabId, cerseiBinding, setCerseiModel]);
+  // The BYOK provider/model bindings for the native agent stood here — the
+  // provider pick, the model re-push on bind, the whole BYOK selection path.
+  // Gone: the native agent's model comes from the seam's published catalogue
+  // through the same `setAcpModel` path every other agent uses, and its
+  // "provider" is the Atlas gateway, which is not a choice.
   // Seed the reasoning-effort from the saved preference once per cersei session,
   // then re-push it whenever the session is bound (mirrors the model re-push).
   const cerseiEffort = useChatStore((s) => s.sessions[tabId]?.cerseiEffort);
@@ -852,30 +872,23 @@ export function MessageInput({
     if (cerseiBound || cerseiEffort === undefined) setCerseiEffort(tabId, eff);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, agentType, cerseiBound]);
-  // Same seed/re-push for the RTK compression toggle.
-  const cerseiCompress = useChatStore((s) => s.sessions[tabId]?.cerseiCompress);
-  useEffect(() => {
-    if (agentType !== "cersei") return;
-    const on = cerseiCompress ?? loadCerseiCompress();
-    if (cerseiBound || cerseiCompress === undefined) setCerseiCompress(tabId, on);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabId, agentType, cerseiBound]);
-  // ACP-reported slash commands for this session. Both adapters advertise
-  // their real command list via `available_commands_update` — Codex's arrives
-  // with the binding, Claude's a few seconds after session/new (the SDK
-  // discovers skills/plugins/MCP prompts first). Per ADR 0003 there is no
-  // fallback catalogue: the picker shows a loading state (see
-  // `slashCommandsLoading` below) during that gap instead. The native agent
-  // has no slash commands; its trigger is suppressed at the wiring site
-  // below.
+  // The RTK compression toggle was seeded and re-pushed here. It is gone with
+  // the runtime that implemented it (#54) — the ported engine has no
+  // tool-output compressor, so the control had nothing to switch (D8).
+  // ACP-reported slash commands for this session. Every agent advertises its
+  // real command list via `available_commands_update` — Codex's arrives with
+  // the binding, Claude's a few seconds after session/new (the SDK discovers
+  // skills/plugins/MCP prompts first), and the native agent's with its
+  // session, published by the seam. Per ADR 0003 there is no fallback
+  // catalogue: the picker shows a loading state (see `slashCommandsLoading`
+  // below) during that gap instead.
   const availableCommands = useChatStore((s) => s.sessions[tabId]?.availableCommands);
   const slashCommandsLoading = availableCommands === undefined;
   const agentSlashCommands = useMemo<SlashCommand[]>(() => {
-    // Every ACP-transport agent gets its advertised commands — first-party AND
-    // registry-installed externals (their agentType IS their plugin id). Only
-    // the native cersei agent (no slash commands) and the legacy "custom"
-    // placeholder bail out.
-    if (agentType === "cersei" || agentType === "custom") return [];
+    // Every agent gets its advertised commands — the native agent included,
+    // whose list the seam now publishes. Only the legacy "custom" placeholder
+    // bails out.
+    if (agentType === "custom") return [];
     const fromAgent: SlashCommand[] = (availableCommands ?? [])
       .map((c) => {
         const o = (c ?? {}) as {
@@ -916,7 +929,27 @@ export function MessageInput({
           handler: "agent-login" as const,
         }
       : null;
-    return [...(login ? [login] : []), ...fromAgent];
+    // The other Atlas-surface commands. Like /login, these drive app
+    // affordances rather than the agent — a new tab, the send queue — so the
+    // app is the honest place to synthesize them. /fork is gated on the same
+    // capability as the header's "branch from here"; /queue exists for every
+    // agent, because the queue does.
+    const local: SlashCommand[] = [];
+    if (agentCatalogEntry(agentType)?.supportsFork === true) {
+      local.push({
+        name: "fork",
+        signature: "/fork",
+        description: "Branch this conversation into a new tab",
+        handler: "fork" as const,
+      });
+    }
+    local.push({
+      name: "queue",
+      signature: "/queue <message>",
+      description: "Queue a message to run when the agent is free",
+      handler: "queue" as const,
+    });
+    return [...(login ? [login] : []), ...fromAgent, ...local];
   }, [agentType, availableCommands]);
   const queue = useChatStore((s) => s.queues[tabId] ?? EMPTY_QUEUE);
 
@@ -1020,10 +1053,10 @@ export function MessageInput({
 
   // ── Slash-command picker orchestration ────────────────────────────────
   const [slashTrigger, setSlashTrigger] = useState<SlashTrigger | null>(null);
-  // Close a picker left open across an agent switch — the new agent's
-  // catalogue (or lack of one, for cersei) must not inherit the open state.
+  // A picker left open across an agent switch must not inherit the open
+  // state; each agent's catalogue swaps in via `agentSlashCommands` above.
   useEffect(() => {
-    if (agentType === "cersei") setSlashTrigger(null);
+    setSlashTrigger(null);
   }, [agentType]);
   const slashPickerRef = useRef<SlashCommandPickerHandle>(null);
   const slashTriggerRef = useRef<SlashTrigger | null>(null);
@@ -1152,7 +1185,7 @@ export function MessageInput({
         if (mime) {
           try {
             const data = await invoke<string>("read_file_base64", { path: p });
-            images.push({ mimeType: mime, dataBase64: data });
+            images.push(await downscaleAttachment({ mimeType: mime, dataBase64: data }));
             continue;
           } catch {
             // Unreadable as base64 → fall through to a path mention.
@@ -1214,7 +1247,7 @@ export function MessageInput({
         if (mime) {
           try {
             const data = await invoke<string>("read_file_base64", { path: p });
-            images.push({ mimeType: mime, dataBase64: data });
+            images.push(await downscaleAttachment({ mimeType: mime, dataBase64: data }));
             continue;
           } catch {
             // Unreadable as base64 → fall through to a path mention.
@@ -1248,10 +1281,13 @@ export function MessageInput({
         } | null>("capture_screenshot", { mode, projectPath: proj });
         if (!res) return; // cancelled (Esc during region select)
         if (imageSupported) {
-          setStagedImages((prev) => [
-            ...prev,
-            { mimeType: res.mimeType, dataBase64: res.dataBase64 },
-          ]);
+          // Shrunk before it is staged, not inside the updater — the state
+          // callback is synchronous and cannot await.
+          const shrunk = await downscaleAttachment({
+            mimeType: res.mimeType,
+            dataBase64: res.dataBase64,
+          });
+          setStagedImages((prev) => [...prev, shrunk]);
         } else {
           handleDropFiles([res.path]);
         }
@@ -1354,7 +1390,7 @@ export function MessageInput({
       if (!t || !view) return;
 
       if (cmd.handler === "agent-login") {
-        // The one Atlas-handled command (S1): every agent opens the same
+        // An Atlas-handled command (S1): every agent opens the same
         // `AgentOAuthModal`. `reason` is passed so the modal can tell an
         // "agent wants a provider key" failure from a plain "not signed in".
         clearSlashRange(view, t.from, t.to);
@@ -1363,6 +1399,18 @@ export function MessageInput({
         inputRef.current?.focus();
         return;
       }
+      if (cmd.handler === "fork") {
+        // Same flow as the header's "branch from here" menu item.
+        clearSlashRange(view, t.from, t.to);
+        setSlashTrigger(null);
+        forkSessionToNewTab(tabId);
+        inputRef.current?.focus();
+        return;
+      }
+      // "queue" needs a message, so its signature carries `<message>` and the
+      // requires-args branch below inserts "/queue " for the user to fill in;
+      // the actual queueing happens in `submit`, which intercepts the typed
+      // form.
 
       // Passthrough: every other command is sent verbatim to the agent.
       // claude-agent-acp's SDK processes the slash command client-side
@@ -1416,7 +1464,7 @@ export function MessageInput({
       // submit path — trim/mentions/queueing behave exactly like a typed Enter.
       submitRef.current();
     },
-    [disabled, agentType],
+    [disabled, agentType, tabId],
   );
 
   // Forward Up/Down/Enter/Esc/Backspace/Tab from CodeMirror to whichever
@@ -1608,6 +1656,21 @@ export function MessageInput({
       if (running) onStop?.();
       return;
     }
+    // Atlas-surface commands, typed in full (the picker's Enter lands here
+    // too). They drive app affordances, so they never reach the agent.
+    if (trimmed === "/fork" && agentCatalogEntry(agentType)?.supportsFork === true) {
+      forkSessionToNewTab(tabId);
+      inputRef.current?.clear();
+      setValue("");
+      return;
+    }
+    if (trimmed === "/queue" || trimmed.startsWith("/queue ")) {
+      const queued = trimmed.slice("/queue".length).trim();
+      if (queued) enqueueMessage(tabId, queued);
+      inputRef.current?.clear();
+      setValue("");
+      return;
+    }
     const mentions = inputRef.current?.getMentions() ?? [];
     if (running) {
       // Queued messages don't carry mentions yet — the queue holds raw
@@ -1632,6 +1695,7 @@ export function MessageInput({
     onStop,
     enqueueMessage,
     tabId,
+    agentType,
     disabled,
     stagedImages,
     githubSyncing,
@@ -1802,10 +1866,7 @@ export function MessageInput({
                   onSubmit={submit}
                   enterToSend={enterToSend}
                   onMentionTrigger={setTrigger}
-                  // The native agent has no slash commands — suppressing the
-                  // trigger here (rather than showing an empty picker) keeps "/"
-                  // as plain text for cersei.
-                  onSlashTrigger={agentType === "cersei" ? undefined : setSlashTrigger}
+                  onSlashTrigger={setSlashTrigger}
                   onPasteImages={handlePasteImages}
                   keyInterceptor={keyInterceptor}
                 />
@@ -1888,16 +1949,11 @@ export function MessageInput({
                 currentAgent={switchableAgent}
                 onSwitchAgent={handleSwitchAgent}
               />
-              {agentType === "cersei" && (
-                <ProviderModelPills
-                  provider={cerseiProvider}
-                  model={cerseiModel}
-                  onProvider={onCerseiProvider}
-                  onModel={onCerseiModel}
-                  compress={cerseiCompress ?? true}
-                  onCompress={(on) => setCerseiCompress(tabId, on)}
-                />
-              )}
+              {/* The BYOK ProviderModelPills used to render here for the
+                  native agent — the user's own provider keys, which the
+                  gateway agent cannot use. Model choice now goes through the
+                  same ACP model pill as every other agent, fed by the seam's
+                  published catalogue. */}
               {agentType === "cersei" && <EffortPill tabId={tabId} />}
               {agentType === "cersei" && <CerseiMemoryPill />}
               {agentType === "cersei" && <CerseiUsagePill tabId={tabId} />}
@@ -1940,17 +1996,9 @@ export function MessageInput({
           onClose={() => setSlashTrigger(null)}
           commands={agentSlashCommands}
           loading={slashCommandsLoading}
-          footerLabel={
-            agentType === "codex"
-              ? "Codex commands"
-              : agentType === "opencode"
-                ? "OpenCode commands"
-                : agentType === "cursor"
-                  ? "Cursor commands"
-                  : agentType === "claude-code"
-                    ? "Claude Code commands"
-                    : undefined
-          }
+          // One resolver instead of an if-ladder that missed the native agent
+          // (it fell through to the picker's "Claude Code commands" default).
+          footerLabel={`${agentMeta(agentType).label} commands`}
         />
       )}
     </div>

@@ -1,0 +1,182 @@
+use super::*;
+use pretty_assertions::assert_eq;
+use rmcp::model::ResourceContents;
+use serde_json::json;
+
+fn resource(uri: &str, name: &str) -> Resource {
+    Resource::new(uri, name)
+}
+
+fn template(uri_template: &str, name: &str) -> ResourceTemplate {
+    ResourceTemplate::new(uri_template, name)
+}
+
+#[test]
+fn resource_with_server_serializes_server_field() {
+    let entry = ResourceWithServer::new("test".to_string(), resource("memo://id", "memo"));
+    let value = serde_json::to_value(&entry).expect("serialize resource");
+
+    assert_eq!(value["server"], json!("test"));
+    assert_eq!(value["uri"], json!("memo://id"));
+    assert_eq!(value["name"], json!("memo"));
+}
+
+#[test]
+fn list_resources_payload_from_single_server_copies_next_cursor() {
+    let mut result = ListResourcesResult::with_all_items(vec![resource("memo://id", "memo")]);
+    result.next_cursor = Some("cursor-1".to_string());
+    let payload = ListResourcesPayload::from_single_server("srv".to_string(), result);
+    let value = serde_json::to_value(&payload).expect("serialize payload");
+
+    assert_eq!(value["server"], json!("srv"));
+    assert_eq!(value["nextCursor"], json!("cursor-1"));
+    let resources = value["resources"].as_array().expect("resources array");
+    assert_eq!(resources.len(), 1);
+    assert_eq!(resources[0]["server"], json!("srv"));
+}
+
+#[test]
+fn list_resources_payload_from_all_servers_is_sorted() {
+    let mut map = HashMap::new();
+    map.insert("beta".to_string(), vec![resource("memo://b-1", "b-1")]);
+    map.insert(
+        "alpha".to_string(),
+        vec![resource("memo://a-1", "a-1"), resource("memo://a-2", "a-2")],
+    );
+
+    let payload = ListResourcesPayload::from_all_servers(map);
+    let value = serde_json::to_value(&payload).expect("serialize payload");
+    let uris: Vec<String> = value["resources"]
+        .as_array()
+        .expect("resources array")
+        .iter()
+        .map(|entry| entry["uri"].as_str().unwrap().to_string())
+        .collect();
+
+    assert_eq!(
+        uris,
+        vec![
+            "memo://a-1".to_string(),
+            "memo://a-2".to_string(),
+            "memo://b-1".to_string()
+        ]
+    );
+}
+
+#[test]
+fn call_tool_result_from_content_marks_success() {
+    let result = call_tool_result_from_content("{}", Some(true));
+    assert_eq!(result.is_error, Some(false));
+    assert_eq!(result.content.len(), 1);
+}
+
+#[test]
+fn parse_arguments_handles_empty_and_json() {
+    assert!(
+        parse_arguments(" \n\t").unwrap().is_none(),
+        "expected None for empty arguments"
+    );
+
+    assert!(
+        parse_arguments("null").unwrap().is_none(),
+        "expected None for null arguments"
+    );
+
+    let value = parse_arguments(r#"{"server":"figma"}"#)
+        .expect("parse json")
+        .expect("value present");
+    assert_eq!(value["server"], json!("figma"));
+}
+
+#[test]
+fn list_resource_args_normalizes_server_and_cursor() {
+    let args: ListResourceArgs = serde_json::from_value(json!({
+        "server": "  hosted  ",
+        "cursor": "  next-page  "
+    }))
+    .expect("parse resource-list arguments");
+
+    assert_eq!(
+        args.normalized(),
+        ListResourceArgs {
+            server: Some("hosted".to_string()),
+            cursor: Some("next-page".to_string()),
+        }
+    );
+}
+
+#[test]
+fn template_with_server_serializes_server_field() {
+    let entry = ResourceWithServer::new("srv".to_string(), template("memo://{id}", "memo"));
+    let value = serde_json::to_value(&entry).expect("serialize template");
+
+    assert_eq!(
+        value,
+        json!({
+            "server": "srv",
+            "uriTemplate": "memo://{id}",
+            "name": "memo"
+        })
+    );
+}
+
+#[test]
+fn list_resource_templates_payload_from_all_servers_is_sorted() {
+    let mut templates_by_server = HashMap::new();
+    templates_by_server.insert(
+        "beta".to_string(),
+        vec![template("memo://beta/{id}", "beta")],
+    );
+    templates_by_server.insert(
+        "alpha".to_string(),
+        vec![template("memo://alpha/{id}", "alpha")],
+    );
+
+    let payload = ListResourceTemplatesPayload::from_all_servers(templates_by_server);
+
+    assert_eq!(
+        serde_json::to_value(payload).expect("serialize resource templates"),
+        json!({
+            "resourceTemplates": [
+                {"server": "alpha", "uriTemplate": "memo://alpha/{id}", "name": "alpha"},
+                {"server": "beta", "uriTemplate": "memo://beta/{id}", "name": "beta"}
+            ]
+        })
+    );
+}
+
+#[test]
+fn serialize_function_output_preserves_small_payload() {
+    let payload = json!({"server": "hosted", "resources": []});
+    let expected = serde_json::to_string(&payload).expect("serialize payload");
+
+    let output = serialize_function_output(payload, TruncationPolicy::Bytes(1_024))
+        .expect("serialize function output")
+        .into_text();
+
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn serialize_function_output_caps_read_resource_payload() {
+    let truncation_policy = TruncationPolicy::Bytes(8_000);
+    let payload = ReadResourcePayload {
+        server: "hosted".to_string(),
+        uri: "skill://large/SKILL.md".to_string(),
+        result: ReadResourceResult::new(vec![ResourceContents::TextResourceContents {
+            uri: "skill://large/SKILL.md".to_string(),
+            mime_type: Some("text/markdown".to_string()),
+            text: "x".repeat(16_000),
+            meta: None,
+        }]),
+    };
+    let serialized = serde_json::to_string(&payload).expect("serialize payload");
+    let expected = truncate_text(&serialized, truncation_policy * 1.2);
+
+    let output = serialize_function_output(payload, truncation_policy)
+        .expect("serialize bounded function output")
+        .into_text();
+
+    assert_ne!(output, serialized);
+    assert_eq!(output, expected);
+}

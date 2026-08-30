@@ -41,7 +41,12 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
-    "resources": ["resources/nvm.sh"],
+    "resources": {
+      "resources/nvm.sh": "resources/nvm.sh",
+      "../LICENSE": "licenses/Atlas-LICENSE.txt",
+      "../vendor/codex/LICENSE": "licenses/OpenAI-Codex-LICENSE.txt",
+      "../vendor/codex/NOTICE": "licenses/OpenAI-Codex-NOTICE.txt"
+    },
     "category": "DeveloperTool",
     "shortDescription": "Atlas — agent-first ideation and planning tool",
     "longDescription": "Atlas is a Tauri-based desktop app that hosts ACP-compatible coding agents (Claude Code, Codex, OpenCode) with first-class file, knowledge, and research integration.",

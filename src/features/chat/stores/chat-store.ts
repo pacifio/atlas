@@ -32,11 +32,7 @@ import { loadCachedAcpModels, saveCachedAcpModels } from "../lib/acp-models-cach
 import { resolveModelLabel } from "../lib/model-label";
 import { defaultAgentForNewSession } from "../lib/default-agent";
 import { loadCachedContextUsage, saveCachedContextUsage } from "../lib/context-usage-cache";
-import {
-  saveCerseiModelPref,
-  saveCerseiEffort,
-  saveCerseiCompress,
-} from "../lib/cersei-model-pref";
+import { saveCerseiModelPref, saveCerseiEffort } from "../lib/cersei-model-pref";
 import { invoke } from "@tauri-apps/api/core";
 import { extractPlanMarkdown, type PlanRecord } from "../lib/plans";
 import { extractNextSteps } from "../lib/next-steps";
@@ -233,16 +229,9 @@ function pushCerseiEffortToAgent(state: ChatState, sessionId: string): void {
   }).catch((err) => console.warn("agents_set_effort failed:", err));
 }
 
-/** Push the native agent's RTK compression toggle via `agents_set_compress`. */
-function pushCerseiCompressToAgent(state: ChatState, sessionId: string): void {
-  const session = state.sessions[sessionId];
-  if (!session?.acpAgentId || !session.acpSessionId) return;
-  if (session.agentType !== "cersei") return;
-  void invoke("agents_set_compress", {
-    key: { agent_id: session.acpAgentId, session_id: session.acpSessionId },
-    on: session.cerseiCompress ?? true,
-  }).catch((err) => console.warn("agents_set_compress failed:", err));
-}
+// `pushCerseiCompressToAgent` stood here, pushing the RTK compression toggle
+// through `agents_set_compress`. Both are gone (#54): the ported engine has no
+// tool-output compressor, so there was nothing on the other end of the command.
 
 /** Convert an atlas-agents wire ToolCall into the in-store ChatMessage shape. */
 function toChatToolCall(tc: AgentToolCall): ChatMessage["toolCalls"][number] {
@@ -378,7 +367,11 @@ interface ChatActions {
      *  deltas that raced ahead of the binding (or a resume) and were dropped
      *  by the session router. Never clobbers a non-empty live list with an
      *  empty snapshot. */
-    setAcpAvailableCommands: (sessionId: string, commands: unknown[]) => void;
+    setAcpAvailableCommands: (
+      sessionId: string,
+      commands: unknown[],
+      sourceAgentType?: AgentType,
+    ) => void;
     /** Apply a snapshot's config options — the ONLY way an agent's initial
      *  knobs reach the frontend, since `session/new`'s advertisement lives in
      *  the backend cell and a follow-up notification is optional (#32). */
@@ -392,7 +385,6 @@ interface ChatActions {
     /** Native Cersei agent: set the reasoning-effort level and push it. */
     setCerseiEffort: (sessionId: string, effort: string) => void;
     /** Native Cersei agent: toggle RTK tool-output compression and push it. */
-    setCerseiCompress: (sessionId: string, on: boolean) => void;
     replaceMessages: (
       sessionId: string,
       messages: Array<{
@@ -1087,7 +1079,16 @@ export const useChatStore = createSelectors(
             console.warn("setConfigOption failed:", e);
           }
         },
-        setAcpAvailableCommands: (sessionId, commands) => {
+        setAcpAvailableCommands: (sessionId, commands, sourceAgentType) => {
+          // Same stale-snapshot hazard `setAcpModes`/`setAcpConfigOptions` are
+          // guarded for, with a worse symptom: a tab relabelled to another
+          // agent keeps its old binding until the rebind lands, so a snapshot
+          // fetched off that binding writes the OLD agent's commands under the
+          // new label. Claude advertises its *skills* as commands, which is
+          // how the native agent's picker showed the user's Claude skills and
+          // none of its own commands.
+          const at = get().sessions[sessionId]?.agentType;
+          if (sourceAgentType && at && sourceAgentType !== at) return;
           set((s) => {
             const session = s.sessions[sessionId];
             if (!session) return;
@@ -1200,14 +1201,6 @@ export const useChatStore = createSelectors(
           });
           saveCerseiEffort(effort);
           pushCerseiEffortToAgent(get(), sessionId);
-        },
-        setCerseiCompress: (sessionId, on) => {
-          set((s) => {
-            const session = s.sessions[sessionId];
-            if (session) session.cerseiCompress = on;
-          });
-          saveCerseiCompress(on);
-          pushCerseiCompressToAgent(get(), sessionId);
         },
         replaceMessages: (sessionId, messages) =>
           set((s) => {
@@ -1995,6 +1988,21 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
     }
     case "available_commands": {
       session.availableCommands = env.commands;
+      return;
+    }
+    case "history_rewound": {
+      // A rewind (the native agent's /undo). Drop trailing messages through
+      // the `turns`-th user message from the end, so the visible transcript
+      // matches what the agent now remembers. Counted in user messages
+      // because our user rows are optimistic — they carry no wire ids the
+      // backend could address individually.
+      let remaining = (env.turns as number) ?? 0;
+      let cut = session.messages.length;
+      while (cut > 0 && remaining > 0) {
+        cut -= 1;
+        if (session.messages[cut]?.role === "user") remaining -= 1;
+      }
+      if (remaining === 0) session.messages.splice(cut);
       return;
     }
     case "mode_changed": {

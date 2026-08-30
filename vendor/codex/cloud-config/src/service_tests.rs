@@ -1,0 +1,1390 @@
+use super::*;
+use crate::backend::BundleClient;
+use crate::backend::BundleRequestError;
+use crate::backend::RetryableFailureKind;
+use crate::backend::bundle_from_response;
+use crate::cache::CLOUD_CONFIG_BUNDLE_CACHE_FILENAME;
+use crate::cache::CloudConfigBundleCache;
+use crate::metrics::bundle_shape_tag;
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use codex_backend_client::ConfigBundleResponse;
+use codex_backend_client::DeliveredTomlFragment;
+use codex_config::AbsolutePathBuf;
+use codex_config::CloudConfigFragment;
+use codex_config::CloudConfigTomlBundle;
+use codex_config::CloudRequirementsFragment;
+use codex_config::CloudRequirementsTomlBundle;
+use codex_config::types::AuthCredentialsStoreMode;
+use codex_core::config::ConfigBuilder;
+use codex_login::AuthKeyringBackendKind;
+use codex_login::auth::AgentIdentityAuth;
+use codex_login::auth::AgentIdentityAuthRecord;
+use codex_login::auth::ExternalAuth;
+use codex_login::auth::ExternalAuthRefreshContext;
+use pretty_assertions::assert_eq;
+use serde_json::json;
+use std::collections::VecDeque;
+use std::future::pending;
+use std::path::Path;
+use std::sync::RwLock;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use tempfile::tempdir;
+
+fn write_auth_json(codex_home: &Path, value: serde_json::Value) -> std::io::Result<()> {
+    std::fs::write(codex_home.join("auth.json"), serde_json::to_string(&value)?)?;
+    Ok(())
+}
+
+fn create_test_cache(codex_home: &Path) -> CloudConfigBundleCache {
+    CloudConfigBundleCache::new(AbsolutePathBuf::resolve_path_against_base(codex_home, "/"))
+}
+
+async fn auth_manager_with_api_key() -> Arc<AuthManager> {
+    let tmp = tempdir().expect("tempdir");
+    let auth_json = json!({
+        "OPENAI_API_KEY": "sk-test-key",
+        "tokens": null,
+        "last_refresh": null,
+    });
+    write_auth_json(tmp.path(), auth_json).expect("write auth");
+    Arc::new(
+        AuthManager::new(
+            tmp.path().to_path_buf(),
+            /*enable_codex_api_key_env*/ false,
+            AuthCredentialsStoreMode::File,
+            /*forced_chatgpt_workspace_id*/ None,
+            /*chatgpt_base_url*/ None,
+            AuthKeyringBackendKind::default(),
+            codex_login::test_support::transport_default_auth_route_config(),
+        )
+        .await,
+    )
+}
+
+async fn auth_manager_with_plan_and_identity(
+    plan_type: &str,
+    chatgpt_user_id: Option<&str>,
+    account_id: Option<&str>,
+) -> Arc<AuthManager> {
+    let tmp = tempdir().expect("tempdir");
+    write_auth_json(
+        tmp.path(),
+        chatgpt_auth_json(
+            plan_type,
+            chatgpt_user_id,
+            account_id,
+            "test-access-token",
+            "test-refresh-token",
+        ),
+    )
+    .expect("write auth");
+    Arc::new(
+        AuthManager::new(
+            tmp.path().to_path_buf(),
+            /*enable_codex_api_key_env*/ false,
+            AuthCredentialsStoreMode::File,
+            /*forced_chatgpt_workspace_id*/ None,
+            /*chatgpt_base_url*/ None,
+            AuthKeyringBackendKind::default(),
+            codex_login::test_support::transport_default_auth_route_config(),
+        )
+        .await,
+    )
+}
+
+async fn auth_manager_with_plan(plan_type: &str) -> Arc<AuthManager> {
+    auth_manager_with_plan_and_identity(plan_type, Some("user-12345"), Some("account-12345")).await
+}
+
+async fn auth_manager_with_agent_identity_business_plan() -> Arc<AuthManager> {
+    let key_material =
+        codex_agent_identity::generate_agent_key_material().expect("generate agent key material");
+    AuthManager::from_auth_for_testing(CodexAuth::AgentIdentity(
+        AgentIdentityAuth::from_record(
+            AgentIdentityAuthRecord {
+                agent_runtime_id: "agent-runtime-123".to_string(),
+                agent_private_key: key_material.private_key_pkcs8_base64,
+                account_id: "account-12345".to_string(),
+                chatgpt_user_id: "user-12345".to_string(),
+                email: Some("user@example.com".to_string()),
+                plan_type: PlanType::Business,
+                chatgpt_account_is_fedramp: false,
+                task_id: Some("task-123".to_string()),
+            },
+            "https://auth.openai.com/api/accounts",
+            &codex_login::test_support::transport_default_auth_route_config(),
+        )
+        .await
+        .expect("agent identity record should be complete"),
+    ))
+}
+
+fn chatgpt_auth_json(
+    plan_type: &str,
+    chatgpt_user_id: Option<&str>,
+    account_id: Option<&str>,
+    access_token: &str,
+    refresh_token: &str,
+) -> serde_json::Value {
+    chatgpt_auth_json_with_last_refresh(
+        plan_type,
+        chatgpt_user_id,
+        account_id,
+        access_token,
+        refresh_token,
+        "2025-01-01T00:00:00Z",
+    )
+}
+
+fn chatgpt_auth_json_with_last_refresh(
+    plan_type: &str,
+    chatgpt_user_id: Option<&str>,
+    account_id: Option<&str>,
+    access_token: &str,
+    refresh_token: &str,
+    last_refresh: &str,
+) -> serde_json::Value {
+    let fake_jwt = fake_chatgpt_jwt(plan_type, chatgpt_user_id, b"sig");
+    json!({
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "id_token": fake_jwt,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "account_id": account_id,
+        },
+        "last_refresh": last_refresh,
+    })
+}
+
+fn fake_chatgpt_jwt(plan_type: &str, chatgpt_user_id: Option<&str>, signature: &[u8]) -> String {
+    let header = json!({ "alg": "none", "typ": "JWT" });
+    let auth_payload = json!({
+        "chatgpt_plan_type": plan_type,
+        "chatgpt_user_id": chatgpt_user_id,
+        "user_id": chatgpt_user_id,
+    });
+    let payload = json!({
+        "email": "user@example.com",
+        "https://api.openai.com/auth": auth_payload,
+    });
+    let header_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).expect("header"));
+    let payload_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).expect("payload"));
+    let signature_b64 = URL_SAFE_NO_PAD.encode(signature);
+    format!("{header_b64}.{payload_b64}.{signature_b64}")
+}
+
+fn test_bundle() -> CloudConfigBundle {
+    CloudConfigBundle {
+        config_toml: CloudConfigTomlBundle {
+            enterprise_managed: vec![test_config_fragment()],
+        },
+        requirements_toml: CloudRequirementsTomlBundle {
+            enterprise_managed: vec![test_requirements_fragment()],
+        },
+    }
+}
+
+fn test_config_fragment() -> CloudConfigFragment {
+    CloudConfigFragment {
+        id: "cfg_1".to_string(),
+        name: "Base config".to_string(),
+        contents: "model = \"gpt-5\"".to_string(),
+    }
+}
+
+fn test_requirements_fragment() -> CloudRequirementsFragment {
+    CloudRequirementsFragment {
+        id: "req_1".to_string(),
+        name: "Base requirements".to_string(),
+        contents: "allowed_approval_policies = [\"never\"]".to_string(),
+    }
+}
+
+fn invalid_config_bundle() -> CloudConfigBundle {
+    CloudConfigBundle {
+        config_toml: CloudConfigTomlBundle {
+            enterprise_managed: vec![CloudConfigFragment {
+                id: "cfg_invalid".to_string(),
+                name: "Invalid config".to_string(),
+                contents: "model = [".to_string(),
+            }],
+        },
+        requirements_toml: CloudRequirementsTomlBundle::default(),
+    }
+}
+
+fn request_error() -> BundleRequestError {
+    BundleRequestError::Retryable(RetryableFailureKind::Request { status_code: None })
+}
+
+struct StaticBundleClient {
+    bundle: CloudConfigBundle,
+    request_count: AtomicUsize,
+}
+
+impl StaticBundleClient {
+    fn new(bundle: CloudConfigBundle) -> Self {
+        Self {
+            bundle,
+            request_count: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl BundleClient for StaticBundleClient {
+    async fn get_bundle(&self, _auth: &CodexAuth) -> Result<CloudConfigBundle, BundleRequestError> {
+        self.request_count.fetch_add(1, Ordering::SeqCst);
+        Ok(self.bundle.clone())
+    }
+}
+
+struct PendingBundleClient;
+
+impl BundleClient for PendingBundleClient {
+    async fn get_bundle(&self, _auth: &CodexAuth) -> Result<CloudConfigBundle, BundleRequestError> {
+        pending::<()>().await;
+        Ok(CloudConfigBundle::default())
+    }
+}
+
+struct NotifyingPendingBundleClient {
+    request_started: Arc<tokio::sync::Notify>,
+    request_cancelled: Arc<tokio::sync::Notify>,
+}
+
+impl Drop for NotifyingPendingBundleClient {
+    fn drop(&mut self) {
+        self.request_cancelled.notify_one();
+    }
+}
+
+impl BundleClient for NotifyingPendingBundleClient {
+    async fn get_bundle(&self, _auth: &CodexAuth) -> Result<CloudConfigBundle, BundleRequestError> {
+        self.request_started.notify_one();
+        pending::<()>().await;
+        Ok(CloudConfigBundle::default())
+    }
+}
+
+struct SequenceBundleClient {
+    responses: tokio::sync::Mutex<VecDeque<Result<CloudConfigBundle, BundleRequestError>>>,
+    request_count: AtomicUsize,
+}
+
+impl SequenceBundleClient {
+    fn new(responses: Vec<Result<CloudConfigBundle, BundleRequestError>>) -> Self {
+        Self {
+            responses: tokio::sync::Mutex::new(VecDeque::from(responses)),
+            request_count: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl BundleClient for SequenceBundleClient {
+    async fn get_bundle(&self, _auth: &CodexAuth) -> Result<CloudConfigBundle, BundleRequestError> {
+        self.request_count.fetch_add(1, Ordering::SeqCst);
+        let mut responses = self.responses.lock().await;
+        responses
+            .pop_front()
+            .unwrap_or_else(|| Ok(CloudConfigBundle::default()))
+    }
+}
+
+struct TokenBundleClient {
+    expected_token: String,
+    bundle: CloudConfigBundle,
+    request_count: AtomicUsize,
+}
+
+impl BundleClient for TokenBundleClient {
+    async fn get_bundle(&self, auth: &CodexAuth) -> Result<CloudConfigBundle, BundleRequestError> {
+        self.request_count.fetch_add(1, Ordering::SeqCst);
+        if matches!(
+            auth.get_token().as_deref(),
+            Ok(token) if token == self.expected_token.as_str()
+        ) {
+            Ok(self.bundle.clone())
+        } else {
+            Err(BundleRequestError::Unauthorized {
+                status_code: Some(401),
+                message: "GET /config/bundle failed: 401".to_string(),
+            })
+        }
+    }
+}
+
+struct UnauthorizedBundleClient {
+    message: String,
+    request_count: AtomicUsize,
+}
+
+struct TestExternalChatgptAuth {
+    current: RwLock<CodexAuth>,
+    refreshed: CodexAuth,
+    refresh_count: AtomicUsize,
+}
+
+impl ExternalAuth for TestExternalChatgptAuth {
+    fn resolve(&self) -> codex_login::ExternalAuthFuture<'_, CodexAuth> {
+        Box::pin(async {
+            self.current
+                .read()
+                .map(|auth| auth.clone())
+                .map_err(|_| std::io::Error::other("external auth lock is poisoned"))
+        })
+    }
+
+    fn refresh(
+        &self,
+        _context: ExternalAuthRefreshContext,
+    ) -> codex_login::ExternalAuthFuture<'_, CodexAuth> {
+        Box::pin(async {
+            let refreshed = self.refreshed.clone();
+            *self
+                .current
+                .write()
+                .map_err(|_| std::io::Error::other("external auth lock is poisoned"))? =
+                refreshed.clone();
+            self.refresh_count.fetch_add(1, Ordering::SeqCst);
+            Ok(refreshed)
+        })
+    }
+}
+
+impl BundleClient for UnauthorizedBundleClient {
+    async fn get_bundle(&self, _auth: &CodexAuth) -> Result<CloudConfigBundle, BundleRequestError> {
+        self.request_count.fetch_add(1, Ordering::SeqCst);
+        Err(BundleRequestError::Unauthorized {
+            status_code: Some(401),
+            message: self.message.clone(),
+        })
+    }
+}
+
+#[test]
+fn bundle_shape_tag_describes_sorted_enterprise_sources() {
+    assert_eq!(bundle_shape_tag(/*bundle*/ None), "none");
+    assert_eq!(
+        bundle_shape_tag(Some(&CloudConfigBundle::default())),
+        "empty"
+    );
+    assert_eq!(
+        bundle_shape_tag(Some(&CloudConfigBundle {
+            config_toml: CloudConfigTomlBundle {
+                enterprise_managed: vec![test_config_fragment()],
+            },
+            requirements_toml: CloudRequirementsTomlBundle::default(),
+        })),
+        "enterprise_config"
+    );
+    assert_eq!(
+        bundle_shape_tag(Some(&CloudConfigBundle {
+            config_toml: CloudConfigTomlBundle::default(),
+            requirements_toml: CloudRequirementsTomlBundle {
+                enterprise_managed: vec![test_requirements_fragment()],
+            },
+        })),
+        "enterprise_requirements"
+    );
+    assert_eq!(
+        bundle_shape_tag(Some(&CloudConfigBundle {
+            config_toml: CloudConfigTomlBundle {
+                enterprise_managed: vec![test_config_fragment()],
+            },
+            requirements_toml: CloudRequirementsTomlBundle {
+                enterprise_managed: vec![test_requirements_fragment()],
+            },
+        })),
+        "enterprise_config,enterprise_requirements"
+    );
+}
+
+#[tokio::test]
+async fn get_bundle_skips_non_chatgpt_auth() {
+    let fetcher = Arc::new(StaticBundleClient::new(test_bundle()));
+    let codex_home = tempdir().expect("tempdir");
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_api_key().await,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    assert_eq!(service.load_startup_bundle().await, Ok(None));
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn get_bundle_skips_individual_plan() {
+    let fetcher = Arc::new(StaticBundleClient::new(test_bundle()));
+    let codex_home = tempdir().expect("tempdir");
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_plan("pro").await,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    assert_eq!(service.load_startup_bundle().await, Ok(None));
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn get_bundle_allows_eligible_workspace_plans_and_writes_cache() {
+    for plan_type in [
+        "business",
+        "ent26",
+        "enterprise_cbp_automation",
+        "enterprise_cbp_usage_based",
+        "enterprise",
+        "hc",
+        "edu",
+        "education",
+    ] {
+        let bundle = test_bundle();
+        let fetcher = Arc::new(StaticBundleClient::new(bundle.clone()));
+        let codex_home = tempdir().expect("tempdir");
+        let service = CloudConfigBundleService::new(
+            auth_manager_with_plan(plan_type).await,
+            fetcher.clone(),
+            codex_home.path().to_path_buf(),
+            CLOUD_CONFIG_BUNDLE_TIMEOUT,
+        );
+
+        assert_eq!(
+            service.load_startup_bundle().await,
+            Ok(Some(bundle)),
+            "plan_type: {plan_type}"
+        );
+        assert_eq!(
+            fetcher.request_count.load(Ordering::SeqCst),
+            1,
+            "plan_type: {plan_type}"
+        );
+        assert!(
+            codex_home
+                .path()
+                .join(CLOUD_CONFIG_BUNDLE_CACHE_FILENAME)
+                .exists(),
+            "plan_type: {plan_type}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn get_bundle_allows_agent_identity_business_plan() {
+    let bundle = test_bundle();
+    let fetcher = Arc::new(StaticBundleClient::new(bundle.clone()));
+    let codex_home = tempdir().expect("tempdir");
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_agent_identity_business_plan().await,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    assert_eq!(service.load_startup_bundle().await, Ok(Some(bundle)));
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 1);
+    assert!(
+        codex_home
+            .path()
+            .join(CLOUD_CONFIG_BUNDLE_CACHE_FILENAME)
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn get_bundle_skips_team_like_business_plans() {
+    for plan_type in [
+        "self_serve_business_prolite",
+        "self_serve_business_usage_based",
+    ] {
+        let fetcher = Arc::new(StaticBundleClient::new(test_bundle()));
+        let codex_home = tempdir().expect("tempdir");
+        let service = CloudConfigBundleService::new(
+            auth_manager_with_plan(plan_type).await,
+            fetcher.clone(),
+            codex_home.path().to_path_buf(),
+            CLOUD_CONFIG_BUNDLE_TIMEOUT,
+        );
+
+        assert_eq!(service.load_startup_bundle().await, Ok(None));
+        assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+async fn get_bundle_rejects_invalid_remote_bundle_before_cache_write() {
+    let codex_home = tempdir().expect("tempdir");
+    let fetcher = Arc::new(StaticBundleClient::new(invalid_config_bundle()));
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_plan("business").await,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    let err = service
+        .load_startup_bundle()
+        .await
+        .expect_err("invalid remote bundle should fail closed");
+
+    assert_eq!(err.code(), CloudConfigBundleLoadErrorCode::InvalidBundle);
+    assert!(err.to_string().contains("invalid cloud config bundle"));
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 1);
+    assert!(
+        !codex_home
+            .path()
+            .join(CLOUD_CONFIG_BUNDLE_CACHE_FILENAME)
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn get_bundle_ignores_invalid_cache_and_refetches() {
+    let codex_home = tempdir().expect("tempdir");
+    let cache = create_test_cache(codex_home.path());
+    cache
+        .save(
+            Some("user-12345".to_string()),
+            Some("account-12345".to_string()),
+            invalid_config_bundle(),
+        )
+        .await
+        .expect("write invalid cache");
+    let replacement_bundle = test_bundle();
+    let fetcher = Arc::new(StaticBundleClient::new(replacement_bundle.clone()));
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_plan("business").await,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    assert_eq!(
+        service.load_startup_bundle().await,
+        Ok(Some(replacement_bundle.clone()))
+    );
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        cache
+            .load(Some("user-12345"), Some("account-12345"))
+            .await
+            .expect("load refreshed cache")
+            .bundle,
+        replacement_bundle
+    );
+}
+
+#[tokio::test]
+async fn get_bundle_empty_response_is_success_and_cached() {
+    let codex_home = tempdir().expect("tempdir");
+    let fetcher = Arc::new(StaticBundleClient::new(CloudConfigBundle::default()));
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_plan("enterprise").await,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    assert_eq!(service.load_startup_bundle().await, Ok(None));
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 1);
+    assert!(
+        codex_home
+            .path()
+            .join(CLOUD_CONFIG_BUNDLE_CACHE_FILENAME)
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn get_bundle_uses_cache_when_valid() {
+    let bundle = test_bundle();
+    let codex_home = tempdir().expect("tempdir");
+    let prime_service = CloudConfigBundleService::new(
+        auth_manager_with_plan("business").await,
+        Arc::new(StaticBundleClient::new(bundle.clone())),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+    let _ = prime_service.load_startup_bundle().await;
+
+    let fetcher = Arc::new(SequenceBundleClient::new(vec![Err(request_error())]));
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_plan("business").await,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    assert_eq!(service.load_startup_bundle().await, Ok(Some(bundle)));
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn get_bundle_ignores_cache_for_different_auth_identity() {
+    let codex_home = tempdir().expect("tempdir");
+    let prime_service = CloudConfigBundleService::new(
+        auth_manager_with_plan_and_identity("business", Some("user-12345"), Some("account-12345"))
+            .await,
+        Arc::new(StaticBundleClient::new(test_bundle())),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+    let _ = prime_service.load_startup_bundle().await;
+
+    let replacement_bundle = CloudConfigBundle {
+        config_toml: CloudConfigTomlBundle::default(),
+        requirements_toml: CloudRequirementsTomlBundle {
+            enterprise_managed: vec![CloudRequirementsFragment {
+                id: "req_2".to_string(),
+                name: "Replacement requirements".to_string(),
+                contents: "allowed_approval_policies = [\"on-request\"]".to_string(),
+            }],
+        },
+    };
+    let fetcher = Arc::new(SequenceBundleClient::new(vec![Ok(
+        replacement_bundle.clone()
+    )]));
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_plan_and_identity("business", Some("user-99999"), Some("account-12345"))
+            .await,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    assert_eq!(
+        service.load_startup_bundle().await,
+        Ok(Some(replacement_bundle))
+    );
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn get_bundle_times_out() {
+    let codex_home = tempdir().expect("tempdir");
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_plan("enterprise").await,
+        Arc::new(PendingBundleClient),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+    let handle = tokio::spawn(async move { service.load_startup_bundle_with_timeout().await });
+    tokio::time::advance(CLOUD_CONFIG_BUNDLE_TIMEOUT + Duration::from_millis(1)).await;
+
+    let result = handle.await.expect("cloud config bundle task");
+    let err = result.expect_err("cloud config bundle timeout should fail closed");
+    assert!(
+        err.to_string()
+            .contains("timed out waiting for cloud config bundle")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn get_bundle_retries_until_success() {
+    let fetcher = Arc::new(SequenceBundleClient::new(vec![
+        Err(request_error()),
+        Ok(test_bundle()),
+    ]));
+    let codex_home = tempdir().expect("tempdir");
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_plan("business").await,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    let handle = tokio::spawn(async move { service.load_startup_bundle().await });
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+
+    assert_eq!(handle.await.expect("bundle task"), Ok(Some(test_bundle())));
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn get_bundle_recovers_after_unauthorized_reload() {
+    let auth_home = tempdir().expect("tempdir");
+    write_auth_json(
+        auth_home.path(),
+        chatgpt_auth_json_with_last_refresh(
+            "business",
+            Some("user-12345"),
+            Some("account-12345"),
+            "stale-access-token",
+            "test-refresh-token",
+            // Keep auth "fresh" so the first request hits unauthorized recovery
+            // instead of AuthManager::auth() proactively reloading from disk.
+            "3025-01-01T00:00:00Z",
+        ),
+    )
+    .expect("write initial auth");
+    let auth_manager = Arc::new(
+        AuthManager::new(
+            auth_home.path().to_path_buf(),
+            /*enable_codex_api_key_env*/ false,
+            AuthCredentialsStoreMode::File,
+            /*forced_chatgpt_workspace_id*/ None,
+            /*chatgpt_base_url*/ None,
+            AuthKeyringBackendKind::default(),
+            codex_login::test_support::transport_default_auth_route_config(),
+        )
+        .await,
+    );
+
+    write_auth_json(
+        auth_home.path(),
+        chatgpt_auth_json_with_last_refresh(
+            "business",
+            Some("user-12345"),
+            Some("account-12345"),
+            "fresh-access-token",
+            "test-refresh-token",
+            "3025-01-01T00:00:00Z",
+        ),
+    )
+    .expect("write refreshed auth");
+    let fetcher = Arc::new(TokenBundleClient {
+        expected_token: "fresh-access-token".to_string(),
+        bundle: test_bundle(),
+        request_count: AtomicUsize::new(0),
+    });
+    let codex_home = tempdir().expect("tempdir");
+    let service = CloudConfigBundleService::new(
+        auth_manager,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    assert_eq!(service.load_startup_bundle().await, Ok(Some(test_bundle())));
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn get_bundle_recovers_after_unauthorized_reload_updates_cache_identity() {
+    let auth_home = tempdir().expect("tempdir");
+    write_auth_json(
+        auth_home.path(),
+        chatgpt_auth_json_with_last_refresh(
+            "business",
+            Some("user-12345"),
+            Some("account-12345"),
+            "stale-access-token",
+            "test-refresh-token",
+            "3025-01-01T00:00:00Z",
+        ),
+    )
+    .expect("write initial auth");
+    let auth_manager = Arc::new(
+        AuthManager::new(
+            auth_home.path().to_path_buf(),
+            /*enable_codex_api_key_env*/ false,
+            AuthCredentialsStoreMode::File,
+            /*forced_chatgpt_workspace_id*/ None,
+            /*chatgpt_base_url*/ None,
+            AuthKeyringBackendKind::default(),
+            codex_login::test_support::transport_default_auth_route_config(),
+        )
+        .await,
+    );
+
+    write_auth_json(
+        auth_home.path(),
+        chatgpt_auth_json_with_last_refresh(
+            "business",
+            Some("user-99999"),
+            Some("account-12345"),
+            "fresh-access-token",
+            "test-refresh-token",
+            "3025-01-01T00:00:00Z",
+        ),
+    )
+    .expect("write refreshed auth");
+    let fetcher = Arc::new(TokenBundleClient {
+        expected_token: "fresh-access-token".to_string(),
+        bundle: test_bundle(),
+        request_count: AtomicUsize::new(0),
+    });
+    let codex_home = tempdir().expect("tempdir");
+    let service = CloudConfigBundleService::new(
+        auth_manager,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    assert_eq!(service.load_startup_bundle().await, Ok(Some(test_bundle())));
+    let cache = create_test_cache(codex_home.path());
+    assert_eq!(
+        cache
+            .load(Some("user-99999"), Some("account-12345"))
+            .await
+            .expect("load cache")
+            .bundle,
+        test_bundle()
+    );
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn get_bundle_surfaces_auth_recovery_message() {
+    let auth_home = tempdir().expect("tempdir");
+    write_auth_json(
+        auth_home.path(),
+        chatgpt_auth_json(
+            "enterprise",
+            Some("user-12345"),
+            Some("account-12345"),
+            "stale-access-token",
+            "test-refresh-token",
+        ),
+    )
+    .expect("write auth");
+    let auth_manager = Arc::new(
+        AuthManager::new(
+            auth_home.path().to_path_buf(),
+            /*enable_codex_api_key_env*/ false,
+            AuthCredentialsStoreMode::File,
+            /*forced_chatgpt_workspace_id*/ None,
+            /*chatgpt_base_url*/ None,
+            AuthKeyringBackendKind::default(),
+            codex_login::test_support::transport_default_auth_route_config(),
+        )
+        .await,
+    );
+
+    write_auth_json(
+        auth_home.path(),
+        chatgpt_auth_json(
+            "enterprise",
+            Some("user-12345"),
+            Some("account-99999"),
+            "fresh-access-token",
+            "test-refresh-token",
+        ),
+    )
+    .expect("write mismatched auth");
+    let fetcher = Arc::new(UnauthorizedBundleClient {
+        message: "GET /config/bundle failed: 401".to_string(),
+        request_count: AtomicUsize::new(0),
+    });
+    let codex_home = tempdir().expect("tempdir");
+    let service = CloudConfigBundleService::new(
+        auth_manager,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    let err = service
+        .load_startup_bundle()
+        .await
+        .expect_err("cloud config bundle should surface auth recovery errors");
+    assert_eq!(
+        err,
+        CloudConfigBundleLoadError::new(
+            CloudConfigBundleLoadErrorCode::Auth,
+            Some(401),
+            "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+        )
+    );
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn get_bundle_refreshes_external_auth_after_unauthorized() {
+    let auth_home = tempdir().expect("tempdir");
+    let auth_manager = Arc::new(
+        AuthManager::new(
+            auth_home.path().to_path_buf(),
+            /*enable_codex_api_key_env*/ false,
+            AuthCredentialsStoreMode::Ephemeral,
+            /*forced_chatgpt_workspace_id*/ None,
+            /*chatgpt_base_url*/ None,
+            AuthKeyringBackendKind::default(),
+            codex_login::test_support::transport_default_auth_route_config(),
+        )
+        .await,
+    );
+    let initial_auth = CodexAuth::from_external_chatgpt_tokens(
+        &fake_chatgpt_jwt("enterprise", Some("user-12345"), b"initial"),
+        "account-12345",
+        Some("enterprise"),
+    )
+    .expect("initial external auth");
+    let refreshed_token = fake_chatgpt_jwt("enterprise", Some("user-12345"), b"refreshed");
+    let refreshed_auth = CodexAuth::from_external_chatgpt_tokens(
+        &refreshed_token,
+        "account-12345",
+        Some("enterprise"),
+    )
+    .expect("refreshed external auth");
+    let external_auth = Arc::new(TestExternalChatgptAuth {
+        current: RwLock::new(initial_auth),
+        refreshed: refreshed_auth,
+        refresh_count: AtomicUsize::new(0),
+    });
+    auth_manager
+        .set_external_auth(external_auth.clone())
+        .await
+        .expect("set external auth");
+
+    let fetcher = Arc::new(TokenBundleClient {
+        expected_token: refreshed_token,
+        bundle: test_bundle(),
+        request_count: AtomicUsize::new(0),
+    });
+    let codex_home = tempdir().expect("tempdir");
+    let service = CloudConfigBundleService::new(
+        auth_manager,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    assert_eq!(service.load_startup_bundle().await, Ok(Some(test_bundle())));
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 2);
+    assert_eq!(external_auth.refresh_count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn get_bundle_does_not_use_cache_when_auth_identity_is_incomplete() {
+    let codex_home = tempdir().expect("tempdir");
+    let prime_service = CloudConfigBundleService::new(
+        auth_manager_with_plan("business").await,
+        Arc::new(StaticBundleClient::new(test_bundle())),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+    let _ = prime_service.load_startup_bundle().await;
+
+    let replacement_bundle = CloudConfigBundle {
+        config_toml: CloudConfigTomlBundle::default(),
+        requirements_toml: CloudRequirementsTomlBundle {
+            enterprise_managed: vec![CloudRequirementsFragment {
+                id: "req_2".to_string(),
+                name: "Replacement requirements".to_string(),
+                contents: "allowed_approval_policies = [\"on-request\"]".to_string(),
+            }],
+        },
+    };
+    let fetcher = Arc::new(SequenceBundleClient::new(vec![Ok(
+        replacement_bundle.clone()
+    )]));
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_plan_and_identity(
+            "business",
+            /*chatgpt_user_id*/ None,
+            Some("account-12345"),
+        )
+        .await,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    assert_eq!(
+        service.load_startup_bundle().await,
+        Ok(Some(replacement_bundle))
+    );
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn get_bundle_stops_after_max_retries() {
+    let fetcher = Arc::new(SequenceBundleClient::new(vec![
+        Err(request_error());
+        CLOUD_CONFIG_BUNDLE_MAX_ATTEMPTS
+    ]));
+    let codex_home = tempdir().expect("tempdir");
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_plan("enterprise").await,
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    let handle = tokio::spawn(async move { service.load_startup_bundle().await });
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(5)).await;
+    tokio::task::yield_now().await;
+
+    let err = handle
+        .await
+        .expect("cloud config bundle task")
+        .expect_err("cloud config bundle retry exhaustion should fail closed");
+    assert_eq!(err.to_string(), CLOUD_CONFIG_BUNDLE_LOAD_FAILED_MESSAGE);
+    assert_eq!(err.code(), CloudConfigBundleLoadErrorCode::RequestFailed);
+    assert_eq!(
+        fetcher.request_count.load(Ordering::SeqCst),
+        CLOUD_CONFIG_BUNDLE_MAX_ATTEMPTS
+    );
+}
+
+#[tokio::test]
+async fn refresh_from_remote_updates_cached_bundle() {
+    let replacement_bundle = CloudConfigBundle {
+        config_toml: CloudConfigTomlBundle::default(),
+        requirements_toml: CloudRequirementsTomlBundle {
+            enterprise_managed: vec![CloudRequirementsFragment {
+                id: "req_2".to_string(),
+                name: "Replacement requirements".to_string(),
+                contents: "allowed_approval_policies = [\"on-request\"]".to_string(),
+            }],
+        },
+    };
+    let codex_home = tempdir().expect("tempdir");
+    let fetcher = Arc::new(SequenceBundleClient::new(vec![
+        Ok(test_bundle()),
+        Ok(replacement_bundle.clone()),
+    ]));
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_plan("business").await,
+        fetcher,
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    assert_eq!(service.get_latest().await, Ok(Some(test_bundle())));
+    assert!(service.refresh_cache_once().await);
+    assert_eq!(
+        service.get_latest().await,
+        Ok(Some(replacement_bundle.clone()))
+    );
+
+    let cache = create_test_cache(codex_home.path());
+    let signed_payload = cache
+        .load(Some("user-12345"), Some("account-12345"))
+        .await
+        .expect("load cache");
+    assert_eq!(signed_payload.bundle, replacement_bundle);
+}
+
+#[tokio::test(start_paused = true)]
+async fn production_loader_refreshes_later_configs_and_preserves_failed_refreshes() {
+    let codex_home = tempdir().expect("tempdir");
+    let initial_bundle = test_bundle();
+    let refreshed_bundle = CloudConfigBundle {
+        config_toml: CloudConfigTomlBundle {
+            enterprise_managed: vec![CloudConfigFragment {
+                id: "cfg_refreshed".to_string(),
+                name: "Refreshed config".to_string(),
+                contents: "model = \"gpt-5-refreshed\"".to_string(),
+            }],
+        },
+        requirements_toml: initial_bundle.requirements_toml.clone(),
+    };
+    let mut responses = vec![Ok(initial_bundle.clone()), Ok(refreshed_bundle.clone())];
+    responses.extend(vec![Err(request_error()); CLOUD_CONFIG_BUNDLE_MAX_ATTEMPTS]);
+    let fetcher = Arc::new(SequenceBundleClient::new(responses));
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_plan("business").await,
+        Arc::clone(&fetcher),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+    let (loader, _) = crate::bundle_loader::cloud_config_bundle_loader_for_service(service);
+
+    let (first, second) = tokio::join!(loader.get(), loader.get());
+    assert_eq!(first, Ok(Some(initial_bundle.clone())));
+    assert_eq!(second, Ok(Some(initial_bundle)));
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 1);
+    tokio::task::yield_now().await;
+    tokio::time::advance(CLOUD_CONFIG_BUNDLE_CACHE_REFRESH_INTERVAL + Duration::from_millis(1))
+        .await;
+    let refresh_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while loader.get().await != Ok(Some(refreshed_bundle.clone())) {
+        assert!(
+            std::time::Instant::now() < refresh_deadline,
+            "the production refresh task should update the latest bundle"
+        );
+        tokio::task::yield_now().await;
+    }
+    let refreshed_config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .cloud_config_bundle(loader.clone())
+        .build()
+        .await
+        .expect("later session config should load the refreshed bundle");
+    assert_eq!(refreshed_config.model.as_deref(), Some("gpt-5-refreshed"));
+
+    tokio::task::yield_now().await;
+    tokio::time::advance(CLOUD_CONFIG_BUNDLE_CACHE_REFRESH_INTERVAL + Duration::from_millis(1))
+        .await;
+    let failed_refresh_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    for expected_request_count in 3..=2 + CLOUD_CONFIG_BUNDLE_MAX_ATTEMPTS {
+        if expected_request_count > 3 {
+            tokio::task::yield_now().await;
+            tokio::time::advance(Duration::from_secs(2)).await;
+        }
+        while fetcher.request_count.load(Ordering::SeqCst) < expected_request_count {
+            assert!(
+                std::time::Instant::now() < failed_refresh_deadline,
+                "the production refresh task should retry the failed bundle request"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+
+    assert_eq!(loader.get().await, Ok(Some(refreshed_bundle)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn refresh_stops_on_replacement_or_after_the_last_loader_clone() {
+    let codex_home = tempdir().expect("tempdir");
+    let fetcher = Arc::new(StaticBundleClient::new(test_bundle()));
+    let service = CloudConfigBundleService::new(
+        auth_manager_with_plan("business").await,
+        Arc::clone(&fetcher),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+    let (loader, abort_handle) =
+        crate::bundle_loader::cloud_config_bundle_loader_for_service(service);
+    let task_slot = std::sync::Mutex::new(None);
+    crate::bundle_loader::replace_refresh_task(&task_slot, abort_handle);
+    let cloned_loader = loader.clone();
+    assert_eq!(loader.get().await, Ok(Some(test_bundle())));
+    tokio::task::yield_now().await;
+
+    drop(loader);
+    tokio::time::advance(CLOUD_CONFIG_BUNDLE_CACHE_REFRESH_INTERVAL + Duration::from_millis(1))
+        .await;
+    let refresh_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while fetcher.request_count.load(Ordering::SeqCst) < 2 {
+        assert!(
+            std::time::Instant::now() < refresh_deadline,
+            "the refresh should remain active while another loader clone exists"
+        );
+        tokio::task::yield_now().await;
+    }
+
+    let replacement_fetcher = Arc::new(StaticBundleClient::new(test_bundle()));
+    let replacement_service = CloudConfigBundleService::new(
+        auth_manager_with_plan_and_identity(
+            "business",
+            Some("user-replacement"),
+            Some("account-replacement"),
+        )
+        .await,
+        Arc::clone(&replacement_fetcher),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+    let (replacement_loader, replacement_handle) =
+        crate::bundle_loader::cloud_config_bundle_loader_for_service(replacement_service);
+    let replacement_task = replacement_handle.clone();
+    crate::bundle_loader::replace_refresh_task(&task_slot, replacement_handle);
+    assert_eq!(replacement_loader.get().await, Ok(Some(test_bundle())));
+
+    tokio::task::yield_now().await;
+    tokio::time::advance(CLOUD_CONFIG_BUNDLE_CACHE_REFRESH_INTERVAL + Duration::from_millis(1))
+        .await;
+    let refresh_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while replacement_fetcher.request_count.load(Ordering::SeqCst) < 2 {
+        assert!(
+            std::time::Instant::now() < refresh_deadline,
+            "the replacement refresher should stay active"
+        );
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 2);
+
+    drop(cloned_loader);
+    tokio::task::yield_now().await;
+    assert!(!replacement_task.is_finished());
+
+    drop(replacement_loader);
+    tokio::task::yield_now().await;
+    assert!(replacement_task.is_finished());
+    tokio::time::advance(CLOUD_CONFIG_BUNDLE_CACHE_REFRESH_INTERVAL + Duration::from_secs(1)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(replacement_fetcher.request_count.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropping_loader_cancels_in_flight_startup_and_refresh() {
+    for starts_from_cache in [false, true] {
+        let codex_home = tempdir().expect("tempdir");
+        if starts_from_cache {
+            create_test_cache(codex_home.path())
+                .save(
+                    Some("user-12345".to_string()),
+                    Some("account-12345".to_string()),
+                    test_bundle(),
+                )
+                .await
+                .expect("write initial cache");
+        }
+        let request_started = Arc::new(tokio::sync::Notify::new());
+        let request_cancelled = Arc::new(tokio::sync::Notify::new());
+        let service = CloudConfigBundleService::new(
+            auth_manager_with_plan("business").await,
+            Arc::new(NotifyingPendingBundleClient {
+                request_started: Arc::clone(&request_started),
+                request_cancelled: Arc::clone(&request_cancelled),
+            }),
+            codex_home.path().to_path_buf(),
+            CLOUD_CONFIG_BUNDLE_TIMEOUT,
+        );
+        let (loader, _) = crate::bundle_loader::cloud_config_bundle_loader_for_service(service);
+        if starts_from_cache {
+            assert_eq!(loader.get().await, Ok(Some(test_bundle())));
+            tokio::task::yield_now().await;
+            tokio::time::advance(CLOUD_CONFIG_BUNDLE_CACHE_REFRESH_INTERVAL).await;
+        }
+        request_started.notified().await;
+
+        drop(loader);
+
+        tokio::time::timeout(Duration::from_secs(1), request_cancelled.notified())
+            .await
+            .expect("loader drop should cancel the in-flight fetch");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn refresh_can_clear_preserve_and_restore_the_latest_bundle() {
+    let codex_home = tempdir().expect("tempdir");
+    let mut responses = vec![Ok(test_bundle()), Ok(CloudConfigBundle::default())];
+    responses.extend(vec![Err(request_error()); CLOUD_CONFIG_BUNDLE_MAX_ATTEMPTS]);
+    responses.push(Ok(test_bundle()));
+    let service = Arc::new(CloudConfigBundleService::new(
+        auth_manager_with_plan("business").await,
+        Arc::new(SequenceBundleClient::new(responses)),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    ));
+
+    assert_eq!(service.get_latest().await, Ok(Some(test_bundle())));
+    assert!(service.refresh_cache_once().await);
+    assert_eq!(service.get_latest().await, Ok(None));
+
+    let refresh_service = Arc::clone(&service);
+    let refresh = tokio::spawn(async move { refresh_service.refresh_cache_once().await });
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(5)).await;
+    tokio::task::yield_now().await;
+    assert!(refresh.await.expect("failed refresh task"));
+    assert_eq!(service.get_latest().await, Ok(None));
+
+    assert!(service.refresh_cache_once().await);
+    assert_eq!(service.get_latest().await, Ok(Some(test_bundle())));
+}
+
+#[tokio::test(start_paused = true)]
+async fn refresh_replaces_initial_errors_and_recovers_with_success() {
+    let codex_home = tempdir().expect("tempdir");
+    let initial_error = BundleRequestError::Retryable(RetryableFailureKind::Request {
+        status_code: Some(500),
+    });
+    let refresh_error = BundleRequestError::Retryable(RetryableFailureKind::Request {
+        status_code: Some(503),
+    });
+    let mut responses = vec![Err(initial_error); CLOUD_CONFIG_BUNDLE_MAX_ATTEMPTS];
+    responses.extend(vec![Err(refresh_error); CLOUD_CONFIG_BUNDLE_MAX_ATTEMPTS]);
+    responses.push(Ok(test_bundle()));
+    let service = Arc::new(CloudConfigBundleService::new(
+        auth_manager_with_plan("business").await,
+        Arc::new(SequenceBundleClient::new(responses)),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    ));
+
+    let initial_service = Arc::clone(&service);
+    let initial = tokio::spawn(async move { initial_service.get_latest().await });
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(5)).await;
+    tokio::task::yield_now().await;
+    let initial_error = initial
+        .await
+        .expect("initial task")
+        .expect_err("initial fetch should fail");
+    assert_eq!(initial_error.status_code(), Some(500));
+
+    let refresh_service = Arc::clone(&service);
+    let refresh = tokio::spawn(async move { refresh_service.refresh_cache_once().await });
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(5)).await;
+    tokio::task::yield_now().await;
+    assert!(refresh.await.expect("failed refresh task"));
+    let latest_error = service
+        .get_latest()
+        .await
+        .expect_err("latest failed refresh should replace the initial error");
+    assert_eq!(latest_error.status_code(), Some(503));
+
+    assert!(service.refresh_cache_once().await);
+    assert_eq!(service.get_latest().await, Ok(Some(test_bundle())));
+}
+
+#[test]
+fn bundle_response_conversion_preserves_fragment_order() {
+    let response = ConfigBundleResponse {
+        config_toml: Some(Some(Box::new(codex_backend_client::DeliveredConfigToml {
+            enterprise_managed: Some(Some(vec![
+                DeliveredTomlFragment::new(
+                    "cfg_high".to_string(),
+                    "High config".to_string(),
+                    "model = \"high\"".to_string(),
+                ),
+                DeliveredTomlFragment::new(
+                    "cfg_low".to_string(),
+                    "Low config".to_string(),
+                    "model = \"low\"".to_string(),
+                ),
+            ])),
+            managed_layers: None,
+        }))),
+        requirements_toml: Some(Some(Box::new(
+            codex_backend_client::DeliveredRequirementsToml {
+                enterprise_managed: Some(Some(vec![DeliveredTomlFragment::new(
+                    "req_high".to_string(),
+                    "High requirements".to_string(),
+                    "allowed_approval_policies = [\"never\"]".to_string(),
+                )])),
+                managed_layers: None,
+            },
+        ))),
+    };
+
+    assert_eq!(
+        bundle_from_response(response),
+        CloudConfigBundle {
+            config_toml: CloudConfigTomlBundle {
+                enterprise_managed: vec![
+                    CloudConfigFragment {
+                        id: "cfg_high".to_string(),
+                        name: "High config".to_string(),
+                        contents: "model = \"high\"".to_string(),
+                    },
+                    CloudConfigFragment {
+                        id: "cfg_low".to_string(),
+                        name: "Low config".to_string(),
+                        contents: "model = \"low\"".to_string(),
+                    },
+                ],
+            },
+            requirements_toml: CloudRequirementsTomlBundle {
+                enterprise_managed: vec![CloudRequirementsFragment {
+                    id: "req_high".to_string(),
+                    name: "High requirements".to_string(),
+                    contents: "allowed_approval_policies = [\"never\"]".to_string(),
+                }],
+            },
+        }
+    );
+}
+
+#[test]
+fn bundle_response_conversion_treats_missing_sections_as_empty() {
+    assert_eq!(
+        bundle_from_response(ConfigBundleResponse::new()),
+        CloudConfigBundle::default()
+    );
+}

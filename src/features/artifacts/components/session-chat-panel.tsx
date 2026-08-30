@@ -559,7 +559,6 @@ function Composer({
             model={thread.model}
             onProvider={onProvider}
             onModel={onModel}
-            showCompress={false}
           />
           <button
             type="button"

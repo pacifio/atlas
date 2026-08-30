@@ -19,11 +19,13 @@ use parking_lot::Mutex;
 use state::{AppState, AppStateHandle};
 use tauri::Manager;
 
-// Compile-time guard: cersei-provider MUST resolve to the vendored, patched
-// crate ([patch.crates-io] → vendor/cersei-provider). The crates.io release
-// has no `utf8` module — if the patch stops applying, `cargo check` fails
-// here instead of shipping decoders that corrupt multi-byte streaming.
-const _CERSEI_UTF8_PATCH_GUARD: &str = cersei_provider::utf8::ATLAS_UTF8_PATCH;
+// The `cersei-provider` UTF-8 patch guard is gone with the SDK it guarded
+// (#54). What it protected against — a decoder that corrupts multi-byte
+// characters split across HTTP chunk boundaries — is now covered inside the
+// engine's own dialect, by a fixture that splits a frame at every byte position
+// (`atlas_chat::sse`, acceptance bar item 6). Same failure, checked by a test
+// that exercises the decoder rather than by a const that only proves a patch
+// still applies.
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -281,6 +283,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            commands::agent_entitlement::native_agent_entitlement,
             commands::auth::auth_snapshot,
             commands::auth::auth_sign_in,
             commands::auth::auth_cancel_sign_in,
@@ -524,7 +527,6 @@ pub fn run() {
             commands::agents::agents_set_mode,
             commands::agents::agents_set_model,
             commands::agents::agents_set_effort,
-            commands::agents::agents_set_compress,
             commands::models_pricing::models_pricing_get,
             commands::models_pricing::models_pricing_refresh,
             commands::agents::agents_respond_permission,

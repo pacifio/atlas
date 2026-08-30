@@ -36,7 +36,7 @@ import { cn } from "@/lib/utils";
  *  per-agent login handlers, the `/skills` settings row and the dimmed
  *  "unavailable" guard rows are gone; Atlas renders what ACP gives, nothing
  *  else. */
-export type SlashCommandHandler = "agent-login" | "passthrough";
+export type SlashCommandHandler = "agent-login" | "fork" | "queue" | "passthrough";
 
 export interface SlashCommand {
   /** Unique slug used both as the visible command name and matched query. */
@@ -276,7 +276,7 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
           )}
         </div>
         <div className="border-t border-[var(--border-default)] px-3 h-[24px] flex items-center justify-between text-[9px] text-[var(--text-tertiary)] uppercase tracking-wider shrink-0">
-          <span>{footerLabel ?? "Claude Code commands"}</span>
+          <span>{footerLabel ?? "Commands"}</span>
           <span>↑↓ · ↵ run · ⎋ close</span>
         </div>
       </div>,

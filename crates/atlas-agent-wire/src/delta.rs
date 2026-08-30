@@ -67,6 +67,14 @@ pub enum SessionDelta {
     PlanUpdated {
         plan: Vec<PlanEntry>,
     },
+    /// The last `turns` exchanges were removed from the conversation's history
+    /// (a rewind — the native agent's `/undo`). The UI drops its trailing
+    /// messages through the `turns`-th user message from the end, so the
+    /// transcript matches what the agent now remembers. Additive: old
+    /// frontends ignore unknown kinds.
+    HistoryRewound {
+        turns: u32,
+    },
     ModeChanged {
         mode_id: String,
     },

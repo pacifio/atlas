@@ -11,7 +11,11 @@ name = "atlas_checkpoint"
 # The store. Bundled so the database is self-contained and does not depend on a
 # system sqlite — the same reason src-tauri already bundles it for the Codex
 # history reader.
-rusqlite = { version = "0.32", features = ["bundled"] }
+# Pinned to rusqlite 0.39 because its `libsqlite3-sys` is 0.37, the major the
+# ported Codex engine pins; `links = "sqlite3"` admits exactly one. Full
+# rationale — and the reason 0.38 and 0.40 are both wrong — lives on the same
+# declaration in `crates/atlas-thread-metadata/Cargo.toml`. Issue #39.
+rusqlite = { version = "0.39", features = ["bundled"] }
 # Redaction runs before persistence, so this is a hard dependency of the write
 # path rather than of the upload path.
 atlas-redact = { path = "../atlas-redact" }

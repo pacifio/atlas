@@ -60,7 +60,7 @@ function setCatalog(entries: Entry[]) {
 const NATIVE: Entry = {
   id: "cersei",
   agentType: "cersei",
-  name: "Atlas",
+  name: "Atlas Agent",
   kind: "native",
   source: "in-process",
   installed: false,
@@ -134,7 +134,7 @@ describe("agentMeta", () => {
     setCatalog(AFTER_INSTALLS);
     for (const missing of [null, undefined, ""]) {
       expect(agentMeta(missing).agentType).toBe("cersei");
-      expect(agentMeta(missing).label).toBe("Atlas");
+      expect(agentMeta(missing).label).toBe("Atlas Agent");
     }
   });
 

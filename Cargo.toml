@@ -1,0 +1,721 @@
+# Atlas's root cargo workspace.
+#
+# The repo had no `[workspace]` until now, and the reason was real: the old ACP
+# stack pinned `agent-client-protocol` 1.3 whose schema crate is pinned exactly
+# (`=1.4.0`), the ported stack pins 2.0 / `=1.5.0`, and no single cargo
+# resolution can hold two exact pins of the same crate. The old stack is gone
+# and every remaining consumer is on `=2.0.0`, so the collision is gone with it
+# (spec `docs/atlas-agent-codex-port-spec.md`, decision D4 and its premise
+# correction; issue #38).
+#
+# The workspace exists so the vendored Codex engine (#42) lands in the same
+# dependency graph as the app instead of a parallel one. Nothing about how
+# Atlas builds today changes: the patch tables and profiles below are the ones
+# that were in `src-tauri/Cargo.toml`, moved rather than rewritten, because
+# cargo honors both ONLY in the manifest it was invoked on — which, in a
+# workspace, is always this file.
+#
+# `tests/cargo-workspace.test.ts` enforces the invariants that have no compile
+# error to announce them: patches and profiles nowhere but here, and a dev
+# opt-level restated for every member (see `[profile.dev.package."*"]` below).
+
+[workspace]
+resolver = "2"
+
+members = [
+  "crates/atlas-acp-thread",
+  "crates/atlas-agent-delta",
+  "crates/atlas-agent-manager",
+  "crates/atlas-agent-servers",
+  "crates/atlas-agent-store",
+  "crates/atlas-agent-transcript",
+  "crates/atlas-agent-wire",
+  "crates/atlas-bus",
+  "crates/atlas-checkpoint",
+  "crates/atlas-codeindex",
+  "crates/atlas-embed",
+  "crates/atlas-git",
+  "crates/atlas-gitdiff",
+  "crates/atlas-memory",
+  "crates/atlas-native-agent",
+  "crates/atlas-redact",
+  "crates/atlas-terminal",
+  "crates/atlas-thread-metadata",
+  "src-tauri",
+
+  # The vendored Codex engine — see the block below.
+  "vendor/codex/agent-graph-store",
+  "vendor/codex/agent-identity",
+  "vendor/codex/analytics",
+  "vendor/codex/app-server",
+  "vendor/codex/app-server-client",
+  "vendor/codex/app-server-protocol",
+  "vendor/codex/app-server-protocol-noop-macros",
+  "vendor/codex/app-server-transport",
+  "vendor/codex/app-server/tests/common",
+  "vendor/codex/apply-patch",
+  "vendor/codex/arg0",
+  "vendor/codex/async-utils",
+  "vendor/codex/aws-auth",
+  "vendor/codex/backend-client",
+  "vendor/codex/chatgpt",
+  "vendor/codex/cloud-config",
+  "vendor/codex/code-mode",
+  "vendor/codex/code-mode-protocol",
+  "vendor/codex/codex-api",
+  "vendor/codex/codex-backend-openapi-models",
+  "vendor/codex/codex-client",
+  "vendor/codex/codex-experimental-api-macros",
+  "vendor/codex/codex-home",
+  "vendor/codex/codex-mcp",
+  "vendor/codex/collaboration-mode-templates",
+  "vendor/codex/config",
+  "vendor/codex/connectors",
+  "vendor/codex/context-fragments",
+  "vendor/codex/core",
+  "vendor/codex/core-plugins",
+  "vendor/codex/core/tests/common",
+  "vendor/codex/diagnostics",
+  "vendor/codex/exec-server",
+  "vendor/codex/exec-server-protocol",
+  "vendor/codex/exec-server/tests/support",
+  "vendor/codex/execpolicy",
+  "vendor/codex/ext/agent",
+  "vendor/codex/ext/connectors",
+  "vendor/codex/ext/extension-api",
+  "vendor/codex/ext/git-attribution",
+  "vendor/codex/ext/goal",
+  "vendor/codex/ext/guardian",
+  "vendor/codex/ext/guardian-v2",
+  "vendor/codex/ext/image-generation",
+  "vendor/codex/ext/items",
+  "vendor/codex/ext/mcp",
+  "vendor/codex/ext/memories",
+  "vendor/codex/ext/queue",
+  "vendor/codex/ext/skills",
+  "vendor/codex/ext/web-search",
+  "vendor/codex/external-agent-migration",
+  "vendor/codex/features",
+  "vendor/codex/feedback",
+  "vendor/codex/file-search",
+  "vendor/codex/file-system",
+  "vendor/codex/file-watcher",
+  "vendor/codex/git-utils",
+  "vendor/codex/history",
+  "vendor/codex/hooks",
+  "vendor/codex/http-client",
+  "vendor/codex/install-context",
+  "vendor/codex/keyring-store",
+  "vendor/codex/linux-sandbox",
+  "vendor/codex/login",
+  "vendor/codex/memories/read",
+  "vendor/codex/memories/write",
+  "vendor/codex/model-provider",
+  "vendor/codex/model-provider-info",
+  "vendor/codex/models-manager",
+  "vendor/codex/network-proxy",
+  "vendor/codex/otel",
+  "vendor/codex/plugin",
+  "vendor/codex/process-hardening",
+  "vendor/codex/prompts",
+  "vendor/codex/protocol",
+  "vendor/codex/response-debug-context",
+  "vendor/codex/rmcp-client",
+  "vendor/codex/rollout",
+  "vendor/codex/rollout-trace",
+  "vendor/codex/sandboxing",
+  "vendor/codex/secrets",
+  "vendor/codex/shell-command",
+  "vendor/codex/shell-escalation",
+  "vendor/codex/skills",
+  "vendor/codex/state",
+  "vendor/codex/terminal-detection",
+  "vendor/codex/test-binary-support",
+  "vendor/codex/thread-store",
+  "vendor/codex/tools",
+  "vendor/codex/uds",
+  "vendor/codex/utils/absolute-path",
+  "vendor/codex/utils/audio",
+  "vendor/codex/utils/cache",
+  "vendor/codex/utils/cargo-bin",
+  "vendor/codex/utils/cli",
+  "vendor/codex/utils/home-dir",
+  "vendor/codex/utils/image",
+  "vendor/codex/utils/json-to-toml",
+  "vendor/codex/utils/output-truncation",
+  "vendor/codex/utils/path-uri",
+  "vendor/codex/utils/path-utils",
+  "vendor/codex/utils/plugins",
+  "vendor/codex/utils/pty",
+  "vendor/codex/utils/rustls-provider",
+  "vendor/codex/utils/stream-parser",
+  "vendor/codex/utils/string",
+  "vendor/codex/utils/template",
+  "vendor/codex/websocket-client",
+  "vendor/codex/windows-sandbox-rs",
+  "vendor/codex/workload-identity",
+]
+
+# Deliberately outside the workspace. Each is built on its own, with its own
+# lockfile and its own profile, and joining the workspace would change that
+# silently. Profiles are workspace-global — the root's `[profile.release]` is
+# the only one cargo reads — so a member cannot keep a release profile of its
+# own, whatever the per-package override table (bottom of this file) can express.
+exclude = [
+  # Not in the app's dependency graph at all: a template binary that
+  # `commands::knowledge_export` compiles on demand at runtime with
+  # `--manifest-path`, carrying its own `[profile.release]` (`panic = "abort"`,
+  # thin LTO). As a member it would rebuild under the app's fat-LTO/unwind
+  # profile instead.
+  "crates/atlas-kb-server",
+]
+
+# ─── Vendored Codex engine (ADR-0003 fork point `42b5f05`) ───────────────────
+# The engine closure, vendored whole: no submodule, no upstream remote, no
+# upstream tracking (ADR-0003, D2, D4 — issue #42). Copied from
+# `openai/codex` @ 42b5f05 with `target/` excluded; upstream's LICENSE and
+# NOTICE travel with the code in `vendor/codex/`, as Apache-2.0 §4 requires.
+#
+# **Quarantined.** These compile as workspace members and NOTHING that ships
+# depends on them. `tests/codex-quarantine.test.ts` is what keeps that true —
+# the compiler cannot, because "unused member" is not an error.
+#
+# Closure size, because it is not the number the spec quotes: the Port
+# Inventory's "77 crates, 63 droppable" is the closure of `codex-core`. D1
+# chose the in-process **app-server client**, whose closure is larger — it also
+# pulls `codex-app-server` itself and the `ext/` extensions the inventory lists
+# as droppable. 105 crates normal+build, 110 including the five test-support
+# crates the vendored crates' own dev-dependencies need (the spec's Testing
+# Decisions keep upstream's suite). Upstream has 140 members, so 30 are
+# dropped, not 63.
+
+[workspace.package]
+
+version = "0.0.0"
+# Track the edition for all workspace crates in one place. Individual
+# crates can still override this value, but keeping it here means new
+# crates created with `cargo new -w ...` automatically inherit the 2024
+# edition.
+edition = "2024"
+license = "Apache-2.0"
+
+# Two things this table does to Atlas's own build, both disclosed rather than
+# absorbed (#42, "behaves identically"):
+#
+#   - `tar = "=0.4.45"` is an EXACT pin, and `atlas-agent-store` asks for `0.4`.
+#     Cargo intersects them, so Atlas's `tar` moved 0.4.46 -> 0.4.45. A patch
+#     step within one semver-compatible major; the alternative is editing the
+#     fork's pin, which belongs to the rip-out phase, not to vendoring.
+#   - Duplicate majors. The engine brings older majors of ~60 crates Atlas
+#     already uses (http 0.2 beside 1.4, zbus 4 beside 5, windows 0.58 beside
+#     0.61, ...). They coexist; Atlas's own version is retained in every case,
+#     and none of them reaches the shipping app's build graph — verified with
+#     `cargo tree -p atlas --edges normal`, not inferred from the lockfile,
+#     because `cargo metadata`'s resolve graph is a workspace-wide union and
+#     reports edges the app never compiles.
+
+# Codex's workspace dependency table, verbatim except that internal `path`
+# entries are rebased onto `vendor/codex/`. 24 entries naming crates outside the
+# vendored closure are dropped rather than left dangling.
+[workspace.dependencies]
+
+# Internal
+app_test_support = { path = "vendor/codex/app-server/tests/common" }
+codex-analytics = { path = "vendor/codex/analytics" }
+codex-agent-graph-store = { path = "vendor/codex/agent-graph-store" }
+codex-agent-identity = { path = "vendor/codex/agent-identity" }
+codex-api = { path = "vendor/codex/codex-api" }
+codex-aws-auth = { path = "vendor/codex/aws-auth" }
+codex-app-server = { path = "vendor/codex/app-server" }
+codex-app-server-transport = { path = "vendor/codex/app-server-transport" }
+codex-app-server-client = { path = "vendor/codex/app-server-client" }
+codex-app-server-protocol = { path = "vendor/codex/app-server-protocol" }
+codex-app-server-protocol-noop-macros = { path = "vendor/codex/app-server-protocol-noop-macros" }
+codex-apply-patch = { path = "vendor/codex/apply-patch" }
+codex-arg0 = { path = "vendor/codex/arg0" }
+codex-async-utils = { path = "vendor/codex/async-utils" }
+codex-backend-client = { path = "vendor/codex/backend-client" }
+codex-chatgpt = { path = "vendor/codex/chatgpt" }
+codex-client = { path = "vendor/codex/codex-client" }
+codex-collaboration-mode-templates = { path = "vendor/codex/collaboration-mode-templates" }
+codex-cloud-config = { path = "vendor/codex/cloud-config" }
+codex-code-mode = { path = "vendor/codex/code-mode" }
+codex-code-mode-protocol = { path = "vendor/codex/code-mode-protocol" }
+codex-home = { path = "vendor/codex/codex-home" }
+codex-http-client = { path = "vendor/codex/http-client" }
+codex-websocket-client = { path = "vendor/codex/websocket-client" }
+codex-config = { path = "vendor/codex/config" }
+codex-connectors = { path = "vendor/codex/connectors" }
+codex-agent-extension = { path = "vendor/codex/ext/agent" }
+codex-connectors-extension = { path = "vendor/codex/ext/connectors" }
+codex-context-fragments = { path = "vendor/codex/context-fragments" }
+codex-core = { path = "vendor/codex/core" }
+codex-core-plugins = { path = "vendor/codex/core-plugins" }
+codex-diagnostics = { path = "vendor/codex/diagnostics" }
+codex-file-system = { path = "vendor/codex/file-system" }
+codex-exec-server-protocol = { path = "vendor/codex/exec-server-protocol" }
+codex-exec-server = { path = "vendor/codex/exec-server" }
+codex-exec-server-test-support = { path = "vendor/codex/exec-server/tests/support" }
+codex-execpolicy = { path = "vendor/codex/execpolicy" }
+codex-extension-api = { path = "vendor/codex/ext/extension-api" }
+codex-extension-items = { path = "vendor/codex/ext/items" }
+codex-goal-extension = { path = "vendor/codex/ext/goal" }
+codex-git-attribution = { path = "vendor/codex/ext/git-attribution" }
+codex-guardian = { path = "vendor/codex/ext/guardian" }
+codex-guardian-v2 = { path = "vendor/codex/ext/guardian-v2" }
+codex-image-generation-extension = { path = "vendor/codex/ext/image-generation" }
+codex-external-agent-migration = { path = "vendor/codex/external-agent-migration" }
+codex-experimental-api-macros = { path = "vendor/codex/codex-experimental-api-macros" }
+codex-features = { path = "vendor/codex/features" }
+codex-feedback = { path = "vendor/codex/feedback" }
+codex-install-context = { path = "vendor/codex/install-context" }
+codex-file-search = { path = "vendor/codex/file-search" }
+codex-file-watcher = { path = "vendor/codex/file-watcher" }
+codex-git-utils = { path = "vendor/codex/git-utils" }
+codex-hooks = { path = "vendor/codex/hooks" }
+codex-history = { path = "vendor/codex/history" }
+codex-keyring-store = { path = "vendor/codex/keyring-store" }
+codex-linux-sandbox = { path = "vendor/codex/linux-sandbox" }
+codex-login = { path = "vendor/codex/login" }
+codex-memories-extension = { path = "vendor/codex/ext/memories" }
+codex-web-search-extension = { path = "vendor/codex/ext/web-search" }
+codex-memories-read = { path = "vendor/codex/memories/read" }
+codex-memories-write = { path = "vendor/codex/memories/write" }
+codex-mcp = { path = "vendor/codex/codex-mcp" }
+codex-mcp-extension = { path = "vendor/codex/ext/mcp" }
+codex-model-provider-info = { path = "vendor/codex/model-provider-info" }
+codex-models-manager = { path = "vendor/codex/models-manager" }
+codex-network-proxy = { path = "vendor/codex/network-proxy" }
+codex-otel = { path = "vendor/codex/otel" }
+codex-plugin = { path = "vendor/codex/plugin" }
+codex-model-provider = { path = "vendor/codex/model-provider" }
+codex-process-hardening = { path = "vendor/codex/process-hardening" }
+codex-protocol = { path = "vendor/codex/protocol" }
+codex-prompts = { path = "vendor/codex/prompts" }
+codex-queue-extension = { path = "vendor/codex/ext/queue" }
+codex-response-debug-context = { path = "vendor/codex/response-debug-context" }
+codex-rmcp-client = { path = "vendor/codex/rmcp-client" }
+codex-rollout = { path = "vendor/codex/rollout" }
+codex-rollout-trace = { path = "vendor/codex/rollout-trace" }
+codex-sandboxing = { path = "vendor/codex/sandboxing" }
+codex-secrets = { path = "vendor/codex/secrets" }
+codex-shell-command = { path = "vendor/codex/shell-command" }
+codex-shell-escalation = { path = "vendor/codex/shell-escalation" }
+codex-skills-extension = { path = "vendor/codex/ext/skills" }
+codex-skills = { path = "vendor/codex/skills" }
+codex-state = { path = "vendor/codex/state" }
+codex-terminal-detection = { path = "vendor/codex/terminal-detection" }
+codex-test-binary-support = { path = "vendor/codex/test-binary-support" }
+codex-thread-store = { path = "vendor/codex/thread-store" }
+codex-tools = { path = "vendor/codex/tools" }
+codex-uds = { path = "vendor/codex/uds" }
+codex-utils-absolute-path = { path = "vendor/codex/utils/absolute-path" }
+codex-utils-audio = { path = "vendor/codex/utils/audio" }
+codex-utils-cache = { path = "vendor/codex/utils/cache" }
+codex-utils-cargo-bin = { path = "vendor/codex/utils/cargo-bin" }
+codex-utils-cli = { path = "vendor/codex/utils/cli" }
+codex-utils-home-dir = { path = "vendor/codex/utils/home-dir" }
+codex-utils-image = { path = "vendor/codex/utils/image" }
+codex-utils-json-to-toml = { path = "vendor/codex/utils/json-to-toml" }
+codex-utils-output-truncation = { path = "vendor/codex/utils/output-truncation" }
+codex-utils-path = { path = "vendor/codex/utils/path-utils" }
+codex-utils-path-uri = { path = "vendor/codex/utils/path-uri" }
+codex-utils-plugins = { path = "vendor/codex/utils/plugins" }
+codex-utils-pty = { path = "vendor/codex/utils/pty" }
+codex-utils-rustls-provider = { path = "vendor/codex/utils/rustls-provider" }
+codex-utils-stream-parser = { path = "vendor/codex/utils/stream-parser" }
+codex-utils-string = { path = "vendor/codex/utils/string" }
+codex-utils-template = { path = "vendor/codex/utils/template" }
+codex-workload-identity = { path = "vendor/codex/workload-identity" }
+codex-windows-sandbox = { path = "vendor/codex/windows-sandbox-rs" }
+core_test_support = { path = "vendor/codex/core/tests/common" }
+
+# External
+age = "0.11.1"
+ansi-to-tui = "8.0.1"
+anyhow = "1"
+arboard = { version = "3", features = ["wayland-data-control"] }
+arc-swap = "1.9.0"
+assert_cmd = "2"
+assert_matches = "1.5.0"
+async-channel = "2.3.1"
+async-io = "2.6.0"
+async-stream = "0.3.6"
+aws-config = "1"
+aws-credential-types = "1"
+aws-sigv4 = "1"
+aws-types = "1"
+axum = { version = "0.8", default-features = false }
+base64 = "0.22.1"
+bitflags = "2.13.1"
+bm25 = "2.3.2"
+bytes = "1.10.1"
+chardetng = "0.1.17"
+chrono = "0.4.43"
+clap = "4"
+clap_complete = "4"
+clatter = { version = "2.2.0", default-features = false, features = [
+    "alloc",
+    "getrandom",
+    "use-25519",
+    "use-aes-gcm",
+    "use-rust-crypto-ml-kem",
+    "use-sha",
+] }
+color-eyre = "0.6.3"
+constant_time_eq = "0.3.1"
+crossbeam-channel = "0.5.15"
+crypto_box = { version = "0.9.1", features = ["seal"] }
+crossterm = "0.29.0"
+ctor = "0.6.3"
+deno_core_icudata = "0.77.0"
+derive_more = "2"
+diffy = "0.4.2"
+dirs = "6"
+divan = "0.1.21"
+dns-lookup = "3.0.1"
+dotenvy = "0.15.7"
+dunce = "1.0.4"
+ed25519-dalek = { version = "2.2.0", features = ["pkcs8"] }
+encoding_rs = "0.8.35"
+eventsource-stream = "0.2.3"
+flate2 = "1.1.8"
+futures = { version = "0.3", default-features = false }
+gethostname = "1.1.0"
+gix = { version = "0.81.0", default-features = false, features = ["sha1"] }
+glob = "0.3"
+globset = "0.4"
+hmac = "0.12.1"
+http = "1.3.1"
+httpdate = "1.0.3"
+iana-time-zone = "0.1.64"
+icu_decimal = "2.1"
+icu_locale_core = "2.1"
+icu_provider = { version = "2.1", features = ["sync"] }
+ignore = "0.4.23"
+image = { version = "^0.25.9", default-features = false }
+include_dir = "0.7.4"
+indexmap = "2.12.0"
+insta = "1.46.3"
+inventory = "0.3.19"
+itertools = "0.14.0"
+jsonptr = { version = "0.7.1", default-features = false }
+jsonwebtoken = "9.3.1"
+keyring = { version = "3.6", default-features = false }
+landlock = "0.4.4"
+lazy_static = "1"
+libc = "0.2.182"
+# Keep SQLx's bundled SQLite on a version containing the WAL-reset corruption fix:
+# https://www.sqlite.org/wal.html#the_wal_reset_bug
+libsqlite3-sys = { version = "0.37", default-features = false }
+log = "0.4"
+lru = "0.18.2"
+maplit = "1.0.2"
+memchr = "2.7.6"
+mime_guess = "2.0.5"
+multimap = "0.10.0"
+notify = "8.2.0"
+nucleo = { git = "https://github.com/helix-editor/nucleo.git", rev = "4253de9faabb4e5c6d81d946a5e35a90f87347ee" }
+once_cell = "1.20.2"
+openssl-sys = "*"
+opentelemetry = "0.31.0"
+opentelemetry-appender-tracing = "0.31.0"
+opentelemetry-otlp = "0.31.0"
+opentelemetry-semantic-conventions = "0.31.0"
+opentelemetry_sdk = "0.31.0"
+os_info = "3.12.0"
+owo-colors = "4.3.0"
+pathdiff = "0.2"
+portable-pty = "0.9.0"
+predicates = "3"
+pretty_assertions = "1.4.1"
+pulldown-cmark = { version = "0.10", default-features = false }
+quick-xml = "0.41.0"
+rand = "0.9"
+ratatui = { version = "0.30.2", default-features = false, features = [
+    "crossterm",
+    "layout-cache",
+    "underline-color",
+] }
+ratatui-macros = "0.7.2"
+rcgen = { version = "0.14.7", default-features = false, features = [
+    "aws_lc_rs",
+    "pem",
+] }
+regex = "1.12.3"
+regex-lite = "0.1.8"
+reqwest = { version = "0.12", features = ["cookies"] }
+rmcp = { version = "=3.0.0", default-features = false }
+runfiles = { git = "https://github.com/dzbarsky/rules_rust", rev = "b56cbaa8465e74127f1ea216f813cd377295ad81" }
+rustix = { version = "1.1.4", features = ["net"] }
+rustls = { version = "0.23", default-features = false, features = [
+    "aws_lc_rs",
+    "std",
+] }
+rustls-native-certs = "0.8.3"
+rustls-pki-types = "1.14.0"
+schemars = "0.8.22"
+seccompiler = "0.5.0"
+semver = "1.0"
+sentry = "0.46.0"
+serde = { version = "1", features = ["rc"] }
+serde_ignored = "0.1.14"
+serde_json = "1"
+serde_path_to_error = "0.1.20"
+serde_with = "3.17"
+serde_yaml = "0.9"
+serial_test = "3.2.0"
+sha1 = "0.10.6"
+scopeguard = "1.2.0"
+sha2 = "0.10"
+shlex = "1.3.0"
+similar = "2.7.0"
+symphonia = { version = "0.6.0", default-features = false, features = [
+    "isomp4",
+    "mkv",
+    "mp3",
+    "ogg",
+    "wav",
+] }
+socket2 = "0.6.1"
+# When bumping sqlx, audit the SQLite constructor deny list in clippy.toml.
+sqlx = { version = "0.9.0", default-features = false, features = [
+    "chrono",
+    "json",
+    "macros",
+    "migrate",
+    "runtime-tokio",
+    "tls-rustls",
+    "sqlite-bundled",
+    "time",
+    "uuid",
+] }
+starlark = { version = "0.14.2", default-features = false }
+strum = "0.27.2"
+strum_macros = "0.28.0"
+supports-color = "3.0.2"
+syntect = "5"
+sys-locale = "0.3.2"
+system-configuration = "0.7"
+tar = { version = "=0.4.45", default-features = false }
+tempfile = "3.23.0"
+test-log = "0.2.19"
+textwrap = "0.16.2"
+thiserror = "2.0.17"
+time = "0.3.47"
+tiny_http = "0.12"
+tokio = "1"
+tokio-rustls = "0.26.4"
+tokio-stream = "0.1.18"
+tokio-test = "0.4"
+tokio-tungstenite = { version = "0.28.0", features = [
+    "proxy",
+    "rustls-tls-native-roots",
+] }
+tokio-util = "0.7.18"
+toml = "0.9.5"
+toml_edit = "0.24.0"
+tracing = "0.1.44"
+tracing-appender = "0.2.3"
+tracing-opentelemetry = "0.32.0"
+tracing-subscriber = "0.3.22"
+tracing-test = "0.2.5"
+tonic = { version = "0.14.3", default-features = false, features = ["channel", "codegen"] }
+tonic-prost = "0.14.3"
+# BLOCKER B (#39/#42): `tree-sitter` sets `links = "tree-sitter"`, so the fork
+# and `atlas-codeindex` cannot hold different majors. D4 resolves it by
+# bumping the fork rather than pinning Atlas back: upstream was 0.25.10 here.
+# `tree-sitter-bash` stays at 0.25 — there is no 0.26 of it, and it does not
+# need one: grammar crates bind to the `tree-sitter-language` shim rather than
+# to the core, which is exactly what lets one core serve grammars of several
+# vintages (Atlas's own are 0.23).
+tree-sitter = "0.26"
+tree-sitter-bash = "0.25"
+ts-rs = "11"
+tungstenite = { version = "0.27.0", features = ["deflate", "proxy"] }
+uds_windows = "1.1.0"
+unicode-segmentation = "1.12.0"
+unicode-width = "0.2"
+url = "2"
+urlencoding = "2.1"
+uuid = "1"
+v8 = "=150.4.0"
+vt100 = "0.16.2"
+walkdir = "2.5.0"
+webbrowser = "1.2.2"
+which = "8"
+whoami = "1.6.1"
+wildmatch = "2.6.1"
+winapi-util = "0.1.11"
+zip = "2.4.2"
+zstd = "0.13"
+
+wiremock = "0.6"
+zeroize = "1.8.2"
+
+[workspace.lints]
+
+# `unexpected_cfgs` is a deny because its warning form already cost a live
+# failure: #54 deleted the `ported-engine` feature, four blocks stayed behind
+# `#[cfg(feature = "ported-engine")]`, and a cfg on a feature that no longer
+# exists compiles to NOTHING — the token-source registration vanished and the
+# first real gateway turn went out with no Authorization header. Cargo warned;
+# nobody greps warnings. Now it fails the build.
+rust = { unexpected_cfgs = "deny" }
+
+[workspace.lints.clippy]
+
+await_holding_invalid_type = "deny"
+await_holding_lock = "deny"
+disallowed_methods = "deny"
+expect_used = "deny"
+identity_op = "deny"
+manual_clamp = "deny"
+manual_filter = "deny"
+manual_find = "deny"
+manual_flatten = "deny"
+manual_map = "deny"
+manual_memcpy = "deny"
+manual_non_exhaustive = "deny"
+manual_ok_or = "deny"
+manual_range_contains = "deny"
+manual_retain = "deny"
+manual_strip = "deny"
+manual_try_fold = "deny"
+manual_unwrap_or = "deny"
+needless_borrow = "deny"
+needless_borrowed_reference = "deny"
+needless_collect = "deny"
+needless_late_init = "deny"
+needless_option_as_deref = "deny"
+needless_question_mark = "deny"
+needless_update = "deny"
+redundant_clone = "deny"
+redundant_closure = "deny"
+redundant_closure_for_method_calls = "deny"
+redundant_static_lifetimes = "deny"
+trivially_copy_pass_by_ref = "deny"
+uninlined_format_args = "deny"
+unnecessary_filter_map = "deny"
+unnecessary_lazy_evaluations = "deny"
+unnecessary_sort_by = "deny"
+unnecessary_to_owned = "deny"
+unwrap_used = "deny"
+
+# cargo-shear cannot see the platform-specific openssl-sys usage, so we
+# silence the false positive here instead of deleting a real dependency.
+
+# ─── Cersei SDK — gone (#54) ─────────────────────────────────────────────────
+# The `cersei-provider` and `cersei-agent` patch entries lived here. They
+# carried two fixes the published crates lacked: incremental UTF-8 decoding in
+# the SSE decoders, and racing `tool.execute()` against the cancel token.
+#
+# Both failures are still guarded, by tests against the engine that replaced
+# them rather than by a patch table: a chunk-split fixture that splits an SSE
+# frame at every byte position, and a cancel test that asserts on the
+# filesystem — the killed command's marker file never appears.
+[patch.crates-io]
+
+# ─── The vendored engine's own git forks ─────────────────────────────────────
+# Copied from the fork point's `[patch.crates-io]`. A patch table is honored
+# only in the manifest cargo was invoked on, so upstream's copy is inert now
+# that these crates are members here: without these three lines the engine
+# silently resolves the unforked crates instead (#42).
+# crossterm is deliberately NOT patched here, though upstream patches it.
+# Its only consumer is the TUI, which is outside the vendored closure, so
+# carrying the entry earned a "patch was not used in the crate graph"
+# warning on every cargo invocation and patched nothing. Restore it with
+# the TUI, if the TUI is ever ported.
+tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "0e5b2d73aa18dd9f0a50ee9ff199d5aef7594186" }
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "4fffad30fe373adbdcffab9545e9e9bf4f2fc19f" }
+
+# Upstream also patches the ssh spelling of the same fork, because a dependency
+# names it that way. Verbatim; dropping it resolves tungstenite twice.
+[patch."ssh://git@github.com/openai-oss-forks/tungstenite-rs.git"]
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "4fffad30fe373adbdcffab9545e9e9bf4f2fc19f" }
+
+# Release profile — Atlas previously shipped with Cargo defaults
+# (lto = false, codegen-units = 16, no strip), which means the bundled .app
+# binary was substantially larger and slower than necessary.
+#
+# Trade-off: `bun run build:app` link time roughly doubles on clean builds
+# (~30 s → ~60–90 s). Dev (`tauri dev`) is unaffected — these are
+# release-only settings.
+[profile.release]
+codegen-units = 1   # Single codegen unit → better cross-function inlining
+lto = "fat"         # Fat LTO: maximum cross-crate dead-code elimination +
+                    # inlining (smaller binary; ~2× link time vs thin)
+strip = "symbols"   # Smaller .app bundle, faster dyld load
+panic = "unwind"    # REQUIRED — three independent `catch_unwind` guards depend on
+                    # it, so this survived the local-LLM removal:
+                    #  1. atlas-embed's EMBEDDER catches candle's Metal
+                    #     kernel-compile panic (at load AND per forward) to fall
+                    #     back to CPU rather than crash.
+                    #  2. commands/capture.rs guards its worker threads — a
+                    #     panicking worker is silent capture loss.
+                    #  3. atlas-checkpoint wraps atlas-redact, so a redaction
+                    #     panic can never leak unredacted text.
+                    # `abort` would turn each of these into an app crash. Costs a
+                    # little binary size for unwind tables.
+opt-level = 3       # Default for release, restated for clarity
+
+# Dev profile — Atlas's own app crate is small (~170 LOC + a handful of
+# command modules). Keep it at the default `opt-level = 0` so incremental
+# rebuilds stay snappy. Its per-package stanza is deliberately absent below.
+[profile.dev]
+
+# Optimize ALL transitive dependencies in dev mode at `opt-level = 1`
+# (Tauri, wry, tao, tokio, serde, reqwest, the vendored cersei forks, etc.).
+# First clean build pays a one-time ~3–5 minute cost; subsequent rebuilds only
+# recompile the app crate and are unaffected. Net effect: `bunx tauri dev`
+# startup drops noticeably because Tauri's runtime is no longer running
+# unoptimized debug code.
+[profile.dev.package."*"]
+opt-level = 1
+
+# `"*"` above reaches dependencies ONLY — workspace members are excluded from
+# it by cargo. Before the workspace, every `crates/atlas-*` package was a plain
+# path dependency of src-tauri and therefore covered; as members they would
+# silently drop to opt-level 0 and `tauri dev` would run the ACP stack, the
+# terminal, the embedder and the RAG engine unoptimized. Restating the level
+# per member is the only way to express "unchanged" (D4: "preserve dev-profile
+# opt-levels for workspace members explicitly").
+#
+# Adding a member means adding a stanza here; `tests/cargo-workspace.test.ts`
+# fails if one is missing.
+[profile.dev.package.atlas-acp-thread]
+opt-level = 1
+[profile.dev.package.atlas-agent-delta]
+opt-level = 1
+[profile.dev.package.atlas-agent-manager]
+opt-level = 1
+[profile.dev.package.atlas-agent-servers]
+opt-level = 1
+[profile.dev.package.atlas-agent-store]
+opt-level = 1
+[profile.dev.package.atlas-agent-transcript]
+opt-level = 1
+[profile.dev.package.atlas-agent-wire]
+opt-level = 1
+[profile.dev.package.atlas-bus]
+opt-level = 1
+[profile.dev.package.atlas-checkpoint]
+opt-level = 1
+[profile.dev.package.atlas-codeindex]
+opt-level = 1
+[profile.dev.package.atlas-embed]
+opt-level = 1
+[profile.dev.package.atlas-git]
+opt-level = 1
+[profile.dev.package.atlas-gitdiff]
+opt-level = 1
+[profile.dev.package.atlas-memory]
+opt-level = 1
+[profile.dev.package.atlas-native-agent]
+opt-level = 1
+[profile.dev.package.atlas-redact]
+opt-level = 1
+[profile.dev.package.atlas-terminal]
+opt-level = 1
+[profile.dev.package.atlas-thread-metadata]
+opt-level = 1

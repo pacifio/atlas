@@ -44,9 +44,11 @@ const signInAttempted = new Set<string>();
 import { composePrompt, type MentionData } from "../lib/mentions";
 import { usePaneFind } from "../lib/use-pane-find";
 import { MessageInput } from "./message-input";
+import { AiGrantPill } from "./ai-grant-pill";
 import { SessionSidebar } from "./session-sidebar";
 import { ChatHeader } from "./chat-header";
-import { openAgentSession, openNewAgentChat } from "../lib/open-agent-session";
+import { openNewAgentChat } from "../lib/open-agent-session";
+import { forkSessionToNewTab } from "../lib/fork-session";
 import { workspacePathForTab } from "../lib/tab-workspace";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchTextDiff } from "@/features/git/lib/git-diff-api";
@@ -165,34 +167,9 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
 
   /** Fork the bound session and open the branch in a new tab, so the thread
    *  that got here stays intact — which is the entire point of forking. */
-  const onForkSessionStable = useCallback(() => {
-    void (async () => {
-      const sess = useChatStore.getState().sessions[tabId];
-      if (!sess?.acpAgentId || !sess.acpSessionId) return;
-      try {
-        const forked = await agents.forkSession({
-          agent_id: sess.acpAgentId,
-          session_id: sess.acpSessionId,
-        });
-        if (!forked) {
-          toast.error("This agent cannot branch a session.");
-          return;
-        }
-        // Open the branch in its own tab so the thread that got here stays
-        // intact — which is the entire point of forking.
-        await openAgentSession({
-          acpSessionId: forked,
-          title: `${sess.title ?? "Session"} (branch)`,
-          // A branch belongs to the SOURCE session's project, not to whichever
-          // workspace happens to be active when the fork button is pressed.
-          cwd: sess.workingDirectory || workspacePathForTab(tabId) || "",
-          agentType: sess.agentType,
-        });
-      } catch (err) {
-        toast.error(errInfo(err).message);
-      }
-    })();
-  }, [tabId]);
+  // Shared with the composer's `/fork` command — one fork flow, two doors.
+  // 0.3.1's source-project fix for the branch cwd lives inside the helper.
+  const onForkSessionStable = useCallback(() => forkSessionToNewTab(tabId), [tabId]);
   const [roleFilter, setRoleFilter] = useState<"all" | "user" | "assistant">("all");
   const [bashPanelOpen, setBashPanelOpen] = useState(false);
   const [plansPanelOpen, setPlansPanelOpen] = useState(false);
@@ -436,9 +413,16 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
             // nothing re-emits it — the snapshot is the recovery path, exactly
             // as for modes/models. Rust buffers pre-install notifications, so
             // by the time this snapshot lands the commands are in state.
+            // The source agent rides along so a snapshot that raced an agent
+            // switch is dropped instead of landing the OLD agent's commands
+            // (Claude's skills, most visibly) under the new agent's picker.
             useChatStore
               .getState()
-              .actions.setAcpAvailableCommands(tabId, snap.available_commands ?? []);
+              .actions.setAcpAvailableCommands(
+                tabId,
+                snap.available_commands ?? [],
+                agentTypeFromPluginId(snap.plugin_id),
+              );
             // And the config-option knobs (#32). The `session/new`
             // advertisement lives only in the backend cell — a follow-up
             // notification is optional and most agents never send one, so
@@ -577,7 +561,9 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
     const agentId = session?.acpAgentId;
     const acpSessionId = session?.acpSessionId;
     if (!agentId || !acpSessionId) return;
-    if (session?.agentType === "cersei") return;
+    // The native agent is not excluded: its models come from the seam's
+    // published catalogue via this same snapshot, exactly like an external
+    // agent's. The old exclusion existed because its picker was BYOK.
     if ((session?.acpAvailableModels?.length ?? 0) > 0) return;
     let cancelled = false;
     void (async () => {
@@ -614,7 +600,11 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         if (useChatStore.getState().sessions[tabId]?.availableCommands === undefined) {
           useChatStore
             .getState()
-            .actions.setAcpAvailableCommands(tabId, snap.available_commands ?? []);
+            .actions.setAcpAvailableCommands(
+              tabId,
+              snap.available_commands ?? [],
+              agentTypeFromPluginId(snap.plugin_id),
+            );
         }
         // And the knobs, for the same reasons (#32).
         if (useChatStore.getState().sessions[tabId]?.acpConfigOptions === undefined) {
@@ -1192,6 +1182,15 @@ const ChatComposer = memo(function ChatComposer({
             rendered (each gets its own slide-up + fade-in animation
             via `.atlas-pill-in`); when the row is empty it doesn't
             paint at all so it never blocks pointer events. */}
+        {/* The no-grant setup state (D15a). It renders itself only when the
+            gateway says this account has no AI grant, so it costs nothing on
+            every other path — and it is a pill rather than a disabled
+            composer, because the agent switcher lives inside the composer. */}
+        <div className="pointer-events-none absolute bottom-full inset-x-0 mb-2 z-20 flex justify-center">
+          <div className="pointer-events-auto">
+            <AiGrantPill />
+          </div>
+        </div>
         {showJumpToBottom && (
           <div className="pointer-events-none absolute bottom-full inset-x-0 mb-2 z-20 flex justify-center">
             <div className="pointer-events-auto flex items-center gap-2">

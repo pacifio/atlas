@@ -20,9 +20,6 @@ Thumbs.db
 .env
 .env.local
 
-# Tauri
-src-tauri/target/
-
 .claude/
 .atlas/
 .agents/
@@ -41,6 +38,9 @@ skills-lock.json
 !CODE_OF_CONDUCT.md
 !CONTEXT.md
 !docs/adr/*.md
+!docs/atlas-agent-codex-port-spec.md
+!docs/research/*.md
+!docs/reference/*.md
 graphify-out/
 # Local-only working folders (plans/specs + helper scripts)
 plans/
@@ -49,3 +49,13 @@ scripts/release-macos.sh
 
 # Stakpak session files
 .stakpak/session*
+
+# The vendored Codex engine is committed verbatim (#42). Without this, the
+# broad `*.md` rule above silently drops the engine's baked system prompts
+# (`core/*_prompt.md`), its guardian policy templates and its skill samples —
+# 35 paths, most of them `include_str!`d at compile time. The tree would build
+# from a working copy and fail from a fresh clone, which is the worst shape a
+# vendoring bug can take.
+!vendor/codex/**
+# ...except build output, if anyone ever builds in-tree there.
+vendor/codex/**/target/
