@@ -56,7 +56,9 @@ export SDKROOT="${SDKROOT:-$(xcrun --show-sdk-path)}"
 log "Building Atlas for ${TARGET}"
 node scripts/with-posthog-env.mjs tauri build --target "${TARGET}" --bundles app,dmg
 
-DMG_DIR="src-tauri/target/${TARGET}/release/bundle/dmg"
+# Cargo's target dir is the workspace root's `target/`, not
+# `src-tauri/target/` — the repo became a cargo workspace in #38.
+DMG_DIR="target/${TARGET}/release/bundle/dmg"
 DMG_PATH="$(ls -t "${DMG_DIR}"/*.dmg 2>/dev/null | head -n1 || true)"
 if [[ -z "${DMG_PATH}" ]]; then
   echo "build-dmg: no .dmg produced under ${DMG_DIR}" >&2

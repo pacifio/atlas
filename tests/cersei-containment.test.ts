@@ -18,14 +18,22 @@ import { fileURLToPath } from "node:url";
  * When the native agent itself is removed (the planned final step of the
  * purge), shrink ALLOWED_CERSEI_MANIFESTS in the same commit — this test
  * failing on that day is it working, not breaking.
+ *
+ * The root `Cargo.toml` is walked too. Since the repo became a cargo workspace
+ * (#38) that is where the vendored SDK actually enters the graph, via
+ * `[patch.crates-io]`; a guard that never read it would report containment
+ * while the root still patched `cersei-*`.
  */
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Manifests that may declare cersei dependencies today: the protocol-free
- *  cersei wrapper, the in-process native agent built on it, and the app crate
- *  (which carries the vendored `cersei-provider` UTF-8 compile guard). */
+ *  atlas-cersei wrapper, the in-process native agent built on it, the app crate
+ *  (which carries the vendored `cersei-provider` UTF-8 compile guard), and the
+ *  workspace root (which owns the two `[patch.crates-io]` vendor overrides —
+ *  the only manifest cargo honors a patch table in). */
 const ALLOWED_CERSEI_MANIFESTS = new Set([
+  "Cargo.toml",
   "crates/atlas-cersei/Cargo.toml",
   "crates/atlas-native-agent/Cargo.toml",
   "src-tauri/Cargo.toml",
@@ -45,6 +53,7 @@ function manifests(): string[] {
     if (existsSync(m)) out.push(m);
   }
   out.push(path.join(REPO_ROOT, "src-tauri", "Cargo.toml"));
+  out.push(path.join(REPO_ROOT, "Cargo.toml"));
   return out;
 }
 

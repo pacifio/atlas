@@ -1,0 +1,1028 @@
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::sync::Arc;
+use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+
+use rmcp::ErrorData as McpError;
+use rmcp::ServiceExt;
+use rmcp::handler::server::ServerHandler;
+use rmcp::model::CallToolRequestParams;
+use rmcp::model::CallToolResult;
+use rmcp::model::Implementation;
+use rmcp::model::InitializeRequestParams;
+use rmcp::model::InitializeResult;
+use rmcp::model::JsonObject;
+use rmcp::model::ListResourceTemplatesResult;
+use rmcp::model::ListResourcesResult;
+use rmcp::model::ListToolsResult;
+use rmcp::model::MetaObject;
+use rmcp::model::PaginatedRequestParams;
+use rmcp::model::ReadResourceRequestParams;
+use rmcp::model::ReadResourceResult;
+use rmcp::model::Resource;
+use rmcp::model::ResourceContents;
+use rmcp::model::ResourceTemplate;
+use rmcp::model::ServerCapabilities;
+use rmcp::model::ServerInfo;
+use rmcp::model::Tool;
+use rmcp::model::ToolAnnotations;
+use serde::Deserialize;
+use serde_json::json;
+use tokio::sync::Barrier;
+use tokio::task;
+use tokio::time::sleep;
+
+#[derive(Clone)]
+struct TestToolServer {
+    tools: Arc<Vec<Tool>>,
+    resources: Arc<Vec<Resource>>,
+    resource_templates: Arc<Vec<ResourceTemplate>>,
+    supports_openai_form_elicitation: Arc<AtomicBool>,
+}
+
+const MEMO_URI: &str = "memo://codex/example-note";
+const MEMO_CONTENT: &str = "This is a sample MCP resource served by the rmcp test server.";
+const SANDBOX_STATE_META_CAPABILITY: &str = "codex/sandbox-state-meta";
+const SMALL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+const APP_ONLY_CWD_MARKER_FILE_ENV: &str = "MCP_TEST_APP_ONLY_CWD_MARKER_FILE";
+const DYNAMIC_SERVER_METADATA_ENV: &str = "MCP_TEST_DYNAMIC_SERVER_METADATA";
+const INITIALIZE_BARRIER_FILE_ENV: &str = "MCP_TEST_INITIALIZE_BARRIER_FILE";
+const SERVER_INSTRUCTIONS_ENV: &str = "MCP_TEST_SERVER_INSTRUCTIONS";
+
+fn dynamic_server_process_label() -> Option<String> {
+    std::env::var_os(DYNAMIC_SERVER_METADATA_ENV)
+        .is_some()
+        .then(|| format!("rmcp-test-process-{}", std::process::id()))
+}
+
+pub fn stdio() -> (tokio::io::Stdin, tokio::io::Stdout) {
+    (tokio::io::stdin(), tokio::io::stdout())
+}
+
+impl TestToolServer {
+    fn new() -> Self {
+        #[expect(clippy::expect_used)]
+        let sandbox_meta_schema: JsonObject = serde_json::from_value(serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
+        .expect("sandbox_meta tool schema should deserialize");
+        let mut sandbox_meta_tool = Tool::new(
+            Cow::Borrowed("sandbox_meta"),
+            Cow::Borrowed("Return the MCP request metadata received by this test server."),
+            Arc::new(sandbox_meta_schema),
+        );
+        sandbox_meta_tool.annotations = Some(ToolAnnotations::new().read_only(true));
+
+        #[expect(clippy::expect_used)]
+        let thread_hint_schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
+        .expect("thread_hint tool schema should deserialize");
+        let mut thread_hint_tool = Tool::new(
+            Cow::Borrowed("thread_hint"),
+            Cow::Borrowed("Return an unstructured history hint for a thread."),
+            Arc::new(thread_hint_schema),
+        );
+        thread_hint_tool.annotations = Some(ToolAnnotations::new().read_only(true));
+        let mut thread_hint_meta = MetaObject::new();
+        thread_hint_meta.insert("ui".to_string(), json!({ "visibility": [] }));
+        thread_hint_tool.meta = Some(thread_hint_meta);
+
+        #[expect(clippy::expect_used)]
+        let encrypted_output_schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
+        .expect("encrypted_output tool schema should deserialize");
+        let mut encrypted_output_tool = Tool::new(
+            Cow::Borrowed("encrypted_output"),
+            Cow::Borrowed("Return mixed plaintext and encrypted content for integration tests."),
+            Arc::new(encrypted_output_schema),
+        );
+        encrypted_output_tool.annotations = Some(ToolAnnotations::new().read_only(true));
+
+        let mut tools = vec![
+            Self::echo_tool(),
+            Self::echo_dash_tool(),
+            encrypted_output_tool,
+            thread_hint_tool,
+            Self::client_capabilities_tool(),
+            Self::cwd_tool(),
+            Self::sync_tool(),
+            Self::sync_readonly_tool(),
+            Self::image_tool(),
+            Self::image_scenario_tool(),
+            sandbox_meta_tool,
+        ];
+        if std::env::var_os("MCP_TEST_ENABLE_NODE_REPL_JS").is_some() {
+            #[expect(clippy::expect_used)]
+            let schema: JsonObject = serde_json::from_value(json!({
+                "type": "object",
+                "properties": { "code": { "type": "string" } },
+                "required": ["code"],
+                "additionalProperties": false
+            }))
+            .expect("js tool schema should deserialize");
+            let mut tool = Tool::new(
+                Cow::Borrowed("js"),
+                Cow::Borrowed("Run JavaScript in the test Node REPL."),
+                Arc::new(schema),
+            );
+            tool.annotations = Some(ToolAnnotations::new().read_only(true));
+            tools.push(tool);
+        }
+        if let Some(process_label) = dynamic_server_process_label()
+            && let Some(echo) = tools.iter_mut().find(|tool| tool.name == "echo")
+        {
+            echo.description = Some(Cow::Owned(format!("Echo from {process_label}.")));
+        }
+        if std::env::var_os("MCP_TEST_OVERSIZED_TOOL_DESCRIPTION").is_some()
+            && let Some(echo) = tools.iter_mut().find(|tool| tool.name == "echo")
+        {
+            echo.description = Some(Cow::Owned("x".repeat(8 * 1024 * 1024 + 1)));
+        }
+        let resources = vec![Self::memo_resource()];
+        let resource_templates = vec![Self::memo_template()];
+        Self {
+            tools: Arc::new(tools),
+            resources: Arc::new(resources),
+            resource_templates: Arc::new(resource_templates),
+            supports_openai_form_elicitation: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn echo_tool() -> Tool {
+        Self::build_echo_tool(
+            "echo",
+            "Echo back the provided message and include environment data.",
+        )
+    }
+
+    fn echo_dash_tool() -> Tool {
+        Self::build_echo_tool(
+            "echo-tool",
+            "Echo back the provided message via a tool name that is not a legal JS identifier.",
+        )
+    }
+
+    fn build_echo_tool(name: &'static str, description: &'static str) -> Tool {
+        #[expect(clippy::expect_used)]
+        let schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {
+                "message": { "type": "string" },
+                "env_var": { "type": "string" }
+            },
+            "required": ["message"],
+            "additionalProperties": false
+        }))
+        .expect("echo tool schema should deserialize");
+
+        let mut tool = Tool::new(
+            Cow::Borrowed(name),
+            Cow::Borrowed(description),
+            Arc::new(schema),
+        );
+        #[expect(clippy::expect_used)]
+        let output_schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {
+                "echo": { "type": "string" },
+                "env": {
+                    "anyOf": [
+                        { "type": "string" },
+                        { "type": "null" }
+                    ]
+                },
+            },
+            "required": ["echo", "env"],
+            "additionalProperties": false
+        }))
+        .expect("echo tool output schema should deserialize");
+        tool.output_schema = Some(Arc::new(output_schema));
+        tool.annotations = Some(ToolAnnotations::new().read_only(true));
+        tool
+    }
+
+    fn cwd_tool() -> Tool {
+        #[expect(clippy::expect_used)]
+        let schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
+        .expect("cwd tool schema should deserialize");
+
+        let mut tool = Tool::new(
+            Cow::Borrowed("cwd"),
+            Cow::Borrowed("Return the current working directory of this test server process."),
+            Arc::new(schema),
+        );
+        #[expect(clippy::expect_used)]
+        let output_schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {
+                "cwd": { "type": "string" }
+            },
+            "required": ["cwd"],
+            "additionalProperties": false
+        }))
+        .expect("cwd tool output schema should deserialize");
+        tool.output_schema = Some(Arc::new(output_schema));
+        tool.annotations = Some(ToolAnnotations::new().read_only(true));
+        tool
+    }
+
+    fn client_capabilities_tool() -> Tool {
+        #[expect(clippy::expect_used)]
+        let schema: JsonObject = serde_json::from_value(serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
+        .expect("client capabilities tool schema should deserialize");
+
+        let mut tool = Tool::new(
+            Cow::Borrowed("client_capabilities"),
+            Cow::Borrowed("Return capabilities advertised by the MCP client."),
+            Arc::new(schema),
+        );
+        tool.annotations = Some(ToolAnnotations::new().read_only(true));
+        tool
+    }
+
+    fn sync_tool() -> Tool {
+        #[expect(clippy::expect_used)]
+        let schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {
+                "sleep_before_ms": { "type": "number" },
+                "sleep_after_ms": { "type": "number" },
+                "barrier": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "participants": { "type": "number" },
+                        "timeout_ms": { "type": "number" }
+                    },
+                    "required": ["id", "participants"],
+                    "additionalProperties": false
+                }
+            },
+            "additionalProperties": false
+        }))
+        .expect("sync tool schema should deserialize");
+
+        let mut tool = Tool::new(
+            Cow::Borrowed("sync"),
+            Cow::Borrowed(
+                "Synchronize concurrent test calls and optionally delay before or after the barrier.",
+            ),
+            Arc::new(schema),
+        );
+        #[expect(clippy::expect_used)]
+        let output_schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {
+                "result": { "type": "string" }
+            },
+            "required": ["result"],
+            "additionalProperties": false
+        }))
+        .expect("sync tool output schema should deserialize");
+        tool.output_schema = Some(Arc::new(output_schema));
+        tool
+    }
+
+    fn sync_readonly_tool() -> Tool {
+        let mut tool = Self::sync_tool();
+        tool.name = Cow::Borrowed("sync_readonly");
+        tool.annotations = Some(ToolAnnotations::new().read_only(true));
+        tool
+    }
+
+    fn image_tool() -> Tool {
+        #[expect(clippy::expect_used)]
+        let schema: JsonObject = serde_json::from_value(serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
+        .expect("image tool schema should deserialize");
+
+        let mut tool = Tool::new(
+            Cow::Borrowed("image"),
+            Cow::Borrowed("Return a single image content block."),
+            Arc::new(schema),
+        );
+        tool.annotations = Some(ToolAnnotations::new().read_only(true));
+        tool
+    }
+
+    /// Tool intended for manual testing of Codex TUI rendering for MCP image tool results.
+    ///
+    /// This exists to exercise edge cases where a `CallToolResult.content` includes image blocks
+    /// that aren't the first item (or includes invalid image blocks before a valid image).
+    ///
+    /// Manual testing approach (Codex TUI):
+    /// - Build this binary: `cargo build -p codex-rmcp-client --bin test_stdio_server`
+    /// - Register it:
+    ///   - `codex mcp add mcpimg -- /abs/path/to/test_stdio_server`
+    /// - Then in Codex TUI, ask it to call:
+    ///   - `mcpimg.image_scenario({"scenario":"image_only"})`
+    ///   - `mcpimg.image_scenario({"scenario":"image_only_original_detail"})`
+    ///   - `mcpimg.image_scenario({"scenario":"text_then_image","caption":"Here is the image:"})`
+    ///   - `mcpimg.image_scenario({"scenario":"invalid_base64_then_image"})`
+    ///   - `mcpimg.image_scenario({"scenario":"invalid_image_bytes_then_image"})`
+    ///   - `mcpimg.image_scenario({"scenario":"multiple_valid_images"})`
+    ///   - `mcpimg.image_scenario({"scenario":"image_then_text","caption":"Here is the image:"})`
+    ///   - `mcpimg.image_scenario({"scenario":"text_only","caption":"Here is the image:"})`
+    /// - You should see an extra history cell: `tool result (image output)`.
+    fn image_scenario_tool() -> Tool {
+        #[expect(clippy::expect_used)]
+        let schema: JsonObject = serde_json::from_value(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "scenario": {
+                    "type": "string",
+                    "enum": [
+                        "image_only",
+                        "image_only_original_detail",
+                        "text_then_image",
+                        "invalid_base64_then_image",
+                        "invalid_image_bytes_then_image",
+                        "multiple_valid_images",
+                        "image_then_text",
+                        "text_only"
+                    ]
+                },
+                "caption": { "type": "string" },
+                "data_url": {
+                    "type": "string",
+                    "description": "Optional data URL like data:image/png;base64,AAAA...; if omitted, uses a built-in tiny PNG."
+                }
+            },
+            "required": ["scenario"],
+            "additionalProperties": false
+        }))
+        .expect("image_scenario tool schema should deserialize");
+
+        let mut tool = Tool::new(
+            Cow::Borrowed("image_scenario"),
+            Cow::Borrowed(
+                "Return content blocks for manual testing of MCP image rendering scenarios.",
+            ),
+            Arc::new(schema),
+        );
+        tool.annotations = Some(ToolAnnotations::new().read_only(true));
+        tool
+    }
+
+    fn memo_resource() -> Resource {
+        Resource::new(MEMO_URI, "example-note")
+            .with_title("Example Note")
+            .with_description("A sample MCP resource exposed for integration tests.")
+            .with_mime_type("text/plain")
+    }
+
+    fn memo_template() -> ResourceTemplate {
+        ResourceTemplate::new("memo://codex/{slug}", "codex-memo")
+            .with_title("Codex Memo")
+            .with_description("Template for memo://codex/{slug} resources used in tests.")
+            .with_mime_type("text/plain")
+    }
+
+    fn memo_text() -> &'static str {
+        MEMO_CONTENT
+    }
+}
+
+#[derive(Deserialize)]
+struct EchoArgs {
+    message: String,
+    env_var: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct JsArgs {
+    code: String,
+}
+
+const DEFAULT_SYNC_TIMEOUT_MS: u64 = 1_000;
+
+static SYNC_BARRIERS: OnceLock<tokio::sync::Mutex<HashMap<String, SyncBarrierState>>> =
+    OnceLock::new();
+
+struct SyncBarrierState {
+    barrier: Arc<Barrier>,
+    participants: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct SyncBarrierArgs {
+    id: String,
+    participants: usize,
+    #[serde(default = "default_sync_timeout_ms")]
+    timeout_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct SyncArgs {
+    #[serde(default)]
+    sleep_before_ms: Option<u64>,
+    #[serde(default)]
+    sleep_after_ms: Option<u64>,
+    #[serde(default)]
+    barrier: Option<SyncBarrierArgs>,
+}
+
+fn default_sync_timeout_ms() -> u64 {
+    DEFAULT_SYNC_TIMEOUT_MS
+}
+
+fn sync_barrier_map() -> &'static tokio::sync::Mutex<HashMap<String, SyncBarrierState>> {
+    SYNC_BARRIERS.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()))
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+/// Scenarios for `image_scenario`, intended to exercise Codex TUI handling of MCP image outputs.
+///
+/// The key behavior under test is that the TUI should render an image output cell if *any*
+/// decodable image block exists in the tool result content, even if the first block is text or an
+/// invalid image.
+enum ImageScenario {
+    ImageOnly,
+    ImageOnlyOriginalDetail,
+    TextThenImage,
+    InvalidBase64ThenImage,
+    InvalidImageBytesThenImage,
+    MultipleValidImages,
+    ImageThenText,
+    TextOnly,
+}
+
+#[derive(Deserialize, Debug)]
+struct ImageScenarioArgs {
+    scenario: ImageScenario,
+    #[serde(default)]
+    caption: Option<String>,
+    #[serde(default)]
+    data_url: Option<String>,
+}
+
+impl ServerHandler for TestToolServer {
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<InitializeResult, McpError> {
+        if let Ok(barrier_file) = std::env::var(INITIALIZE_BARRIER_FILE_ENV) {
+            while !std::path::Path::new(&barrier_file).is_file() {
+                sleep(Duration::from_millis(10)).await;
+            }
+        }
+        self.supports_openai_form_elicitation.store(
+            request
+                .capabilities
+                .extensions
+                .as_ref()
+                .is_some_and(|extensions| extensions.contains_key("openai/form")),
+            Ordering::Relaxed,
+        );
+        context.peer.set_peer_info(request);
+        Ok(self.get_info())
+    }
+
+    fn get_info(&self) -> ServerInfo {
+        let mut capabilities = ServerCapabilities::builder()
+            .enable_tools()
+            .enable_tool_list_changed()
+            .enable_resources()
+            .build();
+        capabilities.experimental = Some(BTreeMap::from([(
+            SANDBOX_STATE_META_CAPABILITY.to_string(),
+            JsonObject::new(),
+        )]));
+
+        let server_info = ServerInfo::new(capabilities);
+        let server_info = match dynamic_server_process_label() {
+            Some(process_label) => server_info
+                .with_server_info(
+                    Implementation::new("codex-rmcp-test-server", env!("CARGO_PKG_VERSION"))
+                        .with_title(process_label.clone()),
+                )
+                .with_instructions(format!("Use the tools from {process_label}.")),
+            None => {
+                server_info.with_instructions("Use these tools to exercise the rmcp test server.")
+            }
+        };
+        match std::env::var(SERVER_INSTRUCTIONS_ENV) {
+            Ok(instructions) => server_info.with_instructions(instructions),
+            Err(_) => server_info,
+        }
+    }
+
+    fn list_tools(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
+        let tools = self.tools.clone();
+        async move {
+            let mut tools = (*tools).clone();
+            if let Some(marker_file) = std::env::var_os(APP_ONLY_CWD_MARKER_FILE_ENV)
+                && std::path::Path::new(&marker_file).is_file()
+                && let Some(cwd) = tools.iter_mut().find(|tool| tool.name == "cwd")
+            {
+                cwd.meta
+                    .get_or_insert_with(MetaObject::new)
+                    .insert("ui".to_string(), json!({ "visibility": ["app"] }));
+            }
+            let mut result = ListToolsResult::with_all_items(tools);
+            match (
+                std::env::var("MCP_TEST_TOOL_PAGINATION").as_deref(),
+                request.and_then(|request| request.cursor).as_deref(),
+            ) {
+                (Ok("two-pages"), None) => {
+                    result.tools.retain(|tool| tool.name == "echo");
+                    result.next_cursor = Some("second".to_string());
+                }
+                (Ok("two-pages"), Some("second")) => {
+                    result.tools.retain(|tool| tool.name == "sync");
+                }
+                (Ok("oversized-cursor"), None) => {
+                    result.tools.retain(|tool| tool.name == "echo");
+                    result.next_cursor = Some("x".repeat(65_537));
+                }
+                _ => {}
+            }
+            Ok(result)
+        }
+    }
+
+    fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListResourcesResult, McpError>> + Send + '_ {
+        let resources = self.resources.clone();
+        async move { Ok(ListResourcesResult::with_all_items((*resources).clone())) }
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        Ok(ListResourceTemplatesResult::with_all_items(
+            (*self.resource_templates).clone(),
+        ))
+    }
+
+    async fn read_resource(
+        &self,
+        ReadResourceRequestParams { uri, .. }: ReadResourceRequestParams,
+        _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<rmcp::model::ReadResourceResponse, McpError> {
+        if uri == MEMO_URI {
+            Ok(
+                ReadResourceResult::new(vec![ResourceContents::TextResourceContents {
+                    uri,
+                    mime_type: Some("text/plain".to_string()),
+                    text: Self::memo_text().to_string(),
+                    meta: None,
+                }])
+                .into(),
+            )
+        } else {
+            Err(McpError::resource_not_found(
+                "resource_not_found",
+                Some(json!({ "uri": uri })),
+            ))
+        }
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResponse, McpError> {
+        match request.name.as_ref() {
+            "js" => {
+                let args = Self::parse_call_args::<JsArgs>(&request, "js")?;
+                if args.code == "nodeRepl.fail()" {
+                    Ok(CallToolResult::error(vec![
+                        rmcp::model::ContentBlock::text("guardian-hidden-failed-result"),
+                    ]))
+                } else if args.code == "nodeRepl.empty()" {
+                    Ok(CallToolResult::success(vec![
+                        rmcp::model::ContentBlock::text(" "),
+                    ]))
+                } else if args.code == "await nodeRepl.emitImage(await tab.screenshot())" {
+                    let mut meta = MetaObject::new();
+                    meta.insert("codex/imageDetail".to_string(), json!("low"));
+                    Ok(CallToolResult::success(vec![
+                        rmcp::model::ContentBlock::text("guardian-visible-before-image"),
+                        rmcp::model::ContentBlock::Image(
+                            rmcp::model::ImageContent::new(SMALL_PNG_BASE64, "IMAGE/PNG")
+                                .with_meta(meta),
+                        ),
+                        rmcp::model::ContentBlock::text("guardian-visible-after-image"),
+                    ]))
+                } else if let Some(text) = args.code.strip_prefix("nodeRepl.write(")
+                    && let Some(text) = text.strip_suffix(')')
+                {
+                    let text = serde_json::from_str::<String>(text)
+                        .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
+                    let mut result =
+                        CallToolResult::success(vec![rmcp::model::ContentBlock::text(text)]);
+                    result.structured_content =
+                        Some(json!({ "text": "guardian-hidden-structured-override" }));
+                    let mut meta = MetaObject::new();
+                    meta.insert("ui".to_string(), json!("guardian-hidden-ui-preview"));
+                    result.meta = Some(meta);
+                    Ok(result)
+                } else {
+                    Err(McpError::invalid_params("unsupported test js source", None))
+                }
+            }
+            "client_capabilities" => Ok(Self::structured_result(json!({
+                "supportsOpenaiFormElicitation": self
+                    .supports_openai_form_elicitation
+                    .load(Ordering::Relaxed),
+            }))),
+            "sandbox_meta" => Ok(Self::structured_result(serde_json::Value::Object(
+                context.meta.0.0,
+            ))),
+            "cwd" => {
+                let cwd = std::env::current_dir()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .map_err(|err| McpError::internal_error(err.to_string(), None))?;
+                Ok(Self::structured_result(json!({ "cwd": cwd })))
+            }
+            "thread_hint" => {
+                let thread_id = context
+                    .meta
+                    .0
+                    .get("threadId")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        McpError::invalid_params("missing threadId metadata".to_string(), None)
+                    })?;
+                Ok(CallToolResult::success(vec![
+                    rmcp::model::ContentBlock::text(format!(
+                        "manual history hint for thread {thread_id}"
+                    )),
+                    rmcp::model::ContentBlock::text(
+                        "unstructured notes/thread_hint fixture result",
+                    ),
+                ]))
+            }
+            "echo" | "echo-tool" => {
+                let args: EchoArgs = match request.arguments {
+                    Some(arguments) => serde_json::from_value(serde_json::Value::Object(
+                        arguments.into_iter().collect(),
+                    ))
+                    .map_err(|err| McpError::invalid_params(err.to_string(), None))?,
+                    None => {
+                        return Err(McpError::invalid_params(
+                            format!("missing arguments for {} tool", request.name),
+                            None,
+                        ));
+                    }
+                };
+
+                let env_snapshot: HashMap<String, String> = std::env::vars().collect();
+                let env_name = args.env_var.as_deref().unwrap_or("MCP_TEST_VALUE");
+                let echo = dynamic_server_process_label()
+                    .unwrap_or_else(|| format!("ECHOING: {}", args.message));
+                let structured_content = json!({
+                    "echo": echo,
+                    "env": env_snapshot.get(env_name),
+                });
+
+                Ok(Self::structured_result(structured_content))
+            }
+            "encrypted_output" => {
+                let mut meta = MetaObject::new();
+                meta.insert("codex/encryptedContent".to_string(), json!(true));
+                let mut result = CallToolResult::success(vec![
+                    rmcp::model::ContentBlock::text("Lookup completed"),
+                    rmcp::model::ContentBlock::Text(
+                        rmcp::model::TextContent::new("gAAAA-test").with_meta(meta),
+                    ),
+                ]);
+                result.structured_content = Some(json!({"encrypted_output": "ignored"}));
+                Ok(result)
+            }
+            "image" => {
+                // Read a data URL (e.g. data:image/png;base64,AAA...) from env and convert to
+                // an MCP image content block. Tests set MCP_TEST_IMAGE_DATA_URL.
+                let data_url = std::env::var("MCP_TEST_IMAGE_DATA_URL").map_err(|_| {
+                    McpError::invalid_params(
+                        "missing MCP_TEST_IMAGE_DATA_URL env var for image tool",
+                        None,
+                    )
+                })?;
+
+                let (mime_type, data_b64) = parse_data_url(&data_url).ok_or_else(|| {
+                    McpError::invalid_params(
+                        format!("invalid data URL for image tool: {data_url}"),
+                        None,
+                    )
+                })?;
+
+                Ok(CallToolResult::success(vec![
+                    rmcp::model::ContentBlock::image(data_b64, mime_type),
+                ]))
+            }
+            "image_scenario" => {
+                let args = Self::parse_call_args::<ImageScenarioArgs>(&request, "image_scenario")?;
+                Self::image_scenario_result(args)
+            }
+            "sync" => {
+                let args = Self::parse_call_args::<SyncArgs>(&request, "sync")?;
+                Self::sync_result(args).await
+            }
+            "sync_readonly" => {
+                let args = Self::parse_call_args::<SyncArgs>(&request, "sync_readonly")?;
+                Self::sync_result(args).await
+            }
+            other => Err(McpError::invalid_params(
+                format!("unknown tool: {other}"),
+                None,
+            )),
+        }
+        .map(Into::into)
+    }
+}
+
+impl TestToolServer {
+    fn parse_call_args<T: for<'de> Deserialize<'de>>(
+        request: &CallToolRequestParams,
+        tool_name: &'static str,
+    ) -> Result<T, McpError> {
+        match request.arguments.as_ref() {
+            Some(arguments) => serde_json::from_value(serde_json::Value::Object(
+                arguments.clone().into_iter().collect(),
+            ))
+            .map_err(|err| McpError::invalid_params(err.to_string(), None)),
+            None => Err(McpError::invalid_params(
+                format!("missing arguments for {tool_name} tool"),
+                None,
+            )),
+        }
+    }
+
+    fn image_scenario_result(args: ImageScenarioArgs) -> Result<CallToolResult, McpError> {
+        let (mime_type, valid_data_b64) = if let Some(data_url) = &args.data_url {
+            parse_data_url(data_url).ok_or_else(|| {
+                McpError::invalid_params(
+                    format!("invalid data_url for image_scenario tool: {data_url}"),
+                    None,
+                )
+            })?
+        } else {
+            ("image/png".to_string(), SMALL_PNG_BASE64.to_string())
+        };
+
+        let caption = args
+            .caption
+            .unwrap_or_else(|| "Here is the image:".to_string());
+
+        let mut content = Vec::new();
+        match args.scenario {
+            ImageScenario::ImageOnly => {
+                content.push(rmcp::model::ContentBlock::image(valid_data_b64, mime_type));
+            }
+            ImageScenario::ImageOnlyOriginalDetail => {
+                let mut meta = MetaObject::new();
+                meta.insert(
+                    "codex/imageDetail".to_string(),
+                    serde_json::json!("original"),
+                );
+                content.push(rmcp::model::ContentBlock::Image(
+                    rmcp::model::ImageContent::new(valid_data_b64, mime_type).with_meta(meta),
+                ));
+            }
+            ImageScenario::TextThenImage => {
+                content.push(rmcp::model::ContentBlock::text(caption));
+                content.push(rmcp::model::ContentBlock::image(valid_data_b64, mime_type));
+            }
+            ImageScenario::InvalidBase64ThenImage => {
+                content.push(rmcp::model::ContentBlock::image(
+                    "not-base64".to_string(),
+                    "image/png".to_string(),
+                ));
+                content.push(rmcp::model::ContentBlock::image(valid_data_b64, mime_type));
+            }
+            ImageScenario::InvalidImageBytesThenImage => {
+                let oversized = std::env::var("MCP_TEST_OVERSIZED_INVALID_IMAGE") == Ok("1".into());
+                content.push(rmcp::model::ContentBlock::image(
+                    if oversized {
+                        "A".repeat(8 * 1024 * 1024 - 24)
+                    } else {
+                        "bm90IGFuIGltYWdl".to_string()
+                    },
+                    "image/png".to_string(),
+                ));
+                let (mime_type, valid_data_b64) = std::env::var("MCP_TEST_IMAGE_DATA_URL")
+                    .ok()
+                    .and_then(|data_url| parse_data_url(&data_url))
+                    .unwrap_or((mime_type, valid_data_b64));
+                content.push(rmcp::model::ContentBlock::image(valid_data_b64, mime_type));
+            }
+            ImageScenario::MultipleValidImages => {
+                content.push(rmcp::model::ContentBlock::image(
+                    valid_data_b64.clone(),
+                    mime_type.clone(),
+                ));
+                content.push(rmcp::model::ContentBlock::image(valid_data_b64, mime_type));
+            }
+            ImageScenario::ImageThenText => {
+                content.push(rmcp::model::ContentBlock::image(valid_data_b64, mime_type));
+                content.push(rmcp::model::ContentBlock::text(caption));
+            }
+            ImageScenario::TextOnly => {
+                content.push(rmcp::model::ContentBlock::text(caption));
+            }
+        }
+
+        Ok(CallToolResult::success(content))
+    }
+
+    async fn sync_result(args: SyncArgs) -> Result<CallToolResult, McpError> {
+        if let Some(delay) = args.sleep_before_ms
+            && delay > 0
+        {
+            sleep(Duration::from_millis(delay)).await;
+        }
+
+        if let Some(barrier) = args.barrier {
+            wait_on_sync_barrier(barrier).await?;
+        }
+
+        if let Some(delay) = args.sleep_after_ms
+            && delay > 0
+        {
+            sleep(Duration::from_millis(delay)).await;
+        }
+
+        Ok(Self::structured_result(json!({ "result": "ok" })))
+    }
+
+    fn structured_result(value: serde_json::Value) -> CallToolResult {
+        let mut result = CallToolResult::success(Vec::new());
+        result.structured_content = Some(value);
+        result
+    }
+}
+
+async fn wait_on_sync_barrier(args: SyncBarrierArgs) -> Result<(), McpError> {
+    if args.participants == 0 {
+        return Err(McpError::invalid_params(
+            "barrier participants must be greater than zero",
+            None,
+        ));
+    }
+
+    if args.timeout_ms == 0 {
+        return Err(McpError::invalid_params(
+            "barrier timeout must be greater than zero",
+            None,
+        ));
+    }
+
+    let barrier_id = args.id.clone();
+    let barrier = {
+        let mut map = sync_barrier_map().lock().await;
+        match map.entry(barrier_id.clone()) {
+            Entry::Occupied(entry) => {
+                let state = entry.get();
+                if state.participants != args.participants {
+                    let existing = state.participants;
+                    return Err(McpError::invalid_params(
+                        format!(
+                            "barrier {barrier_id} already registered with {existing} participants"
+                        ),
+                        None,
+                    ));
+                }
+                state.barrier.clone()
+            }
+            Entry::Vacant(entry) => {
+                let barrier = Arc::new(Barrier::new(args.participants));
+                entry.insert(SyncBarrierState {
+                    barrier: barrier.clone(),
+                    participants: args.participants,
+                });
+                barrier
+            }
+        }
+    };
+
+    let wait_result =
+        match tokio::time::timeout(Duration::from_millis(args.timeout_ms), barrier.wait()).await {
+            Ok(wait_result) => wait_result,
+            Err(_) => {
+                remove_sync_barrier_if_current(&barrier_id, &barrier).await;
+                return Err(McpError::invalid_params(
+                    "sync barrier wait timed out",
+                    None,
+                ));
+            }
+        };
+
+    if wait_result.is_leader() {
+        remove_sync_barrier_if_current(&barrier_id, &barrier).await;
+    }
+
+    Ok(())
+}
+
+async fn remove_sync_barrier_if_current(barrier_id: &str, barrier: &Arc<Barrier>) {
+    let mut map = sync_barrier_map().lock().await;
+    if let Some(state) = map.get(barrier_id)
+        && Arc::ptr_eq(&state.barrier, barrier)
+    {
+        map.remove(barrier_id);
+    }
+}
+
+fn parse_data_url(url: &str) -> Option<(String, String)> {
+    let rest = url.strip_prefix("data:")?;
+    let (mime_and_opts, data) = rest.split_once(',')?;
+    let (mime, _opts) = mime_and_opts.split_once(';').unwrap_or((mime_and_opts, ""));
+    Some((mime.to_string(), data.to_string()))
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(windows)]
+    if std::env::var_os("MCP_TEST_DESCENDANT_ROLE").is_some() {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        return Ok(());
+    }
+
+    eprintln!("starting rmcp test server");
+    if let Ok(pid_file) = std::env::var("MCP_TEST_PID_FILE") {
+        std::fs::write(pid_file, std::process::id().to_string())?;
+    }
+    #[cfg(windows)]
+    if let Ok(marker_file) = std::env::var("MCP_TEST_BREAKAWAY_DENIED_FILE") {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        const ERROR_ACCESS_DENIED: i32 = 5;
+
+        let escaped = std::process::Command::new(std::env::current_exe()?)
+            .creation_flags(CREATE_BREAKAWAY_FROM_JOB)
+            .env("MCP_TEST_DESCENDANT_ROLE", "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        match escaped {
+            Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED) => {
+                std::fs::write(marker_file, "denied")?;
+            }
+            Err(error) => return Err(error.into()),
+            Ok(mut child) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("MCP descendant unexpectedly escaped its Windows job".into());
+            }
+        }
+    }
+    #[cfg(windows)]
+    if let Ok(pid_file) = std::env::var("MCP_TEST_DESCENDANT_PID_FILE") {
+        let child = std::process::Command::new(std::env::current_exe()?)
+            .env("MCP_TEST_DESCENDANT_ROLE", "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+        std::fs::write(pid_file, child.id().to_string())?;
+    }
+    // Run the server with STDIO transport. If the client disconnects we simply
+    // bubble up the error so the process exits.
+    let service = TestToolServer::new();
+    let running = service.serve(stdio()).await?;
+
+    // Wait for the client to finish interacting with the server.
+    running.waiting().await?;
+    // Drain background tasks to ensure clean shutdown.
+    task::yield_now().await;
+    Ok(())
+}

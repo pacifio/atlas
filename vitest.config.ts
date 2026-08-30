@@ -17,8 +17,8 @@ export default defineConfig({
     // per-file with `// @vitest-environment happy-dom`.
     environment: "node",
     include: ["tests/**/*.test.ts", "src/**/*.test.{ts,tsx}"],
-    // `src-tauri/target` and `crates/*/target` hold vendored dependency
-    // sources; without this Vitest walks 38 GB of build artifacts.
+    // The workspace `target/` holds vendored dependency sources; without
+    // this Vitest walks 38 GB of build artifacts.
     exclude: ["**/node_modules/**", "**/target/**", "**/dist/**"],
   },
 });

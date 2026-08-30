@@ -161,21 +161,30 @@ bun run lint                       # oxlint on src/
 bun run format:check               # oxfmt --check on src/
 bun run typecheck                  # frontend typecheck (app + test code)
 bun run test                       # frontend and cross-cutting tests
-bun run test:rust                  # every standalone Rust crate + src-tauri --lib
-cd src-tauri && cargo check        # Rust typecheck, including every crates/* dependency
+bun run test:rust                  # every Rust crate + src-tauri --lib
+cargo check --workspace            # Rust typecheck: every workspace member + the app
 ```
 
-Rust tests run offline and need no API keys. Each crate under `crates/` is its own standalone package (its own `Cargo.lock`, not a workspace member of `src-tauri`), so tests run from inside the crate's own directory — not with `-p <crate>` from `src-tauri`:
+Rust tests run offline and need no API keys. Every crate under `crates/` except
+`atlas-kb-server` (see below) is a member of the root cargo workspace, sharing
+one `Cargo.lock` and one `target/` at the repo root, so `-p <crate>` works from
+anywhere — as does running from inside the crate's own directory, which is what
+CI does:
 
 ```bash
-cd crates/atlas-cersei && cargo test                      # the native agent
-cd crates/atlas-cersei && cargo test --test tools_eval    # a single file
-cd crates/atlas-acp && cargo run --example smoke          # ACP transport smoke test
+cargo test -p atlas-cersei                                # the native agent
+cargo test -p atlas-cersei --test tools_eval              # a single file
+cd crates/atlas-cersei && cargo test                      # same thing, from the crate
 ```
 
-Run `cargo test` from inside the directory of any crate you touched.
-Run `bun run test:rust` from the repository root to test every standalone crate
-and the Tauri library in one pass; it stops at the first failure.
+Run `bun run test:rust` from the repository root to test every crate and the
+Tauri library in one pass; it stops at the first failure.
+
+The exception, `crates/atlas-kb-server`, is a template binary the
+knowledge-export command compiles on demand at runtime under its own release
+profile. Profiles are workspace-global, so joining the workspace would rebuild
+it under the app's — hence it stays out, keeps its own `Cargo.lock`, and is
+built with `--manifest-path`.
 
 Frontend tests run under Vitest:
 

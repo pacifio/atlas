@@ -1,0 +1,150 @@
+use codex_api::AuthProvider;
+use codex_api::ModelsClient;
+use codex_api::Provider;
+use codex_api::RetryConfig;
+use codex_client::ReqwestTransport;
+use codex_http_client::HttpClientBuilder;
+use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::openai_models::ConfigShellToolType;
+use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::openai_models::ModelVisibility;
+use codex_protocol::openai_models::ModelsResponse;
+use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::openai_models::ReasoningEffortPreset;
+use codex_protocol::openai_models::TruncationPolicyConfig;
+use codex_protocol::openai_models::default_input_modalities;
+use http::HeaderMap;
+use http::Method;
+use std::sync::Arc;
+use wiremock::Mock;
+use wiremock::MockServer;
+use wiremock::ResponseTemplate;
+use wiremock::matchers::method;
+use wiremock::matchers::path;
+
+#[derive(Clone, Default)]
+struct DummyAuth;
+
+impl AuthProvider for DummyAuth {
+    fn add_auth_headers(&self, _headers: &mut HeaderMap) {}
+}
+
+fn provider(base_url: &str) -> Provider {
+    Provider {
+        name: "test".to_string(),
+        base_url: base_url.to_string(),
+        query_params: None,
+        headers: HeaderMap::new(),
+        retry: RetryConfig {
+            max_attempts: 1,
+            base_delay: std::time::Duration::from_millis(1),
+            retry_429: false,
+            retry_5xx: true,
+            retry_transport: true,
+        },
+        stream_idle_timeout: std::time::Duration::from_secs(1),
+    }
+}
+
+#[tokio::test]
+async fn models_client_hits_models_endpoint() {
+    let server = MockServer::start().await;
+    let base_url = format!("{}/api/codex", server.uri());
+
+    let response = ModelsResponse {
+        models: vec![ModelInfo {
+            slug: "gpt-test".to_string(),
+            display_name: "gpt-test".to_string(),
+            description: Some("desc".to_string()),
+            default_reasoning_level: Some(ReasoningEffort::Medium),
+            supported_reasoning_levels: vec![
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::Low,
+                    description: ReasoningEffort::Low.to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::Medium,
+                    description: ReasoningEffort::Medium.to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::High,
+                    description: ReasoningEffort::High.to_string(),
+                },
+            ],
+            shell_type: ConfigShellToolType::ShellCommand,
+            visibility: ModelVisibility::List,
+            supported_in_api: true,
+            priority: 1,
+            additional_speed_tiers: Vec::new(),
+            service_tiers: Vec::new(),
+            default_service_tier: None,
+            upgrade: None,
+            model_messages: None,
+            include_skills_usage_instructions: false,
+            include_plugin_usage_instructions: false,
+            include_apps_usage_instructions: false,
+            supports_reasoning_summary_parameter: true,
+            default_reasoning_summary: ReasoningSummary::Auto,
+            support_verbosity: false,
+            default_verbosity: None,
+            availability_nux: None,
+            apply_patch_tool_type: None,
+            web_search_tool_type: Default::default(),
+            truncation_policy: TruncationPolicyConfig::bytes(/*limit*/ 10_000),
+            supports_image_detail_original: false,
+            context_window: Some(272_000),
+            max_context_window: None,
+            auto_compact_token_limit: None,
+            comp_hash: None,
+            effective_context_window_percent: 95,
+            experimental_supported_tools: Vec::new(),
+            input_modalities: default_input_modalities(),
+            used_fallback_model_metadata: false,
+            supports_search_tool: false,
+            use_responses_lite: false,
+            node_repl_auto_review_required: true,
+            node_repl_disabled: true,
+            auto_review_model_override: None,
+            model_specialty: None,
+            tool_mode: None,
+            multi_agent_version: None,
+        }],
+    };
+
+    Mock::given(method("GET"))
+        .and(path("/api/codex/models"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(&response),
+        )
+        .mount(&server)
+        .await;
+
+    let transport = ReqwestTransport::from_http_client(
+        HttpClientBuilder::new()
+            .build_direct()
+            .expect("test HTTP client should build"),
+    );
+    let provider = provider(&base_url);
+    let request_url = ModelsClient::<ReqwestTransport>::request_url(&provider, "0.1.0");
+    let client = ModelsClient::new(transport, provider, Arc::new(DummyAuth));
+
+    let (models, _) = client
+        .list_models(request_url, HeaderMap::new())
+        .await
+        .expect("models request should succeed");
+
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].slug, "gpt-test");
+    assert!(models[0].node_repl_auto_review_required);
+    assert!(models[0].node_repl_disabled);
+
+    let received = server
+        .received_requests()
+        .await
+        .expect("should capture requests");
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0].method, Method::GET.as_str());
+    assert_eq!(received[0].url.path(), "/api/codex/models");
+}

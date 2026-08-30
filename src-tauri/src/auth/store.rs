@@ -6,16 +6,31 @@
 //!
 //! ## Why not the OS keychain
 //!
-//! `docs/api/atlas-auth-api.md` §12.5 says to put this in the keychain. We
-//! knowingly do not, for the same reason `commands::byok` does not: on macOS an
-//! unsigned, frequently-rebuilt binary prompts for keychain permission on
-//! *every* access. `tauri.conf.json` sets no signing identity, and the
-//! auto-updater replaces the binary on every release — which invalidates the
-//! keychain ACL and would re-prompt every user after every update. Keychain is
-//! therefore *worse* in release than in development here.
+//! `atlas-auth-api.md` §12.5 says to put this in the keychain. We knowingly do
+//! not, for the same reason `commands::byok` does not: on macOS an unsigned,
+//! frequently-rebuilt binary prompts for keychain permission on *every* access.
+//! `tauri.conf.json` sets no signing identity, and the auto-updater replaces the
+//! binary on every release — which invalidates the keychain ACL and would
+//! re-prompt every user after every update. Keychain is therefore *worse* in
+//! release than in development here.
+//!
+//! To be precise about the failure, because it is not the obvious one: the
+//! keychain item is never lost and stays readable. A keychain ACL binds to the
+//! *code signature*, so with no signing identity it pins to that exact binary;
+//! after an update macOS sees a different application asking for another app's
+//! secret. What dies is the **silent** read — every user gets a login-password
+//! dialog after every release. Training users to expect that dialog is itself a
+//! hazard in an auth flow.
 //!
 //! Revisit once a real Developer ID signing identity is configured; that also
-//! fixes the auto-update ACL problem.
+//! fixes the auto-update ACL problem, and makes the keychain strictly better.
+//!
+//! **Ratified as a recorded exception (#41, 2026-08-28)** rather than left as a
+//! silent deviation: the port spec's D14 carries the decision, and the ticket's
+//! "no credential outside secure storage" criterion was reworded to match. The
+//! cited §12.5 is in `atlas-auth-api.md`, which is **not in this repo** — the
+//! in-repo `docs/reference/atlas-ai-api.md` is the AI gateway doc and its §12
+//! ends at 12.3, so this citation cannot be followed here.
 //!
 //! The access JWT is never written here — it is minted on demand and held in
 //! memory only.

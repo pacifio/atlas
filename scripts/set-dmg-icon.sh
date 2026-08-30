@@ -16,7 +16,7 @@
 #   scripts/set-dmg-icon.sh [path/to/icon.icns] [path/to/target.dmg]
 #
 # With no args: uses src-tauri/icons/icon.icns and the most recently built
-# .dmg under src-tauri/target/**/release/bundle/dmg/.
+# .dmg under target/**/release/bundle/dmg/ (the workspace target dir).
 # ============================================================================
 
 set -euo pipefail
@@ -27,7 +27,7 @@ icon="${1:-${root}/src-tauri/icons/icon.icns}"
 if [[ -n "${2:-}" ]]; then
   dmg="$2"
 else
-  dmg="$(find "${root}/src-tauri/target" -path "*/release/bundle/dmg/*.dmg" -type f -print0 2>/dev/null \
+  dmg="$(find "${root}/target" -path "*/release/bundle/dmg/*.dmg" -type f -print0 2>/dev/null \
     | xargs -0 ls -t 2>/dev/null | head -n1 || true)"
 fi
 

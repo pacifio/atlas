@@ -218,17 +218,18 @@ if [[ "${UNIVERSAL}" == "1" ]]; then
   # @tauri-apps/cli 2.10.x where cargo's metadata pass sees the synthetic
   # target before tauri intercepts.
   log "Universal build — arm64 first"
-  rm -rf "src-tauri/target/aarch64-apple-darwin/release/bundle"
+  # Cargo's target dir is the workspace root's `target/` since #38.
+  rm -rf "target/aarch64-apple-darwin/release/bundle"
   bun run tauri build --target aarch64-apple-darwin
 
   log "Universal build — x86_64 next"
-  rm -rf "src-tauri/target/x86_64-apple-darwin/release/bundle"
+  rm -rf "target/x86_64-apple-darwin/release/bundle"
   bun run tauri build --target x86_64-apple-darwin
 
   log "lipo'ing into a fat .app"
-  ARM_APP="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Atlas.app"
-  INTEL_APP="src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Atlas.app"
-  UNI_DIR="src-tauri/target/universal-apple-darwin/release/bundle/macos"
+  ARM_APP="target/aarch64-apple-darwin/release/bundle/macos/Atlas.app"
+  INTEL_APP="target/x86_64-apple-darwin/release/bundle/macos/Atlas.app"
+  UNI_DIR="target/universal-apple-darwin/release/bundle/macos"
   mkdir -p "${UNI_DIR}"
   rm -rf "${UNI_DIR}/Atlas.app"
   cp -R "${ARM_APP}" "${UNI_DIR}/Atlas.app"
@@ -248,7 +249,7 @@ if [[ "${UNIVERSAL}" == "1" ]]; then
   # Re-bundle a DMG against the lipo'd .app. We use `create-dmg` if it's
   # installed, otherwise hdiutil. Tauri's DMG packager won't re-run on a
   # bundle we lipo'd by hand.
-  UNI_DMG_DIR="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
+  UNI_DMG_DIR="target/universal-apple-darwin/release/bundle/dmg"
   mkdir -p "${UNI_DMG_DIR}"
   DMG_OUT="${UNI_DMG_DIR}/Atlas_universal.dmg"
   rm -f "${DMG_OUT}"
@@ -280,7 +281,7 @@ else
   # architecture starts, so a failure names the arch that failed.
   build_signed_dmg() {
     local target="$1"
-    local bundle_root="src-tauri/target/${target}/release/bundle"
+    local bundle_root="target/${target}/release/bundle"
 
     log "Cleaning ${bundle_root}"
     rm -rf "${bundle_root}"

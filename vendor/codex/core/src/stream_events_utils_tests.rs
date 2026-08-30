@@ -1,0 +1,408 @@
+use super::HandleOutputCtx;
+use super::TurnItemContributorPolicy;
+use super::completed_item_defers_mailbox_delivery_to_next_turn;
+use super::finalize_non_tool_response_item;
+use super::handle_non_tool_response_item;
+use super::handle_output_item_done;
+use super::last_assistant_message_from_item;
+use super::response_item_may_include_external_context;
+use crate::session::step_context::StepContext;
+use crate::session::tests::make_session_and_context;
+use crate::session::tests::tool_registry_for_test_step;
+use crate::tools::ToolRouter;
+use crate::tools::parallel::ToolCallRuntime;
+use crate::turn_diff_tracker::TurnDiffTracker;
+use codex_extension_api::ExtensionData;
+use codex_extension_api::TurnItemContributor;
+use codex_protocol::ResponseItemId;
+use codex_protocol::items::AgentMessageContent;
+use codex_protocol::items::TurnItem;
+use codex_protocol::memory_citation::MemoryCitation;
+use codex_protocol::models::ContentItem;
+use codex_protocol::models::FunctionCallOutputPayload;
+use codex_protocol::models::LocalShellAction;
+use codex_protocol::models::LocalShellExecAction;
+use codex_protocol::models::LocalShellStatus;
+use codex_protocol::models::MessagePhase;
+use codex_protocol::models::ResponseItem;
+use pretty_assertions::assert_eq;
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
+
+fn assistant_output_text(text: &str) -> ResponseItem {
+    assistant_output_text_with_phase(text, /*phase*/ None)
+}
+
+fn assistant_output_text_with_phase(text: &str, phase: Option<MessagePhase>) -> ResponseItem {
+    ResponseItem::Message {
+        id: Some(ResponseItemId::with_suffix("msg", "1")),
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+            text: text.to_string(),
+        }],
+        phase,
+        internal_chat_message_metadata_passthrough: None,
+    }
+}
+
+#[test]
+fn external_context_pollution_items_include_web_search_and_tool_search() {
+    let polluting_items = [
+        ResponseItem::WebSearchCall {
+            id: None,
+            status: Some("completed".to_string()),
+            action: None,
+            internal_chat_message_metadata_passthrough: None,
+        },
+        ResponseItem::ToolSearchCall {
+            id: None,
+            call_id: Some("search-1".to_string()),
+            status: None,
+            execution: "client".to_string(),
+            arguments: serde_json::json!({"query": "calendar"}),
+            internal_chat_message_metadata_passthrough: None,
+        },
+        ResponseItem::ToolSearchOutput {
+            id: None,
+            call_id: Some("search-1".to_string()),
+            status: "completed".to_string(),
+            execution: "client".to_string(),
+            tools: Vec::new(),
+            internal_chat_message_metadata_passthrough: None,
+        },
+    ];
+
+    assert!(
+        polluting_items
+            .iter()
+            .all(response_item_may_include_external_context)
+    );
+}
+
+#[test]
+fn external_context_pollution_items_exclude_local_tool_calls() {
+    let non_polluting_items = [
+        ResponseItem::LocalShellCall {
+            id: None,
+            call_id: Some("shell-1".to_string()),
+            status: LocalShellStatus::Completed,
+            action: LocalShellAction::Exec(LocalShellExecAction {
+                command: vec!["cat".to_string(), "README.md".to_string()],
+                timeout_ms: None,
+                working_directory: None,
+                env: None,
+                user: None,
+            }),
+            internal_chat_message_metadata_passthrough: None,
+        },
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "shell".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: "call-1".to_string(),
+            encrypted_function_args: None,
+            internal_chat_message_metadata_passthrough: None,
+        },
+        ResponseItem::FunctionCallOutput {
+            id: None,
+            call_id: "call-1".to_string(),
+            output: FunctionCallOutputPayload::from_text("ok".to_string()),
+            internal_chat_message_metadata_passthrough: None,
+        },
+        ResponseItem::CustomToolCall {
+            id: None,
+            status: None,
+            call_id: "custom-1".to_string(),
+            name: "apply_patch".to_string(),
+            namespace: None,
+            input: "*** Begin Patch\n*** End Patch\n".to_string(),
+            internal_chat_message_metadata_passthrough: None,
+        },
+        ResponseItem::CustomToolCallOutput {
+            id: None,
+            call_id: "custom-1".to_string(),
+            name: Some("apply_patch".to_string()),
+            output: FunctionCallOutputPayload::from_text("ok".to_string()),
+            internal_chat_message_metadata_passthrough: None,
+        },
+        assistant_output_text("plain assistant text"),
+    ];
+
+    assert!(
+        !non_polluting_items
+            .iter()
+            .any(response_item_may_include_external_context)
+    );
+}
+
+#[tokio::test]
+async fn handle_non_tool_response_item_strips_citations_from_assistant_message() {
+    let (session, _) = make_session_and_context().await;
+    let item = assistant_output_text(
+        "hello<oai-mem-citation><citation_entries>\nMEMORY.md:1-2|note=[x]\n</citation_entries>\n<rollout_ids>\n019cc2ea-1dff-7902-8d40-c8f6e5d83cc4\n</rollout_ids></oai-mem-citation> world",
+    );
+
+    let turn_item = handle_non_tool_response_item(
+        &session,
+        TurnItemContributorPolicy::Skip,
+        &item,
+        /*plan_mode*/ false,
+    )
+    .await
+    .expect("assistant message should parse");
+
+    let TurnItem::AgentMessage(agent_message) = turn_item else {
+        panic!("expected agent message");
+    };
+    let text = agent_message
+        .content
+        .iter()
+        .map(|entry| match entry {
+            codex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
+        })
+        .collect::<String>();
+    assert_eq!(text, "hello world");
+    let memory_citation = agent_message
+        .memory_citation
+        .expect("memory citation should be parsed");
+    assert_eq!(memory_citation.entries.len(), 1);
+    assert_eq!(memory_citation.entries[0].path, "MEMORY.md");
+    assert_eq!(
+        memory_citation.rollout_ids,
+        vec!["019cc2ea-1dff-7902-8d40-c8f6e5d83cc4".to_string()]
+    );
+}
+
+struct TestTurnItemContributor;
+
+#[derive(Debug)]
+struct TurnItemContributorRan;
+
+impl TurnItemContributor for TestTurnItemContributor {
+    fn contribute<'a>(
+        &'a self,
+        _thread_store: &'a ExtensionData,
+        turn_store: &'a ExtensionData,
+        item: &'a mut TurnItem,
+    ) -> codex_extension_api::ExtensionFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            turn_store.insert(TurnItemContributorRan);
+            if let TurnItem::AgentMessage(agent_message) = item {
+                agent_message.memory_citation = Some(MemoryCitation {
+                    entries: Vec::new(),
+                    rollout_ids: Vec::new(),
+                });
+            }
+            Ok(())
+        })
+    }
+}
+
+struct RewriteAgentMessageContributor;
+
+impl TurnItemContributor for RewriteAgentMessageContributor {
+    fn contribute<'a>(
+        &'a self,
+        _thread_store: &'a ExtensionData,
+        _turn_store: &'a ExtensionData,
+        item: &'a mut TurnItem,
+    ) -> codex_extension_api::ExtensionFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            if let TurnItem::AgentMessage(agent_message) = item {
+                agent_message.content = vec![AgentMessageContent::Text {
+                    text: "contributed assistant text".to_string(),
+                }];
+            }
+            Ok(())
+        })
+    }
+}
+
+#[tokio::test]
+async fn handle_non_tool_response_item_runs_turn_item_contributors_only_when_requested() {
+    let (mut session, turn_context) = make_session_and_context().await;
+    let mut builder = codex_extension_api::ExtensionRegistryBuilder::new();
+    builder.turn_item_contributor(Arc::new(TestTurnItemContributor));
+    session.services.extensions = Arc::new(builder.build());
+    let turn_store = ExtensionData::new(turn_context.sub_id.clone());
+    let item = assistant_output_text(
+        "hello<oai-mem-citation>ignored by memory parser</oai-mem-citation> world",
+    );
+
+    let provisional_turn_item = handle_non_tool_response_item(
+        &session,
+        TurnItemContributorPolicy::Skip,
+        &item,
+        /*plan_mode*/ false,
+    )
+    .await
+    .expect("assistant message should parse");
+
+    assert!(turn_store.get::<TurnItemContributorRan>().is_none());
+    let TurnItem::AgentMessage(provisional_agent_message) = provisional_turn_item else {
+        panic!("expected agent message");
+    };
+    assert_eq!(provisional_agent_message.memory_citation, None);
+
+    let turn_item = handle_non_tool_response_item(
+        &session,
+        TurnItemContributorPolicy::Run(&turn_store),
+        &item,
+        /*plan_mode*/ false,
+    )
+    .await
+    .expect("assistant message should parse");
+
+    assert!(turn_store.get::<TurnItemContributorRan>().is_some());
+    let TurnItem::AgentMessage(agent_message) = turn_item else {
+        panic!("expected agent message");
+    };
+    assert!(agent_message.memory_citation.is_some());
+    let text = agent_message
+        .content
+        .iter()
+        .map(|entry| match entry {
+            codex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
+        })
+        .collect::<String>();
+    assert_eq!(text, "hello world");
+}
+
+#[tokio::test]
+async fn handle_output_item_done_returns_contributed_last_agent_message() {
+    let (mut session, turn_context) = make_session_and_context().await;
+    let mut builder = codex_extension_api::ExtensionRegistryBuilder::new();
+    builder.turn_item_contributor(Arc::new(RewriteAgentMessageContributor));
+    session.services.extensions = Arc::new(builder.build());
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+    let step_context = StepContext::for_test(Arc::clone(&turn_context));
+    let (registry, hosted_specs) = tool_registry_for_test_step(step_context.as_ref());
+    let router = Arc::new(ToolRouter::from_registry(
+        step_context.turn.as_ref(),
+        registry,
+        hosted_specs,
+        &Default::default(),
+    ));
+    let step_context = step_context.with_tool_router_for_test(router);
+    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+    let tool_runtime = ToolCallRuntime::new(Arc::clone(&session), step_context, tracker);
+    let item = assistant_output_text("original assistant text");
+    let mut ctx = HandleOutputCtx {
+        sess: session,
+        turn_context: Arc::clone(&turn_context),
+        turn_store: Arc::new(ExtensionData::new(turn_context.sub_id.clone())),
+        tool_runtime,
+        cancellation_token: CancellationToken::new(),
+    };
+
+    let output = handle_output_item_done(&mut ctx, item, /*previously_active_item*/ None)
+        .await
+        .expect("assistant message should complete");
+
+    assert_eq!(
+        output.last_agent_message.as_deref(),
+        Some("contributed assistant text")
+    );
+}
+
+#[tokio::test]
+async fn finalized_turn_item_defers_mailbox_for_contributed_visible_text() {
+    let (mut session, turn_context) = make_session_and_context().await;
+    let mut builder = codex_extension_api::ExtensionRegistryBuilder::new();
+    builder.turn_item_contributor(Arc::new(RewriteAgentMessageContributor));
+    session.services.extensions = Arc::new(builder.build());
+    let turn_store = ExtensionData::new(turn_context.sub_id.clone());
+    let item = assistant_output_text("<oai-mem-citation>hidden only</oai-mem-citation>");
+
+    let finalized = finalize_non_tool_response_item(
+        &session,
+        TurnItemContributorPolicy::Run(&turn_store),
+        &item,
+        /*plan_mode*/ false,
+    )
+    .await
+    .expect("assistant message should parse");
+
+    assert_eq!(
+        finalized.facts.last_agent_message.as_deref(),
+        Some("contributed assistant text")
+    );
+    assert!(finalized.facts.defers_mailbox_delivery_to_next_turn);
+}
+
+#[tokio::test]
+async fn finalized_turn_item_keeps_mailbox_open_for_commentary_text() {
+    let (mut session, turn_context) = make_session_and_context().await;
+    let mut builder = codex_extension_api::ExtensionRegistryBuilder::new();
+    builder.turn_item_contributor(Arc::new(RewriteAgentMessageContributor));
+    session.services.extensions = Arc::new(builder.build());
+    let turn_store = ExtensionData::new(turn_context.sub_id.clone());
+    let item = assistant_output_text_with_phase("still working", Some(MessagePhase::Commentary));
+
+    let finalized = finalize_non_tool_response_item(
+        &session,
+        TurnItemContributorPolicy::Run(&turn_store),
+        &item,
+        /*plan_mode*/ false,
+    )
+    .await
+    .expect("assistant message should parse");
+
+    assert_eq!(
+        finalized.facts.last_agent_message.as_deref(),
+        Some("contributed assistant text")
+    );
+    assert!(!finalized.facts.defers_mailbox_delivery_to_next_turn);
+}
+
+#[test]
+fn last_assistant_message_from_item_strips_citations_and_plan_blocks() {
+    let item = assistant_output_text(
+        "before<oai-mem-citation>doc1</oai-mem-citation>\n<proposed_plan>\n- x\n</proposed_plan>\nafter",
+    );
+
+    let message = last_assistant_message_from_item(&item, /*plan_mode*/ true)
+        .expect("assistant text should remain after stripping");
+
+    assert_eq!(message, "before\nafter");
+}
+
+#[test]
+fn last_assistant_message_from_item_returns_none_for_citation_only_message() {
+    let item = assistant_output_text("<oai-mem-citation>doc1</oai-mem-citation>");
+
+    assert_eq!(
+        last_assistant_message_from_item(&item, /*plan_mode*/ false),
+        None
+    );
+}
+
+#[test]
+fn last_assistant_message_from_item_returns_none_for_plan_only_hidden_message() {
+    let item = assistant_output_text("<proposed_plan>\n- x\n</proposed_plan>");
+
+    assert_eq!(
+        last_assistant_message_from_item(&item, /*plan_mode*/ true),
+        None
+    );
+}
+
+#[test]
+fn completed_item_defers_mailbox_delivery_for_unknown_phase_messages() {
+    let item = assistant_output_text("final answer");
+
+    assert!(completed_item_defers_mailbox_delivery_to_next_turn(
+        &item, /*plan_mode*/ false,
+    ));
+}
+
+#[test]
+fn completed_item_keeps_mailbox_delivery_open_for_commentary_messages() {
+    let item = assistant_output_text_with_phase("still working", Some(MessagePhase::Commentary));
+
+    assert!(!completed_item_defers_mailbox_delivery_to_next_turn(
+        &item, /*plan_mode*/ false,
+    ));
+}

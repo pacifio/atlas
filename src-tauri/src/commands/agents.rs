@@ -351,6 +351,21 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for TranscriptMiddleware {
                     role,
                     &message.content,
                     message.model.as_deref(),
+                    Some(&message.id),
+                    chrono::Utc::now().to_rfc3339(),
+                );
+            }
+            // The rest of a streaming reply. `MessageAppended` carries only a
+            // run's FIRST fragment; ignoring the chunks — as this arm's absence
+            // did — recorded every assistant reply cut off after a few words.
+            // Invisible for agents whose own `session/load` replays history;
+            // the whole visible transcript for the native agent, which resumes
+            // without history and repaints from this record.
+            SessionDelta::TextChunk { message_id, delta } => {
+                state.note_text_chunk(
+                    &envelope.session_id,
+                    message_id,
+                    delta,
                     chrono::Utc::now().to_rfc3339(),
                 );
             }
@@ -681,21 +696,74 @@ pub fn install_manager(app: &AppHandle) {
 
     // Wire the native agent's `search_memory` tool to Atlas's on-device memory
     // retrieval, mapping the retrieved docs into the agent's shape.
-    let app_for_search = app.clone();
-    atlas_cersei::register_memory_search(Arc::new(move |cwd, query, k| {
-        let app = app_for_search.clone();
-        Box::pin(async move {
-            crate::commands::memory_retrieve::retrieve(&app, &cwd, &query, k)
-                .await
-                .into_iter()
-                .map(|d| atlas_cersei::MemDoc {
-                    title: d.title,
-                    source: d.source,
-                    text: d.text,
-                })
-                .collect()
-        })
+    // The ported engine's `search_memory`, wired to the same retrieval (#48,
+    // acceptance bar item 11). Registered rather than passed in because these
+    // types are behind a cargo feature, and a constructor parameter would
+    // `cfg`-gate `AgentHost::new`'s signature and every caller of it.
+    // The D10 token provider (#51): the native agent authenticates with the
+    // user's Atlas account, minting a short-TTL access JWT per request.
+    //
+    // Registered for the same reason `search_memory` is, and read at *connect*
+    // time rather than construction — `AgentHost` is built before the auth
+    // state exists, so a source resolved in its constructor would always be
+    // absent and every turn would go out with no credential.
+    //
+    // No cfg gate. This block used to sit behind `ported-engine`, and when #54
+    // deleted that feature the gate did not fail the build — a cfg on a feature
+    // that no longer exists silently compiles to NOTHING, so the registration
+    // vanished and the first live turn went out with no Authorization header at
+    // all ("Missing bearer token", straight from the gateway). Cargo does warn
+    // (`unexpected_cfgs`), but only as a warning.
+    //
+    // The handle is captured and the auth state resolved **per mint**, not
+    // here: `install_manager` runs at line ~176 of setup and `AuthState` is
+    // managed at ~193, so an eager `app.state::<AuthState>()` panics the app
+    // at launch — `state() called before manage()`. The old feature gate hid
+    // exactly this ordering bug by never letting the line run.
+    atlas_native_agent::engine::auth::register_token_source(Arc::new(AccountTokenSource {
+        app: app.clone(),
     }));
+
+    // The paying org, on every gateway request. Resolved from the live auth
+    // snapshot per request rather than captured once: the user can switch org
+    // mid-session, and the next message must bill — and be admitted by — the
+    // org they switched to. Without this header the gateway attributes every
+    // request to the caller *personally*, and an account whose AI grant lives
+    // on its organisation is refused `403 no_entitlement` while that org sits
+    // fully entitled.
+    {
+        let app_for_org = app.clone();
+        atlas_native_agent::engine::set_org_source(Arc::new(move || {
+            // `try_state`, lazily: this closure can in principle run before
+            // `AuthState` is managed (same launch-ordering hazard as the token
+            // source above), and "no org yet" is the honest answer then —
+            // personal attribution, never a panic.
+            let state = app_for_org.try_state::<crate::commands::auth::AuthState>()?;
+            match state.core().snapshot() {
+                crate::auth::AuthSnapshot::SignedIn { active_org_id, .. } => active_org_id,
+                _ => None,
+            }
+        }));
+    }
+
+    {
+        let app_for_engine = app.clone();
+        atlas_native_agent::engine::memory::register_search(Arc::new(move |cwd, query, k| {
+            let app = app_for_engine.clone();
+            Box::pin(async move {
+                crate::commands::memory_retrieve::retrieve(&app, &cwd, &query, k)
+                    .await
+                    .into_iter()
+                    .map(|d| atlas_native_agent::engine::memory::MemDoc {
+                        title: d.title,
+                        source: d.source,
+                        text: d.text,
+                    })
+                    .collect()
+            })
+        }));
+    }
+
 }
 
 // ── Commands ────────────────────────────────────────────────────────────────
@@ -818,20 +886,19 @@ pub fn agents_respond_elicitation(
         .map_err(|e| e.to_string())
 }
 
-/// Branch a session from its current state (ACP `session/fork`).
+/// Branch a session from its current state.
 ///
-/// Always `null` on the ported seam: Zed does not implement `session/fork`, so
-/// the trait has no method for it and there is nothing to delegate to. The
-/// command stays registered and keeps its "this agent cannot fork" answer so
-/// the frontend's capability check (`supportsFork`, likewise false) is what
-/// hides the affordance, rather than an error the user has to read.
+/// Real for the native agent — the engine's `thread/fork` copies the stored
+/// conversation into a new thread, and the frontend opens the returned id
+/// through the normal reopen path (which replays the forked history). Still
+/// `null` for every ACP agent: Zed does not implement `session/fork`, the
+/// trait has no method for it, and `supportsFork` hides the affordance there.
 #[tauri::command]
 pub async fn agents_fork_session(
     key: SessionKey,
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<Option<String>, String> {
-    let _ = (key, host);
-    Ok(None)
+    host.fork_session(&key).await.map_err(|e| e.to_string())
 }
 
 /// Set any agent-advertised config option.
@@ -1385,14 +1452,10 @@ pub fn agents_set_effort(
     host.set_effort(&key, effort).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn agents_set_compress(
-    key: SessionKey,
-    on: bool,
-    host: State<'_, Arc<AgentHost>>,
-) -> Result<(), String> {
-    host.set_compress(&key, on).map_err(|e| e.to_string())
-}
+// `agents_set_compress` is gone (#54). Tool-output compression was a knob on
+// the Cersei runtime's RTK compressor and the engine has no counterpart — a
+// named casualty (D8). Removed rather than stubbed, so the toggle disappears
+// instead of sitting there doing nothing.
 
 #[tauri::command]
 pub fn agents_respond_permission(
@@ -1785,5 +1848,44 @@ mod auth_url_tests {
             first_url("https://first.example.com and https://second.example.com").as_deref(),
             Some("https://first.example.com")
         );
+    }
+}
+
+/// The native agent's credential: an Atlas access JWT from the signed-in
+/// account (#51, spec D10/D14).
+///
+/// A thin adapter and deliberately so — the caching, the proactive re-mint at
+/// `exp − 60s` and the refresh-once-on-401 all live in the seam's
+/// `AtlasExternalAuth`, which is where the engine can drive them. This only has
+/// to answer "mint me one now".
+///
+/// `mint_access_token` is a bare `GET /token` with no cache of its own, which
+/// is *correct* for its other callers: they mint at the point of use, so their
+/// token is never near expiry. It is the engine's long-lived session, holding a
+/// credential across a multi-minute turn, that needs the caching layer above.
+struct AccountTokenSource {
+    /// The app handle, not the auth core: this source is registered during
+    /// setup, *before* `AuthState` is managed, so the core cannot be captured
+    /// at construction. It is resolved per mint — by which time a turn is in
+    /// flight and the state has long existed.
+    app: AppHandle,
+}
+
+impl atlas_native_agent::engine::auth::AtlasTokenSource for AccountTokenSource {
+    fn mint(&self) -> atlas_native_agent::engine::auth::ExternalAuthFuture<'_, String> {
+        Box::pin(async move {
+            let Some(state) = self.app.try_state::<crate::commands::auth::AuthState>() else {
+                return Err(std::io::Error::other(
+                    "Atlas auth state is not ready yet — try again in a moment",
+                ));
+            };
+            state.core().mint_access_token().await.map_err(|err| {
+                // The engine's trait speaks `io::Error`, so the reason has to
+                // survive as text or the user is told only that auth failed.
+                // Signed-out is the common case and reads very differently from
+                // a rejected credential, so it keeps its own words.
+                std::io::Error::other(format!("Atlas account token unavailable: {err:?}"))
+            })
+        })
     }
 }

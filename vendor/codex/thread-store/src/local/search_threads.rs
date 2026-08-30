@@ -1,0 +1,237 @@
+use std::collections::HashMap;
+
+use codex_install_context::InstallContext;
+use codex_rollout::RolloutConfig;
+use codex_rollout::first_rollout_content_match_snippet;
+use codex_rollout::parse_cursor;
+use codex_rollout::search_rollout_matches;
+
+use super::LocalThreadStore;
+use super::helpers::resolve_thread_names;
+use super::helpers::resolve_thread_section_metadata;
+use super::helpers::set_thread_name;
+use super::helpers::stored_thread_from_rollout_item;
+use super::list_threads::list_rollout_threads;
+use crate::ListThreadsParams;
+use crate::SearchThreadsParams;
+use crate::SortDirection;
+use crate::StoredThreadSearchResult;
+use crate::ThreadSearchPage;
+use crate::ThreadSortKey;
+use crate::ThreadStoreError;
+use crate::ThreadStoreResult;
+
+#[cfg(test)]
+#[path = "search_threads_tests.rs"]
+mod tests;
+
+struct ThreadSearchItem {
+    item: codex_rollout::ThreadItem,
+    snippet: String,
+}
+
+pub(super) async fn search_threads(
+    store: &LocalThreadStore,
+    params: SearchThreadsParams,
+) -> ThreadStoreResult<ThreadSearchPage> {
+    let search_term = params.search_term.as_str();
+    if search_term.is_empty() {
+        return Err(ThreadStoreError::InvalidRequest {
+            message: "thread/search requires search_term".to_string(),
+        });
+    }
+    let cursor = params
+        .cursor
+        .as_deref()
+        .map(|cursor| {
+            parse_cursor(cursor).ok_or_else(|| ThreadStoreError::InvalidRequest {
+                message: format!("invalid cursor: {cursor}"),
+            })
+        })
+        .transpose()?;
+    let sort_key = match params.sort_key {
+        ThreadSortKey::CreatedAt => codex_rollout::ThreadSortKey::CreatedAt,
+        ThreadSortKey::UpdatedAt => codex_rollout::ThreadSortKey::UpdatedAt,
+        ThreadSortKey::RecencyAt => codex_rollout::ThreadSortKey::RecencyAt,
+        ThreadSortKey::SectionPosition => {
+            return Err(ThreadStoreError::InvalidRequest {
+                message: "section-position sorting requires a section filter".to_owned(),
+            });
+        }
+    };
+    let sort_direction = match params.sort_direction {
+        SortDirection::Asc => codex_rollout::SortDirection::Asc,
+        SortDirection::Desc => codex_rollout::SortDirection::Desc,
+    };
+    let state_db = store.state_db().await;
+    let rollout_config = RolloutConfig {
+        codex_home: store.config.codex_home.clone(),
+        sqlite: store.config.sqlite.clone(),
+        cwd: store.config.codex_home.clone(),
+        model_provider_id: store.config.default_model_provider_id.clone(),
+        generate_memories: false,
+    };
+    let rg_command = InstallContext::current().rg_command();
+    let matching_rollouts = search_rollout_matches(
+        rg_command.as_path(),
+        store.config.codex_home.as_path(),
+        params.archived,
+        search_term,
+    )
+    .await
+    .map_err(|err| ThreadStoreError::Internal {
+        message: format!("failed to search rollout contents: {err}"),
+    })?;
+    if matching_rollouts.is_empty() {
+        return Ok(ThreadSearchPage {
+            items: Vec::new(),
+            next_cursor: None,
+        });
+    }
+    let mut matching_items = Vec::new();
+    let mut page_cursor = cursor;
+    let scan_page_size = params.page_size.saturating_mul(8).clamp(256, 2048);
+    let scan_params = ListThreadsParams {
+        page_size: scan_page_size,
+        cursor: None,
+        sort_key: params.sort_key,
+        sort_direction: params.sort_direction,
+        allowed_sources: params.allowed_sources.clone(),
+        model_providers: None,
+        cwd_filters: None,
+        section: None,
+        archived: params.archived,
+        search_term: None,
+        relation_filter: None,
+        use_state_db_only: state_db.is_some(),
+    };
+    let mut remaining_rollouts = matching_rollouts;
+
+    loop {
+        let page = list_rollout_threads(
+            state_db.clone(),
+            &rollout_config,
+            store.config.default_model_provider_id.as_str(),
+            &scan_params,
+            page_cursor.as_ref(),
+            sort_key,
+            sort_direction,
+        )
+        .await?;
+        for item in page.items {
+            let logical_path = codex_rollout::plain_rollout_path(item.path.as_path());
+            let Some(snippet) = (match remaining_rollouts.remove(logical_path.as_path()) {
+                Some(Some(snippet)) => Some(snippet),
+                Some(None) => first_rollout_content_match_snippet(item.path.as_path(), search_term)
+                    .await
+                    .map_err(|err| ThreadStoreError::Internal {
+                        message: format!("failed to read rollout search match: {err}"),
+                    })?,
+                None => None,
+            }) else {
+                continue;
+            };
+            matching_items.push(ThreadSearchItem { item, snippet });
+            if matching_items.len() > params.page_size {
+                break;
+            }
+        }
+        page_cursor = page.next_cursor;
+        if matching_items.len() > params.page_size
+            || remaining_rollouts.is_empty()
+            || page_cursor.is_none()
+        {
+            break;
+        }
+    }
+
+    let more_matches_available = matching_items.len() > params.page_size;
+    matching_items.truncate(params.page_size);
+    let next_cursor = if more_matches_available {
+        matching_items
+            .last()
+            .and_then(|item| cursor_from_thread_search_item(item, params.sort_key))
+    } else {
+        None
+    }
+    .as_ref()
+    .and_then(|cursor| serde_json::to_value(cursor).ok())
+    .and_then(|value| value.as_str().map(str::to_owned));
+
+    let mut items = matching_items
+        .into_iter()
+        .filter_map(|item| {
+            stored_thread_from_rollout_item(
+                item.item,
+                params.archived,
+                store.config.default_model_provider_id.as_str(),
+            )
+            .map(|thread| StoredThreadSearchResult {
+                thread,
+                snippet: item.snippet,
+            })
+        })
+        .collect::<Vec<_>>();
+    if let Some(state_db) = state_db {
+        let sectioned_thread_ids = items
+            .iter()
+            .filter(|item| item.thread.section.is_some())
+            .map(|item| item.thread.thread_id)
+            .collect::<Vec<_>>();
+        let mut section_metadata =
+            resolve_thread_section_metadata(state_db.as_ref(), &sectioned_thread_ids).await;
+        for item in &mut items {
+            if let Some((section_position, section_entered_at)) =
+                section_metadata.remove(&item.thread.thread_id)
+            {
+                item.thread.section_position = section_position;
+                item.thread.section_entered_at = section_entered_at;
+            }
+        }
+    }
+    set_thread_search_result_names(store, &mut items).await;
+
+    Ok(ThreadSearchPage { items, next_cursor })
+}
+
+fn cursor_from_thread_search_item(
+    item: &ThreadSearchItem,
+    sort_key: ThreadSortKey,
+) -> Option<codex_rollout::Cursor> {
+    let timestamp = match sort_key {
+        ThreadSortKey::CreatedAt => item.item.created_at.as_deref()?,
+        ThreadSortKey::UpdatedAt => item
+            .item
+            .updated_at
+            .as_deref()
+            .or(item.item.created_at.as_deref())?,
+        ThreadSortKey::RecencyAt => item
+            .item
+            .recency_at
+            .as_deref()
+            .or(item.item.updated_at.as_deref())
+            .or(item.item.created_at.as_deref())?,
+        ThreadSortKey::SectionPosition => return None,
+    };
+    match sort_key {
+        ThreadSortKey::RecencyAt => parse_cursor(&format!("{timestamp}|{}", item.item.thread_id?)),
+        ThreadSortKey::CreatedAt | ThreadSortKey::UpdatedAt => parse_cursor(timestamp),
+        ThreadSortKey::SectionPosition => None,
+    }
+}
+
+async fn set_thread_search_result_names(
+    store: &LocalThreadStore,
+    items: &mut [StoredThreadSearchResult],
+) {
+    let thread_history_modes = items
+        .iter()
+        .map(|item| (item.thread.thread_id, item.thread.history_mode))
+        .collect::<HashMap<_, _>>();
+    let names = resolve_thread_names(store, &thread_history_modes).await;
+    for item in items {
+        if let Some(name) = names.get(&item.thread.thread_id).cloned() {
+            set_thread_name(&mut item.thread, name);
+        }
+    }
+}

@@ -1,0 +1,114 @@
+use std::ffi::OsString;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use codex_rmcp_client::ElicitationAction;
+use codex_rmcp_client::ElicitationResponse;
+use codex_rmcp_client::LocalStdioServerLauncher;
+use codex_rmcp_client::RmcpClient;
+use codex_utils_cargo_bin::CargoBinError;
+use futures::FutureExt as _;
+use rmcp::model::ClientCapabilities;
+use rmcp::model::ElicitationCapability;
+use rmcp::model::FormElicitationCapability;
+use rmcp::model::Implementation;
+use rmcp::model::InitializeRequestParams;
+use rmcp::model::ListResourceTemplatesResult;
+use rmcp::model::ProtocolVersion;
+use rmcp::model::ReadResourceRequestParams;
+use rmcp::model::ResourceContents;
+use serde_json::json;
+
+const RESOURCE_URI: &str = "memo://codex/example-note";
+
+fn stdio_server_bin() -> Result<PathBuf, CargoBinError> {
+    codex_utils_cargo_bin::cargo_bin("test_stdio_server")
+}
+
+fn init_params() -> InitializeRequestParams {
+    let mut capabilities = ClientCapabilities::default();
+    capabilities.elicitation =
+        Some(ElicitationCapability::new().with_form(FormElicitationCapability::new()));
+    InitializeRequestParams::new(
+        capabilities,
+        Implementation::new("codex-test", "0.0.0-test").with_title("Codex rmcp resource test"),
+    )
+    .with_protocol_version(ProtocolVersion::V_2025_06_18)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn rmcp_client_can_list_and_read_resources() -> anyhow::Result<()> {
+    let client = RmcpClient::new_stdio_client(
+        stdio_server_bin()?.into(),
+        Vec::<OsString>::new(),
+        /*env*/ None,
+        &[],
+        /*cwd*/ None,
+        Arc::new(LocalStdioServerLauncher::new(std::env::current_dir()?)),
+    )
+    .await?;
+
+    client
+        .initialize(
+            init_params(),
+            Some(Duration::from_secs(5)),
+            Box::new(|_, _| {
+                async {
+                    Ok(ElicitationResponse {
+                        action: ElicitationAction::Accept,
+                        content: Some(json!({})),
+                        meta: None,
+                    })
+                }
+                .boxed()
+            }),
+        )
+        .await?;
+
+    let list = client
+        .list_resources(/*params*/ None, Some(Duration::from_secs(5)))
+        .await?;
+    let memo = list
+        .resources
+        .iter()
+        .find(|resource| resource.uri == RESOURCE_URI)
+        .expect("memo resource present");
+    assert_eq!(
+        memo,
+        &rmcp::model::Resource::new(RESOURCE_URI, "example-note")
+            .with_title("Example Note")
+            .with_description("A sample MCP resource exposed for integration tests.")
+            .with_mime_type("text/plain")
+    );
+    let templates = client
+        .list_resource_templates(/*params*/ None, Some(Duration::from_secs(5)))
+        .await?;
+    let mut expected_templates = ListResourceTemplatesResult::with_all_items(vec![
+        rmcp::model::ResourceTemplate::new("memo://codex/{slug}", "codex-memo")
+            .with_title("Codex Memo")
+            .with_description("Template for memo://codex/{slug} resources used in tests.")
+            .with_mime_type("text/plain"),
+    ]);
+    expected_templates.result_type = None;
+    assert_eq!(templates, expected_templates);
+
+    let read = client
+        .read_resource(
+            ReadResourceRequestParams::new(RESOURCE_URI),
+            Some(Duration::from_secs(5)),
+        )
+        .await?;
+    let text = read.contents.first().expect("resource contents present");
+    assert_eq!(
+        text,
+        &ResourceContents::TextResourceContents {
+            uri: RESOURCE_URI.to_string(),
+            mime_type: Some("text/plain".to_string()),
+            text: "This is a sample MCP resource served by the rmcp test server.".to_string(),
+            meta: None,
+        }
+    );
+
+    Ok(())
+}

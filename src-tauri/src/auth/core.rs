@@ -1121,7 +1121,8 @@ impl AuthCore {
     /// `POST /organization/update-member-role` — change one member's role.
     ///
     /// Takes effect in the member's **next** minted token; tokens already issued
-    /// stay valid until they expire (the 10-minute TTL bound, API §6.1).
+    /// stay valid until they expire (the 10-minute TTL bound,
+    /// `docs/reference/atlas-ai-api.md` §12.2).
     pub async fn update_member_role(
         &self,
         org_id: &str,

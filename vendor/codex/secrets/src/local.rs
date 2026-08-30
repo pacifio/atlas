@@ -1,0 +1,635 @@
+use std::collections::BTreeMap;
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::PoisonError;
+use std::sync::atomic::Ordering;
+use std::sync::atomic::compiler_fence;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
+
+use age::decrypt;
+use age::encrypt;
+use age::scrypt::Identity as ScryptIdentity;
+use age::scrypt::Recipient as ScryptRecipient;
+use age::secrecy::ExposeSecret;
+use age::secrecy::SecretString;
+use anyhow::Context;
+use anyhow::Result;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use codex_keyring_store::KeyringStore;
+use rand::TryRngCore;
+use rand::rngs::OsRng;
+use serde::Deserialize;
+use serde::Serialize;
+use sha2::Digest;
+use sha2::Sha256;
+use tracing::warn;
+
+use super::SecretListEntry;
+use super::SecretName;
+use super::SecretScope;
+use super::SecretsBackend;
+use super::compute_keyring_account;
+use super::keyring_service;
+
+const SECRETS_VERSION: u8 = 1;
+const LOCAL_SECRETS_FILENAME: &str = "local.age";
+const CODEX_AUTH_SECRETS_FILENAME: &str = "codex_auth.age";
+const MCP_OAUTH_SECRETS_FILENAME: &str = "mcp_oauth.age";
+static MCP_OAUTH_CACHE: Mutex<Option<CachedMcpSecrets>> = Mutex::new(None);
+
+/// Selects the local encrypted file used by a `LocalSecretsBackend`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LocalSecretsNamespace {
+    /// General managed secrets stored in `local.age`.
+    #[default]
+    ManagedSecrets,
+    /// Codex authentication credentials used by the CLI, TUI, app server, and other clients.
+    CodexAuth,
+    /// OAuth credentials for external MCP servers.
+    McpOAuth,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+struct SecretsFile {
+    version: u8,
+    secrets: BTreeMap<String, String>,
+}
+
+struct CachedMcpSecrets {
+    path: PathBuf,
+    ciphertext_hash: [u8; 32],
+    passphrase_hash: [u8; 32],
+    file: Arc<SecretsFile>,
+}
+
+impl SecretsFile {
+    fn new_empty() -> Self {
+        Self {
+            version: SECRETS_VERSION,
+            secrets: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalSecretsBackend {
+    codex_home: PathBuf,
+    keyring_store: Arc<dyn KeyringStore>,
+    namespace: LocalSecretsNamespace,
+}
+
+impl LocalSecretsBackend {
+    pub fn new(codex_home: PathBuf, keyring_store: Arc<dyn KeyringStore>) -> Self {
+        Self::new_with_namespace(
+            codex_home,
+            keyring_store,
+            LocalSecretsNamespace::ManagedSecrets,
+        )
+    }
+
+    pub fn new_with_namespace(
+        codex_home: PathBuf,
+        keyring_store: Arc<dyn KeyringStore>,
+        namespace: LocalSecretsNamespace,
+    ) -> Self {
+        Self {
+            codex_home,
+            keyring_store,
+            namespace,
+        }
+    }
+
+    pub fn set(&self, scope: &SecretScope, name: &SecretName, value: &str) -> Result<()> {
+        anyhow::ensure!(!value.is_empty(), "secret value must not be empty");
+        let canonical_key = scope.canonical_key(name);
+        let mut file = self.load_file()?;
+        file.secrets.insert(canonical_key, value.to_string());
+        self.save_file(&file)
+    }
+
+    pub fn get(&self, scope: &SecretScope, name: &SecretName) -> Result<Option<String>> {
+        let canonical_key = scope.canonical_key(name);
+        let file = self.load_file()?;
+        Ok(file.secrets.get(&canonical_key).cloned())
+    }
+
+    pub fn delete(&self, scope: &SecretScope, name: &SecretName) -> Result<bool> {
+        let canonical_key = scope.canonical_key(name);
+        let mut file = self.load_file()?;
+        let removed = file.secrets.remove(&canonical_key).is_some();
+        if removed {
+            self.save_file(&file)?;
+        }
+        Ok(removed)
+    }
+
+    pub fn list(&self, scope_filter: Option<&SecretScope>) -> Result<Vec<SecretListEntry>> {
+        let file = self.load_file()?;
+        let mut entries = Vec::new();
+        for canonical_key in file.secrets.keys() {
+            let Some(entry) = parse_canonical_key(canonical_key) else {
+                warn!("skipping invalid canonical secret key: {canonical_key}");
+                continue;
+            };
+            if let Some(scope) = scope_filter
+                && entry.scope != *scope
+            {
+                continue;
+            }
+            entries.push(entry);
+        }
+        Ok(entries)
+    }
+
+    fn secrets_dir(&self) -> PathBuf {
+        self.codex_home.join("secrets")
+    }
+
+    fn secrets_path(&self) -> PathBuf {
+        let filename = match self.namespace {
+            LocalSecretsNamespace::ManagedSecrets => LOCAL_SECRETS_FILENAME,
+            LocalSecretsNamespace::CodexAuth => CODEX_AUTH_SECRETS_FILENAME,
+            LocalSecretsNamespace::McpOAuth => MCP_OAUTH_SECRETS_FILENAME,
+        };
+        self.secrets_dir().join(filename)
+    }
+
+    fn load_file(&self) -> Result<SecretsFile> {
+        let path = self.secrets_path();
+        if !path.exists() {
+            return Ok(SecretsFile::new_empty());
+        }
+
+        let ciphertext = fs::read(&path)
+            .with_context(|| format!("failed to read secrets file at {}", path.display()))?;
+        let passphrase = self.load_or_create_passphrase()?;
+        let cache = (self.namespace == LocalSecretsNamespace::McpOAuth).then(|| {
+            let ciphertext_hash: [u8; 32] = Sha256::digest(&ciphertext).into();
+            let passphrase_hash: [u8; 32] =
+                Sha256::digest(passphrase.expose_secret().as_bytes()).into();
+            let cache = MCP_OAUTH_CACHE
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            (cache, ciphertext_hash, passphrase_hash)
+        });
+        if let Some((cache, ciphertext_hash, passphrase_hash)) = cache.as_ref()
+            && let Some(cached) = cache.as_ref()
+            && cached.path == path
+            && cached.ciphertext_hash == *ciphertext_hash
+            && cached.passphrase_hash == *passphrase_hash
+        {
+            return Ok(cached.file.as_ref().clone());
+        }
+        let plaintext = decrypt_with_passphrase(&ciphertext, &passphrase)?;
+        let mut parsed: SecretsFile = serde_json::from_slice(&plaintext).with_context(|| {
+            format!(
+                "failed to deserialize decrypted secrets file at {}",
+                path.display()
+            )
+        })?;
+        if parsed.version == 0 {
+            parsed.version = SECRETS_VERSION;
+        }
+        anyhow::ensure!(
+            parsed.version <= SECRETS_VERSION,
+            "secrets file version {} is newer than supported version {}",
+            parsed.version,
+            SECRETS_VERSION
+        );
+        if let Some((mut cache, ciphertext_hash, passphrase_hash)) = cache {
+            *cache = Some(CachedMcpSecrets {
+                path,
+                ciphertext_hash,
+                passphrase_hash,
+                file: Arc::new(parsed.clone()),
+            });
+        }
+        Ok(parsed)
+    }
+
+    fn save_file(&self, file: &SecretsFile) -> Result<()> {
+        let dir = self.secrets_dir();
+        fs::create_dir_all(&dir)
+            .with_context(|| format!("failed to create secrets dir {}", dir.display()))?;
+
+        let passphrase = self.load_or_create_passphrase()?;
+        let plaintext = serde_json::to_vec(file).context("failed to serialize secrets file")?;
+        let ciphertext = encrypt_with_passphrase(&plaintext, &passphrase)?;
+        let path = self.secrets_path();
+        write_file_atomically(&path, &ciphertext)?;
+        if self.namespace == LocalSecretsNamespace::McpOAuth {
+            let mut cache = MCP_OAUTH_CACHE
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if cache.as_ref().is_some_and(|cached| cached.path == path) {
+                *cache = None;
+            }
+        }
+        Ok(())
+    }
+
+    fn load_or_create_passphrase(&self) -> Result<SecretString> {
+        let account = compute_keyring_account(&self.codex_home);
+        let loaded = self
+            .keyring_store
+            .load(keyring_service(), &account)
+            .map_err(|err| anyhow::anyhow!(err.message()))
+            .with_context(|| format!("failed to load secrets key from keyring for {account}"))?;
+        match loaded {
+            Some(existing) => Ok(SecretString::from(existing)),
+            None => {
+                // Generate a high-entropy key and persist it in the OS keyring.
+                // This keeps secrets out of plaintext config while remaining
+                // fully local/offline for the MVP.
+                let generated = generate_passphrase()?;
+                self.keyring_store
+                    .save(keyring_service(), &account, generated.expose_secret())
+                    .map_err(|err| anyhow::anyhow!(err.message()))
+                    .context("failed to persist secrets key in keyring")?;
+                Ok(generated)
+            }
+        }
+    }
+}
+
+impl SecretsBackend for LocalSecretsBackend {
+    fn set(&self, scope: &SecretScope, name: &SecretName, value: &str) -> Result<()> {
+        LocalSecretsBackend::set(self, scope, name, value)
+    }
+
+    fn get(&self, scope: &SecretScope, name: &SecretName) -> Result<Option<String>> {
+        LocalSecretsBackend::get(self, scope, name)
+    }
+
+    fn delete(&self, scope: &SecretScope, name: &SecretName) -> Result<bool> {
+        LocalSecretsBackend::delete(self, scope, name)
+    }
+
+    fn list(&self, scope_filter: Option<&SecretScope>) -> Result<Vec<SecretListEntry>> {
+        LocalSecretsBackend::list(self, scope_filter)
+    }
+}
+
+fn write_file_atomically(path: &Path, contents: &[u8]) -> Result<()> {
+    let dir = path.parent().with_context(|| {
+        format!(
+            "failed to compute parent directory for secrets file at {}",
+            path.display()
+        )
+    })?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let filename = path.file_name().with_context(|| {
+        format!(
+            "failed to compute filename for secrets file at {}",
+            path.display()
+        )
+    })?;
+    let tmp_path = dir.join(format!(
+        ".{}.tmp-{}-{nonce}",
+        filename.to_string_lossy(),
+        std::process::id()
+    ));
+
+    {
+        let mut tmp_file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp_path)
+            .with_context(|| {
+                format!(
+                    "failed to create temp secrets file at {}",
+                    tmp_path.display()
+                )
+            })?;
+        tmp_file.write_all(contents).with_context(|| {
+            format!(
+                "failed to write temp secrets file at {}",
+                tmp_path.display()
+            )
+        })?;
+        tmp_file.sync_all().with_context(|| {
+            format!("failed to sync temp secrets file at {}", tmp_path.display())
+        })?;
+    }
+
+    match fs::rename(&tmp_path, path) {
+        Ok(()) => Ok(()),
+        Err(initial_error) => {
+            #[cfg(target_os = "windows")]
+            {
+                if path.exists() {
+                    fs::remove_file(path).with_context(|| {
+                        format!(
+                            "failed to remove existing secrets file at {} before replace",
+                            path.display()
+                        )
+                    })?;
+                    fs::rename(&tmp_path, path).with_context(|| {
+                        format!(
+                            "failed to replace secrets file at {} with {}",
+                            path.display(),
+                            tmp_path.display()
+                        )
+                    })?;
+                    return Ok(());
+                }
+            }
+
+            let _ = fs::remove_file(&tmp_path);
+            Err(initial_error).with_context(|| {
+                format!(
+                    "failed to atomically replace secrets file at {} with {}",
+                    path.display(),
+                    tmp_path.display()
+                )
+            })
+        }
+    }
+}
+
+fn generate_passphrase() -> Result<SecretString> {
+    let mut bytes = [0_u8; 32];
+    let mut rng = OsRng;
+    rng.try_fill_bytes(&mut bytes)
+        .context("failed to generate random secrets key")?;
+    // Base64 keeps the keyring payload ASCII-safe without reducing entropy.
+    let encoded = BASE64_STANDARD.encode(bytes);
+    wipe_bytes(&mut bytes);
+    Ok(SecretString::from(encoded))
+}
+
+fn wipe_bytes(bytes: &mut [u8]) {
+    for byte in bytes {
+        // Volatile writes make it much harder for the compiler to elide the wipe.
+        // SAFETY: `byte` is a valid mutable reference into `bytes`.
+        unsafe { std::ptr::write_volatile(byte, 0) };
+    }
+    compiler_fence(Ordering::SeqCst);
+}
+
+fn encrypt_with_passphrase(plaintext: &[u8], passphrase: &SecretString) -> Result<Vec<u8>> {
+    let recipient = ScryptRecipient::new(passphrase.clone());
+    encrypt(&recipient, plaintext).context("failed to encrypt secrets file")
+}
+
+fn decrypt_with_passphrase(ciphertext: &[u8], passphrase: &SecretString) -> Result<Vec<u8>> {
+    let identity = ScryptIdentity::new(passphrase.clone());
+    decrypt(&identity, ciphertext).context("failed to decrypt secrets file")
+}
+
+fn parse_canonical_key(canonical_key: &str) -> Option<SecretListEntry> {
+    let mut parts = canonical_key.split('/');
+    let scope_kind = parts.next()?;
+    match scope_kind {
+        "global" => {
+            let name = parts.next()?;
+            if parts.next().is_some() {
+                return None;
+            }
+            let name = SecretName::new(name).ok()?;
+            Some(SecretListEntry {
+                scope: SecretScope::Global,
+                name,
+            })
+        }
+        "env" => {
+            let environment_id = parts.next()?;
+            let name = parts.next()?;
+            if parts.next().is_some() {
+                return None;
+            }
+            let name = SecretName::new(name).ok()?;
+            let scope = SecretScope::environment(environment_id.to_string()).ok()?;
+            Some(SecretListEntry { scope, name })
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_keyring_store::tests::MockKeyringStore;
+    use keyring::Error as KeyringError;
+    use pretty_assertions::assert_eq;
+
+    static MCP_OAUTH_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn load_file_rejects_newer_schema_versions() -> Result<()> {
+        let codex_home = tempfile::tempdir().expect("tempdir");
+        let keyring = Arc::new(MockKeyringStore::default());
+        let backend = LocalSecretsBackend::new(codex_home.path().to_path_buf(), keyring);
+
+        let file = SecretsFile {
+            version: SECRETS_VERSION + 1,
+            secrets: BTreeMap::new(),
+        };
+        backend.save_file(&file)?;
+
+        let error = backend
+            .load_file()
+            .expect_err("must reject newer schema version");
+        assert!(
+            error.to_string().contains("newer than supported version"),
+            "unexpected error: {error:#}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn set_fails_when_keyring_is_unavailable() -> Result<()> {
+        let codex_home = tempfile::tempdir().expect("tempdir");
+        let keyring = Arc::new(MockKeyringStore::default());
+        let account = compute_keyring_account(codex_home.path());
+        keyring.set_error(
+            &account,
+            KeyringError::Invalid("error".into(), "load".into()),
+        );
+
+        let backend = LocalSecretsBackend::new(codex_home.path().to_path_buf(), keyring);
+        let scope = SecretScope::Global;
+        let name = SecretName::new("TEST_SECRET")?;
+        let error = backend
+            .set(&scope, &name, "secret-value")
+            .expect_err("must fail when keyring load fails");
+        assert!(
+            error
+                .to_string()
+                .contains("failed to load secrets key from keyring"),
+            "unexpected error: {error:#}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn save_file_does_not_leave_temp_files() -> Result<()> {
+        let codex_home = tempfile::tempdir().expect("tempdir");
+        let keyring = Arc::new(MockKeyringStore::default());
+        let backend = LocalSecretsBackend::new(codex_home.path().to_path_buf(), keyring);
+
+        let scope = SecretScope::Global;
+        let name = SecretName::new("TEST_SECRET")?;
+        backend.set(&scope, &name, "one")?;
+        backend.set(&scope, &name, "two")?;
+
+        let secrets_dir = backend.secrets_dir();
+        let entries = fs::read_dir(&secrets_dir)
+            .with_context(|| format!("failed to read {}", secrets_dir.display()))?
+            .collect::<std::io::Result<Vec<_>>>()
+            .with_context(|| format!("failed to enumerate {}", secrets_dir.display()))?;
+
+        let filenames: Vec<String> = entries
+            .into_iter()
+            .filter_map(|entry| entry.file_name().to_str().map(ToString::to_string))
+            .collect();
+        assert_eq!(filenames, vec![LOCAL_SECRETS_FILENAME.to_string()]);
+        assert_eq!(backend.get(&scope, &name)?, Some("two".to_string()));
+        assert!(
+            MCP_OAUTH_CACHE
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_ref()
+                .is_none_or(|cached| cached.path != backend.secrets_path())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn local_namespaces_write_separate_files() -> Result<()> {
+        let _cache_lock = MCP_OAUTH_CACHE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let codex_home = tempfile::tempdir().expect("tempdir");
+        let keyring = Arc::new(MockKeyringStore::default());
+        let codex_auth_backend = LocalSecretsBackend::new_with_namespace(
+            codex_home.path().to_path_buf(),
+            keyring.clone(),
+            LocalSecretsNamespace::CodexAuth,
+        );
+        let mcp_backend = LocalSecretsBackend::new_with_namespace(
+            codex_home.path().to_path_buf(),
+            keyring,
+            LocalSecretsNamespace::McpOAuth,
+        );
+        let scope = SecretScope::Global;
+        let name = SecretName::new("TEST_SECRET")?;
+
+        codex_auth_backend.set(&scope, &name, "codex-auth-value")?;
+        mcp_backend.set(&scope, &name, "mcp-value")?;
+
+        assert_eq!(
+            codex_auth_backend.get(&scope, &name)?,
+            Some("codex-auth-value".to_string())
+        );
+        assert!(
+            MCP_OAUTH_CACHE
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_ref()
+                .is_none_or(|cached| cached.path != codex_auth_backend.secrets_path())
+        );
+        assert_eq!(
+            mcp_backend.get(&scope, &name)?,
+            Some("mcp-value".to_string())
+        );
+        assert!(
+            codex_home
+                .path()
+                .join("secrets")
+                .join("codex_auth.age")
+                .exists()
+        );
+        assert!(
+            codex_home
+                .path()
+                .join("secrets")
+                .join("mcp_oauth.age")
+                .exists()
+        );
+        assert!(!codex_home.path().join("secrets").join("local.age").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn mcp_oauth_cache_reuses_plaintext_and_invalidates_when_ciphertext_changes() -> Result<()> {
+        let _cache_lock = MCP_OAUTH_CACHE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let codex_home = tempfile::tempdir().expect("tempdir");
+        let keyring = Arc::new(MockKeyringStore::default());
+        let first = LocalSecretsBackend::new_with_namespace(
+            codex_home.path().to_path_buf(),
+            keyring.clone(),
+            LocalSecretsNamespace::McpOAuth,
+        );
+        let second = LocalSecretsBackend::new_with_namespace(
+            codex_home.path().to_path_buf(),
+            keyring,
+            LocalSecretsNamespace::McpOAuth,
+        );
+        let scope = SecretScope::Global;
+        let name = SecretName::new("TEST_SECRET")?;
+        let cached_file = || {
+            Arc::clone(
+                &MCP_OAUTH_CACHE
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .as_ref()
+                    .expect("MCP OAuth credentials should be cached")
+                    .file,
+            )
+        };
+
+        first.set(&scope, &name, "one")?;
+        let (first_cached, second_cached) = std::thread::scope(|threads| {
+            let first_reader = threads.spawn(|| {
+                assert_eq!(first.get(&scope, &name)?, Some("one".to_string()));
+                Ok::<_, anyhow::Error>(cached_file())
+            });
+            let second_reader = threads.spawn(|| {
+                assert_eq!(second.get(&scope, &name)?, Some("one".to_string()));
+                Ok::<_, anyhow::Error>(cached_file())
+            });
+            Ok::<_, anyhow::Error>((
+                first_reader.join().expect("first credential reader")?,
+                second_reader.join().expect("second credential reader")?,
+            ))
+        })?;
+        assert!(Arc::ptr_eq(&first_cached, &second_cached));
+
+        assert_eq!(second.get(&scope, &name)?, Some("one".to_string()));
+        assert!(Arc::ptr_eq(&first_cached, &cached_file()));
+
+        first.set(&scope, &name, "two")?;
+        assert!(
+            MCP_OAUTH_CACHE
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_ref()
+                .is_none_or(|cached| cached.path != first.secrets_path())
+        );
+        assert_eq!(second.get(&scope, &name)?, Some("two".to_string()));
+        assert!(!Arc::ptr_eq(&first_cached, &cached_file()));
+
+        assert!(first.delete(&scope, &name)?);
+        assert!(
+            MCP_OAUTH_CACHE
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_ref()
+                .is_none_or(|cached| cached.path != first.secrets_path())
+        );
+        assert_eq!(second.get(&scope, &name)?, None);
+
+        Ok(())
+    }
+}

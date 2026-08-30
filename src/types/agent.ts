@@ -41,7 +41,10 @@ export const AGENT_LABEL: Record<FirstPartyAgent, string> = {
   opencode: "OpenCode",
   cursor: "Cursor",
   kilo: "Kilo",
-  cersei: "Atlas",
+  // The key is the stored agent id, which stays `cersei` forever because every
+  // recorded thread resolves through it (D7). The label is the product name.
+  // They are deliberately different things.
+  cersei: "Atlas Agent",
 };
 
 /** The Rust-side spawnable plugin id for each first-party agent (see

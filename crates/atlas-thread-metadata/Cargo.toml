@@ -11,7 +11,25 @@ name = "atlas_thread_metadata"
 # Bundled for the same reason atlas-checkpoint bundles it: the store must not
 # depend on whatever sqlite the host machine happens to ship.
 anyhow = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+# Pinned to the rusqlite whose `libsqlite3-sys` is **0.37** — the major the
+# ported Codex engine pins (`libsqlite3-sys = "0.37"`, integration §6 BLOCKER A).
+# `libsqlite3-sys` sets `links = "sqlite3"`, so exactly one may exist in the
+# graph, and both sides bundle a vendored SQLite. This is a pin, not a floor:
+# 0.38 resolves libsqlite3-sys 0.36 (below the engine's ≥ 3.51.3 assert) and
+# 0.40 resolves 0.38.x — newer, and still a collision. 0.37.0 bundles SQLite
+# 3.51.3 exactly, via the `bundled` feature specifically; `bundled-sqlcipher`
+# would ship 3.50.4 and silently drop under the floor.
+#
+# THE canonical statement of this pin. `atlas-checkpoint` and `src-tauri`
+# declare rusqlite too and point here. Guarded by `tests/sqlite_floor.rs`
+# (the linked library) and `tests/cargo-deps-unification.test.ts` (the
+# resolution, including that all four declarations agree). Issue #39.
+#
+# The bump adds `rsqlite-vfs` and `sqlite-wasm-rs` to the lockfile. Both are
+# gated to `cfg(all(target_family = "wasm", target_os = "unknown"))` and are
+# never built for Atlas's targets — Cargo.lock records target deps
+# unconditionally. Neither declares `links`.
+rusqlite = { version = "0.39", features = ["bundled"] }
 # For `AgentId`, `acp::SessionId` and `AgentSessionInfo` — the row is presented
 # to the import/resume paths in exactly those types, as in Zed.
 atlas-acp-thread = { path = "../atlas-acp-thread" }
@@ -28,4 +46,5 @@ tempfile = "3"
 futures = "0.3"
 tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
 chrono = "0.4"
-rusqlite = { version = "0.32", features = ["bundled"] }
+# Same pin as the `[dependencies]` entry above, and for the same reason.
+rusqlite = { version = "0.39", features = ["bundled"] }

@@ -499,12 +499,23 @@ impl SessionProjection {
                 deltas
             }
             AcpThreadEvent::EntriesRemoved(range) => {
-                // No wire kind removes anything; the mirror is trimmed so later
-                // indices still line up.
                 let start = range.start.min(self.entries.len());
                 let end = range.end.min(self.entries.len());
+                // Count whole exchanges by their user messages: that is the
+                // unit the frontend can identify in its own mirror (its user
+                // rows are optimistic and carry no wire ids to address).
+                let turns = self.entries[start..end]
+                    .iter()
+                    .filter(|projected| matches!(projected, Projected::User))
+                    .count() as u32;
                 self.entries.drain(start..end);
-                Vec::new()
+                if turns > 0 {
+                    vec![SessionDelta::HistoryRewound { turns }]
+                } else {
+                    // A removal that clips no user message (assistant-only
+                    // trim) has no exchange for the frontend to drop.
+                    Vec::new()
+                }
             }
             AcpThreadEvent::StatusChanged => self.status_deltas(),
             AcpThreadEvent::Stopped(stop_reason) => {

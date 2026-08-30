@@ -1,0 +1,93 @@
+[package]
+name = "codex-rmcp-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1"
+axum = { workspace = true, default-features = false, features = [
+    "http1",
+    "json",
+    "tokio",
+] }
+base64 = { workspace = true }
+codex-api = { workspace = true }
+codex-config = { workspace = true }
+codex-exec-server = { workspace = true }
+codex-http-client = { workspace = true }
+codex-keyring-store = { workspace = true }
+codex-network-proxy = { workspace = true }
+codex-protocol = { workspace = true }
+codex-secrets = { workspace = true }
+codex-utils-path-uri = { workspace = true }
+codex-utils-pty = { workspace = true }
+codex-utils-home-dir = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true, default-features = false, features = ["std"] }
+http = { workspace = true }
+keyring = { workspace = true, features = ["crypto-rust"] }
+memchr = { workspace = true }
+oauth2 = "5"
+rmcp = { workspace = true, default-features = false, features = [
+    "auth",
+    "base64",
+    "client",
+    "macros",
+    "schemars",
+    "server",
+    "transport-async-rw",
+    "transport-child-process",
+    "transport-streamable-http-client",
+    "transport-streamable-http-server",
+] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+sse-stream = "0.2.5"
+thiserror = { workspace = true }
+tiny_http = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-util",
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "sync",
+    "io-std",
+    "time",
+] }
+tracing = { workspace = true, features = ["log"] }
+url = { workspace = true }
+urlencoding = { workspace = true }
+webbrowser = { workspace = true }
+which = { workspace = true }
+
+[dev-dependencies]
+codex-http-client = { workspace = true }
+codex-utils-cargo-bin = { workspace = true }
+pretty_assertions = { workspace = true }
+serial_test = { workspace = true }
+tempfile = { workspace = true }
+wiremock = { workspace = true }
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { workspace = true, features = ["linux-native-async-persistent"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { workspace = true, features = ["windows-native"] }
+
+[target.'cfg(any(target_os = "freebsd", target_os = "openbsd"))'.dependencies]
+keyring = { workspace = true, features = ["sync-secret-service"] }
+
+# This test is compiled through `#[path]` inside the inline `oauth::tests` module. Cargo-shear
+# cannot resolve that nested module path and otherwise reports the linked file as unlinked.
+[package.metadata.cargo-shear]
+ignored-paths = ["src/oauth/tests/persistor_tests.rs"]
+
+[lib]
+doctest = false

@@ -1,0 +1,70 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-core-plugins"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "codex_core_plugins"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+codex-analytics = { workspace = true }
+codex-app-server-protocol = { workspace = true }
+codex-config = { workspace = true }
+codex-connectors = { workspace = true }
+codex-exec-server = { workspace = true }
+codex-git-utils = { workspace = true }
+codex-hooks = { workspace = true }
+codex-http-client = { workspace = true }
+codex-login = { workspace = true }
+codex-mcp = { workspace = true }
+codex-model-provider = { workspace = true }
+codex-otel = { workspace = true }
+codex-plugin = { workspace = true }
+codex-protocol = { workspace = true }
+codex-skills = { workspace = true }
+codex-shell-command = { workspace = true }
+codex-tools = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-path = { workspace = true }
+codex-utils-path-uri = { workspace = true }
+codex-utils-plugins = { workspace = true }
+chrono = { workspace = true }
+dirs = { workspace = true }
+flate2 = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true }
+regex = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_with = { workspace = true }
+serde_yaml = { workspace = true }
+sha2 = { workspace = true }
+tar = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "rt", "time"] }
+toml = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+zip = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+which = { workspace = true }
+
+[dev-dependencies]
+codex-exec-server-test-support = { workspace = true }
+libc = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-test = { workspace = true, features = ["no-env-filter"] }
+wiremock = { workspace = true }
