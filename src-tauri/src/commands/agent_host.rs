@@ -2353,6 +2353,42 @@ mod tests {
         fresh_id: &'static str,
     }
 
+    /// A selector that knows its default before any pick — the shape the
+    /// engine's catalogue-backed selector has (#76).
+    struct FakeSelector;
+
+    impl atlas_acp_thread::AgentModelSelector for FakeSelector {
+        fn list_models(
+            &self,
+        ) -> BoxFuture<'static, anyhow::Result<atlas_acp_thread::AgentModelList>> {
+            async { Ok(atlas_acp_thread::AgentModelList::Flat(Vec::new())) }.boxed()
+        }
+
+        fn select_model(
+            &self,
+            _model_id: atlas_acp_thread::AgentModelId,
+        ) -> BoxFuture<'static, anyhow::Result<()>> {
+            async { Ok(()) }.boxed()
+        }
+
+        fn selected_model(
+            &self,
+        ) -> BoxFuture<'static, anyhow::Result<atlas_acp_thread::AgentModelInfo>> {
+            async {
+                Ok(atlas_acp_thread::AgentModelInfo {
+                    id: atlas_acp_thread::AgentModelId::new("fake-default-model"),
+                    name: "Fake Default".into(),
+                    description: None,
+                    icon: None,
+                    is_latest: true,
+                    cost: None,
+                    disabled: None,
+                })
+            }
+            .boxed()
+        }
+    }
+
     impl AgentConnection for RebindingNative {
         fn agent_id(&self) -> atlas_acp_thread::AgentId {
             atlas_acp_thread::AgentId::new(CERSEI_AGENT_ID)
@@ -2406,6 +2442,13 @@ mod tests {
 
         fn cancel(&self, _session_id: &acp::SessionId) {}
 
+        fn model_selector(
+            &self,
+            _session_id: &acp::SessionId,
+        ) -> Option<Arc<dyn atlas_acp_thread::AgentModelSelector>> {
+            Some(Arc::new(FakeSelector))
+        }
+
         fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
             self
         }
@@ -2446,6 +2489,32 @@ mod tests {
         fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
             self
         }
+    }
+
+    /// Issue #76: a native session's model must be known to capture BEFORE
+    /// the user ever touches the picker. `current_model` used to be written
+    /// only by an explicit pick, so the common case — running on the default —
+    /// told capture `None` on every turn and the Timeline row showed no
+    /// model, while the agent knew its model the whole time.
+    #[tokio::test]
+    async fn a_new_native_session_knows_its_model_before_any_pick() {
+        let native = Arc::new(RebindingNative { fresh_id: "s-model" });
+        let (host, dir) = fresh_host_with_native(native);
+
+        let agent_id = host.spawn(CERSEI_AGENT_ID).await.expect("spawn").agent_id;
+        let init = host
+            .new_session(agent_id, PathBuf::from("/tmp/atlas"), Vec::new())
+            .await
+            .expect("a session opens");
+
+        let snap = host.snapshot_meta(&init.key).expect("meta");
+        assert_eq!(
+            snap.current_model.as_deref(),
+            Some("fake-default-model"),
+            "the record carries the agent's own default before any pick",
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Issue #62: sign-out drops the native connection — the engine's token
