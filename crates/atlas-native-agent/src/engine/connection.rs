@@ -556,12 +556,23 @@ async fn pump_events(
             biased;
 
             Some(answer) = answers_rx.recv() => {
+                // A failed delivery here is the worst silent outcome this
+                // loop has: the engine turn waits forever for an answer that
+                // will never arrive, and the user sees a spinner (#69). It
+                // cannot be retried — the request id may be gone — but it
+                // must never be invisible.
                 match answer.result {
                     Ok(value) => {
-                        let _ = client.resolve_server_request(answer.request_id, value).await;
+                        if let Err(e) = client.resolve_server_request(answer.request_id, value).await {
+                            tracing::warn!(
+                                target: "atlas_native_agent::engine",
+                                "delivering an approval to the engine failed; \
+                                 the waiting turn may hang: {e}",
+                            );
+                        }
                     }
                     Err(message) => {
-                        let _ = client
+                        if let Err(e) = client
                             .reject_server_request(
                                 answer.request_id,
                                 codex_app_server_protocol::JSONRPCErrorError {
@@ -570,7 +581,14 @@ async fn pump_events(
                                     data: None,
                                 },
                             )
-                            .await;
+                            .await
+                        {
+                            tracing::warn!(
+                                target: "atlas_native_agent::engine",
+                                "delivering a rejection to the engine failed; \
+                                 the waiting turn may hang: {e}",
+                            );
+                        }
                     }
                 }
             }
