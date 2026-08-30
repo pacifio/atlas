@@ -129,9 +129,11 @@ pub struct StoredIdentity {
     ///   is omitted when there is no profile yet.
     #[serde(default)]
     pub orgs: Option<Vec<StoredOrg>>,
-    /// The organisation the user last made active **on the web**, when they ever
-    /// did. Never written from the desktop: `/organization/set-active` is
-    /// ATL-36's, and this ticket is read-only.
+    /// The organisation the user last made active — **on the web**, or, since
+    /// #73, from the desktop's own org switcher (`AuthCore::set_active_org`).
+    /// The desktop write is local-only; `/organization/set-active` stays
+    /// ATL-36's. This stopped being read-only the moment the field became the
+    /// org every gateway request bills.
     ///
     /// Kept separate from "which one to display" — see [`Self::active_org`],
     /// which resolves that and has to cope with this being `None`, the common

@@ -331,6 +331,38 @@ impl AuthCore {
         }
     }
 
+    /// Record which organisation the desktop is acting for (#73).
+    ///
+    /// This writes the same field the web's `/organization/set-active` feeds,
+    /// but locally only — the server is not told, deliberately: web and
+    /// desktop each keep their own last choice, the same independence they
+    /// had before, just symmetric now.
+    ///
+    /// The store's doc used to say this field is "never written from the
+    /// desktop". That held while it only decided which organisation the
+    /// sidebar displays — and stopped holding the moment it became the
+    /// organisation every gateway request bills: the `Atlas-Org` source reads
+    /// the snapshot per request, so a switch that never lands here keeps
+    /// billing (and entitlement-checking) the previous org, which is exactly
+    /// how an unentitled org appeared to work — its turns were quietly
+    /// charged to the entitled one.
+    ///
+    /// `None` clears the desktop's choice; display and billing then fall back
+    /// the way [`StoredIdentity::active_org`] documents (web-set value, else
+    /// the first org). An id that is not in the org list is stored anyway and
+    /// tolerated on the read side, same as the web's value — membership lists
+    /// can lag.
+    pub fn set_active_org(&self, org_id: Option<String>) -> Result<(), String> {
+        let Some(mut session) = self.stored() else {
+            return Err("not signed in".to_string());
+        };
+        let Some(identity) = session.identity.as_mut() else {
+            return Err("no identity yet — try again in a moment".to_string());
+        };
+        identity.active_org_id = org_id;
+        store::save(&self.dir, &session)
+    }
+
     // ---- identity --------------------------------------------------------
 
     /// Read the signed-in user from the server.

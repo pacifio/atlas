@@ -1598,6 +1598,46 @@ async fn the_active_organisation_follows_the_web_and_falls_back_when_it_cannot()
     );
 }
 
+/// #73: the desktop org switcher must reach billing. The active org used to
+/// be writable only from the web — that held while the field just picked
+/// which org the sidebar shows, and stopped holding when it became the org
+/// every gateway request bills. A frontend-only switch kept billing (and
+/// entitlement-checking) the previous org, so an unentitled org appeared to
+/// work: its turns were quietly charged to the entitled one.
+#[tokio::test]
+async fn the_desktop_can_set_the_active_organisation_it_bills() {
+    let stub = Stub::start().await;
+    let dir = TempDir::new();
+    scripted_grant_with_roles(&stub, &[("org_a", "admin"), ("org_b", "member")]);
+    stub.org_list(&[("org_a", "Entitled"), ("org_b", "Unentitled")]);
+    stub.profile("Ada Lovelace", None);
+
+    let auth = core(&stub, &dir);
+    sign_in(&auth).await;
+    assert_eq!(
+        active_org_of(&auth.snapshot()).as_deref(),
+        Some("org_a"),
+        "list order is the fallback before any switch",
+    );
+
+    auth.set_active_org(Some("org_b".to_string()))
+        .expect("a signed-in user can switch");
+    assert_eq!(
+        active_org_of(&auth.snapshot()).as_deref(),
+        Some("org_b"),
+        "the switch is what the gateway's Atlas-Org source reads next",
+    );
+
+    // Survives a restart: the choice lives in the credential file.
+    let reopened = core(&stub, &dir);
+    assert_eq!(active_org_of(&reopened.snapshot()).as_deref(), Some("org_b"));
+
+    // Clearing returns to the documented fallback (web-set value, else first) —
+    // the state a local-only org (no server id) selects.
+    auth.set_active_org(None).expect("clearing is a valid state");
+    assert_eq!(active_org_of(&auth.snapshot()).as_deref(), Some("org_a"));
+}
+
 // ---------------------------------------------------------------- sign-out
 //
 // The ordering is the whole ticket (ATL-50): everything local goes first and

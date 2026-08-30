@@ -197,6 +197,30 @@ pub fn auth_cancel_sign_in(app: AppHandle, state: State<'_, AuthState>) -> AuthS
     snapshot
 }
 
+/// Which organisation the desktop acts for — billing included (#73).
+///
+/// The org switcher used to be frontend-only: it re-pointed workspaces and
+/// telemetry and told the Rust side nothing, while every gateway request
+/// reads the active org from the auth snapshot. So the switch changed what
+/// the user SAW and not who they BILLED — an unentitled org appeared to work
+/// because its turns were charged to the entitled one. The switcher calls
+/// this now; broadcast after writing so every window's auth state agrees.
+///
+/// `org_id` is the SERVER org id (`remoteId`), or `None` for a local-only
+/// org, which clears the desktop's choice and falls back the way the store
+/// documents.
+#[tauri::command]
+pub async fn auth_set_active_org(
+    app: AppHandle,
+    state: State<'_, AuthState>,
+    org_id: Option<String>,
+) -> Result<(), String> {
+    let core = state.core();
+    core.set_active_org(org_id)?;
+    broadcast(&app, core.snapshot());
+    Ok(())
+}
+
 /// Sign out (ATL-50).
 ///
 /// Local state is gone and the signed-out snapshot has been broadcast to every
