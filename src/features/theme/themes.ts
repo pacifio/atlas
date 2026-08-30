@@ -190,6 +190,72 @@ export const ATLAS_THEMES: AtlasTheme[] = [
       accentForeground: "#170900",
     },
   },
+  /**
+   * Catppuccin, ported as chrome rather than just editor syntax (the syntax
+   * side already ships in `EDITOR_THEMES`). Two of Catppuccin's four flavors:
+   * Latte (light) is skipped for the same reason as the editor port — this
+   * file is dark-theme-only by design — and Frappé is skipped because its
+   * base is light enough to push several already-shipped editor themes'
+   * comment tokens below the interface's contrast floor, with no fix that
+   * doesn't wash out `atlas`'s keyword color (see `themes.test.ts`'s
+   * cross-theme contrast suite).
+   *
+   * Unlike Atlas's own themes above — where every surface only ever rises
+   * above `base` — these two deliberately cross that line for `panel`
+   * (Mantle) and `input` (Crust): Catppuccin's own style guide calls Crust/
+   * Mantle "Secondary Panes," darker than Base, with Surface 0/1/2 as the
+   * raised tier. Following that reading is the more faithful port. Accent is
+   * mauve, matching the editor themes' choice, for family consistency.
+   */
+  {
+    id: "catppuccin-mocha",
+    name: "Catppuccin Mocha",
+    description: "Catppuccin's flagship flavor — deep blue-black with a soft mauve accent.",
+    spec: {
+      base: "#1e1e2e",
+      panel: "#181825",
+      elevated: "#313244",
+      overlay: "#585b70",
+      input: "#11111b",
+      tabActive: "#45475a",
+      textPrimary: "#cdd6f4",
+      textSecondary: "#bac2de",
+      textTertiary: "#a6adc8",
+      textGhost: "#6c7086",
+      textMuted: "#7f849c",
+      borderDefault: "#585b70",
+      borderSubtle: "#45475a",
+      borderStrong: "#6c7086",
+      accent: "#cba6f7",
+      accentHover: "#b4befe",
+      accentForeground: "#1e1e2e",
+    },
+  },
+  {
+    // See the Mocha entry above for the shared role-mapping rationale.
+    id: "catppuccin-macchiato",
+    name: "Catppuccin Macchiato",
+    description: "Catppuccin's mid-contrast flavor — warm slate blue with a soft mauve accent.",
+    spec: {
+      base: "#24273a",
+      panel: "#1e2030",
+      elevated: "#363a4f",
+      overlay: "#5b6078",
+      input: "#181926",
+      tabActive: "#494d64",
+      textPrimary: "#cad3f5",
+      textSecondary: "#b8c0e0",
+      textTertiary: "#a5adcb",
+      textGhost: "#6e738d",
+      textMuted: "#8087a2",
+      borderDefault: "#5b6078",
+      borderSubtle: "#494d64",
+      borderStrong: "#6e738d",
+      accent: "#c6a0f6",
+      accentHover: "#b7bdf8",
+      accentForeground: "#24273a",
+    },
+  },
 ];
 
 /** Look up a theme by id, falling back to the Atlas Black default. */
