@@ -18,8 +18,12 @@ share it without special-casing.
 > duplicate `:Topic` nodes, an inert `recall_top_k` ranking); fixing one means
 > editing that file in the same commit.
 
-> rationale + the build plan? See `plans/atlas-cersei-rag-replan.md` and
-> `crates/atlas-cersei/ARCHITECTURE.md` §6e.
+> rationale + the build plan? The originating plan and the frozen-seam spec
+> lived in `plans/atlas-cersei-rag-replan.md` and
+> `crates/atlas-cersei/ARCHITECTURE.md` §6e — both deleted with the Cersei
+> path (#54). The seam itself is stated below and enforced by this crate's
+> tests; the native consumer is now `atlas-native-agent`'s `search_memory`
+> dynamic tool.
 
 ---
 
