@@ -70,6 +70,33 @@ fn assistant_turn(text: &str) -> String {
     ])
 }
 
+/// Like [`assistant_turn`], with a real token-usage block (#74).
+fn assistant_turn_with_usage(text: &str) -> String {
+    sse(vec![
+        json!({"type": "response.created", "response": {"id": "resp-u"}}),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "id": "msg-1",
+                "content": [{"type": "output_text", "text": text}]
+            }
+        }),
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp-u",
+                "usage": {
+                    "input_tokens": 100, "input_tokens_details": {"cached_tokens": 40},
+                    "output_tokens": 42, "output_tokens_details": null,
+                    "total_tokens": 142
+                }
+            }
+        }),
+    ])
+}
+
 struct Harness {
     _server: MockServer,
     _home: tempfile::TempDir,
@@ -281,6 +308,32 @@ async fn a_turn_completes_end_to_end_on_the_ported_engine() {
         acp::StopReason::EndTurn,
         "a turn the model finished normally must end the turn",
     );
+}
+
+#[tokio::test]
+async fn token_usage_reaches_the_thread_the_app_reads() {
+    // #74. The engine emits `thread/tokenUsage/updated` after a completion,
+    // and everything downstream of the thread is already built: the
+    // TokenUsageUpdated event drives the projector's UsageUpdated delta,
+    // which is what the Timeline's token-consumption display and capture's
+    // record_usage consume. The sink ignoring the notification is why the
+    // native agent — the one agent that reports a REAL input/output split —
+    // showed no consumption at all.
+    let h = harness(assistant_turn_with_usage("ok")).await;
+    let session_id = h.open_thread().await;
+
+    h.connection
+        .prompt(acp::PromptRequest::new(session_id, text("count me")))
+        .await
+        .expect("the turn should complete");
+
+    let thread = h.thread();
+    let locked = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let usage = locked
+        .token_usage()
+        .expect("a turn that reported usage must leave it on the thread");
+    assert_eq!(usage.input_tokens, 100);
+    assert_eq!(usage.output_tokens, 42);
 }
 
 #[tokio::test]

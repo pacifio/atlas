@@ -270,6 +270,15 @@ fn tool_call_of(item: &ThreadItem) -> Option<acp::ToolCall> {
                 )
                 .raw_input(serde_json::json!({
                     "paths": changes.iter().map(|c| c.path.clone()).collect::<Vec<_>>(),
+                    // The engine's own per-file unified diffs, joined. This is
+                    // what capture's `edit_patch` stores for the Timeline's
+                    // checkpoint diff/restore view — its first arm reads
+                    // `arguments["patch"]`, and without this key every native
+                    // edit produced a checkpoint with nothing to show (#75).
+                    // The structured Diff content block is not an option: it
+                    // wants full old/new text, which a unified diff cannot
+                    // reconstruct.
+                    "patch": diffs,
                 }));
             if !diffs.trim().is_empty() {
                 call = call.content(vec![acp::ToolCallContent::Content(acp::Content::new(
@@ -510,6 +519,33 @@ pub fn apply_notification(
             turns.complete(&params.thread_id, params.turn);
         }
 
+        // The thread's cumulative token usage. Everything downstream was
+        // already built and waiting — `update_token_usage` fires the
+        // TokenUsageUpdated event, the projector turns it into the
+        // UsageUpdated (real input/output split) and ContextUsage (gauge)
+        // deltas, and capture's `record_usage` OVERWRITES totals, which is
+        // exactly right for a cumulative figure. Ignoring this notification
+        // is why the native agent — the one agent that reports a real split —
+        // showed no token consumption on the Timeline at all (#74).
+        ServerNotification::ThreadTokenUsageUpdated(params) => {
+            let Some(thread) = sessions.thread(&session_id(&params.thread_id)) else {
+                return;
+            };
+            let total = &params.token_usage.total;
+            let clamp = |n: i64| n.max(0) as u64;
+            lock(&thread).update_token_usage(Some(atlas_acp_thread::TokenUsage {
+                max_tokens: params
+                    .token_usage
+                    .model_context_window
+                    .map(clamp)
+                    .unwrap_or(0),
+                used_tokens: clamp(total.total_tokens),
+                input_tokens: clamp(total.input_tokens),
+                output_tokens: clamp(total.output_tokens),
+                max_output_tokens: None,
+            }));
+        }
+
         // A stream error. `will_retry` is the engine telling us whether it is
         // about to try again, and it is the difference between a retry pill
         // and a dead turn: a retrying turn has NOT ended, so the only correct
@@ -658,6 +694,59 @@ mod tests {
             Some(""),
             "the accumulator starts empty again after the turn",
         );
+    }
+
+    #[test]
+    fn a_file_change_ships_its_patch_for_the_checkpoint_diff() {
+        // #75: the engine reports an edit with a per-file unified diff. The
+        // capture path stores a patch for the Timeline's diff/restore view,
+        // and its extractor's first arm reads `arguments["patch"]` — a key
+        // this sink never wrote, so every native edit produced a checkpoint
+        // with nothing to show or restore. (The structured Diff content
+        // block wants full old/new text, which a unified diff cannot
+        // reconstruct — the patch argument is the honest carrier.)
+        let sessions = EngineSessions::default();
+        let turns = TurnWaiters::default();
+        let id = acp::SessionId::new("t-patch");
+        let thread = crate::engine::test_support::detached_thread(id.clone());
+        sessions.insert(id, &thread, "/tmp".to_string());
+
+        apply_notification(
+            &sessions,
+            &turns,
+            3,
+            ServerNotification::ItemCompleted(codex_app_server_protocol::ItemCompletedNotification {
+                thread_id: "t-patch".to_string(),
+                turn_id: "turn-1".to_string(),
+                item: ThreadItem::FileChange {
+                    id: "item-1".to_string(),
+                    status: codex_app_server_protocol::PatchApplyStatus::Completed,
+                    changes: vec![codex_app_server_protocol::FileUpdateChange {
+                        path: "src/foo.rs".to_string(),
+                        kind: codex_app_server_protocol::PatchChangeKind::Update { move_path: None },
+                        diff: "@@ -1 +1 @@\n-old\n+new\n".to_string(),
+                    }],
+                },
+                completed_at_ms: 0,
+            }),
+        );
+
+        let locked = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let call = locked
+            .entries()
+            .iter()
+            .find_map(|e| match e {
+                atlas_acp_thread::AgentThreadEntry::ToolCall(call) => Some(call),
+                _ => None,
+            })
+            .expect("the file change reaches the thread as a tool call");
+        let patch = call
+            .raw_input
+            .as_ref()
+            .and_then(|args| args.get("patch"))
+            .and_then(|p| p.as_str())
+            .expect("the edit's arguments carry the patch the checkpoint stores");
+        assert!(patch.contains("+new"), "the patch is the engine's own diff: {patch}");
     }
 
     #[test]
