@@ -94,14 +94,14 @@ jobs:
       # Compiles the app and its command surface, then runs its 194 tests.
       - name: Test
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --locked
       # Plain clippy, no `-D warnings`: the workspace lint table (`[lints]`
       # in the manifest, #60) already carries its own denies, and this is the
       # crate where the #54 cfg outage happened — the deny has to be able to
       # fail a build here, not only warn.
       - name: Clippy (workspace lint table)
         working-directory: src-tauri
-        run: cargo clippy --all-targets
+        run: cargo clippy --locked --all-targets
 
   crates:
     # Every crate gets its own job so a failure names the crate rather than the
@@ -173,14 +173,14 @@ jobs:
           git config --global user.email "ci@example.invalid"
       - name: Test
         working-directory: crates/${{ matrix.crate }}
-        run: cargo test
+        run: cargo test --locked
       # Every member crate, no flag: plain clippy enforces the workspace lint
       # table (`[lints] workspace = true`, #60), whose entries are denies of
       # their own. The stricter `-D warnings` step below stays opt-in.
       - name: Clippy (workspace lint table)
         working-directory: crates/${{ matrix.crate }}
-        run: cargo clippy --all-targets
+        run: cargo clippy --locked --all-targets
       - name: Clippy
         if: matrix.clippy
         working-directory: crates/${{ matrix.crate }}
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
