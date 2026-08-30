@@ -54,7 +54,7 @@ pub struct ClientContext {
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 // ------------------------------------------------------------------- dispatch
@@ -494,7 +494,7 @@ pub fn handle_session_notification(
         if let Some(exit) = meta.and_then(|meta| meta.get("terminal_exit")) {
             if let Some(terminal_id) = exit.get("terminal_id").and_then(|v| v.as_str()) {
                 let mut status = acp::TerminalExitStatus::new();
-                status.exit_code = exit.get("exit_code").and_then(|v| v.as_u64()).map(|c| c as u32);
+                status.exit_code = exit.get("exit_code").and_then(serde_json::Value::as_u64).map(|c| c as u32);
                 status.signal = exit
                     .get("signal")
                     .and_then(|v| v.as_str())

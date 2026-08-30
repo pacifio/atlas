@@ -79,7 +79,7 @@ pub fn run() {
         // Custom menu: replaces the default Window ▸ Close (Cmd+W) with a
         // "Close Tab" item so Cmd+W in a focused embedded browser webview closes
         // the tab instead of tearing down the window. See `menu.rs`.
-        .menu(|handle| menu::build(handle))
+        .menu(menu::build)
         .on_menu_event(|app, event| {
             if event.id() == menu::CLOSE_TAB_ID {
                 use tauri::Emitter;
@@ -106,7 +106,7 @@ pub fn run() {
             // Pre-load the Rust-owned `AppState` (currentProject + recents)
             // before the webview starts loading — paid in parallel with the
             // WebView framework init, ~1ms on warm cache.
-            let mut loaded = AppState::load(&app.handle());
+            let mut loaded = AppState::load(app.handle());
             // Device-stable telemetry identity, owned by Rust in its own file.
             // It used to live in `state.json` as `telemetry_anon_id`, where every
             // settings save wiped it (the frontend payload omitted the field and
@@ -114,14 +114,14 @@ pub fn run() {
             // new PostHog person on every save. An install upgrading from that
             // era ADOPTS its existing id here rather than forking a new person.
             let (device, is_new_device) =
-                telemetry::device::load_or_create(&app.handle(), loaded.telemetry_anon_id.as_deref());
+                telemetry::device::load_or_create(app.handle(), loaded.telemetry_anon_id.as_deref());
             let device_id = device.device_id.clone();
-            let device_id_source = device.source.clone();
+            let device_id_source = device.source;
             // Mirror it back into `state.json` so the two agree and a downgrade
             // still finds an id. `AppStatePatch` now stops the frontend wiping it.
             if loaded.telemetry_anon_id.as_deref() != Some(device_id.as_str()) {
                 loaded.telemetry_anon_id = Some(device_id.clone());
-                let _ = AppState::save(&app.handle(), &loaded);
+                let _ = AppState::save(app.handle(), &loaded);
             }
             let telemetry_enabled = loaded.settings.share_telemetry;
             let app_state: AppStateHandle = Arc::new(Mutex::new(loaded));
@@ -130,7 +130,7 @@ pub fn run() {
             // Opt-in product telemetry. Inert unless the user has enabled it AND
             // a PostHog key resolves (env / telemetry.json / build-time default).
             let (telemetry, flush_rx) =
-                telemetry::TelemetryClient::new(&app.handle(), device_id, telemetry_enabled);
+                telemetry::TelemetryClient::new(app.handle(), device_id, telemetry_enabled);
             app.manage(telemetry.clone());
             if let Some(rx) = flush_rx {
                 let tclient = telemetry.clone();
@@ -154,7 +154,7 @@ pub fn run() {
                         .payload()
                         .downcast_ref::<&str>()
                         .copied()
-                        .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.as_str()))
+                        .or_else(|| info.payload().downcast_ref::<String>().map(std::string::String::as_str))
                         .unwrap_or("panic");
                     tclient.capture_panic_blocking(serde_json::json!({
                         "location": location,
@@ -173,10 +173,10 @@ pub fn run() {
                 }),
             );
 
-            commands::agents::install_manager(&app.handle());
+            commands::agents::install_manager(app.handle());
             // Silent background refresh of model pricing from models.dev — first
             // launch populates the cache; later launches update only on change.
-            commands::models_pricing::refresh_in_background(&app.handle());
+            commands::models_pricing::refresh_in_background(app.handle());
             // Auto-update: clean up any staged update that already took effect,
             // then run a non-blocking background check + a periodic re-check. The
             // download/verify/stage happens silently; the user is only prompted
@@ -191,7 +191,7 @@ pub fn run() {
                     .app_config_dir()
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
                 app.manage(commands::auth::AuthState::new(config_dir));
-                commands::auth::restore_on_launch(&app.handle());
+                commands::auth::restore_on_launch(app.handle());
 
                 // Seed the Organisation every event is attributed to, from the
                 // state we just loaded. The app has an active org from its first
@@ -229,9 +229,9 @@ pub fn run() {
                     }));
             }
 
-            commands::updater::init_on_startup(&app.handle());
-            commands::updater::check_in_background(&app.handle());
-            commands::updater::spawn_periodic(&app.handle());
+            commands::updater::init_on_startup(app.handle());
+            commands::updater::check_in_background(app.handle());
+            commands::updater::spawn_periodic(app.handle());
 
             // Background memory indexer (Step 4): a single owned Tokio task drains
             // a bounded queue and indexes each open project's corpus into its

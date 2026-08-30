@@ -875,6 +875,8 @@ struct LedgerEntry {
 
 /// `skip_serializing_if` predicate: a `Skill` kind is the implicit default and is
 /// never written to the ledger JSON.
+// The reference is serde's contract for `skip_serializing_if`, not a choice.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_skill_kind(kind: &ComponentKind) -> bool {
     *kind == ComponentKind::Skill
 }
@@ -1720,7 +1722,7 @@ fn reconcile(root: &Path, scope: &str, home: &Path) -> Result<ReconcileView, Str
                     // No canonical twin → external (or external-conflict).
                     ("external".to_string(), None)
                 }
-            } else if !entry_meta.is_some() {
+            } else if entry_meta.is_none() {
                 // Nothing on disk for this tool.
                 if !detected {
                     ("absent".to_string(), None)
@@ -1988,11 +1990,9 @@ pub async fn agents_list_skill_targets(
     project_path: Option<String>,
 ) -> Result<Vec<AgentTarget>, String> {
     let root = root_for(&scope, project_path.as_deref())?;
-    Ok(
-        tokio::task::spawn_blocking(move || list_targets(&root, &scope))
+    tokio::task::spawn_blocking(move || list_targets(&root, &scope))
             .await
-            .map_err(|e| e.to_string())?,
-    )
+            .map_err(|e| e.to_string())
 }
 
 // ── Tauri commands (Control Plane) ───────────────────────────────────────────────
@@ -2004,11 +2004,9 @@ pub async fn tools_list(
     project_path: Option<String>,
 ) -> Result<Vec<AgentTarget>, String> {
     let root = root_for(&scope, project_path.as_deref())?;
-    Ok(
-        tokio::task::spawn_blocking(move || list_targets(&root, &scope))
+    tokio::task::spawn_blocking(move || list_targets(&root, &scope))
             .await
-            .map_err(|e| e.to_string())?,
-    )
+            .map_err(|e| e.to_string())
 }
 
 /// Build the reconciled skill × tool matrix for a scope.
@@ -2127,7 +2125,7 @@ fn repo_name_from_source(source: &str) -> String {
     source
         .trim()
         .trim_end_matches('/')
-        .rsplit(|c| c == '/' || c == ':')
+        .rsplit(['/', ':'])
         .next()
         .unwrap_or(source)
         .trim_end_matches(".git")

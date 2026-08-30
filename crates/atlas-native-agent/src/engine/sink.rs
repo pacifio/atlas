@@ -165,7 +165,7 @@ impl EngineSessions {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<acp::SessionId, EngineSession>> {
-        self.sessions.lock().unwrap_or_else(|p| p.into_inner())
+        self.sessions.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -329,7 +329,7 @@ fn session_id(thread_id: &str) -> acp::SessionId {
 }
 
 fn lock(thread: &AcpThreadHandle) -> std::sync::MutexGuard<'_, AcpThread> {
-    thread.lock().unwrap_or_else(|p| p.into_inner())
+    thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Applies one engine notification.
@@ -446,7 +446,7 @@ pub fn apply_notification(
             };
             if let Some(thread) = sessions.thread(&session) {
                 let update = acp::ToolCallUpdate::new(
-                    acp::ToolCallId::new(params.item_id.clone()),
+                    acp::ToolCallId::new(params.item_id),
                     acp::ToolCallUpdateFields::new().content(vec![
                         acp::ToolCallContent::Content(acp::Content::new(text_block(&total))),
                     ]),

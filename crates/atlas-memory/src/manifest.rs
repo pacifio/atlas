@@ -120,7 +120,7 @@ impl Manifest {
 
     /// Id for a key, if known.
     pub fn id_for(&self, key: u64) -> Option<&str> {
-        self.key_to_id.get(&key).map(|s| s.as_str())
+        self.key_to_id.get(&key).map(std::string::String::as_str)
     }
 
     /// Insert or update the entry for `id` (assigning a key if needed) and keep

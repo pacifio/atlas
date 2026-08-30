@@ -105,7 +105,7 @@ fn sync_identity(app: &AppHandle, snapshot: &AuthSnapshot) {
                 org_role: active
                     .and_then(|o| o.role)
                     .map(|r| format!("{r:?}").to_lowercase()),
-                org_count: orgs.as_ref().map(|v| v.len()).unwrap_or(0),
+                org_count: orgs.as_ref().map(std::vec::Vec::len).unwrap_or(0),
             });
         }
         AuthSnapshot::SignedOut => tel.reset_identity(),
@@ -165,7 +165,7 @@ pub async fn auth_sign_in(
                 raise(&task_app);
                 let (org_count, has_active) = match &snap {
                     AuthSnapshot::SignedIn { orgs, active_org_id, .. } => (
-                        orgs.as_ref().map(|v| v.len()).unwrap_or(0),
+                        orgs.as_ref().map(std::vec::Vec::len).unwrap_or(0),
                         active_org_id.is_some(),
                     ),
                     _ => (0, false),

@@ -215,7 +215,7 @@ fn rrf_fuse_weighted(lists: &[(&[Ranked], f32)]) -> Vec<(RetrievedDoc, f32)> {
     }
 
     let mut fused: Vec<(f32, RetrievedDoc, usize)> =
-        acc.into_values().map(|(s, d, o)| (s, d, o)).collect();
+        acc.into_values().collect();
     // Highest fused score first; break ties by first-seen order (embedding first).
     fused.sort_by(|a, b| {
         b.0.partial_cmp(&a.0)

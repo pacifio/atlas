@@ -125,7 +125,7 @@ fn persist_byok_usage(app: &AppHandle, provider: &str, model: &str, input: u64, 
         "outputTokens": output,
         "costUsd": cost,
     });
-    let line = format!("{}\n", entry);
+    let line = format!("{entry}\n");
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }

@@ -90,7 +90,7 @@ pub async fn codebase_index_build(
     emit(&app, "scanning", 0, 0);
     let scan_pp = pp.clone();
     let scanned: Vec<ScannedFile> =
-        tokio::task::spawn_blocking(move || scan(Path::new(&scan_pp), |p| mtime_ms(p)))
+        tokio::task::spawn_blocking(move || scan(Path::new(&scan_pp), mtime_ms))
             .await
             .map_err(|e| format!("scan join: {e}"))?;
 
@@ -248,7 +248,7 @@ fn build_summary_user(doc: &CodebaseDoc) -> String {
 }
 
 fn clean_summary(t: &str) -> String {
-    let one_line = t.trim().split_whitespace().collect::<Vec<_>>().join(" ");
+    let one_line = t.split_whitespace().collect::<Vec<_>>().join(" ");
     one_line.chars().take(400).collect()
 }
 

@@ -514,7 +514,7 @@ pub struct ToolCall {
 
 impl ToolCall {
     pub fn from_acp(tool_call: acp::ToolCall, status: ToolCallStatus) -> Result<Self> {
-        let label = Self::label_for(&tool_call.kind, tool_call.title);
+        let label = Self::label_for(tool_call.kind, tool_call.title);
         let mut content = Vec::with_capacity(tool_call.content.len());
         for item in tool_call.content {
             if let Some(item) = ToolCallContent::from_acp(item)? {
@@ -539,8 +539,8 @@ impl ToolCall {
     /// label as markdown. Nothing renders markdown in this crate, so only the
     /// multi-line truncation — which is real behaviour, not presentation —
     /// is ported.
-    fn label_for(kind: &acp::ToolKind, title: String) -> String {
-        if *kind == acp::ToolKind::Execute || *kind == acp::ToolKind::Edit {
+    fn label_for(kind: acp::ToolKind, title: String) -> String {
+        if kind == acp::ToolKind::Execute || kind == acp::ToolKind::Edit {
             title
         } else if let Some((first_line, _)) = title.split_once('\n') {
             first_line.to_owned() + "…"
@@ -578,7 +578,7 @@ impl ToolCall {
         }
 
         if let Some(title) = title {
-            self.label = Self::label_for(&self.kind, title);
+            self.label = Self::label_for(self.kind, title);
         }
 
         if let Some(content) = content {

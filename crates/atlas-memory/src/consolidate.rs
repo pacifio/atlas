@@ -240,7 +240,7 @@ fn prune_memdir(memory_dir: &Path) -> Result<(usize, usize)> {
     }
 
     // Rewrite each file with its survivors (or delete it if none remain).
-    for ((path, _), survivors) in files.iter().zip(per_file.into_iter()) {
+    for ((path, _), survivors) in files.iter().zip(per_file) {
         if survivors.is_empty() {
             let _ = std::fs::remove_file(path);
             continue;
@@ -260,7 +260,7 @@ fn apply_floor_and_cap(per_file: &mut [Vec<RawEntry>], floor: f32, cap: usize) -
         entries.retain(|e| e.confidence >= floor);
     }
 
-    let surviving: usize = per_file.iter().map(|e| e.len()).sum();
+    let surviving: usize = per_file.iter().map(std::vec::Vec::len).sum();
     if surviving <= cap {
         return surviving;
     }
@@ -291,7 +291,7 @@ fn apply_floor_and_cap(per_file: &mut [Vec<RawEntry>], floor: f32, cap: usize) -
         });
     }
 
-    per_file.iter().map(|e| e.len()).sum()
+    per_file.iter().map(std::vec::Vec::len).sum()
 }
 
 /// Parse the `- **[cat]** content *(confidence: NN%)*` bullets out of one memdir
@@ -423,7 +423,7 @@ mod tests {
         force_session_gate(&memory_dir);
 
         // Simulate another consolidation already holding the lock.
-        let other = AutoDream::new(memory_dir.clone(), memory_dir.clone());
+        let other = AutoDream::new(memory_dir.clone(), memory_dir);
         other.acquire_lock().unwrap();
 
         let outcome = consolidate(&mut engine).unwrap();

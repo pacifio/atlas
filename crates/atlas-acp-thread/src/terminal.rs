@@ -340,7 +340,7 @@ impl TerminalRegistry {
     /// created yet. Exposed so the buffering invariant can be asserted directly
     /// rather than inferred from the rendered output.
     pub fn pending_output_len(&self, id: &acp::TerminalId) -> usize {
-        self.pending_output.get(id).map_or(0, |c| c.len())
+        self.pending_output.get(id).map_or(0, std::vec::Vec::len)
     }
 
     /// Whether an exit status arrived before the terminal it belongs to.

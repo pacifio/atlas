@@ -90,7 +90,7 @@ pub async fn append_pinned_log(org: String, entry_json: String) -> Result<(), St
             .map_err(|e| e.to_string())?;
         // Strip any newlines in the entry so each line is one entry.
         let single = entry_json.replace('\n', " ");
-        writeln!(f, "{}", single).map_err(|e| e.to_string())?;
+        writeln!(f, "{single}").map_err(|e| e.to_string())?;
         Ok(())
     })
     .await
@@ -164,7 +164,7 @@ pub async fn append_project_log(project: String, entry_json: String) -> Result<(
                 .open(&path)
                 .map_err(|e| e.to_string())?;
             let single = entry_json.replace('\n', " ");
-            writeln!(f, "{}", single).map_err(|e| e.to_string())?;
+            writeln!(f, "{single}").map_err(|e| e.to_string())?;
         }
         // Soft-cap: if the file grew past the limit, keep the most recent bytes
         // starting at a line boundary.

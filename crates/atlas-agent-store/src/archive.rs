@@ -135,7 +135,7 @@ pub fn github_release_archive_from_url(archive_url: &str) -> Option<GithubReleas
         percent_decode_str(segment)
             .decode_utf8()
             .ok()
-            .map(|segment| segment.into_owned())
+            .map(std::borrow::Cow::into_owned)
     }
 
     let url = Url::parse(archive_url).ok()?;

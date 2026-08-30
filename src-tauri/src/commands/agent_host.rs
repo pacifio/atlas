@@ -350,7 +350,7 @@ impl AgentHost {
             // the store itself only knows entry ids, and the forwarder has to
             // know which connection to read the elicitation back from.
             request_elicitation_events: {
-                let tx = elicitation_tx.clone();
+                let tx = elicitation_tx;
                 Arc::new(move |agent_id: &ThreadAgentId| {
                     let (agent_tx, mut agent_rx) = mpsc::unbounded_channel();
                     let tx = tx.clone();
@@ -770,7 +770,7 @@ impl AgentHost {
                 .map(|mode| SessionModeInfo {
                     id: mode.id.to_string(),
                     name: mode.name.clone(),
-                    description: mode.description.clone(),
+                    description: mode.description,
                 })
                 .collect(),
         )
@@ -1151,7 +1151,7 @@ impl AgentHost {
         self.request_elicitations
             .stream
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
     }
 
@@ -1168,7 +1168,7 @@ impl AgentHost {
         let connection = self.manager.connection_by_agent_id(agent_id)?;
         let store = connection.request_elicitations()?;
         let wire = {
-            let store = store.lock().unwrap_or_else(|p| p.into_inner());
+            let store = store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let (_, elicitation) = store.elicitation(entry_id)?;
             atlas_agent_delta::elicitation_wire(elicitation)
         };
@@ -1176,7 +1176,7 @@ impl AgentHost {
         self.request_elicitations
             .answered_by
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(request_id, (agent_id.clone(), entry_id.clone()));
         Some((request_id, wire))
     }
@@ -1199,7 +1199,7 @@ impl AgentHost {
         let connection = self.manager.connection_by_agent_id(agent_id)?;
         let store = connection.request_elicitations()?;
         let still_pending = {
-            let store = store.lock().unwrap_or_else(|p| p.into_inner());
+            let store = store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let (_, elicitation) = store.elicitation(entry_id)?;
             matches!(
                 elicitation.status,
@@ -1213,7 +1213,7 @@ impl AgentHost {
             .request_elicitations
             .answered_by
             .lock()
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let request_id = answered_by
             .iter()
             .find(|(_, (agent, entry))| agent == agent_id && entry == entry_id)
@@ -1232,7 +1232,7 @@ impl AgentHost {
         self.request_elicitations
             .answered_by
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retain(|_, (agent, _)| agent != agent_id);
     }
 
@@ -1254,7 +1254,7 @@ impl AgentHost {
             .request_elicitations
             .answered_by
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&request_id);
         if let Some((agent_id, entry_id)) = request_scoped {
             let Some(connection) = self.manager.connection_by_agent_id(&agent_id) else {
@@ -1263,7 +1263,7 @@ impl AgentHost {
             let Some(store) = connection.request_elicitations() else {
                 return Ok(());
             };
-            let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
+            let mut store = store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             match elicitation_response(action, content)? {
                 Some(response) => store.respond_to_elicitation(&entry_id, response),
                 None => store.cancel_elicitation(&entry_id),
@@ -1821,7 +1821,7 @@ pub struct ThreadProjectWire {
 fn thread_row(thread: &ThreadMetadata) -> ThreadRow {
     ThreadRow {
         thread_id: thread.thread_id.to_key_string(),
-        session_id: thread.session_id.as_ref().map(|id| id.to_string()),
+        session_id: thread.session_id.as_ref().map(std::string::ToString::to_string),
         agent_id: thread.agent_id.to_string(),
         title: thread.display_title().to_string(),
         updated_at: thread.updated_at.to_rfc3339(),
@@ -2093,8 +2093,8 @@ fn parse_env_var(v: &serde_json::Value) -> Option<AuthEnvVar> {
     Some(AuthEnvVar {
         name: obj.get("name")?.as_str()?.to_string(),
         label: obj.get("label").and_then(|l| l.as_str()).map(str::to_string),
-        secret: obj.get("secret").and_then(|s| s.as_bool()).unwrap_or(true),
-        optional: obj.get("optional").and_then(|o| o.as_bool()).unwrap_or(false),
+        secret: obj.get("secret").and_then(serde_json::Value::as_bool).unwrap_or(true),
+        optional: obj.get("optional").and_then(serde_json::Value::as_bool).unwrap_or(false),
     })
 }
 
@@ -2132,11 +2132,11 @@ fn pending_option_kind(
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|p| p.into_inner())
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn lock_thread(thread: &AcpThreadHandle) -> std::sync::MutexGuard<'_, AcpThread> {
-    thread.lock().unwrap_or_else(|p| p.into_inner())
+    thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 // ── The installed map on disk ───────────────────────────────────────────────

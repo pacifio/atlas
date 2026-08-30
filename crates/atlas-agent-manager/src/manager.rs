@@ -504,7 +504,7 @@ impl AgentManager {
     }
 
     fn lock_entries(&self) -> std::sync::MutexGuard<'_, HashMap<Agent, Entry>> {
-        self.entries.lock().unwrap_or_else(|p| p.into_inner())
+        self.entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     // ---- sessions -------------------------------------------------------
@@ -721,14 +721,14 @@ impl AgentManager {
     }
 
     fn lock_sessions(&self) -> std::sync::MutexGuard<'_, HashMap<acp::SessionId, SessionHandle>> {
-        self.sessions.lock().unwrap_or_else(|p| p.into_inner())
+        self.sessions.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
 fn lock(entry: &Entry) -> std::sync::MutexGuard<'_, AgentConnectionEntry> {
-    entry.lock().unwrap_or_else(|p| p.into_inner())
+    entry.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn lock_thread(thread: &AcpThreadHandle) -> std::sync::MutexGuard<'_, AcpThread> {
-    thread.lock().unwrap_or_else(|p| p.into_inner())
+    thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }

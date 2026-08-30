@@ -246,12 +246,7 @@ fn every_agent_is_recorded_the_same_way() {
     }
     store.flush().unwrap();
 
-    let agents: Vec<String> = store
-        .threads()
-        .iter()
-        .map(|t| t.agent_id.to_string())
-        .collect();
-    assert_eq!(agents.len(), 5, "one row each, no agent singled out");
+    assert_eq!(store.threads().len(), 5, "one row each, no agent singled out");
 }
 
 #[test]

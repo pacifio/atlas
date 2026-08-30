@@ -95,10 +95,7 @@ fn completion(
 }
 
 fn error_of(events: &[Result<ResponseEvent, ApiError>]) -> Option<&ApiError> {
-    events.iter().find_map(|event| match event {
-        Err(err) => Some(err),
-        _ => None,
-    })
+    events.iter().find_map(|event| event.as_ref().err())
 }
 
 #[test]

@@ -28,7 +28,7 @@ pub async fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
 fn read_directory_sync(path: &str) -> Result<Vec<FileEntry>, String> {
     let dir = Path::new(path);
     if !dir.is_dir() {
-        return Err(format!("Not a directory: {}", path));
+        return Err(format!("Not a directory: {path}"));
     }
 
     let mut entries = Vec::new();
@@ -73,7 +73,7 @@ fn read_directory_sync(path: &str) -> Result<Vec<FileEntry>, String> {
 #[tauri::command]
 pub async fn read_file_content(path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", path, e))
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read {path}: {e}"))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -90,7 +90,7 @@ pub async fn read_file_content(path: String) -> Result<String, String> {
 pub async fn read_file_base64(path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         use base64::Engine;
-        let bytes = fs::read(&path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
+        let bytes = fs::read(&path).map_err(|e| format!("Failed to read {path}: {e}"))?;
         Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
     })
     .await
@@ -181,11 +181,11 @@ pub async fn is_text_file(path: String) -> Result<bool, String> {
     tokio::task::spawn_blocking(move || {
         use std::io::Read;
         let mut f =
-            fs::File::open(&path).map_err(|e| format!("Failed to open {}: {}", path, e))?;
+            fs::File::open(&path).map_err(|e| format!("Failed to open {path}: {e}"))?;
         let mut buf = [0u8; 8192];
         let n = f
             .read(&mut buf)
-            .map_err(|e| format!("Failed to read {}: {}", path, e))?;
+            .map_err(|e| format!("Failed to read {path}: {e}"))?;
         let slice = &buf[..n];
         // Empty file → treat as text (an empty editor is fine).
         if slice.is_empty() {
@@ -241,7 +241,7 @@ pub async fn file_mtime_ms(path: String) -> Result<i64, String> {
 #[tauri::command]
 pub async fn write_file_content(path: String, content: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        fs::write(&path, &content).map_err(|e| format!("Failed to write {}: {}", path, e))
+        fs::write(&path, &content).map_err(|e| format!("Failed to write {path}: {e}"))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -257,7 +257,7 @@ pub async fn write_file_base64(path: String, contents: String) -> Result<(), Str
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(contents.as_bytes())
             .map_err(|e| format!("bad base64: {e}"))?;
-        fs::write(&path, &bytes).map_err(|e| format!("Failed to write {}: {}", path, e))
+        fs::write(&path, &bytes).map_err(|e| format!("Failed to write {path}: {e}"))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -274,12 +274,12 @@ pub async fn fs_create_file(path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let p = Path::new(&path);
         if p.exists() {
-            return Err(format!("Already exists: {}", path));
+            return Err(format!("Already exists: {path}"));
         }
         if let Some(parent) = p.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        fs::write(p, "").map_err(|e| format!("Failed to create {}: {}", path, e))
+        fs::write(p, "").map_err(|e| format!("Failed to create {path}: {e}"))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -290,9 +290,9 @@ pub async fn fs_create_dir(path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let p = Path::new(&path);
         if p.exists() {
-            return Err(format!("Already exists: {}", path));
+            return Err(format!("Already exists: {path}"));
         }
-        fs::create_dir_all(p).map_err(|e| format!("Failed to mkdir {}: {}", path, e))
+        fs::create_dir_all(p).map_err(|e| format!("Failed to mkdir {path}: {e}"))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -303,7 +303,7 @@ pub async fn fs_rename(from: String, to: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let dst = Path::new(&to);
         if dst.exists() {
-            return Err(format!("Target already exists: {}", to));
+            return Err(format!("Target already exists: {to}"));
         }
         fs::rename(&from, &to).map_err(|e| format!("Failed to rename: {e}"))
     })
@@ -335,7 +335,7 @@ pub async fn fs_copy(from: String, to: String) -> Result<(), String> {
         let src = Path::new(&from);
         let dst = Path::new(&to);
         if dst.exists() {
-            return Err(format!("Target already exists: {}", to));
+            return Err(format!("Target already exists: {to}"));
         }
         if src.is_dir() {
             copy_dir_recursive(src, dst)
@@ -376,7 +376,7 @@ pub async fn fs_duplicate(path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let src = Path::new(&path);
         if !src.exists() {
-            return Err(format!("Not found: {}", path));
+            return Err(format!("Not found: {path}"));
         }
         let parent = src.parent().ok_or("No parent dir")?;
         let stem = src
@@ -535,7 +535,7 @@ fn ensure_atlas_gitignore_sync(
     let gitignore = root.join(".gitignore");
 
     if !gitignore.exists() {
-        fs::write(&gitignore, format!("{}\n", ATLAS_GITIGNORE_PATTERN))
+        fs::write(&gitignore, format!("{ATLAS_GITIGNORE_PATTERN}\n"))
             .map_err(|e| format!("could not create .gitignore: {e}"))?;
         tracing::info!(
             target: "atlas::gitignore",

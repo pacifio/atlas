@@ -160,7 +160,7 @@ impl Harness {
 }
 
 fn lock(thread: &AcpThreadHandle) -> std::sync::MutexGuard<'_, AcpThread> {
-    thread.lock().unwrap_or_else(|p| p.into_inner())
+    thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn text_chunk(text: &str) -> serde_json::Value {
@@ -755,7 +755,7 @@ async fn create_terminal(harness: &Harness, terminal_id: &str, args: &[&str]) {
     let terminal = std::sync::Arc::new(
         atlas_terminal::command::CommandTerminal::spawn(
             echo_binary(),
-            &args.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+            &args.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
             &[],
             None,
             4096,

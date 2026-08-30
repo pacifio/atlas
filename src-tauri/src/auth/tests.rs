@@ -920,7 +920,7 @@ fn a_hostile_retry_after_cannot_escape_the_window() {
 fn cached_avatars(dir: &TempDir) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = std::fs::read_dir(dir.path())
         .expect("read config dir")
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.path())
         .filter(|p| {
             p.file_name()

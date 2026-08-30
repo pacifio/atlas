@@ -80,6 +80,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       # One cargo workspace since #38: the lockfile and the target dir both
       # live at the repo root, so that is what the cache keys off.
       - uses: Swatinem/rust-cache@v2
@@ -93,6 +95,13 @@ jobs:
       - name: Test
         working-directory: src-tauri
         run: cargo test
+      # Plain clippy, no `-D warnings`: the workspace lint table (`[lints]`
+      # in the manifest, #60) already carries its own denies, and this is the
+      # crate where the #54 cfg outage happened — the deny has to be able to
+      # fail a build here, not only warn.
+      - name: Clippy (workspace lint table)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets
 
   crates:
     # Every crate gets its own job so a failure names the crate rather than the
@@ -165,6 +174,12 @@ jobs:
       - name: Test
         working-directory: crates/${{ matrix.crate }}
         run: cargo test
+      # Every member crate, no flag: plain clippy enforces the workspace lint
+      # table (`[lints] workspace = true`, #60), whose entries are denies of
+      # their own. The stricter `-D warnings` step below stays opt-in.
+      - name: Clippy (workspace lint table)
+        working-directory: crates/${{ matrix.crate }}
+        run: cargo clippy --all-targets
       - name: Clippy
         if: matrix.clippy
         working-directory: crates/${{ matrix.crate }}

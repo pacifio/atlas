@@ -259,7 +259,7 @@ impl AcpConnection {
                 for thread in sessions.all_threads() {
                     thread
                         .lock()
-                        .unwrap_or_else(|p| p.into_inner())
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .emit_load_error(load_error.clone());
                 }
             }
@@ -913,7 +913,7 @@ impl AgentConnection for AcpConnection {
             &options
                 .config_options
                 .lock()
-                .unwrap_or_else(|p| p.into_inner()),
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
         )?;
         Some(Arc::new(AcpModelSelector {
             connection: self.connection.clone(),
@@ -956,7 +956,7 @@ impl AcpConnection {
         };
 
         let initial = {
-            let mut modes = modes.lock().unwrap_or_else(|p| p.into_inner());
+            let mut modes = modes.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if !modes
                 .available_modes
                 .iter()
@@ -979,7 +979,7 @@ impl AcpConnection {
             .await
             .is_err()
         {
-            modes.lock().unwrap_or_else(|p| p.into_inner()).current_mode_id = initial;
+            modes.lock().unwrap_or_else(std::sync::PoisonError::into_inner).current_mode_id = initial;
         }
     }
 }
@@ -994,7 +994,7 @@ impl AgentSessionModes for AcpSessionModes {
     fn current_mode(&self) -> acp::SessionModeId {
         self.modes
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .current_mode_id
             .clone()
     }
@@ -1002,7 +1002,7 @@ impl AgentSessionModes for AcpSessionModes {
     fn all_modes(&self) -> Vec<acp::SessionMode> {
         self.modes
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .available_modes
             .clone()
     }
@@ -1014,7 +1014,7 @@ impl AgentSessionModes for AcpSessionModes {
         let previous = self.current_mode();
         modes
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .current_mode_id = mode.clone();
 
         async move {
@@ -1027,7 +1027,7 @@ impl AgentSessionModes for AcpSessionModes {
                 Err(err) => {
                     modes
                         .lock()
-                        .unwrap_or_else(|p| p.into_inner())
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .current_mode_id = previous;
                     Err(anyhow!(err))
                 }
@@ -1125,7 +1125,7 @@ impl AcpModelSelector {
                 .options
                 .config_options
                 .lock()
-                .unwrap_or_else(|p| p.into_inner()),
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
         )
         .ok_or_else(|| anyhow!("this agent no longer advertises a model selector"))
     }
@@ -1174,7 +1174,7 @@ impl AgentModelSelector for AcpModelSelector {
             *options
                 .config_options
                 .lock()
-                .unwrap_or_else(|p| p.into_inner()) = response.config_options;
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = response.config_options;
             options.notify();
             Ok(())
         }
@@ -1197,7 +1197,7 @@ impl AgentSessionConfigOptions for AcpSessionConfigOptions {
         self.options
             .config_options
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 
@@ -1222,7 +1222,7 @@ impl AgentSessionConfigOptions for AcpSessionConfigOptions {
             *options
                 .config_options
                 .lock()
-                .unwrap_or_else(|p| p.into_inner()) = response.config_options.clone();
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = response.config_options.clone();
             options.notify();
             Ok(response.config_options)
         }

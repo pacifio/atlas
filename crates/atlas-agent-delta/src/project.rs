@@ -106,7 +106,7 @@ pub fn tool_call(call: &ThreadToolCall, thread: &atlas_acp_thread::AcpThread) ->
         tool_name: call
             .tool_name
             .as_ref()
-            .map(|name| name.to_string())
+            .map(std::string::ToString::to_string)
             .unwrap_or_else(|| {
                 if title.is_empty() {
                     kind.clone()

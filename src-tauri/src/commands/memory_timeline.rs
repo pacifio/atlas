@@ -169,7 +169,7 @@ pub async fn memory_timeline(
         });
     }
     sessions.retain(|s| s.ts_ms > 0);
-    sessions.sort_by(|a, b| a.ts_ms.cmp(&b.ts_ms));
+    sessions.sort_by_key(|a| a.ts_ms);
 
     let mut memory: Vec<TimelineMemory> = docs
         .into_iter()
@@ -182,7 +182,7 @@ pub async fn memory_timeline(
             ts_ms: d.timestamp_ms,
         })
         .collect();
-    memory.sort_by(|a, b| a.ts_ms.cmp(&b.ts_ms));
+    memory.sort_by_key(|a| a.ts_ms);
 
     let result = MemoryTimeline {
         branches,
@@ -226,7 +226,7 @@ pub async fn memory_timeline_cached(project_path: String) -> Result<Option<Memor
 
 fn build_git(path: &str) -> Result<(Vec<TimelineBranch>, Vec<TimelineCommit>), String> {
     let refs = git_refs_compute(path)?;
-    let current = refs.head_ref.clone();
+    let current = refs.head_ref;
 
     // Local branches with their tip commit time (unix seconds), for ordering.
     let out = Command::new("git")

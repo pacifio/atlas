@@ -57,7 +57,7 @@ pub fn curate_pack(mut docs: Vec<MemoryDoc>) -> Option<String> {
         return None;
     }
     // Newest first — the most recent conventions/decisions matter most.
-    docs.sort_by(|a, b| b.timestamp_ms.cmp(&a.timestamp_ms));
+    docs.sort_by_key(|doc| std::cmp::Reverse(doc.timestamp_ms));
 
     let mut body = String::new();
     let mut count = 0usize;
@@ -85,8 +85,7 @@ pub fn curate_pack(mut docs: Vec<MemoryDoc>) -> Option<String> {
     }
     let footer = format!("({} memories · {} chars)", count, body.trim_end().len());
     Some(format!(
-        "--- PROJECT MEMORY ---\n{}{}\n--- END PROJECT MEMORY ---",
-        body, footer
+        "--- PROJECT MEMORY ---\n{body}{footer}\n--- END PROJECT MEMORY ---"
     ))
 }
 
@@ -145,7 +144,7 @@ pub fn parse_handoff_turns(jsonl: &str, max_turns: usize) -> Vec<(String, String
             Ok(v) => v,
             Err(_) => continue,
         };
-        if v.get("isSidechain").and_then(|x| x.as_bool()) == Some(true) {
+        if v.get("isSidechain").and_then(serde_json::Value::as_bool) == Some(true) {
             continue;
         }
         match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
@@ -234,8 +233,7 @@ fn format_turns(turns: &[(String, String)]) -> String {
 /// Wrap a raw handoff body in the labelled block with an attribution footer.
 pub fn wrap_handoff(body: &str, turn_count: usize, attribution: &str) -> String {
     format!(
-        "--- RECENT SESSION ---\n{}\n(last {} turns · {})\n--- END RECENT SESSION ---",
-        body, turn_count, attribution
+        "--- RECENT SESSION ---\n{body}\n(last {turn_count} turns · {attribution})\n--- END RECENT SESSION ---"
     )
 }
 

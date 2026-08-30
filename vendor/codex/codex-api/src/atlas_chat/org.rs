@@ -34,14 +34,14 @@ static ORG_SOURCE: RwLock<Option<OrgSource>> = RwLock::new(None);
 /// Installs the host's org source. A later call replaces the earlier one,
 /// which is also what lets each test bring its own.
 pub fn set_org_source(source: OrgSource) {
-    *ORG_SOURCE.write().unwrap_or_else(|p| p.into_inner()) = Some(source);
+    *ORG_SOURCE.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(source);
 }
 
 /// The paying org for a request being built now, if the host declared one.
 pub fn current_org() -> Option<String> {
     let source = ORG_SOURCE
         .read()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone()?;
     // An empty id is no org: sending `Atlas-Org:` with nothing in it is a
     // malformed header, not a personal request.
@@ -56,7 +56,7 @@ mod tests {
     fn no_source_means_personal_attribution() {
         // Not an error: a caller with no org grant is the contract's
         // `org_none` case, and the header is simply absent.
-        *ORG_SOURCE.write().unwrap_or_else(|p| p.into_inner()) = None;
+        *ORG_SOURCE.write().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         assert_eq!(current_org(), None);
     }
 
@@ -68,11 +68,11 @@ mod tests {
         let org = Arc::new(std::sync::Mutex::new(Some("org_a".to_string())));
         let reader = org.clone();
         set_org_source(Arc::new(move || {
-            reader.lock().unwrap_or_else(|p| p.into_inner()).clone()
+            reader.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
         }));
         assert_eq!(current_org().as_deref(), Some("org_a"));
 
-        *org.lock().unwrap_or_else(|p| p.into_inner()) = Some("org_b".to_string());
+        *org.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some("org_b".to_string());
         assert_eq!(current_org().as_deref(), Some("org_b"));
     }
 

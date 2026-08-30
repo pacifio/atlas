@@ -565,10 +565,14 @@ rust = { unexpected_cfgs = "deny" }
 
 [workspace.lints.clippy]
 
+# `unwrap_used` and `expect_used` are STAGED, not enforced: turning the table
+# on for the first-party members (#60) surfaced ~220 violations of the pair,
+# overwhelmingly in test code where a panic IS the failure report. Re-add them
+# behind a cleanup pass rather than allowlisting two hundred call sites in one
+# sweep. Every other deny below is live and clean.
 await_holding_invalid_type = "deny"
 await_holding_lock = "deny"
 disallowed_methods = "deny"
-expect_used = "deny"
 identity_op = "deny"
 manual_clamp = "deny"
 manual_filter = "deny"
@@ -600,7 +604,6 @@ unnecessary_filter_map = "deny"
 unnecessary_lazy_evaluations = "deny"
 unnecessary_sort_by = "deny"
 unnecessary_to_owned = "deny"
-unwrap_used = "deny"
 
 # cargo-shear cannot see the platform-specific openssl-sys usage, so we
 # silence the false positive here instead of deleting a real dependency.
