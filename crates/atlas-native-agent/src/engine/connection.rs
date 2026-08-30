@@ -974,11 +974,19 @@ impl AgentConnection for EngineConnection {
                     match read {
                         Ok(response) => (response.thread.id, response.thread.turns),
                         Err(read_err) => {
-                            tracing::info!(
+                            // `warn!`, not `info!`: this arm is reached by an
+                            // unknown thread id (a pre-cutover row — expected)
+                            // but also by a transport failure or a bad reply,
+                            // and those mean the model continues with no
+                            // context while the chat repaints from Atlas's own
+                            // transcript and looks fine. The two errors are
+                            // printed so the reader can tell which it was.
+                            tracing::warn!(
                                 target: "atlas_native_agent::engine",
-                                "the engine does not know thread {session_id}; opening it \
-                                 fresh (a row from before the engine changed): \
-                                 resume: {resume_err}; read: {read_err}",
+                                "opening thread {session_id} fresh: the engine could not \
+                                 resume it or read it back — either it does not know the \
+                                 id (a row from before the engine changed) or the calls \
+                                 themselves failed. resume: {resume_err}; read: {read_err}",
                             );
                             let started: v2::ThreadStartResponse = self
                                 .call(|request_id| ClientRequest::ThreadStart {
@@ -1003,8 +1011,9 @@ impl AgentConnection for EngineConnection {
 
             // Keyed by the id the engine will stamp on its events, which is
             // the only id the sink can match. For a pre-cutover row that is a
-            // new id, and the live feed rebinds the store row to it — the same
-            // path a draft takes.
+            // new id — the caller reads it off the returned thread and rebinds
+            // the store row (`resume_thread` compares it to the stored id and
+            // adopts, #56); nothing here writes to history.
             let engine_session_id = acp::SessionId::new(engine_thread_id.as_str());
             let thread = self.new_thread(engine_session_id.clone(), work_dirs, title);
             {

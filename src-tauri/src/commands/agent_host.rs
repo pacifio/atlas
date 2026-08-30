@@ -39,7 +39,7 @@ use atlas_acp_thread::{
 };
 use atlas_agent_delta::{project, DeltaProjector, DeltaSink, ThreadObserver};
 use atlas_agent_manager::{Agent, AgentManager, ResumeMode};
-use atlas_agent_servers::{AcpConnectionDefaults, ConnectOptions};
+use atlas_agent_servers::{AcpConnectionDefaults, AgentServer, ConnectOptions};
 use atlas_agent_store::{AgentRegistryStore, AgentServerStore, ExternalAgentSource};
 use atlas_agent_transcript::TranscriptKind;
 use atlas_agent_wire::{
@@ -320,6 +320,19 @@ impl AgentHost {
         store: Arc<AgentServerStore>,
         registry: Arc<AgentRegistryStore>,
     ) -> Arc<Self> {
+        let native = select_native_agent(&config_dir);
+        Self::with_native(sink, config_dir, store, registry, native)
+    }
+
+    /// [`AgentHost::new`] with the native agent supplied by the caller — the
+    /// seam tests use to stand in a scripted agent.
+    pub(crate) fn with_native(
+        sink: Arc<dyn DeltaSink>,
+        config_dir: PathBuf,
+        store: Arc<AgentServerStore>,
+        registry: Arc<AgentRegistryStore>,
+        native: Arc<dyn AgentServer>,
+    ) -> Arc<Self> {
         let projector = DeltaProjector::new(sink);
         let history = match ThreadMetadataStore::open(atlas_thread_metadata::db_path(&config_dir)) {
             Ok(store) => Some(ThreadRecorder::new(store)),
@@ -328,7 +341,6 @@ impl AgentHost {
                 None
             }
         };
-        let native = select_native_agent(&config_dir);
         let (elicitation_tx, elicitation_rx) = mpsc::unbounded_channel();
         let options = ConnectOptions {
             root_dir: None,
@@ -1340,12 +1352,23 @@ impl AgentHost {
                     .manager
                     .resume_stored_session(
                         record.agent.clone(),
-                        session_id,
+                        session_id.clone(),
                         work_dirs,
                         thread.title(),
                     )
                     .await
                     .map_err(HostError::from)?;
+                // The agent may have answered with a different session id than
+                // the stored one — the engine's fresh-thread fallback for a
+                // pre-cutover row does exactly that. The row is bound to the
+                // id the live feed will stamp on its events, the same
+                // invariant the draft arm above keeps; without it the feed's
+                // first write mints a duplicate row and the one the user
+                // clicked is orphaned on the dead id (#56).
+                let opened_session_id = lock_thread(&resumed.thread).session_id().clone();
+                if opened_session_id != session_id {
+                    history.adopt(opened_session_id, thread_id);
+                }
                 (resumed.thread, resumed.mode == ResumeMode::WithoutHistory)
             }
         };
@@ -2300,7 +2323,163 @@ mod auth_method_wire_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::test_support::fresh_host;
+    use super::test_support::{fresh_host, fresh_host_with_native};
+    use atlas_acp_thread::{AcpThread, AcpThreadHandle, AgentConnection};
+    use atlas_agent_servers::AgentServerDelegate;
+    use futures::future::BoxFuture;
+    use futures::FutureExt;
+
+    /// A native agent that reopens every session under one fixed id of its
+    /// own choosing — the shape of the engine's fresh-thread fallback for a
+    /// row whose stored id it does not know.
+    struct RebindingNative {
+        fresh_id: &'static str,
+    }
+
+    impl AgentConnection for RebindingNative {
+        fn agent_id(&self) -> atlas_acp_thread::AgentId {
+            atlas_acp_thread::AgentId::new(CERSEI_AGENT_ID)
+        }
+
+        fn telemetry_id(&self) -> Arc<str> {
+            CERSEI_AGENT_ID.into()
+        }
+
+        fn new_session(
+            self: Arc<Self>,
+            work_dirs: Vec<PathBuf>,
+        ) -> BoxFuture<'static, anyhow::Result<AcpThreadHandle>> {
+            let thread = self.thread(acp::SessionId::new(self.fresh_id), work_dirs);
+            async move { Ok(thread) }.boxed()
+        }
+
+        fn supports_load_session(&self) -> bool {
+            true
+        }
+
+        fn load_session(
+            self: Arc<Self>,
+            _session_id: acp::SessionId,
+            work_dirs: Vec<PathBuf>,
+            _title: Option<Arc<str>>,
+        ) -> BoxFuture<'static, anyhow::Result<AcpThreadHandle>> {
+            // The stored id is not honoured: the thread comes back under the
+            // agent's own fresh id, exactly like the engine's fallback.
+            let thread = self.thread(acp::SessionId::new(self.fresh_id), work_dirs);
+            async move { Ok(thread) }.boxed()
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method: acp::AuthMethodId,
+        ) -> BoxFuture<'static, anyhow::Result<()>> {
+            async { Ok(()) }.boxed()
+        }
+
+        fn prompt(
+            &self,
+            _params: acp::PromptRequest,
+        ) -> BoxFuture<'static, anyhow::Result<acp::PromptResponse>> {
+            async { Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)) }.boxed()
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId) {}
+
+        fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
+            self
+        }
+    }
+
+    impl RebindingNative {
+        fn thread(
+            self: &Arc<Self>,
+            session_id: acp::SessionId,
+            work_dirs: Vec<PathBuf>,
+        ) -> AcpThreadHandle {
+            Arc::new(std::sync::Mutex::new(AcpThread::new(
+                session_id,
+                self.clone() as Arc<dyn AgentConnection>,
+                work_dirs,
+                None,
+                atlas_acp_thread::event_channel().0,
+            )))
+        }
+    }
+
+    impl AgentServer for RebindingNative {
+        fn agent_id(&self) -> atlas_acp_thread::AgentId {
+            atlas_acp_thread::AgentId::new(CERSEI_AGENT_ID)
+        }
+
+        fn connect(
+            &self,
+            _delegate: AgentServerDelegate,
+            _options: ConnectOptions,
+        ) -> BoxFuture<'static, anyhow::Result<Arc<dyn AgentConnection>>> {
+            let connection = Arc::new(RebindingNative {
+                fresh_id: self.fresh_id,
+            });
+            async move { Ok(connection as Arc<dyn AgentConnection>) }.boxed()
+        }
+
+        fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
+            self
+        }
+    }
+
+    /// Issue #56 (B1): the engine may answer a resume with a *different*
+    /// session id than the stored one — its fresh-thread fallback for a
+    /// pre-cutover row does exactly that. The row the user clicked must be
+    /// rebound to the id the live feed will stamp on its events; otherwise the
+    /// feed's first write mints a duplicate sidebar row and the original is
+    /// orphaned on the dead id.
+    #[tokio::test]
+    async fn a_resume_that_comes_back_under_a_new_id_rebinds_the_row() {
+        let native = Arc::new(RebindingNative {
+            fresh_id: "engine-fresh-id",
+        });
+        let (host, dir) = fresh_host_with_native(native);
+        let history = host.history().expect("a fresh host has history");
+
+        let thread = atlas_thread_metadata::ThreadMetadata {
+            session_id: Some(acp::SessionId::new("cersei-era-id")),
+            ..atlas_thread_metadata::ThreadMetadata::new(
+                atlas_thread_metadata::ThreadId::new(),
+                CERSEI_AGENT_ID.into(),
+                atlas_thread_metadata::PathList::new(&[PathBuf::from("/tmp/atlas")]),
+            )
+        };
+        let thread_id = thread.thread_id;
+        history.store().save_all(vec![thread]);
+
+        let resumed = host.resume_thread(thread_id).await.expect("resume succeeds");
+        assert_eq!(resumed.key.session_id, "engine-fresh-id");
+
+        // The live feed's first write under the new id must land on the row
+        // the user clicked, not mint a second one.
+        history.record_connected(
+            &atlas_acp_thread::AgentId::new(CERSEI_AGENT_ID),
+            &acp::SessionId::new("engine-fresh-id"),
+            atlas_thread_metadata::ThreadSnapshot {
+                is_draft: false,
+                title: None,
+                work_dirs: vec![PathBuf::from("/tmp/atlas")],
+            },
+        );
+        let rows = history.store().threads();
+        assert_eq!(rows.len(), 1, "one conversation, one row");
+        assert_eq!(rows[0].thread_id, thread_id);
+        assert_eq!(
+            rows[0].session_id,
+            Some(acp::SessionId::new("engine-fresh-id"))
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// The whole no-default-agents rule, checked at the only place that
     /// enforces it. A fresh install must offer exactly one agent, and every
@@ -2549,4 +2728,41 @@ pub(crate) mod test_support {
         (host, dir)
     }
 
+    /// [`fresh_host`], but the native agent is the caller's scripted stand-in
+    /// rather than the real engine.
+    pub(crate) fn fresh_host_with_native(
+        native: Arc<dyn AgentServer>,
+    ) -> (Arc<AgentHost>, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("atlas-host-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        struct Discard;
+        impl DeltaSink for Discard {
+            fn emit(&self, _envelope: atlas_agent_wire::SessionDeltaEnvelope) {}
+        }
+        struct Offline;
+        impl atlas_agent_store::HttpClient for Offline {
+            fn get(
+                &self,
+                _url: &str,
+            ) -> futures::future::BoxFuture<'static, anyhow::Result<atlas_agent_store::HttpResponse>>
+            {
+                use futures::FutureExt;
+                async { Err(anyhow::anyhow!("offline in tests")) }.boxed()
+            }
+        }
+        let http: Arc<dyn atlas_agent_store::HttpClient> = Arc::new(Offline);
+        let registry = Arc::new(atlas_agent_store::AgentRegistryStore::new(
+            dir.clone(),
+            http.clone(),
+        ));
+        let store = Arc::new(AgentServerStore::new(
+            dir.clone(),
+            http,
+            atlas_agent_store::NodeRuntime::unavailable("not needed in this test"),
+            Arc::new(atlas_agent_store::InheritedProjectEnvironment),
+            Some(registry.clone()),
+        ));
+        let host = AgentHost::with_native(Arc::new(Discard), dir.clone(), store, registry, native);
+        (host, dir)
+    }
 }
