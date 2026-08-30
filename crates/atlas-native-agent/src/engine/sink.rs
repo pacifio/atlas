@@ -75,7 +75,16 @@ pub struct EngineSessions {
 
 impl EngineSessions {
     pub fn insert(&self, session_id: acp::SessionId, thread: &AcpThreadHandle, cwd: String) {
-        self.lock().insert(
+        let mut sessions = self.lock();
+        // Reap entries whose thread the host has dropped (#66). The map has
+        // no other removal path — the connection lives as long as the process
+        // — and while `thread` is Weak, everything else in the entry
+        // (`streamed`, `command_output`, `cwd`, `skills`) is owned here and
+        // outlived the AcpThread it described. Swept at insert, so the state
+        // is bounded by live sessions rather than by every session the
+        // process ever opened.
+        sessions.retain(|_, session| session.thread.strong_count() > 0);
+        sessions.insert(
             session_id,
             EngineSession {
                 thread: Arc::downgrade(thread),
@@ -132,6 +141,20 @@ impl EngineSessions {
     fn clear_command_output(&self, session_id: &acp::SessionId, item_id: &str) {
         if let Some(session) = self.lock().get_mut(session_id) {
             session.command_output.remove(item_id);
+        }
+    }
+
+    /// The turn is over: drop every live-output accumulator for the session.
+    ///
+    /// `ItemCompleted` clears each item's entry, but an item aborted by an
+    /// interrupt never completes — the engine gives a task 100 ms to wind
+    /// down and then aborts it — so its accumulated output stayed for the
+    /// life of the process, one verbose build per press of Stop (#66). The
+    /// turn's end is the honest boundary: whatever is still accumulating
+    /// belongs to an item that will never report.
+    fn end_of_turn_cleanup(&self, session_id: &acp::SessionId) {
+        if let Some(session) = self.lock().get_mut(session_id) {
+            session.command_output.clear();
         }
     }
 
@@ -483,6 +506,7 @@ pub fn apply_notification(
         // The turn's outcome. This is what `prompt` is awaiting — without it a
         // prompt future never resolves and the composer stays spinning.
         ServerNotification::TurnCompleted(params) => {
+            sessions.end_of_turn_cleanup(&session_id(&params.thread_id));
             turns.complete(&params.thread_id, params.turn);
         }
 
@@ -587,6 +611,53 @@ mod tests {
         // `ResourceLink::new` is (name, uri) — the display name first.
         let link = acp::ContentBlock::ResourceLink(acp::ResourceLink::new("a.rs", "file:///tmp/a.rs"));
         assert_eq!(flatten_prompt(&[link]), "file:///tmp/a.rs");
+    }
+
+    #[test]
+    fn a_dropped_threads_state_is_reaped_at_the_next_insert() {
+        // #66: the Weak thread was collectable, but the ENTRY — with its
+        // owned `streamed`, `command_output`, `cwd` and `skills` — had no
+        // removal path and lived as long as the process. Inserting a new
+        // session sweeps the dead ones.
+        let sessions = EngineSessions::default();
+        let dead = acp::SessionId::new("dead");
+        {
+            let thread = crate::engine::test_support::detached_thread(dead.clone());
+            sessions.insert(dead.clone(), &thread, "/tmp".to_string());
+        }
+        assert!(
+            sessions.cwd(&dead).is_some(),
+            "the entry itself outlives the thread…",
+        );
+
+        let live = acp::SessionId::new("live");
+        let thread = crate::engine::test_support::detached_thread(live.clone());
+        sessions.insert(live.clone(), &thread, "/tmp".to_string());
+        assert!(
+            sessions.cwd(&dead).is_none(),
+            "…until the next insert sweeps it",
+        );
+        assert!(sessions.cwd(&live).is_some());
+    }
+
+    #[test]
+    fn an_aborted_commands_output_is_dropped_when_the_turn_ends() {
+        // #66: `ItemCompleted` clears per item, but a task interrupted by
+        // Stop is aborted after its 100 ms grace and never completes — its
+        // accumulated output stayed for the life of the process. The turn's
+        // end clears whatever is still accumulating.
+        let sessions = EngineSessions::default();
+        let id = acp::SessionId::new("t1");
+        let thread = crate::engine::test_support::detached_thread(id.clone());
+        sessions.insert(id.clone(), &thread, "/tmp".to_string());
+
+        sessions.append_command_output(&id, "item-1", "a very verbose build log");
+        sessions.end_of_turn_cleanup(&id);
+        assert_eq!(
+            sessions.append_command_output(&id, "item-1", "").as_deref(),
+            Some(""),
+            "the accumulator starts empty again after the turn",
+        );
     }
 
     #[test]
