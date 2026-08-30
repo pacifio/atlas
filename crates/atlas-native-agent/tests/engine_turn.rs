@@ -334,24 +334,20 @@ async fn a_cancelled_turn_ends_aborted_rather_than_hanging_or_ending_normally() 
         })
     };
 
-    // Cancel needs a turn in flight, and `turn/start` has to have returned
-    // before the seam knows the turn id to interrupt. Rather than sleep a
-    // guessed interval, retry the cancel until the prompt finishes: a cancel
-    // with nothing running is a documented no-op, so repeating it is safe.
-    let cancelled = tokio::time::timeout(Duration::from_secs(20), async {
-        while !prompting.is_finished() {
-            h.connection.cancel(&session_id);
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await;
-    assert!(
-        cancelled.is_ok(),
-        "the cancel never took effect — the turn was still running after 20s",
-    );
+    // ONE press, like production (#57). The earlier version of this test
+    // retried cancel in a 100 ms loop, which could never fail on the lost
+    // press: a stop landing while `turn/start` is still in flight used to be
+    // silently dropped, and the loop's next iteration papered over it. The
+    // press may land before or after the turn registers — the seam records
+    // a too-early stop and honours it the moment the turn id exists, so a
+    // single press must take the turn down from either side of that line.
+    // (`connection.rs` unit-tests both interleavings deterministically.)
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    h.connection.cancel(&session_id);
 
-    let response = prompting
+    let response = tokio::time::timeout(Duration::from_secs(20), prompting)
         .await
+        .expect("one press must take the turn down — 20s later it was still running")
         .expect("the prompt task should not panic")
         .expect("a cancelled turn is an outcome, not an error");
 

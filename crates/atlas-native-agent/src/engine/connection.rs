@@ -118,6 +118,18 @@ pub struct TurnWaiters {
     /// Completions that arrived before anyone asked for them. See the module
     /// docs: this is what closes the register-after-response race.
     unclaimed: Mutex<std::collections::VecDeque<v2::Turn>>,
+    /// Threads whose prompt is between entry and [`TurnWaiters::register`] —
+    /// the window in which a stop has no turn id to interrupt (#57). The
+    /// register-after-response race has a cancel half too: `active` is only
+    /// written by `register`, which runs after the `turn/start` round trip, so
+    /// a stop pressed during that round trip used to find nothing and return —
+    /// while the UI, whose `running_turn` was already taken, dropped the Stop
+    /// button in the same instant. The turn then ran to completion with no way
+    /// to stop it.
+    starting: Mutex<std::collections::HashSet<String>>,
+    /// Stops pressed inside that window. Recorded here by [`TurnWaiters::cancel_requested`]
+    /// and honoured by the prompt path the moment the turn id exists.
+    pending_cancel: Mutex<std::collections::HashSet<String>>,
 }
 
 impl TurnWaiters {
@@ -186,6 +198,41 @@ impl TurnWaiters {
     /// The turn to interrupt for a session, if one is running.
     pub(crate) fn active_turn(&self, thread_id: &str) -> Option<String> {
         self.active().get(thread_id).cloned()
+    }
+
+    /// The prompt path is about to send `turn/start`. Until [`TurnWaiters::end_prompt`]
+    /// a cancel for this thread has no turn id; it is recorded instead and
+    /// honoured when the id exists.
+    fn begin_prompt(&self, thread_id: &str) {
+        self.starting().insert(thread_id.to_string());
+    }
+
+    /// A cancel arrived with no active turn. Records it if a prompt is inside
+    /// its starting window, and answers whether it was recorded — `false`
+    /// means nothing is running or starting, a true no-op.
+    pub(crate) fn cancel_requested(&self, thread_id: &str) -> bool {
+        if !self.starting().contains(thread_id) {
+            return false;
+        }
+        self.pending_cancel().insert(thread_id.to_string());
+        true
+    }
+
+    /// The starting window is over — the turn registered, failed to start, or
+    /// finished before it could be waited on. Answers whether a cancel arrived
+    /// inside the window; the flag is consumed either way, so a stop aimed at
+    /// a turn that never ran cannot leak into the next one.
+    fn end_prompt(&self, thread_id: &str) -> bool {
+        self.starting().remove(thread_id);
+        self.pending_cancel().remove(thread_id)
+    }
+
+    fn starting(&self) -> std::sync::MutexGuard<'_, std::collections::HashSet<String>> {
+        self.starting.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn pending_cancel(&self) -> std::sync::MutexGuard<'_, std::collections::HashSet<String>> {
+        self.pending_cancel.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     fn forget(&self, thread_id: &str, turn_id: &str) {
@@ -1286,13 +1333,18 @@ impl AgentConnection for EngineConnection {
             // parent thread's model, which the gateway serves.
             Some(crate::engine::commands::Command::Review(instructions)) => {
                 let thread_id = thread_id.clone();
+                let request_ids = self.request_ids.clone();
                 return async move {
                     let target = match instructions {
                         Some(instructions) => v2::ReviewTarget::Custom { instructions },
                         None => v2::ReviewTarget::UncommittedChanges,
                     };
-                    let started: v2::ReviewStartResponse = requests
-                        .request_typed(ClientRequest::ReviewStart {
+                    // The review runs as a turn, so it has the same stop
+                    // window as a prompt: no id to interrupt until
+                    // `review/start` answers (#57).
+                    turns.begin_prompt(&thread_id);
+                    let started = match requests
+                        .request_typed::<v2::ReviewStartResponse>(ClientRequest::ReviewStart {
                             request_id,
                             params: v2::ReviewStartParams {
                                 thread_id: thread_id.clone(),
@@ -1301,11 +1353,27 @@ impl AgentConnection for EngineConnection {
                             },
                         })
                         .await
-                        .map_err(|e| anyhow!("the review could not start: {e}"))?;
+                    {
+                        Ok(started) => started,
+                        Err(e) => {
+                            turns.end_prompt(&thread_id);
+                            return Err(anyhow!("the review could not start: {e}"));
+                        }
+                    };
                     if started.turn.status != v2::TurnStatus::InProgress {
+                        turns.end_prompt(&thread_id);
                         return Ok(acp::PromptResponse::new(stop_reason(&started.turn)?));
                     }
                     let waiter = turns.register(&thread_id, &started.turn.id);
+                    if turns.end_prompt(&thread_id) {
+                        send_interrupt(
+                            &requests,
+                            &request_ids,
+                            thread_id.clone(),
+                            started.turn.id.clone(),
+                        )
+                        .await;
+                    }
                     match waiter.await {
                         Ok(turn) => Ok(acp::PromptResponse::new(stop_reason(&turn)?)),
                         Err(_) => {
@@ -1331,9 +1399,13 @@ impl AgentConnection for EngineConnection {
             None => {}
         }
 
+        let request_ids = self.request_ids.clone();
         async move {
-            let started: v2::TurnStartResponse = requests
-                .request_typed(ClientRequest::TurnStart {
+            // Opens the window a stop can land in with no turn id to
+            // interrupt. Every exit below closes it via `end_prompt` (#57).
+            turns.begin_prompt(&thread_id);
+            let started = match requests
+                .request_typed::<v2::TurnStartResponse>(ClientRequest::TurnStart {
                     request_id,
                     params: v2::TurnStartParams {
                         thread_id: thread_id.clone(),
@@ -1348,16 +1420,38 @@ impl AgentConnection for EngineConnection {
                     },
                 })
                 .await
-                .map_err(|e| anyhow!("{e}"))?;
+            {
+                Ok(started) => started,
+                Err(e) => {
+                    // The turn never ran; a stop aimed at it succeeded
+                    // vacuously and must not leak into the next turn.
+                    turns.end_prompt(&thread_id);
+                    return Err(anyhow!("{e}"));
+                }
+            };
 
             // If the turn already finished, its outcome is in the response and
             // no notification is coming — registering a waiter for it would
             // hang forever.
             if started.turn.status != v2::TurnStatus::InProgress {
+                turns.end_prompt(&thread_id);
                 return Ok(acp::PromptResponse::new(stop_reason(&started.turn)?));
             }
 
             let waiter = turns.register(&thread_id, &started.turn.id);
+            // A stop pressed while `turn/start` was in flight had no id to
+            // interrupt. It was recorded; honour it now that the id exists.
+            // The engine answers by completing the turn as `Interrupted`,
+            // which the waiter below reports the usual way.
+            if turns.end_prompt(&thread_id) {
+                send_interrupt(
+                    &requests,
+                    &request_ids,
+                    thread_id.clone(),
+                    started.turn.id.clone(),
+                )
+                .await;
+            }
             let turn = match waiter.await {
                 Ok(turn) => turn,
                 Err(_) => {
@@ -1404,17 +1498,29 @@ impl AgentConnection for EngineConnection {
     fn cancel(&self, session_id: &acp::SessionId) {
         let thread_id = session_id.to_string();
         let Some(turn_id) = self.turns.active_turn(&thread_id) else {
-            // Nothing is running. Not an error — a cancel can race a turn that
-            // just finished — but worth saying, because the other reading is
-            // that the turn was never recorded and cancel is silently dead.
-            tracing::debug!(
-                target: "atlas_native_agent::engine",
-                "cancel for {thread_id} with no turn in flight",
-            );
+            // No turn is registered — but one may be mid-`turn/start`, with
+            // no id to interrupt yet. That stop used to be silently dropped,
+            // and the Stop button disappeared with it (#57): recorded now,
+            // and the prompt path honours it the moment the id exists.
+            if self.turns.cancel_requested(&thread_id) {
+                tracing::info!(
+                    target: "atlas_native_agent::engine",
+                    "cancel for {thread_id} recorded while its turn is still starting",
+                );
+            } else {
+                // Nothing running or starting. Not an error — a cancel can
+                // race a turn that just finished — but worth saying, because
+                // the other reading is that the turn was never recorded and
+                // cancel is silently dead.
+                tracing::debug!(
+                    target: "atlas_native_agent::engine",
+                    "cancel for {thread_id} with no turn in flight",
+                );
+            }
             return;
         };
         let requests = self.requests.clone();
-        let request_id = self.request_ids.next();
+        let request_ids = self.request_ids.clone();
         // Fire and forget, like the Cersei path: the caller is awaiting the
         // turn's own completion, and the engine answers an interrupt by
         // finishing that turn as `Interrupted`.
@@ -1424,25 +1530,84 @@ impl AgentConnection for EngineConnection {
         // the main thread, where there is no ambient runtime — a bare spawn
         // there panicked and took the whole app down with it.
         self.runtime.handle().spawn(async move {
-            let result = requests
-                .request_typed::<v2::TurnInterruptResponse>(ClientRequest::TurnInterrupt {
-                    request_id,
-                    params: v2::TurnInterruptParams { thread_id, turn_id },
-                })
-                .await;
-            if let Err(e) = result {
-                tracing::warn!(
-                    target: "atlas_native_agent::engine",
-                    "interrupting the engine turn failed: {e}",
-                );
-            }
+            send_interrupt(&requests, &request_ids, thread_id, turn_id).await;
         });
+    }
+}
+
+/// Send `turn/interrupt` and log a failure. The caller is awaiting the turn's
+/// own completion, which the engine answers by finishing it as `Interrupted` —
+/// so the response here carries nothing to act on, only an error to surface.
+async fn send_interrupt(
+    requests: &InProcessAppServerRequestHandle,
+    request_ids: &RequestIds,
+    thread_id: String,
+    turn_id: String,
+) {
+    let result = requests
+        .request_typed::<v2::TurnInterruptResponse>(ClientRequest::TurnInterrupt {
+            request_id: request_ids.next(),
+            params: v2::TurnInterruptParams { thread_id, turn_id },
+        })
+        .await;
+    if let Err(e) = result {
+        tracing::warn!(
+            target: "atlas_native_agent::engine",
+            "interrupting the engine turn failed: {e}",
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── #57: the stop window between `turn/start` and `register` ──────────
+    //
+    // The integration test presses Stop once against a real engine; these pin
+    // the interleavings deterministically, because which side of `register`
+    // the press lands on cannot be scripted from outside.
+
+    #[test]
+    fn a_cancel_during_the_starting_window_is_recorded_and_handed_to_the_prompt() {
+        let turns = TurnWaiters::default();
+        turns.begin_prompt("t1");
+        assert!(
+            turns.cancel_requested("t1"),
+            "a stop with a prompt mid-start is recorded, not dropped",
+        );
+        let _rx = turns.register("t1", "turn-1");
+        assert!(
+            turns.end_prompt("t1"),
+            "the recorded stop reaches the prompt path once the id exists",
+        );
+        assert!(!turns.end_prompt("t1"), "and is consumed by it");
+    }
+
+    #[test]
+    fn a_cancel_with_nothing_running_or_starting_stays_a_no_op() {
+        let turns = TurnWaiters::default();
+        assert!(!turns.cancel_requested("t1"));
+        turns.begin_prompt("t1");
+        assert!(!turns.end_prompt("t1"), "no stop was pressed");
+        assert!(
+            !turns.cancel_requested("t1"),
+            "the window is closed; a late stop is a no-op again",
+        );
+    }
+
+    #[test]
+    fn a_stop_aimed_at_a_turn_that_never_ran_does_not_leak_into_the_next_one() {
+        let turns = TurnWaiters::default();
+        turns.begin_prompt("t1");
+        assert!(turns.cancel_requested("t1"));
+        // `turn/start` failed: the prompt path closes the window, and the
+        // stop succeeded vacuously.
+        assert!(turns.end_prompt("t1"));
+        // The user's next message must not be killed by the stale press.
+        turns.begin_prompt("t1");
+        assert!(!turns.end_prompt("t1"));
+    }
 
     fn message_delta(thread: &str, item: &str, delta: &str) -> InProcessServerEvent {
         InProcessServerEvent::ServerNotification(Box::new(
