@@ -166,7 +166,7 @@ impl TurnWaiters {
 
         self.attempts
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&turn.id);
 
         if let Some(tx) = self.waiters().remove(&turn.id) {
@@ -185,19 +185,26 @@ impl TurnWaiters {
     /// Records one retry notice for a turn and returns its attempt number,
     /// counting from 1.
     pub(crate) fn note_retry(&self, turn_id: &str) -> usize {
-        let mut attempts = self.attempts.lock().unwrap_or_else(|p| p.into_inner());
+        let mut attempts = self.attempts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let counter = attempts.entry(turn_id.to_string()).or_insert(0);
         *counter += 1;
         *counter
     }
 
     fn unclaimed(&self) -> std::sync::MutexGuard<'_, std::collections::VecDeque<v2::Turn>> {
-        self.unclaimed.lock().unwrap_or_else(|p| p.into_inner())
+        self.unclaimed.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The turn to interrupt for a session, if one is running.
     pub(crate) fn active_turn(&self, thread_id: &str) -> Option<String> {
         self.active().get(thread_id).cloned()
+    }
+
+    /// Whether a turn is running or starting on this thread — the state in
+    /// which a mode switch would relabel the picker without touching the
+    /// turn's frozen context (#61).
+    pub(crate) fn is_busy(&self, thread_id: &str) -> bool {
+        self.active().contains_key(thread_id) || self.starting().contains(thread_id)
     }
 
     /// The prompt path is about to send `turn/start`. Until [`TurnWaiters::end_prompt`]
@@ -228,11 +235,11 @@ impl TurnWaiters {
     }
 
     fn starting(&self) -> std::sync::MutexGuard<'_, std::collections::HashSet<String>> {
-        self.starting.lock().unwrap_or_else(|p| p.into_inner())
+        self.starting.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn pending_cancel(&self) -> std::sync::MutexGuard<'_, std::collections::HashSet<String>> {
-        self.pending_cancel.lock().unwrap_or_else(|p| p.into_inner())
+        self.pending_cancel.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn forget(&self, thread_id: &str, turn_id: &str) {
@@ -244,11 +251,11 @@ impl TurnWaiters {
     }
 
     fn waiters(&self) -> std::sync::MutexGuard<'_, HashMap<String, oneshot::Sender<v2::Turn>>> {
-        self.waiters.lock().unwrap_or_else(|p| p.into_inner())
+        self.waiters.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn active(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
-        self.active.lock().unwrap_or_else(|p| p.into_inner())
+        self.active.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -385,7 +392,7 @@ impl EngineConnection {
             .await?;
         self.session_modes
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(session_id.clone(), mode.clone());
         Ok(())
     }
@@ -470,7 +477,7 @@ impl EngineConnection {
         if let Some(thread) = self.sessions.thread(session_id) {
             let _ = thread
                 .lock()
-                .unwrap_or_else(|p| p.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .handle_session_update(acp::SessionUpdate::AvailableCommandsUpdate(
                     acp::AvailableCommandsUpdate::new(crate::engine::commands::available(&skills)),
                 ));
@@ -730,7 +737,7 @@ fn handle_server_request(
 
     // Take the waiter out under the lock, then await it on its own task.
     let waiter = {
-        let mut thread = thread.lock().unwrap_or_else(|p| p.into_inner());
+        let mut thread = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         thread.request_tool_call_authorization(
             prompt,
             approvals::options(),
@@ -1070,7 +1077,7 @@ impl AgentConnection for EngineConnection {
                 // it (see `engine::replay`). A pre-cutover row took the
                 // fresh-thread arm above and has no turns; it opens empty,
                 // which D6 accepted, and now only that row does.
-                let mut locked = thread.lock().unwrap_or_else(|p| p.into_inner());
+                let mut locked = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 crate::engine::replay::replay_turns(&mut locked, &stored_turns);
             }
             self.sessions.insert(
@@ -1129,7 +1136,7 @@ impl AgentConnection for EngineConnection {
         let mut turn_input: Option<Vec<v2::UserInput>> = None;
         match crate::engine::commands::parse(&text, &skills) {
             Some(crate::engine::commands::Command::Compact) => {
-                let thread_id = thread_id.clone();
+                let thread_id = thread_id;
                 return async move {
                     let _: v2::ThreadCompactStartResponse = requests
                         .request_typed(ClientRequest::ThreadCompactStart {
@@ -1157,7 +1164,7 @@ impl AgentConnection for EngineConnection {
             // the turn ends; no model is consulted and nothing is billed.
             Some(crate::engine::commands::Command::Diff) => {
                 let sessions = self.sessions.clone();
-                let session_id = params.session_id.clone();
+                let session_id = params.session_id;
                 return async move {
                     let cwd = sessions
                         .cwd(&session_id)
@@ -1172,7 +1179,7 @@ impl AgentConnection for EngineConnection {
                     if let Some(thread) = sessions.thread(&session_id) {
                         thread
                             .lock()
-                            .unwrap_or_else(|p| p.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .push_assistant_content_block(
                                 acp::ContentBlock::Text(acp::TextContent::new(reply)),
                                 false,
@@ -1184,7 +1191,7 @@ impl AgentConnection for EngineConnection {
             }
             Some(crate::engine::commands::Command::Status) => {
                 let sessions = self.sessions.clone();
-                let session_id = params.session_id.clone();
+                let session_id = params.session_id;
                 return async move {
                     let cwd = sessions
                         .cwd(&session_id)
@@ -1193,7 +1200,7 @@ impl AgentConnection for EngineConnection {
                     if let Some(thread) = sessions.thread(&session_id) {
                         thread
                             .lock()
-                            .unwrap_or_else(|p| p.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .push_assistant_content_block(
                                 acp::ContentBlock::Text(acp::TextContent::new(reply)),
                                 false,
@@ -1208,8 +1215,8 @@ impl AgentConnection for EngineConnection {
             // to match so the transcript shows what the model now remembers.
             Some(crate::engine::commands::Command::Undo) => {
                 let sessions = self.sessions.clone();
-                let session_id = params.session_id.clone();
-                let thread_id = thread_id.clone();
+                let session_id = params.session_id;
+                let thread_id = thread_id;
                 return async move {
                     let rolled = requests
                         .request_typed::<v2::ThreadRollbackResponse>(ClientRequest::ThreadRollback {
@@ -1224,7 +1231,7 @@ impl AgentConnection for EngineConnection {
                         Ok(_) => {
                             if let Some(thread) = sessions.thread(&session_id) {
                                 let mut locked =
-                                    thread.lock().unwrap_or_else(|p| p.into_inner());
+                                    thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                                 // The LAST user entry is "/undo" itself — the
                                 // host pushed it before prompt() ran. The
                                 // exchange being undone starts at the user
@@ -1260,7 +1267,7 @@ impl AgentConnection for EngineConnection {
                     if let Some(thread) = sessions.thread(&session_id) {
                         thread
                             .lock()
-                            .unwrap_or_else(|p| p.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .push_assistant_content_block(
                                 acp::ContentBlock::Text(acp::TextContent::new(reply)),
                                 false,
@@ -1273,8 +1280,8 @@ impl AgentConnection for EngineConnection {
             // `/goal` — set with input, show without.
             Some(crate::engine::commands::Command::Goal(objective)) => {
                 let sessions = self.sessions.clone();
-                let session_id = params.session_id.clone();
-                let thread_id = thread_id.clone();
+                let session_id = params.session_id;
+                let thread_id = thread_id;
                 return async move {
                     let reply = match objective {
                         Some(objective_text) => {
@@ -1315,7 +1322,7 @@ impl AgentConnection for EngineConnection {
                     if let Some(thread) = sessions.thread(&session_id) {
                         thread
                             .lock()
-                            .unwrap_or_else(|p| p.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .push_assistant_content_block(
                                 acp::ContentBlock::Text(acp::TextContent::new(reply)),
                                 false,
@@ -1332,7 +1339,7 @@ impl AgentConnection for EngineConnection {
             // `review_model` unset on purpose, and the engine then uses the
             // parent thread's model, which the gateway serves.
             Some(crate::engine::commands::Command::Review(instructions)) => {
-                let thread_id = thread_id.clone();
+                let thread_id = thread_id;
                 let request_ids = self.request_ids.clone();
                 return async move {
                     let target = match instructions {
@@ -1843,6 +1850,8 @@ struct ConnectionHandle {
     requests: InProcessAppServerRequestHandle,
     request_ids: Arc<RequestIds>,
     session_modes: Arc<Mutex<HashMap<acp::SessionId, acp::SessionModeId>>>,
+    /// For the in-flight-turn check in `set_mode` (#61).
+    turns: Arc<TurnWaiters>,
 }
 
 impl EngineConnection {
@@ -1851,6 +1860,7 @@ impl EngineConnection {
             requests: self.requests.clone(),
             request_ids: self.request_ids.clone(),
             session_modes: self.session_modes.clone(),
+            turns: self.turns.clone(),
         }
     }
 }
@@ -1888,7 +1898,7 @@ impl AgentSessionModes for EngineSessionModes {
         self.connection
             .session_modes
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&self.session_id)
             .cloned()
             .unwrap_or_else(|| acp::SessionModeId::new(modes::DEFAULT_MODE_ID))
@@ -1902,6 +1912,21 @@ impl AgentSessionModes for EngineSessionModes {
         let connection = self.connection.clone();
         let session_id = self.session_id.clone();
         async move {
+            // Refused, not silently narrowed to the picker: the engine's
+            // `update_settings` writes only the session configuration, and a
+            // running turn keeps the frozen context it started with — so a
+            // mid-turn switch would change the label while every remaining
+            // tool call executes under the old policy. Showing "Plan —
+            // read-only" over a turn still running with full access is the
+            // one shape worse than no control at all (#61). Stop the turn,
+            // then switch; the next turn picks the new mode up at start.
+            if connection.turns.is_busy(&session_id.to_string()) {
+                return Err(anyhow!(
+                    "The permission mode can't change while a turn is running — \
+                     it would only relabel the picker; the running turn keeps \
+                     the permissions it started with. Stop the turn first."
+                ));
+            }
             let (approval_policy, sandbox_policy) = modes::engine_policy(&mode.0);
             connection
                 .update_settings(&session_id, |params| {
@@ -1914,7 +1939,7 @@ impl AgentSessionModes for EngineSessionModes {
             connection
                 .session_modes
                 .lock()
-                .unwrap_or_else(|p| p.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .insert(session_id, mode);
             Ok(())
         }
