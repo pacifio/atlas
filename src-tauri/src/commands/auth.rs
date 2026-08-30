@@ -214,6 +214,15 @@ pub fn auth_cancel_sign_in(app: AppHandle, state: State<'_, AuthState>) -> AuthS
 pub async fn auth_sign_out(app: AppHandle, state: State<'_, AuthState>) -> Result<bool, String> {
     let core = state.core();
     let ticket = core.sign_out();
+    // The native agent's connection caches an access JWT that outlives the
+    // revoked session token — the JWT verifies statelessly against JWKS — and
+    // would keep making org-billed gateway calls until its own expiry, up to
+    // ~9 minutes (#62). Signing out locally means the engine's credential goes
+    // too, in-flight turn included. `try_state` because sign-out must work
+    // even if the agent host never initialised.
+    if let Some(host) = app.try_state::<std::sync::Arc<super::agent_host::AgentHost>>() {
+        host.drop_native_connection();
+    }
     // Capture BEFORE broadcasting. `broadcast` resets the telemetry identity to
     // the device, so the order matters: reversed, the event that describes the
     // account leaving would be filed against the anonymous device person.

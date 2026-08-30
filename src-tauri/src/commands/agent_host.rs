@@ -652,6 +652,23 @@ impl AgentHost {
         Ok(())
     }
 
+    /// Drop the native agent's connection, if one is open.
+    ///
+    /// Sign-out calls this (#62): the engine's token cache lives on the
+    /// connection and serves the access JWT until the JWT's own `exp` — the
+    /// JWT verifies statelessly against JWKS, so revoking the session token
+    /// does not invalidate it, and an open connection would keep making
+    /// authenticated, org-billed gateway calls for up to ~9 minutes after
+    /// the user signed out. Dropping the connection is what actually stops
+    /// them: the cache dies with it, and so does any in-flight turn. The
+    /// next spawn reconnects and mints fresh — or fails, honestly, now that
+    /// there is nothing to mint with.
+    pub fn drop_native_connection(&self) {
+        self.forget_request_elicitations(&ThreadAgentId::new(CERSEI_AGENT_ID));
+        self.manager.drop_connection(&Agent::Native);
+        lock(&self.sessions).retain(|_, session| session.agent != Agent::Native);
+    }
+
     pub async fn new_session(
         &self,
         agent_id: AgentId,
@@ -2429,6 +2446,34 @@ mod tests {
         fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
             self
         }
+    }
+
+    /// Issue #62: sign-out drops the native connection — the engine's token
+    /// cache lives on it, and the JWT it holds outlives the revoked session
+    /// token. This pins the host half: after the drop nothing is running, so
+    /// the next spawn builds a fresh connection (and with it a fresh, empty
+    /// cache) instead of reusing the credentialled one.
+    #[tokio::test]
+    async fn dropping_the_native_connection_leaves_nothing_running() {
+        let native = Arc::new(RebindingNative { fresh_id: "s-1" });
+        let (host, dir) = fresh_host_with_native(native);
+
+        host.spawn(CERSEI_AGENT_ID).await.expect("native agent spawns");
+        // The Connecting→Connected flip runs on a spawned task; on the test's
+        // current-thread runtime it needs the yield before `connected` sees it.
+        tokio::task::yield_now().await;
+        assert!(
+            host.manager().connected(&Agent::Native).is_some(),
+            "a connection is open",
+        );
+
+        host.drop_native_connection();
+        assert!(
+            host.manager().connected(&Agent::Native).is_none(),
+            "sign-out leaves nothing running",
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Issue #56 (B1): the engine may answer a resume with a *different*

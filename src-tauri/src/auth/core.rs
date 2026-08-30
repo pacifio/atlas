@@ -1291,11 +1291,14 @@ impl AuthCore {
     /// here pretends otherwise: [`Self::snapshot`] is derived from the file, so
     /// the state the caller broadcasts next is whatever is really on disk.
     ///
-    /// There is still no in-memory access token to clear. ATL-51 added none:
-    /// the JWT it needs for the `orgs` claim is minted, read, and dropped inside
-    /// a single call, and nothing else in the desktop consumes one. A cache
-    /// would buy nothing and would be one more thing this function had to
-    /// remember to clear.
+    /// One in-memory access token DOES exist elsewhere: #51 gave the native
+    /// agent's connection a cache that serves the JWT until its own `exp`,
+    /// and this function cannot reach it. The `auth_sign_out` command drops
+    /// that connection alongside calling this (#62) — a future caller of
+    /// `sign_out` from anywhere else must do the same, or the engine keeps
+    /// making org-billed calls for up to ~9 minutes on a revoked account.
+    /// (The JWT verifies statelessly against JWKS; revoking the session
+    /// token does not invalidate it.)
     pub fn sign_out(&self) -> Option<RevocationTicket> {
         let stored = self.stored();
         // Before the credential, not after: the identity is where the path to
