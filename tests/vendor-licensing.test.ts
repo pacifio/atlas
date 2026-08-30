@@ -128,6 +128,18 @@ describe("§4(a) and §4(d) — the licence and NOTICE reach recipients", () => 
 });
 
 describe("§4(b) — modified files say they were modified", () => {
+  it("has the history it needs — a shallow clone cannot run this suite", () => {
+    // On a depth-1 clone the oldest commit touching vendor/codex IS HEAD, so
+    // the diff against it is empty and the rule below holds vacuously. Name
+    // the cause here so the next person reads it instead of the symptom (#58).
+    expect(
+      vendoringCommit(),
+      "vendoringCommit() resolved to HEAD — this is a shallow clone " +
+        "(actions/checkout defaults to fetch-depth: 1). Check out with " +
+        "fetch-depth: 0 so the vendoring fork point is reachable.",
+    ).not.toBe(git("rev-parse", "HEAD").trim());
+  });
+
   it("finds the modification set (parser health)", () => {
     // If this returned nothing, the rule below would hold vacuously forever.
     expect(modifiedVendoredFiles().length).toBeGreaterThan(5);

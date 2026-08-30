@@ -37,6 +37,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history, not the depth-1 default: vendor-licensing.test.ts
+          # derives its fork point as the oldest commit touching vendor/codex,
+          # and on a shallow clone that resolves to HEAD — the modification
+          # set comes back empty and the suite fails (#58).
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
       - name: Install
         run: bun install --frozen-lockfile
