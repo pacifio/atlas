@@ -20,13 +20,30 @@
 //! (`SandboxWrap`) is not ported: it depends on Zed's `sandbox` crate and is a
 //! separate feature from the thread model.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
 use agent_client_protocol::schema::v1 as acp;
-use atlas_terminal::command::{CommandExit, CommandTerminal};
+use atlas_terminal::command::{
+    CommandExit, CommandTerminal, OutputBuffer, DEFAULT_OUTPUT_BYTE_LIMIT,
+};
+use indexmap::IndexMap;
+
+/// How many terminal ids may have output or an exit status parked for them
+/// before the oldest is dropped.
+///
+/// The buffering exists for a race measured in milliseconds — the agent
+/// referencing a terminal id in a `session/update` before our own `Created`
+/// bookkeeping lands — so an id that is still unclaimed after 64 others have
+/// come and gone is not early, it is fabricated. See `handle_event`.
+const MAX_PENDING_TERMINALS: usize = 64;
+
+/// Total bytes parked across every not-yet-created terminal id.
+///
+/// Matched to [`DEFAULT_OUTPUT_BYTE_LIMIT`] so a terminal cannot buy more
+/// buffer by delaying its own announcement than it would get after it.
+const MAX_PENDING_OUTPUT_BYTES: usize = DEFAULT_OUTPUT_BYTE_LIMIT as usize;
 
 /// What the terminal provider tells the thread. Ported from
 /// `TerminalProviderEvent` (`acp_thread.rs:2183-2200`).
@@ -86,7 +103,12 @@ pub struct AcpTerminal {
     /// Output that arrived as provider events before/alongside the PTY's own
     /// capture. Held separately so replaying a pre-`Created` buffer cannot
     /// interleave into the middle of what the PTY reader collected.
-    replayed_output: Vec<u8>,
+    ///
+    /// Bounded by `output_byte_limit`. For a terminal we own this holds only
+    /// the pre-`Created` burst and the PTY buffer carries the rest; for a
+    /// DISPLAY-ONLY terminal it is the *entire* capture, and it is the only
+    /// thing standing between a watch-mode build and unbounded RSS.
+    replayed_output: OutputBuffer,
     exit_status: Option<acp::TerminalExitStatus>,
     stopped_by_user: bool,
 }
@@ -116,7 +138,14 @@ impl AcpTerminal {
             output_byte_limit,
             started_at: Instant::now(),
             inner,
-            replayed_output: Vec::new(),
+            // `None` means the agent declared no limit, not that it declared no
+            // limit *applies*: a display-only terminal never gets to declare
+            // one at all (`handle_session_update` has no field to read it from),
+            // so it lands on the same default a `terminal/create` without an
+            // `outputByteLimit` gets.
+            replayed_output: OutputBuffer::new(
+                output_byte_limit.unwrap_or(DEFAULT_OUTPUT_BYTE_LIMIT),
+            ),
             exit_status: None,
             stopped_by_user: false,
         }
@@ -158,7 +187,7 @@ impl AcpTerminal {
     }
 
     pub(crate) fn write_output(&mut self, data: &[u8]) {
-        self.replayed_output.extend_from_slice(data);
+        self.replayed_output.push(data);
     }
 
     pub(crate) fn set_exit_status(&mut self, status: acp::TerminalExitStatus) {
@@ -170,15 +199,20 @@ impl AcpTerminal {
     /// Replayed pre-`Created` bytes are prefixed, because they are by definition
     /// the earliest output of the command.
     pub fn current_output(&self) -> acp::TerminalOutputResponse {
-        let (captured, truncated) = match &self.inner {
+        let (captured, captured_truncated) = match &self.inner {
             Some(inner) => inner.output(),
             // Display-only: the meta events ARE the capture.
             None => (String::new(), false),
         };
+        // Either buffer having dropped its front makes the whole response
+        // partial. Reading `truncated` off the PTY alone is how a display-only
+        // terminal came to report a complete capture of a buffer it had been
+        // trimming for hours.
+        let truncated = captured_truncated || self.replayed_output.truncated();
         let output = if self.replayed_output.is_empty() {
             captured
         } else {
-            let mut out = String::from_utf8_lossy(&self.replayed_output).into_owned();
+            let mut out = self.replayed_output.text().to_string();
             out.push_str(&captured);
             out
         };
@@ -192,6 +226,55 @@ impl AcpTerminal {
         let mut response = acp::TerminalOutputResponse::new(output, truncated);
         response.exit_status = exit_status;
         response
+    }
+
+    /// How [`Self::current_output`]'s `output` has grown past `from` bytes.
+    ///
+    /// Exists so flattening a terminal into a tool call's result costs the tail
+    /// rather than the whole buffer. Rebuilding the buffer to discover that it
+    /// only grew is what made a chatty command's projection quadratic in its
+    /// own output (ATL-219), and the projector runs it once per chunk.
+    ///
+    /// `None` means "ask [`Self::current_output`] instead", and is deliberately
+    /// returned for every case where a byte offset taken from an earlier read
+    /// is no longer trustworthy:
+    ///
+    /// * either buffer has dropped its front, so `from` names different bytes
+    ///   than it did — and `terminal_output` additionally prefixes a truncation
+    ///   marker, which changes the whole answer's shape;
+    /// * `from` is past the end, so the output shrank rather than grew;
+    /// * `from` lands inside the replayed half while a PTY half also has
+    ///   content, where serving the tail would mean copying the PTY half too;
+    /// * `from` is not on a character boundary.
+    pub fn output_appended(&self, from: usize) -> Option<TerminalAppend> {
+        if self.replayed_output.truncated() {
+            return None;
+        }
+        let replayed = self.replayed_output.text();
+        let build = |captured: &str| -> Option<TerminalAppend> {
+            let total = replayed.len() + captured.len();
+            if from > total {
+                return None;
+            }
+            if from == total {
+                return Some(TerminalAppend::Unchanged);
+            }
+            if from < replayed.len() {
+                if !captured.is_empty() {
+                    return None;
+                }
+                return replayed
+                    .get(from..)
+                    .map(|tail| TerminalAppend::Grew(tail.to_string()));
+            }
+            captured
+                .get(from - replayed.len()..)
+                .map(|tail| TerminalAppend::Grew(tail.to_string()))
+        };
+        match &self.inner {
+            Some(inner) => inner.with_untruncated_output(build)?,
+            None => build(""),
+        }
     }
 
     /// Kill the command. Marks the terminal as user-stopped so the UI can tell
@@ -211,18 +294,55 @@ impl AcpTerminal {
         }
     }
 
-    pub async fn wait_for_exit(&self) -> acp::TerminalExitStatus {
+    /// `None` when this terminal cannot be awaited: a display-only terminal
+    /// whose exit has not arrived yet.
+    ///
+    /// The exit for one of those arrives as a meta event on some later
+    /// `session/update`, and nothing here can park on that. Returning a default
+    /// `TerminalExitStatus` instead would be indistinguishable from a clean
+    /// `exit 0` — the one answer a caller must not be handed when the truth is
+    /// "we have no idea". Unreachable in production today: the
+    /// `terminal/wait_for_exit` handler awaits the PTY directly and refuses
+    /// display-only terminals before it would get here.
+    pub async fn wait_for_exit(&self) -> Option<acp::TerminalExitStatus> {
         if let Some(status) = &self.exit_status {
-            return status.clone();
+            return Some(status.clone());
         }
         match &self.inner {
-            Some(inner) => exit_status_from_command(inner.wait_for_exit().await),
-            // Display-only with no exit yet: the exit arrives as a meta event,
-            // and nothing here can await it. Unreachable in production today —
-            // the `terminal/wait_for_exit` handler awaits the PTY directly and
-            // refuses display-only terminals before it would get here — so an
-            // empty status is the honest answer for a test or future caller.
-            None => acp::TerminalExitStatus::new(),
+            Some(inner) => Some(exit_status_from_command(inner.wait_for_exit().await)),
+            None => None,
+        }
+    }
+}
+
+/// What [`AcpTerminal::output_appended`] found: nothing new, or exactly the
+/// bytes appended since the caller's cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalAppend {
+    Unchanged,
+    Grew(String),
+}
+
+/// Killing the child on drop is the only thing that covers an ABRUPT teardown.
+///
+/// The tidy path is already safe — `terminal/release` kills before it drops
+/// (`atlas-agent-servers/src/handlers.rs`) — but a session closed with a build
+/// still running never reaches it: `close_session` drops the last
+/// `AcpThreadHandle`, which drops the `TerminalRegistry`, which drops us. And
+/// nothing below here saves it. `portable-pty`'s unix child is a plain
+/// `std::process::Child`, which does not kill on drop, and the reader thread
+/// holds a dup'd master fd, so the PTY never even hangs up. The child would
+/// outlive Atlas as an orphan, still writing into a buffer nobody will read.
+///
+/// Display-only terminals have no process of ours to kill, and `kill()` says so
+/// with an error — expected here, not a failure.
+impl Drop for AcpTerminal {
+    fn drop(&mut self) {
+        if self.inner.is_none() {
+            return;
+        }
+        if let Err(err) = self.kill() {
+            tracing::debug!(terminal_id = %self.id, "killing terminal on drop failed: {err:#}");
         }
     }
 }
@@ -237,11 +357,26 @@ pub fn exit_status_from_command(exit: CommandExit) -> acp::TerminalExitStatus {
 /// The thread's terminal side-tables, kept together so the buffering rule has
 /// one owner. Ported from `AcpThread`'s `terminals` /
 /// `pending_terminal_output` / `pending_terminal_exit` fields.
+///
+/// `terminals` itself is deliberately uncapped, unlike the two pending maps.
+/// Every entry in it cost the agent a `terminal/create` that spawned a real
+/// process, so the OS bounds it long before this map does, and the only ways to
+/// cap it here are worse than the growth: refusing `terminal/create` is a
+/// policy the handler should own and answer with a protocol error, and evicting
+/// an entry would kill a command the agent is still using. The pending maps
+/// have neither excuse — nothing was spawned, and an id parked there may not
+/// exist at all (ATL-218 finding 6).
 #[derive(Default)]
 pub struct TerminalRegistry {
-    terminals: HashMap<acp::TerminalId, AcpTerminal>,
-    pending_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
-    pending_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
+    terminals: IndexMap<acp::TerminalId, AcpTerminal>,
+    /// Insertion-ordered so eviction can be oldest-first. A `HashMap` would
+    /// leave "which id has been waiting longest" unanswerable, and the id that
+    /// has waited longest is exactly the one least likely to ever be claimed.
+    pending_output: IndexMap<acp::TerminalId, Vec<Vec<u8>>>,
+    pending_exit: IndexMap<acp::TerminalId, acp::TerminalExitStatus>,
+    /// Running total of every chunk in `pending_output`, so the byte budget is
+    /// enforced without walking the map on each event.
+    pending_output_bytes: usize,
 }
 
 impl TerminalRegistry {
@@ -270,9 +405,73 @@ impl TerminalRegistry {
     }
 
     pub fn remove(&mut self, id: &acp::TerminalId) -> Option<AcpTerminal> {
-        self.pending_output.remove(id);
-        self.pending_exit.remove(id);
-        self.terminals.remove(id)
+        self.take_pending_output(id);
+        self.pending_exit.shift_remove(id);
+        self.terminals.shift_remove(id)
+    }
+
+    /// Take an id's parked chunks, keeping the byte accounting straight.
+    fn take_pending_output(&mut self, id: &acp::TerminalId) -> Option<Vec<Vec<u8>>> {
+        let chunks = self.pending_output.shift_remove(id)?;
+        let bytes: usize = chunks.iter().map(Vec::len).sum();
+        self.pending_output_bytes = self.pending_output_bytes.saturating_sub(bytes);
+        Some(chunks)
+    }
+
+    /// Park output for a terminal that has not been announced yet, then bring
+    /// the side-tables back inside their budget.
+    ///
+    /// The buffering itself is load-bearing and stays: out-of-order arrival is
+    /// a real, documented case. What is bounded is how long an id that will
+    /// NEVER be announced gets to hold memory — `handle_session_update` reads
+    /// `terminal_id` off agent-supplied meta with no membership check, and
+    /// `terminal/release` refuses ids it does not know, so nothing else prunes
+    /// a fabricated one before the session ends.
+    fn park_output(&mut self, id: acp::TerminalId, data: Vec<u8>) {
+        self.pending_output_bytes += data.len();
+        self.pending_output.entry(id).or_default().push(data);
+
+        while self.pending_output.len() > MAX_PENDING_TERMINALS {
+            let oldest = self
+                .pending_output
+                .get_index(0)
+                .map(|(id, _)| id.clone())
+                .expect("non-empty above the cap");
+            self.take_pending_output(&oldest);
+        }
+
+        // Over the byte budget, drop the OLDEST chunk of the OLDEST id rather
+        // than the id that just arrived: the newest bytes are the ones most
+        // likely to belong to a terminal that is about to be announced.
+        while self.pending_output_bytes > MAX_PENDING_OUTPUT_BYTES {
+            let Some((id, chunks)) = self.pending_output.get_index_mut(0) else {
+                // Cannot happen — the total is the sum of what is in the map —
+                // but resetting beats spinning if it ever did.
+                self.pending_output_bytes = 0;
+                break;
+            };
+            if chunks.is_empty() {
+                let id = id.clone();
+                self.pending_output.shift_remove(&id);
+                continue;
+            }
+            let dropped = chunks.remove(0).len();
+            self.pending_output_bytes = self.pending_output_bytes.saturating_sub(dropped);
+            if chunks.is_empty() {
+                let id = id.clone();
+                self.pending_output.shift_remove(&id);
+            }
+        }
+    }
+
+    /// Park an exit status for an unannounced terminal. Capped by id count
+    /// only: a `TerminalExitStatus` is two small fields, so the id ceiling is
+    /// the whole of the bound.
+    fn park_exit(&mut self, id: acp::TerminalId, status: acp::TerminalExitStatus) {
+        self.pending_exit.insert(id, status);
+        while self.pending_exit.len() > MAX_PENDING_TERMINALS {
+            self.pending_exit.shift_remove_index(0);
+        }
     }
 
     /// Ported from `AcpThread::on_terminal_provider_event`
@@ -296,13 +495,13 @@ impl TerminalRegistry {
 
                 // Drain anything that arrived first. Order within the buffer is
                 // arrival order, which is the order the PTY produced it.
-                if let Some(chunks) = self.pending_output.remove(&terminal_id) {
+                if let Some(chunks) = self.take_pending_output(&terminal_id) {
                     for data in chunks {
                         acp_terminal.write_output(&data);
                     }
                 }
 
-                if let Some(status) = self.pending_exit.remove(&terminal_id) {
+                if let Some(status) = self.pending_exit.shift_remove(&terminal_id) {
                     acp_terminal.set_exit_status(status);
                 }
 
@@ -312,10 +511,7 @@ impl TerminalRegistry {
                 if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
                     terminal.write_output(&data);
                 } else {
-                    self.pending_output
-                        .entry(terminal_id)
-                        .or_default()
-                        .push(data);
+                    self.park_output(terminal_id, data);
                 }
             }
             TerminalProviderEvent::TitleChanged { terminal_id, title } => {
@@ -330,7 +526,7 @@ impl TerminalRegistry {
                 if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
                     terminal.set_exit_status(status);
                 } else {
-                    self.pending_exit.insert(terminal_id, status);
+                    self.park_exit(terminal_id, status);
                 }
             }
         }
@@ -346,5 +542,16 @@ impl TerminalRegistry {
     /// Whether an exit status arrived before the terminal it belongs to.
     pub fn has_pending_exit(&self, id: &acp::TerminalId) -> bool {
         self.pending_exit.contains_key(id)
+    }
+
+    /// How many terminal ids have output parked for them, and how many bytes
+    /// that costs. Exposed so the bound can be asserted directly.
+    pub fn pending_output_stats(&self) -> (usize, usize) {
+        (self.pending_output.len(), self.pending_output_bytes)
+    }
+
+    /// How many exit statuses are parked for terminals not yet announced.
+    pub fn pending_exit_len(&self) -> usize {
+        self.pending_exit.len()
     }
 }

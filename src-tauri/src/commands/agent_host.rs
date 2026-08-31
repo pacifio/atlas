@@ -804,6 +804,13 @@ impl AgentHost {
         if let Some(history) = self.history() {
             history.forget(&acp::SessionId::new(session_id));
         }
+        // The projector holds the session's only strong thread handle, so
+        // nothing else can release it — and its permission and elicitation
+        // routes are keyed by wire request id with no other removal path
+        // (ATL-225). Before `close_session` so the thread and its terminals are
+        // dropped whether or not the agent's own close RPC succeeds.
+        self.projector
+            .close_session(&acp::SessionId::new(session_id));
         self.manager
             .close_session(&acp::SessionId::new(session_id))
             .await

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::v1 as acp;
 use atlas_acp_thread::{
     AcpThread, AcpThreadEvent, AcpThreadHandle, AgentThreadEntry, ElicitationEntryId, EventStream,
-    LoadError, ToolCallStatus as ThreadToolCallStatus,
+    LoadError, TerminalAppend, ToolCallStatus as ThreadToolCallStatus,
 };
 use atlas_agent_servers::ThreadEventSink;
 use atlas_agent_wire::{
@@ -139,10 +139,20 @@ impl DeltaProjector {
         let this = self.clone();
         Arc::new(move |session_id: &acp::SessionId| {
             let (tx, rx) = atlas_acp_thread::event_channel();
-            this.pending
+            let mut pending = this
+                .pending
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(session_id.clone(), rx);
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // A session whose `session/load` or `session/resume` RPC failed
+            // never reaches `register`, so nothing takes its pre-registered
+            // stream back out and the key stays here for the life of the
+            // process (ATL-225). The thread that held the only sender was
+            // dropped along with the failure, so a stream with no senders left
+            // can never carry another event and is safe to forget. Swept here
+            // rather than on a timer because this is the one place that learns
+            // a new session is being opened.
+            pending.retain(|_, stream| stream.sender_strong_count() > 0);
+            pending.insert(session_id.clone(), rx);
             tx
         })
     }
@@ -160,6 +170,12 @@ impl DeltaProjector {
     /// delta carries the full state it announces, and none is skipped — so a
     /// consumer cannot tell the difference. A host that needs the finer grain
     /// pumps the stream itself with [`Self::register`].
+    ///
+    /// The cleanup when the stream ends is a backstop, not the primary path:
+    /// the projection owns the thread that owns the sender, so in Atlas the
+    /// stream only ends after [`Self::close_session`] has already dropped the
+    /// projection. It stays for a host that owns its threads the other way
+    /// round, and because ending a task on a dead channel is right regardless.
     pub fn attach(self: &Arc<Self>, agent_id: AgentId, thread: AcpThreadHandle) {
         let session_id = lock_thread(&thread).session_id().clone();
         let Some(mut events) = self.register(agent_id, thread) else {
@@ -170,10 +186,7 @@ impl DeltaProjector {
             while let Some(event) = events.recv().await {
                 this.apply(&session_id, event);
             }
-            this.sessions
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .remove(&session_id);
+            this.forget_session(&session_id);
         });
     }
 
@@ -215,6 +228,58 @@ impl DeltaProjector {
             .insert(session_id, projection);
 
         Some(events)
+    }
+
+    /// Forget a session the host has closed.
+    ///
+    /// The projector is a session's OWNER, not just an observer: after `bind`
+    /// the projection holds the only strong handle on the thread — the
+    /// connection's session table keeps a `Weak`, and the host drops its clone.
+    /// Which means the cleanup at the end of [`Self::attach`]'s task cannot run
+    /// on its own: the thread it is waiting on holds the sender that would end
+    /// the stream, so the stream never ends. Closing has to be told, not
+    /// noticed.
+    ///
+    /// Dropping the projection is what releases the thread, and with it the
+    /// thread's terminals — whose `Drop` kills any PTY still running.
+    pub fn close_session(&self, session_id: &acp::SessionId) {
+        self.forget_session(session_id);
+    }
+
+    /// Drop everything keyed to a session whose event stream has ended.
+    ///
+    /// `sessions` used to be the only table cleaned up here. The permission and
+    /// elicitation tables are keyed by wire request id and had no removal at
+    /// all, so on a process-lifetime singleton they retained one entry per
+    /// prompt the app had ever shown, for as long as the app ran (ATL-225).
+    fn forget_session(&self, session_id: &acp::SessionId) {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id);
+        self.permissions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|_, key| &key.session_id != session_id);
+        self.elicitations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|_, key| &key.session_id != session_id);
+    }
+
+    /// How many permission and elicitation routes are retained. Test-facing:
+    /// the leak these count was invisible from the outside.
+    pub fn routing_table_sizes(&self) -> (usize, usize) {
+        (
+            self.permissions.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(),
+            self.elicitations.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(),
+        )
+    }
+
+    /// How many event streams are pre-registered for sessions that do not exist
+    /// yet. Test-facing, for the same reason.
+    pub fn pending_len(&self) -> usize {
+        self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len()
     }
 
     /// Subscribe to every delta in-process, without going through the host sink.
@@ -436,9 +501,18 @@ enum Projected {
 
 #[derive(Debug)]
 struct ProjectedRun {
-    message_id: String,
+    /// `None` for a run that has nothing to render yet — an image- or
+    /// audio-only chunk flattens to the empty string, and announcing it put a
+    /// blank bubble on screen that the snapshot then omitted on reload
+    /// (ATL-224). The slot is still mirrored so run indices stay aligned with
+    /// the thread's, and the id is minted the moment the run has text.
+    message_id: Option<String>,
     is_thought: bool,
-    text: String,
+    /// How much of the run has been emitted, in bytes — not the text itself.
+    /// Keeping the text meant rebuilding and re-comparing the whole message on
+    /// every token of it (ATL-223); a run only ever grows at its end, so a
+    /// length is all that is needed to find what is new.
+    text_len: usize,
 }
 
 struct SessionProjection {
@@ -503,19 +577,41 @@ impl SessionProjection {
                 let end = range.end.min(self.entries.len());
                 // Count whole exchanges by their user messages: that is the
                 // unit the frontend can identify in its own mirror (its user
-                // rows are optimistic and carry no wire ids to address).
+                // rows are optimistic and carry no wire ids to address). A
+                // removal that clips none (an assistant-only trim) leaves it
+                // nothing to drop, which is why this can be zero.
                 let turns = self.entries[start..end]
                     .iter()
                     .filter(|projected| matches!(projected, Projected::User))
                     .count() as u32;
+                let removed: Vec<String> = self.entries[start..end]
+                    .iter()
+                    .filter_map(|projected| match projected {
+                        Projected::ToolCall { snapshot, .. } => Some(snapshot.id.clone()),
+                        _ => None,
+                    })
+                    .collect();
                 self.entries.drain(start..end);
+
+                // A tool call that goes away takes its permission prompt with
+                // it. Left in `open_permissions` the route outlives the call,
+                // and the frontend keeps a modal open on a tool call that no
+                // longer exists, answerable by nobody — the stranding shape of
+                // ATL-213, one layer up.
+                let mut deltas = Vec::new();
+                self.open_permissions.retain(|tool_call_id, request_id| {
+                    if removed.iter().any(|id| id == &tool_call_id.to_string()) {
+                        deltas.push(SessionDelta::PermissionResolved {
+                            request_id: *request_id,
+                        });
+                        return false;
+                    }
+                    true
+                });
                 if turns > 0 {
-                    vec![SessionDelta::HistoryRewound { turns }]
-                } else {
-                    // A removal that clips no user message (assistant-only
-                    // trim) has no exchange for the frontend to drop.
-                    Vec::new()
+                    deltas.push(SessionDelta::HistoryRewound { turns });
                 }
+                deltas
             }
             AcpThreadEvent::StatusChanged => self.status_deltas(),
             AcpThreadEvent::Stopped(stop_reason) => {
@@ -593,7 +689,11 @@ impl SessionProjection {
             // announced as a prompt update, which is the only thing that event
             // means today.
             AcpThreadEvent::PromptUpdated => self.plan_deltas(),
-            // Nothing on the wire corresponds to these.
+            // Nothing on the wire corresponds to these. `Refusal` has no
+            // emitter anywhere in `atlas-acp-thread` today, so its arm is
+            // unreachable rather than merely silent; it stays because the match
+            // must be exhaustive, and because a refusal is a thing the wire
+            // would eventually want to say.
             AcpThreadEvent::PromptCapabilitiesUpdated
             | AcpThreadEvent::WorkingDirectoriesUpdated
             | AcpThreadEvent::Refusal => Vec::new(),
@@ -623,19 +723,35 @@ impl SessionProjection {
             AgentThreadEntry::AssistantMessage(message) => {
                 let mut runs = Vec::new();
                 let mut deltas = Vec::new();
+                let at = chrono::Utc::now();
                 for run in project::runs(&message.chunks) {
+                    let text_len = run.text.len();
+                    // An image- or audio-only chunk flattens to nothing. The
+                    // snapshot skips such a run; announcing it here put a blank
+                    // bubble in the live view that vanished on reload
+                    // (ATL-224). Mirrored anyway so the run indices keep
+                    // matching the thread's.
+                    if run.text.is_empty() {
+                        runs.push(ProjectedRun {
+                            message_id: None,
+                            is_thought: run.is_thought,
+                            text_len,
+                        });
+                        continue;
+                    }
                     let message_id = new_message_id();
                     deltas.push(SessionDelta::MessageAppended {
                         message: project::run_message(
                             message_id.clone(),
                             &run,
                             self.model.clone(),
+                            at,
                         ),
                     });
                     runs.push(ProjectedRun {
-                        message_id,
+                        message_id: Some(message_id),
                         is_thought: run.is_thought,
-                        text: run.text,
+                        text_len,
                     });
                 }
                 (Projected::Assistant { runs }, deltas)
@@ -655,6 +771,10 @@ impl SessionProjection {
                     vec![delta],
                 )
             }
+            // Nothing in the ported stack constructs `CompletedPlan`, so this
+            // arm and its counterpart in `update_entry` are unreachable rather
+            // than merely rare. Kept for exhaustiveness, and because the
+            // variant is the shape a finished plan would arrive in.
             AgentThreadEntry::CompletedPlan(entries) => (
                 Projected::Other,
                 vec![SessionDelta::PlanUpdated {
@@ -687,43 +807,98 @@ impl SessionProjection {
 
         match (projected, entry) {
             (Projected::Assistant { runs }, AgentThreadEntry::AssistantMessage(message)) => {
-                let current = project::runs(&message.chunks);
+                // Spans, not text: one `EntryUpdated` arrives per streamed
+                // chunk, and rebuilding the message's whole text to find out
+                // what is new costs the entire message on every token of it
+                // (ATL-223). A run only grows at its end, so a byte length is
+                // enough to locate the new part.
+                let spans = project::run_spans(&message.chunks);
                 let mut deltas = Vec::new();
-                for (run_ix, run) in current.iter().enumerate() {
+                for (run_ix, span) in spans.iter().enumerate() {
+                    let len = project::run_span_len(&message.chunks, span);
                     match runs.get_mut(run_ix) {
-                        Some(projected) if projected.is_thought == run.is_thought => {
-                            // Text only ever grows; a rewrite would mean the
-                            // agent replaced what it already said, which the
-                            // wire has no way to express.
-                            let Some(suffix) = run.text.strip_prefix(projected.text.as_str())
+                        Some(projected) if projected.is_thought == span.is_thought => {
+                            match projected.message_id.clone() {
+                                Some(message_id) => {
+                                    // A shrink would mean the agent replaced
+                                    // what it already said, which the wire has
+                                    // no way to express.
+                                    if len <= projected.text_len {
+                                        continue;
+                                    }
+                                    let Some(delta) = project::run_span_tail(
+                                        &message.chunks,
+                                        span,
+                                        projected.text_len,
+                                    ) else {
+                                        continue;
+                                    };
+                                    if delta.is_empty() {
+                                        continue;
+                                    }
+                                    projected.text_len = len;
+                                    deltas.push(if span.is_thought {
+                                        SessionDelta::ThinkingChunk { message_id, delta }
+                                    } else {
+                                        SessionDelta::TextChunk { message_id, delta }
+                                    });
+                                }
+                                // Held back as empty (ATL-224), and now it has
+                                // something to render. This is its first
+                                // announcement, so it is a whole message rather
+                                // than a chunk appended to one nobody has.
+                                None => {
+                                    if len == 0 {
+                                        continue;
+                                    }
+                                    let Some(text) =
+                                        project::run_span_tail(&message.chunks, span, 0)
+                                    else {
+                                        continue;
+                                    };
+                                    let message_id = new_message_id();
+                                    deltas.push(SessionDelta::MessageAppended {
+                                        message: project::run_message(
+                                            message_id.clone(),
+                                            &project::Run {
+                                                is_thought: span.is_thought,
+                                                text,
+                                            },
+                                            self.model.clone(),
+                                            chrono::Utc::now(),
+                                        ),
+                                    });
+                                    projected.message_id = Some(message_id);
+                                    projected.text_len = len;
+                                }
+                            }
+                        }
+                        _ => {
+                            let Some(text) = project::run_span_tail(&message.chunks, span, 0)
                             else {
                                 continue;
                             };
-                            if suffix.is_empty() {
-                                continue;
-                            }
-                            let delta = suffix.to_string();
-                            let message_id = projected.message_id.clone();
-                            projected.text = run.text.clone();
-                            deltas.push(if run.is_thought {
-                                SessionDelta::ThinkingChunk { message_id, delta }
+                            let announced = if text.is_empty() {
+                                None
                             } else {
-                                SessionDelta::TextChunk { message_id, delta }
-                            });
-                        }
-                        _ => {
-                            let message_id = new_message_id();
-                            deltas.push(SessionDelta::MessageAppended {
-                                message: project::run_message(
-                                    message_id.clone(),
-                                    run,
-                                    self.model.clone(),
-                                ),
-                            });
+                                let message_id = new_message_id();
+                                deltas.push(SessionDelta::MessageAppended {
+                                    message: project::run_message(
+                                        message_id.clone(),
+                                        &project::Run {
+                                            is_thought: span.is_thought,
+                                            text,
+                                        },
+                                        self.model.clone(),
+                                        chrono::Utc::now(),
+                                    ),
+                                });
+                                Some(message_id)
+                            };
                             let projected_run = ProjectedRun {
-                                message_id,
-                                is_thought: run.is_thought,
-                                text: run.text.clone(),
+                                message_id: announced,
+                                is_thought: span.is_thought,
+                                text_len: len,
                             };
                             match runs.get_mut(run_ix) {
                                 Some(slot) => *slot = projected_run,
@@ -741,7 +916,40 @@ impl SessionProjection {
                 },
                 AgentThreadEntry::ToolCall(call),
             ) => {
-                let current = project::tool_call(call, &thread);
+                // Fast path: nothing but the result changed, and the result is
+                // one terminal's output that only grew. Building `current` to
+                // discover that costs a copy of everything the command has
+                // printed so far — on every chunk it prints, with the session's
+                // lock held — which is what let a chatty command stall the
+                // whole session (ATL-219).
+                let meta = project::tool_call_meta(call);
+                if tool_call_meta_eq(snapshot, &meta) {
+                    if let Some(terminal_id) = project::sole_terminal(&call.content) {
+                        let emitted = snapshot.result.as_deref().unwrap_or_default().len();
+                        match thread.terminal_output_appended(terminal_id, emitted) {
+                            Some(TerminalAppend::Unchanged) => return Vec::new(),
+                            // A first result stays a full snapshot, as on the
+                            // slow path below: a consumer that ignores chunks
+                            // must still see the tool call's content announced
+                            // at least once.
+                            Some(TerminalAppend::Grew(suffix)) if emitted > 0 => {
+                                let delta = SessionDelta::ToolCallOutputChunk {
+                                    message_id: message_id.clone(),
+                                    tool_call_id: snapshot.id.clone(),
+                                    delta: suffix.clone(),
+                                };
+                                snapshot
+                                    .result
+                                    .get_or_insert_with(String::new)
+                                    .push_str(&suffix);
+                                return vec![delta];
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                let mut current = meta;
+                current.result = project::tool_result(&call.content, &thread);
                 let delta = tool_call_delta(message_id, snapshot, &current);
                 **snapshot = current;
                 delta.into_iter().collect()
@@ -836,7 +1044,14 @@ impl SessionProjection {
     fn plan_deltas(&mut self) -> Vec<SessionDelta> {
         let plan = project::plan_entries(&lock_thread(&self.thread).plan().entries);
         let fingerprint = serde_json::to_value(&plan).unwrap_or(serde_json::Value::Null);
-        if plan.is_empty() || self.plan == Some(fingerprint.clone()) {
+        // An empty plan is only silence when nothing has been announced yet.
+        // Skipping every empty plan meant an agent that CLEARED its plan never
+        // said so, and the UI kept rendering a card full of steps the agent had
+        // abandoned (ATL-222).
+        if self.plan.is_none() && plan.is_empty() {
+            return Vec::new();
+        }
+        if self.plan == Some(fingerprint.clone()) {
             return Vec::new();
         }
         self.plan = Some(fingerprint);
@@ -922,21 +1137,20 @@ impl SessionProjection {
 /// quadratic in its output. When nothing but the result's tail changed, the
 /// tail alone goes on the wire; everything else is a full snapshot, because the
 /// UI never merges fields.
+///
+/// That is a claim about the WIRE only, and for a long time it was the whole
+/// claim: reaching this function at all meant the caller had already rebuilt
+/// the entire result and was about to compare it string-for-string, so the
+/// projection stayed quadratic while the bytes on the wire did not (ATL-219).
+/// The caller in `update_entry` now answers the common case — one terminal,
+/// output that only grew — without building anything, and only falls through to
+/// here when it cannot.
 fn tool_call_delta(
     message_id: &str,
     previous: &ToolCall,
     current: &ToolCall,
 ) -> Option<SessionDelta> {
-    let same_except_result = previous.status == current.status
-        && previous.title == current.title
-        && previous.kind == current.kind
-        && previous.tool_name == current.tool_name
-        && previous.arguments == current.arguments
-        && previous.locations == current.locations
-        && previous.raw_output == current.raw_output
-        && previous.content_blocks == current.content_blocks;
-
-    if same_except_result {
+    if tool_call_meta_eq(previous, current) {
         let previous_result = previous.result.as_deref().unwrap_or_default();
         let current_result = current.result.as_deref().unwrap_or_default();
         if previous_result == current_result {
@@ -964,6 +1178,23 @@ fn tool_call_delta(
         message_id: message_id.to_string(),
         tool_call: current.clone(),
     })
+}
+
+/// Whether two projections of a tool call agree on everything but the result.
+///
+/// The result is the only field whose size grows with what a command printed,
+/// so it is the only one worth streaming — and the only one worth measuring
+/// before deciding to. Shared with the incremental path in `update_entry`, so
+/// the two cannot disagree about what "only the output changed" means.
+fn tool_call_meta_eq(previous: &ToolCall, current: &ToolCall) -> bool {
+    previous.status == current.status
+        && previous.title == current.title
+        && previous.kind == current.kind
+        && previous.tool_name == current.tool_name
+        && previous.arguments == current.arguments
+        && previous.locations == current.locations
+        && previous.raw_output == current.raw_output
+        && previous.content_blocks == current.content_blocks
 }
 
 /// `LoadError`'s own `Display` is the reason text, so the wire carries exactly

@@ -125,7 +125,7 @@ impl From<&str> for AgentModelId {
 /// to run it — Atlas already streams a login CLI's output into `AgentOAuthModal`.
 /// Zed's `use_new_terminal` / `allow_concurrent_runs` / `hide: Always` are all
 /// consequences of running inside its terminal panel and have no meaning here.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct TerminalAuthCommand {
     pub id: String,
     pub label: String,
@@ -145,6 +145,28 @@ pub struct TerminalAuthCommand {
     /// the command themselves actually needs: their own shell already carries
     /// the rest.
     pub declared_env: Vec<(String, String)>,
+}
+
+/// Hand-written so `env` cannot reach a log line, a panic message, or an error
+/// report. The derive would have printed the user's entire environment —
+/// including the BYOK keys read out of the keychain — from any `{:?}` anywhere,
+/// which is precisely what this type's own doc comment forbids doing with it.
+/// Nothing formats it today; this is about the next `{:?}` somebody adds.
+///
+/// `declared_env` is the agent's own declaration and is safe to show, so it
+/// prints in full: redacting it would make the useful half unreadable to buy
+/// nothing.
+impl fmt::Debug for TerminalAuthCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TerminalAuthCommand")
+            .field("id", &self.id)
+            .field("label", &self.label)
+            .field("command", &self.command)
+            .field("args", &self.args)
+            .field("env", &format_args!("<redacted: {} vars>", self.env.len()))
+            .field("declared_env", &self.declared_env)
+            .finish()
+    }
 }
 
 /// Ported from `build_terminal_auth_task` (`connection.rs:69-89`).
@@ -327,6 +349,16 @@ impl dyn AgentConnection {
     }
 }
 
+/// Rewinding a session's history.
+///
+/// No implementation and no caller today — `remove_entries_from` is reached
+/// only by the native agent's `/undo`. Whoever wires this up owns a coupling
+/// that is not local to this file: shrinking `AcpThread::entries` makes
+/// `atlas-agent-delta`'s per-session mirror shrink with it, and anything keyed
+/// by entry position or by tool call id (the projector's `open_permissions`,
+/// its `Projected` mirror) has to be trimmed in the same step. The projector
+/// handles the `EntriesRemoved` event it already receives; check it still does
+/// before assuming a new truncation path is free.
 pub trait AgentSessionTruncate: Send + Sync {
     fn run(&self, client_user_message_id: ClientUserMessageId) -> BoxFuture<'static, Result<()>>;
 }

@@ -61,6 +61,13 @@ function collapseDuplicateRemotes(
   if (remap.size === 0) return;
 
   // Re-tag before dropping, so nothing is briefly owned by a missing org.
+  // Log which workspaces move — a silent re-tag here is how "my projects
+  // jumped into another org" reports happen, and this trail makes them
+  // diagnosable.
+  const retagged = useWorkspaceStore
+    .getState()
+    .workspaces.filter((w) => w.orgId && remap.has(w.orgId))
+    .map((w) => w.id);
   useWorkspaceStore.setState((s) => ({
     workspaces: s.workspaces.map((w) =>
       w.orgId && remap.has(w.orgId) ? { ...w, orgId: remap.get(w.orgId) } : w,
@@ -69,6 +76,12 @@ function collapseDuplicateRemotes(
       g.orgId && remap.has(g.orgId) ? { ...g, orgId: remap.get(g.orgId) } : g,
     ),
   }));
+  logEvent({
+    source: "project",
+    kind: "org-duplicate-collapse",
+    summary: `merged ${remap.size} duplicate org row(s)`,
+    payload: { remap: Object.fromEntries(remap), retaggedWorkspaceIds: retagged },
+  });
 
   set((s) => ({
     organisations: s.organisations.filter((o) => !remap.has(o.id)),
@@ -342,15 +355,28 @@ export const useOrgStore = createSelectors(
 
           // Adopt a same-named, still-local org rather than duplicating it —
           // covers an org created offline that later arrives from the server.
+          // Only genuinely local rows qualify (`!remoteId && !syncEnabled`);
+          // logged because adoption changes which server org owns the local
+          // org's workspaces, and a wrong name-match must be traceable.
           const adoptIdx = next.findIndex(
-            (o) => !o.remoteId && o.name.trim().toLowerCase() === s.name.trim().toLowerCase(),
+            (o) =>
+              !o.remoteId &&
+              !o.syncEnabled &&
+              o.name.trim().toLowerCase() === s.name.trim().toLowerCase(),
           );
           if (adoptIdx !== -1) {
+            const adopted = next[adoptIdx];
             next = next.map((o, i) =>
               i === adoptIdx ? { ...o, remoteId: s.id, syncEnabled: true } : o,
             );
             linked.add(s.id);
             changed = true;
+            logEvent({
+              source: "project",
+              kind: "org-adopt",
+              summary: `linked local org "${adopted.name}" to server org`,
+              payload: { localOrgId: adopted.id, remoteOrgId: s.id },
+            });
             continue;
           }
 

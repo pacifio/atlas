@@ -21,6 +21,8 @@ import { timeAgo } from "@/lib/time-ago";
 import { ThreadHistoryView } from "./thread-history-view";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
+import { useActiveOrgWorkspaces } from "@/features/workspaces/lib/org-scope";
+import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useChatStore } from "../stores/chat-store";
 import { bumpLoadToken, isLoadStale } from "../lib/load-tokens";
@@ -171,7 +173,10 @@ export const SessionSidebar = memo(function SessionSidebar({
   // `cwd.length > 0`) returned [] → the sidebar showed only ephemeral live rows.
   // Fall back to the active workspace's path (the real source of truth).
   const activeWorkspaceId = useWorkspaceStore.use.activeWorkspaceId();
-  const workspaces = useWorkspaceStore.use.workspaces();
+  // ACTIVE-org workspaces only — the fallback below must never resolve to (or
+  // hold, via the sticky ref) a path that belongs to another organisation.
+  const workspaces = useActiveOrgWorkspaces();
+  const activeOrganisationId = useOrgStore.use.activeOrganisationId();
   const resolvedCwd =
     project?.path ?? workspaces.find((w) => w.id === activeWorkspaceId)?.path ?? "";
   // STICKY cwd. It no longer keys any query — history is one app-level store —
@@ -184,6 +189,15 @@ export const SessionSidebar = memo(function SessionSidebar({
   // cwd across those blips; only clear it when there is genuinely no project
   // open (zero workspaces).
   const lastCwdRef = useRef("");
+  // The sticky hold must not survive an ORG switch — it would pin the
+  // outgoing org's cwd (and thus its thread ordering) into the new org while
+  // teardown has everything transiently null. Reset it the moment the org
+  // changes, render-synchronously.
+  const lastOrgRef = useRef(activeOrganisationId);
+  if (lastOrgRef.current !== activeOrganisationId) {
+    lastOrgRef.current = activeOrganisationId;
+    lastCwdRef.current = "";
+  }
   if (resolvedCwd) {
     lastCwdRef.current = resolvedCwd;
   } else if (workspaces.length === 0) {

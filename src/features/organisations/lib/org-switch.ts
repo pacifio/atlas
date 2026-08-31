@@ -2,6 +2,7 @@ import { logEvent } from "@/features/log/lib/log";
 import { useLogStore } from "@/features/log/stores/log-store";
 import { flushAll } from "@/features/workspaces/lib/flush-registry";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
+import { resetGitSummariesForOrgSwitch } from "@/features/workspaces/stores/workspace-git-store";
 import {
   useProjectStore,
   flushAppStateSave,
@@ -96,6 +97,10 @@ export async function switchOrg(id: string): Promise<void> {
     //    cache all close), stopping the old org's watchers.
     wsActions.teardownForOrgSwitch();
     projectActions.setActiveProject(null);
+
+    //    Drop the git-summary "already fetched" flags so the incoming org's
+    //    sidebar rows re-validate instead of rendering cached-forever data.
+    resetGitSummariesForOrgSwitch();
 
     // 4) Make the org swap authoritative. `setActiveOrganisation` also
     //    re-points analytics attribution (see `syncOrgTelemetry`), so events

@@ -291,17 +291,48 @@ impl AppState {
         }
 
         // Backfill org ownership on any untagged workspace/group (covers both
-        // the fresh migration above and stray untagged entries).
-        if let Some(default_org) = self.active_organisation_id.clone() {
-            for ws in &mut self.workspaces {
-                if ws.org_id.is_none() {
-                    ws.org_id = Some(default_org.clone());
-                }
-            }
+        // the fresh migration above and stray untagged entries — the frontend
+        // can mint `org_id: null` rows during a boot race, and every render
+        // surface filters strictly by org, so an untagged row would otherwise
+        // be invisible in one org and leak into all of them). When no active
+        // org is set, fall back to the first org rather than leaving rows
+        // untagged forever.
+        let default_org = self
+            .active_organisation_id
+            .clone()
+            .or_else(|| self.organisations.first().map(|o| o.id.clone()));
+        if let Some(default_org) = default_org {
+            let group_orgs: std::collections::HashMap<String, String> = self
+                .groups
+                .iter()
+                .filter_map(|g| Some((g.id.clone(), g.org_id.clone()?)))
+                .collect();
+            let mut backfilled = 0usize;
             for group in &mut self.groups {
                 if group.org_id.is_none() {
                     group.org_id = Some(default_org.clone());
+                    backfilled += 1;
                 }
+            }
+            for ws in &mut self.workspaces {
+                if ws.org_id.is_none() {
+                    // A workspace inside an org-tagged group belongs to that
+                    // group's org; only truly orphaned rows get the default.
+                    ws.org_id = Some(
+                        ws.group_id
+                            .as_ref()
+                            .and_then(|gid| group_orgs.get(gid).cloned())
+                            .unwrap_or_else(|| default_org.clone()),
+                    );
+                    backfilled += 1;
+                }
+            }
+            if backfilled > 0 {
+                tracing::info!(
+                    count = backfilled,
+                    default_org = %default_org,
+                    "backfilled org_id on untagged workspaces/groups"
+                );
             }
         }
 

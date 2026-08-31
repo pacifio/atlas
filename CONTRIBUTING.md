@@ -58,6 +58,8 @@ You need:
 - [Rust](https://rustup.rs/), stable
 - Xcode Command Line Tools
 
+We suggest using [mise](https://mise.jdx.dev/) to manage the Bun version — the repo ships an `mise.toml` pinning it, so `mise install` picks up the right version automatically. Not required; installing Bun directly works too.
+
 **No API keys, no `.env` file, no account.** Atlas builds and runs from a clean clone:
 
 ```bash
