@@ -1712,6 +1712,15 @@ impl AcpThread {
 
     /// Closes the running turn. `stop_reason` is emitted so the UI leaves the
     /// generating state for the same reasons Zed does.
+    ///
+    /// Deliberately NOT guarded on `running_turn`. A guard would make
+    /// `set_error()` followed by `end_turn()` emit nothing instead of a second
+    /// `Stopped` — but no caller does that pair (`atlas-agent-manager`'s
+    /// `prompt` reaches `end_turn` only on the Ok arm and `set_error` only on
+    /// the Err one), and both this crate's callers and
+    /// `atlas-agent-delta`'s tests use `end_turn` as "announce Stopped" without
+    /// a turn open. Adding the guard would break that use for a case nothing
+    /// reaches. Checked while fixing `cancel_inner` below (ATL-218 finding 4).
     pub fn end_turn(&mut self, stop_reason: acp::StopReason) {
         self.running_turn = None;
         self.emit(AcpThreadEvent::Stopped(stop_reason));
@@ -1737,13 +1746,32 @@ impl AcpThread {
         self.cancel_inner(RequestPermissionOutcome::Cancelled)
     }
 
+    /// Resolving the thread's own state is unconditional; telling the AGENT is
+    /// what needs a running turn.
+    ///
+    /// The two halves used to sit on opposite sides of the early return, and
+    /// the split was the bug. `set_error()` and `emit_load_error()` both clear
+    /// `running_turn` before anything can cancel, so after either one every
+    /// later `cancel()` returned above `mark_pending_entries_as_canceled` and
+    /// a tool call sat in `WaitingForConfirmation` forever — holding a
+    /// `respond_tx` nobody would ever send on, and masking the error state,
+    /// since the projection reads `WaitingForConfirmation` before `had_error`
+    /// and reports the session as Waiting. `begin_turn()` cancels BEFORE it
+    /// sets `running_turn`, so the next turn early-returned too: there was no
+    /// self-heal path, and the only escape was the user clicking an option on a
+    /// prompt belonging to a dead turn.
+    ///
+    /// So: entries and elicitations are resolved on every call, because they
+    /// are ours and a turn that is gone cannot advance them either way. Only
+    /// `connection.cancel()` stays behind the check — an idle thread must not
+    /// send `session/cancel` for a turn the agent already finished.
     fn cancel_inner(&mut self, permission_outcome: RequestPermissionOutcome) {
         self.cancel_outstanding_elicitations();
+        self.mark_pending_entries_as_canceled(permission_outcome);
 
         if self.running_turn.take().is_none() {
             return;
         }
-        self.mark_pending_entries_as_canceled(permission_outcome);
         self.connection.cancel(&self.session_id);
         self.emit(AcpThreadEvent::StatusChanged);
     }

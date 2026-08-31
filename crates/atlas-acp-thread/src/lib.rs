@@ -7,9 +7,11 @@
 //! updates, out-of-order terminal buffering, cancel semantics) the logic is
 //! ported line-for-line and the Zed file:line is cited at the function.
 //!
-//! Nothing links this crate yet. It is stage 1 of
-//! `plans/atlas-acp-zed-port-plan.md`; the old ACP stack is untouched and stays
-//! on its own SDK version.
+//! This crate is the ACP stack now, not a staging area beside it. Seven
+//! packages link it: `atlas-agent-manager`, `atlas-agent-servers`,
+//! `atlas-agent-store`, `atlas-agent-delta`, `atlas-native-agent`,
+//! `atlas-thread-metadata`, and `src-tauri`. Anything changed here is a change
+//! to what ships — see `Cargo.toml` for what that means for the SDK pin.
 //!
 //! # What is deliberately NOT ported
 //!

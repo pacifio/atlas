@@ -50,15 +50,21 @@ pub struct CommandExit {
 /// what matters to an agent reading a failure — and requires that the retained
 /// bytes stay a valid string. Both are easy to get subtly wrong, so they live
 /// here behind tests rather than at the call site.
+///
+/// Public because a PTY is not the only thing that accumulates a command's
+/// output: a DISPLAY-ONLY terminal (one the agent runs itself, streaming its
+/// output to us as `session/update` meta) has no `CommandTerminal` at all, and
+/// `atlas-acp-thread` buffers those bytes directly. That buffer needs the same
+/// cap and the same boundary walk, and reimplementing either is how they drift.
 #[derive(Debug)]
-struct OutputBuffer {
+pub struct OutputBuffer {
     bytes: Vec<u8>,
     limit: usize,
     truncated: bool,
 }
 
 impl OutputBuffer {
-    fn new(limit: u64) -> Self {
+    pub fn new(limit: u64) -> Self {
         Self {
             bytes: Vec::new(),
             // Saturating: `u64::MAX` from a careless agent must clamp, not wrap
@@ -68,7 +74,7 @@ impl OutputBuffer {
         }
     }
 
-    fn push(&mut self, chunk: &[u8]) {
+    pub fn push(&mut self, chunk: &[u8]) {
         self.bytes.extend_from_slice(chunk);
         if self.bytes.len() <= self.limit {
             return;
@@ -90,8 +96,23 @@ impl OutputBuffer {
     /// `output` field is a string, so there is nothing else to return. The
     /// boundary walk in [`Self::push`] means truncation itself never
     /// manufactures a replacement character; anything here came from the child.
-    fn text(&self) -> String {
+    pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.bytes).into_owned()
+    }
+
+    /// Whether anything has been dropped from the front. Sticky: once a buffer
+    /// has truncated, no later read can honestly claim a complete capture.
+    pub fn truncated(&self) -> bool {
+        self.truncated
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Retained bytes. Used to account for a buffer's cost from outside.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
     }
 }
 

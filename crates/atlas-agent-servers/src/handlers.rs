@@ -586,7 +586,10 @@ pub fn handle_create_terminal(
 /// - the command exits (checked after each wake);
 /// - the thread is gone (the upgrade fails, checked before parking again);
 /// - the terminal is released or the session torn down, both of which kill the
-///   command — which is an exit, so the first condition fires.
+///   command — which is an exit, so the first condition fires. Release kills
+///   explicitly, just below; teardown kills through `AcpTerminal`'s `Drop`,
+///   which is the only thing covering an ABRUPT teardown — `close_session`
+///   drops the thread handle without ever reaching this code.
 pub fn follow_terminal_output(
     thread: AcpThreadHandle,
     terminal: Arc<CommandTerminal>,

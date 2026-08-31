@@ -29,6 +29,12 @@ pub struct TerminalOutput {
     pub data: Vec<u8>,
 }
 
+impl Default for TerminalManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TerminalManager {
     pub fn new() -> Self {
         Self {
@@ -197,7 +203,7 @@ impl TerminalManager {
             if error.raw_os_error() == Some(libc::ESRCH) {
                 return Ok(false);
             }
-            return Err(error.into());
+            Err(error.into())
         }
 
         #[cfg(not(unix))]
