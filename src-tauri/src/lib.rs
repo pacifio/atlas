@@ -284,6 +284,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::agent_entitlement::native_agent_entitlement,
+            commands::agent_entitlement::native_agent_request_access,
             commands::auth::auth_snapshot,
             commands::auth::auth_sign_in,
             commands::auth::auth_cancel_sign_in,

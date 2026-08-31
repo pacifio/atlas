@@ -64,6 +64,8 @@ import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import { ComposerOptionsPill } from "./composer-options-pill";
 import { FeaturedAgentOffers } from "./featured-agent-offers";
 import { RetryPill } from "./retry-pill";
+import { AiGrantBar } from "./ai-grant-bar";
+import { useAiGrantProbe, useNoAiGrant } from "../stores/ai-grant-store";
 import {
   QUALITY_LADDER,
   aggregateExceedsBudget,
@@ -784,7 +786,7 @@ export function MessageInput({
   onStop,
   running = false,
   stopping = false,
-  disabled = false,
+  disabled: disabledProp = false,
   placeholder = "Message Atlas... (@ to mention, / for commands)",
 }: MessageInputProps) {
   const { enqueueMessage, removeQueueItem, setAcpModes, setAcpModesPending, setCerseiEffort } =
@@ -862,6 +864,27 @@ export function MessageInput({
   // external ids through and collapses only the legacy "custom" placeholder,
   // which is what the transcript and sidebar already did.
   const switchableAgent: SwitchableAgent = switchableAgentOf(agentType);
+
+  // The org's AI grant, and the composer lock it drives.
+  //
+  // Owned here because this component always renders while a chat is open;
+  // `AiGrantBar` below only reads the result (see `ai-grant-store.ts` for why
+  // the two must not probe independently).
+  useAiGrantProbe();
+  const noAiGrant = useNoAiGrant();
+  // Scoped to the NATIVE agent, which is the only one that talks to the Atlas
+  // gateway. Claude Code, Codex and every registry agent run on the user's own
+  // credentials — an org with no AI grant says nothing about them, and locking
+  // their composer would break agents that work fine.
+  //
+  // This is the one thing ADR-0002 permits: the ban is on a composer disabled
+  // by an agent's *readiness*, because the agent switcher lives inside it. The
+  // `disabled` path below pointer-blocks only the text area and the send
+  // button — the toolbar, and with it the switcher, stays live, so the user can
+  // always move to an agent that runs. Verified against the escape hatch: this
+  // must never disable the toolbar.
+  const blockedByGrant = noAiGrant && agentType === "cersei";
+  const disabled = disabledProp || blockedByGrant;
   // The BYOK provider/model bindings for the native agent stood here — the
   // provider pick, the model re-push on bind, the whole BYOK selection path.
   // Gone: the native agent's model comes from the seam's published catalogue
@@ -1744,7 +1767,15 @@ export function MessageInput({
   // composer no longer mirrors the setup phase here (the setup pill above the
   // input already communicates install/auth state). Only the queue hint
   // overrides it.
-  const effectivePlaceholder = running ? "Type to queue the next message…" : placeholder;
+  // The no-grant wording names the way OUT, not just the wall — and it lives in
+  // the placeholder rather than only in the bar above because the bar can be
+  // dismissed, and a composer that is dead with no visible reason is worse than
+  // one that explains itself.
+  const effectivePlaceholder = blockedByGrant
+    ? "No AI access — ask your admin, or switch agent below"
+    : running
+      ? "Type to queue the next message…"
+      : placeholder;
 
   return (
     <div className="px-4 pb-4 pt-2 bg-transparent">
@@ -1777,6 +1808,13 @@ export function MessageInput({
 
         {/* Transient-failure retry countdown (native agent). */}
         <RetryPill tabId={tabId} />
+
+        {/* The no-grant setup state (D15a), tucked into the top of the
+            composer — the explanation for the input being locked below.
+            Scoped to the native agent for the same reason the lock is: the
+            other agents do not use the Atlas gateway, so an org with no grant
+            is not their problem and a bar over a working composer is noise. */}
+        {agentType === "cersei" && <AiGrantBar />}
 
         {/* Live plan docked on top of the input bar (JetBrains-Air style). */}
 
