@@ -130,7 +130,7 @@ impl TranscriptSource {
             return Vec::new();
         };
         let mut files: Vec<PathBuf> = entries
-            .filter_map(|entry| entry.ok())
+            .filter_map(std::result::Result::ok)
             .map(|entry| entry.path())
             .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
             .collect();
@@ -374,7 +374,7 @@ fn import_file(
     let session_key = SessionKey {
         workspace_id: workspace_id.to_string(),
         source: Source::ExternalJsonl,
-        native_session_id: native_session_id.clone(),
+        native_session_id,
     };
 
     // Resume from the last clean pass when the state is present, parses, and
@@ -457,7 +457,7 @@ fn import_file(
             if line.trim().is_empty() {
                 continue;
             }
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
                 // A transcript being appended to while it is read ends mid-object.
                 outcome.malformed_lines += 1;
                 continue;
@@ -564,7 +564,7 @@ fn import_file(
                 let native_id = turn
                     .native_id
                     .clone()
-                    .unwrap_or_else(|| synthetic_line_id(line_index, &line));
+                    .unwrap_or_else(|| synthetic_line_id(line_index, line));
 
                 match capture.record_turn(
                     &id,

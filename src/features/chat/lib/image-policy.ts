@@ -86,3 +86,20 @@ export function exceedsBudget(base64Length: number): boolean {
  * gateway refuses outright.
  */
 export const QUALITY_LADDER = [0.85, 0.7, 0.55, 0.4] as const;
+
+/**
+ * What all staged attachments together may occupy.
+ *
+ * The per-image budget is enforced per image only, so four in-budget
+ * attachments plus the prompt, the tool schemas and the conversation so far
+ * could still guarantee a `413` (#71). Three quarters of the cap leaves the
+ * last quarter for everything that isn't an image — the same share one image
+ * gets. The gateway stays the backstop; crossing this line is a warning owed
+ * to the user before they press send, not a refusal.
+ */
+export const AGGREGATE_IMAGE_BUDGET_BYTES = (BODY_CAP_BYTES * 3) / 4;
+
+/** Whether the staged attachments together are likely to blow the body cap. */
+export function aggregateExceedsBudget(base64Lengths: number[]): boolean {
+  return base64Lengths.reduce((total, n) => total + n, 0) > AGGREGATE_IMAGE_BUDGET_BYTES;
+}

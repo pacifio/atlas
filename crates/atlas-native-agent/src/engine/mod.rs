@@ -1,12 +1,12 @@
 //! The ported Codex engine, behind the seam.
 //!
-//! Everything in here is gated on the `ported-engine` feature — the
-//! development-time switch of spec Phase 2. With the feature off this module
-//! does not exist, the engine is not in the dependency graph, and the shipped
-//! app is byte-for-byte the Cersei path it is today. That is deliberate: the
-//! Cersei path keeps shipping until the acceptance bar is green (Cutover
-//! Sequence, Phase 5), so the switch must not be able to leak the engine into
-//! a release build by accident.
+//! This module used to be gated on the `ported-engine` feature — the
+//! development-time switch of spec Phase 2, kept while the Cersei path was
+//! still shipping. The cutover happened: #54 deleted the feature and the
+//! Cersei path with it, so the engine is unconditional now and there is no
+//! kill switch here. (The feature's deletion also caused the #54 auth outage
+//! — four `#[cfg(feature = "ported-engine")]` blocks compiled to nothing —
+//! which is why `unexpected_cfgs` is a workspace deny, #60.)
 //!
 //! The surface is ADR-0004's: the engine is driven **in-process at the
 //! app-server layer**, through `codex-app-server-client`, and `src-tauri` sees

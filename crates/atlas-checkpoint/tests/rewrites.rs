@@ -325,7 +325,7 @@ fn a_cherry_pick_collision_orphans_rather_than_picking_arbitrarily() {
         "agent work\n",
         "agent work",
     );
-    let original = only_checkpoint(&store, &session).commit_sha.clone();
+    let original = only_checkpoint(&store, &session).commit_sha;
 
     // Two branches each cherry-pick the same change. Each needs its own
     // preceding commit: without a differing parent, git produces a
@@ -377,7 +377,7 @@ fn a_patch_id_collision_resolves_to_the_checkpoints_recorded_branch_when_it_can(
         "agent work\n",
         "agent work",
     );
-    let original = only_checkpoint(&store, &session).commit_sha.clone();
+    let original = only_checkpoint(&store, &session).commit_sha;
 
     // The same change is cherry-picked to another branch…
     fixture.git(&["checkout", "-b", "release", "main"]);
@@ -433,7 +433,7 @@ fn an_orphan_whose_commit_becomes_reachable_again_is_re_linked() {
     fixture.walk(&store);
 
     let session = agent_commit(&fixture, &mut store, "s1", "src/lib.rs", "agent\n", "agent change");
-    let commit = only_checkpoint(&store, &session).commit_sha.clone();
+    let commit = only_checkpoint(&store, &session).commit_sha;
 
     // Rewind past it, so the commit is unreachable and the Checkpoint orphans.
     fixture.git(&["reset", "--hard", "HEAD~1"]);

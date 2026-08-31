@@ -101,7 +101,7 @@ fn walk_notes(project_path: &str) -> Vec<NoteFile> {
     }
     let mut out: Vec<NoteFile> = Vec::new();
     walk(&root, &root, project_path, &mut out);
-    out.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    out.sort_by_key(|a| a.title.to_lowercase());
     out
 }
 

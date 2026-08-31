@@ -215,7 +215,6 @@ All wired in as `path` dependencies from `src-tauri/Cargo.toml`, and all members
 
 | Crate | Role |
 |---|---|
-| `atlas-cersei` | Atlas's native in-process coding agent, built on the Cersei SDK. Read `crates/atlas-cersei/ARCHITECTURE.md` before touching agent lifecycle, tools, permissions, providers, or persistence. |
 | `atlas-checkpoint` | The agent-session record: local SQLite store (`.atlas/sessions.db`), redact-on-write capture, git commit linkage, transcript import, sync outbox. Tauri-free, so the whole surface is testable against a real database and a real git repo. |
 | `atlas-redact` | Single source of truth for secret redaction: layered scrubbing (Shannon entropy, vendored betterleaks rules, provider prefixes, credentialed URIs, connection strings) with JSON-aware traversal. String in, redacted string out — no I/O, no async. |
 | `atlas-git` | Git execution layer: one spawn chokepoint over the real `git` binary (so hooks run), a typed stderr→error taxonomy with friendly messages (ported from GitHub Desktop/dugite), porcelain-v2 status parsing, streaming output for long operations. |
@@ -307,10 +306,9 @@ atlas/
 │   ├── atlas-agent-delta          thread events → frozen SessionDelta wire
 │   ├── atlas-agent-wire           the frozen wire shapes (contract-tested)
 │   ├── atlas-agent-transcript     an agent's own record of a conversation
-│   ├── atlas-native-agent         Cersei on the AgentConnection seam
+│   ├── atlas-native-agent         the vendored engine on the AgentConnection seam
 │   ├── atlas-thread-metadata      app-owned session history (threads.db)
 │   ├── atlas-bus                  event bus + middleware pipeline
-│   ├── atlas-cersei               native in-process agent (Cersei SDK)
 │   ├── atlas-checkpoint           session record / Timeline (sessions.db)
 │   ├── atlas-redact               secret redaction (single source of truth)
 │   ├── atlas-git                  git spawn chokepoint + error taxonomy
@@ -321,9 +319,8 @@ atlas/
 │   ├── atlas-codeindex            tree-sitter codebase scanner
 │   └── atlas-kb-server            self-contained KB static-server binary
 │
-├── vendor/                        [patch.crates-io] overrides
-│   ├── cersei-provider              UTF-8 chunk-boundary fix
-│   └── cersei-agent                 tool-cancel race fix
+├── vendor/                        vendored source, workspace members
+│   └── codex                        the engine behind Atlas Agent (ADR-0004)
 │
 ├── scripts/                       build/release helpers (with-posthog-env.mjs)
 ├── landing/                       marketing site source
@@ -344,7 +341,7 @@ atlas/
 
 ## Gotchas
 
-- **Vendored Cersei patches.** `cersei-provider` and `cersei-agent` are `[patch.crates-io]`'d in `src-tauri/Cargo.toml` to `vendor/cersei-provider` and `vendor/cersei-agent` instead of the crates.io release: the published `cersei-provider` corrupts multi-byte UTF-8 characters split across HTTP chunk boundaries, and the published `cersei-agent` never raced `tool.execute()` against the cancel token, leaving orphaned `tool_use` blocks in provider history on cancel. Compile-time guards (`_CERSEI_UTF8_PATCH_GUARD` in `src-tauri/src/lib.rs`, `_CERSEI_CANCEL_PATCH_GUARD` in `crates/atlas-cersei/src/lib.rs`) fail `cargo check` if either patch stops applying — that means the vendor override stopped resolving. Don't delete the guards to fix the build.
+- **The Cersei patch table is gone (#54).** The `cersei-provider`/`cersei-agent` `[patch.crates-io]` overrides and their compile guards were deleted with the Cersei path itself. The two failure classes they fixed are still guarded, by tests against the engine that replaced them rather than by a patch table: a chunk-split fixture that splits an SSE frame at every byte position, and a cancel test that asserts on the filesystem — the killed command's marker file never appears. See the root `Cargo.toml`'s `[patch.crates-io]` comment.
 - **`vite.config.ts`'s `dedupe` is load-bearing.** Lazy-loaded language packages (`lang-json`, `lang-rust`, …) each transitively import `@codemirror/{state,view,language}` and `@lezer/*`; without `dedupe`, Rollup can ship two copies in the production bundle. `EditorView.theme(...)` then registers against one copy's `StyleModule` while the `EditorView` construction uses the other, and the theme silently no-ops — text renders unstyled. Same story for `pdfjs-dist`: two copies mismatch the worker against the main-thread API version and PDF rendering fails. Dev mode does not reproduce either failure (Vite serves a single pre-bundled instance) — this only shows up in production builds.
 - **Release-profile `panic = "unwind"` is required.** The local-LLM loader (`atlas-embed`, used by memory chat) `catch_unwind`s candle's Metal kernel-compile panic to fall back to CPU. `panic = "abort"` would crash the app outright instead of degrading gracefully; the cost is a small amount of extra binary size for unwind tables.
 - **The single-instance plugin is release-only.** Registered behind `#[cfg(not(debug_assertions))]` in `src-tauri/src/lib.rs`. Registering it in debug builds kills `tauri dev` the instant it starts whenever the installed `/Applications/Atlas.app` is already running — the dev process gets treated as the "second instance," forwards its argv, and exits.

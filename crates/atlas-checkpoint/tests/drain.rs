@@ -643,7 +643,7 @@ fn batches_respect_the_byte_ceiling_independently_of_the_count() {
     }
 
     let batch = store.pending_artifacts(WORKSPACE, WIRE_WORKSPACE, ORG, 100, 64 * 1024).unwrap();
-    let bytes: usize = batch.iter().map(|a| a.approx_bytes()).sum();
+    let bytes: usize = batch.iter().map(atlas_checkpoint::artifacts::AtlasArtifact::approx_bytes).sum();
     assert!(batch.len() < 100, "the byte ceiling bit before the count did");
     assert!(bytes < 512 * 1024, "batch was {bytes} bytes");
 }

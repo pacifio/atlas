@@ -114,7 +114,7 @@ pub async fn terminal_create(
             // output is a reliable carrier for the change — and hanging the
             // check here costs one ioctl per emitted chunk and NOTHING while
             // the terminal sits idle, unlike a polling timer per session.
-            if let Some(raw) = probe.as_ref().and_then(|p| p.is_raw()) {
+            if let Some(raw) = probe.as_ref().and_then(atlas_terminal::TtyModeProbe::is_raw) {
                 if last_raw != Some(raw) {
                     last_raw = Some(raw);
                     let _ = app_handle.emit(
@@ -379,7 +379,7 @@ const SHELL_BUILTINS: &[&str] = &[
 
 fn scan_commands() -> Vec<String> {
     use std::collections::BTreeSet;
-    let mut set: BTreeSet<String> = SHELL_BUILTINS.iter().map(|s| s.to_string()).collect();
+    let mut set: BTreeSet<String> = SHELL_BUILTINS.iter().map(std::string::ToString::to_string).collect();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

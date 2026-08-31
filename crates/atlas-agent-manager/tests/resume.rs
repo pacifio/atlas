@@ -293,7 +293,7 @@ impl Harness {
         let thread_events: ThreadEventSink =
             Arc::new(|_session_id| atlas_acp_thread::event_channel().0);
         let manager = AgentManager::new(
-            Arc::new(FakeCatalog(id.clone())),
+            Arc::new(FakeCatalog(id)),
             server,
             ConnectOptions {
                 root_dir: None,

@@ -64,7 +64,12 @@ import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import { ComposerOptionsPill } from "./composer-options-pill";
 import { FeaturedAgentOffers } from "./featured-agent-offers";
 import { RetryPill } from "./retry-pill";
-import { QUALITY_LADDER, exceedsBudget, targetDimensions } from "../lib/image-policy";
+import {
+  QUALITY_LADDER,
+  aggregateExceedsBudget,
+  exceedsBudget,
+  targetDimensions,
+} from "../lib/image-policy";
 import { ComposerAddMenu } from "./composer-add-menu";
 import type { GithubRepo } from "@/features/github/types";
 import { imageMimeFromPath } from "@/lib/byok/model-capabilities";
@@ -148,6 +153,12 @@ async function downscaleAttachment(image: ImageAttachment): Promise<ImageAttachm
     canvas.height = height;
     const ctx = canvas.getContext("2d");
     if (!ctx) return image;
+    // A fresh canvas is transparent and JPEG has no alpha channel, so
+    // transparent pixels composite to BLACK — a macOS window capture (rounded
+    // corners, drop shadow, routinely over budget) came out with black
+    // corners and a black halo (#71). Paint the ground white first.
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, width, height);
     ctx.drawImage(bitmap, 0, 0, width, height);
     bitmap.close?.();
 
@@ -1163,6 +1174,25 @@ export function MessageInput({
   useEffect(() => {
     if (!imageSupported) setStagedImages([]);
   }, [imageSupported]);
+
+  // The per-image budget is per image only: several in-budget attachments
+  // plus the prompt, tools and history can still blow the gateway's body cap
+  // (#71). The gateway's 413 stays the backstop — this is the warning the
+  // user is owed BEFORE pressing send, once per crossing, cleared when they
+  // remove enough to fit again.
+  const stagedOverAggregateBudget = aggregateExceedsBudget(
+    stagedImages.map((img) => img.dataBase64.length),
+  );
+  const warnedAggregateRef = useRef(false);
+  useEffect(() => {
+    if (stagedOverAggregateBudget && !warnedAggregateRef.current) {
+      warnedAggregateRef.current = true;
+      toast.warning(
+        "These attachments together are near the 2 MB request limit — the send may be refused. Consider removing one.",
+      );
+    }
+    if (!stagedOverAggregateBudget) warnedAggregateRef.current = false;
+  }, [stagedOverAggregateBudget]);
 
   // "+" menu → "Add files or photos". The Tauri dialog hands back real
   // paths (a browser file input wouldn't), which is what makes the routing

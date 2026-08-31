@@ -143,7 +143,7 @@ pub async fn git_branches_full(path: String) -> Result<Vec<BranchInfo>, GitError
                 let upstream = p.get(2).copied().unwrap_or("");
                 Some(BranchInfo {
                     name,
-                    is_current: p.get(1).map_or(false, |h| h.trim() == "*"),
+                    is_current: p.get(1).is_some_and(|h| h.trim() == "*"),
                     is_remote,
                     upstream: if upstream.is_empty() {
                         None
@@ -603,7 +603,7 @@ pub async fn git_stash_push(
             args.push("-m".into());
             args.push(m);
         }
-        let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let argv: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
         git_mut(&app, &path, &argv)?;
         Ok(())
     })
@@ -655,7 +655,7 @@ pub async fn git_discard(path: String, files: Vec<String>, app: AppHandle) -> Re
             "--".to_string(),
         ];
         args.extend(files);
-        let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let argv: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
         git_mut(&app, &path, &argv)?;
         Ok(())
     })
@@ -685,7 +685,7 @@ pub async fn git_delete_added(
             "--".to_string(),
         ];
         args.extend(files.clone());
-        let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let argv: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
         let _ = git_mut(&app, &path, &argv);
         // Delete the working-tree copies.
         for f in &files {
@@ -772,7 +772,7 @@ pub async fn git_create_tag(
         if let Some(t) = target.filter(|t| !t.is_empty()) {
             args.push(t);
         }
-        let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let argv: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
         git_mut(&app, &path, &argv)?;
         Ok(())
     })

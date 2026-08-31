@@ -75,7 +75,16 @@ pub struct EngineSessions {
 
 impl EngineSessions {
     pub fn insert(&self, session_id: acp::SessionId, thread: &AcpThreadHandle, cwd: String) {
-        self.lock().insert(
+        let mut sessions = self.lock();
+        // Reap entries whose thread the host has dropped (#66). The map has
+        // no other removal path — the connection lives as long as the process
+        // — and while `thread` is Weak, everything else in the entry
+        // (`streamed`, `command_output`, `cwd`, `skills`) is owned here and
+        // outlived the AcpThread it described. Swept at insert, so the state
+        // is bounded by live sessions rather than by every session the
+        // process ever opened.
+        sessions.retain(|_, session| session.thread.strong_count() > 0);
+        sessions.insert(
             session_id,
             EngineSession {
                 thread: Arc::downgrade(thread),
@@ -135,6 +144,20 @@ impl EngineSessions {
         }
     }
 
+    /// The turn is over: drop every live-output accumulator for the session.
+    ///
+    /// `ItemCompleted` clears each item's entry, but an item aborted by an
+    /// interrupt never completes — the engine gives a task 100 ms to wind
+    /// down and then aborts it — so its accumulated output stayed for the
+    /// life of the process, one verbose build per press of Stop (#66). The
+    /// turn's end is the honest boundary: whatever is still accumulating
+    /// belongs to an item that will never report.
+    fn end_of_turn_cleanup(&self, session_id: &acp::SessionId) {
+        if let Some(session) = self.lock().get_mut(session_id) {
+            session.command_output.clear();
+        }
+    }
+
     /// The model the picker chose for this session — `None` until it chooses,
     /// meaning "the configured default".
     pub fn selected_model(&self, session_id: &acp::SessionId) -> Option<String> {
@@ -165,7 +188,7 @@ impl EngineSessions {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<acp::SessionId, EngineSession>> {
-        self.sessions.lock().unwrap_or_else(|p| p.into_inner())
+        self.sessions.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -247,6 +270,15 @@ fn tool_call_of(item: &ThreadItem) -> Option<acp::ToolCall> {
                 )
                 .raw_input(serde_json::json!({
                     "paths": changes.iter().map(|c| c.path.clone()).collect::<Vec<_>>(),
+                    // The engine's own per-file unified diffs, joined. This is
+                    // what capture's `edit_patch` stores for the Timeline's
+                    // checkpoint diff/restore view — its first arm reads
+                    // `arguments["patch"]`, and without this key every native
+                    // edit produced a checkpoint with nothing to show (#75).
+                    // The structured Diff content block is not an option: it
+                    // wants full old/new text, which a unified diff cannot
+                    // reconstruct.
+                    "patch": diffs,
                 }));
             if !diffs.trim().is_empty() {
                 call = call.content(vec![acp::ToolCallContent::Content(acp::Content::new(
@@ -329,7 +361,7 @@ fn session_id(thread_id: &str) -> acp::SessionId {
 }
 
 fn lock(thread: &AcpThreadHandle) -> std::sync::MutexGuard<'_, AcpThread> {
-    thread.lock().unwrap_or_else(|p| p.into_inner())
+    thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Applies one engine notification.
@@ -446,7 +478,7 @@ pub fn apply_notification(
             };
             if let Some(thread) = sessions.thread(&session) {
                 let update = acp::ToolCallUpdate::new(
-                    acp::ToolCallId::new(params.item_id.clone()),
+                    acp::ToolCallId::new(params.item_id),
                     acp::ToolCallUpdateFields::new().content(vec![
                         acp::ToolCallContent::Content(acp::Content::new(text_block(&total))),
                     ]),
@@ -483,7 +515,35 @@ pub fn apply_notification(
         // The turn's outcome. This is what `prompt` is awaiting — without it a
         // prompt future never resolves and the composer stays spinning.
         ServerNotification::TurnCompleted(params) => {
+            sessions.end_of_turn_cleanup(&session_id(&params.thread_id));
             turns.complete(&params.thread_id, params.turn);
+        }
+
+        // The thread's cumulative token usage. Everything downstream was
+        // already built and waiting — `update_token_usage` fires the
+        // TokenUsageUpdated event, the projector turns it into the
+        // UsageUpdated (real input/output split) and ContextUsage (gauge)
+        // deltas, and capture's `record_usage` OVERWRITES totals, which is
+        // exactly right for a cumulative figure. Ignoring this notification
+        // is why the native agent — the one agent that reports a real split —
+        // showed no token consumption on the Timeline at all (#74).
+        ServerNotification::ThreadTokenUsageUpdated(params) => {
+            let Some(thread) = sessions.thread(&session_id(&params.thread_id)) else {
+                return;
+            };
+            let total = &params.token_usage.total;
+            let clamp = |n: i64| n.max(0) as u64;
+            lock(&thread).update_token_usage(Some(atlas_acp_thread::TokenUsage {
+                max_tokens: params
+                    .token_usage
+                    .model_context_window
+                    .map(clamp)
+                    .unwrap_or(0),
+                used_tokens: clamp(total.total_tokens),
+                input_tokens: clamp(total.input_tokens),
+                output_tokens: clamp(total.output_tokens),
+                max_output_tokens: None,
+            }));
         }
 
         // A stream error. `will_retry` is the engine telling us whether it is
@@ -587,6 +647,106 @@ mod tests {
         // `ResourceLink::new` is (name, uri) — the display name first.
         let link = acp::ContentBlock::ResourceLink(acp::ResourceLink::new("a.rs", "file:///tmp/a.rs"));
         assert_eq!(flatten_prompt(&[link]), "file:///tmp/a.rs");
+    }
+
+    #[test]
+    fn a_dropped_threads_state_is_reaped_at_the_next_insert() {
+        // #66: the Weak thread was collectable, but the ENTRY — with its
+        // owned `streamed`, `command_output`, `cwd` and `skills` — had no
+        // removal path and lived as long as the process. Inserting a new
+        // session sweeps the dead ones.
+        let sessions = EngineSessions::default();
+        let dead = acp::SessionId::new("dead");
+        {
+            let thread = crate::engine::test_support::detached_thread(dead.clone());
+            sessions.insert(dead.clone(), &thread, "/tmp".to_string());
+        }
+        assert!(
+            sessions.cwd(&dead).is_some(),
+            "the entry itself outlives the thread…",
+        );
+
+        let live = acp::SessionId::new("live");
+        let thread = crate::engine::test_support::detached_thread(live.clone());
+        sessions.insert(live.clone(), &thread, "/tmp".to_string());
+        assert!(
+            sessions.cwd(&dead).is_none(),
+            "…until the next insert sweeps it",
+        );
+        assert!(sessions.cwd(&live).is_some());
+    }
+
+    #[test]
+    fn an_aborted_commands_output_is_dropped_when_the_turn_ends() {
+        // #66: `ItemCompleted` clears per item, but a task interrupted by
+        // Stop is aborted after its 100 ms grace and never completes — its
+        // accumulated output stayed for the life of the process. The turn's
+        // end clears whatever is still accumulating.
+        let sessions = EngineSessions::default();
+        let id = acp::SessionId::new("t1");
+        let thread = crate::engine::test_support::detached_thread(id.clone());
+        sessions.insert(id.clone(), &thread, "/tmp".to_string());
+
+        sessions.append_command_output(&id, "item-1", "a very verbose build log");
+        sessions.end_of_turn_cleanup(&id);
+        assert_eq!(
+            sessions.append_command_output(&id, "item-1", "").as_deref(),
+            Some(""),
+            "the accumulator starts empty again after the turn",
+        );
+    }
+
+    #[test]
+    fn a_file_change_ships_its_patch_for_the_checkpoint_diff() {
+        // #75: the engine reports an edit with a per-file unified diff. The
+        // capture path stores a patch for the Timeline's diff/restore view,
+        // and its extractor's first arm reads `arguments["patch"]` — a key
+        // this sink never wrote, so every native edit produced a checkpoint
+        // with nothing to show or restore. (The structured Diff content
+        // block wants full old/new text, which a unified diff cannot
+        // reconstruct — the patch argument is the honest carrier.)
+        let sessions = EngineSessions::default();
+        let turns = TurnWaiters::default();
+        let id = acp::SessionId::new("t-patch");
+        let thread = crate::engine::test_support::detached_thread(id.clone());
+        sessions.insert(id, &thread, "/tmp".to_string());
+
+        apply_notification(
+            &sessions,
+            &turns,
+            3,
+            ServerNotification::ItemCompleted(codex_app_server_protocol::ItemCompletedNotification {
+                thread_id: "t-patch".to_string(),
+                turn_id: "turn-1".to_string(),
+                item: ThreadItem::FileChange {
+                    id: "item-1".to_string(),
+                    status: codex_app_server_protocol::PatchApplyStatus::Completed,
+                    changes: vec![codex_app_server_protocol::FileUpdateChange {
+                        path: "src/foo.rs".to_string(),
+                        kind: codex_app_server_protocol::PatchChangeKind::Update { move_path: None },
+                        diff: "@@ -1 +1 @@\n-old\n+new\n".to_string(),
+                    }],
+                },
+                completed_at_ms: 0,
+            }),
+        );
+
+        let locked = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let call = locked
+            .entries()
+            .iter()
+            .find_map(|e| match e {
+                atlas_acp_thread::AgentThreadEntry::ToolCall(call) => Some(call),
+                _ => None,
+            })
+            .expect("the file change reaches the thread as a tool call");
+        let patch = call
+            .raw_input
+            .as_ref()
+            .and_then(|args| args.get("patch"))
+            .and_then(|p| p.as_str())
+            .expect("the edit's arguments carry the patch the checkpoint stores");
+        assert!(patch.contains("+new"), "the patch is the engine's own diff: {patch}");
     }
 
     #[test]

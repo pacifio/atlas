@@ -382,9 +382,7 @@ fn locate_in_profiles(var: &str) -> Option<(PathBuf, shell_profile::Assignment)>
         };
         // Last assignment wins — that is what the shell ends up with.
         if let Some(a) = shell_profile::parse_assignments(&content)
-            .into_iter()
-            .filter(|a| a.var == var)
-            .next_back()
+            .into_iter().rfind(|a| a.var == var)
         {
             return Some((path, a));
         }

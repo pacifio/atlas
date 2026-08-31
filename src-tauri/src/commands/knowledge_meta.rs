@@ -286,7 +286,7 @@ pub fn knowledge_meta_patch(
         let entry = writer
             .snapshot
             .pages
-            .entry(entry_id.clone())
+            .entry(entry_id)
             .or_insert_with(PageMeta::default);
         if entry.created_at.is_none() {
             entry.created_at = Some(now.clone());

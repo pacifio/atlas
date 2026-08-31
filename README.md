@@ -63,7 +63,7 @@ Agents now write a large share of the code and keep none of the reasoning behind
 
 Atlas runs your agents as they are, and enriches what they see.
 
-Claude Code and Codex run as external subprocesses over [ACP](https://github.com/zed-industries/agent-client-protocol), the most-used, most-tested path. The Atlas agent runs in-process on [Cersei](https://docs.tryatlas.cc/), our Rust agent framework.
+Claude Code and Codex run as external subprocesses over [ACP](https://github.com/zed-industries/agent-client-protocol), the most-used, most-tested path. Atlas Agent, the native agent, runs in-process on a hard fork of the Codex engine (see `CONTEXT.md` and ADR-0004).
 
 Beyond those, Atlas can spawn any agent in the ACP registry (Cursor, OpenCode, Kilo Code, and more), pulling in each one's official binary automatically. All of them go through the same send path, so everything below applies whichever one you pick.
 

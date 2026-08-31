@@ -61,7 +61,7 @@ fn expected() -> BTreeMap<String, BTreeSet<String>> {
     .map(|(kind, fields)| {
         (
             kind.to_string(),
-            fields.iter().map(|f| f.to_string()).collect(),
+            fields.iter().map(std::string::ToString::to_string).collect(),
         )
     })
     .collect()

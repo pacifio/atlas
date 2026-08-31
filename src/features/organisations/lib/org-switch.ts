@@ -9,6 +9,7 @@ import {
   scheduleAppStateSave,
 } from "@/features/project/stores/project-store";
 import { toast } from "sonner";
+import { invoke } from "@tauri-apps/api/core";
 import { auth } from "@/features/auth/lib/auth-api";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useOrgStore } from "../stores/org-store";
@@ -105,6 +106,22 @@ export async function switchOrg(id: string): Promise<void> {
     //    re-points analytics attribution (see `syncOrgTelemetry`), so events
     //    from here on are filed under the incoming org.
     orgActions.setActiveOrganisation(id);
+
+    //    The switch must reach the BACKEND too (#73): every gateway request
+    //    reads the active org from the Rust auth snapshot, so a frontend-only
+    //    switch keeps billing — and entitlement-checking — the previous org,
+    //    which is how an unentitled org appeared to work. Awaited, so the
+    //    first message sent in the new org cannot race the write. A
+    //    local-only org (no remoteId) clears the choice: attribution falls
+    //    back the way the auth store documents (web-set value, else first
+    //    server org).
+    try {
+      await invoke("auth_set_active_org", { orgId: target.remoteId ?? null });
+    } catch (err) {
+      // Signed out (nothing to bill) or transient — the switch itself must
+      // not be aborted over attribution; the next sign-in rewrites it.
+      console.warn("auth_set_active_org failed:", err);
+    }
 
     //    Re-scope the activity console the same way: drop the outgoing org's
     //    buffered entries and load the incoming org's pins. Without this the

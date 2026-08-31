@@ -176,7 +176,7 @@ mod tests {
             &root,
             LEGACY_MODEL,
             DIM,
-            &[("doc-a", "hash-a", va.clone()), ("doc-b", "hash-b", vb.clone())],
+            &[("doc-a", "hash-a", va.clone()), ("doc-b", "hash-b", vb)],
         );
 
         // `open` runs migration internally.

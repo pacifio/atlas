@@ -299,7 +299,7 @@ pub fn update_ignore(
         guard.settings.updater_ignored_version = Some(version);
         guard.clone()
     };
-    let app2 = app.clone();
+    let app2 = app;
     std::thread::spawn(move || {
         if let Err(e) = AppState::save(&app2, &snapshot) {
             tracing::warn!(target: "atlas::updater", "save ignored version failed: {e}");
@@ -634,7 +634,7 @@ fn stage_from_dmg(app: &AppHandle, dmg: &Path, dir: &Path, version: &str) -> Res
 fn stage_from_mount(mount_point: &Path, dir: &Path) -> Result<PathBuf, String> {
     let src_app = std::fs::read_dir(mount_point)
         .map_err(|e| format!("read mount: {e}"))?
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.path())
         .find(|p| p.extension().map(|x| x == "app").unwrap_or(false))
         .ok_or_else(|| "no .app found in the update DMG".to_string())?;
@@ -851,7 +851,7 @@ fn current_app_bundle() -> Result<PathBuf, String> {
         .parent() // MacOS
         .and_then(|p| p.parent()) // Contents
         .and_then(|p| p.parent()) // Atlas.app
-        .map(|p| p.to_path_buf())
+        .map(std::path::Path::to_path_buf)
         .ok_or_else(|| "could not resolve app bundle path".to_string())?;
     if app.extension().map(|x| x == "app").unwrap_or(false) {
         Ok(app)

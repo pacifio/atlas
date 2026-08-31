@@ -272,7 +272,7 @@ fn npm_command_args(
             .to_string_lossy()
             .into_owned(),
     );
-    command_args.extend(args.iter().map(|arg| arg.to_string()));
+    command_args.extend(args.iter().map(std::string::ToString::to_string));
     command_args
 }
 

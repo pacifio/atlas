@@ -105,7 +105,7 @@ fn sync_identity(app: &AppHandle, snapshot: &AuthSnapshot) {
                 org_role: active
                     .and_then(|o| o.role)
                     .map(|r| format!("{r:?}").to_lowercase()),
-                org_count: orgs.as_ref().map(|v| v.len()).unwrap_or(0),
+                org_count: orgs.as_ref().map(std::vec::Vec::len).unwrap_or(0),
             });
         }
         AuthSnapshot::SignedOut => tel.reset_identity(),
@@ -165,7 +165,7 @@ pub async fn auth_sign_in(
                 raise(&task_app);
                 let (org_count, has_active) = match &snap {
                     AuthSnapshot::SignedIn { orgs, active_org_id, .. } => (
-                        orgs.as_ref().map(|v| v.len()).unwrap_or(0),
+                        orgs.as_ref().map(std::vec::Vec::len).unwrap_or(0),
                         active_org_id.is_some(),
                     ),
                     _ => (0, false),
@@ -197,6 +197,30 @@ pub fn auth_cancel_sign_in(app: AppHandle, state: State<'_, AuthState>) -> AuthS
     snapshot
 }
 
+/// Which organisation the desktop acts for — billing included (#73).
+///
+/// The org switcher used to be frontend-only: it re-pointed workspaces and
+/// telemetry and told the Rust side nothing, while every gateway request
+/// reads the active org from the auth snapshot. So the switch changed what
+/// the user SAW and not who they BILLED — an unentitled org appeared to work
+/// because its turns were charged to the entitled one. The switcher calls
+/// this now; broadcast after writing so every window's auth state agrees.
+///
+/// `org_id` is the SERVER org id (`remoteId`), or `None` for a local-only
+/// org, which clears the desktop's choice and falls back the way the store
+/// documents.
+#[tauri::command]
+pub async fn auth_set_active_org(
+    app: AppHandle,
+    state: State<'_, AuthState>,
+    org_id: Option<String>,
+) -> Result<(), String> {
+    let core = state.core();
+    core.set_active_org(org_id)?;
+    broadcast(&app, core.snapshot());
+    Ok(())
+}
+
 /// Sign out (ATL-50).
 ///
 /// Local state is gone and the signed-out snapshot has been broadcast to every
@@ -214,6 +238,15 @@ pub fn auth_cancel_sign_in(app: AppHandle, state: State<'_, AuthState>) -> AuthS
 pub async fn auth_sign_out(app: AppHandle, state: State<'_, AuthState>) -> Result<bool, String> {
     let core = state.core();
     let ticket = core.sign_out();
+    // The native agent's connection caches an access JWT that outlives the
+    // revoked session token — the JWT verifies statelessly against JWKS — and
+    // would keep making org-billed gateway calls until its own expiry, up to
+    // ~9 minutes (#62). Signing out locally means the engine's credential goes
+    // too, in-flight turn included. `try_state` because sign-out must work
+    // even if the agent host never initialised.
+    if let Some(host) = app.try_state::<std::sync::Arc<super::agent_host::AgentHost>>() {
+        host.drop_native_connection();
+    }
     // Capture BEFORE broadcasting. `broadcast` resets the telemetry identity to
     // the device, so the order matters: reversed, the event that describes the
     // account leaving would be filed against the anonymous device person.

@@ -162,7 +162,7 @@ impl AtlasExternalAuth {
 
     fn cached_if_fresh(&self) -> Option<String> {
         let now = self.clock.now_unix();
-        let cached = self.cached.lock().unwrap_or_else(|p| p.into_inner());
+        let cached = self.cached.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         cached
             .as_ref()
             .filter(|c| now < c.renew_after)
@@ -180,7 +180,7 @@ impl AtlasExternalAuth {
             Some(exp) => exp.saturating_sub(REMINT_MARGIN.as_secs()).max(now + 1),
             None => now + ASSUMED_TTL.as_secs() - REMINT_MARGIN.as_secs(),
         };
-        *self.cached.lock().unwrap_or_else(|p| p.into_inner()) = Some(CachedToken {
+        *self.cached.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(CachedToken {
             token: token.clone(),
             renew_after,
         });

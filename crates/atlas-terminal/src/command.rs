@@ -294,7 +294,7 @@ impl CommandTerminal {
             .inner
             .output
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         (!out.truncated).then(|| f(out.text()))
     }
 

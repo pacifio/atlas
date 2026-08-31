@@ -76,7 +76,7 @@ pub async fn canvas_media_data_url(project_path: String, src: String) -> Result<
         let mime = match abs
             .extension()
             .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
+            .map(str::to_lowercase)
             .as_deref()
         {
             Some("png") => "image/png",
@@ -92,7 +92,7 @@ pub async fn canvas_media_data_url(project_path: String, src: String) -> Result<
             _ => "application/octet-stream",
         };
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        Ok(format!("data:{};base64,{}", mime, b64))
+        Ok(format!("data:{mime};base64,{b64}"))
     })
     .await
     .map_err(|e| e.to_string())?

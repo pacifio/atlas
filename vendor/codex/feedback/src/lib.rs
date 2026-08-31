@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::collections::btree_map::Entry;
@@ -8,7 +9,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::Duration;
 
 use anyhow::Result;
 use anyhow::anyhow;
@@ -38,9 +38,11 @@ pub const CODEX_APP_DIRECTORY_CACHE_ATTACHMENT_FILENAME: &str = "codex-app-direc
 /// Filename used for the Windows sandbox log feedback attachment.
 pub const WINDOWS_SANDBOX_LOG_ATTACHMENT_FILENAME: &str = "windows-sandbox.log";
 const DEFAULT_MAX_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
-const SENTRY_DSN: &str =
-    "https://ae32ed50620d7a7792c1ce5df38b3e3e@o33249.ingest.us.sentry.io/4510195390611458";
-const UPLOAD_TIMEOUT_SECS: u64 = 10;
+// Upstream carried `SENTRY_DSN` and `UPLOAD_TIMEOUT_SECS` here — a hardcoded
+// ingest endpoint that `upload_feedback` built a Sentry client around. Removed
+// by Atlas (#63): the fourth phone-home path, reachable through the in-process
+// app-server's `feedback/upload` request even though Atlas ships no feedback
+// UI. `upload_feedback` refuses now instead of exfiltrating logs.
 const FEEDBACK_TAGS_TARGET: &str = "feedback_tags";
 const MAX_FEEDBACK_TAGS: usize = 64;
 
@@ -353,7 +355,9 @@ impl RingBuffer {
 }
 
 pub struct FeedbackSnapshot {
+    #[allow(dead_code)] // read only by the removed upload path (#63)
     bytes: Vec<u8>,
+    #[allow(dead_code)]
     tags: BTreeMap<String, String>,
     feedback_diagnostics: FeedbackDiagnostics,
     pub thread_id: String,
@@ -420,77 +424,20 @@ impl FeedbackSnapshot {
     }
 
     /// Upload feedback to Sentry with optional attachments.
-    pub fn upload_feedback(&self, options: FeedbackUploadOptions<'_>) -> Result<()> {
-        use std::str::FromStr;
-        use std::sync::Arc;
-
-        use sentry::Client;
-        use sentry::ClientOptions;
-        use sentry::protocol::Envelope;
-        use sentry::protocol::EnvelopeItem;
-        use sentry::protocol::Event;
-        use sentry::protocol::Level;
-        use sentry::transports::DefaultTransportFactory;
-        use sentry::types::Dsn;
-
-        // Build Sentry client
-        let client = Client::from_config(ClientOptions {
-            dsn: Some(Dsn::from_str(SENTRY_DSN).map_err(|e| anyhow!("invalid DSN: {e}"))?),
-            transport: Some(Arc::new(DefaultTransportFactory {})),
-            ..Default::default()
-        });
-
-        let tags = self.upload_tags(
-            options.classification,
-            options.reason,
-            options.tags,
-            options.session_source.as_ref(),
-        );
-
-        let level = match options.classification {
-            "bug" | "bad_result" | "safety_check" => Level::Error,
-            _ => Level::Info,
-        };
-
-        let mut envelope = Envelope::new();
-        let title = format!(
-            "[{}]: Codex session {}",
-            display_classification(options.classification),
-            self.thread_id
-        );
-
-        let mut event = Event {
-            level,
-            message: Some(title.clone()),
-            tags,
-            ..Default::default()
-        };
-        if let Some(r) = options.reason {
-            use sentry::protocol::Exception;
-            use sentry::protocol::Values;
-
-            event.exception = Values::from(vec![Exception {
-                ty: title,
-                value: Some(r.to_string()),
-                ..Default::default()
-            }]);
-        }
-        envelope.add_item(EnvelopeItem::Event(event));
-
-        for attachment in self.feedback_attachments(
-            options.include_logs,
-            options.extra_attachments,
-            options.extra_attachment_paths,
-            options.logs_override,
-        ) {
-            envelope.add_item(EnvelopeItem::Attachment(attachment));
-        }
-
-        client.send_envelope(envelope);
-        client.flush(Some(Duration::from_secs(UPLOAD_TIMEOUT_SECS)));
-        Ok(())
+    ///
+    /// Removed by Atlas (#63). Upstream built a Sentry client around a
+    /// hardcoded ingest DSN here and shipped the user's logs to it; the
+    /// in-process app-server honours a `feedback/upload` request, so the path
+    /// was live even with no feedback UI in front of it. The signature stays
+    /// so the request processor compiles; the answer is an error, never a
+    /// silent success — a caller must not believe an upload happened.
+    pub fn upload_feedback(&self, _options: FeedbackUploadOptions<'_>) -> Result<()> {
+        Err(anyhow!("feedback upload is removed in Atlas"))
     }
 
+    // Fed only the removed `upload_feedback` (#63); kept, with its tests,
+    // as the record of what an upload carried.
+    #[allow(dead_code)]
     fn upload_tags(
         &self,
         classification: &str,
@@ -540,6 +487,7 @@ impl FeedbackSnapshot {
         tags
     }
 
+    #[allow(dead_code)]
     fn feedback_attachments(
         &self,
         include_logs: bool,
@@ -622,6 +570,7 @@ impl FeedbackSnapshot {
     }
 }
 
+#[allow(dead_code)]
 fn display_classification(classification: &str) -> String {
     match classification {
         "bug" => "Bug".to_string(),

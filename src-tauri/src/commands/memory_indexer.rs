@@ -283,14 +283,13 @@ impl MemoryRegistry {
 
                 // The persisted codebase index, when it exists.
                 let codebase_index = Path::new(cwd).join(".atlas").join("codebase-index");
-                if codebase_index.is_dir() {
-                    if w
+                if codebase_index.is_dir()
+                    && w
                         .watch(&codebase_index, notify::RecursiveMode::Recursive)
                         .is_ok()
                     {
                         watched_any = true;
                     }
-                }
 
                 if watched_any {
                     self.watchers.insert(cwd.to_string(), w);

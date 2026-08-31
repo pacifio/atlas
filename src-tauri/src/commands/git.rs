@@ -239,7 +239,7 @@ async fn git_status_compute(path: &str) -> Result<GitStatus, String> {
         .lines()
         .filter(|l| l.len() >= 3)
         .map(|line| {
-            let index = line.chars().nth(0).unwrap_or(' ');
+            let index = line.chars().next().unwrap_or(' ');
             let worktree = line.chars().nth(1).unwrap_or(' ');
             let file_path = line[3..].to_string();
             let (status, staged) = if index != ' ' && index != '?' {
@@ -317,7 +317,7 @@ pub(crate) fn git_log_compute(
             }
             let parents: Vec<String> = parts[6]
                 .split_whitespace()
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
             let refs: Vec<String> = parts[7]
                 .split(',')
@@ -456,7 +456,7 @@ pub async fn git_graph_signature(path: String) -> Result<String, String> {
         for b in head.bytes().chain(joined.bytes()) {
             h = h.wrapping_mul(33) ^ (b as u64);
         }
-        Ok(format!("{}-{:016x}", head, h))
+        Ok(format!("{head}-{h:016x}"))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -605,7 +605,7 @@ pub async fn git_list_branches(path: String) -> Result<Vec<GitBranch>, String> {
                 let parts: Vec<&str> = line.split('\x1f').collect();
                 GitBranch {
                     name: parts.first().unwrap_or(&"").to_string(),
-                    is_current: parts.get(1).map_or(false, |h| h.trim() == "*"),
+                    is_current: parts.get(1).is_some_and(|h| h.trim() == "*"),
                 }
             })
             .collect();

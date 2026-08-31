@@ -118,6 +118,18 @@ pub struct TurnWaiters {
     /// Completions that arrived before anyone asked for them. See the module
     /// docs: this is what closes the register-after-response race.
     unclaimed: Mutex<std::collections::VecDeque<v2::Turn>>,
+    /// Threads whose prompt is between entry and [`TurnWaiters::register`] —
+    /// the window in which a stop has no turn id to interrupt (#57). The
+    /// register-after-response race has a cancel half too: `active` is only
+    /// written by `register`, which runs after the `turn/start` round trip, so
+    /// a stop pressed during that round trip used to find nothing and return —
+    /// while the UI, whose `running_turn` was already taken, dropped the Stop
+    /// button in the same instant. The turn then ran to completion with no way
+    /// to stop it.
+    starting: Mutex<std::collections::HashSet<String>>,
+    /// Stops pressed inside that window. Recorded here by [`TurnWaiters::cancel_requested`]
+    /// and honoured by the prompt path the moment the turn id exists.
+    pending_cancel: Mutex<std::collections::HashSet<String>>,
 }
 
 impl TurnWaiters {
@@ -154,7 +166,7 @@ impl TurnWaiters {
 
         self.attempts
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&turn.id);
 
         if let Some(tx) = self.waiters().remove(&turn.id) {
@@ -173,19 +185,61 @@ impl TurnWaiters {
     /// Records one retry notice for a turn and returns its attempt number,
     /// counting from 1.
     pub(crate) fn note_retry(&self, turn_id: &str) -> usize {
-        let mut attempts = self.attempts.lock().unwrap_or_else(|p| p.into_inner());
+        let mut attempts = self.attempts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let counter = attempts.entry(turn_id.to_string()).or_insert(0);
         *counter += 1;
         *counter
     }
 
     fn unclaimed(&self) -> std::sync::MutexGuard<'_, std::collections::VecDeque<v2::Turn>> {
-        self.unclaimed.lock().unwrap_or_else(|p| p.into_inner())
+        self.unclaimed.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The turn to interrupt for a session, if one is running.
     pub(crate) fn active_turn(&self, thread_id: &str) -> Option<String> {
         self.active().get(thread_id).cloned()
+    }
+
+    /// Whether a turn is running or starting on this thread — the state in
+    /// which a mode switch would relabel the picker without touching the
+    /// turn's frozen context (#61).
+    pub(crate) fn is_busy(&self, thread_id: &str) -> bool {
+        self.active().contains_key(thread_id) || self.starting().contains(thread_id)
+    }
+
+    /// The prompt path is about to send `turn/start`. Until [`TurnWaiters::end_prompt`]
+    /// a cancel for this thread has no turn id; it is recorded instead and
+    /// honoured when the id exists.
+    fn begin_prompt(&self, thread_id: &str) {
+        self.starting().insert(thread_id.to_string());
+    }
+
+    /// A cancel arrived with no active turn. Records it if a prompt is inside
+    /// its starting window, and answers whether it was recorded — `false`
+    /// means nothing is running or starting, a true no-op.
+    pub(crate) fn cancel_requested(&self, thread_id: &str) -> bool {
+        if !self.starting().contains(thread_id) {
+            return false;
+        }
+        self.pending_cancel().insert(thread_id.to_string());
+        true
+    }
+
+    /// The starting window is over — the turn registered, failed to start, or
+    /// finished before it could be waited on. Answers whether a cancel arrived
+    /// inside the window; the flag is consumed either way, so a stop aimed at
+    /// a turn that never ran cannot leak into the next one.
+    fn end_prompt(&self, thread_id: &str) -> bool {
+        self.starting().remove(thread_id);
+        self.pending_cancel().remove(thread_id)
+    }
+
+    fn starting(&self) -> std::sync::MutexGuard<'_, std::collections::HashSet<String>> {
+        self.starting.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn pending_cancel(&self) -> std::sync::MutexGuard<'_, std::collections::HashSet<String>> {
+        self.pending_cancel.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn forget(&self, thread_id: &str, turn_id: &str) {
@@ -197,11 +251,11 @@ impl TurnWaiters {
     }
 
     fn waiters(&self) -> std::sync::MutexGuard<'_, HashMap<String, oneshot::Sender<v2::Turn>>> {
-        self.waiters.lock().unwrap_or_else(|p| p.into_inner())
+        self.waiters.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn active(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
-        self.active.lock().unwrap_or_else(|p| p.into_inner())
+        self.active.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -338,7 +392,7 @@ impl EngineConnection {
             .await?;
         self.session_modes
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(session_id.clone(), mode.clone());
         Ok(())
     }
@@ -423,7 +477,7 @@ impl EngineConnection {
         if let Some(thread) = self.sessions.thread(session_id) {
             let _ = thread
                 .lock()
-                .unwrap_or_else(|p| p.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .handle_session_update(acp::SessionUpdate::AvailableCommandsUpdate(
                     acp::AvailableCommandsUpdate::new(crate::engine::commands::available(&skills)),
                 ));
@@ -502,12 +556,23 @@ async fn pump_events(
             biased;
 
             Some(answer) = answers_rx.recv() => {
+                // A failed delivery here is the worst silent outcome this
+                // loop has: the engine turn waits forever for an answer that
+                // will never arrive, and the user sees a spinner (#69). It
+                // cannot be retried — the request id may be gone — but it
+                // must never be invisible.
                 match answer.result {
                     Ok(value) => {
-                        let _ = client.resolve_server_request(answer.request_id, value).await;
+                        if let Err(e) = client.resolve_server_request(answer.request_id, value).await {
+                            tracing::warn!(
+                                target: "atlas_native_agent::engine",
+                                "delivering an approval to the engine failed; \
+                                 the waiting turn may hang: {e}",
+                            );
+                        }
                     }
                     Err(message) => {
-                        let _ = client
+                        if let Err(e) = client
                             .reject_server_request(
                                 answer.request_id,
                                 codex_app_server_protocol::JSONRPCErrorError {
@@ -516,7 +581,14 @@ async fn pump_events(
                                     data: None,
                                 },
                             )
-                            .await;
+                            .await
+                        {
+                            tracing::warn!(
+                                target: "atlas_native_agent::engine",
+                                "delivering a rejection to the engine failed; \
+                                 the waiting turn may hang: {e}",
+                            );
+                        }
                     }
                 }
             }
@@ -683,7 +755,7 @@ fn handle_server_request(
 
     // Take the waiter out under the lock, then await it on its own task.
     let waiter = {
-        let mut thread = thread.lock().unwrap_or_else(|p| p.into_inner());
+        let mut thread = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         thread.request_tool_call_authorization(
             prompt,
             approvals::options(),
@@ -974,11 +1046,19 @@ impl AgentConnection for EngineConnection {
                     match read {
                         Ok(response) => (response.thread.id, response.thread.turns),
                         Err(read_err) => {
-                            tracing::info!(
+                            // `warn!`, not `info!`: this arm is reached by an
+                            // unknown thread id (a pre-cutover row — expected)
+                            // but also by a transport failure or a bad reply,
+                            // and those mean the model continues with no
+                            // context while the chat repaints from Atlas's own
+                            // transcript and looks fine. The two errors are
+                            // printed so the reader can tell which it was.
+                            tracing::warn!(
                                 target: "atlas_native_agent::engine",
-                                "the engine does not know thread {session_id}; opening it \
-                                 fresh (a row from before the engine changed): \
-                                 resume: {resume_err}; read: {read_err}",
+                                "opening thread {session_id} fresh: the engine could not \
+                                 resume it or read it back — either it does not know the \
+                                 id (a row from before the engine changed) or the calls \
+                                 themselves failed. resume: {resume_err}; read: {read_err}",
                             );
                             let started: v2::ThreadStartResponse = self
                                 .call(|request_id| ClientRequest::ThreadStart {
@@ -1003,8 +1083,9 @@ impl AgentConnection for EngineConnection {
 
             // Keyed by the id the engine will stamp on its events, which is
             // the only id the sink can match. For a pre-cutover row that is a
-            // new id, and the live feed rebinds the store row to it — the same
-            // path a draft takes.
+            // new id — the caller reads it off the returned thread and rebinds
+            // the store row (`resume_thread` compares it to the stored id and
+            // adopts, #56); nothing here writes to history.
             let engine_session_id = acp::SessionId::new(engine_thread_id.as_str());
             let thread = self.new_thread(engine_session_id.clone(), work_dirs, title);
             {
@@ -1014,7 +1095,7 @@ impl AgentConnection for EngineConnection {
                 // it (see `engine::replay`). A pre-cutover row took the
                 // fresh-thread arm above and has no turns; it opens empty,
                 // which D6 accepted, and now only that row does.
-                let mut locked = thread.lock().unwrap_or_else(|p| p.into_inner());
+                let mut locked = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 crate::engine::replay::replay_turns(&mut locked, &stored_turns);
             }
             self.sessions.insert(
@@ -1073,7 +1154,7 @@ impl AgentConnection for EngineConnection {
         let mut turn_input: Option<Vec<v2::UserInput>> = None;
         match crate::engine::commands::parse(&text, &skills) {
             Some(crate::engine::commands::Command::Compact) => {
-                let thread_id = thread_id.clone();
+                let thread_id = thread_id;
                 return async move {
                     let _: v2::ThreadCompactStartResponse = requests
                         .request_typed(ClientRequest::ThreadCompactStart {
@@ -1101,7 +1182,7 @@ impl AgentConnection for EngineConnection {
             // the turn ends; no model is consulted and nothing is billed.
             Some(crate::engine::commands::Command::Diff) => {
                 let sessions = self.sessions.clone();
-                let session_id = params.session_id.clone();
+                let session_id = params.session_id;
                 return async move {
                     let cwd = sessions
                         .cwd(&session_id)
@@ -1116,7 +1197,7 @@ impl AgentConnection for EngineConnection {
                     if let Some(thread) = sessions.thread(&session_id) {
                         thread
                             .lock()
-                            .unwrap_or_else(|p| p.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .push_assistant_content_block(
                                 acp::ContentBlock::Text(acp::TextContent::new(reply)),
                                 false,
@@ -1128,7 +1209,7 @@ impl AgentConnection for EngineConnection {
             }
             Some(crate::engine::commands::Command::Status) => {
                 let sessions = self.sessions.clone();
-                let session_id = params.session_id.clone();
+                let session_id = params.session_id;
                 return async move {
                     let cwd = sessions
                         .cwd(&session_id)
@@ -1137,7 +1218,7 @@ impl AgentConnection for EngineConnection {
                     if let Some(thread) = sessions.thread(&session_id) {
                         thread
                             .lock()
-                            .unwrap_or_else(|p| p.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .push_assistant_content_block(
                                 acp::ContentBlock::Text(acp::TextContent::new(reply)),
                                 false,
@@ -1152,8 +1233,8 @@ impl AgentConnection for EngineConnection {
             // to match so the transcript shows what the model now remembers.
             Some(crate::engine::commands::Command::Undo) => {
                 let sessions = self.sessions.clone();
-                let session_id = params.session_id.clone();
-                let thread_id = thread_id.clone();
+                let session_id = params.session_id;
+                let thread_id = thread_id;
                 return async move {
                     let rolled = requests
                         .request_typed::<v2::ThreadRollbackResponse>(ClientRequest::ThreadRollback {
@@ -1168,7 +1249,7 @@ impl AgentConnection for EngineConnection {
                         Ok(_) => {
                             if let Some(thread) = sessions.thread(&session_id) {
                                 let mut locked =
-                                    thread.lock().unwrap_or_else(|p| p.into_inner());
+                                    thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                                 // The LAST user entry is "/undo" itself — the
                                 // host pushed it before prompt() ran. The
                                 // exchange being undone starts at the user
@@ -1204,7 +1285,7 @@ impl AgentConnection for EngineConnection {
                     if let Some(thread) = sessions.thread(&session_id) {
                         thread
                             .lock()
-                            .unwrap_or_else(|p| p.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .push_assistant_content_block(
                                 acp::ContentBlock::Text(acp::TextContent::new(reply)),
                                 false,
@@ -1217,8 +1298,8 @@ impl AgentConnection for EngineConnection {
             // `/goal` — set with input, show without.
             Some(crate::engine::commands::Command::Goal(objective)) => {
                 let sessions = self.sessions.clone();
-                let session_id = params.session_id.clone();
-                let thread_id = thread_id.clone();
+                let session_id = params.session_id;
+                let thread_id = thread_id;
                 return async move {
                     let reply = match objective {
                         Some(objective_text) => {
@@ -1259,7 +1340,7 @@ impl AgentConnection for EngineConnection {
                     if let Some(thread) = sessions.thread(&session_id) {
                         thread
                             .lock()
-                            .unwrap_or_else(|p| p.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .push_assistant_content_block(
                                 acp::ContentBlock::Text(acp::TextContent::new(reply)),
                                 false,
@@ -1276,14 +1357,19 @@ impl AgentConnection for EngineConnection {
             // `review_model` unset on purpose, and the engine then uses the
             // parent thread's model, which the gateway serves.
             Some(crate::engine::commands::Command::Review(instructions)) => {
-                let thread_id = thread_id.clone();
+                let thread_id = thread_id;
+                let request_ids = self.request_ids.clone();
                 return async move {
                     let target = match instructions {
                         Some(instructions) => v2::ReviewTarget::Custom { instructions },
                         None => v2::ReviewTarget::UncommittedChanges,
                     };
-                    let started: v2::ReviewStartResponse = requests
-                        .request_typed(ClientRequest::ReviewStart {
+                    // The review runs as a turn, so it has the same stop
+                    // window as a prompt: no id to interrupt until
+                    // `review/start` answers (#57).
+                    turns.begin_prompt(&thread_id);
+                    let started = match requests
+                        .request_typed::<v2::ReviewStartResponse>(ClientRequest::ReviewStart {
                             request_id,
                             params: v2::ReviewStartParams {
                                 thread_id: thread_id.clone(),
@@ -1292,11 +1378,27 @@ impl AgentConnection for EngineConnection {
                             },
                         })
                         .await
-                        .map_err(|e| anyhow!("the review could not start: {e}"))?;
+                    {
+                        Ok(started) => started,
+                        Err(e) => {
+                            turns.end_prompt(&thread_id);
+                            return Err(anyhow!("the review could not start: {e}"));
+                        }
+                    };
                     if started.turn.status != v2::TurnStatus::InProgress {
+                        turns.end_prompt(&thread_id);
                         return Ok(acp::PromptResponse::new(stop_reason(&started.turn)?));
                     }
                     let waiter = turns.register(&thread_id, &started.turn.id);
+                    if turns.end_prompt(&thread_id) {
+                        send_interrupt(
+                            &requests,
+                            &request_ids,
+                            thread_id.clone(),
+                            started.turn.id.clone(),
+                        )
+                        .await;
+                    }
                     match waiter.await {
                         Ok(turn) => Ok(acp::PromptResponse::new(stop_reason(&turn)?)),
                         Err(_) => {
@@ -1322,9 +1424,13 @@ impl AgentConnection for EngineConnection {
             None => {}
         }
 
+        let request_ids = self.request_ids.clone();
         async move {
-            let started: v2::TurnStartResponse = requests
-                .request_typed(ClientRequest::TurnStart {
+            // Opens the window a stop can land in with no turn id to
+            // interrupt. Every exit below closes it via `end_prompt` (#57).
+            turns.begin_prompt(&thread_id);
+            let started = match requests
+                .request_typed::<v2::TurnStartResponse>(ClientRequest::TurnStart {
                     request_id,
                     params: v2::TurnStartParams {
                         thread_id: thread_id.clone(),
@@ -1339,16 +1445,38 @@ impl AgentConnection for EngineConnection {
                     },
                 })
                 .await
-                .map_err(|e| anyhow!("{e}"))?;
+            {
+                Ok(started) => started,
+                Err(e) => {
+                    // The turn never ran; a stop aimed at it succeeded
+                    // vacuously and must not leak into the next turn.
+                    turns.end_prompt(&thread_id);
+                    return Err(anyhow!("{e}"));
+                }
+            };
 
             // If the turn already finished, its outcome is in the response and
             // no notification is coming — registering a waiter for it would
             // hang forever.
             if started.turn.status != v2::TurnStatus::InProgress {
+                turns.end_prompt(&thread_id);
                 return Ok(acp::PromptResponse::new(stop_reason(&started.turn)?));
             }
 
             let waiter = turns.register(&thread_id, &started.turn.id);
+            // A stop pressed while `turn/start` was in flight had no id to
+            // interrupt. It was recorded; honour it now that the id exists.
+            // The engine answers by completing the turn as `Interrupted`,
+            // which the waiter below reports the usual way.
+            if turns.end_prompt(&thread_id) {
+                send_interrupt(
+                    &requests,
+                    &request_ids,
+                    thread_id.clone(),
+                    started.turn.id.clone(),
+                )
+                .await;
+            }
             let turn = match waiter.await {
                 Ok(turn) => turn,
                 Err(_) => {
@@ -1395,17 +1523,29 @@ impl AgentConnection for EngineConnection {
     fn cancel(&self, session_id: &acp::SessionId) {
         let thread_id = session_id.to_string();
         let Some(turn_id) = self.turns.active_turn(&thread_id) else {
-            // Nothing is running. Not an error — a cancel can race a turn that
-            // just finished — but worth saying, because the other reading is
-            // that the turn was never recorded and cancel is silently dead.
-            tracing::debug!(
-                target: "atlas_native_agent::engine",
-                "cancel for {thread_id} with no turn in flight",
-            );
+            // No turn is registered — but one may be mid-`turn/start`, with
+            // no id to interrupt yet. That stop used to be silently dropped,
+            // and the Stop button disappeared with it (#57): recorded now,
+            // and the prompt path honours it the moment the id exists.
+            if self.turns.cancel_requested(&thread_id) {
+                tracing::info!(
+                    target: "atlas_native_agent::engine",
+                    "cancel for {thread_id} recorded while its turn is still starting",
+                );
+            } else {
+                // Nothing running or starting. Not an error — a cancel can
+                // race a turn that just finished — but worth saying, because
+                // the other reading is that the turn was never recorded and
+                // cancel is silently dead.
+                tracing::debug!(
+                    target: "atlas_native_agent::engine",
+                    "cancel for {thread_id} with no turn in flight",
+                );
+            }
             return;
         };
         let requests = self.requests.clone();
-        let request_id = self.request_ids.next();
+        let request_ids = self.request_ids.clone();
         // Fire and forget, like the Cersei path: the caller is awaiting the
         // turn's own completion, and the engine answers an interrupt by
         // finishing that turn as `Interrupted`.
@@ -1415,25 +1555,84 @@ impl AgentConnection for EngineConnection {
         // the main thread, where there is no ambient runtime — a bare spawn
         // there panicked and took the whole app down with it.
         self.runtime.handle().spawn(async move {
-            let result = requests
-                .request_typed::<v2::TurnInterruptResponse>(ClientRequest::TurnInterrupt {
-                    request_id,
-                    params: v2::TurnInterruptParams { thread_id, turn_id },
-                })
-                .await;
-            if let Err(e) = result {
-                tracing::warn!(
-                    target: "atlas_native_agent::engine",
-                    "interrupting the engine turn failed: {e}",
-                );
-            }
+            send_interrupt(&requests, &request_ids, thread_id, turn_id).await;
         });
+    }
+}
+
+/// Send `turn/interrupt` and log a failure. The caller is awaiting the turn's
+/// own completion, which the engine answers by finishing it as `Interrupted` —
+/// so the response here carries nothing to act on, only an error to surface.
+async fn send_interrupt(
+    requests: &InProcessAppServerRequestHandle,
+    request_ids: &RequestIds,
+    thread_id: String,
+    turn_id: String,
+) {
+    let result = requests
+        .request_typed::<v2::TurnInterruptResponse>(ClientRequest::TurnInterrupt {
+            request_id: request_ids.next(),
+            params: v2::TurnInterruptParams { thread_id, turn_id },
+        })
+        .await;
+    if let Err(e) = result {
+        tracing::warn!(
+            target: "atlas_native_agent::engine",
+            "interrupting the engine turn failed: {e}",
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── #57: the stop window between `turn/start` and `register` ──────────
+    //
+    // The integration test presses Stop once against a real engine; these pin
+    // the interleavings deterministically, because which side of `register`
+    // the press lands on cannot be scripted from outside.
+
+    #[test]
+    fn a_cancel_during_the_starting_window_is_recorded_and_handed_to_the_prompt() {
+        let turns = TurnWaiters::default();
+        turns.begin_prompt("t1");
+        assert!(
+            turns.cancel_requested("t1"),
+            "a stop with a prompt mid-start is recorded, not dropped",
+        );
+        let _rx = turns.register("t1", "turn-1");
+        assert!(
+            turns.end_prompt("t1"),
+            "the recorded stop reaches the prompt path once the id exists",
+        );
+        assert!(!turns.end_prompt("t1"), "and is consumed by it");
+    }
+
+    #[test]
+    fn a_cancel_with_nothing_running_or_starting_stays_a_no_op() {
+        let turns = TurnWaiters::default();
+        assert!(!turns.cancel_requested("t1"));
+        turns.begin_prompt("t1");
+        assert!(!turns.end_prompt("t1"), "no stop was pressed");
+        assert!(
+            !turns.cancel_requested("t1"),
+            "the window is closed; a late stop is a no-op again",
+        );
+    }
+
+    #[test]
+    fn a_stop_aimed_at_a_turn_that_never_ran_does_not_leak_into_the_next_one() {
+        let turns = TurnWaiters::default();
+        turns.begin_prompt("t1");
+        assert!(turns.cancel_requested("t1"));
+        // `turn/start` failed: the prompt path closes the window, and the
+        // stop succeeded vacuously.
+        assert!(turns.end_prompt("t1"));
+        // The user's next message must not be killed by the stale press.
+        turns.begin_prompt("t1");
+        assert!(!turns.end_prompt("t1"));
+    }
 
     fn message_delta(thread: &str, item: &str, delta: &str) -> InProcessServerEvent {
         InProcessServerEvent::ServerNotification(Box::new(
@@ -1669,6 +1868,8 @@ struct ConnectionHandle {
     requests: InProcessAppServerRequestHandle,
     request_ids: Arc<RequestIds>,
     session_modes: Arc<Mutex<HashMap<acp::SessionId, acp::SessionModeId>>>,
+    /// For the in-flight-turn check in `set_mode` (#61).
+    turns: Arc<TurnWaiters>,
 }
 
 impl EngineConnection {
@@ -1677,6 +1878,7 @@ impl EngineConnection {
             requests: self.requests.clone(),
             request_ids: self.request_ids.clone(),
             session_modes: self.session_modes.clone(),
+            turns: self.turns.clone(),
         }
     }
 }
@@ -1714,7 +1916,7 @@ impl AgentSessionModes for EngineSessionModes {
         self.connection
             .session_modes
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&self.session_id)
             .cloned()
             .unwrap_or_else(|| acp::SessionModeId::new(modes::DEFAULT_MODE_ID))
@@ -1728,6 +1930,21 @@ impl AgentSessionModes for EngineSessionModes {
         let connection = self.connection.clone();
         let session_id = self.session_id.clone();
         async move {
+            // Refused, not silently narrowed to the picker: the engine's
+            // `update_settings` writes only the session configuration, and a
+            // running turn keeps the frozen context it started with — so a
+            // mid-turn switch would change the label while every remaining
+            // tool call executes under the old policy. Showing "Plan —
+            // read-only" over a turn still running with full access is the
+            // one shape worse than no control at all (#61). Stop the turn,
+            // then switch; the next turn picks the new mode up at start.
+            if connection.turns.is_busy(&session_id.to_string()) {
+                return Err(anyhow!(
+                    "The permission mode can't change while a turn is running — \
+                     it would only relabel the picker; the running turn keeps \
+                     the permissions it started with. Stop the turn first."
+                ));
+            }
             let (approval_policy, sandbox_policy) = modes::engine_policy(&mode.0);
             connection
                 .update_settings(&session_id, |params| {
@@ -1740,7 +1957,7 @@ impl AgentSessionModes for EngineSessionModes {
             connection
                 .session_modes
                 .lock()
-                .unwrap_or_else(|p| p.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .insert(session_id, mode);
             Ok(())
         }

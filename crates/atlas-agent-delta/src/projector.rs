@@ -131,7 +131,7 @@ impl DeltaProjector {
     /// Install the thread observer. Call before any session is created;
     /// events emitted before this are not replayed to it.
     pub fn observe_threads(&self, observer: Arc<dyn ThreadObserver>) {
-        *self.observer.lock().unwrap_or_else(|p| p.into_inner()) = Some(observer);
+        *self.observer.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(observer);
     }
 
     /// The sink factory to hand to `ConnectOptions`.
@@ -139,7 +139,10 @@ impl DeltaProjector {
         let this = self.clone();
         Arc::new(move |session_id: &acp::SessionId| {
             let (tx, rx) = atlas_acp_thread::event_channel();
-            let mut pending = this.pending.lock().unwrap_or_else(|p| p.into_inner());
+            let mut pending = this
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             // A session whose `session/load` or `session/resume` RPC failed
             // never reaches `register`, so nothing takes its pre-registered
             // stream back out and the key stays here for the life of the
@@ -201,7 +204,7 @@ impl DeltaProjector {
         let Some(events) = self
             .pending
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&session_id)
         else {
             // No stream was handed out for this session, so nothing will ever
@@ -221,7 +224,7 @@ impl DeltaProjector {
         )));
         self.sessions
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(session_id, projection);
 
         Some(events)
@@ -252,15 +255,15 @@ impl DeltaProjector {
     fn forget_session(&self, session_id: &acp::SessionId) {
         self.sessions
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(session_id);
         self.permissions
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retain(|_, key| &key.session_id != session_id);
         self.elicitations
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retain(|_, key| &key.session_id != session_id);
     }
 
@@ -268,15 +271,15 @@ impl DeltaProjector {
     /// the leak these count was invisible from the outside.
     pub fn routing_table_sizes(&self) -> (usize, usize) {
         (
-            self.permissions.lock().unwrap_or_else(|p| p.into_inner()).len(),
-            self.elicitations.lock().unwrap_or_else(|p| p.into_inner()).len(),
+            self.permissions.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(),
+            self.elicitations.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(),
         )
     }
 
     /// How many event streams are pre-registered for sessions that do not exist
     /// yet. Test-facing, for the same reason.
     pub fn pending_len(&self) -> usize {
-        self.pending.lock().unwrap_or_else(|p| p.into_inner()).len()
+        self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len()
     }
 
     /// Subscribe to every delta in-process, without going through the host sink.
@@ -293,7 +296,7 @@ impl DeltaProjector {
         let observer = self
             .observer
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let Some(observer) = observer else {
             return;
@@ -302,7 +305,7 @@ impl DeltaProjector {
         // thread itself, and holding the projection's lock across that call
         // would put the history store behind the wire projection's lock.
         let (agent_id, thread) = {
-            let projection = projection.lock().unwrap_or_else(|p| p.into_inner());
+            let projection = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             (projection.agent_id, projection.thread.clone())
         };
         observer.on_thread_event(agent_id, session_id, event, &thread);
@@ -326,7 +329,7 @@ impl DeltaProjector {
     pub fn permission_key(&self, request_id: &Uuid) -> Option<PermissionKey> {
         self.permissions
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(request_id)
             .cloned()
     }
@@ -339,7 +342,7 @@ impl DeltaProjector {
     pub fn elicitation_key(&self, request_id: &Uuid) -> Option<ElicitationKey> {
         self.elicitations
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(request_id)
             .cloned()
     }
@@ -416,7 +419,7 @@ impl DeltaProjector {
         };
         self.notify_observer(session_id, &event, &projection);
         let (envelopes, permissions, elicitations) = {
-            let mut projection = projection.lock().unwrap_or_else(|p| p.into_inner());
+            let mut projection = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let deltas = projection.apply(event);
             let envelopes = projection.wrap(deltas);
             (
@@ -426,13 +429,13 @@ impl DeltaProjector {
             )
         };
         if !permissions.is_empty() {
-            let mut table = self.permissions.lock().unwrap_or_else(|p| p.into_inner());
+            let mut table = self.permissions.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             for (request_id, key) in permissions {
                 table.insert(request_id, key);
             }
         }
         if !elicitations.is_empty() {
-            let mut table = self.elicitations.lock().unwrap_or_else(|p| p.into_inner());
+            let mut table = self.elicitations.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             for (request_id, key) in elicitations {
                 table.insert(request_id, key);
             }
@@ -445,7 +448,7 @@ impl DeltaProjector {
     fn session(&self, session_id: &acp::SessionId) -> Option<Arc<Mutex<SessionProjection>>> {
         self.sessions
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(session_id)
             .cloned()
     }
@@ -456,7 +459,7 @@ impl DeltaProjector {
         f: impl FnOnce(&mut SessionProjection) -> R,
     ) -> Option<R> {
         let projection = self.session(session_id)?;
-        let mut projection = projection.lock().unwrap_or_else(|p| p.into_inner());
+        let mut projection = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Some(f(&mut projection))
     }
 
@@ -469,7 +472,7 @@ impl DeltaProjector {
             return;
         };
         let envelopes = {
-            let projection = projection.lock().unwrap_or_else(|p| p.into_inner());
+            let projection = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             projection.wrap(f(&projection))
         };
         for envelope in envelopes {
@@ -632,7 +635,7 @@ impl SessionProjection {
             AcpThreadEvent::TitleUpdated => {
                 let title = lock_thread(&self.thread)
                     .title()
-                    .map(|title| title.to_string());
+                    .map(std::string::ToString::to_string);
                 title
                     .map(|title| vec![SessionDelta::TitleUpdated { title }])
                     .unwrap_or_default()
@@ -1205,5 +1208,5 @@ fn new_message_id() -> String {
 }
 
 fn lock_thread(thread: &AcpThreadHandle) -> std::sync::MutexGuard<'_, AcpThread> {
-    thread.lock().unwrap_or_else(|p| p.into_inner())
+    thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }

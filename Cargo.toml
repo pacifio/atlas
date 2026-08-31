@@ -565,10 +565,14 @@ rust = { unexpected_cfgs = "deny" }
 
 [workspace.lints.clippy]
 
+# `unwrap_used` and `expect_used` are STAGED, not enforced: turning the table
+# on for the first-party members (#60) surfaced ~220 violations of the pair,
+# overwhelmingly in test code where a panic IS the failure report. Re-add them
+# behind a cleanup pass rather than allowlisting two hundred call sites in one
+# sweep. Every other deny below is live and clean.
 await_holding_invalid_type = "deny"
 await_holding_lock = "deny"
 disallowed_methods = "deny"
-expect_used = "deny"
 identity_op = "deny"
 manual_clamp = "deny"
 manual_filter = "deny"
@@ -600,7 +604,6 @@ unnecessary_filter_map = "deny"
 unnecessary_lazy_evaluations = "deny"
 unnecessary_sort_by = "deny"
 unnecessary_to_owned = "deny"
-unwrap_used = "deny"
 
 # cargo-shear cannot see the platform-specific openssl-sys usage, so we
 # silence the false positive here instead of deleting a real dependency.
@@ -718,4 +721,344 @@ opt-level = 1
 [profile.dev.package.atlas-terminal]
 opt-level = 1
 [profile.dev.package.atlas-thread-metadata]
+opt-level = 1
+
+# The vendored engine's members, same reasoning as the stanzas above (#65).
+# #42's exemption — "quarantined, on no runtime path until the seam is rewired
+# (#45)" — expired when #45 and #54 landed: the engine now runs on EVERY dev
+# turn (streaming, rollout I/O, sandboxing, apply-patch, ~600k LOC), and at
+# the profile's opt-level 0 it was the slowest code on the hottest path. The
+# cost is a longer first clean build; the `"*"` override cannot cover these
+# because workspace members are excluded from it by cargo. Generated from the
+# member list — a new vendored member belongs here too, and
+# tests/cargo-workspace.test.ts fails if it is missing.
+
+[profile.dev.package.app_test_support]
+opt-level = 1
+
+[profile.dev.package.codex-agent-extension]
+opt-level = 1
+
+[profile.dev.package.codex-agent-graph-store]
+opt-level = 1
+
+[profile.dev.package.codex-agent-identity]
+opt-level = 1
+
+[profile.dev.package.codex-analytics]
+opt-level = 1
+
+[profile.dev.package.codex-api]
+opt-level = 1
+
+[profile.dev.package.codex-app-server]
+opt-level = 1
+
+[profile.dev.package.codex-app-server-client]
+opt-level = 1
+
+[profile.dev.package.codex-app-server-protocol]
+opt-level = 1
+
+[profile.dev.package.codex-app-server-protocol-noop-macros]
+opt-level = 1
+
+[profile.dev.package.codex-app-server-transport]
+opt-level = 1
+
+[profile.dev.package.codex-apply-patch]
+opt-level = 1
+
+[profile.dev.package.codex-arg0]
+opt-level = 1
+
+[profile.dev.package.codex-async-utils]
+opt-level = 1
+
+[profile.dev.package.codex-aws-auth]
+opt-level = 1
+
+[profile.dev.package.codex-backend-client]
+opt-level = 1
+
+[profile.dev.package.codex-backend-openapi-models]
+opt-level = 1
+
+[profile.dev.package.codex-chatgpt]
+opt-level = 1
+
+[profile.dev.package.codex-client]
+opt-level = 1
+
+[profile.dev.package.codex-cloud-config]
+opt-level = 1
+
+[profile.dev.package.codex-code-mode]
+opt-level = 1
+
+[profile.dev.package.codex-code-mode-protocol]
+opt-level = 1
+
+[profile.dev.package.codex-collaboration-mode-templates]
+opt-level = 1
+
+[profile.dev.package.codex-config]
+opt-level = 1
+
+[profile.dev.package.codex-connectors]
+opt-level = 1
+
+[profile.dev.package.codex-connectors-extension]
+opt-level = 1
+
+[profile.dev.package.codex-context-fragments]
+opt-level = 1
+
+[profile.dev.package.codex-core]
+opt-level = 1
+
+[profile.dev.package.codex-core-plugins]
+opt-level = 1
+
+[profile.dev.package.codex-diagnostics]
+opt-level = 1
+
+[profile.dev.package.codex-exec-server]
+opt-level = 1
+
+[profile.dev.package.codex-exec-server-protocol]
+opt-level = 1
+
+[profile.dev.package.codex-exec-server-test-support]
+opt-level = 1
+
+[profile.dev.package.codex-execpolicy]
+opt-level = 1
+
+[profile.dev.package.codex-experimental-api-macros]
+opt-level = 1
+
+[profile.dev.package.codex-extension-api]
+opt-level = 1
+
+[profile.dev.package.codex-extension-items]
+opt-level = 1
+
+[profile.dev.package.codex-external-agent-migration]
+opt-level = 1
+
+[profile.dev.package.codex-features]
+opt-level = 1
+
+[profile.dev.package.codex-feedback]
+opt-level = 1
+
+[profile.dev.package.codex-file-search]
+opt-level = 1
+
+[profile.dev.package.codex-file-system]
+opt-level = 1
+
+[profile.dev.package.codex-file-watcher]
+opt-level = 1
+
+[profile.dev.package.codex-git-attribution]
+opt-level = 1
+
+[profile.dev.package.codex-git-utils]
+opt-level = 1
+
+[profile.dev.package.codex-goal-extension]
+opt-level = 1
+
+[profile.dev.package.codex-guardian]
+opt-level = 1
+
+[profile.dev.package.codex-guardian-v2]
+opt-level = 1
+
+[profile.dev.package.codex-history]
+opt-level = 1
+
+[profile.dev.package.codex-home]
+opt-level = 1
+
+[profile.dev.package.codex-hooks]
+opt-level = 1
+
+[profile.dev.package.codex-http-client]
+opt-level = 1
+
+[profile.dev.package.codex-image-generation-extension]
+opt-level = 1
+
+[profile.dev.package.codex-install-context]
+opt-level = 1
+
+[profile.dev.package.codex-keyring-store]
+opt-level = 1
+
+[profile.dev.package.codex-linux-sandbox]
+opt-level = 1
+
+[profile.dev.package.codex-login]
+opt-level = 1
+
+[profile.dev.package.codex-mcp]
+opt-level = 1
+
+[profile.dev.package.codex-mcp-extension]
+opt-level = 1
+
+[profile.dev.package.codex-memories-extension]
+opt-level = 1
+
+[profile.dev.package.codex-memories-read]
+opt-level = 1
+
+[profile.dev.package.codex-memories-write]
+opt-level = 1
+
+[profile.dev.package.codex-model-provider]
+opt-level = 1
+
+[profile.dev.package.codex-model-provider-info]
+opt-level = 1
+
+[profile.dev.package.codex-models-manager]
+opt-level = 1
+
+[profile.dev.package.codex-network-proxy]
+opt-level = 1
+
+[profile.dev.package.codex-otel]
+opt-level = 1
+
+[profile.dev.package.codex-plugin]
+opt-level = 1
+
+[profile.dev.package.codex-process-hardening]
+opt-level = 1
+
+[profile.dev.package.codex-prompts]
+opt-level = 1
+
+[profile.dev.package.codex-protocol]
+opt-level = 1
+
+[profile.dev.package.codex-queue-extension]
+opt-level = 1
+
+[profile.dev.package.codex-response-debug-context]
+opt-level = 1
+
+[profile.dev.package.codex-rmcp-client]
+opt-level = 1
+
+[profile.dev.package.codex-rollout]
+opt-level = 1
+
+[profile.dev.package.codex-rollout-trace]
+opt-level = 1
+
+[profile.dev.package.codex-sandboxing]
+opt-level = 1
+
+[profile.dev.package.codex-secrets]
+opt-level = 1
+
+[profile.dev.package.codex-shell-command]
+opt-level = 1
+
+[profile.dev.package.codex-shell-escalation]
+opt-level = 1
+
+[profile.dev.package.codex-skills]
+opt-level = 1
+
+[profile.dev.package.codex-skills-extension]
+opt-level = 1
+
+[profile.dev.package.codex-state]
+opt-level = 1
+
+[profile.dev.package.codex-terminal-detection]
+opt-level = 1
+
+[profile.dev.package.codex-test-binary-support]
+opt-level = 1
+
+[profile.dev.package.codex-thread-store]
+opt-level = 1
+
+[profile.dev.package.codex-tools]
+opt-level = 1
+
+[profile.dev.package.codex-uds]
+opt-level = 1
+
+[profile.dev.package.codex-utils-absolute-path]
+opt-level = 1
+
+[profile.dev.package.codex-utils-audio]
+opt-level = 1
+
+[profile.dev.package.codex-utils-cache]
+opt-level = 1
+
+[profile.dev.package.codex-utils-cargo-bin]
+opt-level = 1
+
+[profile.dev.package.codex-utils-cli]
+opt-level = 1
+
+[profile.dev.package.codex-utils-home-dir]
+opt-level = 1
+
+[profile.dev.package.codex-utils-image]
+opt-level = 1
+
+[profile.dev.package.codex-utils-json-to-toml]
+opt-level = 1
+
+[profile.dev.package.codex-utils-output-truncation]
+opt-level = 1
+
+[profile.dev.package.codex-utils-path]
+opt-level = 1
+
+[profile.dev.package.codex-utils-path-uri]
+opt-level = 1
+
+[profile.dev.package.codex-utils-plugins]
+opt-level = 1
+
+[profile.dev.package.codex-utils-pty]
+opt-level = 1
+
+[profile.dev.package.codex-utils-rustls-provider]
+opt-level = 1
+
+[profile.dev.package.codex-utils-stream-parser]
+opt-level = 1
+
+[profile.dev.package.codex-utils-string]
+opt-level = 1
+
+[profile.dev.package.codex-utils-template]
+opt-level = 1
+
+[profile.dev.package.codex-web-search-extension]
+opt-level = 1
+
+[profile.dev.package.codex-websocket-client]
+opt-level = 1
+
+[profile.dev.package.codex-windows-sandbox]
+opt-level = 1
+
+[profile.dev.package.codex-workload-identity]
+opt-level = 1
+
+[profile.dev.package.core_test_support]
 opt-level = 1

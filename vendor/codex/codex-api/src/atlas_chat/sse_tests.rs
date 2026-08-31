@@ -95,10 +95,7 @@ fn completion(
 }
 
 fn error_of(events: &[Result<ResponseEvent, ApiError>]) -> Option<&ApiError> {
-    events.iter().find_map(|event| match event {
-        Err(err) => Some(err),
-        _ => None,
-    })
+    events.iter().find_map(|event| event.as_ref().err())
 }
 
 #[test]
@@ -428,16 +425,67 @@ fn a_turn_with_no_usage_chunk_still_completes() {
 }
 
 #[test]
-fn an_unparseable_frame_is_skipped_rather_than_killing_the_turn() {
-    // Gateways emit keepalives and comments. Treating one as fatal would end
-    // turns for no reason; treating a *missing sentinel* as fine would not.
+fn an_unparseable_frame_poisons_the_turn_rather_than_vanishing() {
+    // This test used to assert the opposite — that the frame is skipped and
+    // the turn completes — on the theory that gateways emit keepalives. They
+    // do, but as SSE *comments*, which the eventsource layer never surfaces
+    // as data; a data frame this client cannot read carried something, and
+    // whatever it carried is gone. Reporting the turn complete anyway is the
+    // header's "short success", the exact outcome the withheld-`[DONE]` rule
+    // exists to prevent — one layer up from the decoder (#59).
     let events = tokio_test::block_on(play(&[
         "{not json",
         &text_delta("still here"),
         FINISH_STOP,
         "[DONE]",
     ]));
-    assert_eq!(assistant_text(&events).as_deref(), Some("still here"));
+    // The content that did arrive still streams — it was really delivered —
+    // but the close reports an error, not a complete answer.
+    assert_eq!(deltas(&events), "still here");
+    assert!(
+        completion(&events).is_none(),
+        "a stream with a lost frame must not report a completed turn",
+    );
+    let Some(err) = error_of(&events) else {
+        panic!("a lost frame is an error at close");
+    };
+    assert!(
+        err.to_string().contains("could not read"),
+        "the error should say what happened: {err}",
+    );
+}
+
+#[test]
+fn an_explicit_null_where_a_default_is_declared_is_a_lost_frame_too() {
+    // `#[serde(default)]` covers a *missing* key, not a present-but-null one:
+    // `{"choices":null}` fails the chunk parse. The failure mode must be the
+    // same as any other unreadable frame — recorded, surfaced at close —
+    // because it is silent by construction otherwise.
+    let events = tokio_test::block_on(play(&[
+        r#"{"id":"c1","choices":null}"#,
+        FINISH_STOP,
+        "[DONE]",
+    ]));
+    assert!(completion(&events).is_none());
+    assert!(error_of(&events).is_some());
+}
+
+#[test]
+fn a_gateway_error_frame_still_wins_over_a_lost_frame_diagnosis() {
+    // The gateway's own diagnosis is strictly better than "a frame here was
+    // unreadable". When both happen, the user sees the gateway's message.
+    let events = tokio_test::block_on(play(&[
+        "{not json",
+        r#"{"error":{"message":"quota exhausted","code":"usage_limit_reached"}}"#,
+        "[DONE]",
+    ]));
+    let Some(err) = error_of(&events) else {
+        panic!("an error frame is an error");
+    };
+    assert!(
+        err.to_string().contains("quota exhausted"),
+        "the gateway's own diagnosis wins: {err}",
+    );
 }
 
 #[test]

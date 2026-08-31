@@ -127,8 +127,8 @@ pub fn hunk_signature(h: &Hunk) -> Vec<(u8, &str)> {
 /// Find the hunk in `fresh` whose content matches `displayed_body` — the
 /// body the UI showed, one `(marker, content)` per line in order, markers
 /// being `' '`, `'+'`, `'-'` (no-newline markers omitted).
-pub fn find_matching_hunk<'a>(
-    fresh: &'a FilePatch,
+pub fn find_matching_hunk(
+    fresh: &FilePatch,
     displayed_body: &[(u8, String)],
 ) -> Option<usize> {
     let want: Vec<(u8, &str)> = displayed_body.iter().map(|(m, c)| (*m, c.as_str())).collect();

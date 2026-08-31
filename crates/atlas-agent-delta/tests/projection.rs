@@ -160,7 +160,7 @@ impl Harness {
 }
 
 fn lock(thread: &AcpThreadHandle) -> std::sync::MutexGuard<'_, AcpThread> {
-    thread.lock().unwrap_or_else(|p| p.into_inner())
+    thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn text_chunk(text: &str) -> serde_json::Value {
@@ -755,7 +755,7 @@ async fn create_terminal(harness: &Harness, terminal_id: &str, args: &[&str]) {
     let terminal = std::sync::Arc::new(
         atlas_terminal::command::CommandTerminal::spawn(
             echo_binary(),
-            &args.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+            &args.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
             &[],
             None,
             4096,
@@ -1422,7 +1422,7 @@ async fn a_session_whose_stream_ends_leaves_no_routes_behind() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stream_for_a_session_that_never_opened_is_swept() {
     let recorder = Arc::new(Recorder::default());
-    let projector = DeltaProjector::new(recorder.clone());
+    let projector = DeltaProjector::new(recorder);
 
     // A load that failed: the sink was handed out, the thread that would have
     // owned it was dropped with the error, and `register` was never called.

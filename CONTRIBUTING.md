@@ -174,9 +174,9 @@ anywhere — as does running from inside the crate's own directory, which is wha
 CI does:
 
 ```bash
-cargo test -p atlas-cersei                                # the native agent
-cargo test -p atlas-cersei --test tools_eval              # a single file
-cd crates/atlas-cersei && cargo test                      # same thing, from the crate
+cargo test -p atlas-native-agent                          # the native agent
+cargo test -p atlas-native-agent --test engine_turn       # a single file
+cd crates/atlas-native-agent && cargo test                # same thing, from the crate
 ```
 
 Run `bun run test:rust` from the repository root to test every crate and the

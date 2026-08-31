@@ -23,3 +23,8 @@ candle-nn = "0.11.0"
 candle-transformers = "0.11.0"
 serde_json = "1.0.150"
 tokenizers = "0.23.1"
+
+# The workspace lint table is only real for members that opt in —
+# without this stanza it is dead configuration (#60).
+[lints]
+workspace = true

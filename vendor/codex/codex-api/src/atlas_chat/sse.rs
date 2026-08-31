@@ -322,6 +322,19 @@ async fn process_chat_sse(
             Ok(chunk) => chunk,
             Err(err) => {
                 debug!(error = %err, "failed to parse a chat.completion.chunk");
+                // Recorded, not skipped: whatever this frame carried is gone,
+                // so the turn can no longer honestly be reported complete —
+                // "no error signalled" has to keep implying "nothing was
+                // lost", or `[DONE]` becomes the header's short success from
+                // the inside (#59). Kept scanning so a gateway error frame
+                // that follows can overwrite this with its own diagnosis,
+                // which is strictly better than "a frame was unreadable".
+                if stream_error.is_none() {
+                    stream_error = Some(ApiError::Stream(format!(
+                        "the model stream carried a frame this client could \
+                         not read ({err}), so the answer may be incomplete"
+                    )));
+                }
                 continue;
             }
         };

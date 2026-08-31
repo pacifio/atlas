@@ -35,6 +35,7 @@ import { defaultAgentForNewSession } from "../lib/default-agent";
 import { loadCachedContextUsage, saveCachedContextUsage } from "../lib/context-usage-cache";
 import { saveCerseiModelPref, saveCerseiEffort } from "../lib/cersei-model-pref";
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 import { extractPlanMarkdown, type PlanRecord } from "../lib/plans";
 import { extractNextSteps } from "../lib/next-steps";
 import {
@@ -135,31 +136,67 @@ function aggregateTurnFiles(tools: Record<string, TurnFile>): TurnFile[] {
  * No-op until the session is bound (the create-time setMode in chat-panel
  * covers the not-yet-bound case).
  */
-function pushPermissionModeToAgent(state: ChatState, sessionId: string): void {
+function pushPermissionModeToAgent(
+  state: ChatState,
+  sessionId: string,
+  previousMode?: ClaudePermissionMode,
+): void {
   const session = state.sessions[sessionId];
   if (!session?.acpAgentId || !session.acpSessionId) return;
   if (session.agentType !== "claude-code") return;
+  const pushed = session.claudePermissionMode ?? "default";
   void invoke("agents_set_mode", {
     key: { agent_id: session.acpAgentId, session_id: session.acpSessionId },
-    modeId: session.claudePermissionMode ?? "default",
-  }).catch((err) => console.warn("agents_set_mode failed:", err));
+    modeId: pushed,
+  }).catch((err) => {
+    console.warn("agents_set_mode failed:", err);
+    revertRefusedMode(sessionId, err, (sess) => {
+      if (sess.claudePermissionMode === pushed && previousMode !== undefined) {
+        sess.claudePermissionMode = previousMode;
+      }
+    });
+  });
 }
 
 /** Push a generic ACP session mode (Codex's read-only / auto / full-access)
  *  to its bound agent. Agent-agnostic sibling of `pushPermissionModeToAgent`.
  *  No-op until the session is bound. */
-function pushAcpModeToAgent(state: ChatState, sessionId: string): void {
+function pushAcpModeToAgent(state: ChatState, sessionId: string, previousMode?: string): void {
   const session = state.sessions[sessionId];
   if (!session?.acpAgentId || !session.acpSessionId || !session.acpCurrentMode) return;
   // Only push ids this session's agent actually advertised. A mode carried over
-  // from another agent is rejected (`invalidParams`), and the actor rolls its
-  // optimistic flip back — which reads as a picker that silently does nothing.
+  // from another agent is rejected (`invalidParams`) before it is ever pushed.
   const modes = session.acpAvailableModes ?? [];
   if (modes.length > 0 && !modes.some((m) => m.id === session.acpCurrentMode)) return;
+  const pushed = session.acpCurrentMode;
   void invoke("agents_set_mode", {
     key: { agent_id: session.acpAgentId, session_id: session.acpSessionId },
-    modeId: session.acpCurrentMode,
-  }).catch((err) => console.warn("agents_set_mode failed:", err));
+    modeId: pushed,
+  }).catch((err) => {
+    console.warn("agents_set_mode failed:", err);
+    revertRefusedMode(sessionId, err, (sess) => {
+      if (sess.acpCurrentMode === pushed && previousMode !== undefined) {
+        sess.acpCurrentMode = previousMode;
+      }
+    });
+  });
+}
+
+/** The agent refused a mode change the picker already shows (the flip is
+ *  optimistic). Leaving the label on the refused mode is the picker lying —
+ *  the native agent refuses mid-turn switches precisely because the running
+ *  turn keeps the permissions it started with (#61) — so roll the label back
+ *  (unless the user has since picked something else) and say why. */
+function revertRefusedMode(
+  sessionId: string,
+  err: unknown,
+  revert: (sess: ChatSession) => void,
+): void {
+  useChatStore.setState((s) => {
+    const sess = s.sessions[sessionId];
+    if (sess) revert(sess);
+  });
+  toast.error(typeof err === "string" ? err : String(err));
 }
 
 /** Hydrate the per-agent persisted mode preference (last explicit pick) into
@@ -965,10 +1002,12 @@ export const useChatStore = createSelectors(
           }),
         cycleClaudePermissionMode: (sessionId) => {
           let next: ClaudePermissionMode | undefined;
+          let previous: ClaudePermissionMode | undefined;
           set((s) => {
             const session = s.sessions[sessionId];
             if (!session) return;
             const cur = session.claudePermissionMode ?? "default";
+            previous = cur;
             const i = CLAUDE_PERMISSION_MODES.indexOf(cur);
             next = CLAUDE_PERMISSION_MODES[(i + 1) % CLAUDE_PERMISSION_MODES.length];
             session.claudePermissionMode = next;
@@ -977,7 +1016,7 @@ export const useChatStore = createSelectors(
           // "default" means "defer to the CLI's own configured default" —
           // cycling back to it DROPS the persisted pick rather than storing it.
           if (next) saveLastModePref("claude-code", next === "default" ? null : next);
-          pushPermissionModeToAgent(get(), sessionId);
+          pushPermissionModeToAgent(get(), sessionId, previous);
         },
         hydrateClaudePermissionMode: (sessionId, mode) =>
           set((s) => {
@@ -987,6 +1026,7 @@ export const useChatStore = createSelectors(
             session.claudePermissionModeExplicit = false;
           }),
         setClaudePermissionMode: (sessionId, mode) => {
+          const previous = get().sessions[sessionId]?.claudePermissionMode ?? "default";
           set((s) => {
             const session = s.sessions[sessionId];
             if (session) {
@@ -995,7 +1035,7 @@ export const useChatStore = createSelectors(
             }
           });
           saveLastModePref("claude-code", mode === "default" ? null : mode);
-          pushPermissionModeToAgent(get(), sessionId);
+          pushPermissionModeToAgent(get(), sessionId, previous);
         },
         setAcpModes: (sessionId, currentMode, availableModes, sourceAgentType) => {
           const at = get().sessions[sessionId]?.agentType;
@@ -1045,6 +1085,7 @@ export const useChatStore = createSelectors(
             if (session) session.acpModesPending = pending;
           }),
         setAcpMode: (sessionId, modeId) => {
+          const previous = get().sessions[sessionId]?.acpCurrentMode;
           set((s) => {
             const session = s.sessions[sessionId];
             if (session) {
@@ -1057,7 +1098,7 @@ export const useChatStore = createSelectors(
           // or installed — keeps its own record.
           const at = get().sessions[sessionId]?.agentType;
           if (at && at !== "claude-code") saveLastModePref(at, modeId);
-          pushAcpModeToAgent(get(), sessionId);
+          pushAcpModeToAgent(get(), sessionId, previous);
         },
         clearElicitation: (sessionId) =>
           set((s) => {

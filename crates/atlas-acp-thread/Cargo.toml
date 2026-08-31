@@ -33,3 +33,8 @@ tracing = "0.1.44"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
+
+# The workspace lint table is only real for members that opt in —
+# without this stanza it is dead configuration (#60).
+[lints]
+workspace = true

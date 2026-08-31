@@ -152,7 +152,7 @@ fn count_checkpoints(detail: &SessionDetail) -> usize {
 /// Entries arrive ordered, so this is one pass: accumulate a run, and when a
 /// Checkpoint closes it, keep the run if that Checkpoint was selected.
 fn scope_to_checkpoints(entries: &[TimelineEntry], shas: &[String]) -> Vec<TimelineEntry> {
-    let selected: HashSet<&str> = shas.iter().map(|s| s.as_str()).collect();
+    let selected: HashSet<&str> = shas.iter().map(std::string::String::as_str).collect();
     let mut out: Vec<TimelineEntry> = Vec::new();
     let mut run: Vec<TimelineEntry> = Vec::new();
 
@@ -685,7 +685,7 @@ fn searchable(entry: &TimelineEntry) -> String {
 fn tokenize(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric() && c != '_')
         .filter(|t| t.len() > 1)
-        .map(|t| t.to_ascii_lowercase())
+        .map(str::to_ascii_lowercase)
         .collect()
 }
 

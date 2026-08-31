@@ -242,9 +242,9 @@ pub fn browser_embed_create(
     let nav_started = state.nav.clone();
     let nav_finished = state.nav.clone();
     let app_started = app.clone();
-    let app_finished = app.clone();
+    let app_finished = app;
     let id_started = id.clone();
-    let id_finished = id.clone();
+    let id_finished = id;
 
     let builder = tauri::webview::WebviewBuilder::new(&label, WebviewUrl::External(parsed))
         .data_directory(profile)
@@ -262,7 +262,7 @@ pub fn browser_embed_create(
                     let app2 = app_finished.clone();
                     let nav2 = nav_finished.clone();
                     let id2 = id_finished.clone();
-                    let url2 = url.clone();
+                    let url2 = url;
                     let _ = webview.eval_with_callback("document.title", move |raw| {
                         let title = raw.trim().trim_matches('"').to_string();
                         let title = if title.is_empty() { None } else { Some(title) };
