@@ -14,9 +14,9 @@ import {
 
 import { AtlasIcon } from "@/components/atlas-icon";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
+import { useActiveOrgWorkspaces } from "@/features/workspaces/lib/org-scope";
 import { BranchLine, GitDot, NumStatPill } from "@/features/workspaces/components/git-summary";
 import { useWorkspaceGitStore } from "@/features/workspaces/stores/workspace-git-store";
-import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { cn } from "@/lib/utils";
 
 import { useArtifactsStore } from "../stores/artifacts-store";
@@ -106,14 +106,9 @@ const BOARD_LIMIT = 500;
 export function ArtifactsPanel() {
   // Every project in the active Organisation, not just the open one: the board
   // answers "what has been happening in our code", which does not stop at the
-  // folder that happens to be focused. Workspaces with no `orgId` are legacy
-  // entries and belong to the active org during the migration window.
-  const allWorkspaces = useWorkspaceStore.use.workspaces();
+  // folder that happens to be focused.
+  const projects = useActiveOrgWorkspaces();
   const activeOrganisationId = useOrgStore.use.activeOrganisationId();
-  const projects = useMemo(
-    () => allWorkspaces.filter((w) => w.orgId === activeOrganisationId || w.orgId == null),
-    [allWorkspaces, activeOrganisationId],
-  );
   // A stable key, so the read effect does not re-fire on unrelated workspace
   // mutations (a rename, a pin) that leave the set of paths unchanged.
   const projectPaths = useMemo(() => projects.map((w) => w.path).sort(), [projects]);

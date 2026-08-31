@@ -26,6 +26,7 @@ import { CapturePopover } from "@/features/capture/components/capture-popover";
 import { StatusDot } from "@/features/capture/components/capture-status";
 import type { Binding, CaptureHealth } from "@/features/capture/types";
 import { activeWorkspaceId } from "@/features/workspaces/lib/active-workspace";
+import { useActiveOrgWorkspaces } from "@/features/workspaces/lib/org-scope";
 import { isDev } from "@/lib/env";
 
 function useTauriWindow() {
@@ -67,7 +68,13 @@ export function Titlebar() {
   const organisations = useOrgStore.use.organisations();
   const activeOrganisationId = useOrgStore.use.activeOrganisationId();
   const orgName = organisations.find((o) => o.id === activeOrganisationId)?.name ?? null;
+  // Same path can be a workspace in several orgs — prefer the ACTIVE org's
+  // twin so a rename in another org never re-labels this titlebar.
   const displayName =
+    (currentProject
+      ? workspaces.find((w) => w.path === currentProject.path && w.orgId === activeOrganisationId)
+          ?.name
+      : undefined) ??
     (currentProject ? workspaces.find((w) => w.path === currentProject.path)?.name : undefined) ??
     currentProject?.name ??
     "Atlas";
@@ -331,7 +338,9 @@ function DevModePill() {
 function WorkspaceToggle() {
   const sidebarOpen = useWorkspaceStore.use.sidebarOpen();
   const { toggleSidebar } = useWorkspaceStore.use.actions();
-  const count = useWorkspaceStore.use.workspaces().length;
+  // Badge counts only the active org's workspaces (matches what the sidebar
+  // it toggles will actually show).
+  const count = useActiveOrgWorkspaces().length;
 
   return (
     <button
