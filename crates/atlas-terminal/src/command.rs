@@ -58,7 +58,15 @@ pub struct CommandExit {
 /// cap and the same boundary walk, and reimplementing either is how they drift.
 #[derive(Debug)]
 pub struct OutputBuffer {
-    bytes: Vec<u8>,
+    /// The decoded window. Held as text rather than bytes so a reader can
+    /// borrow it: flattening a terminal into a tool call's result happens on
+    /// every output chunk, and decoding the whole buffer each time is what made
+    /// that cost quadratic in what the command had printed (ATL-219).
+    text: String,
+    /// Trailing bytes that may be the start of a character whose remaining
+    /// bytes have not arrived yet. Decoding them now would put a replacement
+    /// char in the window that the next chunk would have completed.
+    pending: Vec<u8>,
     limit: usize,
     truncated: bool,
 }
@@ -66,7 +74,8 @@ pub struct OutputBuffer {
 impl OutputBuffer {
     pub fn new(limit: u64) -> Self {
         Self {
-            bytes: Vec::new(),
+            text: String::new(),
+            pending: Vec::new(),
             // Saturating: `u64::MAX` from a careless agent must clamp, not wrap
             // to a tiny buffer on 32-bit.
             limit: usize::try_from(limit).unwrap_or(usize::MAX),
@@ -75,29 +84,43 @@ impl OutputBuffer {
     }
 
     pub fn push(&mut self, chunk: &[u8]) {
-        self.bytes.extend_from_slice(chunk);
-        if self.bytes.len() <= self.limit {
+        self.pending.extend_from_slice(chunk);
+        let hold = incomplete_tail_len(&self.pending);
+        let split = self.pending.len() - hold;
+        if split > 0 {
+            self.text
+                .push_str(&String::from_utf8_lossy(&self.pending[..split]));
+            self.pending.drain(..split);
+        }
+        if self.text.len() <= self.limit {
             return;
         }
         self.truncated = true;
-        // Drop from the front, then walk forward off any UTF-8 continuation
-        // byte (`0b10xxxxxx`). Slicing on a raw byte offset would cut a
-        // multi-byte character in half and every later read would show a
-        // replacement char at the head of the window.
-        let mut cut = self.bytes.len() - self.limit;
-        while cut < self.bytes.len() && (self.bytes[cut] & 0b1100_0000) == 0b1000_0000 {
+        // Drop from the front, then walk forward to the next character
+        // boundary. Slicing on a raw byte offset would cut a multi-byte
+        // character in half and every later read would show a replacement char
+        // at the head of the window.
+        let mut cut = self.text.len() - self.limit;
+        while cut < self.text.len() && !self.text.is_char_boundary(cut) {
             cut += 1;
         }
-        self.bytes.drain(..cut);
+        self.text.drain(..cut);
     }
 
-    /// The retained window as a string. Lossy by necessity — a command may emit
-    /// genuinely non-UTF-8 bytes (a binary blob, a latin-1 log) and ACP's
-    /// `output` field is a string, so there is nothing else to return. The
-    /// boundary walk in [`Self::push`] means truncation itself never
-    /// manufactures a replacement character; anything here came from the child.
-    pub fn text(&self) -> String {
-        String::from_utf8_lossy(&self.bytes).into_owned()
+    /// The retained window.
+    ///
+    /// Lossy by necessity — a command may emit genuinely non-UTF-8 bytes (a
+    /// binary blob, a latin-1 log) and ACP's `output` field is a string, so
+    /// there is nothing else to return. The boundary walk in [`Self::push`]
+    /// means truncation itself never manufactures a replacement character;
+    /// anything here came from the child.
+    ///
+    /// A partially-arrived character at the very end is not shown until the
+    /// rest of it lands. That is a character appearing one chunk late rather
+    /// than a replacement char that later vanishes, and it is why the window
+    /// can be decoded once on write instead of on every read.
+    pub fn text(&self) -> &str {
+        &self.text
     }
 
     /// Whether anything has been dropped from the front. Sticky: once a buffer
@@ -107,13 +130,41 @@ impl OutputBuffer {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
+        self.text.is_empty()
     }
 
     /// Retained bytes. Used to account for a buffer's cost from outside.
     pub fn len(&self) -> usize {
-        self.bytes.len()
+        self.text.len()
     }
+}
+
+/// How many trailing bytes are the start of a character that has not fully
+/// arrived, and so must not be decoded yet.
+///
+/// A UTF-8 character is at most four bytes, so only the last three can be
+/// waiting on more. Anything that is not a lead byte in that window — a stray
+/// continuation byte, an invalid byte — is genuinely malformed and is decoded
+/// now, so a corrupt stream cannot wedge the buffer.
+fn incomplete_tail_len(bytes: &[u8]) -> usize {
+    let len = bytes.len();
+    for back in 1..=3.min(len) {
+        let byte = bytes[len - back];
+        if byte & 0b1100_0000 == 0b1000_0000 {
+            continue;
+        }
+        let needed = match byte {
+            0x00..=0x7f => 1,
+            0xc0..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf7 => 4,
+            // Not a lead byte at all: malformed, and no amount of waiting
+            // makes it valid.
+            _ => return 0,
+        };
+        return if back < needed { back } else { 0 };
+    }
+    0
 }
 
 /// Shared state for one running (or finished) command.
@@ -226,9 +277,25 @@ impl CommandTerminal {
     /// Output retained so far, and whether anything was dropped from the front.
     pub fn output(&self) -> (String, bool) {
         match self.inner.output.lock() {
-            Ok(out) => (out.text(), out.truncated),
+            Ok(out) => (out.text().to_string(), out.truncated),
             Err(_) => (String::new(), false),
         }
+    }
+
+    /// Run `f` over the retained output without copying it.
+    ///
+    /// `None` when the buffer has dropped its front, because a caller holding a
+    /// byte offset into an earlier read can no longer trust that the offset
+    /// names the same position. Such a caller re-reads the whole window through
+    /// [`Self::output`]; this exists so the case where nothing was dropped —
+    /// the common one — costs a lock and nothing else (ATL-219).
+    pub fn with_untruncated_output<R>(&self, f: impl FnOnce(&str) -> R) -> Option<R> {
+        let out = self
+            .inner
+            .output
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (!out.truncated).then(|| f(out.text()))
     }
 
     /// `Some` once the command has exited.
@@ -513,6 +580,41 @@ mod tests {
                 "limit {limit} split a character: {text:?}"
             );
         }
+    }
+
+    /// The buffer decodes on write so a reader can borrow the window instead of
+    /// rebuilding it (ATL-219). That only holds up if a character split across
+    /// two reads still arrives whole — a PTY read boundary lands wherever the
+    /// kernel put it, not where a character ends.
+    #[test]
+    fn a_character_split_across_two_pushes_is_not_mangled() {
+        let smiley = "🙂".as_bytes();
+        for split in 1..smiley.len() {
+            let mut buf = OutputBuffer::new(64);
+            buf.push(&smiley[..split]);
+            assert!(
+                !buf.text().contains('\u{FFFD}'),
+                "split at {split} decoded a partial character early: {:?}",
+                buf.text()
+            );
+            buf.push(&smiley[split..]);
+            assert_eq!(buf.text(), "🙂", "split at {split} lost the character");
+        }
+    }
+
+    /// The hold-back is bounded: bytes that cannot be the start of any
+    /// character are decoded now, so a corrupt stream cannot wedge the buffer
+    /// into never showing anything again.
+    #[test]
+    fn malformed_trailing_bytes_do_not_wedge_the_buffer() {
+        let mut buf = OutputBuffer::new(64);
+        buf.push(&[b'o', b'k', 0xff]);
+        assert!(
+            buf.text().starts_with("ok"),
+            "a stray byte held back everything after it: {:?}",
+            buf.text()
+        );
+        assert_eq!(buf.text().chars().count(), 3);
     }
 
     #[test]
