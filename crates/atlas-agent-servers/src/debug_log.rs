@@ -100,8 +100,8 @@ impl AcpDebugMessage {
                     params: object.get("params").cloned(),
                 },
             }
-        } else if let Some(parsed_id) = parsed_id {
-            let id = match parsed_id {
+        } else {
+            let id = match parsed_id? {
                 Ok(id) => id,
                 Err(err) => {
                     tracing::warn!("skipping JSON-RPC response with unparsable id: {err}");
@@ -125,8 +125,6 @@ impl AcpDebugMessage {
                     result: Ok(object.get("result").cloned()),
                 }
             }
-        } else {
-            return None;
         };
 
         Some(Self { direction, message })
