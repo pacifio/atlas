@@ -16,6 +16,7 @@ import type { PendingPermission } from "@/types/acp";
 import type {
   AgentDelta,
   ToolCall as AgentToolCall,
+  ToolCallStatus,
   ImageAttachment,
   SessionModeInfo,
 } from "@/types/agents";
@@ -395,10 +396,17 @@ interface ChatActions {
          *  per-message badge survives session reloads. */
         model?: string | null;
         toolCalls?: Array<{
+          /** The agent's own tool call id, when the caller has it. Optional
+           *  only because not every paint path carries one; a caller that has
+           *  it MUST pass it — it is the key later deltas are matched on. */
+          id?: string;
           toolName: string;
           kind?: string | null;
           arguments: Record<string, unknown>;
           result?: string | null;
+          /** How the tool call actually ended. Absent means unknown, which is
+           *  the only case that may be assumed completed. */
+          status?: ToolCallStatus;
         }>;
       }>,
     ) => void;
@@ -1212,13 +1220,18 @@ export const useChatStore = createSelectors(
                 id: `msg-${Date.now()}-${i}`,
                 role: m.role,
                 content: m.content,
+                // Keep the agent's own id and outcome when the caller has
+                // them. Re-minting both is what made every tool call in a
+                // resumed transcript render as succeeded, failed ones included
+                // (ATL-220). The fallbacks stand only for a paint path that
+                // genuinely has neither.
                 toolCalls: (m.toolCalls ?? []).map((tc, j) => ({
-                  id: `tc-${Date.now()}-${i}-${j}`,
+                  id: tc.id ?? `tc-${Date.now()}-${i}-${j}`,
                   toolName: tc.toolName,
                   kind: tc.kind ?? null,
                   arguments: tc.arguments,
                   result: tc.result ?? null,
-                  status: "completed" as const,
+                  status: tc.status ?? ("completed" as const),
                   duration: null,
                 })),
                 fileChanges: [],
@@ -1977,11 +1990,15 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       }));
       if (last && last.role === "assistant") {
         last.plan = planSteps;
-      } else {
+      } else if (planSteps.length > 0) {
         const fresh = stampProducingModel(session, makeAssistantTextMessage(""));
         fresh.plan = planSteps;
         session.messages.push(fresh);
       }
+      // A CLEARED plan now reaches here rather than being swallowed by the
+      // backend (ATL-222), and it has nothing to hang on a message that does
+      // not exist — minting an empty assistant bubble to carry an empty plan
+      // would trade the stale card for a blank one.
       // Mirror onto the session so the docked plan panel selects it directly.
       session.livePlan = planSteps;
       return;
