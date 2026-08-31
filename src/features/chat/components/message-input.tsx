@@ -1843,14 +1843,13 @@ export function MessageInput({
             "shadow-[0_8px_24px_rgba(0,0,0,0.35)]",
             // Drag-over highlight: a clear accent ring while OS files hover.
             isDropTarget && "border-[var(--accent-primary)] ring-2 ring-[var(--accent-primary)]/40",
-            // Hard-disable when the bound agent isn't ready. Dim only — the
-            // pointer block lives on the INPUT wrapper below, never on the
-            // whole composer: the agent switcher sits in this toolbar, and
-            // blocking it meant a user without Claude Code could never reach
-            // another agent (the composer was a dead end on a fresh install).
-            // No red tint — the send button is already disabled and
-            // submit()/Cmd+Enter are gated on `disabled`.
-            disabled && "opacity-60",
+            // NOTE: the disabled dim is NOT applied here. It used to be
+            // (`disabled && "opacity-60"` on this shell), and it faded the
+            // whole composer — footer pills, the agent switcher, and every
+            // dropup, since the menus are absolutely-positioned CHILDREN of
+            // this element (not portals) and inherit its opacity. The escape
+            // hatch has to look reachable, not just be reachable, so the dim
+            // now lives on the inner input surface alone.
             // Lock the composer while a GitHub repo syncs into `.atlas/repos`.
             githubSyncing !== null && "opacity-60 pointer-events-none",
           )}
@@ -1882,6 +1881,11 @@ export function MessageInput({
               // /20 accent ring read far too loud on the nested surface.
               "focus-within:border-[color-mix(in_srgb,var(--border-focus)_50%,var(--border-default))]",
               "focus-within:ring-1 focus-within:ring-[var(--accent-primary)]/10",
+              // The disabled dim, scoped to the field the lock actually
+              // applies to (see the shell above). No red tint — the send
+              // button is already disabled and submit()/Cmd+Enter are gated
+              // on `disabled`.
+              disabled && "opacity-60",
             )}
           >
             {stagedImages.length > 0 && (
@@ -1997,7 +2001,11 @@ export function MessageInput({
           <div className="flex items-center justify-between px-2 pb-1.5 pt-1">
             <div className="flex items-center gap-1">
               <ComposerAddMenu
-                disabled={disabled || githubSyncing !== null}
+                // `disabledProp`, NOT `disabled`: a missing org AI grant locks
+                // the input, not the toolbar. Greying the + here made the whole
+                // footer read as dead while the fix (switch agent, request a
+                // grant) is one row away.
+                disabled={disabledProp || githubSyncing !== null}
                 projectPath={useProjectStore.getState().currentProject?.path ?? null}
                 agentId={switchableAgent}
                 imageSupported={imageSupported}
