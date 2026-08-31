@@ -188,6 +188,63 @@ pub async fn native_agent_entitlement(
     }
 }
 
+/// Records that a user asked their admin for AI access.
+///
+/// There is no access-request endpoint on the gateway, and inventing a silent
+/// one would be worse than nothing: the user would press a button, see a tick,
+/// and nobody would ever be told. This is honest about what it is — a
+/// **signal**, delivered to PostHog as `ai_access_requested`, where the team
+/// reading it can see which organisations are asking and act on it.
+///
+/// `capture_user_initiated` rather than `capture`, for the same reason
+/// feedback uses it: the user pressed a button asking to be counted, so a
+/// telemetry opt-out must not silently discard the ask (the consent state
+/// still travels with it as `telemetry_opt_in`). An **inert** build — no
+/// PostHog key compiled in — still sends nothing and says so, which is why
+/// this returns the error rather than a cheerful tick.
+///
+/// Identity is resolved here, not passed by the renderer (see `feedback.rs`):
+/// the org NAME matters to whoever reads the event, and Rust already holds it.
+#[tauri::command]
+pub async fn native_agent_request_access(
+    state: tauri::State<'_, crate::commands::auth::AuthState>,
+    telemetry: tauri::State<'_, std::sync::Arc<crate::telemetry::TelemetryClient>>,
+) -> Result<(), String> {
+    let crate::auth::AuthSnapshot::SignedIn {
+        user,
+        orgs,
+        active_org_id,
+    } = state.core().snapshot()
+    else {
+        // Nothing to record and nobody to attribute it to. The button is only
+        // reachable while signed in; this is the race, not a user path.
+        return Err("Sign in to request AI access.".into());
+    };
+
+    // The organisation the gateway refused — matched by the same id sent as the
+    // `atlas-org` header above, so the event names the org that was actually
+    // checked rather than whichever one the UI happens to be showing.
+    let org = active_org_id.as_ref().and_then(|id| {
+        orgs.as_ref()
+            .and_then(|list| list.iter().find(|o| &o.id == id))
+    });
+
+    let props = serde_json::json!({
+        "active_org_id": active_org_id,
+        "org_name": org.map(|o| o.name.clone()),
+        // Whether the asker could grant it themselves — an owner filing this is
+        // a product problem (they cannot find the switch), a member filing it
+        // is the intended path.
+        "org_role": org.and_then(|o| o.role.as_ref().map(|r| format!("{r:?}"))),
+        "account_id": user.as_ref().map(|u| u.id.clone()),
+        "account_email": user.as_ref().map(|u| u.email.clone()),
+    });
+
+    std::sync::Arc::clone(&telemetry)
+        .capture_user_initiated("ai_access_requested", props)
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
