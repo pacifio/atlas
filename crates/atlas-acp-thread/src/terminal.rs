@@ -212,7 +212,7 @@ impl AcpTerminal {
         let output = if self.replayed_output.is_empty() {
             captured
         } else {
-            let mut out = self.replayed_output.text();
+            let mut out = self.replayed_output.text().to_string();
             out.push_str(&captured);
             out
         };
@@ -226,6 +226,55 @@ impl AcpTerminal {
         let mut response = acp::TerminalOutputResponse::new(output, truncated);
         response.exit_status = exit_status;
         response
+    }
+
+    /// How [`Self::current_output`]'s `output` has grown past `from` bytes.
+    ///
+    /// Exists so flattening a terminal into a tool call's result costs the tail
+    /// rather than the whole buffer. Rebuilding the buffer to discover that it
+    /// only grew is what made a chatty command's projection quadratic in its
+    /// own output (ATL-219), and the projector runs it once per chunk.
+    ///
+    /// `None` means "ask [`Self::current_output`] instead", and is deliberately
+    /// returned for every case where a byte offset taken from an earlier read
+    /// is no longer trustworthy:
+    ///
+    /// * either buffer has dropped its front, so `from` names different bytes
+    ///   than it did — and `terminal_output` additionally prefixes a truncation
+    ///   marker, which changes the whole answer's shape;
+    /// * `from` is past the end, so the output shrank rather than grew;
+    /// * `from` lands inside the replayed half while a PTY half also has
+    ///   content, where serving the tail would mean copying the PTY half too;
+    /// * `from` is not on a character boundary.
+    pub fn output_appended(&self, from: usize) -> Option<TerminalAppend> {
+        if self.replayed_output.truncated() {
+            return None;
+        }
+        let replayed = self.replayed_output.text();
+        let build = |captured: &str| -> Option<TerminalAppend> {
+            let total = replayed.len() + captured.len();
+            if from > total {
+                return None;
+            }
+            if from == total {
+                return Some(TerminalAppend::Unchanged);
+            }
+            if from < replayed.len() {
+                if !captured.is_empty() {
+                    return None;
+                }
+                return replayed
+                    .get(from..)
+                    .map(|tail| TerminalAppend::Grew(tail.to_string()));
+            }
+            captured
+                .get(from - replayed.len()..)
+                .map(|tail| TerminalAppend::Grew(tail.to_string()))
+        };
+        match &self.inner {
+            Some(inner) => inner.with_untruncated_output(build)?,
+            None => build(""),
+        }
     }
 
     /// Kill the command. Marks the terminal as user-stopped so the UI can tell
@@ -264,6 +313,14 @@ impl AcpTerminal {
             None => None,
         }
     }
+}
+
+/// What [`AcpTerminal::output_appended`] found: nothing new, or exactly the
+/// bytes appended since the caller's cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalAppend {
+    Unchanged,
+    Grew(String),
 }
 
 /// Killing the child on drop is the only thing that covers an ABRUPT teardown.

@@ -29,7 +29,7 @@ use tokio::sync::oneshot;
 
 use crate::connection::{AgentConnection, ClientUserMessageId, PermissionOptions};
 use crate::elicitation::{ElicitationEntryId, ElicitationStore};
-use crate::terminal::{AcpTerminal, TerminalProviderEvent, TerminalRegistry};
+use crate::terminal::{AcpTerminal, TerminalAppend, TerminalProviderEvent, TerminalRegistry};
 use crate::EventSink;
 
 /// One piece of renderable content.
@@ -852,6 +852,25 @@ pub struct AcpThread {
     parent_session_id: Option<acp::SessionId>,
     title: Option<Arc<str>>,
     entries: Vec<AgentThreadEntry>,
+    /// When each entry was first appended, parallel to `entries`.
+    ///
+    /// Kept beside the list rather than inside `AgentThreadEntry` because every
+    /// variant wants it and none of them constructs itself here — the entries
+    /// are built from protocol updates in a dozen places, and a field on each
+    /// would have to be threaded through all of them.
+    ///
+    /// Both vectors are only ever appended to (`push_entry`) or truncated
+    /// together (`remove_entries_from`), which is what keeps the indices
+    /// aligned; `push_entry` asserts it in debug builds.
+    ///
+    /// This is the time Atlas learned of the entry, which is the message's real
+    /// time for anything the app watched happen. It is NOT recoverable for a
+    /// thread rebuilt by an agent's `session/load` replay: ACP carries no
+    /// per-message timestamp, so a replayed conversation is stamped at replay
+    /// time. That is a limit of the protocol, not a choice — but it is stable
+    /// per thread, which is the property the projection actually needed
+    /// (ATL-221).
+    entry_created_at: Vec<chrono::DateTime<chrono::Utc>>,
     elicitations: ElicitationStore,
     plan: Plan,
     turn_id: u32,
@@ -880,6 +899,7 @@ impl AcpThread {
             parent_session_id: None,
             title,
             entries: Vec::new(),
+            entry_created_at: Vec::new(),
             elicitations: ElicitationStore::default(),
             plan: Plan::default(),
             turn_id: 0,
@@ -947,6 +967,17 @@ impl AcpThread {
     /// id is worth nothing to history until a message has gone through it.
     pub fn is_draft(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// When the entry at `ix` was appended.
+    ///
+    /// Read by the projection instead of stamping the clock at read time: a
+    /// snapshot that minted its own timestamps reported every message in a past
+    /// conversation as sent just now, and two snapshots of an unchanged thread
+    /// disagreed with each other (ATL-221). See `entry_created_at` for what
+    /// this value does and does not mean.
+    pub fn entry_created_at(&self, ix: usize) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.entry_created_at.get(ix).copied()
     }
 
     pub fn entries(&self) -> &[AgentThreadEntry] {
@@ -1018,6 +1049,7 @@ impl AcpThread {
             return;
         }
         self.entries.truncate(from);
+        self.entry_created_at.truncate(from);
         self.emit(AcpThreadEvent::EntriesRemoved(from..len));
     }
 
@@ -1130,6 +1162,8 @@ impl AcpThread {
 
     fn push_entry(&mut self, entry: AgentThreadEntry) {
         self.entries.push(entry);
+        self.entry_created_at.push(chrono::Utc::now());
+        debug_assert_eq!(self.entries.len(), self.entry_created_at.len());
         self.emit(AcpThreadEvent::NewEntry);
     }
 
@@ -1873,6 +1907,22 @@ impl AcpThread {
     /// and the tool call's status is where the UI shows it. Zed's
     /// `Terminal::to_markdown` (`terminal.rs:604-609`) is content-only for the
     /// same reason.
+    /// How [`Self::terminal_output`]'s answer has grown past `from` bytes.
+    ///
+    /// `None` when the id names no terminal this thread holds, or when the
+    /// answer cannot be served as a pure extension of `from` — see
+    /// [`AcpTerminal::output_appended`] for the cases. A caller that gets
+    /// `None` falls back to [`Self::terminal_output`]; this exists so the case
+    /// that actually happens on every output chunk does not cost a copy of
+    /// everything the command has printed so far (ATL-219).
+    pub fn terminal_output_appended(
+        &self,
+        id: &acp::TerminalId,
+        from: usize,
+    ) -> Option<TerminalAppend> {
+        self.terminals.get(id)?.output_appended(from)
+    }
+
     pub fn terminal_output(&self, id: &acp::TerminalId) -> Option<String> {
         self.terminals.get(id).map(|terminal| {
             let response = terminal.current_output();

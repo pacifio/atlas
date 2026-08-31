@@ -349,6 +349,16 @@ impl dyn AgentConnection {
     }
 }
 
+/// Rewinding a session's history.
+///
+/// No implementation and no caller today — `remove_entries_from` is reached
+/// only by the native agent's `/undo`. Whoever wires this up owns a coupling
+/// that is not local to this file: shrinking `AcpThread::entries` makes
+/// `atlas-agent-delta`'s per-session mirror shrink with it, and anything keyed
+/// by entry position or by tool call id (the projector's `open_permissions`,
+/// its `Projected` mirror) has to be trimmed in the same step. The projector
+/// handles the `EntriesRemoved` event it already receives; check it still does
+/// before assuming a new truncation path is free.
 pub trait AgentSessionTruncate: Send + Sync {
     fn run(&self, client_user_message_id: ClientUserMessageId) -> BoxFuture<'static, Result<()>>;
 }
