@@ -46,6 +46,12 @@ pub const CONFIG_SCHEMA_VERSION: u32 = 1;
 
 pub const CONFIG_FILE_NAME: &str = "config.toml";
 
+/// How many times [`ConfigManager::apply_patch`] rebuilds its patch when an
+/// external write lands inside the merge-then-swap window. Three is enough to
+/// ride out an editor's own save (which is itself usually a rename) without
+/// letting a runaway writer block the UI indefinitely.
+const CAS_ATTEMPTS: usize = 3;
+
 /// Mirrors `MIN_SCALE`/`MAX_SCALE` in
 /// `src/features/settings/lib/ui-scale.ts` — kept in sync manually since the
 /// frontend clamp and this validation gate the same field from two ends.
@@ -306,6 +312,10 @@ pub enum ConfigError {
     Parse(String),
     Invalid(ValidationIssue),
     UnsupportedVersion(u32),
+    /// `CAS_ATTEMPTS` consecutive attempts each found the file rewritten
+    /// between the merge and the swap. Nothing was written — retrying is
+    /// safe, which is what the message tells the user to do.
+    Busy,
 }
 
 impl std::fmt::Display for ConfigError {
@@ -319,6 +329,10 @@ impl std::fmt::Display for ConfigError {
             ConfigError::UnsupportedVersion(v) => write!(
                 f,
                 "config.toml has schemaVersion {v}, newer than this Atlas build supports ({CONFIG_SCHEMA_VERSION}) — it was likely created by a newer Atlas version"
+            ),
+            ConfigError::Busy => write!(
+                f,
+                "config.toml is being written by something else — nothing was changed; try again"
             ),
         }
     }
@@ -547,7 +561,13 @@ pub fn settings_from_legacy_json(raw: Option<&serde_json::Value>) -> AppSettings
 // ConfigManager
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq)]
+/// Serialized straight to the frontend (`ConfigInfo.status`,
+/// `BootstrapPayload.configStatus`) — `tag = "status"` matches the
+/// discriminated union in `atlas-config-api.ts`. Deriving `Serialize` here
+/// rather than mirroring the enum into a separate wire type in
+/// `commands::atlas_config` keeps one definition of the three states.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "status")]
 pub enum ConfigStatus {
     Ok,
     /// A hot-reload (external edit) failed; `effective` still holds the
@@ -680,7 +700,24 @@ impl ConfigManager {
             // File genuinely absent — the normal pre-first-write state, not
             // an error. `bootstrap` below is what decides whether that's
             // "needs migration" or "already migrated, stay on defaults".
-            Err(_) => Self::in_memory_defaults(path),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::in_memory_defaults(path),
+            // Anything else (permissions, a transient I/O fault, a directory
+            // where the file should be) is a *failure to read*, not an
+            // absence. Serving defaults is still right at runtime — boot must
+            // never block on this — but the status MUST say so, because
+            // `bootstrap_at` keys the "the legacy state.json settings are
+            // now redundant" decision off it. Reporting `Ok` here is what let
+            // an unreadable config silently retire the user's only surviving
+            // copy of their preferences.
+            Err(e) => {
+                tracing::warn!(
+                    target: "atlas::config",
+                    "config.toml could not be read, serving defaults in memory (file left untouched): {e}"
+                );
+                let mut mgr = Self::in_memory_defaults(path);
+                mgr.status = ConfigStatus::UsingDefaults { error: format!("could not read config.toml: {e}") };
+                mgr
+            }
         }
     }
 
@@ -721,6 +758,18 @@ impl ConfigManager {
     /// between an external edit and this write); rejects outright rather than
     /// clobbering if that re-read finds a malformed file.
     ///
+    /// The re-read and the rename are not one atomic step — an external
+    /// editor (or the `atlas-self-configure` skill) can still write in the
+    /// gap, and that write would be clobbered along with its comments and
+    /// unknown keys. Short of taking an advisory file lock, the best
+    /// available answer is to re-check the file immediately before the swap
+    /// and, if it moved, rebuild the patch on the fresh content and try
+    /// again — bounded by [`CAS_ATTEMPTS`], after which the write is refused
+    /// with [`ConfigError::Busy`] rather than spinning forever. Note that
+    /// `Busy` is only reachable for `expected_generation: None` callers: with
+    /// `Some(g)`, the retry's `reload_from_disk` adopts the intervening write
+    /// and bumps the generation, so the second pass reports `Conflict`.
+    ///
     /// `expected_generation`: `None` for internal Rust-side callers
     /// (`commands::updater`, `commands::models`) that only ever race the
     /// filesystem, never a second in-app editor — always applies, matching
@@ -733,14 +782,30 @@ impl ConfigManager {
         patch: &SettingsPatch,
         expected_generation: Option<u64>,
     ) -> Result<UpdateOutcome, ConfigError> {
+        for _ in 0..CAS_ATTEMPTS {
+            if let Some(outcome) = self.try_apply_patch(patch, expected_generation)? {
+                return Ok(outcome);
+            }
+        }
+        Err(ConfigError::Busy)
+    }
+
+    /// One compare-and-swap attempt. `Ok(None)` means the file changed
+    /// underneath us between the re-read and the swap and nothing was
+    /// written — the caller retries against the new content.
+    fn try_apply_patch(
+        &mut self,
+        patch: &SettingsPatch,
+        expected_generation: Option<u64>,
+    ) -> Result<Option<UpdateOutcome>, ConfigError> {
         self.reload_from_disk()?;
 
         if let Some(expected) = expected_generation {
             if expected != self.generation {
-                return Ok(UpdateOutcome::Conflict {
+                return Ok(Some(UpdateOutcome::Conflict {
                     settings: self.effective.clone(),
                     generation: self.generation,
-                });
+                }));
             }
         }
 
@@ -753,7 +818,9 @@ impl ConfigManager {
         doc["schemaVersion"] = toml_edit::value(i64::from(CONFIG_SCHEMA_VERSION));
 
         let text = doc.to_string();
-        write_atomic(&self.path, &text).map_err(|e| ConfigError::Io(e.to_string()))?;
+        if !self.write_if_unchanged(&text)? {
+            return Ok(None);
+        }
 
         self.document = doc;
         self.unknown_keys = unknown_keys_in(&self.document);
@@ -762,7 +829,26 @@ impl ConfigManager {
         self.generation += 1;
         self.status = ConfigStatus::Ok;
 
-        Ok(UpdateOutcome::Applied { settings: candidate, generation: self.generation })
+        Ok(Some(UpdateOutcome::Applied { settings: candidate, generation: self.generation }))
+    }
+
+    /// Swap `text` in only if the file still holds exactly the content this
+    /// patch was merged against (`last_raw`). `Ok(false)` = it moved, so the
+    /// merge base is stale and nothing was written.
+    ///
+    /// A missing file is not "moved" — that's the pre-first-write state, and
+    /// writing is precisely what should happen. Any other read error is
+    /// surfaced rather than guessed past.
+    fn write_if_unchanged(&self, text: &str) -> Result<bool, ConfigError> {
+        match fs::read_to_string(&self.path) {
+            Ok(now) if now != self.last_raw => return Ok(false),
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(ConfigError::Io(e.to_string()));
+            }
+            _ => {}
+        }
+        write_atomic(&self.path, text).map_err(|e| ConfigError::Io(e.to_string()))?;
+        Ok(true)
     }
 
     /// The sole path allowed to overwrite a malformed (or just unwanted)
@@ -811,6 +897,8 @@ impl ConfigManager {
 /// writes, migration, and any external tooling can never collide on one
 /// fixed `.tmp` name), flushed then renamed over the target.
 fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+    use std::io::Write;
+
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -820,8 +908,35 @@ fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
         .unwrap_or_else(|| CONFIG_FILE_NAME.to_string());
     let unique = format!("{file_name}.tmp.{}", uuid::Uuid::new_v4());
     let tmp = path.with_file_name(unique);
-    fs::write(&tmp, contents)?;
-    fs::rename(&tmp, path)
+
+    // `sync_all` before the rename, not just `fs::write`: without it the
+    // rename can reach the disk ahead of the bytes it points at, so power
+    // loss just after the UI said "saved" can leave config.toml pointing at
+    // an empty or half-written inode. On the failure paths the temp file is
+    // removed rather than left as litter next to the real config.
+    let written = (|| -> std::io::Result<()> {
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(contents.as_bytes())?;
+        f.sync_all()
+    })();
+    if let Err(e) = written {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+
+    // Make the rename itself durable. Best-effort: some filesystems refuse to
+    // open a directory for sync, and that is not worth failing an otherwise
+    // successful write over.
+    if let Some(dir) = path.parent() {
+        if let Ok(d) = fs::File::open(dir) {
+            let _ = d.sync_all();
+        }
+    }
+    Ok(())
 }
 
 /// Thread-safe handle registered as Tauri managed state, mirroring
@@ -870,10 +985,11 @@ pub fn update(app: &AppHandle, patch: SettingsPatch) -> Result<ConfigSnapshot, C
 pub struct MigrationOutcome {
     pub manager: ConfigManager,
     /// Whether the caller should persist `settings_config_migrated = true`
-    /// into `state.json` (v4) after this call. Always `true` once this
-    /// returns — either the config already existed, or it was just created —
-    /// the only remaining question is whether the *caller* still needs to
-    /// write that fact down.
+    /// into `state.json` (v4) after this call. `true` once `config.toml`
+    /// demonstrably holds the settings — it either loaded cleanly or was
+    /// just created. Deliberately `false` when the file exists but could not
+    /// be read or parsed: the legacy `state.json.settings` is still the only
+    /// copy in that case and must survive until a real config does.
     pub mark_migrated: bool,
 }
 
@@ -883,7 +999,14 @@ pub fn bootstrap(
     legacy_settings_raw: Option<serde_json::Value>,
 ) -> MigrationOutcome {
     let Some(path) = ConfigManager::config_path(app) else {
-        return MigrationOutcome { manager: ConfigManager::load(app), mark_migrated: false };
+        // No resolvable config dir at all (no $HOME / no %APPDATA%). Defaults
+        // keep the app usable, but this is a failure and must reach the
+        // banner rather than passing for a healthy load.
+        let mut manager = ConfigManager::load(app);
+        manager.status = ConfigStatus::UsingDefaults {
+            error: "could not resolve the Atlas config directory".to_string(),
+        };
+        return MigrationOutcome { manager, mark_migrated: false };
     };
     bootstrap_at(path, marker_already_set, legacy_settings_raw)
 }
@@ -902,7 +1025,26 @@ fn bootstrap_at(
         // into it, whether this is the first time we've seen it (a v3->v4
         // upgrade that lands after a user hand-authored config.toml, or a
         // manual restore) or the Nth.
-        return MigrationOutcome { manager: ConfigManager::load_at(path), mark_migrated: true };
+        let mut manager = ConfigManager::load_at(path);
+        // ...but only report migration as done if that file could actually be
+        // READ. While it is malformed or unreadable, `state.json.settings` is
+        // still the only surviving copy of the user's preferences; setting
+        // the marker here would let `AppState::save` drop it (the typed
+        // `AppState` has no `settings` field any more), turning a recoverable
+        // bad file into permanent data loss.
+        let mark_migrated = matches!(manager.status(), ConfigStatus::Ok);
+        if !mark_migrated && !marker_already_set {
+            // The file is present but unusable, so migration never ran and
+            // `state.json.settings` is still the user's real configuration.
+            // Serve THAT rather than compiled defaults: keeping the legacy
+            // copy alive (see `AppState::save`) is only half the guarantee —
+            // the other half is honouring it while the file is broken, or the
+            // user still spends the whole session on defaults with, say,
+            // telemetry back on. The broken file itself is left untouched.
+            manager.effective = settings_from_legacy_json(legacy_settings_raw.as_ref());
+            manager.document = document_for(&manager.effective);
+        }
+        return MigrationOutcome { manager, mark_migrated };
     }
 
     // No file yet. Import from legacy state exactly once, ever.
@@ -912,11 +1054,21 @@ fn bootstrap_at(
         settings_from_legacy_json(legacy_settings_raw.as_ref())
     };
 
-    match ConfigManager::create_fresh_with(path.clone(), settings) {
+    match ConfigManager::create_fresh_with(path.clone(), settings.clone()) {
         Ok(manager) => MigrationOutcome { manager, mark_migrated: true },
         Err(e) => {
             tracing::warn!(target: "atlas::config", "failed to write migrated config.toml: {e}");
-            MigrationOutcome { manager: ConfigManager::load_at(path), mark_migrated: false }
+            // The file was never created, so `load_at` will take its
+            // "genuinely absent" branch and report `Ok` — which would hide a
+            // real failure behind a healthy status and drop the legacy
+            // settings we just computed. Serve those settings in memory and
+            // flag the write failure instead.
+            let mut manager = ConfigManager::load_at(path);
+            manager.effective = settings;
+            manager.document = document_for(&manager.effective);
+            manager.status =
+                ConfigStatus::UsingDefaults { error: format!("could not write config.toml: {e}") };
+            MigrationOutcome { manager, mark_migrated: false }
         }
     }
 }
@@ -1220,6 +1372,236 @@ someFutureKey = \"left alone\"
         for key in KNOWN_SETTINGS_KEYS {
             assert!(CONFIGURATION_DOC.contains(key), "docs/reference/configuration.md is missing `{key}`");
         }
+    }
+
+    /// `MIN_UI_SCALE`/`MAX_UI_SCALE` are duplicated in `ui-scale.ts`, which
+    /// clamps the same field from the frontend end. Nothing but this test
+    /// stops the two drifting apart, and drift means the UI happily offers a
+    /// zoom level Rust then rejects (or vice versa).
+    #[test]
+    fn ui_scale_bounds_match_the_frontend_clamp() {
+        const UI_SCALE_TS: &str = include_str!("../../../src/features/settings/lib/ui-scale.ts");
+        assert!(
+            UI_SCALE_TS.contains(&format!("export const MIN_SCALE = {MIN_UI_SCALE:.1};")),
+            "ui-scale.ts MIN_SCALE has drifted from MIN_UI_SCALE ({MIN_UI_SCALE})"
+        );
+        assert!(
+            UI_SCALE_TS.contains(&format!("export const MAX_SCALE = {MAX_UI_SCALE:.1};")),
+            "ui-scale.ts MAX_SCALE has drifted from MAX_UI_SCALE ({MAX_UI_SCALE})"
+        );
+    }
+
+    /// `ConfigStatus` serializes straight to the frontend now that the
+    /// mirrored `ConfigStatusWire` is gone; this pins the exact discriminated
+    /// union `atlas-config-api.ts` destructures.
+    #[test]
+    fn config_status_serializes_as_the_frontend_union() {
+        assert_eq!(
+            serde_json::to_value(ConfigStatus::Ok).unwrap(),
+            serde_json::json!({ "status": "ok" })
+        );
+        assert_eq!(
+            serde_json::to_value(ConfigStatus::UsingDefaults { error: "boom".into() }).unwrap(),
+            serde_json::json!({ "status": "usingDefaults", "error": "boom" })
+        );
+        assert_eq!(
+            serde_json::to_value(ConfigStatus::UsingLastKnownGood { error: "boom".into() }).unwrap(),
+            serde_json::json!({ "status": "usingLastKnownGood", "error": "boom" })
+        );
+    }
+
+    /// A file that exists but cannot be PARSED must not be reported as a
+    /// completed migration: `state.json.settings` is still the only surviving
+    /// copy of the user's preferences at that point, and the marker is what
+    /// authorizes `AppState::save` to drop it.
+    #[test]
+    fn a_malformed_existing_config_does_not_report_migration_done() {
+        let path = tmp_config_path();
+        fs::write(&path, "this is not { valid toml").unwrap();
+        let legacy = serde_json::json!({ "enterToSend": false, "gitBlameInline": false });
+
+        let outcome = bootstrap_at(path, false, Some(legacy));
+
+        assert!(
+            !outcome.mark_migrated,
+            "a malformed config.toml must not retire the legacy settings"
+        );
+        assert!(matches!(outcome.manager.status(), ConfigStatus::UsingDefaults { .. }));
+        // Boot never blocks: something usable is always effective. Which
+        // settings those are is the subject of
+        // `a_broken_config_falls_back_to_the_legacy_settings_not_compiled_defaults`.
+        assert!(!outcome.manager.effective().enter_to_send);
+    }
+
+    /// The same guarantee for a file that cannot be READ at all (here: a
+    /// directory sitting where the config should be — deterministic on every
+    /// platform and every uid, unlike a chmod-based test). This is the case
+    /// `load_at` used to fold into "file absent" and report as healthy.
+    #[test]
+    fn an_unreadable_existing_config_does_not_report_migration_done() {
+        let path = tmp_config_path();
+        fs::create_dir_all(&path).unwrap();
+
+        let outcome = bootstrap_at(path, false, Some(serde_json::json!({ "enterToSend": false })));
+
+        assert!(
+            !outcome.mark_migrated,
+            "an unreadable config.toml must not retire the legacy settings"
+        );
+        assert!(
+            matches!(outcome.manager.status(), ConfigStatus::UsingDefaults { .. }),
+            "an unreadable file must be flagged, not reported as Ok"
+        );
+    }
+
+    /// Preserving `state.json.settings` is only half the guarantee — while the
+    /// file is broken those settings must actually be in EFFECT, or the user
+    /// spends the session on compiled defaults (telemetry back on) with their
+    /// real preferences sitting unused on disk.
+    #[test]
+    fn a_broken_config_falls_back_to_the_legacy_settings_not_compiled_defaults() {
+        let path = tmp_config_path();
+        fs::write(&path, "this is not { valid toml").unwrap();
+        let legacy = serde_json::json!({ "shareTelemetry": false, "uiScale": 1.25 });
+
+        let outcome = bootstrap_at(path, false, Some(legacy));
+
+        assert!(!outcome.mark_migrated);
+        assert!(!outcome.manager.effective().share_telemetry, "the user's opt-out must survive");
+        assert_eq!(outcome.manager.effective().ui_scale, 1.25);
+        assert!(matches!(outcome.manager.status(), ConfigStatus::UsingDefaults { .. }));
+    }
+
+    /// ...but only before migration is recorded. Once the marker is set, the
+    /// legacy object is stale by definition and must not be resurrected.
+    #[test]
+    fn a_broken_config_after_migration_does_not_resurrect_legacy_settings() {
+        let path = tmp_config_path();
+        fs::write(&path, "this is not { valid toml").unwrap();
+        let legacy = serde_json::json!({ "shareTelemetry": false });
+
+        let outcome = bootstrap_at(path, true, Some(legacy));
+
+        assert!(
+            outcome.manager.effective().share_telemetry,
+            "a post-migration boot must not read state.json.settings again"
+        );
+    }
+
+    /// The healthy path still marks migration done, so the two tests above
+    /// can't be satisfied by simply never setting the marker.
+    #[test]
+    fn a_readable_existing_config_reports_migration_done() {
+        let path = tmp_config_path();
+        fs::write(&path, "schemaVersion = 1\n\n[settings]\nenterToSend = false\n").unwrap();
+
+        let outcome = bootstrap_at(path, false, None);
+
+        assert!(outcome.mark_migrated);
+        assert_eq!(outcome.manager.status(), &ConfigStatus::Ok);
+        assert!(!outcome.manager.effective().enter_to_send);
+    }
+
+    /// The external-edit half of the round trip: a valid edit made outside
+    /// Atlas is adopted wholesale and advances the generation, which is what
+    /// the frontend mirrors so its next write isn't a spurious conflict.
+    #[test]
+    fn reload_adopts_a_valid_external_edit_and_bumps_the_generation() {
+        let path = tmp_config_path();
+        let mut mgr =
+            ConfigManager::create_fresh_with(path.clone(), AppSettings::default()).unwrap();
+        let before = mgr.generation();
+        assert!(mgr.effective().git_blame_inline);
+
+        fs::write(
+            &path,
+            "schemaVersion = 1\n\n# hand-written\n[settings]\ngitBlameInline = false\nuiScale = 1.25\n",
+        )
+        .unwrap();
+
+        assert!(mgr.reload_from_disk().unwrap(), "a changed, valid file is adopted");
+        assert!(!mgr.effective().git_blame_inline);
+        assert_eq!(mgr.effective().ui_scale, 1.25);
+        assert_eq!(mgr.generation(), before + 1);
+        assert_eq!(mgr.status(), &ConfigStatus::Ok);
+
+        // Idempotent: re-reading the same bytes is a no-op, not another bump.
+        assert!(!mgr.reload_from_disk().unwrap());
+        assert_eq!(mgr.generation(), before + 1);
+    }
+
+    /// The compare-and-swap that guards the merge-then-rename window: if the
+    /// file moved since the base this patch was computed against, the write is
+    /// refused outright rather than clobbering the other writer's content
+    /// (comments and unknown keys included).
+    #[test]
+    fn a_write_whose_base_went_stale_is_refused_rather_than_clobbering() {
+        let path = tmp_config_path();
+        let mgr = ConfigManager::create_fresh_with(path.clone(), AppSettings::default()).unwrap();
+
+        // Simulate the racing writer landing inside the window: disk now holds
+        // something `mgr.last_raw` doesn't know about.
+        let external =
+            "schemaVersion = 1\n\n# someone else's comment\n[settings]\nenterToSend = false\n";
+        fs::write(&path, external).unwrap();
+
+        assert!(
+            !mgr.write_if_unchanged("schemaVersion = 1\n").unwrap(),
+            "a stale base must refuse to write"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            external,
+            "the other writer's content survives untouched"
+        );
+    }
+
+    /// ...and the same call writes when the base IS current, so the guard
+    /// can't be satisfied by refusing everything.
+    #[test]
+    fn a_write_on_a_current_base_goes_through() {
+        let path = tmp_config_path();
+        let mgr = ConfigManager::create_fresh_with(path.clone(), AppSettings::default()).unwrap();
+
+        let text = "schemaVersion = 1\n\n[settings]\nenterToSend = false\n";
+        assert!(mgr.write_if_unchanged(text).unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    }
+
+    fn temp_files_beside(path: &Path) -> Vec<String> {
+        fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp."))
+            .collect()
+    }
+
+    /// `write_atomic` must not leave its `.tmp.<uuid>` sibling behind when the
+    /// swap FAILS — that's the path that used to litter, since the success
+    /// path renames the temp away by construction. A directory sitting at the
+    /// destination makes the rename fail deterministically.
+    #[test]
+    fn a_failed_atomic_write_cleans_up_its_temp_file() {
+        let path = tmp_config_path();
+        fs::create_dir_all(&path).unwrap();
+
+        assert!(write_atomic(&path, "schemaVersion = 1\n").is_err(), "renaming onto a dir fails");
+        assert!(
+            temp_files_beside(&path).is_empty(),
+            "a failed write left litter: {:?}",
+            temp_files_beside(&path)
+        );
+    }
+
+    /// ...and the success path both lands the content and leaves nothing.
+    #[test]
+    fn a_successful_atomic_write_lands_the_content_and_leaves_nothing() {
+        let path = tmp_config_path();
+        write_atomic(&path, "schemaVersion = 1\n").unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "schemaVersion = 1\n");
+        assert!(temp_files_beside(&path).is_empty());
     }
 
     #[test]

@@ -15,10 +15,10 @@ without touching anything else Atlas persists.
 - Linux: `~/.config/dev.atlas.ide/config.toml`
 - Windows: `%APPDATA%\dev.atlas.ide\config.toml`
 
-If you are the Atlas native agent and have a `get_atlas_config_info` tool
-available, prefer it — it returns the exact resolved path plus the current
-validated settings, generation number, and any load error, without you
-having to guess at platform conventions or race a concurrent write.
+Editing that file is the supported mechanism, and the only one available to
+you: Atlas's own config commands are IPC endpoints reachable from its UI, not
+agent tools. Atlas watches the file and validates every change you make (see
+step 7 below), so a direct edit is a first-class way in — not a workaround.
 
 If the file does not exist yet, Atlas hasn't created it (a fresh install
 before first launch, or the user deleted it). Do not create one speculatively
@@ -93,9 +93,12 @@ diagnostic) — never delete a key you don't recognize.
 7. Atlas does its own full validation pass whenever it notices the file
    changed (this happens live, no restart required for any setting above).
    If your edit was invalid despite step 4, Atlas rejects it entirely and
-   keeps running on the last good settings — report that to the user rather
-   than trying to "fix" the file further yourself; ask them what they
-   actually want instead.
+   keeps running on the last good settings — but the *file* stays as you
+   wrote it, and while it is invalid Atlas refuses every settings write from
+   its own UI too, until someone fixes the file or uses "Recreate defaults"
+   (which overwrites it, keeping a `.bak-<unix-seconds>` copy). So an invalid
+   write is not free: report it to the user and offer to restore the content
+   you read in step 1, rather than trying to "fix" the file further yourself.
 
 ## What this skill must never touch
 

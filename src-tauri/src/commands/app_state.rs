@@ -3,7 +3,9 @@
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use crate::state::{AppSettings, AppState, AppStateHandle, AppStatePatch, AtlasConfigHandle};
+use crate::state::{
+    AppSettings, AppState, AppStateHandle, AppStatePatch, AtlasConfigHandle, ConfigStatus,
+};
 
 /// Bootstrap response: `AppState` (workspaces/recents/orgs) plus the
 /// `config.toml`-sourced settings snapshot, combined into one payload so the
@@ -18,6 +20,13 @@ pub struct BootstrapPayload {
     pub state: AppState,
     pub settings: AppSettings,
     pub config_generation: u64,
+    /// Whether `config.toml` actually loaded. This is the ONLY signal the UI
+    /// gets at boot that the file on disk is broken and the settings on
+    /// screen are Atlas's defaults rather than the user's — computed since
+    /// #64 but, until now, reachable only through `get_atlas_config_info`,
+    /// which nothing called. A malformed config silently reverted every
+    /// preference (`shareTelemetry` back to ON included) with no banner.
+    pub config_status: ConfigStatus,
 }
 
 /// One-shot bootstrap: returns the full `AppState` snapshot plus the current
@@ -33,6 +42,7 @@ pub fn bootstrap_app_state(
         state: state.lock().clone(),
         settings: config_guard.effective().clone(),
         config_generation: config_guard.generation(),
+        config_status: config_guard.status().clone(),
     }
 }
 

@@ -140,6 +140,24 @@ auto-repaired, renamed, or overwritten by Atlas on its own:
   malformed:** also rejected — a patch is never allowed to paper over a
   file it didn't validate first.
 
+Any status other than `"ok"` reaches the user as a banner at the top of
+Settings → General, with "Open config" and "Recreate defaults" beside it.
+Both the boot-time status (carried on `bootstrap_app_state`'s
+`configStatus`) and later hot-reload failures (`atlas:config-error`) land
+there, so a config that failed to load at startup can't quietly serve
+defaults — including flipping `shareTelemetry` back on — without saying so.
+
+A file that exists but cannot be *read* at all (permissions, a transient I/O
+fault) is treated as `"usingDefaults"`, not as an absent file — as is a
+config directory that can't be resolved, and a migration write that fails.
+The distinction matters for migration: see below.
+
+"Defaults" there means *compiled* defaults only once migration has been
+recorded. Before that, a broken or unwritable `config.toml` falls back to the
+legacy `state.json` settings instead, so the user keeps their real
+preferences (their telemetry opt-out included) for the session rather than
+silently reverting while those preferences sit unused on disk.
+
 The only path allowed to overwrite a malformed (or just unwanted) file is
 "Recreate defaults" (`reset_atlas_config`), which backs the previous content
 up to `config.toml.bak-<unix-seconds>` next to it before writing fresh
@@ -164,12 +182,25 @@ read-modify-validate-atomic-write path:
 2. Merge only the changed key(s) into the parsed document via `toml_edit` —
    every other key, comment, and ordering is left untouched.
 3. Validate the complete resulting candidate.
-4. Write to a uniquely-named temp file in the same directory, then rename it
-   over `config.toml` (atomic; a crash mid-write can't leave a torn file).
+4. Re-check that the file still holds exactly the content step 1 read. If it
+   moved, the merge base is stale: nothing is written and the whole sequence
+   restarts on the fresh content (up to three times, then the write is
+   refused with "config.toml is being written by something else"). This
+   narrows — it cannot fully close, short of an advisory file lock — the
+   window between the re-read and the swap, in which a concurrent external
+   edit would otherwise be clobbered along with its comments.
+5. Write to a uniquely-named temp file in the same directory, `fsync` it,
+   then rename it over `config.toml` and `fsync` the directory. The sync
+   before the rename is what makes the atomicity real: without it the rename
+   can reach disk ahead of the bytes it points at, so power loss just after
+   "Settings saved" could leave an empty or half-written file. Temp files are
+   removed on every failure path rather than left beside the real config.
 
 The Settings UI additionally passes an `expectedGeneration` — a stale value
-(something else changed the file first) is reported back as a conflict
-rather than silently overwritten.
+(something else changed the file first) is reported back as a conflict. The
+store adopts the fresh generation and retries the same patch, up to three
+attempts in total, before surfacing an error; one retry wasn't enough to
+survive a burst of rapid changes (dragging the zoom slider, say).
 
 ## Migration from `state.json`
 
@@ -184,6 +215,28 @@ Before issue #64, these settings lived in `state.json`'s `AppState.settings`
 3. The marker is then set `true` — this is what stops Atlas from
    resurrecting stale `state.json` settings if the user later deletes
    `config.toml` on purpose.
+
+The marker is set **only** once `config.toml` demonstrably holds the
+settings: it either loaded cleanly or was just created. If the file exists
+but is malformed or unreadable, migration is deliberately left unrecorded,
+because `state.json`'s `settings` object is still the only surviving copy of
+the user's preferences at that point.
+
+That copy is protected from the other end too. The typed `AppState` has no
+`settings` field any more, so serializing it over `state.json` wholesale
+would delete the legacy object — and `state.json` gets saved for reasons
+that have nothing to do with settings (a rotated telemetry id, a workspace
+change). `AppState::save` therefore merges over whatever the file already
+holds rather than replacing it, and drops the legacy `settings` key only
+once `settingsConfigMigrated` is `true`. It writes through a uniquely-named
+temp file, `fsync`ed before the rename, for the same reasons `config.toml`
+does.
+
+And the preserved copy is actually used: while the marker is `false` and
+`config.toml` is unreadable, unparseable, or couldn't be written, those
+legacy settings become the effective ones. "Recreate defaults" still writes
+compiled defaults — that is what the button says — so it discards them; the
+banner offers "Open config" first for exactly that reason.
 
 One extra field, `adaptiveSuggestions`, existed on the frontend but had no
 Rust-side counterpart before this migration; it's now part of the schema
@@ -215,5 +268,10 @@ schema accepts only `"agent"` or `"off"`.
   patch, invalid values, unsupported future schema, malformed cold-start and
   hot-reload behavior, generation conflicts, reset/backup, and the legacy
   migration extraction (including the `adaptiveSuggestions` normalization).
+  Also: the compare-and-swap that refuses a write on a stale base, temp-file
+  cleanup, external-edit adoption (generation bump + dedup on re-read),
+  `ConfigStatus`'s wire shape, and that a malformed or unreadable
+  `config.toml` never reports migration as done.
 - Rust: `src-tauri/src/state/app_state.rs` — a legacy `settings` key in
-  `state.json` doesn't break parsing of the rest of the file.
+  `state.json` doesn't break parsing of the rest of the file, survives a save
+  made before migration is recorded, and is dropped once it is.

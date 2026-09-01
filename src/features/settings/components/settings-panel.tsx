@@ -36,7 +36,7 @@ import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
 import { updater } from "@/features/updater/lib/updater-api";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
 import { useSettingsNav, type SettingsSection } from "../stores/settings-nav-store";
-import { openConfigFile, resetConfig } from "../lib/atlas-config-api";
+import { openConfigFile } from "../lib/atlas-config-api";
 
 const SECTIONS: Array<{
   id: SettingsSection;
@@ -187,7 +187,7 @@ interface CliStatus {
 function GeneralSettings() {
   const settings = useProjectStore.use.settings();
   const configError = useProjectStore.use.configError();
-  const { updateSettings, clearConfigError } = useProjectStore.use.actions();
+  const { updateSettings, clearConfigError, resetConfig } = useProjectStore.use.actions();
   const [cli, setCli] = useState<CliStatus | null>(null);
   const [installing, setInstalling] = useState(false);
   const [resettingConfig, setResettingConfig] = useState(false);
@@ -195,12 +195,11 @@ function GeneralSettings() {
   const recreateConfigDefaults = async () => {
     setResettingConfig(true);
     try {
-      const snapshot = await resetConfig();
-      useProjectStore.setState({
-        settings: snapshot.settings,
-        configGeneration: snapshot.generation,
-        configError: null,
-      });
+      // The store action owns both the state write and the resulting side
+      // effects (theme, zoom). Doing it here with `setState` raced the
+      // `atlas:config-changed` listener and skipped those side effects
+      // whenever this path won.
+      await resetConfig();
       toast.success("config.toml reset to defaults (previous file backed up alongside it)");
     } catch (e) {
       toast.error(`Reset failed: ${e instanceof Error ? e.message : String(e)}`);

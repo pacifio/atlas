@@ -3,7 +3,7 @@
 //! JS side via `#[serde(rename_all = "camelCase")]` so the frontend can use
 //! the deserialized payload verbatim.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -403,9 +403,55 @@ impl AppState {
         (state, legacy_settings)
     }
 
-    /// Atomic write — `state.json.tmp` then `rename` so a crash mid-write
-    /// can never leave a torn JSON file behind.
+    /// Merge `state` over whatever `state.json` already holds, rather than
+    /// replacing the file wholesale.
+    ///
+    /// The typed `AppState` deliberately has no `settings` field any more
+    /// (issue #64), so `to_string_pretty(state)` DROPS the legacy `settings`
+    /// object — the very thing `atlas_config::bootstrap` still needs whenever
+    /// migration hasn't succeeded yet. A save triggered for some unrelated
+    /// reason (a rotated telemetry id, say) would then destroy the user's only
+    /// surviving copy of their preferences. Merging preserves it, and any
+    /// other key an older or newer build writes, for exactly the reason
+    /// `config.toml` patches preserve unknown TOML keys.
+    ///
+    /// Once migration IS recorded as done the legacy copy has served its
+    /// purpose and is dropped, so `state.json` doesn't carry a stale shadow of
+    /// `config.toml` forever.
+    fn merged_for_save(path: &Path, state: &AppState) -> serde_json::Result<serde_json::Value> {
+        let mut merged = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .filter(serde_json::Value::is_object)
+            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+
+        let fresh = serde_json::to_value(state)?;
+        if let (Some(dst), Some(src)) = (merged.as_object_mut(), fresh.as_object()) {
+            for (k, v) in src {
+                dst.insert(k.clone(), v.clone());
+            }
+            if state.settings_config_migrated {
+                dst.remove("settings");
+            }
+        }
+        Ok(merged)
+    }
+
+    /// Atomic write — a uniquely-named temp file then `rename`, so a crash
+    /// mid-write can never leave a torn JSON file behind.
+    ///
+    /// The temp name carries a UUID rather than being the fixed
+    /// `state.json.tmp`: saves overlap in practice (the boot-time telemetry-id
+    /// / migration-marker write against the frontend's debounced flush), and
+    /// two of them sharing one temp path can interleave into exactly the torn
+    /// file the rename is supposed to prevent. That matters more since
+    /// [`Self::merged_for_save`] made this a read-modify-write, and because
+    /// this file holds the only copy of the legacy settings until migration
+    /// succeeds. `sync_all` before the rename is what makes the atomicity
+    /// real — otherwise the rename can reach disk ahead of its bytes.
     pub fn save(app: &AppHandle, state: &AppState) -> std::io::Result<()> {
+        use std::io::Write;
+
         let Some(path) = Self::path(app) else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -415,12 +461,26 @@ impl AppState {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let tmp = path.with_extension("json.tmp");
-        let raw = serde_json::to_string_pretty(state).map_err(|e| {
+        let tmp = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
+        let merged = Self::merged_for_save(&path, state).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
         })?;
-        std::fs::write(&tmp, raw)?;
-        std::fs::rename(tmp, path)?;
+        let raw = serde_json::to_string_pretty(&merged).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        })?;
+        let written = (|| -> std::io::Result<()> {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(raw.as_bytes())?;
+            f.sync_all()
+        })();
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
         Ok(())
     }
 }
@@ -428,6 +488,82 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tmp_state_path() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("atlas-state-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("state.json")
+    }
+
+    fn state_file_with_legacy_settings(path: &Path) {
+        std::fs::write(
+            path,
+            serde_json::json!({
+                "version": 1,
+                "recentProjects": [],
+                "settings": { "enterToSend": false, "gitBlameInline": false },
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
+    /// The typed `AppState` has no `settings` field any more (issue #64), so
+    /// serializing it over `state.json` wholesale silently DELETES the legacy
+    /// settings object. While `settings_config_migrated` is still false that
+    /// object is the only surviving copy of the user's preferences —
+    /// `config.toml` either doesn't exist yet or couldn't be read — and a save
+    /// fired for an entirely unrelated reason (a rotated telemetry id) must
+    /// not destroy it.
+    #[test]
+    fn a_save_before_migration_preserves_the_legacy_settings() {
+        let path = tmp_state_path();
+        state_file_with_legacy_settings(&path);
+
+        let state = AppState { settings_config_migrated: false, ..AppState::default() };
+        let merged = AppState::merged_for_save(&path, &state).unwrap();
+
+        assert_eq!(
+            merged.get("settings").and_then(|s| s.get("enterToSend")),
+            Some(&serde_json::json!(false)),
+            "the legacy settings must survive a save made for an unrelated reason"
+        );
+    }
+
+    /// ...and once migration IS recorded, the legacy copy has served its
+    /// purpose: drop it rather than carrying a stale shadow of `config.toml`
+    /// in `state.json` forever.
+    #[test]
+    fn a_save_after_migration_drops_the_legacy_settings() {
+        let path = tmp_state_path();
+        state_file_with_legacy_settings(&path);
+
+        let state = AppState { settings_config_migrated: true, ..AppState::default() };
+        let merged = AppState::merged_for_save(&path, &state).unwrap();
+
+        assert!(merged.get("settings").is_none(), "a migrated state.json keeps no settings shadow");
+    }
+
+    /// Merging must not resurrect stale values for keys the struct owns — the
+    /// fresh state always wins on its own fields.
+    #[test]
+    fn merging_lets_the_live_state_win_on_its_own_fields() {
+        let path = tmp_state_path();
+        std::fs::write(
+            &path,
+            serde_json::json!({ "version": 1, "settingsConfigMigrated": false, "recentProjects": [
+                { "name": "old", "path": "/old", "lastOpened": "then" }
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+
+        let state = AppState { settings_config_migrated: true, ..AppState::default() };
+        let merged = AppState::merged_for_save(&path, &state).unwrap();
+
+        assert_eq!(merged["settingsConfigMigrated"], serde_json::json!(true));
+        assert_eq!(merged["recentProjects"], serde_json::json!([]));
+    }
 
     /// Exactly the payload `buildAppStatePayload()` sends — note the absence of
     /// `telemetryAnonId`, which is the whole point.

@@ -3808,16 +3808,14 @@ mod tests {
     use super::*;
 
     fn tmp_root() -> PathBuf {
+        // UUID rather than a nanosecond timestamp: two threads in the same
+        // `cargo test` run landed on the same directory often enough to be
+        // observed (see `tmp_root_isolated` below, which was added to dodge
+        // exactly this), and a collision means one test deletes another's
+        // fixture mid-assertion. Fixing the shared helper removes the flake
+        // for every test that uses it, not just the bundled-skill ones.
         let mut p = std::env::temp_dir();
-        let uniq = format!(
-            "atlas-skills-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        p.push(uniq);
+        p.push(format!("atlas-skills-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&p).unwrap();
         // Make both v1 tools "detected".
         fs::create_dir_all(p.join(".claude")).unwrap();
@@ -3825,13 +3823,9 @@ mod tests {
         p
     }
 
-    /// `tmp_root()` suffixed with a UUID. The bundled-skill tests below don't
-    /// need the `.claude`/`.codex` detection dirs, and running many of them
-    /// concurrently made `tmp_root()`'s nanosecond-timestamp uniqueness
-    /// collide often enough to be observed in practice (two threads landing
-    /// on the same directory, one test's `ensure_bundled_skills_at` write
-    /// racing another's fixture setup) — this closes that without touching
-    /// the shared helper other tests already depend on.
+    /// `tmp_root()` without the `.claude`/`.codex` detection dirs — the
+    /// bundled-skill tests below assert on the canonical store itself and
+    /// don't want either tool to register as detected.
     fn tmp_root_isolated() -> PathBuf {
         let p = std::env::temp_dir().join(format!("atlas-skills-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&p).unwrap();
@@ -5177,6 +5171,40 @@ mod tests {
         let entry = skills.iter().find(|s| s.name == BUNDLED_SKILL_NAME).expect("bundled skill is discoverable");
         assert!(entry.managed);
         assert_eq!(entry.scope, "global");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// Issue #64's acceptance criteria name the skill's *projection*, not just
+    /// its discoverability: "a managed global `self-configure` skill is
+    /// available for supported Atlas agents". Discoverability was covered;
+    /// actually landing it in a tool's skills dir was not.
+    #[test]
+    fn bundled_skill_projects_into_a_supported_tool() {
+        let root = tmp_root_isolated();
+        ensure_bundled_skills_at(&root);
+
+        for tool in ["claude-code", "codex"] {
+            let def = tool_def(tool).expect("tool is in the registry");
+            project(&root, def, "global", BUNDLED_SKILL_NAME, false)
+                .unwrap_or_else(|e| panic!("projecting into {tool} failed: {e}"));
+
+            let link = tool_link_path(&root, def, "global", BUNDLED_SKILL_NAME);
+            let projected = fs::read_to_string(link.join("SKILL.md"))
+                .unwrap_or_else(|e| panic!("{tool} projection has no readable SKILL.md: {e}"));
+            assert_eq!(projected, ATLAS_SELF_CONFIGURE_SKILL_MD);
+
+            // And the ledger knows about it, which is what `reconcile` reads to
+            // report the skill as projected rather than as external drift.
+            let ledger = read_ledger(&root);
+            assert!(
+                ledger
+                    .projections
+                    .get(BUNDLED_SKILL_NAME)
+                    .is_some_and(|per_tool| per_tool.contains_key(def.id)),
+                "{tool} projection was not recorded in the ledger"
+            );
+        }
 
         fs::remove_dir_all(&root).ok();
     }

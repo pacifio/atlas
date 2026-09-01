@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppSettings } from "@/features/project/stores/project-store";
+import type { AppSettings } from "./app-settings";
 
 /**
  * `config.toml` bridge — the validated, human/agent-editable settings file

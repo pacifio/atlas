@@ -17,17 +17,23 @@ import { useOrgStore } from "@/features/organisations/stores/org-store";
 import type { Organisation } from "@/features/organisations/types";
 import { registerFlush } from "@/features/workspaces/lib/flush-registry";
 import { persistHashOf } from "@/features/workspaces/lib/workspace-snapshot";
-import { applyUiScale, DEFAULT_SCALE } from "@/features/settings/lib/ui-scale";
+import { applyUiScale } from "@/features/settings/lib/ui-scale";
 import { applyEditorTheme } from "@/features/editor/themes/apply-editor-theme";
-import { DEFAULT_EDITOR_THEME_ID } from "@/features/editor/themes/themes";
 import { applyAtlasTheme } from "@/features/theme/apply-atlas-theme";
-import { DEFAULT_ATLAS_THEME_ID } from "@/features/theme/themes";
 import {
   updateSettings as updateAtlasConfig,
+  resetConfig as resetAtlasConfig,
   onConfigChanged,
   onConfigError,
+  type ConfigStatus,
   type SettingsPatch,
 } from "@/features/settings/lib/atlas-config-api";
+import { DEFAULT_SETTINGS, type AppSettings } from "@/features/settings/lib/app-settings";
+
+// Re-exported because most of the app reaches for `AppSettings` through the
+// store it reads settings from; the definition itself belongs to the settings
+// feature (see `app-settings.ts`).
+export type { AppSettings };
 
 interface Project {
   name: string;
@@ -39,79 +45,6 @@ interface RecentProject {
   path: string;
   lastOpened: string;
 }
-
-/**
- * App-wide preferences surfaced in Settings → General. Mirrors
- * `src-tauri/src/state/app_state.rs:AppSettings`. Defaults declared on
- * both sides; if you add a field, default it both places.
- */
-export interface AppSettings {
-  /** Auto-add `.atlas/` to each opened git project's `.gitignore`. */
-  autoAddAtlasGitignore: boolean;
-  /** Record Atlas-internal events (sign-in, agent lifecycle, etc.) into
-   *  the Logs panel under the `atlas` source. */
-  enableAtlasLogs: boolean;
-  /** Show dotfiles / dot-directories in the explorer file tree. */
-  showHiddenFiles: boolean;
-  /** Global interface zoom (1 == 100%). Driven by the ⌘+/⌘-/⌘0 hotkeys;
-   *  applied via the native WebView zoom. */
-  uiScale: number;
-  /** Anonymous product telemetry (PostHog). Default ON (opt-out) — gates both
-   *  the Rust emitter and the frontend crash reporter. See
-   *  `src/features/telemetry`. */
-  shareTelemetry: boolean;
-  /** Attribute telemetry to the signed-in Atlas account rather than keeping it
-   *  on the anonymous per-device person. Default ON; irrelevant while signed out
-   *  or while `shareTelemetry` is off — both gate it. */
-  linkTelemetryToAccount: boolean;
-  /** Selected on-device embedding model id (== dir name). Managed by the Local
-   *  Model Manager; carried here so settings round-trips never clobber it. */
-  embeddingModelId: string;
-  /** Code-editor color theme id (see src/features/editor/themes). Drives the
-   *  CodeMirror editor, the diff viewer and the source-control diff views. */
-  codeEditorTheme: string;
-  /** Atlas interface-theme id (see src/features/theme/themes). Swaps the whole
-   *  dark UI palette — background, panels, text, borders and accent — while
-   *  keeping dark-theme primitives. Independent of `codeEditorTheme` (which only
-   *  themes code syntax). Default "atlas-black" = original AMOLED look. */
-  atlasTheme: string;
-  /** Adaptive next-step suggestion chips in the agent chat's per-turn card.
-   *  "agent" (default) asks the coding agent to end each reply with a hidden
-   *  `<next_steps>` block (uses the live session context, no BYOK); "off"
-   *  disables it. (Legacy "parse"/"llm" values are treated as enabled.) */
-  adaptiveSuggestions: "off" | "agent";
-  /** Inline Git blame in the code editor — dim author/age/summary annotation
-   *  trailing the active line. Off = the CodeMirror extension isn't loaded. */
-  gitBlameInline: boolean;
-  /** Auto-update master switch. ON (default) → every startup checks PostHog
-   *  remote config and prompts when a newer signed DMG is available. */
-  autoUpdate: boolean;
-  /** A version the user chose to "Ignore" in the update prompt; the startup
-   *  check won't re-prompt for exactly this version. */
-  updaterIgnoredVersion: string | null;
-  /** Chat composer send gesture. true (default) = Enter sends, Shift+Enter
-   *  inserts a newline (Slack/Discord/ChatGPT convention). false = only
-   *  Cmd/Ctrl+Enter sends, bare Enter always inserts a newline (the old
-   *  default). Cmd/Ctrl+Enter always sends regardless of this setting. */
-  enterToSend: boolean;
-}
-
-const DEFAULT_SETTINGS: AppSettings = {
-  autoAddAtlasGitignore: true,
-  enableAtlasLogs: true,
-  showHiddenFiles: true,
-  uiScale: DEFAULT_SCALE,
-  shareTelemetry: true,
-  linkTelemetryToAccount: true,
-  embeddingModelId: "all-MiniLM-L6-v2",
-  codeEditorTheme: DEFAULT_EDITOR_THEME_ID,
-  atlasTheme: DEFAULT_ATLAS_THEME_ID,
-  adaptiveSuggestions: "agent",
-  gitBlameInline: true,
-  autoUpdate: true,
-  updaterIgnoredVersion: null,
-  enterToSend: true,
-};
 
 /**
  * Wire shape returned by the Rust `bootstrap_app_state` command. Mirrors
@@ -139,6 +72,10 @@ export interface AppStateWire {
   /** Optimistic-concurrency counter for `update_atlas_settings` — see
    *  `atlas-config-api.ts`. */
   configGeneration?: number;
+  /** Whether `config.toml` actually loaded. Anything other than `ok` means
+   *  `settings` above are Atlas's defaults, not the user's. Optional only
+   *  because the bootstrap-failure fallback path builds a payload by hand. */
+  configStatus?: ConfigStatus;
   version: number;
 }
 
@@ -175,6 +112,12 @@ interface ProjectState {
     updateSettings: (partial: Partial<AppSettings>) => void;
     /** Dismiss the current `configError` banner without touching the file. */
     clearConfigError: () => void;
+    /** "Recreate defaults" — the one action allowed to overwrite a malformed
+     *  `config.toml` (Rust backs the old file up first). Owns the state write
+     *  AND the resulting side effects, which is why the Settings panel calls
+     *  this rather than reaching into `setState` itself. Rejects with the
+     *  underlying error so the caller can toast it. */
+    resetConfig: () => Promise<void>;
     /** One-shot hydration from Rust. Called once on app boot. */
     hydrate: (payload: AppStateWire, opts?: { skipActiveSwitch?: boolean }) => void;
   };
@@ -367,6 +310,19 @@ function applySettingsSideEffects(next: AppSettings, previous: AppSettings): voi
   if (next.atlasTheme !== previous.atlasTheme) applyAtlasTheme(next.atlasTheme);
 }
 
+/** How many times a settings write adopts the latest generation and retries
+ *  before giving up and telling the user. See `updateSettings`. */
+const SETTINGS_WRITE_ATTEMPTS = 3;
+
+/** Turn a boot-time `ConfigStatus` into the banner string, or `null` when the
+ *  file loaded cleanly. */
+function configErrorFrom(status: ConfigStatus | undefined): string | null {
+  if (!status || status.status === "ok") return null;
+  return status.status === "usingDefaults"
+    ? `config.toml could not be loaded, so Atlas is running on default settings — your saved preferences are not applied. ${status.error}`
+    : `config.toml is currently invalid; Atlas is running on the last settings that loaded cleanly. ${status.error}`;
+}
+
 export const useProjectStore = createSelectors(
   create<ProjectState>()((set, get) => ({
     currentProject: null,
@@ -444,19 +400,25 @@ export const useProjectStore = createSelectors(
         // an external edit), so a Conflict here does NOT mean someone else
         // wanted this same key — it just means the base this patch was
         // computed against is out of date. Adopt the fresh generation and
-        // retry the original patch once; only surface an error if it
-        // conflicts again (an actual tight race, not just staleness).
+        // retry the original patch; only surface an error once
+        // `SETTINGS_WRITE_ATTEMPTS` of them have conflicted in a row (an
+        // actual sustained race, not just staleness). A single retry wasn't
+        // enough: during a burst of rapid changes — dragging the zoom slider,
+        // say — a second unrelated write can land between the retry and its
+        // read, silently dropping the user's action.
         const previous = get().settings;
         const optimistic = { ...previous, ...partial };
         set({ settings: optimistic });
         applySettingsSideEffects(optimistic, previous);
 
-        const attempt = (generation: number, isRetry: boolean) => {
+        const attempt = (generation: number, attemptsLeft: number) => {
           updateAtlasConfig(partial as SettingsPatch, generation)
             .then((outcome) => {
               if (outcome.kind === "conflict") {
-                if (isRetry) {
-                  console.warn("updateSettings: conflicted again after adopting latest generation");
+                if (attemptsLeft <= 1) {
+                  console.warn(
+                    "updateSettings: still conflicting after adopting the latest generation",
+                  );
                   set({
                     settings: outcome.settings,
                     configGeneration: outcome.generation,
@@ -467,7 +429,7 @@ export const useProjectStore = createSelectors(
                   return;
                 }
                 set({ configGeneration: outcome.generation });
-                attempt(outcome.generation, true);
+                attempt(outcome.generation, attemptsLeft - 1);
                 return;
               }
               set({
@@ -483,9 +445,19 @@ export const useProjectStore = createSelectors(
               applySettingsSideEffects(previous, optimistic);
             });
         };
-        attempt(get().configGeneration, false);
+        attempt(get().configGeneration, SETTINGS_WRITE_ATTEMPTS);
       },
       clearConfigError: () => set({ configError: null }),
+      resetConfig: async () => {
+        const previous = get().settings;
+        const snapshot = await resetAtlasConfig();
+        set({
+          settings: snapshot.settings,
+          configGeneration: snapshot.generation,
+          configError: null,
+        });
+        applySettingsSideEffects(snapshot.settings, previous);
+      },
       hydrate: (payload: AppStateWire, opts?: { skipActiveSwitch?: boolean }) => {
         // Merge with defaults so an older/mid-migration response missing a
         // brand-new key gets the modern default rather than `undefined` —
@@ -499,7 +471,11 @@ export const useProjectStore = createSelectors(
           recentProjects: payload.recentProjects ?? [],
           settings,
           configGeneration: payload.configGeneration ?? 0,
-          configError: null,
+          // A `config.toml` that failed to load at startup is the one case the
+          // user cannot otherwise notice: every preference silently reads back
+          // as an Atlas default (`shareTelemetry` included). Rust computes the
+          // status at boot; hard-nulling it here is what kept it off screen.
+          configError: configErrorFrom(payload.configStatus),
           hydrated: true,
         });
 

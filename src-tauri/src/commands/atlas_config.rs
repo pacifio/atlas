@@ -20,33 +20,11 @@ use crate::state::{
 use crate::telemetry::TelemetryClient;
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase", tag = "status")]
-pub enum ConfigStatusWire {
-    Ok,
-    UsingLastKnownGood { error: String },
-    UsingDefaults { error: String },
-}
-
-impl From<&ConfigStatus> for ConfigStatusWire {
-    fn from(status: &ConfigStatus) -> Self {
-        match status {
-            ConfigStatus::Ok => ConfigStatusWire::Ok,
-            ConfigStatus::UsingLastKnownGood { error } => {
-                ConfigStatusWire::UsingLastKnownGood { error: error.clone() }
-            }
-            ConfigStatus::UsingDefaults { error } => {
-                ConfigStatusWire::UsingDefaults { error: error.clone() }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigInfo {
     pub path: String,
     pub schema_version: u32,
-    pub status: ConfigStatusWire,
+    pub status: ConfigStatus,
     pub effective_settings: AppSettings,
     pub generation: u64,
     pub unknown_keys: Vec<String>,
@@ -61,7 +39,7 @@ pub fn get_atlas_config_info(state: State<'_, AtlasConfigHandle>) -> ConfigInfo 
     ConfigInfo {
         path: guard.path().to_string_lossy().into_owned(),
         schema_version: crate::state::atlas_config::CONFIG_SCHEMA_VERSION,
-        status: guard.status().into(),
+        status: guard.status().clone(),
         effective_settings: guard.effective().clone(),
         generation: guard.generation(),
         unknown_keys: guard.unknown_keys().to_vec(),
@@ -146,6 +124,12 @@ pub fn notify_settings_changed(app: &AppHandle, settings: &AppSettings, generati
     if let Some(client) = app.try_state::<Arc<TelemetryClient>>() {
         client.set_enabled(settings.share_telemetry);
     }
+    // 3. re-apply `linkTelemetryToAccount`. It is read by
+    //    `commands::auth::sync_identity`, which otherwise only runs on an auth
+    //    *transition* — so without this, turning account linkage off while
+    //    signed in left PostHog attributing events to the account until the
+    //    next sign-out, which is the opposite of what the toggle says.
+    crate::commands::auth::resync_telemetry_identity(app, settings.link_telemetry_to_account);
 }
 
 fn emit_error(app: &AppHandle, error: &ConfigError) {
