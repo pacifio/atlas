@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Wipe all local Atlas app data for a true first-run (macOS).
-# Removes app support, caches, WebKit state, and preferences for both the
-# current bundle id (dev.atlas.ide) and the legacy `atlas` name. Does NOT
+# Removes ~/.config/atlas (config.toml), app support, caches, WebKit state,
+# and preferences for both the current bundle id (dev.atlas.ide) and the
+# legacy `atlas` name. Does NOT
 # touch the repo, build artifacts, or any agent CLI credentials (~/.claude etc).
 set -euo pipefail
 
@@ -12,6 +13,7 @@ fi
 
 removed=0
 for d in \
+  "${XDG_CONFIG_HOME:-$HOME/.config}/atlas" \
   "$HOME/Library/Application Support/dev.atlas.ide" \
   "$HOME/Library/Caches/atlas" \
   "$HOME/Library/Caches/dev.atlas.ide" \

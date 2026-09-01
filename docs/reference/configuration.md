@@ -16,16 +16,37 @@ see [Testing](#testing).
 
 ## Location
 
-| Platform | Path |
-|---|---|
-| macOS | `~/Library/Application Support/dev.atlas.ide/config.toml` |
-| Linux | `~/.config/dev.atlas.ide/config.toml` |
-| Windows | `%APPDATA%\dev.atlas.ide\config.toml` |
+```
+~/.config/atlas/config.toml
+```
 
-Resolved exclusively through Tauri's `app.path().app_config_dir()` — never
-hard-code an OS-specific path in application code; call
-`ConfigManager::config_path` (Rust) or the `get_atlas_config_info` command
-(frontend/agents) instead.
+The same path on every platform, and `$XDG_CONFIG_HOME/atlas/config.toml`
+when that variable is set to an absolute path. A relative value is ignored
+rather than resolved against the cwd — a GUI app launched from Finder has an
+arbitrary one.
+
+Deliberately **not** Tauri's `app_config_dir()`, which on macOS is
+`~/Library/Application Support/dev.atlas.ide/`. This file exists to be opened
+and hand-edited, by a person or an agent, and a path they can type is part of
+that; a bundle id buried under `Application Support` is not. Zed makes the same
+call for the same reason (`~/.config/zed/settings.json` on macOS), and it puts
+Atlas's config beside every other tool a developer already keeps in
+`~/.config`.
+
+This is a split, not a move. Everything else Atlas persists stays in the
+platform data directory, because none of it is a document anyone should be
+editing:
+
+| Stays in `app_config_dir()` | Why |
+|---|---|
+| `state.json` | Workspaces, recents, orgs — machine-managed. |
+| `device.json` | Telemetry identity; see the exclusions below. |
+| `telemetry.json` | Self-hosted PostHog override. |
+| `models-pricing.json`, `byok-usage.jsonl` | Caches. |
+| `session-chat/`, comms state | Session data. |
+
+In application code, call `ConfigManager::config_path()` (Rust) or the
+`get_atlas_config_info` command (frontend) rather than rebuilding the path.
 
 ## Format
 

@@ -156,7 +156,7 @@ pub fn run() {
             // deletes `config.toml` on purpose never gets it silently
             // resurrected from stale `state.json` data.
             let migration =
-                state::atlas_config::bootstrap(app.handle(), loaded.settings_config_migrated, legacy_settings_raw);
+                state::atlas_config::bootstrap(loaded.settings_config_migrated, legacy_settings_raw);
             let migration_marker_changed = migration.mark_migrated && !loaded.settings_config_migrated;
             if migration_marker_changed {
                 loaded.settings_config_migrated = true;

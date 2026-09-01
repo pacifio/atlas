@@ -1,7 +1,7 @@
 //! `AtlasConfig` — the human- and agent-editable settings file.
 //!
 //! Replaces `AppState.settings` (formerly the `settings` object inside
-//! `state.json`). Lives at `<app_config_dir>/config.toml`: TOML rather than
+//! `state.json`). Lives at `~/.config/atlas/config.toml`: TOML rather than
 //! JSON specifically so the file can carry comments, and so a patch (from the
 //! Settings UI or the `atlas-self-configure` skill) can preserve them —
 //! `toml_edit` edits the document key-by-key instead of reserializing the
@@ -45,6 +45,11 @@ use tauri::{AppHandle, Manager};
 pub const CONFIG_SCHEMA_VERSION: u32 = 1;
 
 pub const CONFIG_FILE_NAME: &str = "config.toml";
+
+/// Directory under `~/.config` (or `$XDG_CONFIG_HOME`) holding
+/// [`CONFIG_FILE_NAME`]. Named for the product, not the bundle id: a path a
+/// user types should read `atlas`, not `dev.atlas.ide`.
+pub const CONFIG_DIR_NAME: &str = "atlas";
 
 /// How many times [`ConfigManager::apply_patch`] rebuilds its patch when an
 /// external write lands inside the merge-then-swap window. Three is enough to
@@ -217,8 +222,7 @@ const CONFIG_HEADER: &str = "\
 # this file exactly as you wrote it.
 ";
 
-const SCHEMA_VERSION_DOC: &str = "\
-
+const SCHEMA_VERSION_DOC: &str = "
 # Format version of this file. Atlas manages it; leave it alone.
 ";
 
@@ -795,8 +799,8 @@ pub struct ConfigManager {
 }
 
 impl ConfigManager {
-    pub fn config_path(app: &AppHandle) -> Option<PathBuf> {
-        app.path().app_config_dir().ok().map(|d| d.join(CONFIG_FILE_NAME))
+    pub fn config_path() -> Option<PathBuf> {
+        config_root().map(|d| d.join(CONFIG_FILE_NAME))
     }
 
     pub fn path(&self) -> &Path {
@@ -860,16 +864,15 @@ impl ConfigManager {
     /// Never blocks boot — malformed or missing content degrades to
     /// `AppSettings::default()`, exactly like `AppState::load`'s existing
     /// `unwrap_or_default()` behavior for `state.json`.
-    pub fn load(app: &AppHandle) -> Self {
-        let Some(path) = Self::config_path(app) else {
+    pub fn load() -> Self {
+        let Some(path) = Self::config_path() else {
             return Self::in_memory_defaults(PathBuf::from(CONFIG_FILE_NAME));
         };
         Self::load_at(path)
     }
 
     /// The path-only half of `load` — split out so `bootstrap_at` (and its
-    /// tests) can exercise the real cold-start behavior without needing a
-    /// live `AppHandle`/`app_config_dir` to resolve a path from.
+    /// tests) can exercise the real cold-start behavior against a temp dir.
     fn load_at(path: PathBuf) -> Self {
         match fs::read_to_string(&path) {
             Ok(raw) => Self::from_raw(path.clone(), &raw).unwrap_or_else(|e| {
@@ -1123,6 +1126,43 @@ fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// `~/.config/atlas/` — deliberately NOT Tauri's `app_config_dir()`, which on
+/// macOS is `~/Library/Application Support/dev.atlas.ide/`.
+///
+/// `config.toml` is meant to be opened, read and hand-edited, by a person or
+/// by an agent; a path they can type is part of that, and a bundle id buried
+/// under `Application Support` is not. Zed makes the same call for the same
+/// reason (`~/.config/zed/settings.json` on macOS), and it puts Atlas's config
+/// beside every other tool a developer already keeps under `~/.config`.
+///
+/// This is a split, not a move: everything else Atlas persists —
+/// `state.json`, `device.json`, `telemetry.json`, the models-pricing cache,
+/// session chat — stays in the platform data directory. Those are
+/// machine-managed state, not documents, and nobody should be editing them.
+fn config_root() -> Option<PathBuf> {
+    let xdg = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+    let home = dirs::home_dir().or_else(|| std::env::var_os("HOME").map(PathBuf::from));
+    config_root_from(xdg.as_deref(), home.as_deref())
+}
+
+/// The decision itself, taking its inputs rather than reading the environment,
+/// so it can be tested without racing every other test in the process over
+/// `set_var`.
+///
+/// `$XDG_CONFIG_HOME` wins when it is set to an absolute path — the convention
+/// everywhere the variable means anything, and how a user relocates config for
+/// every other tool they run. A relative value is ignored rather than resolved
+/// against the cwd: the cwd of a GUI app launched from Finder is arbitrary,
+/// and writing config into it would be worse than falling back.
+fn config_root_from(xdg: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
+    if let Some(xdg) = xdg {
+        if xdg.is_absolute() {
+            return Some(xdg.join(CONFIG_DIR_NAME));
+        }
+    }
+    home.map(|home| home.join(".config").join(CONFIG_DIR_NAME))
+}
+
 /// Thread-safe handle registered as Tauri managed state, mirroring
 /// `AppStateHandle`'s shape.
 pub type AtlasConfigHandle = Arc<Mutex<ConfigManager>>;
@@ -1178,15 +1218,14 @@ pub struct MigrationOutcome {
 }
 
 pub fn bootstrap(
-    app: &AppHandle,
     marker_already_set: bool,
     legacy_settings_raw: Option<serde_json::Value>,
 ) -> MigrationOutcome {
-    let Some(path) = ConfigManager::config_path(app) else {
+    let Some(path) = ConfigManager::config_path() else {
         // No resolvable config dir at all (no $HOME / no %APPDATA%). Defaults
         // keep the app usable, but this is a failure and must reach the
         // banner rather than passing for a healthy load.
-        let mut manager = ConfigManager::load(app);
+        let mut manager = ConfigManager::load();
         manager.status = ConfigStatus::UsingDefaults {
             error: "could not resolve the Atlas config directory".to_string(),
         };
@@ -1196,9 +1235,8 @@ pub fn bootstrap(
 }
 
 /// The actual migration decision, split out from `bootstrap` so it's
-/// testable against a real temp-dir path without needing a live `AppHandle`
-/// to resolve one from — `ConfigManager::config_path` requires a running
-/// Tauri app, which `#[cfg(test)]` here has no way to construct.
+/// testable against a real temp-dir path rather than whatever
+/// `config_root()` resolves to on the machine running the tests.
 fn bootstrap_at(
     path: PathBuf,
     marker_already_set: bool,
@@ -1268,6 +1306,53 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("atlas-config-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         dir.join(CONFIG_FILE_NAME)
+    }
+
+    // ── config_root (issue #64 follow-up: ~/.config/atlas, not the bundle id) ──
+
+    #[test]
+    fn config_lives_under_dot_config_atlas_not_the_bundle_id() {
+        let home = PathBuf::from("/Users/someone");
+        let root = config_root_from(None, Some(&home)).expect("a home resolves a root");
+
+        assert_eq!(root, PathBuf::from("/Users/someone/.config/atlas"));
+        assert_eq!(root.join(CONFIG_FILE_NAME), PathBuf::from("/Users/someone/.config/atlas/config.toml"));
+        // The whole point: nothing here reads `dev.atlas.ide`.
+        assert!(!root.to_string_lossy().contains("dev.atlas.ide"));
+        assert!(!root.to_string_lossy().contains("Application Support"));
+    }
+
+    /// `$XDG_CONFIG_HOME` is how a user relocates config for every other tool
+    /// they run; honouring it is the price of living in `~/.config`.
+    #[test]
+    fn an_absolute_xdg_config_home_wins() {
+        let xdg = PathBuf::from("/elsewhere/cfg");
+        let home = PathBuf::from("/Users/someone");
+
+        let root = config_root_from(Some(&xdg), Some(&home)).unwrap();
+
+        assert_eq!(root, PathBuf::from("/elsewhere/cfg/atlas"));
+    }
+
+    /// A relative `$XDG_CONFIG_HOME` is ignored rather than resolved against
+    /// the cwd — a GUI app launched from Finder has an arbitrary one, and
+    /// writing config into it is worse than falling back to `$HOME`.
+    #[test]
+    fn a_relative_xdg_config_home_is_ignored() {
+        let xdg = PathBuf::from("relative/cfg");
+        let home = PathBuf::from("/Users/someone");
+
+        let root = config_root_from(Some(&xdg), Some(&home)).unwrap();
+
+        assert_eq!(root, PathBuf::from("/Users/someone/.config/atlas"));
+    }
+
+    /// No home and no usable XDG: there is nowhere to put it, and `load`
+    /// degrades to in-memory defaults rather than inventing a path.
+    #[test]
+    fn no_home_and_no_xdg_resolves_nothing() {
+        assert_eq!(config_root_from(None, None), None);
+        assert_eq!(config_root_from(Some(&PathBuf::from("rel")), None), None);
     }
 
     #[test]

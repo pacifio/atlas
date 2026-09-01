@@ -11,9 +11,13 @@ without touching anything else Atlas persists.
 
 ## Where the file lives
 
-- macOS: `~/Library/Application Support/dev.atlas.ide/config.toml`
-- Linux: `~/.config/dev.atlas.ide/config.toml`
-- Windows: `%APPDATA%\dev.atlas.ide\config.toml`
+```
+~/.config/atlas/config.toml
+```
+
+The same path on every platform. If `$XDG_CONFIG_HOME` is set to an absolute
+path, it's `$XDG_CONFIG_HOME/atlas/config.toml` instead — check that variable
+before assuming.
 
 Editing that file is the supported mechanism, and the only one available to
 you: Atlas's config commands are IPC endpoints reachable from its own UI, not

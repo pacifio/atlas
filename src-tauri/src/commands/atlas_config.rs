@@ -154,6 +154,13 @@ pub fn start_watcher(app: &AppHandle, handle: AtlasConfigHandle) {
             None => return,
         }
     };
+    // The watch target must exist before `notify` can watch it. `bootstrap`
+    // normally creates it on the way in (writing the file creates the dir),
+    // but not if that write failed — and unlike the old Application Support
+    // location, `~/.config/atlas` is a directory nothing else creates.
+    if let Err(e) = std::fs::create_dir_all(&watch_dir) {
+        tracing::warn!(target: "atlas::config", "could not create {}: {e}", watch_dir.display());
+    }
     let config_file_name = crate::state::atlas_config::CONFIG_FILE_NAME.to_string();
     let app = app.clone();
 
