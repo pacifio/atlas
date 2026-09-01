@@ -29,6 +29,29 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Pick the rustls crypto provider, once, before anything can open a TLS
+    // connection.
+    //
+    // rustls 0.23 refuses to guess when more than one provider is compiled in,
+    // and this graph has two: `ring` (via sqlx, through the vendored Codex
+    // state store) and `aws-lc-rs` (via rama-tls / aws-smithy, through the
+    // vendored network proxy). Neither is removable, and cargo's feature
+    // unification turns "two dependencies each chose one" into "rustls sees
+    // both and panics at the first handshake" — on a background worker, far
+    // from anything that looks related.
+    //
+    // It was dormant until team chat opened the first rustls socket at runtime.
+    // Installing explicitly is the documented remedy and it is process-global,
+    // so it belongs here rather than in whichever subsystem happens to connect
+    // first. `aws-lc-rs` is rustls's own default of the two.
+    if rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .is_err()
+    {
+        // Already installed — only possible if something ran earlier than this.
+        tracing::debug!("rustls crypto provider was already installed");
+    }
+
     // Install a tracing subscriber that prints `tracing::info!` etc. to
     // stderr. Verbosity is controlled by `RUST_LOG`; see `logging.rs`.
     logging::init();
@@ -191,6 +214,10 @@ pub fn run() {
                     .app_config_dir()
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
                 app.manage(commands::auth::AuthState::new(config_dir));
+                // Team chat's socket, before `restore_on_launch` broadcasts:
+                // that broadcast is what points it at an Organisation, and a
+                // manager that is not yet managed would miss the first one.
+                commands::comms::install(app.handle());
                 commands::auth::restore_on_launch(app.handle());
 
                 // Seed the Organisation every event is attributed to, from the
@@ -290,6 +317,34 @@ pub fn run() {
             commands::auth::auth_cancel_sign_in,
             commands::auth::auth_sign_out,
             commands::auth::auth_set_active_org,
+            commands::comms::comms_ready,
+            commands::comms::comms_fetch_attachment,
+            commands::comms::comms_status,
+            commands::comms::comms_snapshot,
+            commands::comms::comms_open_conversation,
+            commands::comms::comms_close_conversation,
+            commands::comms::comms_conversation_snapshot,
+            commands::comms::comms_load_older,
+            commands::comms::comms_send,
+            commands::comms::comms_upload_attachment,
+            commands::comms::comms_cancel_upload,
+            commands::comms::comms_edit,
+            commands::comms::comms_delete,
+            commands::comms::comms_react,
+            commands::comms::comms_pin,
+            commands::comms::comms_read,
+            commands::comms::comms_typing,
+            commands::comms::comms_create_channel,
+            commands::comms::comms_create_dm,
+            commands::comms::comms_create_group_dm,
+            commands::comms::comms_join,
+            commands::comms::comms_invite,
+            commands::comms::comms_leave,
+            commands::comms::comms_patch_conversation,
+            commands::comms::comms_search,
+            commands::comms::comms_reconnect,
+            commands::comms::comms_disconnect,
+            commands::comms::comms_base_url,
             commands::auth::auth_create_org,
             commands::auth::auth_check_org_slug,
             commands::auth::auth_list_members,

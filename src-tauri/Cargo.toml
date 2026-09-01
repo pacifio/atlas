@@ -86,6 +86,11 @@ atlas-native-agent = { path = "../crates/atlas-native-agent" }
 # Atlas's session history — the only source for the sidebar (ADR-0001).
 atlas-thread-metadata = { path = "../crates/atlas-thread-metadata" }
 atlas-bus = { path = "../crates/atlas-bus" }
+atlas-comms = { path = "../crates/atlas-comms" }
+# Only to name a crypto provider at startup — see `run()`. Both `ring` and
+# `aws-lc-rs` are already in the graph via the vendored Codex tree, which is
+# exactly why rustls cannot pick one on its own.
+rustls = { version = "0.23", features = ["aws-lc-rs"] }
 agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
 atlas-terminal = { path = "../crates/atlas-terminal" }
 atlas-embed = { path = "../crates/atlas-embed" }

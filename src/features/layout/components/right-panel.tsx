@@ -27,6 +27,14 @@ const GithubPanel = lazy(() =>
     default: m.GithubPanel,
   })),
 );
+// Team chat shares the right slot with source control — ⌘⇧C claims it, ⌘⇧B
+// claims it back. Lazy for the same reason as the panels above: it is never on
+// screen during the boot cascade unless the slot was left on chat.
+const CommsPanel = lazy(() =>
+  import("@/features/comms/components/comms-panel").then((m) => ({
+    default: m.CommsPanel,
+  })),
+);
 const sections = [
   { id: "changes" as const, label: "Source Control", icon: GitCompare },
   { id: "git-graph" as const, label: "Commit", icon: GitCommit },
@@ -34,8 +42,17 @@ const sections = [
 ];
 
 export function RightPanel() {
-  const activeSection = useLayoutStore.use.rightPanel().activeSection;
+  const rightPanel = useLayoutStore.use.rightPanel();
+  const activeSection = rightPanel.activeSection;
   const { setRightSection } = useLayoutStore.use.actions();
+
+  if (rightPanel.mode === "chat") {
+    return (
+      <Suspense fallback={<PanelSkeleton label="Chat" />}>
+        <CommsPanel />
+      </Suspense>
+    );
+  }
 
   return (
     <div className="atlas-vibrant-panel h-full flex flex-col bg-[var(--panel-bg-2)]">

@@ -3,6 +3,7 @@ import { useLogStore } from "@/features/log/stores/log-store";
 import { flushAll } from "@/features/workspaces/lib/flush-registry";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { resetGitSummariesForOrgSwitch } from "@/features/workspaces/stores/workspace-git-store";
+import { commsActions } from "@/features/comms/stores/comms-store";
 import {
   useProjectStore,
   flushAppStateSave,
@@ -101,6 +102,13 @@ export async function switchOrg(id: string): Promise<void> {
     //    Drop the git-summary "already fetched" flags so the incoming org's
     //    sidebar rows re-validate instead of rendering cached-forever data.
     resetGitSummariesForOrgSwitch();
+
+    //    Close the team-chat socket and drop its projection. There is no
+    //    matching "open" below: step 4's awaited `auth_set_active_org` triggers
+    //    the auth broadcast, and Rust re-points the socket from there — so
+    //    every other path that changes the active org is correct for free.
+    await invoke("comms_disconnect").catch(() => {});
+    commsActions().reset();
 
     // 4) Make the org swap authoritative. `setActiveOrganisation` also
     //    re-points analytics attribution (see `syncOrgTelemetry`), so events

@@ -33,6 +33,7 @@ members = [
   "crates/atlas-bus",
   "crates/atlas-checkpoint",
   "crates/atlas-codeindex",
+  "crates/atlas-comms",
   "crates/atlas-embed",
   "crates/atlas-git",
   "crates/atlas-gitdiff",

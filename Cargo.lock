@@ -834,6 +834,7 @@ dependencies = [
  "atlas-bus",
  "atlas-checkpoint",
  "atlas-codeindex",
+ "atlas-comms",
  "atlas-embed",
  "atlas-git",
  "atlas-gitdiff",
@@ -859,6 +860,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rig-core",
  "rusqlite",
+ "rustls",
  "semver",
  "serde",
  "serde_json",
@@ -1034,6 +1036,23 @@ dependencies = [
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+]
+
+[[package]]
+name = "atlas-comms"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

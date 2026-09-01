@@ -533,7 +533,24 @@ impl AuthCore {
                     avatar_url: avatar.url,
                     avatar_path: avatar.path,
                     orgs,
-                    active_org_id: session.session.active_organization_id,
+                    // The desktop's own choice survives the refresh. #73 made
+                    // this field the organisation every gateway request bills,
+                    // and `set_active_org` documents the independence: web and
+                    // desktop each keep their own last choice. The server's
+                    // value is therefore a *seed* for a session that has never
+                    // chosen — never an override of one that has. Clobbering it
+                    // here was what re-pointed the chat socket (and the billing
+                    // header) at `orgs.first()` a few seconds after every
+                    // launch, until the next manual org switch wrote it back.
+                    //
+                    // Read from `current` (re-fetched after the network work),
+                    // not `previous`: a `set_active_org` that landed during the
+                    // round trips above must not be undone by this write.
+                    active_org_id: current
+                        .identity
+                        .as_ref()
+                        .and_then(|i| i.active_org_id.clone())
+                        .or(session.session.active_organization_id),
                 }),
                 ..current
             },

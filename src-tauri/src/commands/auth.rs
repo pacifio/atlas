@@ -61,6 +61,11 @@ impl AuthState {
 /// transition can forget to update who events are attributed to.
 fn broadcast(app: &AppHandle, snapshot: AuthSnapshot) {
     sync_identity(app, &snapshot);
+    // Team chat's socket follows the active Organisation, and every transition
+    // that can change it — launch restore, sign-in, sign-out, `set_active_org`
+    // — passes through here. Hooking the funnel rather than each call site is
+    // what makes "connect" have no separate path that could be forgotten.
+    crate::commands::comms::retarget(app, &snapshot);
     let _ = app.emit("atlas:auth-changed", snapshot);
 }
 

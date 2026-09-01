@@ -53,6 +53,10 @@ interface LayoutState {
     visible: boolean;
     width: number;
     activeSection: "changes" | "github" | "git-graph";
+    /** The right slot holds one occupant at a time: source control (⌘⇧B) or
+     *  team chat (⌘⇧C). Pressing the other one's key swaps the occupant rather
+     *  than opening a second panel. */
+    mode: "source-control" | "chat";
   };
   /** Per-app KB tab layout — survives tab switches (each KB tab gets the
    *  same panel layout, matching the global-left/right model). */
@@ -111,7 +115,14 @@ interface LayoutState {
 interface LayoutActions {
   actions: {
     toggleLeftPanel: () => void;
+    /** ⌘⇧B — source control. Closes the slot if it already holds source
+     *  control, otherwise takes the slot over from chat. */
     toggleRightPanel: () => void;
+    /** ⌘⇧C — team chat. Mirror of `toggleRightPanel`. */
+    toggleRightChatPanel: () => void;
+    /** Shared implementation: a key that owns a mode either closes the slot
+     *  (it already holds that mode) or claims it. */
+    toggleRightPanelMode: (mode: LayoutState["rightPanel"]["mode"]) => void;
     toggleBottomPanel: () => void;
     toggleChatSidebar: () => void;
     toggleUsagePanel: () => void;
@@ -180,6 +191,7 @@ const initialState: LayoutState = {
     visible: true,
     width: 280,
     activeSection: "changes",
+    mode: "source-control",
   },
   knowledgePanel: {
     showSidebar: true,
@@ -346,9 +358,35 @@ export const useLayoutStore = createSelectors(
             set((s) => {
               s.leftPanel.visible = !s.leftPanel.visible;
             }),
+          toggleRightPanelMode: (mode) =>
+            set((s) => {
+              // Already showing this mode → the key that opened it closes it.
+              // Showing the other mode → swap the occupant, stay open. Closed →
+              // open on this mode.
+              if (s.rightPanel.visible && s.rightPanel.mode === mode) {
+                s.rightPanel.visible = false;
+                return;
+              }
+              s.rightPanel.visible = true;
+              s.rightPanel.mode = mode;
+            }),
           toggleRightPanel: () =>
             set((s) => {
-              s.rightPanel.visible = !s.rightPanel.visible;
+              if (s.rightPanel.visible && s.rightPanel.mode === "source-control") {
+                s.rightPanel.visible = false;
+                return;
+              }
+              s.rightPanel.visible = true;
+              s.rightPanel.mode = "source-control";
+            }),
+          toggleRightChatPanel: () =>
+            set((s) => {
+              if (s.rightPanel.visible && s.rightPanel.mode === "chat") {
+                s.rightPanel.visible = false;
+                return;
+              }
+              s.rightPanel.visible = true;
+              s.rightPanel.mode = "chat";
             }),
           toggleBottomPanel: () =>
             set((s) => {
@@ -401,6 +439,9 @@ export const useLayoutStore = createSelectors(
           revealRightSection: (section) =>
             set((s) => {
               s.rightPanel.visible = true;
+              // The sections are all source-control views, so revealing one has
+              // to claim the slot back from chat.
+              s.rightPanel.mode = "source-control";
               s.rightPanel.activeSection = section;
             }),
           addTab: (tab, groupId) =>
@@ -719,7 +760,12 @@ export const useLayoutStore = createSelectors(
               if (template.panels.bottom !== undefined)
                 s.bottomPanel.visible = template.panels.bottom;
               if (template.leftSection) s.leftPanel.activeSection = template.leftSection;
-              if (template.rightSection) s.rightPanel.activeSection = template.rightSection;
+              // A template naming a section means it wants source control in
+              // the slot; leaving chat there would silently ignore the request.
+              if (template.rightSection) {
+                s.rightPanel.activeSection = template.rightSection;
+                s.rightPanel.mode = "source-control";
+              }
             }),
           setTabDirty: (id, dirty) =>
             set((s) => {
@@ -910,6 +956,10 @@ export const useLayoutStore = createSelectors(
           const RIGHT = ["changes", "github", "git-graph"];
           if (!LEFT.includes(leftPanel.activeSection)) leftPanel.activeSection = "files";
           if (!RIGHT.includes(rightPanel.activeSection)) rightPanel.activeSection = "changes";
+          // Same coercion for the slot occupant — a persisted state predating
+          // the chat panel has no `mode` at all.
+          const RIGHT_MODES = ["source-control", "chat"];
+          if (!RIGHT_MODES.includes(rightPanel.mode)) rightPanel.mode = "source-control";
           // Tabs whose feature has since been removed (pomodoro, model-chat,
           // research…) still sit in persisted state.json; restoring them
           // yields a permanent placeholder tab. Drop them, and repoint
