@@ -34,26 +34,70 @@ patch from the Settings UI or an agent preserves comments, key order, and any
 key Atlas doesn't recognize. Chosen over JSON (no comments) and YAML
 (ambiguous scalar parsing for a file humans and agents both hand-edit).
 
+Atlas writes the file **self-documenting**: a header, then a comment above
+every key giving what it does, its default, and any constraint on its value.
+Those comments come from `SETTINGS_DOCS` in `state/atlas_config.rs` — the same
+table `unknown_keys_in` uses to decide what Atlas recognizes — so they can't
+drift from what validation accepts.
+
+That is deliberate, and it's why the bundled `atlas-self-configure` skill
+carries no key table of its own: an agent reads the real file and gets a
+schema that matches the build in front of it, instead of a copy in a skill
+that was projected into `~/.agents/skills` at some earlier version. The
+`settings_docs_cover_every_setting` and
+`the_self_configure_skill_defers_to_the_files_own_comments` tests hold both
+halves of that in place.
+
+A generated file looks like this (abridged — every key gets the same
+treatment):
+
 ```toml
+# Atlas configuration.
+#
+# Every user-facing Atlas preference lives here. Edit this file by hand or use
+# Settings — both write to it, and Atlas picks up external edits live, with no
+# restart needed for any key below.
+#
+# Your comments, formatting, and any keys Atlas doesn't recognize survive its
+# own writes. An invalid value is rejected whole: Atlas keeps running on the
+# last settings that loaded cleanly, shows the error in Settings, and leaves
+# this file exactly as you wrote it.
+
+# Format version of this file. Atlas manages it; leave it alone.
 schemaVersion = 1
 
 [settings]
+
+# Add `.atlas/` to each opened git project's .gitignore, creating the
+# file if needed. No-op on non-git projects. (default: true)
 autoAddAtlasGitignore = true
-enableAtlasLogs = true
-showHiddenFiles = true
+
+# Interface zoom, where 1.0 is 100%. Also driven by Cmd +/-/0.
+# Must be a number between 0.5 and 2.0. (default: 1.0)
 uiScale = 1.0
-shareTelemetry = true
-linkTelemetryToAccount = true
-embeddingModelId = "all-MiniLM-L6-v2"
-codeEditorTheme = "atlas"
-atlasTheme = "atlas-black"
+
+# Next-step suggestion chips in the agent chat's per-turn card.
+# Exactly "agent" or "off", nothing else. (default: "agent")
 adaptiveSuggestions = "agent"
-gitBlameInline = true
-autoUpdate = true
-# updaterIgnoredVersion is absent unless a version was ignored — TOML has no
-# null, so "unset" means the key doesn't appear at all.
+
+# updaterIgnoredVersion: a release you chose to skip in the update
+# prompt. Absent unless one was ignored — TOML has no null, so "unset"
+# means the key simply isn't here. Delete the line to clear it; never
+# write an empty string.
+
+# Chat composer send gesture. true = Enter sends and Shift+Enter
+# inserts a newline; false = only Cmd/Ctrl+Enter sends. Cmd/Ctrl+Enter
+# sends either way. (default: true)
 enterToSend = true
 ```
+
+Note `updaterIgnoredVersion`: a key that serializes to nothing still gets its
+comment, carried down onto the next key that is present. Otherwise the one key
+whose *absence* carries meaning would be the one key nothing explains.
+
+Comments are only ever written into a file Atlas generates — first migration,
+or "Recreate defaults". Atlas never injects them into a file a user or agent
+wrote; `toml_edit` just preserves whatever comments are already there.
 
 ## Schema
 

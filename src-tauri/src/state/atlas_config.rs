@@ -202,22 +202,122 @@ impl Default for AppSettings {
 /// The full set of keys `AppSettings` knows about, in wire (camelCase) form.
 /// Used to flag anything else in `[settings]` as an unknown key — preserved
 /// on disk and surfaced as a diagnostic, never treated as an error.
-const KNOWN_SETTINGS_KEYS: &[&str] = &[
-    "autoAddAtlasGitignore",
-    "enableAtlasLogs",
-    "showHiddenFiles",
-    "uiScale",
-    "shareTelemetry",
-    "linkTelemetryToAccount",
-    "embeddingModelId",
-    "codeEditorTheme",
-    "atlasTheme",
-    "adaptiveSuggestions",
-    "gitBlameInline",
-    "autoUpdate",
-    "updaterIgnoredVersion",
-    "enterToSend",
+/// Preamble written above `schemaVersion` in every `config.toml` Atlas
+/// generates.
+const CONFIG_HEADER: &str = "\
+# Atlas configuration.
+#
+# Every user-facing Atlas preference lives here. Edit this file by hand or use
+# Settings — both write to it, and Atlas picks up external edits live, with no
+# restart needed for any key below.
+#
+# Your comments, formatting, and any keys Atlas doesn't recognize survive its
+# own writes. An invalid value is rejected whole: Atlas keeps running on the
+# last settings that loaded cleanly, shows the error in Settings, and leaves
+# this file exactly as you wrote it.
+";
+
+const SCHEMA_VERSION_DOC: &str = "\
+
+# Format version of this file. Atlas manages it; leave it alone.
+";
+
+/// camelCase key → the comment written directly above it in a generated
+/// `config.toml`.
+///
+/// This is the schema documentation. The `atlas-self-configure` skill
+/// deliberately carries no copy of it: the agent reads the real file, which
+/// explains itself, rather than a table that can drift from the code. A key
+/// missing an entry here therefore ships undocumented —
+/// `settings_docs_cover_every_setting` fails the build if that happens.
+///
+/// Order matches `AppSettings`' field order, and so the generated file's. That
+/// matters for a key that serializes to nothing (`updaterIgnoredVersion` when
+/// unset): its comment is carried down onto the next key that IS present,
+/// rather than dropped.
+const SETTINGS_DOCS: &[(&str, &str)] = &[
+    (
+        "autoAddAtlasGitignore",
+        "# Add `.atlas/` to each opened git project's .gitignore, creating the\n\
+         # file if needed. No-op on non-git projects. (default: true)",
+    ),
+    (
+        "enableAtlasLogs",
+        "# Record Atlas-internal events (sign-in, agent lifecycle, file and\n\
+         # browser opens) into the Logs panel. (default: true)",
+    ),
+    (
+        "showHiddenFiles",
+        "# Show dotfiles and dot-directories in the explorer file tree.\n\
+         # (default: true)",
+    ),
+    (
+        "uiScale",
+        "# Interface zoom, where 1.0 is 100%. Also driven by Cmd +/-/0.\n\
+         # Must be a number between 0.5 and 2.0. (default: 1.0)",
+    ),
+    (
+        "shareTelemetry",
+        "# Anonymous product telemetry. Opt-OUT: on by default, coarse metadata\n\
+         # only, never file contents or prompts. See TELEMETRY.md.\n\
+         # (default: true)",
+    ),
+    (
+        "linkTelemetryToAccount",
+        "# Attribute telemetry to your signed-in Atlas account instead of the\n\
+         # anonymous per-device id. Irrelevant while signed out, or while\n\
+         # shareTelemetry is false — both gate it. (default: true)",
+    ),
+    (
+        "embeddingModelId",
+        "# On-device embedding model, named by its directory. Normally managed\n\
+         # for you by the Local Model Manager. Must not be empty.\n\
+         # (default: \"all-MiniLM-L6-v2\")",
+    ),
+    (
+        "codeEditorTheme",
+        "# Code-editor colour theme id — themes code syntax in the editor and\n\
+         # both diff views. Must not be empty. (default: \"atlas\")",
+    ),
+    (
+        "atlasTheme",
+        "# Atlas interface theme id — repaints the whole UI palette, separately\n\
+         # from codeEditorTheme. Must not be empty. (default: \"atlas-black\")",
+    ),
+    (
+        "adaptiveSuggestions",
+        "# Next-step suggestion chips in the agent chat's per-turn card.\n\
+         # Exactly \"agent\" or \"off\", nothing else. (default: \"agent\")",
+    ),
+    (
+        "gitBlameInline",
+        "# Inline git blame — a dim author/age/summary annotation trailing the\n\
+         # active line in the editor. (default: true)",
+    ),
+    (
+        "autoUpdate",
+        "# Check for a newer signed Atlas release on startup and prompt when one\n\
+         # is available. (default: true)",
+    ),
+    (
+        "updaterIgnoredVersion",
+        "# updaterIgnoredVersion: a release you chose to skip in the update\n\
+         # prompt. Absent unless one was ignored — TOML has no null, so \"unset\"\n\
+         # means the key simply isn't here. Delete the line to clear it; never\n\
+         # write an empty string.",
+    ),
+    (
+        "enterToSend",
+        "# Chat composer send gesture. true = Enter sends and Shift+Enter\n\
+         # inserts a newline; false = only Cmd/Ctrl+Enter sends. Cmd/Ctrl+Enter\n\
+         # sends either way. (default: true)",
+    ),
 ];
+
+/// Every key Atlas recognizes under `[settings]`, in file order.
+fn known_settings_keys() -> impl Iterator<Item = &'static str> {
+    SETTINGS_DOCS.iter().map(|(key, _)| *key)
+}
 
 /// One field failed semantic validation. Structural validation only —
 /// deliberately NOT a full theme-id/embedding-model-id catalog membership
@@ -292,14 +392,98 @@ fn unknown_keys_in(document: &toml_edit::DocumentMut) -> Vec<String> {
     table
         .iter()
         .map(|(k, _)| k.to_string())
-        .filter(|k| !KNOWN_SETTINGS_KEYS.contains(&k.as_str()))
+        .filter(|k| !known_settings_keys().any(|known| known == k.as_str()))
         .collect()
 }
 
 fn document_for(settings: &AppSettings) -> toml_edit::DocumentMut {
     let file = AtlasConfigFile { schema_version: CONFIG_SCHEMA_VERSION, settings: settings.clone() };
     let text = toml::to_string_pretty(&file).expect("AppSettings always serializes to TOML");
-    text.parse().expect("freshly-generated TOML always parses")
+    annotate(&text).parse().expect("freshly-generated TOML always parses")
+}
+
+/// Interleave [`CONFIG_HEADER`] and [`SETTINGS_DOCS`] into freshly generated
+/// TOML, so the file Atlas writes explains itself.
+///
+/// Done on the text rather than through `toml_edit`'s decor API for one
+/// reason: a key can be missing from the output entirely (`updaterIgnoredVersion`
+/// serializes to nothing when unset, since TOML has no null), and there is no
+/// decor to hang its comment on. Walking `SETTINGS_DOCS` in order alongside
+/// the generated lines lets an absent key's comment fall through onto the next
+/// key that is present, which is exactly where a reader looking for it will be.
+///
+/// Only ever applied to output this module just generated — never to a file a
+/// user or agent wrote. Comments already in such a file are preserved by
+/// `toml_edit` on patch, and none are ever injected into it.
+fn annotate(generated: &str) -> String {
+    let mut out = String::with_capacity(generated.len() * 3);
+    out.push_str(CONFIG_HEADER);
+
+    let mut docs = SETTINGS_DOCS.iter().peekable();
+    // Comments for keys that serialized to nothing, waiting for the next key
+    // that did.
+    let mut carried: Vec<&str> = Vec::new();
+
+    for line in generated.lines() {
+        // A key line, not the `[settings]` header or a blank: it has an `=`,
+        // and something before it. Getting this wrong once meant `[settings]`
+        // was read as a key, which drained every remaining doc entry into
+        // `carried` and dumped all of them at the bottom of the file.
+        let Some(assigned) = line
+            .split_once('=')
+            .map(|(key, _)| key.trim())
+            .filter(|key| !key.is_empty())
+        else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+
+        if assigned == "schemaVersion" {
+            out.push_str(SCHEMA_VERSION_DOC);
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        // Advance to this key's entry, collecting the comments of any keys it
+        // skipped past (those didn't make it into the output).
+        while docs.peek().is_some_and(|(key, _)| *key != assigned) {
+            let (_, comment) = docs.next().expect("peeked");
+            carried.push(comment);
+        }
+        let Some((_, comment)) = docs.next() else {
+            // Not a documented key (the `[settings]` header, a blank line, or
+            // something new that `settings_docs_cover_every_setting` will
+            // catch) — pass it through untouched.
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+
+        out.push('\n');
+        for skipped in carried.drain(..) {
+            out.push_str(skipped);
+            out.push('\n');
+        }
+        out.push_str(comment);
+        out.push('\n');
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    // Any documented keys after the last one that was emitted.
+    for (_, comment) in docs {
+        out.push('\n');
+        out.push_str(comment);
+        out.push('\n');
+    }
+    for comment in carried {
+        out.push('\n');
+        out.push_str(comment);
+        out.push('\n');
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -1360,8 +1544,8 @@ someFutureKey = \"left alone\"
     // `docs/reference/configuration.md` explicitly claims every schema key
     // appears in both itself and the bundled skill. Compiled in via
     // `include_str!` (not read from disk at test time) so this fails the
-    // build the moment either document drifts from `KNOWN_SETTINGS_KEYS`,
-    // the same way the rest of this crate's `include_str!`'d resources do.
+    // build the moment either document drifts from `SETTINGS_DOCS`, the same
+    // way the rest of this crate's `include_str!`'d resources do.
 
     const CONFIGURATION_DOC: &str = include_str!("../../../docs/reference/configuration.md");
     const SELF_CONFIGURE_SKILL: &str =
@@ -1369,7 +1553,7 @@ someFutureKey = \"left alone\"
 
     #[test]
     fn every_known_setting_key_is_documented_in_the_configuration_reference() {
-        for key in KNOWN_SETTINGS_KEYS {
+        for key in known_settings_keys() {
             assert!(CONFIGURATION_DOC.contains(key), "docs/reference/configuration.md is missing `{key}`");
         }
     }
@@ -1604,13 +1788,79 @@ someFutureKey = \"left alone\"
         assert!(temp_files_beside(&path).is_empty());
     }
 
+    /// The generated file is the schema documentation now — the skill points
+    /// agents at the comments rather than carrying its own copy of the key
+    /// table. So the guard that used to check SKILL.md checks the emitted file
+    /// instead: a key with no `SETTINGS_DOCS` entry would ship undocumented and
+    /// leave an agent with nothing to read.
     #[test]
-    fn every_known_setting_key_is_covered_by_the_self_configure_skill() {
-        for key in KNOWN_SETTINGS_KEYS {
+    fn settings_docs_cover_every_setting() {
+        let rendered = document_for(&AppSettings::default()).to_string();
+        for key in known_settings_keys() {
+            let documented = SETTINGS_DOCS
+                .iter()
+                .find(|(k, _)| *k == key)
+                .is_some_and(|(_, comment)| comment.contains(key) || !comment.trim().is_empty());
+            assert!(documented, "`{key}` has no SETTINGS_DOCS comment");
+        }
+        // And every one of those comments actually reaches the file.
+        for (_, comment) in SETTINGS_DOCS {
+            let first = comment.lines().next().expect("comments are non-empty");
             assert!(
-                SELF_CONFIGURE_SKILL.contains(key),
-                "the atlas-self-configure SKILL.md is missing `{key}`"
+                rendered.contains(first.trim()),
+                "this comment never made it into config.toml: {first}"
             );
         }
+    }
+
+    /// The skill must NOT re-document the keys — that duplication is what the
+    /// comments replaced, and a stale copy is worse than none. It should still
+    /// tell the agent where the file is.
+    #[test]
+    fn the_self_configure_skill_defers_to_the_files_own_comments() {
+        let named: Vec<_> =
+            known_settings_keys().filter(|key| SELF_CONFIGURE_SKILL.contains(*key)).collect();
+        // A worked example may name a key or two; a table of them is the
+        // duplication the file's own comments replaced, and a stale copy of
+        // the schema is worse for an agent than no copy at all.
+        assert!(
+            named.len() < 4,
+            "SKILL.md is re-documenting the schema instead of deferring to config.toml: {named:?}"
+        );
+        assert!(SELF_CONFIGURE_SKILL.contains(CONFIG_FILE_NAME));
+    }
+
+    /// A key absent from the generated output (`updaterIgnoredVersion` when
+    /// unset — TOML has no null) must still get its comment into the file,
+    /// carried down onto the next key that IS present. Otherwise the one key
+    /// whose *absence* is meaningful is the one nothing explains.
+    #[test]
+    fn a_key_that_serializes_to_nothing_still_gets_documented() {
+        let rendered = document_for(&AppSettings::default()).to_string();
+        assert!(
+            !rendered.contains("updaterIgnoredVersion ="),
+            "unset means the key is absent, not written as a sentinel"
+        );
+        assert!(
+            rendered.contains("# updaterIgnoredVersion:"),
+            "its comment must survive even though the key didn't"
+        );
+        // Sitting immediately above the key that follows it in field order.
+        let comment_at = rendered.find("# updaterIgnoredVersion:").unwrap();
+        let next_key_at = rendered.find("enterToSend =").unwrap();
+        assert!(comment_at < next_key_at);
+    }
+
+    /// The annotated file must still be a valid, loadable config — comments
+    /// are decoration, not a second schema.
+    #[test]
+    fn the_annotated_file_round_trips() {
+        let path = tmp_config_path();
+        let settings = AppSettings { ui_scale: 1.25, enter_to_send: false, ..Default::default() };
+        let rendered = document_for(&settings).to_string();
+
+        let mgr = ConfigManager::from_raw(path, &rendered).expect("the generated file parses");
+        assert_eq!(mgr.effective(), &settings);
+        assert!(mgr.unknown_keys().is_empty(), "comments must not read as unknown keys");
     }
 }

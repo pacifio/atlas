@@ -16,89 +16,73 @@ without touching anything else Atlas persists.
 - Windows: `%APPDATA%\dev.atlas.ide\config.toml`
 
 Editing that file is the supported mechanism, and the only one available to
-you: Atlas's own config commands are IPC endpoints reachable from its UI, not
+you: Atlas's config commands are IPC endpoints reachable from its own UI, not
 agent tools. Atlas watches the file and validates every change you make (see
-step 7 below), so a direct edit is a first-class way in — not a workaround.
+step 6 below), so a direct edit is a first-class way in — not a workaround.
 
 If the file does not exist yet, Atlas hasn't created it (a fresh install
 before first launch, or the user deleted it). Do not create one speculatively
 — report that to the user instead of guessing at defaults.
 
-## The schema
+## The schema is in the file
 
-```toml
-schemaVersion = 1
+Atlas writes a comment above every key: what it does, its default, and any
+constraint on its value — a numeric range, an exact set of allowed strings,
+"must not be empty". **Read those comments and follow them.** They are
+generated from the same table Atlas validates against, so they cannot drift
+from what it will actually accept.
 
-[settings]
-autoAddAtlasGitignore = true
-enableAtlasLogs = true
-showHiddenFiles = true
-uiScale = 1.0
-shareTelemetry = true
-linkTelemetryToAccount = true
-embeddingModelId = "all-MiniLM-L6-v2"
-codeEditorTheme = "atlas"
-atlasTheme = "atlas-black"
-adaptiveSuggestions = "agent"
-gitBlameInline = true
-autoUpdate = true
-# updaterIgnoredVersion is absent unless the user has ignored a specific
-# version — TOML has no null, so "unset" means the key isn't there at all.
-enterToSend = true
-```
+Do not work from a schema you remember, or from one you saw in another
+project. The file in front of you is authoritative, and it is the only thing
+guaranteed to match the Atlas build the user is running.
 
-| Key | Type | Default | Meaning |
-|---|---|---|---|
-| `autoAddAtlasGitignore` | boolean | `true` | Adds `.atlas/` to a project's `.gitignore` on open. |
-| `enableAtlasLogs` | boolean | `true` | Records Atlas-internal events into the Logs panel. |
-| `showHiddenFiles` | boolean | `true` | Shows dotfiles in the file explorer. |
-| `uiScale` | number | `1.0` | Interface zoom. **Must be between 0.5 and 2.0.** |
-| `shareTelemetry` | boolean | `true` | Anonymous product telemetry opt-out switch. |
-| `linkTelemetryToAccount` | boolean | `true` | Attribute telemetry to the signed-in account instead of the anonymous device id. |
-| `embeddingModelId` | string | `"all-MiniLM-L6-v2"` | Selected on-device embedding model id. **Must not be empty.** |
-| `codeEditorTheme` | string | `"atlas"` | Code editor color theme id. **Must not be empty.** |
-| `atlasTheme` | string | `"atlas-black"` | Atlas interface theme id. **Must not be empty.** |
-| `adaptiveSuggestions` | `"agent"` \| `"off"` | `"agent"` | Next-step suggestion chips in chat. Exactly one of these two strings — nothing else. |
-| `gitBlameInline` | boolean | `true` | Inline git blame in the editor. |
-| `autoUpdate` | boolean | `true` | Auto-update master switch. |
-| `updaterIgnoredVersion` | string, or the key absent | absent | A version the user chose to skip. Set the key to clear it back to "nothing ignored" by removing the line entirely — do not write an empty string. |
-| `enterToSend` | boolean | `true` | Chat composer send gesture. |
+Two things the comments won't spell out:
 
-Any key not in this table is left alone by Atlas (preserved, surfaced as a
-diagnostic) — never delete a key you don't recognize.
+- **A key that isn't there.** Some settings mean "unset" by being absent —
+  TOML has no null. The comment for such a key sits above whichever key
+  follows it, so read the whole `[settings]` block, not just the lines with
+  values on them. To clear one of these, delete its line; never write an
+  empty string.
+- **A key Atlas doesn't recognize.** It's preserved untouched and reported to
+  the user as a diagnostic. Never delete a key you don't recognize.
 
 ## Making a change
 
-1. **Read the whole file first.** You need to see existing comments and
-   formatting so your edit doesn't disturb them.
-2. **Explain what you're about to change** to the user before writing:
-   the key, its current value, the new value, and what it actually does
-   (from the table above) — don't silently flip a setting.
-3. **Change only the one line (or few lines) you mean to change.** Leave
-   every other key, comment, and blank line exactly as it was. Do not
-   reformat, reorder, or re-indent the rest of the file.
-4. **Validate the value yourself before writing:**
-   - `uiScale` must be a finite number in `[0.5, 2.0]`.
-   - `adaptiveSuggestions` must be exactly `"agent"` or `"off"`.
-   - String fields (`embeddingModelId`, `codeEditorTheme`, `atlasTheme`) must
-     not be empty.
-   - To clear `updaterIgnoredVersion`, remove the line; don't write `""`.
+1. **Read the whole file first.** You need its comments and formatting to
+   avoid disturbing them, and you need the target key's comment to know what
+   a valid value even is.
+2. **Explain what you're about to change** to the user before writing: the
+   key, its current value, the new value, and what it does — quoting the
+   file's own comment. Don't silently flip a setting.
+3. **Change only the line (or few lines) you mean to change.** Leave every
+   other key, comment, and blank line exactly as it was — including the
+   comment above the key you're editing, which is Atlas's to rewrite, not
+   yours. Do not reformat, reorder, or re-indent anything:
+
+   ```diff
+    # Inline git blame — a dim author/age/summary annotation trailing the
+    # active line in the editor. (default: true)
+   -someSetting = true
+   +someSetting = false
+   ```
+4. **Validate the value against that key's comment before writing.** If the
+   comment states a range or a fixed set of values and the user asked for
+   something outside it, say so and stop; don't write it and let Atlas reject
+   it.
 5. **Write atomically:** write your edited content to a new file in the
    *same directory* (e.g. `config.toml.tmp.<random>`), then rename/move it
-   over `config.toml`. Never edit the file in place or write directly to
-   `config.toml` — a crash or a concurrent Atlas reload mid-write must never
-   leave a half-written file behind.
-6. **Re-read the file after writing** to confirm your change landed as
-   expected.
-7. Atlas does its own full validation pass whenever it notices the file
-   changed (this happens live, no restart required for any setting above).
-   If your edit was invalid despite step 4, Atlas rejects it entirely and
-   keeps running on the last good settings — but the *file* stays as you
-   wrote it, and while it is invalid Atlas refuses every settings write from
-   its own UI too, until someone fixes the file or uses "Recreate defaults"
-   (which overwrites it, keeping a `.bak-<unix-seconds>` copy). So an invalid
-   write is not free: report it to the user and offer to restore the content
-   you read in step 1, rather than trying to "fix" the file further yourself.
+   over `config.toml`. Never edit in place — a crash or a concurrent Atlas
+   reload mid-write must not leave a half-written file behind.
+6. **Re-read the file after writing** to confirm your change landed.
+
+Atlas re-validates the whole file whenever it notices a change, live, no
+restart. An invalid edit is rejected entirely and Atlas keeps running on the
+last good settings — but the file stays as you wrote it, and while it's
+invalid Atlas also refuses every settings write from its own UI, until someone
+repairs it or uses "Recreate defaults" (which overwrites it, keeping a
+`.bak-<unix-seconds>` copy). So a bad write is not free: report it and offer to
+restore the exact content you read in step 1, rather than trying to patch your
+way out.
 
 ## What this skill must never touch
 
@@ -115,25 +99,3 @@ diagnostic) — never delete a key you don't recognize.
 
 If a request needs any of the above, say so plainly and stop — it's out of
 scope for this skill, not something to work around.
-
-## Examples
-
-**Turn off a boolean** (`gitBlameInline`):
-```diff
--gitBlameInline = true
-+gitBlameInline = false
-```
-
-**Change an enum** (`adaptiveSuggestions`):
-```diff
--adaptiveSuggestions = "agent"
-+adaptiveSuggestions = "off"
-```
-
-**Change a bounded number** (`uiScale`, requesting 150%):
-```diff
--uiScale = 1.0
-+uiScale = 1.5
-```
-(Reject a request for e.g. `3.0` — out of the `[0.5, 2.0]` range; tell the
-user the valid range instead of writing it anyway.)
