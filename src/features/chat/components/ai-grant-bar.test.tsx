@@ -194,17 +194,23 @@ describe("the grant store's composer lock", () => {
     // The switch can happen mid-flight. org1's "no grant" arriving after the
     // user moved to org2 would lock org2's composer over a grant it may have.
     useAiGrantStore.setState({ probedOrgId: null });
-    let settle: ((v: Entitlement) => void) | undefined;
-    invoke.mockReturnValue(
-      new Promise<Entitlement>((r) => {
-        settle = r;
-      }),
+    // One promise PER probe — a shared `mockReturnValue` promise would also
+    // resolve org_2's own probe, which is entitled to record the answer.
+    const settlers: ((v: Entitlement) => void)[] = [];
+    invoke.mockImplementation(
+      () =>
+        new Promise<Entitlement>((r) => {
+          settlers.push(r);
+        }),
     );
     const { ensureProbed } = useAiGrantStore.getState().actions;
     ensureProbed("org_1");
     ensureProbed("org_2");
-    settle?.(NO_GRANT); // org_1's answer, arriving late
     await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
+    settlers[0]?.(NO_GRANT); // org_1's answer, arriving late
+    // A macrotask, so every pending microtask (the stale probe's continuation
+    // included) has run before the assertion.
+    await new Promise((r) => setTimeout(r, 0));
     expect(useAiGrantStore.getState().entitlement).toBeNull();
   });
 

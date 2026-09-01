@@ -1305,14 +1305,10 @@ async fn a_turn_emits_the_events_the_live_thread_feed_records_on() {
         .await
         .expect("the turn should complete");
 
-    let recorded: Vec<_> = h
-        .drained()
-        .into_iter()
-        .filter(atlas_thread_metadata::affects_thread_metadata)
-        .collect();
-
     assert!(
-        !recorded.is_empty(),
+        h.drained()
+            .into_iter()
+            .any(|event| atlas_thread_metadata::affects_thread_metadata(&event)),
         "an engine turn produced no event the live feed records on, so its \
          store row would never be created or updated",
     );
