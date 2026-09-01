@@ -128,8 +128,12 @@ pub fn run() {
             }
             // Pre-load the Rust-owned `AppState` (currentProject + recents)
             // before the webview starts loading — paid in parallel with the
-            // WebView framework init, ~1ms on warm cache.
-            let mut loaded = AppState::load(app.handle());
+            // WebView framework init, ~1ms on warm cache. `legacy_settings_raw`
+            // is the old `settings` object exactly as it appeared in a
+            // pre-#64 `state.json`, if any — `AppState` no longer has that
+            // field, so it's carried separately for the one-time migration
+            // below rather than being silently dropped by serde.
+            let (mut loaded, legacy_settings_raw) = AppState::load(app.handle());
             // Device-stable telemetry identity, owned by Rust in its own file.
             // It used to live in `state.json` as `telemetry_anon_id`, where every
             // settings save wiped it (the frontend payload omitted the field and
@@ -140,15 +144,41 @@ pub fn run() {
                 telemetry::device::load_or_create(app.handle(), loaded.telemetry_anon_id.as_deref());
             let device_id = device.device_id.clone();
             let device_id_source = device.source;
-            // Mirror it back into `state.json` so the two agree and a downgrade
-            // still finds an id. `AppStatePatch` now stops the frontend wiping it.
-            if loaded.telemetry_anon_id.as_deref() != Some(device_id.as_str()) {
+            let telemetry_id_changed = loaded.telemetry_anon_id.as_deref() != Some(device_id.as_str());
+            if telemetry_id_changed {
                 loaded.telemetry_anon_id = Some(device_id.clone());
+            }
+
+            // `config.toml` (issue #64): user preferences move out of
+            // `state.json.settings` into their own validated, human-editable
+            // file. `bootstrap` imports the legacy settings exactly once,
+            // guarded by `settings_config_migrated` so a user who later
+            // deletes `config.toml` on purpose never gets it silently
+            // resurrected from stale `state.json` data.
+            let migration =
+                state::atlas_config::bootstrap(loaded.settings_config_migrated, legacy_settings_raw);
+            let migration_marker_changed = migration.mark_migrated && !loaded.settings_config_migrated;
+            if migration_marker_changed {
+                loaded.settings_config_migrated = true;
+            }
+            let telemetry_enabled = migration.manager.effective().share_telemetry;
+            let atlas_config: state::AtlasConfigHandle = Arc::new(Mutex::new(migration.manager));
+            app.manage(atlas_config.clone());
+            commands::atlas_config::start_watcher(app.handle(), atlas_config);
+
+            // Mirror the (possibly updated) telemetry id + migration marker
+            // back into `state.json` so both agree and a downgrade still
+            // finds them. `AppStatePatch` stops the frontend wiping either.
+            if telemetry_id_changed || migration_marker_changed {
                 let _ = AppState::save(app.handle(), &loaded);
             }
-            let telemetry_enabled = loaded.settings.share_telemetry;
             let app_state: AppStateHandle = Arc::new(Mutex::new(loaded));
             app.manage(app_state);
+
+            // Bundled `atlas-self-configure` skill (issue #64): install/
+            // upgrade it into the canonical global skills store so it's
+            // discoverable the same way any other managed skill is.
+            commands::skills::ensure_bundled_skills();
 
             // Opt-in product telemetry. Inert unless the user has enabled it AND
             // a PostHog key resolves (env / telemetry.json / build-time default).
@@ -539,6 +569,10 @@ pub fn run() {
             commands::log::clear_project_log,
             commands::app_state::bootstrap_app_state,
             commands::app_state::save_app_state,
+            commands::atlas_config::get_atlas_config_info,
+            commands::atlas_config::update_atlas_settings,
+            commands::atlas_config::reset_atlas_config,
+            commands::atlas_config::open_atlas_config,
             commands::telemetry::telemetry_config,
             commands::telemetry::telemetry_set_enabled,
             commands::telemetry::telemetry_set_org,

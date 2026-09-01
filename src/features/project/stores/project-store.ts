@@ -17,11 +17,23 @@ import { useOrgStore } from "@/features/organisations/stores/org-store";
 import type { Organisation } from "@/features/organisations/types";
 import { registerFlush } from "@/features/workspaces/lib/flush-registry";
 import { persistHashOf } from "@/features/workspaces/lib/workspace-snapshot";
-import { applyUiScale, DEFAULT_SCALE } from "@/features/settings/lib/ui-scale";
+import { applyUiScale } from "@/features/settings/lib/ui-scale";
 import { applyEditorTheme } from "@/features/editor/themes/apply-editor-theme";
-import { DEFAULT_EDITOR_THEME_ID } from "@/features/editor/themes/themes";
 import { applyAtlasTheme } from "@/features/theme/apply-atlas-theme";
-import { DEFAULT_ATLAS_THEME_ID } from "@/features/theme/themes";
+import {
+  updateSettings as updateAtlasConfig,
+  resetConfig as resetAtlasConfig,
+  onConfigChanged,
+  onConfigError,
+  type ConfigStatus,
+  type SettingsPatch,
+} from "@/features/settings/lib/atlas-config-api";
+import { DEFAULT_SETTINGS, type AppSettings } from "@/features/settings/lib/app-settings";
+
+// Re-exported because most of the app reaches for `AppSettings` through the
+// store it reads settings from; the definition itself belongs to the settings
+// feature (see `app-settings.ts`).
+export type { AppSettings };
 
 interface Project {
   name: string;
@@ -33,79 +45,6 @@ interface RecentProject {
   path: string;
   lastOpened: string;
 }
-
-/**
- * App-wide preferences surfaced in Settings → General. Mirrors
- * `src-tauri/src/state/app_state.rs:AppSettings`. Defaults declared on
- * both sides; if you add a field, default it both places.
- */
-export interface AppSettings {
-  /** Auto-add `.atlas/` to each opened git project's `.gitignore`. */
-  autoAddAtlasGitignore: boolean;
-  /** Record Atlas-internal events (sign-in, agent lifecycle, etc.) into
-   *  the Logs panel under the `atlas` source. */
-  enableAtlasLogs: boolean;
-  /** Show dotfiles / dot-directories in the explorer file tree. */
-  showHiddenFiles: boolean;
-  /** Global interface zoom (1 == 100%). Driven by the ⌘+/⌘-/⌘0 hotkeys;
-   *  applied via the native WebView zoom. */
-  uiScale: number;
-  /** Anonymous product telemetry (PostHog). Default ON (opt-out) — gates both
-   *  the Rust emitter and the frontend crash reporter. See
-   *  `src/features/telemetry`. */
-  shareTelemetry: boolean;
-  /** Attribute telemetry to the signed-in Atlas account rather than keeping it
-   *  on the anonymous per-device person. Default ON; irrelevant while signed out
-   *  or while `shareTelemetry` is off — both gate it. */
-  linkTelemetryToAccount: boolean;
-  /** Selected on-device embedding model id (== dir name). Managed by the Local
-   *  Model Manager; carried here so settings round-trips never clobber it. */
-  embeddingModelId: string;
-  /** Code-editor color theme id (see src/features/editor/themes). Drives the
-   *  CodeMirror editor, the diff viewer and the source-control diff views. */
-  codeEditorTheme: string;
-  /** Atlas interface-theme id (see src/features/theme/themes). Swaps the whole
-   *  dark UI palette — background, panels, text, borders and accent — while
-   *  keeping dark-theme primitives. Independent of `codeEditorTheme` (which only
-   *  themes code syntax). Default "atlas-black" = original AMOLED look. */
-  atlasTheme: string;
-  /** Adaptive next-step suggestion chips in the agent chat's per-turn card.
-   *  "agent" (default) asks the coding agent to end each reply with a hidden
-   *  `<next_steps>` block (uses the live session context, no BYOK); "off"
-   *  disables it. (Legacy "parse"/"llm" values are treated as enabled.) */
-  adaptiveSuggestions: "off" | "agent";
-  /** Inline Git blame in the code editor — dim author/age/summary annotation
-   *  trailing the active line. Off = the CodeMirror extension isn't loaded. */
-  gitBlameInline: boolean;
-  /** Auto-update master switch. ON (default) → every startup checks PostHog
-   *  remote config and prompts when a newer signed DMG is available. */
-  autoUpdate: boolean;
-  /** A version the user chose to "Ignore" in the update prompt; the startup
-   *  check won't re-prompt for exactly this version. */
-  updaterIgnoredVersion: string | null;
-  /** Chat composer send gesture. true (default) = Enter sends, Shift+Enter
-   *  inserts a newline (Slack/Discord/ChatGPT convention). false = only
-   *  Cmd/Ctrl+Enter sends, bare Enter always inserts a newline (the old
-   *  default). Cmd/Ctrl+Enter always sends regardless of this setting. */
-  enterToSend: boolean;
-}
-
-const DEFAULT_SETTINGS: AppSettings = {
-  autoAddAtlasGitignore: true,
-  enableAtlasLogs: true,
-  showHiddenFiles: true,
-  uiScale: DEFAULT_SCALE,
-  shareTelemetry: true,
-  linkTelemetryToAccount: true,
-  embeddingModelId: "all-MiniLM-L6-v2",
-  codeEditorTheme: DEFAULT_EDITOR_THEME_ID,
-  atlasTheme: DEFAULT_ATLAS_THEME_ID,
-  adaptiveSuggestions: "agent",
-  gitBlameInline: true,
-  autoUpdate: true,
-  updaterIgnoredVersion: null,
-  enterToSend: true,
-};
 
 /**
  * Wire shape returned by the Rust `bootstrap_app_state` command. Mirrors
@@ -124,7 +63,19 @@ export interface AppStateWire {
   /** The Organisation layer above workspaces (v3). */
   organisations?: Organisation[];
   activeOrganisationId?: string | null;
+  /** Sourced from `config.toml`, not `state.json` (issue #64) — folded into
+   *  this same bootstrap response for one round trip, but written back
+   *  through `update_atlas_settings`, never `save_app_state`. Optional only
+   *  because the bootstrap-failure fallback path constructs a payload by
+   *  hand without it; `hydrate` merges over `DEFAULT_SETTINGS` regardless. */
   settings?: AppSettings;
+  /** Optimistic-concurrency counter for `update_atlas_settings` — see
+   *  `atlas-config-api.ts`. */
+  configGeneration?: number;
+  /** Whether `config.toml` actually loaded. Anything other than `ok` means
+   *  `settings` above are Atlas's defaults, not the user's. Optional only
+   *  because the bootstrap-failure fallback path builds a payload by hand. */
+  configStatus?: ConfigStatus;
   version: number;
 }
 
@@ -132,6 +83,14 @@ interface ProjectState {
   currentProject: Project | null;
   recentProjects: RecentProject[];
   settings: AppSettings;
+  /** The generation of `settings` currently reflected here — every
+   *  `updateSettings` call and every `atlas:config-changed` event advances
+   *  it. See `atlas-config-api.ts`. */
+  configGeneration: number;
+  /** Set when `config.toml` is currently malformed (external edit or a
+   *  rejected write) — `settings` still holds the last valid snapshot.
+   *  `null` when there's nothing to report. Settings UI surfaces this. */
+  configError: string | null;
   /** True until the Rust-side bootstrap returns. UI gates on this to keep
    *  the boot skeleton up rather than flashing an empty WelcomeScreen. */
   hydrated: boolean;
@@ -145,19 +104,46 @@ interface ProjectState {
     setActiveProject: (project: Project | null) => void;
     removeRecent: (path: string) => void;
     clearRecents: () => void;
+    /** Applies + persists a settings change through `config.toml`
+     *  (`update_atlas_settings`) — see `atlas-config-api.ts`. Optimistic:
+     *  the store updates immediately, then reconciles with whatever Rust
+     *  actually committed (a validation failure or a generation conflict
+     *  rolls the optimistic change back to the last-known-good snapshot). */
     updateSettings: (partial: Partial<AppSettings>) => void;
+    /** Dismiss the current `configError` banner without touching the file. */
+    clearConfigError: () => void;
+    /** "Recreate defaults" — the one action allowed to overwrite a malformed
+     *  `config.toml` (Rust backs the old file up first). Owns the state write
+     *  AND the resulting side effects, which is why the Settings panel calls
+     *  this rather than reaching into `setState` itself. Rejects with the
+     *  underlying error so the caller can toast it. */
+    resetConfig: () => Promise<void>;
     /** One-shot hydration from Rust. Called once on app boot. */
     hydrate: (payload: AppStateWire, opts?: { skipActiveSwitch?: boolean }) => void;
   };
 }
 
-// Debounced persistence: the Rust `save_app_state` command takes the full
-// `AppState` payload. Both `useProjectStore` (recents/settings) and
-// `useWorkspaceStore` (workspaces/groups/activeWorkspaceId) contribute to it,
-// so the save reads from both stores at flush time. Coalesced to ~500ms.
-/** Build the full `AppState` payload from every contributing store. Shared by
+/** The `AppStatePatch` shape `save_app_state` actually accepts — settings are
+ *  no longer part of it (issue #64: they persist through `config.toml` /
+ *  `update_atlas_settings` instead, see `updateSettings` below). */
+interface AppStatePatchWire {
+  currentProject: null;
+  recentProjects: RecentProject[];
+  workspaces: Workspace[];
+  groups: WorkspaceGroup[];
+  activeWorkspaceId: string | null;
+  organisations: Organisation[];
+  activeOrganisationId: string | null;
+}
+
+// Debounced persistence: the Rust `save_app_state` command takes the
+// workspaces/recents/orgs slice of `AppState`. Both `useProjectStore`
+// (recents) and `useWorkspaceStore` (workspaces/groups/activeWorkspaceId)
+// contribute to it, so the save reads from both stores at flush time.
+// Coalesced to ~500ms.
+/** Build the `AppStatePatch` payload from every contributing store. Shared by
  *  the debounced + immediate save paths so they never drift. */
-function buildAppStatePayload(): AppStateWire {
+function buildAppStatePayload(): AppStatePatchWire {
   const project = useProjectStore.getState();
   const ws = useWorkspaceStore.getState();
   const org = useOrgStore.getState();
@@ -169,8 +155,6 @@ function buildAppStatePayload(): AppStateWire {
     activeWorkspaceId: ws.activeWorkspaceId,
     organisations: org.organisations,
     activeOrganisationId: org.activeOrganisationId,
-    settings: project.settings,
-    version: 3,
   };
 }
 
@@ -308,11 +292,44 @@ export async function loadProjectStores(path: string): Promise<void> {
   }
 }
 
+/** Re-apply every settings-driven side effect whose value actually changed
+ *  between `previous` and `next`. Shared by `updateSettings` (both the
+ *  optimistic apply and the reconciled result), `hydrate`, and the
+ *  `atlas:config-changed` listener below — one path so a hot-reloaded
+ *  external edit re-applies UI scale/theme/explorer state exactly like a
+ *  UI-driven change does. */
+function applySettingsSideEffects(next: AppSettings, previous: AppSettings): void {
+  // Toggling hidden-files visibility must re-apply the explorer's dotfile
+  // filter immediately. `refresh()` reconciles the root and every expanded
+  // subtree, so the user's expansion state survives.
+  if (next.showHiddenFiles !== previous.showHiddenFiles) {
+    void useExplorerStore.getState().actions.refresh();
+  }
+  if (next.uiScale !== previous.uiScale) applyUiScale(next.uiScale);
+  if (next.codeEditorTheme !== previous.codeEditorTheme) applyEditorTheme(next.codeEditorTheme);
+  if (next.atlasTheme !== previous.atlasTheme) applyAtlasTheme(next.atlasTheme);
+}
+
+/** How many times a settings write adopts the latest generation and retries
+ *  before giving up and telling the user. See `updateSettings`. */
+const SETTINGS_WRITE_ATTEMPTS = 3;
+
+/** Turn a boot-time `ConfigStatus` into the banner string, or `null` when the
+ *  file loaded cleanly. */
+function configErrorFrom(status: ConfigStatus | undefined): string | null {
+  if (!status || status.status === "ok") return null;
+  return status.status === "usingDefaults"
+    ? `config.toml could not be loaded, so Atlas is running on default settings — your saved preferences are not applied. ${status.error}`
+    : `config.toml is currently invalid; Atlas is running on the last settings that loaded cleanly. ${status.error}`;
+}
+
 export const useProjectStore = createSelectors(
   create<ProjectState>()((set, get) => ({
     currentProject: null,
     recentProjects: [],
     settings: DEFAULT_SETTINGS,
+    configGeneration: 0,
+    configError: null,
     hydrated: false,
     actions: {
       openProject: async (path: string) => {
@@ -373,21 +390,78 @@ export const useProjectStore = createSelectors(
         scheduleAppStateSave();
       },
       updateSettings: (partial: Partial<AppSettings>) => {
-        set((s) => ({ settings: { ...s.settings, ...partial } }));
-        scheduleAppStateSave();
-        // Toggling hidden-files visibility must re-apply the explorer's
-        // dotfile filter immediately. `refresh()` reconciles the root and
-        // every expanded subtree, so the user's expansion state survives.
-        if (partial.showHiddenFiles !== undefined) {
-          void useExplorerStore.getState().actions.refresh();
-        }
-        if (partial.uiScale !== undefined) applyUiScale(partial.uiScale);
-        if (partial.codeEditorTheme !== undefined) applyEditorTheme(partial.codeEditorTheme);
-        if (partial.atlasTheme !== undefined) applyAtlasTheme(partial.atlasTheme);
+        // Optimistic: apply immediately so the control feels instant, then
+        // reconcile with whatever `config.toml` actually ends up holding.
+        // Rust validates the full candidate and can reject it outright, or —
+        // on a stale `configGeneration` — refuse to apply and return a
+        // Conflict instead (see `atlas-config-api.ts`). A generation can go
+        // stale without any UI involvement at all (an internal Rust-side
+        // write, e.g. the Local Model Manager persisting a model switch, or
+        // an external edit), so a Conflict here does NOT mean someone else
+        // wanted this same key — it just means the base this patch was
+        // computed against is out of date. Adopt the fresh generation and
+        // retry the original patch; only surface an error once
+        // `SETTINGS_WRITE_ATTEMPTS` of them have conflicted in a row (an
+        // actual sustained race, not just staleness). A single retry wasn't
+        // enough: during a burst of rapid changes — dragging the zoom slider,
+        // say — a second unrelated write can land between the retry and its
+        // read, silently dropping the user's action.
+        const previous = get().settings;
+        const optimistic = { ...previous, ...partial };
+        set({ settings: optimistic });
+        applySettingsSideEffects(optimistic, previous);
+
+        const attempt = (generation: number, attemptsLeft: number) => {
+          updateAtlasConfig(partial as SettingsPatch, generation)
+            .then((outcome) => {
+              if (outcome.kind === "conflict") {
+                if (attemptsLeft <= 1) {
+                  console.warn(
+                    "updateSettings: still conflicting after adopting the latest generation",
+                  );
+                  set({
+                    settings: outcome.settings,
+                    configGeneration: outcome.generation,
+                    configError:
+                      "Settings change conflicted with a concurrent edit — please try again.",
+                  });
+                  applySettingsSideEffects(outcome.settings, optimistic);
+                  return;
+                }
+                set({ configGeneration: outcome.generation });
+                attempt(outcome.generation, attemptsLeft - 1);
+                return;
+              }
+              set({
+                settings: outcome.settings,
+                configGeneration: outcome.generation,
+                configError: null,
+              });
+              applySettingsSideEffects(outcome.settings, optimistic);
+            })
+            .catch((e) => {
+              console.warn("update_atlas_settings failed:", e);
+              set({ settings: previous, configError: String(e) });
+              applySettingsSideEffects(previous, optimistic);
+            });
+        };
+        attempt(get().configGeneration, SETTINGS_WRITE_ATTEMPTS);
+      },
+      clearConfigError: () => set({ configError: null }),
+      resetConfig: async () => {
+        const previous = get().settings;
+        const snapshot = await resetAtlasConfig();
+        set({
+          settings: snapshot.settings,
+          configGeneration: snapshot.generation,
+          configError: null,
+        });
+        applySettingsSideEffects(snapshot.settings, previous);
       },
       hydrate: (payload: AppStateWire, opts?: { skipActiveSwitch?: boolean }) => {
-        // Merge with defaults so older state.json files (written before a new
-        // setting existed) get the modern default rather than `undefined`.
+        // Merge with defaults so an older/mid-migration response missing a
+        // brand-new key gets the modern default rather than `undefined` —
+        // belt-and-suspenders on top of Rust's own field-level defaulting.
         const settings: AppSettings = {
           ...DEFAULT_SETTINGS,
           ...payload.settings,
@@ -396,6 +470,12 @@ export const useProjectStore = createSelectors(
           currentProject: null,
           recentProjects: payload.recentProjects ?? [],
           settings,
+          configGeneration: payload.configGeneration ?? 0,
+          // A `config.toml` that failed to load at startup is the one case the
+          // user cannot otherwise notice: every preference silently reads back
+          // as an Atlas default (`shareTelemetry` included). Rust computes the
+          // status at boot; hard-nulling it here is what kept it off screen.
+          configError: configErrorFrom(payload.configStatus),
           hydrated: true,
         });
 
@@ -449,3 +529,22 @@ export const useProjectStore = createSelectors(
     },
   })),
 );
+
+// `config.toml` can change for reasons other than this window's own
+// `updateSettings` call: the Settings UI edited it in another window (not
+// currently possible — Atlas is single-window — but this is also what fires
+// for a `reset_atlas_config`), or an external editor / the
+// `atlas-self-configure` skill wrote to it directly. Both land here as a hot
+// reload; `applySettingsSideEffects` re-applies exactly the side effects that
+// actually changed, same as a UI-driven update.
+void onConfigChanged(({ settings, generation }) => {
+  const previous = useProjectStore.getState().settings;
+  useProjectStore.setState({ settings, configGeneration: generation, configError: null });
+  applySettingsSideEffects(settings, previous);
+});
+
+// A malformed external edit (or a write Rust rejected) — `settings` is
+// unchanged, this is purely "tell the user".
+void onConfigError((error) => {
+  useProjectStore.setState({ configError: error });
+});

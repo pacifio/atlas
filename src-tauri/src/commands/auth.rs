@@ -60,7 +60,7 @@ impl AuthState {
 /// because of that: a signed-in relaunch is covered for free, and no future
 /// transition can forget to update who events are attributed to.
 fn broadcast(app: &AppHandle, snapshot: AuthSnapshot) {
-    sync_identity(app, &snapshot);
+    sync_identity(app, &snapshot, crate::state::atlas_config::read(app).link_telemetry_to_account);
     // Team chat's socket follows the active Organisation, and every transition
     // that can change it — launch restore, sign-in, sign-out, `set_active_org`
     // — passes through here. Hooking the funnel rather than each call site is
@@ -79,7 +79,24 @@ fn broadcast(app: &AppHandle, snapshot: AuthSnapshot) {
 /// alone: the next successful validation broadcasts a snapshot that has `user`,
 /// and resetting in the gap would bounce attribution back to the device for no
 /// reason.
-fn sync_identity(app: &AppHandle, snapshot: &AuthSnapshot) {
+/// Re-apply the current auth snapshot to the telemetry identity after
+/// `linkTelemetryToAccount` changed.
+///
+/// [`sync_identity`] only ever runs on an auth transition, but that setting
+/// gates it from the settings side and can flip with no transition at all —
+/// so `commands::atlas_config::notify_settings_changed` calls this on every
+/// committed settings change. The flag is passed in rather than read here
+/// because that caller already holds the freshly committed snapshot, and
+/// reaching back into the config mutex from a path that may be running under
+/// it is how a deadlock gets written.
+pub fn resync_telemetry_identity(app: &AppHandle, link_to_account: bool) {
+    if let Some(state) = app.try_state::<AuthState>() {
+        let snapshot = state.core().snapshot();
+        sync_identity(app, &snapshot, link_to_account);
+    }
+}
+
+fn sync_identity(app: &AppHandle, snapshot: &AuthSnapshot, link_to_account: bool) {
     let tel = telemetry(app);
     match snapshot {
         AuthSnapshot::SignedIn {
@@ -88,12 +105,7 @@ fn sync_identity(app: &AppHandle, snapshot: &AuthSnapshot) {
             active_org_id,
         } => {
             // Honour the user's choice to keep analytics off their account.
-            if !app
-                .state::<crate::state::AppStateHandle>()
-                .lock()
-                .settings
-                .link_telemetry_to_account
-            {
+            if !link_to_account {
                 tel.reset_identity();
                 return;
             }

@@ -143,6 +143,13 @@ futures = "0.3"
 ignore = "0.4"
 notify = "8"
 notify-debouncer-full = "0.6"
+# `config.toml` (issue #64): `toml_edit` edits the on-disk document
+# key-by-key so a UI/skill patch preserves comments, ordering and unknown
+# keys instead of reserializing the whole file; `toml` (serde-based) does
+# the typed parse/validate pass. Both pinned versions already exist in the
+# workspace lockfile via vendored deps, so this adds no new resolution.
+toml_edit = "0.24.0"
+toml = "0.9.5"
 # Per-cwd engine registry map for the background memory indexer
 # (`commands::memory_indexer`). Same 6.x already used by the workspace crates.
 dashmap = "6"

@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::memory_indexer::MemoryRegistry;
-use crate::state::app_state::AppStateHandle;
 
 /// Embedding models all expose the same three sentence-transformer files; only the
 /// source repo differs.
@@ -135,11 +134,7 @@ pub fn model_dir_for(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
 }
 
 pub fn selected_embedding_id(app: &AppHandle) -> String {
-    app.state::<AppStateHandle>()
-        .lock()
-        .settings
-        .embedding_model_id
-        .clone()
+    crate::state::atlas_config::read(app).embedding_model_id
 }
 
 /// Whether every file for `id` exists on disk. Uses the catalog's file list; for an
@@ -348,19 +343,30 @@ pub async fn model_select(
         return Err("Download the model before selecting it.".into());
     }
 
-    let state = app.state::<AppStateHandle>();
     let mut needs_reindex = false;
-    {
-        let mut s = state.lock();
-        match entry.kind {
-            ModelKind::Embedding => {
-                if s.settings.embedding_model_id != id {
-                    s.settings.embedding_model_id = id.clone();
-                    needs_reindex = true;
-                }
+    match entry.kind {
+        ModelKind::Embedding => {
+            if crate::state::atlas_config::read(&app).embedding_model_id != id {
+                let patch = crate::state::SettingsPatch {
+                    embedding_model_id: Some(id.clone()),
+                    ..Default::default()
+                };
+                // Off the async runtime thread — this touches the filesystem.
+                let app_for_write = app.clone();
+                let snapshot = tokio::task::spawn_blocking(move || {
+                    crate::state::atlas_config::update(&app_for_write, patch)
+                })
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| format!("save settings: {e}"))?;
+                crate::commands::atlas_config::notify_settings_changed(
+                    &app,
+                    &snapshot.settings,
+                    snapshot.generation,
+                );
+                needs_reindex = true;
             }
         }
-        crate::state::app_state::AppState::save(&app, &s).map_err(|e| format!("save settings: {e}"))?;
     }
 
     // Drop cached models so the next call loads the newly selected one.
