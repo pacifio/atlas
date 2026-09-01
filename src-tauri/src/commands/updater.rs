@@ -49,7 +49,6 @@ const DL_PARALLEL_MIN: u64 = 4 * 1024 * 1024;
 /// Flush accumulated bytes to disk once a segment buffers this much.
 const DL_WRITE_CHUNK: usize = 1024 * 1024;
 
-use crate::state::{AppState, AppStateHandle};
 use crate::telemetry::{RemoteUpdateConfig, TelemetryClient};
 
 /// The running app's version (compile-time). Compared against the remote value.
@@ -154,12 +153,8 @@ fn is_newer(remote: &str, current: &str) -> bool {
 }
 
 fn read_settings(app: &AppHandle) -> (bool, Option<String>) {
-    let state = app.state::<AppStateHandle>();
-    let guard = state.lock();
-    (
-        guard.settings.auto_update,
-        guard.settings.updater_ignored_version.clone(),
-    )
+    let settings = crate::state::atlas_config::read(app);
+    (settings.auto_update, settings.updater_ignored_version)
 }
 
 async fn fetch_remote(app: &AppHandle) -> Option<RemoteUpdateConfig> {
@@ -289,22 +284,18 @@ pub fn update_state(app: AppHandle, state: State<'_, UpdaterState>) -> UpdaterSn
 
 /// Persist a "don't prompt for this version again" choice.
 #[tauri::command]
-pub fn update_ignore(
-    version: String,
-    app: AppHandle,
-    state: State<'_, AppStateHandle>,
-) -> Result<(), String> {
-    let snapshot = {
-        let mut guard = state.lock();
-        guard.settings.updater_ignored_version = Some(version);
-        guard.clone()
+pub async fn update_ignore(version: String, app: AppHandle) -> Result<(), String> {
+    let patch = crate::state::SettingsPatch {
+        updater_ignored_version: Some(Some(version)),
+        ..Default::default()
     };
-    let app2 = app;
-    std::thread::spawn(move || {
-        if let Err(e) = AppState::save(&app2, &snapshot) {
-            tracing::warn!(target: "atlas::updater", "save ignored version failed: {e}");
-        }
-    });
+    // Off the async runtime thread — this touches the filesystem.
+    let app_for_write = app.clone();
+    let snapshot = tokio::task::spawn_blocking(move || crate::state::atlas_config::update(&app_for_write, patch))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    crate::commands::atlas_config::notify_settings_changed(&app, &snapshot.settings, snapshot.generation);
     Ok(())
 }
 
@@ -715,12 +706,7 @@ pub fn apply_on_exit(app: &AppHandle) {
     if !is_newer(&m.version, CURRENT_VERSION) {
         return;
     }
-    let ignored = app
-        .state::<AppStateHandle>()
-        .lock()
-        .settings
-        .updater_ignored_version
-        .clone();
+    let ignored = crate::state::atlas_config::read(app).updater_ignored_version;
     if ignored.as_deref() == Some(m.version.as_str()) {
         return;
     }

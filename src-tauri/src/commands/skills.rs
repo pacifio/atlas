@@ -568,6 +568,86 @@ fn migrate_legacy_skills(root: &Path) {
     }
 }
 
+// ── Bundled skills (issue #64) ──────────────────────────────────────────────
+
+/// Content of the Atlas-owned `atlas-self-configure` skill, compiled into the
+/// binary so installing/upgrading it needs no separate resource-bundling
+/// config — it's just a string embedded at build time.
+const ATLAS_SELF_CONFIGURE_SKILL_MD: &str =
+    include_str!("../../resources/skills/atlas-self-configure/SKILL.md");
+
+/// Name of the one bundled skill Atlas ships today. A second one would want
+/// this generalized into a table; not done speculatively for a list of one.
+const BUNDLED_SKILL_NAME: &str = "atlas-self-configure";
+
+/// Sidecar file recording the hash of the bundled content Atlas itself last
+/// wrote, so a later upgrade can tell "the user never touched this" (safe to
+/// overwrite with the new bundled version) apart from "the user edited this"
+/// (must not clobber their changes — surface drift instead).
+const BUNDLED_HASH_FILE: &str = ".bundled-hash";
+
+fn sha256_hex(content: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(content.as_bytes());
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Install or upgrade the bundled `atlas-self-configure` skill into the
+/// canonical **global** store (`~/.agents/skills/atlas-self-configure`), so
+/// it's discoverable through the exact same `list_skills`/`skills_project`
+/// machinery as any other managed skill — no second delivery path.
+///
+/// Idempotent and safe to call on every launch:
+/// - Missing entirely → write it fresh.
+/// - Present, and its content hash matches the last hash *this function*
+///   recorded → the user never touched it since; safe to overwrite with
+///   whatever this build ships (a normal version upgrade).
+/// - Present, but the hash doesn't match (or the sidecar is missing/
+///   unreadable) → treat as user-modified and leave it alone entirely,
+///   including not touching the sidecar, so the next launch keeps re-
+///   detecting the drift rather than adopting the user's edit as "new
+///   baseline" behind their back.
+///
+/// Global-only, matching the design record: no per-project duplicate.
+pub fn ensure_bundled_skills() {
+    let Some(home) = home_dir() else {
+        return;
+    };
+    ensure_bundled_skills_at(&home);
+}
+
+/// The root-parameterized core of `ensure_bundled_skills`, split out so tests
+/// can point it at a temp dir instead of the real `$HOME` — mirrors every
+/// other function in this file (`root_for`, `skills_base`, `project`, ...)
+/// taking `root: &Path` rather than resolving it internally.
+fn ensure_bundled_skills_at(root: &Path) {
+    let dir = skills_base(root).join(BUNDLED_SKILL_NAME);
+    let skill_md = dir.join("SKILL.md");
+    let hash_file = dir.join(BUNDLED_HASH_FILE);
+    let bundled_hash = sha256_hex(ATLAS_SELF_CONFIGURE_SKILL_MD);
+
+    if skill_md.exists() {
+        let recorded_hash = fs::read_to_string(&hash_file).ok();
+        let on_disk_matches_recorded = fs::read_to_string(&skill_md)
+            .ok()
+            .zip(recorded_hash.as_deref())
+            .map(|(disk, recorded)| sha256_hex(&disk) == recorded.trim())
+            .unwrap_or(false);
+        if !on_disk_matches_recorded {
+            // User-modified (or a pre-#64 install with no sidecar yet) —
+            // never overwrite silently.
+            return;
+        }
+    }
+
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    if fs::write(&skill_md, ATLAS_SELF_CONFIGURE_SKILL_MD).is_ok() {
+        let _ = fs::write(&hash_file, &bundled_hash);
+    }
+}
+
 /// Sanitize a skill name into a safe single path segment.
 ///
 /// - lowercase; `[^a-z0-9._]+` → `-`; collapse runs; strip leading/trailing
@@ -3745,6 +3825,19 @@ mod tests {
         p
     }
 
+    /// `tmp_root()` suffixed with a UUID. The bundled-skill tests below don't
+    /// need the `.claude`/`.codex` detection dirs, and running many of them
+    /// concurrently made `tmp_root()`'s nanosecond-timestamp uniqueness
+    /// collide often enough to be observed in practice (two threads landing
+    /// on the same directory, one test's `ensure_bundled_skills_at` write
+    /// racing another's fixture setup) — this closes that without touching
+    /// the shared helper other tests already depend on.
+    fn tmp_root_isolated() -> PathBuf {
+        let p = std::env::temp_dir().join(format!("atlas-skills-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
     #[test]
     fn sanitize_lowercases_and_replaces_spaces() {
         assert_eq!(sanitize_name("My Cool Skill").unwrap(), "my-cool-skill");
@@ -5054,6 +5147,87 @@ mod tests {
         assert!(ship.path.ends_with("commands/ship.md"));
         assert!(Path::new(&ship.path).is_file());
 
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ── ensure_bundled_skills_at (issue #64) ────────────────────────────
+
+    #[test]
+    fn bundled_skill_is_installed_fresh_into_the_canonical_store() {
+        let root = tmp_root_isolated();
+        ensure_bundled_skills_at(&root);
+
+        let dir = skills_base(&root).join(BUNDLED_SKILL_NAME);
+        let installed = fs::read_to_string(dir.join("SKILL.md")).unwrap();
+        assert_eq!(installed, ATLAS_SELF_CONFIGURE_SKILL_MD);
+        assert!(installed.contains("name: atlas-self-configure"));
+
+        let recorded_hash = fs::read_to_string(dir.join(BUNDLED_HASH_FILE)).unwrap();
+        assert_eq!(recorded_hash.trim(), sha256_hex(ATLAS_SELF_CONFIGURE_SKILL_MD));
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn bundled_skill_appears_as_a_managed_global_skill() {
+        let root = tmp_root_isolated();
+        ensure_bundled_skills_at(&root);
+
+        let skills = list_skills(&root, "global").expect("list_skills succeeds");
+        let entry = skills.iter().find(|s| s.name == BUNDLED_SKILL_NAME).expect("bundled skill is discoverable");
+        assert!(entry.managed);
+        assert_eq!(entry.scope, "global");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn reinstalling_is_idempotent_when_nothing_touched_it() {
+        let root = tmp_root_isolated();
+        ensure_bundled_skills_at(&root);
+        let dir = skills_base(&root).join(BUNDLED_SKILL_NAME);
+        let first_pass = fs::read_to_string(dir.join("SKILL.md")).unwrap();
+
+        // Simulates the next app launch on the same (unmodified) install.
+        ensure_bundled_skills_at(&root);
+        let second_pass = fs::read_to_string(dir.join("SKILL.md")).unwrap();
+
+        assert_eq!(first_pass, second_pass);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_user_edited_skill_is_never_silently_overwritten() {
+        let root = tmp_root_isolated();
+        ensure_bundled_skills_at(&root);
+        let dir = skills_base(&root).join(BUNDLED_SKILL_NAME);
+        let skill_md = dir.join("SKILL.md");
+
+        // The user (or an agent, via the ordinary skills-edit surface) hand-
+        // edits the canonical copy — its hash no longer matches the sidecar.
+        fs::write(&skill_md, "user-modified content").unwrap();
+
+        ensure_bundled_skills_at(&root);
+
+        assert_eq!(fs::read_to_string(&skill_md).unwrap(), "user-modified content");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_skill_with_no_hash_sidecar_is_treated_as_user_owned() {
+        // Covers a pre-#64 install (or any external drop-in) that has a
+        // SKILL.md at this exact canonical path but no `.bundled-hash` —
+        // absence of the sidecar must fail closed (never overwrite), not
+        // open.
+        let root = tmp_root_isolated();
+        let dir = skills_base(&root).join(BUNDLED_SKILL_NAME);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "hand-authored, no sidecar").unwrap();
+
+        ensure_bundled_skills_at(&root);
+
+        assert_eq!(fs::read_to_string(dir.join("SKILL.md")).unwrap(), "hand-authored, no sidecar");
+        assert!(!dir.join(BUNDLED_HASH_FILE).exists());
         fs::remove_dir_all(&root).ok();
     }
 }

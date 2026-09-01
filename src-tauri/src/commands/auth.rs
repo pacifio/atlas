@@ -88,12 +88,7 @@ fn sync_identity(app: &AppHandle, snapshot: &AuthSnapshot) {
             active_org_id,
         } => {
             // Honour the user's choice to keep analytics off their account.
-            if !app
-                .state::<crate::state::AppStateHandle>()
-                .lock()
-                .settings
-                .link_telemetry_to_account
-            {
+            if !crate::state::atlas_config::read(app).link_telemetry_to_account {
                 tel.reset_identity();
                 return;
             }
