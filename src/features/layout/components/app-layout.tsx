@@ -78,7 +78,7 @@ export function AppLayout() {
           Only present when pinned + open; unpinned falls through to the overlay
           below. */}
       {docked && (
-        <div className="h-screen w-[244px] shrink-0 border-r border-[var(--border-default)] bg-[#0C0C0C]">
+        <div className="h-screen w-[244px] shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-elevated)]">
           <WorkspaceSidebar />
         </div>
       )}
