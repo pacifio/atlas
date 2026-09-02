@@ -8,13 +8,18 @@ import {
   useRef,
   useState,
 } from "react";
-import { ChevronDown, ChevronLeft, Hash, Loader2, Lock, Pin, Users } from "lucide-react";
+import { ChevronDown, ChevronLeft, Hash, Lock, Pencil, RefreshCw, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GradualBlur } from "@/components/gradual-blur";
 import { useTranscriptScroll } from "@/features/chat/lib/use-transcript-scroll";
+import { animatedScrollTo } from "@/features/artifacts/lib/scroll-to";
+import { toast } from "sonner";
 import { CommsAvatar } from "./comms-avatar";
 import { CommsComposer } from "./comms-composer";
 import { MessageGroup } from "./message-group";
+import { PinnedMenu } from "./pinned-menu";
+import { RenameChannelMenu } from "./rename-channel-menu";
+import { CallActivity } from "./call-activity";
 import { useCommsStore } from "../stores/comms-store";
 import {
   conversationTitle,
@@ -46,7 +51,13 @@ export const CommsConversation = memo(function CommsConversation({
   const messages = useCommsStore((s) => s.messages[conv.id]) ?? EMPTY_MESSAGES;
   const pinned = useCommsStore.use.pinned();
   const typingRoom = useCommsStore((s) => s.typing[conv.id]);
+  const calls = useCommsStore.use.calls();
   const loading = useCommsStore((s) => s.loading[conv.id] === true);
+  // "Loaded and empty" and "never loaded" look identical in a transcript, so
+  // the intro copy is gated on the former — it used to appear over a fetch
+  // that had quietly failed and claim the channel had no history.
+  const hydrated = useCommsStore((s) => s.hydrated[conv.id] === true);
+  const loadError = useCommsStore((s) => s.loadError[conv.id]);
   const actions = useCommsStore.use.actions();
 
   const members = useMemo(() => new Map(memberList.map((m) => [m.id, m])), [memberList]);
@@ -64,6 +75,22 @@ export const CommsConversation = memo(function CommsConversation({
       return { group, newDay: isNewDay(prev, group.messages[0]) };
     });
   }, [messages, me]);
+
+  // Calls belong to the same timeline as messages and are ordered by the same
+  // org-wide `seq`, so they interleave rather than sitting in a sidebar. Ended
+  // calls stay: the row IS the record that the call happened.
+  const items = useMemo(() => {
+    const callRows = Object.values(calls).filter((c) => c.conv_id === conv.id);
+    if (callRows.length === 0) {
+      return groups.map((g) => ({ kind: "group" as const, seq: g.group.messages[0].seq, ...g }));
+    }
+    const merged = [
+      ...groups.map((g) => ({ kind: "group" as const, seq: g.group.messages[0].seq, ...g })),
+      ...callRows.map((call) => ({ kind: "call" as const, seq: call.seq, call })),
+    ];
+    merged.sort((a, b) => a.seq - b.seq);
+    return merged;
+  }, [groups, calls, conv.id]);
 
   // Stable identities so MessageGroup's memo actually engages — the previous
   // inline arrows gave every group new props on every render, which made the
@@ -99,6 +126,57 @@ export const CommsConversation = memo(function CommsConversation({
     },
   });
 
+  // Jump to a message and flash it. If the target is older than the loaded
+  // window, page history in (bounded) until it appears — the store's
+  // `loadOlder` merges through the same dedupe as everything else.
+  const jumpSeqRef = useRef(0);
+  const jumpToMessage = useCallback(
+    async (messageId: string) => {
+      const seq = ++jumpSeqRef.current;
+      const store = useCommsStore.getState();
+      const present = () =>
+        (useCommsStore.getState().messages[conv.id] ?? []).some((m) => m.id === messageId);
+
+      let pages = 0;
+      while (!present() && pages < 8) {
+        const before = (useCommsStore.getState().messages[conv.id] ?? [])[0]?.seq;
+        await store.actions.loadOlder(conv.id);
+        if (jumpSeqRef.current !== seq) return; // superseded by a newer jump
+        const after = (useCommsStore.getState().messages[conv.id] ?? [])[0]?.seq;
+        if (after === before) break; // no further history
+        pages += 1;
+      }
+      if (!present()) {
+        toast.error("That message is too far back to jump to.");
+        return;
+      }
+
+      // The rows for freshly paged-in history need a paint before they can be
+      // measured; two frames is the cheap, reliable wait for that.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (jumpSeqRef.current !== seq) return;
+          const el = scroller.current;
+          if (!el) return;
+          const node = el.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(messageId)}"]`);
+          if (!node) return;
+          // A jump is a deliberate departure from the live edge — without
+          // this, the bottom-pin yanks the view straight back down.
+          atEndRef.current = false;
+          animatedScrollTo(el, node, { block: "center" });
+          node.classList.remove("atlas-jump-flash");
+          // Force a restart when the same row is jumped to twice in a row.
+          void node.offsetWidth;
+          node.classList.add("atlas-jump-flash");
+          const done = () => node.classList.remove("atlas-jump-flash");
+          node.addEventListener("animationend", done, { once: true });
+          setTimeout(done, 1400);
+        });
+      });
+    },
+    [conv.id, atEndRef],
+  );
+
   // Unseen-message count for the pill label. Counted only while away from the
   // live edge; cleared the moment the reader returns.
   const [newCount, setNewCount] = useState(0);
@@ -128,6 +206,14 @@ export const CommsConversation = memo(function CommsConversation({
     actions.markRead(conv.id);
   }, [conv.id, actions, atEndRef, scrollToBottom]);
 
+  // Last-resort self-heal: any path that renders a conversation without going
+  // through `openConversation` (a restored tab, a retarget, a view swapped in
+  // by something else) still gets its first page. Idempotent — the store
+  // cancels a pending retry before starting another.
+  useEffect(() => {
+    if (!hydrated && !loading && !loadError) actions.retryConversation(conv.id);
+  }, [conv.id, hydrated, loading, loadError, actions]);
+
   // Keyed by user id with the time they last said so; the store ages entries
   // out, since there is no "stopped typing" frame to wait for.
   const typers = useMemo(
@@ -153,6 +239,7 @@ export const CommsConversation = memo(function CommsConversation({
         members={members}
         me={me}
         pinnedCount={pinnedCount}
+        onJumpToMessage={jumpToMessage}
         onBack={actions.goHome}
       />
 
@@ -165,7 +252,7 @@ export const CommsConversation = memo(function CommsConversation({
           height={`${TOP_FADE}px`}
           strength={2}
           layers={4}
-          tint="color-mix(in srgb, var(--panel-bg-2) 90%, transparent)"
+          tint="color-mix(in srgb, var(--comms-surface) 90%, transparent)"
           style={{ zIndex: 3 }}
         />
 
@@ -175,34 +262,55 @@ export const CommsConversation = memo(function CommsConversation({
           className="min-h-0 flex-1 overflow-y-auto hide-scrollbar [overflow-anchor:none]"
         >
           <div ref={content} style={{ paddingTop: TOP_FADE / 2, paddingBottom: 10 }}>
-            {loading && messages.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-2 py-16">
-                <Loader2 size={15} className="animate-spin text-text-tertiary" />
-                <span className="text-[11px] text-text-secondary">Loading messages…</span>
+            {messages.length === 0 && (loading || (!hydrated && !loadError)) ? (
+              <TranscriptSkeleton />
+            ) : messages.length === 0 && loadError ? (
+              <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
+                <span className="text-[12px] font-medium text-text-primary">
+                  Couldn’t load this conversation
+                </span>
+                <span className="max-w-[260px] text-[11px] text-text-tertiary">{loadError}</span>
+                <button
+                  type="button"
+                  onClick={() => actions.retryConversation(conv.id)}
+                  className="mt-1 flex h-[26px] items-center gap-1.5 rounded-md border border-border-default bg-bg-hover px-3 text-[11px] font-medium text-text-primary transition-colors hover:bg-bg-active cursor-pointer"
+                >
+                  <RefreshCw size={11} />
+                  Try again
+                </button>
               </div>
             ) : (
-              <ConversationIntro conv={conv} title={title} isChannel={isChannel} />
+              hydrated && <ConversationIntro conv={conv} title={title} isChannel={isChannel} />
             )}
 
-            {groups.map(({ group, newDay }) => (
-              <Fragment key={group.key}>
-                {newDay && <DayDivider at={group.messages[0].created_at} />}
-                <MessageGroup
-                  messages={group.messages}
-                  own={group.own}
-                  author={members.get(group.authorId) ?? null}
-                  members={members}
-                  me={me}
-                  lookup={lookup}
-                  onReply={onReply}
-                  onEdit={onEdit}
-                  onDelete={onDelete}
-                  onReact={actions.react}
-                  onPin={actions.togglePin}
-                  showAuthor={conv.kind !== "dm"}
+            {items.map((item) =>
+              item.kind === "call" ? (
+                <CallActivity
+                  key={`call:${item.call.id}`}
+                  call={item.call}
+                  author={members.get(item.call.started_by) ?? null}
                 />
-              </Fragment>
-            ))}
+              ) : (
+                <Fragment key={item.group.key}>
+                  {item.newDay && <DayDivider at={item.group.messages[0].created_at} />}
+                  <MessageGroup
+                    messages={item.group.messages}
+                    own={item.group.own}
+                    author={members.get(item.group.authorId) ?? null}
+                    members={members}
+                    me={me}
+                    lookup={lookup}
+                    onReply={onReply}
+                    onEdit={onEdit}
+                    onDelete={onDelete}
+                    onReact={actions.react}
+                    onPin={actions.togglePin}
+                    onJump={jumpToMessage}
+                    showAuthor={conv.kind !== "dm"}
+                  />
+                </Fragment>
+              ),
+            )}
 
             {typers.length > 0 && (
               <TypingHint names={typers.map((id) => members.get(id)?.name ?? "Someone")} />
@@ -223,7 +331,7 @@ export const CommsConversation = memo(function CommsConversation({
           )}
           style={{
             background:
-              "linear-gradient(to bottom, transparent, var(--panel-bg-2) 72%, var(--panel-bg-2))",
+              "linear-gradient(to bottom, transparent, var(--comms-surface) 72%, var(--comms-surface))",
           }}
         />
       </div>
@@ -276,6 +384,7 @@ function ConversationHeader({
   members,
   me,
   pinnedCount,
+  onJumpToMessage,
   onBack,
 }: {
   conv: ChatConversation;
@@ -285,6 +394,7 @@ function ConversationHeader({
   members: Map<string, OrgMemberProfile>;
   me: string;
   pinnedCount: number;
+  onJumpToMessage: (id: string) => void;
   onBack: () => void;
 }) {
   const isChannel = conv.kind === "channel";
@@ -317,9 +427,29 @@ function ConversationHeader({
           online={counterpart ? online.includes(counterpart.id) : false}
         />
       )}
-      <span className="min-w-0 truncate text-[11.5px] font-medium text-text-primary">
-        {isChannel ? conv.name : title}
-      </span>
+      {isChannel ? (
+        // Members may rename a channel (the server checks); hover reveals the
+        // pencil, and DMs never get one — a name there is refused outright.
+        <RenameChannelMenu conv={conv}>
+          <button
+            type="button"
+            title="Rename channel"
+            className="group/title flex min-w-0 items-center gap-1 text-left cursor-pointer"
+          >
+            <span className="min-w-0 truncate text-[11.5px] font-medium text-text-primary">
+              {conv.name}
+            </span>
+            <Pencil
+              size={10}
+              className="shrink-0 text-text-tertiary opacity-0 transition-opacity group-hover/title:opacity-100"
+            />
+          </button>
+        </RenameChannelMenu>
+      ) : (
+        <span className="min-w-0 truncate text-[11.5px] font-medium text-text-primary">
+          {title}
+        </span>
+      )}
 
       {isGroup && (
         <span className="shrink-0 text-[10px] text-text-ghost">
@@ -334,14 +464,12 @@ function ConversationHeader({
 
       <div className="ml-auto flex shrink-0 items-center gap-0.5">
         {pinnedCount > 0 && (
-          <button
-            type="button"
-            title={`${pinnedCount} pinned`}
-            className="flex h-5 items-center gap-1 rounded px-1.5 text-[10px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary cursor-pointer"
-          >
-            <Pin size={10} />
-            <span className="tabular-nums">{pinnedCount}</span>
-          </button>
+          <PinnedMenu
+            convId={conv.id}
+            count={pinnedCount}
+            members={members}
+            onJump={onJumpToMessage}
+          />
         )}
         {(isChannel || isGroup) && (
           <div className="flex items-center -space-x-1.5 pl-1">
@@ -350,7 +478,7 @@ function ConversationHeader({
                 key={id}
                 member={members.get(id) ?? null}
                 size={16}
-                className="ring-2 ring-[var(--panel-bg-2)] rounded-full"
+                className="ring-2 ring-[var(--comms-surface)] rounded-full"
               />
             ))}
           </div>
@@ -417,6 +545,44 @@ function TypingHint({ names }: { names: string[] }) {
         ))}
       </span>
       {label}
+    </div>
+  );
+}
+
+/**
+ * Message-shaped placeholders for a transcript that has not arrived.
+ *
+ * Opacity-only shimmer (`atlas-marker-shimmer`): this renders inside
+ * `atlas-vibrant-panel`, whose grain overlay makes WKWebView mis-composite
+ * anything animating a transform.
+ */
+function TranscriptSkeleton() {
+  return (
+    <div className="flex flex-col gap-3 px-3 py-4">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <div key={i} className="flex gap-2">
+          <div
+            className="h-[30px] w-[30px] shrink-0 rounded-full bg-[var(--bg-elevated)] opacity-50"
+            style={{ animation: "atlas-marker-shimmer 1.4s ease-in-out infinite" }}
+          />
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5 pt-1">
+            <div
+              className="h-[9px] rounded bg-[var(--bg-elevated)] opacity-50"
+              style={{
+                width: 90 + ((i * 31) % 50),
+                animation: "atlas-marker-shimmer 1.4s ease-in-out infinite",
+              }}
+            />
+            <div
+              className="h-[8px] rounded bg-[var(--bg-elevated)] opacity-35"
+              style={{
+                width: `${58 + ((i * 17) % 34)}%`,
+                animation: "atlas-marker-shimmer 1.4s ease-in-out infinite",
+              }}
+            />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

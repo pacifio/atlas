@@ -82,6 +82,7 @@ import {
   listenAuthSignedOut,
 } from "@/features/auth/lib/auth-api";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
+import { useMembersStore } from "@/features/organisations/stores/members-store";
 import { ConnectDialog } from "@/features/auth/components/connect-dialog";
 import { clampScale, SCALE_STEP, DEFAULT_SCALE } from "@/features/settings/lib/ui-scale";
 import { useModelsStore } from "@/features/settings/stores/models-store";
@@ -265,6 +266,20 @@ export function App() {
       window.clearInterval(prune);
     };
   }, []);
+
+  // Warm the member roster at APP scope, so the chat panel's first paint has
+  // names — the panel used to be the only fetcher, which meant a boot with the
+  // panel closed guaranteed an "Unknown"-titled DM list on first open. Guarded
+  // AND keyed on the auth transition (the members-modal pattern): the org id
+  // is persisted locally and ready long before the credential is.
+  const bootRemoteOrgId =
+    bootOrganisations.find((o) => o.id === bootLocalActiveOrg)?.remoteId ?? null;
+  const bootSignedIn = bootAuthStatus === "signed-in";
+  useEffect(() => {
+    if (bootRemoteOrgId && bootSignedIn) {
+      void useMembersStore.getState().actions.load(bootRemoteOrgId);
+    }
+  }, [bootRemoteOrgId, bootSignedIn]);
 
   // NOTE: we intentionally do NOT wipe localStorage on boot anymore. Several
   // stores legitimately persist there via zustand `persist` — the workspace

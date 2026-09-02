@@ -367,7 +367,100 @@ fn urlencode(s: &str) -> String {
         .collect()
 }
 
+/// One participant's recorded track. WebM, one file per participant.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RecordingTrack {
+    pub id: String,
+    pub filename: String,
+    pub bytes: i64,
+    /// A **60-second** link, minted per read against a live membership check —
+    /// so it is fetched at click time and never stored.
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RecordingsResponse {
+    pub state: crate::wire::CallRecordingState,
+    #[serde(default)]
+    pub tracks: Vec<RecordingTrack>,
+}
+
+/// The answer to `GET /calls?conv_id=…&include=recent` (ATL-208): every live
+/// call plus the last 10 ended ones, oldest-first by `seq`. This is how the
+/// web client cold-syncs its call cards, and it is why the desktop does not
+/// need the journal to reach that far back — the DO's `calls` table is never
+/// pruned, only the visible ended set is capped.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CallList {
+    #[serde(default)]
+    pub calls: Vec<crate::wire::Call>,
+}
+
 impl RestClient {
+    /// A conversation's calls: all live ones plus the last 10 ended (ATL-208).
+    ///
+    /// This is the cold-sync path for call history. The journal still delivers
+    /// `call.*` frames live and on resume, but a watermark already at the live
+    /// edge replays nothing — so, like the web client, history is asked for
+    /// over REST and the frames are only an overlay on top of it.
+    pub async fn calls(&self, org: &str, conv_id: &str) -> Result<CallList> {
+        self.json(
+            reqwest::Method::GET,
+            &format!("/calls?conv_id={}&include=recent", urlencode(conv_id)),
+            org,
+            None,
+        )
+        .await
+    }
+
+    /// A call's recorded tracks. Each carries a short-lived URL, so the answer
+    /// is only good for about a minute — ask again rather than caching it.
+    ///
+    /// The server hands the URL back RELATIVE (`../../files/dl/{token}?org=…`,
+    /// resolved against the recordings route itself), so it is made absolute
+    /// here — nothing downstream should ever see a URL reqwest cannot GET.
+    pub async fn call_recordings(&self, org: &str, call_id: &str) -> Result<RecordingsResponse> {
+        let mut out: RecordingsResponse = self
+            .json(
+                reqwest::Method::GET,
+                &format!("/calls/{call_id}/recordings"),
+                org,
+                None,
+            )
+            .await?;
+        let route = reqwest::Url::parse(&format!("{}/calls/{call_id}/recordings", self.base))
+            .map_err(|e| CommsError::Protocol(format!("bad recordings base: {e}")))?;
+        for track in &mut out.tracks {
+            if let Ok(abs) = route.join(&track.url) {
+                track.url = abs.to_string();
+            }
+        }
+        Ok(out)
+    }
+
+    /// Download a recording from its short-lived URL.
+    ///
+    /// The URL already carries its own credential (that is what the 60-second
+    /// mint is), so this deliberately does NOT attach a bearer.
+    pub async fn download_recording(&self, url: &str) -> Result<Vec<u8>> {
+        self.download_recording_with(url, &mut |_, _| {}).await
+    }
+
+    /// `download_recording`, reporting `(got, total)` after every chunk.
+    pub async fn download_recording_with(
+        &self,
+        url: &str,
+        on_chunk: &mut (dyn FnMut(u64, u64) + Send),
+    ) -> Result<Vec<u8>> {
+        let res = self
+            .http
+            .get(url)
+            .timeout(std::time::Duration::from_secs(300))
+            .send()
+            .await?;
+        Self::drain(Self::check(res).await?, on_chunk).await
+    }
+
     /// Reserve an upload and learn how to cut the file into parts.
     ///
     /// **Quota is refused here, before a single byte moves** — a `413
@@ -470,11 +563,41 @@ impl RestClient {
     /// sixty-second life. reqwest follows it in-flight; nothing here ever
     /// stores the redirect target, which is the whole rule about it.
     pub async fn download_file(&self, org: &str, file_id: &str) -> Result<Vec<u8>> {
+        self.download_file_with(org, file_id, &mut |_, _| {}).await
+    }
+
+    /// `download_file`, reporting `(got, total)` after every chunk. `total`
+    /// is `0` when the server declared no content-length.
+    pub async fn download_file_with(
+        &self,
+        org: &str,
+        file_id: &str,
+        on_chunk: &mut (dyn FnMut(u64, u64) + Send),
+    ) -> Result<Vec<u8>> {
         let res = Self::check(
             self.request(reqwest::Method::GET, &format!("/files/{file_id}"), org, None)
                 .await?,
         )
         .await?;
-        Ok(res.bytes().await?.to_vec())
+        Self::drain(res, on_chunk).await
+    }
+
+    /// Pull a response body chunk-by-chunk so a caller can watch it arrive —
+    /// `.bytes()` would answer only once, at the end, which is exactly when a
+    /// progress ring stops being useful.
+    async fn drain(
+        res: reqwest::Response,
+        on_chunk: &mut (dyn FnMut(u64, u64) + Send),
+    ) -> Result<Vec<u8>> {
+        use futures_util::StreamExt;
+        let total = res.content_length().unwrap_or(0);
+        let mut out: Vec<u8> = Vec::with_capacity(total.min(64 * 1024 * 1024) as usize);
+        let mut stream = res.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            out.extend_from_slice(&chunk);
+            on_chunk(out.len() as u64, total);
+        }
+        Ok(out)
     }
 }

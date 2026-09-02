@@ -376,8 +376,9 @@ fn eviction_is_distinct_from_leaving() {
 #[test]
 fn an_unknown_frame_is_ignored_not_an_error() {
     // The server ships ahead of us; every not-yet-built slice lands here.
+    // (`call.started` used to be the example — until we built calls.)
     let parsed: ServerFrame = serde_json::from_value(serde_json::json!({
-        "t": "call.started", "seq": 900, "call": { "id": "call_1" }
+        "t": "note.ready", "seq": 900, "call_id": "call_1", "state": "ready"
     }))
     .expect("an unknown `t` must still deserialize");
     assert_eq!(parsed, ServerFrame::Unknown);

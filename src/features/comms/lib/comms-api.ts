@@ -11,7 +11,15 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ChatConversation, ChatReaction, ChatReadState, CommsMessage } from "../types";
+import type {
+  ChatCall,
+  ChatPin,
+  ChatConversation,
+  ChatReaction,
+  ChatReadState,
+  CommsMessage,
+  RecordingTrack,
+} from "../types";
 
 export type ConnectionState =
   | "disconnected"
@@ -38,6 +46,12 @@ export interface CommsSnapshot {
   discoverable: ChatConversation[];
   reads: ChatReadState[];
   online: string[];
+  calls: ChatCall[];
+}
+
+export interface RecordingsResponse {
+  state: string;
+  tracks: RecordingTrack[];
 }
 
 export interface ConversationWindow {
@@ -77,6 +91,15 @@ export type CommsEvent =
   | { kind: "typing"; conv_id: string; user_id: string; at_ms: number }
   | { kind: "reactionsChanged"; message_id: string; rows: ChatReaction[] }
   | { kind: "pinsChanged"; conv_id: string; pinned_message_ids: string[] }
+  | { kind: "callChanged"; call: ChatCall }
+  | {
+      kind: "downloadProgress";
+      download_id: string;
+      got_bytes: number;
+      total_bytes: number;
+      state: "downloading" | "complete" | "failed";
+      error: string | null;
+    }
   | {
       kind: "memberChanged";
       conv_id: string;
@@ -184,6 +207,25 @@ export const comms = {
    *  path for `convertFileSrc`. Cached by file id — attachments are immutable. */
   fetchAttachment: (fileId: string, filename: string) =>
     invoke<string>("comms_fetch_attachment", { fileId, filename }),
+  /** Save an attachment to a path the user picked. Shares the view cache, so a
+   *  file already previewed saves without a second round trip. */
+  saveAttachment: (fileId: string, filename: string, dest: string, downloadId: string) =>
+    invoke<void>("comms_save_attachment", { fileId, filename, dest, downloadId }),
+  /** A call's recordings. URLs expire in ~60s, so this is asked at open time
+   *  and never cached. */
+  callRecordings: (callId: string) =>
+    invoke<RecordingsResponse>("comms_call_recordings", { callId }),
+  saveRecording: (url: string, dest: string, downloadId: string) =>
+    invoke<void>("comms_save_recording", { url, dest, downloadId }),
+  /** Cache a recording track locally and return its path for `convertFileSrc`.
+   *  Progress is announced under the track id while it buffers. */
+  fetchRecording: (url: string, trackId: string, filename: string) =>
+    invoke<string>("comms_fetch_recording", { url, trackId, filename }),
+  /** The full pin rail, message content riding with each pin. Fetched fresh
+   *  per menu open — pins are cheap and the rail is capped at 100. */
+  pins: (convId: string) => invoke<ChatPin[]>("comms_pins", { convId }),
+  /** The chat service base, for building a file's canonical URL. */
+  baseUrl: () => invoke<string>("comms_base_url"),
   reconnect: () => invoke<void>("comms_reconnect"),
   disconnect: () => invoke<void>("comms_disconnect"),
 };

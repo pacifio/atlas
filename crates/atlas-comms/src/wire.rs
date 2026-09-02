@@ -118,6 +118,62 @@ pub struct Pin {
     pub message: Option<Message>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallMode {
+    Audio,
+    Video,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CallRecordingState {
+    #[default]
+    Off,
+    Starting,
+    Recording,
+    Processing,
+    Ready,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CallTranscriptState {
+    #[default]
+    None,
+    Pending,
+    Ready,
+    Failed,
+}
+
+/// A call, as the timeline knows it.
+///
+/// Two sources, one map: `GET /calls?conv_id=…&include=recent` (ATL-208) is
+/// the cold-sync — every live call plus the last 10 ended — and the journaled
+/// `call.*` frames are the live overlay on top. The frames alone are NOT
+/// enough: a watermark already at the live edge replays nothing, so a client
+/// that never fetched would show no history at all (which is exactly the bug
+/// this note used to encode as a design).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Call {
+    pub id: String,
+    #[serde(default)]
+    pub conv_id: Option<String>,
+    pub mode: CallMode,
+    pub started_by: String,
+    pub started_at: i64,
+    #[serde(default)]
+    pub ended_at: Option<i64>,
+    pub seq: i64,
+    #[serde(default)]
+    pub transcript_state: CallTranscriptState,
+    #[serde(default)]
+    pub join_slug: Option<String>,
+    #[serde(default)]
+    pub recording_state: CallRecordingState,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireError {
     pub code: String,
@@ -259,6 +315,37 @@ pub enum ServerFrame {
     #[serde(rename = "typing")]
     Typing { conv_id: String, user_id: String },
 
+    /// The ringing signal AND the timeline card, one journaled frame.
+    #[serde(rename = "call.started")]
+    CallStarted { seq: i64, call: Call },
+
+    #[serde(rename = "call.ended")]
+    CallEnded {
+        seq: i64,
+        call_id: String,
+        ended_at: i64,
+        #[serde(default)]
+        duration_s: Option<i64>,
+    },
+
+    /// Journaled on purpose — that is what makes the indicator honest for
+    /// somebody who was away while it ran.
+    #[serde(rename = "call.recording")]
+    CallRecording {
+        seq: i64,
+        call_id: String,
+        state: CallRecordingState,
+    },
+
+    /// Lands minutes after the call ended, hence its own frame rather than a
+    /// field on `call.ended`.
+    #[serde(rename = "call.transcript")]
+    CallTranscript {
+        seq: i64,
+        call_id: String,
+        state: CallTranscriptState,
+    },
+
     #[serde(rename = "error")]
     Error { error: WireError },
 
@@ -346,7 +433,11 @@ pub fn is_journaled(frame: &ServerFrame) -> bool {
         | ServerFrame::ConversationUpdated { .. }
         | ServerFrame::MemberJoined { .. }
         | ServerFrame::MemberLeft { .. }
-        | ServerFrame::MemberEvicted { .. } => true,
+        | ServerFrame::MemberEvicted { .. }
+        | ServerFrame::CallStarted { .. }
+        | ServerFrame::CallEnded { .. }
+        | ServerFrame::CallRecording { .. }
+        | ServerFrame::CallTranscript { .. } => true,
 
         // `ack` carries a seq but is addressed to one socket, so it is not a
         // journal position this client may adopt: the same seq arrives at
@@ -377,7 +468,11 @@ pub fn frame_seq(frame: &ServerFrame) -> Option<i64> {
         | ServerFrame::ConversationUpdated { seq, .. }
         | ServerFrame::MemberJoined { seq, .. }
         | ServerFrame::MemberLeft { seq, .. }
-        | ServerFrame::MemberEvicted { seq, .. } => Some(*seq),
+        | ServerFrame::MemberEvicted { seq, .. }
+        | ServerFrame::CallStarted { seq, .. }
+        | ServerFrame::CallEnded { seq, .. }
+        | ServerFrame::CallRecording { seq, .. }
+        | ServerFrame::CallTranscript { seq, .. } => Some(*seq),
         _ => None,
     }
 }

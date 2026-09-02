@@ -79,6 +79,54 @@ export interface ChatReadState {
   mentions: number;
 }
 
+export type CallMode = "audio" | "video";
+export type CallRecordingState =
+  | "off"
+  | "starting"
+  | "recording"
+  | "processing"
+  | "ready"
+  | "failed";
+export type CallTranscriptState = "none" | "pending" | "ready" | "failed";
+
+/**
+ * A call, as the timeline knows it.
+ *
+ * Assembled from journaled frames, never from REST: `GET /calls` answers LIVE
+ * calls only, because an ended call is a timeline card and the timeline is the
+ * journal's job. A resume therefore replays call history for free.
+ */
+export interface ChatCall {
+  id: string;
+  conv_id: string | null;
+  mode: CallMode;
+  started_by: string;
+  started_at: number;
+  ended_at: number | null;
+  seq: number;
+  transcript_state: CallTranscriptState;
+  join_slug: string | null;
+  recording_state: CallRecordingState;
+}
+
+/** A pin, as `GET /conversations/{id}/pins` answers: the message rides with
+ *  it so a rail (or a menu) renders in one request. */
+export interface ChatPin {
+  conv_id: string;
+  message_id: string;
+  pinned_by: string;
+  at: number;
+  message: ChatMessage | null;
+}
+
+/** One participant's recorded track. The URL is a 60-second mint. */
+export interface RecordingTrack {
+  id: string;
+  filename: string;
+  bytes: number;
+  url: string;
+}
+
 /** A member of the active org, from `get-full-organization`. */
 export interface OrgMemberProfile {
   id: string;

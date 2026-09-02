@@ -20,6 +20,7 @@ import { comms, type CommsEnvelope, type ConnectionInfo } from "../lib/comms-api
 import type { PendingAttachment } from "../components/comms-composer";
 import { CHAT_MESSAGE_ATTACHMENT_MAX, TYPING_EXPIRY_MS } from "../types";
 import type {
+  ChatCall,
   ChatConversation,
   ChatReaction,
   ChatReadState,
@@ -85,6 +86,13 @@ interface CommsState {
   /** Conversations whose first page is in flight — drives the transcript
    *  spinner. Keyed by conv id; absent = not loading. */
   loading: Record<string, boolean>;
+  /** Conversations whose first page HAS landed. Separates "loaded and empty"
+   *  from "never loaded" — the transcript intro used to claim the former
+   *  whenever the fetch had quietly failed. */
+  hydrated: Record<string, boolean>;
+  /** Conversations whose load exhausted its retries, with the last error.
+   *  Only set once retrying has genuinely given up. */
+  loadError: Record<string, string>;
   /** Reaction rows INDEXED BY MESSAGE. The `reactionsChanged` event carries one
    *  message's rows, so applying it replaces exactly one key — every other
    *  message's slice keeps identity and its row's memo holds. A flat array here
@@ -93,6 +101,13 @@ interface CommsState {
   pinned: string[];
   /** conv -> user -> when they last said so; aged out on a timer. */
   typing: Record<string, Record<string, number>>;
+  /** In-flight downloads by the object's own id (attachment id / track id).
+   *  A key exists only while the arc should render; complete/failed delete it. */
+  downloads: Record<string, { got: number; total: number }>;
+  /** Calls by id, assembled from journaled frames. Ended calls are kept — the
+   *  card becoming "over" is the point; removing it would read as a call that
+   *  never happened. */
+  calls: Record<string, ChatCall>;
 
   tabs: CommsTab[];
   activeTabId: string | null;
@@ -140,6 +155,8 @@ interface CommsState {
     attachFiles: (convId: string, paths: string[]) => void;
     removeAttachment: (convId: string, uploadId: string) => void;
     loadOlder: (convId: string) => Promise<void>;
+    /** Re-attempt a conversation's first page after retries were exhausted. */
+    retryConversation: (convId: string) => void;
   };
 }
 
@@ -152,9 +169,13 @@ const serverOwned = () => ({
   reads: [] as ChatReadState[],
   messages: {} as Record<string, CommsMessage[]>,
   loading: {} as Record<string, boolean>,
+  hydrated: {} as Record<string, boolean>,
+  loadError: {} as Record<string, string>,
   reactionsByMessage: {} as Record<string, ChatReaction[]>,
   pinned: [] as string[],
   typing: {} as Record<string, Record<string, number>>,
+  calls: {} as Record<string, ChatCall>,
+  downloads: {} as Record<string, { got: number; total: number }>,
 });
 
 export const useCommsStore = createSelectors(
@@ -177,6 +198,10 @@ export const useCommsStore = createSelectors(
       reset: () =>
         set({
           ...serverOwned(),
+          // Org-scoped, but deliberately NOT in serverOwned(): a same-org
+          // resync must not blank names while the roster refetches. A reset
+          // or retarget crosses orgs, so here it goes.
+          members: [],
           tabs: [{ id: "tab_home", convId: null }],
           activeTabId: "tab_home",
           composers: {},
@@ -189,6 +214,7 @@ export const useCommsStore = createSelectors(
             connection: snapshot.connection,
             me: snapshot.me ?? "",
             conversations: snapshot.conversations,
+            calls: Object.fromEntries((snapshot.calls ?? []).map((c) => [c.id, c])),
             discoverable: snapshot.discoverable,
             reads: snapshot.reads,
             online: snapshot.online,
@@ -198,10 +224,23 @@ export const useCommsStore = createSelectors(
           const tabs = get().tabs;
           for (const tab of tabs) {
             if (!tab.convId) continue;
+            // A conversation we have never fetched needs the REST page, not a
+            // state snapshot: `conversationSnapshot` reads what Rust already
+            // holds, which for an unhydrated conversation is nothing.
+            if (!get().hydrated[tab.convId]) {
+              loadConversation(tab.convId, set);
+              continue;
+            }
             try {
               const win = await comms.conversationSnapshot(tab.convId);
               set((s) => ({
-                messages: { ...s.messages, [tab.convId as string]: win.messages ?? [] },
+                messages: {
+                  ...s.messages,
+                  [tab.convId as string]: mergeWindow(
+                    s.messages[tab.convId as string],
+                    win.messages ?? [],
+                  ),
+                },
                 reactionsByMessage: mergeReactions(s.reactionsByMessage, win.reactions),
                 pinned: mergePins(s.pinned, win.pinned_message_ids),
               }));
@@ -228,6 +267,9 @@ export const useCommsStore = createSelectors(
         if (envelope.org && currentOrg && envelope.org !== currentOrg) {
           set({
             ...serverOwned(),
+            // The old org's roster must not survive the retarget — the panel
+            // keys its refetch off `connection.orgId`, set just below.
+            members: [],
             connection: {
               state: "connecting",
               reason: null,
@@ -241,7 +283,8 @@ export const useCommsStore = createSelectors(
 
         const ev = envelope.ev;
         switch (ev.kind) {
-          case "connection":
+          case "connection": {
+            const wasOpen = state.connection.state === "open";
             set((s) => ({
               connection: {
                 ...s.connection,
@@ -251,7 +294,12 @@ export const useCommsStore = createSelectors(
                 orgId: envelope.org || s.connection.orgId,
               },
             }));
+            // The socket opening is proof the org target and credential now
+            // exist — which is exactly what a too-early first-page fetch was
+            // missing. Anything still unloaded gets another go, immediately.
+            if (!wasOpen && ev.state === "open") retryUnloadedConversations();
             return;
+          }
 
           case "resync":
             void get().actions.hydrate();
@@ -350,6 +398,31 @@ export const useCommsStore = createSelectors(
             }));
             return;
 
+          case "downloadProgress": {
+            if (ev.state === "downloading") {
+              set((s) => ({
+                downloads: {
+                  ...s.downloads,
+                  [ev.download_id]: { got: ev.got_bytes, total: ev.total_bytes },
+                },
+              }));
+            } else {
+              // complete or failed: the arc unmounts; failure surfaces as a
+              // toast at the call site, which owns the user-facing wording.
+              set((s) => {
+                if (!(ev.download_id in s.downloads)) return s;
+                const next = { ...s.downloads };
+                delete next[ev.download_id];
+                return { downloads: next };
+              });
+            }
+            return;
+          }
+
+          case "callChanged":
+            set((s) => ({ calls: { ...s.calls, [ev.call.id]: ev.call } }));
+            return;
+
           case "memberChanged":
           case "error":
             return;
@@ -370,13 +443,10 @@ export const useCommsStore = createSelectors(
           tabs = [...s.tabs, tab];
           activeTabId = tab.id;
         }
-        set((st) => ({
+        set(() => ({
           tabs,
           activeTabId,
           panelOpen: true,
-          // Only show the spinner when we hold nothing — reopening a cached
-          // conversation paints instantly and a flash of spinner would lie.
-          loading: st.messages[convId]?.length ? st.loading : { ...st.loading, [convId]: true },
         }));
         releaseIfUnshown(leaving, tabs);
         loadConversation(convId, set);
@@ -397,10 +467,13 @@ export const useCommsStore = createSelectors(
         set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id }));
       },
 
+      // An UPSERT, not an add: a PATCH response (rename, archive) goes
+      // through here too, and replacing by id paints the caller's own change
+      // without waiting for the `conversation.updated` broadcast round trip.
       adoptConversation: (conv) =>
         set((s) =>
           s.conversations.some((c) => c.id === conv.id)
-            ? {}
+            ? { conversations: s.conversations.map((c) => (c.id === conv.id ? conv : c)) }
             : { conversations: [...s.conversations, conv] },
         ),
 
@@ -590,6 +663,11 @@ export const useCommsStore = createSelectors(
         void comms.join(convId).catch(() => {});
       },
 
+      retryConversation: (convId) => {
+        convAttempts.delete(convId);
+        loadConversation(convId, set);
+      },
+
       loadOlder: async (convId) => {
         const list = get().messages[convId] ?? [];
         const oldest = list[0]?.seq;
@@ -609,6 +687,29 @@ export const useCommsStore = createSelectors(
     },
   })),
 );
+
+/**
+ * Adopt a window snapshot WITHOUT letting it erase what we hold.
+ *
+ * The bug this guards (same class as the resume-replay clobber): opening a
+ * conversation races boot-time resyncs. `openConversation`'s REST-hydrated
+ * window and `hydrate()`'s per-tab re-read both land via `set`, and the one
+ * that read Rust EARLIER can apply LATER — an empty pre-hydration snapshot
+ * then overwrites a full transcript, silently, with no error anywhere. The
+ * rule: an empty incoming window never replaces content, and a non-empty one
+ * is unioned by id (locally-known rows Rust lacks — an in-flight optimistic
+ * send — survive).
+ */
+function mergeWindow(
+  current: CommsMessage[] | undefined,
+  incoming: CommsMessage[],
+): CommsMessage[] {
+  if (incoming.length === 0) return current ?? [];
+  if (!current || current.length === 0) return incoming;
+  const ids = new Set(incoming.map((m) => m.id));
+  const extra = current.filter((m) => !ids.has(m.id));
+  return extra.length === 0 ? incoming : sortBySeq([...incoming, ...extra]);
+}
 
 /** Merge a patch into one pending attachment, wherever it lives. */
 function patchAttachment(
@@ -641,27 +742,98 @@ function releaseIfUnshown(convId: string | null, tabs: CommsTab[]): void {
   }
 }
 
-/** First-page fetch for a conversation, shared by every navigation path. */
+/**
+ * First-page fetch for a conversation, shared by every navigation path.
+ *
+ * **This retries, because the failure modes here are all transient and all
+ * used to be permanent.** `comms_open_conversation` rejects outright when the
+ * Rust supervisor has no org target yet ("no organisation is connected") or
+ * when the token mint loses a race with boot — and the old one-shot version
+ * logged a warning, cleared `loading`, and left an empty transcript that
+ * rendered as "this is the beginning of the channel". The only cure was
+ * reopening the conversation by hand, which is exactly what people were doing.
+ *
+ * `loading` stays TRUE across the backoff so the UI shows a skeleton rather
+ * than a lie, and `hydrated` is what finally licenses the empty-state copy.
+ */
+const RETRY_MS = [300, 700, 1500, 3000, 6000, 10_000, 15_000];
+const convTimers = new Map<string, number>();
+const convAttempts = new Map<string, number>();
+
+function cancelConvRetry(convId: string): void {
+  const t = convTimers.get(convId);
+  if (t !== undefined) {
+    clearTimeout(t);
+    convTimers.delete(convId);
+  }
+}
+
 function loadConversation(
   convId: string,
   set: (fn: (s: CommsState) => Partial<CommsState>) => void,
 ): void {
+  cancelConvRetry(convId);
+  set((s) => {
+    const { [convId]: _drop, ...rest } = s.loadError;
+    return { loading: { ...s.loading, [convId]: true }, loadError: rest };
+  });
+
   void comms
     .openConversation(convId)
-    .then((win) =>
+    .then((win) => {
+      convAttempts.delete(convId);
       set((s) => ({
-        messages: { ...s.messages, [convId]: win.messages ?? [] },
+        messages: { ...s.messages, [convId]: mergeWindow(s.messages[convId], win.messages ?? []) },
         reactionsByMessage: mergeReactions(s.reactionsByMessage, win.reactions),
         pinned: mergePins(s.pinned, win.pinned_message_ids),
         loading: { ...s.loading, [convId]: false },
-      })),
-    )
+        hydrated: { ...s.hydrated, [convId]: true },
+      }));
+    })
     .catch((e) => {
       // Never silent: a swallowed rejection here once hid the entire
       // messages-not-loading class of bug.
       console.warn("comms: open conversation failed:", convId, e);
-      set((s) => ({ loading: { ...s.loading, [convId]: false } }));
+      const n = (convAttempts.get(convId) ?? 0) + 1;
+      convAttempts.set(convId, n);
+
+      if (n <= RETRY_MS.length) {
+        // Keep `loading` set: a pending retry IS still loading, and dropping
+        // it here is what made a failure look like an empty channel.
+        convTimers.set(
+          convId,
+          window.setTimeout(
+            () => {
+              convTimers.delete(convId);
+              loadConversation(convId, set);
+            },
+            RETRY_MS[n - 1],
+          ),
+        );
+        return;
+      }
+      set((s) => ({
+        loading: { ...s.loading, [convId]: false },
+        loadError: {
+          ...s.loadError,
+          [convId]: typeof e === "string" ? e : "Could not load this conversation.",
+        },
+      }));
     });
+}
+
+/** Re-open every conversation a view is showing that has not loaded yet.
+ *  Called when the socket opens — by then the org target and credential
+ *  certainly exist, which is precisely what an early attempt lacked. */
+export function retryUnloadedConversations(): void {
+  const s = useCommsStore.getState();
+  const set = useCommsStore.setState as (fn: (st: CommsState) => Partial<CommsState>) => void;
+  for (const tab of s.tabs) {
+    const id = tab.convId;
+    if (!id || s.hydrated[id]) continue;
+    convAttempts.delete(id);
+    loadConversation(id, set);
+  }
 }
 
 /** Non-reactive accessor, for keybinding handlers and other non-React callers. */

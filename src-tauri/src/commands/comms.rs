@@ -207,6 +207,10 @@ pub struct CommsSnapshot {
     pub discoverable: Vec<Conversation>,
     pub reads: Vec<ReadState>,
     pub online: Vec<String>,
+    /// Cold-synced over REST at conversation open (ATL-208) and overlaid with
+    /// journaled `call.*` frames; the snapshot carries whatever both have
+    /// taught the state so far.
+    pub calls: Vec<atlas_comms::wire::Call>,
 }
 
 // Deliberately NOT camelCase: `messages`/`reactions` are wire objects with
@@ -260,6 +264,7 @@ pub fn comms_snapshot(app: AppHandle) -> Result<CommsSnapshot, String> {
         discoverable: state.discoverable.clone(),
         reads: state.reads.values().cloned().collect(),
         online: state.online.clone(),
+        calls: state.calls.values().cloned().collect(),
     }))
 }
 
@@ -309,6 +314,22 @@ pub async fn comms_open_conversation(
         mgr.mark_hydrated(&conv_id);
         if let Ok(pins) = mgr.rest().pins(&org_id, &conv_id).await {
             mgr.adopt_pins(&conv_id, pins.pins.iter().map(|p| p.message_id.clone()).collect());
+        }
+        // Call history rides the same hydration: REST is its only cold source
+        // (ATL-208) — a watermark at the live edge replays no `call.*` frames.
+        // Best-effort like pins; the transcript is usable without it.
+        match mgr.rest().calls(&org_id, &conv_id).await {
+            Ok(list) => {
+                tracing::debug!(
+                    target: "atlas_comms::bridge",
+                    "open_conversation {conv_id}: fetched {} calls",
+                    list.calls.len()
+                );
+                mgr.adopt_calls(list.calls);
+            }
+            Err(e) => {
+                tracing::warn!(target: "atlas_comms::bridge", "open_conversation {conv_id}: calls fetch failed: {e}");
+            }
         }
     }
     let win = window(&mgr, &conv_id);
@@ -384,6 +405,24 @@ pub async fn comms_load_older(
             .collect(),
         has_more,
     })
+}
+
+
+/// The full pin rail for a conversation, message content included.
+///
+/// A REST passthrough with no state mutation: the store only holds pinned
+/// *ids*, but the menu wants author/body/time for messages that may be far
+/// outside the loaded window — and the server already sends the message
+/// riding with its pin so a rail renders in one request.
+#[tauri::command]
+pub async fn comms_pins(
+    app: AppHandle,
+    conv_id: String,
+) -> Result<Vec<atlas_comms::wire::Pin>, String> {
+    let mgr = manager(&app)?;
+    let org_id = org(&mgr)?;
+    let list = mgr.rest().pins(&org_id, &conv_id).await.map_err(map_err)?;
+    Ok(list.pins)
 }
 
 // ---------------------------------------------------------------------------
@@ -682,34 +721,111 @@ pub fn comms_disconnect(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// A call's recordings. The URLs expire in ~60s, so this is called at open
+/// time rather than cached with the call.
+#[tauri::command]
+pub async fn comms_call_recordings(
+    app: AppHandle,
+    call_id: String,
+) -> Result<atlas_comms::rest::RecordingsResponse, String> {
+    let mgr = manager(&app)?;
+    let org_id = org(&mgr)?;
+    mgr.rest()
+        .call_recordings(&org_id, &call_id)
+        .await
+        .map_err(map_err)
+}
+
+/// Save a recording track wherever the user wants it.
+///
+/// Takes the URL rather than an id because the link is minted per read and
+/// dies in a minute — the renderer passes back the one it was just handed.
+#[tauri::command]
+pub async fn comms_save_recording(
+    app: AppHandle,
+    url: String,
+    dest: String,
+    download_id: String,
+) -> Result<(), String> {
+    let mgr = manager(&app)?;
+    let bytes = mgr
+        .download_recording(&url, &download_id)
+        .await
+        .map_err(map_err)?;
+    std::fs::write(&dest, &bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Fetch a recording track into the local cache and return its path.
+///
+/// The track URL is a sixty-second mint, which is exactly why playback cannot
+/// point an `<audio>` element at it: a seek past the buffered range becomes a
+/// range request against a dead ticket. The bytes are cached under the
+/// track's id — track content is immutable — and the renderer plays the local
+/// file through `convertFileSrc`, the same road attachments take. Progress is
+/// announced under the track id, so the same arc the save flow uses covers
+/// the pre-play buffering too.
+#[tauri::command]
+pub async fn comms_fetch_recording(
+    app: AppHandle,
+    url: String,
+    track_id: String,
+    filename: String,
+) -> Result<String, String> {
+    let mgr = manager(&app)?;
+    if track_id.contains('/') || track_id.contains("..") {
+        return Err("bad track id".into());
+    }
+    let ext = std::path::Path::new(&filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("webm")
+        .to_string();
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("comms-recordings");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{track_id}.{ext}"));
+    if path.exists() {
+        return Ok(path.to_string_lossy().into_owned());
+    }
+    let bytes = mgr.download_recording(&url, &track_id).await.map_err(map_err)?;
+    let tmp = dir.join(format!(".{track_id}.part"));
+    std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// The base the renderer would show in a diagnostics panel. Never a token.
 #[tauri::command]
 pub fn comms_base_url() -> String {
     chat_base()
 }
 
-/// Fetch an attachment to the local cache and hand back a path.
+/// Ensure an attachment is in the local cache and return its path.
 ///
 /// The download URL is a 302 to a ticket that dies in 60 seconds, so the
 /// redirect is followed immediately and **never cached** — the file id is the
-/// stable name, the ticket is not. A file already in the cache is returned
-/// without a network trip: attachments are immutable (deleting the message
-/// deletes the file server-side; a stale local copy of a deleted attachment is
-/// acceptable and unavoidable).
-#[tauri::command]
-pub async fn comms_fetch_attachment(
-    app: AppHandle,
-    file_id: String,
-    filename: String,
-) -> Result<String, String> {
-    let mgr = manager(&app)?;
+/// stable name, the ticket is not. A file already on disk is returned without a
+/// network trip: attachments are immutable (deleting the message deletes the
+/// file server-side; a stale local copy of a deleted attachment is acceptable
+/// and unavoidable).
+async fn cache_attachment(
+    app: &AppHandle,
+    file_id: &str,
+    filename: &str,
+    download_id: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
+    let mgr = manager(app)?;
     let org_id = org(&mgr)?;
 
     // Belt and braces: the id is server-minted, but it becomes a path segment.
     if file_id.contains('/') || file_id.contains("..") {
         return Err("bad file id".into());
     }
-    let ext = std::path::Path::new(&filename)
+    let ext = std::path::Path::new(filename)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("bin")
@@ -723,17 +839,52 @@ pub async fn comms_fetch_attachment(
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(format!("{file_id}.{ext}"));
     if path.exists() {
-        return Ok(path.to_string_lossy().into_owned());
+        return Ok(path);
     }
 
-    let bytes = mgr
-        .rest()
-        .download_file(&org_id, &file_id)
-        .await
-        .map_err(map_err)?;
+    let bytes = match download_id {
+        // Announced, for a ring somewhere: route through the manager.
+        Some(id) => mgr.download_attachment(file_id, id).await.map_err(map_err)?,
+        // Silent, for inline media that has its own loading treatment.
+        None => mgr
+            .rest()
+            .download_file(&org_id, file_id)
+            .await
+            .map_err(map_err)?,
+    };
     // Write-then-rename, so a crash mid-download never leaves a plausible file.
     let tmp = dir.join(format!(".{file_id}.part"));
     std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+/// Fetch an attachment into the local cache; the renderer turns the returned
+/// path into a displayable URL with `convertFileSrc`.
+#[tauri::command]
+pub async fn comms_fetch_attachment(
+    app: AppHandle,
+    file_id: String,
+    filename: String,
+) -> Result<String, String> {
+    let path = cache_attachment(&app, &file_id, &filename, None).await?;
     Ok(path.to_string_lossy().into_owned())
 }
+
+/// Save an attachment to a destination the user picked.
+///
+/// Goes through the same cache as viewing, so "download" after a preview costs
+/// no second round trip — and a file the user has already seen saves instantly.
+#[tauri::command]
+pub async fn comms_save_attachment(
+    app: AppHandle,
+    file_id: String,
+    filename: String,
+    dest: String,
+    download_id: String,
+) -> Result<(), String> {
+    let cached = cache_attachment(&app, &file_id, &filename, Some(&download_id)).await?;
+    std::fs::copy(&cached, &dest).map_err(|e| e.to_string())?;
+    Ok(())
+}
+

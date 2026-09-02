@@ -17,7 +17,7 @@
 
 use serde::Serialize;
 
-use crate::wire::{Attachment, CodeRef, Conversation, ReactionRow, ReadState};
+use crate::wire::{Attachment, Call, CodeRef, Conversation, ReactionRow, ReadState};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CommsEnvelope {
@@ -135,6 +135,25 @@ pub enum CommsEvent {
         /// `"uploading" | "complete" | "failed"`.
         state: &'static str,
         error: Option<String>,
+    },
+
+    /// Mirror of `UploadProgress` for the other direction. `total_bytes` is
+    /// `0` when the server did not declare a content-length — render an
+    /// indeterminate ring, not a 0% one.
+    DownloadProgress {
+        download_id: String,
+        got_bytes: u64,
+        total_bytes: u64,
+        /// `"downloading" | "complete" | "failed"`.
+        state: &'static str,
+        error: Option<String>,
+    },
+
+    /// A call started, ended, or changed recording/transcript state. Carries
+    /// the whole call — like `conversation.updated`, a replayed pair then
+    /// converges whichever order it arrives in.
+    CallChanged {
+        call: Call,
     },
 
     /// Frames carry no correlation id, so these are stamped on arrival: two

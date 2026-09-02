@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 
 use crate::wire::{
-    Conversation, Message, ReactionRow, ReadState, ServerFrame, Visibility, WireError,
+    Call, Conversation, Message, ReactionRow, ReadState, ServerFrame, Visibility, WireError,
 };
 
 /// A send this client has written but not yet seen acknowledged.
@@ -97,6 +97,9 @@ pub enum StateDelta {
         user_id: String,
         change: MemberChange,
     },
+    CallChanged {
+        call_id: String,
+    },
     Error {
         code: String,
         message: String,
@@ -139,6 +142,10 @@ pub struct ChatState {
     /// whole mechanism — there is no "stopped typing" frame, so a reader ages
     /// the entry out, which is right for a pause and for a crash alike.
     pub typing: HashMap<String, HashMap<String, i64>>,
+    /// Calls by id. Ended calls are KEPT, not dropped: `call.ended` is what
+    /// turns the card from "join" into "over", and removing the row would make
+    /// it vanish instead — which reads as a call that never happened.
+    pub calls: HashMap<String, Call>,
     pub last_error: Option<WireError>,
 }
 
@@ -541,6 +548,49 @@ pub fn apply_frame(
             state.last_error = Some(error);
             vec![delta]
         }
+
+        // Calls are assembled entirely from journaled frames, so a resume
+        // replays a conversation's whole call history — there is no REST
+        // history endpoint to fall back on (`GET /calls` is live calls only).
+        ServerFrame::CallStarted { call, .. } => {
+            let call_id = call.id.clone();
+            state.calls.insert(call_id.clone(), call);
+            vec![StateDelta::CallChanged { call_id }]
+        }
+
+        ServerFrame::CallEnded {
+            call_id, ended_at, ..
+        } => match state.calls.get_mut(&call_id) {
+            Some(call) => {
+                call.ended_at = Some(ended_at);
+                vec![StateDelta::CallChanged { call_id }]
+            }
+            // A call we never saw start (joined mid-history) is not worth
+            // inventing a card for — the started frame carries everything.
+            None => Vec::new(),
+        },
+
+        ServerFrame::CallRecording {
+            call_id, state: rec, ..
+        } => match state.calls.get_mut(&call_id) {
+            Some(call) => {
+                call.recording_state = rec;
+                vec![StateDelta::CallChanged { call_id }]
+            }
+            None => Vec::new(),
+        },
+
+        ServerFrame::CallTranscript {
+            call_id,
+            state: transcript,
+            ..
+        } => match state.calls.get_mut(&call_id) {
+            Some(call) => {
+                call.transcript_state = transcript;
+                vec![StateDelta::CallChanged { call_id }]
+            }
+            None => Vec::new(),
+        },
 
         // The server ships ahead of us; a frame we do not model is not an error.
         ServerFrame::Unknown => Vec::new(),

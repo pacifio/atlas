@@ -5,6 +5,9 @@ import { comms } from "../lib/comms-api";
 import { CommsAvatar } from "./comms-avatar";
 import { byRecency, conversationTitle } from "../lib/derive";
 import { useCommsStore } from "../stores/comms-store";
+import { useMembersStore } from "@/features/organisations/stores/members-store";
+import { CreateChannelMenu } from "./create-channel-menu";
+import { NewDmMenu } from "./new-dm-menu";
 import type { LucideIcon } from "lucide-react";
 import type { ChatConversation, ChatReadState, OrgMemberProfile } from "../types";
 
@@ -25,6 +28,14 @@ export function CommsHome() {
   const discoverable = useCommsStore.use.discoverable();
   const reads = useCommsStore.use.reads();
   const memberList = useCommsStore.use.members();
+  // The DM/contact sections are unreadable without the roster (titles resolve
+  // to "Unknown", contacts are simply absent), so while it is still on its
+  // way the sections show placeholder rows rather than degraded ones.
+  const rosterOrgId = useCommsStore((s) => s.connection.orgId);
+  const rosterLoading = useMembersStore((s) =>
+    rosterOrgId ? (s.byOrg[rosterOrgId]?.loading ?? false) : false,
+  );
+  const rosterPending = memberList.length === 0 && rosterLoading;
   const online = useCommsStore.use.online();
   const me = useCommsStore.use.me();
   const actions = useCommsStore.use.actions();
@@ -53,6 +64,11 @@ export function CommsHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [conversations, members, me, q],
   );
+  // Group conversations and 1:1s are different things wearing the same row —
+  // a group has a member count where a person has an address — so they are
+  // rendered as two runs with a rule between them rather than one blended list.
+  const groupDms = useMemo(() => directs.filter((c) => c.kind === "group_dm"), [directs]);
+  const oneToOnes = useMemo(() => directs.filter((c) => c.kind !== "group_dm"), [directs]);
 
   /** Colleagues with no 1:1 DM yet — the "you could talk to" tail. */
   const contacts = useMemo(() => {
@@ -92,7 +108,9 @@ export function CommsHome() {
   return (
     <div className="flex min-w-0 flex-1 flex-col animate-fade-in">
       <div className="shrink-0 px-2 pt-2 pb-1">
-        <div className="flex items-center gap-1.5 rounded-md border border-border-default bg-bg-input px-2 py-[5px] focus-within:border-border-focus">
+        {/* Radius matches the surface card it sits in (CommsSurface's
+            `rounded-[10px]`) — a tighter corner read as a different family. */}
+        <div className="flex items-center gap-1.5 rounded-[10px] border border-border-default bg-bg-input px-2.5 py-[5px] focus-within:border-border-focus">
           <Search size={12} className="shrink-0 text-text-ghost" />
           <input
             value={query}
@@ -104,7 +122,7 @@ export function CommsHome() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto hide-scrollbar pb-3">
-        <SectionLabel label="Channels" icon={Hash} />
+        <SectionLabel label="Channels" icon={Hash} action={<CreateChannelMenu />} />
         {channels.map((c) => (
           <ChannelRow
             key={c.id}
@@ -117,28 +135,63 @@ export function CommsHome() {
           <EmptyHint text={q ? "No matching channels." : "No channels yet."} />
         )}
 
-        <SectionLabel label="Direct messages" icon={MessagesSquare} />
-        {directs.map((c) => (
-          <DirectRow
-            key={c.id}
-            conv={c}
-            read={readBy.get(c.id)}
-            members={members}
-            online={online}
-            me={me}
-            onOpen={() => actions.openConversation(c.id)}
-          />
-        ))}
-        {contacts.map((m) => (
-          <ContactRow
-            key={m.id}
-            member={m}
-            online={online.includes(m.id)}
-            starting={startingDm === m.id}
-            onStart={() => void startDm(m.id)}
-          />
-        ))}
-        {directs.length === 0 && contacts.length === 0 && (
+        <SectionLabel label="Direct messages" icon={MessagesSquare} action={<NewDmMenu />} />
+        {rosterPending &&
+          [0, 1, 2].map((i) => (
+            <div key={`sk${i}`} className="flex items-center gap-2.5 py-[5px] pl-3.5 pr-2.5">
+              <div
+                className="h-[26px] w-[26px] shrink-0 rounded-full bg-[var(--bg-elevated)] opacity-50"
+                style={{ animation: "atlas-marker-shimmer 1.4s ease-in-out infinite" }}
+              />
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                <div
+                  className="h-[9px] rounded bg-[var(--bg-elevated)] opacity-50"
+                  style={{
+                    width: 88 + ((i * 37) % 60),
+                    animation: "atlas-marker-shimmer 1.4s ease-in-out infinite",
+                  }}
+                />
+              </div>
+            </div>
+          ))}
+        {!rosterPending &&
+          groupDms.map((c) => (
+            <DirectRow
+              key={c.id}
+              conv={c}
+              read={readBy.get(c.id)}
+              members={members}
+              online={online}
+              me={me}
+              onOpen={() => actions.openConversation(c.id)}
+            />
+          ))}
+        {!rosterPending && groupDms.length > 0 && (oneToOnes.length > 0 || contacts.length > 0) && (
+          <RowDivider />
+        )}
+        {!rosterPending &&
+          oneToOnes.map((c) => (
+            <DirectRow
+              key={c.id}
+              conv={c}
+              read={readBy.get(c.id)}
+              members={members}
+              online={online}
+              me={me}
+              onOpen={() => actions.openConversation(c.id)}
+            />
+          ))}
+        {!rosterPending &&
+          contacts.map((m) => (
+            <ContactRow
+              key={m.id}
+              member={m}
+              online={online.includes(m.id)}
+              starting={startingDm === m.id}
+              onStart={() => void startDm(m.id)}
+            />
+          ))}
+        {!rosterPending && directs.length === 0 && contacts.length === 0 && (
           <EmptyHint text={q ? "Nobody matches." : "Nobody else is here yet."} />
         )}
 
@@ -191,11 +244,21 @@ export function CommsHome() {
  * it — that offset is what makes the list read as "these belong to that", which
  * a bare uppercase label could not do on its own.
  */
-function SectionLabel({ label, icon: Icon }: { label: string; icon: LucideIcon }) {
+function SectionLabel({
+  label,
+  icon: Icon,
+  action,
+}: {
+  label: string;
+  icon: LucideIcon;
+  /** Right-aligned control — the section's `+` menus live here. */
+  action?: React.ReactNode;
+}) {
   return (
     <div className="flex items-center gap-1.5 px-3 pb-1.5 pt-3.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-text-secondary">
       <Icon size={12} className="shrink-0" />
       {label}
+      {action && <span className="ml-auto flex items-center">{action}</span>}
     </div>
   );
 }
@@ -208,6 +271,16 @@ function SectionLabel({ label, icon: Icon }: { label: string; icon: LucideIcon }
  */
 function RowIcon({ children }: { children: React.ReactNode }) {
   return <span className="flex w-7 shrink-0 items-center justify-center">{children}</span>;
+}
+
+/** A hairline between two runs of rows. Inset to the row text column so it
+ *  reads as a separator inside the section, not the end of it. */
+function RowDivider() {
+  return (
+    <div className="py-1 pl-3.5 pr-2.5">
+      <div className="h-px bg-border-subtle" />
+    </div>
+  );
 }
 
 function EmptyHint({ text }: { text: string }) {

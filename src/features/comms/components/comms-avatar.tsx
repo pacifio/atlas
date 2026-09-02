@@ -60,7 +60,7 @@ export const CommsAvatar = memo(function CommsAvatar({
           aria-label={online ? "Online" : "Offline"}
           style={{ width: dot, height: dot }}
           className={cn(
-            "absolute -bottom-px -right-px rounded-full border-2 border-[var(--panel-bg-2)]",
+            "absolute -bottom-px -right-px rounded-full border-2 border-[var(--comms-surface)]",
             online ? "bg-[var(--comms-unread)]" : "bg-[#3d3d3d]",
           )}
         />
@@ -86,7 +86,7 @@ export function CommsAvatarStack({
           member={m}
           size={i === 0 ? Math.round(size * 0.72) : Math.round(size * 0.72)}
           className={cn(
-            "absolute ring-2 ring-[var(--panel-bg-2)] rounded-full",
+            "absolute ring-2 ring-[var(--comms-surface)] rounded-full",
             i === 0 ? "left-0 top-0" : "right-0 bottom-0",
           )}
         />

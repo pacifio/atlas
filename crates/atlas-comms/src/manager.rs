@@ -76,6 +76,15 @@ struct Inner {
     /// Uploads asked to stop. Checked between parts — a 32 MiB part in flight
     /// is allowed to finish rather than being torn out from under reqwest.
     cancelled_uploads: Mutex<HashSet<String>>,
+    /// Completed uploads by file id, so an optimistic send can carry the
+    /// attachment's real metadata.
+    ///
+    /// The sender is the ONE participant the server never tells about their
+    /// own message: an `ack` carries `{client_msg_id, id, seq}` and nothing
+    /// else, and `message.new` deliberately skips the sending socket. So the
+    /// filename/type/size that everyone else receives has to come from here,
+    /// or the author's own copy renders as a message with no attachment.
+    uploaded: Mutex<HashMap<String, crate::wire::Attachment>>,
     /// True while a bulk transition is running: granular emission is off.
     quiet: AtomicBool,
 }
@@ -110,6 +119,7 @@ impl CommsManager {
                 hydrated: Mutex::new(HashSet::new()),
                 typing_sent: Mutex::new(HashMap::new()),
                 cancelled_uploads: Mutex::new(HashSet::new()),
+                uploaded: Mutex::new(HashMap::new()),
                 quiet: AtomicBool::new(false),
             }),
         }
@@ -472,7 +482,13 @@ impl CommsManager {
             }
             if let Ok(pins) = self.inner.rest.pins(&target.org_id, &conv_id).await {
                 let ids = pins.pins.iter().map(|p| p.message_id.clone()).collect();
-                self.inner.state.lock().unwrap().pins.insert(conv_id, ids);
+                self.inner.state.lock().unwrap().pins.insert(conv_id.clone(), ids);
+            }
+            // Call history is REST-only here: the replay we just failed to get
+            // was the sole other source, and the watermark is about to jump
+            // past it for good.
+            if let Ok(list) = self.inner.rest.calls(&target.org_id, &conv_id).await {
+                self.adopt_calls(list.calls);
             }
         }
 
@@ -555,7 +571,7 @@ impl CommsManager {
             reply_to_id: reply_to_id.clone(),
             edited_at: None,
             created_at: now,
-            attachments: Vec::new(),
+            attachments: self.attachment_meta(&attachments),
             code_refs: Vec::new(),
             draft_id: None,
         };
@@ -949,6 +965,16 @@ impl CommsManager {
             }
         };
 
+        {
+            let mut done = self.inner.uploaded.lock().unwrap();
+            // Bounded: this only has to survive from upload to send, and an
+            // unbounded map would hold every file of a long session.
+            if done.len() > 256 {
+                done.clear();
+            }
+            done.insert(file.id.clone(), file.clone());
+        }
+
         self.emit_upload(upload_id, size, size, "complete", None);
         self.finish_upload(upload_id);
         Ok(file.id)
@@ -967,6 +993,26 @@ impl CommsManager {
         self.inner.cancelled_uploads.lock().unwrap().contains(upload_id)
     }
 
+    /// Resolve file ids to the metadata their upload returned.
+    ///
+    /// A file id we never uploaded in this session (a resend after a restart)
+    /// degrades to a generic entry rather than vanishing: the id is what the
+    /// download needs, and a nameless card still opens.
+    fn attachment_meta(&self, file_ids: &[String]) -> Vec<crate::wire::Attachment> {
+        let done = self.inner.uploaded.lock().unwrap();
+        file_ids
+            .iter()
+            .map(|id| {
+                done.get(id).cloned().unwrap_or_else(|| crate::wire::Attachment {
+                    id: id.clone(),
+                    filename: "file".into(),
+                    content_type: "application/octet-stream".into(),
+                    bytes: 0,
+                })
+            })
+            .collect()
+    }
+
     fn finish_upload(&self, upload_id: &str) {
         self.inner.cancelled_uploads.lock().unwrap().remove(upload_id);
     }
@@ -982,6 +1028,80 @@ impl CommsManager {
         self.emit(CommsEvent::UploadProgress {
             upload_id: upload_id.to_string(),
             sent_bytes,
+            total_bytes,
+            state,
+            error,
+        });
+    }
+
+    /// Download an attachment, announcing progress under `download_id`.
+    ///
+    /// Chunk arrivals are throttled to one event per 256 KiB — a fast local
+    /// link would otherwise flood the bridge with more frames than the ring
+    /// has pixels — with `complete`/`failed` always sent.
+    pub async fn download_attachment(&self, file_id: &str, download_id: &str) -> Result<Vec<u8>> {
+        let org = self
+            .org_id()
+            .ok_or_else(|| CommsError::Protocol("no organisation is connected".into()))?;
+        let progress = self.progress_reporter(download_id);
+        let mut on_chunk = progress;
+        let result = self
+            .inner
+            .rest
+            .download_file_with(&org, file_id, &mut on_chunk)
+            .await;
+        self.finish_download(download_id, &result);
+        result
+    }
+
+    /// Download a recording track from its short-lived absolute URL,
+    /// announcing progress under `download_id`.
+    pub async fn download_recording(&self, url: &str, download_id: &str) -> Result<Vec<u8>> {
+        let progress = self.progress_reporter(download_id);
+        let mut on_chunk = progress;
+        let result = self.inner.rest.download_recording_with(url, &mut on_chunk).await;
+        self.finish_download(download_id, &result);
+        result
+    }
+
+    /// A throttled `(got, total)` → `DownloadProgress` closure.
+    fn progress_reporter(&self, download_id: &str) -> impl FnMut(u64, u64) + Send + use<'_> {
+        const STRIDE: u64 = 256 * 1024;
+        let mgr = self.clone();
+        let id = download_id.to_string();
+        let mut last = 0u64;
+        move |got, total| {
+            if got < last + STRIDE && got != total {
+                return;
+            }
+            last = got;
+            mgr.emit_download(&id, got, total, "downloading", None);
+        }
+    }
+
+    fn finish_download(&self, download_id: &str, result: &Result<Vec<u8>>) {
+        match result {
+            Ok(bytes) => {
+                let n = bytes.len() as u64;
+                self.emit_download(download_id, n, n, "complete", None);
+            }
+            Err(e) => {
+                self.emit_download(download_id, 0, 0, "failed", Some(e.to_string()));
+            }
+        }
+    }
+
+    fn emit_download(
+        &self,
+        download_id: &str,
+        got_bytes: u64,
+        total_bytes: u64,
+        state: &'static str,
+        error: Option<String>,
+    ) {
+        self.emit(CommsEvent::DownloadProgress {
+            download_id: download_id.to_string(),
+            got_bytes,
             total_bytes,
             state,
             error,
@@ -1065,6 +1185,27 @@ impl CommsManager {
             .insert(conv_id.to_string(), ids);
     }
 
+    /// Adopt REST call history (ATL-208), the way the web client does: merge
+    /// **additively by id**, never overwriting a row the socket already
+    /// delivered — a frame is always fresher than a page fetched before it.
+    /// Announces each newly learned call so an already-hydrated renderer
+    /// paints it without waiting for a snapshot.
+    pub fn adopt_calls(&self, calls: Vec<crate::wire::Call>) {
+        let mut fresh = Vec::new();
+        {
+            let mut state = self.inner.state.lock().unwrap();
+            for call in calls {
+                if !state.calls.contains_key(&call.id) {
+                    state.calls.insert(call.id.clone(), call.clone());
+                    fresh.push(call);
+                }
+            }
+        }
+        for call in fresh {
+            self.emit(CommsEvent::CallChanged { call });
+        }
+    }
+
     // -- emission ------------------------------------------------------------
 
     fn emit_delta(&self, delta: StateDelta) {
@@ -1122,6 +1263,10 @@ impl CommsManager {
                 pinned_message_ids: state.pins.get(&conv_id).cloned().unwrap_or_default(),
                 conv_id,
             }),
+            StateDelta::CallChanged { call_id } => state
+                .calls
+                .get(&call_id)
+                .map(|call| CommsEvent::CallChanged { call: call.clone() }),
             StateDelta::MemberChanged {
                 conv_id,
                 user_id,
@@ -1326,6 +1471,57 @@ mod tests {
     /// never advances the watermark — looked like a loaded transcript and
     /// suppressed the fetch. The channel then rendered exactly that one
     /// message after a restart.
+    /// REST call history merges ADDITIVELY: a row the socket already
+    /// delivered is never overwritten by a page fetched before the frame, and
+    /// only genuinely new calls are announced.
+    #[tokio::test]
+    async fn adopt_calls_is_additive_and_announces_only_fresh_rows() {
+        let store = CommsStore::open_in_memory().expect("store");
+        let mgr = CommsManager::new(store, std::sync::Arc::new(NoToken));
+        mgr.set_target(Some(OrgTarget {
+            org_id: "org_a".into(),
+        }));
+
+        let call = |id: &str, ended: Option<i64>| crate::wire::Call {
+            id: id.into(),
+            conv_id: Some("c1".into()),
+            mode: crate::wire::CallMode::Audio,
+            started_by: "u1".into(),
+            started_at: 1,
+            ended_at: ended,
+            seq: 10,
+            transcript_state: crate::wire::CallTranscriptState::None,
+            join_slug: None,
+            recording_state: crate::wire::CallRecordingState::Off,
+        };
+
+        // A socket frame taught us the call is over…
+        mgr.inner
+            .state
+            .lock()
+            .unwrap()
+            .calls
+            .insert("call_1".into(), call("call_1", Some(99)));
+
+        let mut rx = mgr.subscribe();
+        // …and the REST page, fetched before that frame, still says live.
+        mgr.adopt_calls(vec![call("call_1", None), call("call_2", Some(50))]);
+
+        // The frame's answer stands; the new row was learned.
+        mgr.with_state(|state| {
+            assert_eq!(state.calls["call_1"].ended_at, Some(99));
+            assert_eq!(state.calls["call_2"].ended_at, Some(50));
+        });
+
+        // Exactly one announcement, for the fresh row only.
+        let env = rx.try_recv().expect("one event");
+        match env.ev {
+            CommsEvent::CallChanged { call } => assert_eq!(call.id, "call_2"),
+            other => panic!("unexpected event: {other:?}"),
+        }
+        assert!(rx.try_recv().is_err(), "call_1 must not be re-announced");
+    }
+
     #[tokio::test]
     async fn hydration_is_tracked_and_cleared_when_leaving_an_org() {
         let store = CommsStore::open_in_memory().expect("store");

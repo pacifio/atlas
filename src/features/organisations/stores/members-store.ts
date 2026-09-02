@@ -57,6 +57,27 @@ const FRESH_MS = 30_000;
  *  no-op rather than a second request racing the first. */
 const inFlight = new Set<string>();
 
+/**
+ * Failure bookkeeping + one scheduled retry per org.
+ *
+ * A rejected `listMembers` used to LATCH: `loadedAt` stayed null, `error` was
+ * written, and nothing anywhere retried — the comms panel then showed
+ * "Unknown" DMs until its remount refired `load`. The store now heals itself:
+ * bounded exponential backoff (2s·2ⁿ capped at 30s, 5 attempts), cleared on
+ * success or a `force` load. Timers, not effects, so recovery does not depend
+ * on any component being mounted with the right deps.
+ */
+const attempts = new Map<string, number>();
+const retryTimers = new Map<string, number>();
+
+function clearRetry(orgId: string): void {
+  const t = retryTimers.get(orgId);
+  if (t !== undefined) {
+    clearTimeout(t);
+    retryTimers.delete(orgId);
+  }
+}
+
 export const useMembersStore = createSelectors(
   create<MembersState>()((set, get) => {
     const roster = (orgId: string): OrgRoster => get().byOrg[orgId] ?? EMPTY;
@@ -74,6 +95,8 @@ export const useMembersStore = createSelectors(
           const fresh = current.loadedAt !== null && Date.now() - current.loadedAt < FRESH_MS;
           if (!opts?.force && (fresh || inFlight.has(orgId))) return;
           if (inFlight.has(orgId)) return;
+          if (opts?.force) attempts.delete(orgId);
+          clearRetry(orgId);
 
           inFlight.add(orgId);
           patch(orgId, { loading: true });
@@ -92,6 +115,18 @@ export const useMembersStore = createSelectors(
                 loading: false,
                 error: typeof e === "string" ? e : "Couldn't load members.",
               });
+              const n = (attempts.get(orgId) ?? 0) + 1;
+              attempts.set(orgId, n);
+              if (n <= 5) {
+                const delay = Math.min(30_000, 2_000 * 2 ** (n - 1));
+                retryTimers.set(
+                  orgId,
+                  window.setTimeout(() => {
+                    retryTimers.delete(orgId);
+                    void get().actions.load(orgId);
+                  }, delay),
+                );
+              }
               return;
             }
             patch(orgId, {
@@ -101,6 +136,7 @@ export const useMembersStore = createSelectors(
               loading: false,
               error: null,
             });
+            attempts.delete(orgId);
           } finally {
             inFlight.delete(orgId);
           }

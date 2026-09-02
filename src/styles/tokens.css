@@ -44,14 +44,16 @@
   --panel-rail-bg: #0f0f0f; /* workspace sidebar (<aside>, rendered at /80) */
   --panel-bg: #060706; /* left panel — file tree / explorer */
   --panel-bg-2: #0d0e0d; /* right panel — source control AND team chat */
+  --comms-outer: #0f0f0f; /* team chat — backdrop the surface floats on */
+  --comms-surface: #000000; /* team chat — the interface card, pure black */
 
   /* === Team chat (comms) ===
      The transcript is LINEAR (Discord/Slack), not bubbles — the panel is ~390px
      wide and a max-width bubble wrapped nearly every sentence. The former
      `--comms-bubble-*` fills are gone with it.
      A mention of *you* — deliberately warmer than a mention of anyone else. */
-  --comms-mention-bg: rgba(255, 255, 0, 0.14);
-  --comms-mention-text: #ffff00;
+  --comms-mention-bg: rgba(255, 255, 255, 0.16);
+  --comms-mention-text: #ffffff;
   --comms-mention-other-bg: rgba(255, 255, 255, 0.08);
   --comms-mention-other-text: #cfcfcf;
   /* The team-chat green: unread counts, the tab-strip dot, and the presence dot
@@ -61,8 +63,10 @@
      is not — white on it is 1.84:1 — so the badge grades to `-deep` and the
      digits take a dark text-shadow, the usual candy-pill treatment. Black text
      would measure 11.4:1 if legibility ever matters more than the look. */
-  --comms-unread: #49d967;
-  --comms-unread-deep: #2fa84c;
+  /* Monochrome by house preference — signal strength is carried by SHADE
+     (white = mention, mid-gray = unread/active), never by hue. */
+  --comms-unread: #b8b8b8;
+  --comms-unread-deep: #8a8a8a;
   /* The Connect call-to-action on an unconnected org. Chromatic for the same
      reason `--capture-live` is, and NOT `--status-success` (deliberately grey):
      this is the only action on an otherwise empty panel, so it has to read as

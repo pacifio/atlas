@@ -4,6 +4,8 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   Copy,
   CornerUpRight,
+  Download,
+  Link as LinkIcon,
   FileText,
   Loader2,
   MoreHorizontal,
@@ -16,6 +18,9 @@ import {
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
+import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { toast } from "sonner";
+import { comms } from "../lib/comms-api";
 import { CommsAvatar } from "./comms-avatar";
 import { MessageBody } from "./message-body";
 import { MediaLightbox } from "./media-lightbox";
@@ -27,6 +32,8 @@ import {
 } from "../lib/attachment-cache";
 import { aggregateReactions, formatClock } from "../lib/derive";
 import { useCommsStore } from "../stores/comms-store";
+import { ArcProgress } from "./arc-progress";
+import { AudioPlayer } from "./audio-player";
 import { CHAT_REACTION_EMOJI } from "../types";
 import type { ChatAttachment, CommsMessage, OrgMemberProfile } from "../types";
 
@@ -62,6 +69,8 @@ interface MessageGroupProps {
   onDelete: (id: string) => void;
   onReact: (id: string, emoji: string, on: boolean) => void;
   onPin: (id: string, on: boolean) => void;
+  /** Jump the transcript to a message id (reply quotes, pin entries). */
+  onJump: (id: string) => void;
   /** Channels and group DMs name the author; a 1:1 DM does not need to. */
   showAuthor: boolean;
 }
@@ -81,6 +90,7 @@ export const MessageGroup = memo(function MessageGroup({
   onDelete,
   onReact,
   onPin,
+  onJump,
   showAuthor,
 }: MessageGroupProps) {
   return (
@@ -100,6 +110,7 @@ export const MessageGroup = memo(function MessageGroup({
           onDelete={onDelete}
           onReact={onReact}
           onPin={onPin}
+          onJump={onJump}
           showAuthor={showAuthor}
         />
       ))}
@@ -133,6 +144,7 @@ const MessageRow = memo(function MessageRow({
   onDelete,
   onReact,
   onPin,
+  onJump,
   showAuthor,
 }: {
   message: CommsMessage;
@@ -147,15 +159,22 @@ const MessageRow = memo(function MessageRow({
   onDelete: (id: string) => void;
   onReact: (id: string, emoji: string, on: boolean) => void;
   onPin: (id: string, on: boolean) => void;
+  onJump: (id: string) => void;
   showAuthor: boolean;
 }) {
   const m = message;
   const pinned = useCommsStore((s) => s.pinned.includes(m.id));
   const [hovered, setHovered] = useState(false);
+  // Opening a Radix menu moves the pointer and focus into a PORTAL, outside
+  // this row — so `onMouseLeave` fires, and if mounting depended on hover alone
+  // the toolbar (and the menu inside it) would unmount the instant it opened.
+  // The open flag therefore has to live OUT here, above the thing that unmounts.
+  const [menuOpen, setMenuOpen] = useState(false);
   const parent = m.reply_to_id ? lookup(m.reply_to_id) : undefined;
 
   return (
     <div
+      data-msg-id={m.id}
       className="group/msg relative flex gap-2 rounded px-1 hover:bg-bg-hover [contain:layout_style]"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -177,6 +196,7 @@ const MessageRow = memo(function MessageRow({
           <ReplyLine
             parent={parent}
             author={parent ? (members.get(parent.author_id) ?? null) : null}
+            onJump={() => onJump(m.reply_to_id as string)}
           />
         )}
 
@@ -196,8 +216,9 @@ const MessageRow = memo(function MessageRow({
         <ReactionRow message={m} members={members} me={me} onReact={onReact} />
       </div>
 
-      {hovered && (
+      {(hovered || menuOpen) && (
         <HoverActions
+          onOpenChange={setMenuOpen}
           pinned={pinned}
           canEdit={own && !m.deleted}
           canDelete={!m.deleted}
@@ -273,21 +294,40 @@ function MessageContent({
 function ReplyLine({
   parent,
   author,
+  onJump,
 }: {
   parent: CommsMessage | undefined;
   author: OrgMemberProfile | null;
+  onJump: () => void;
 }) {
-  // A parent can be missing (paged out) or deleted. Both render as a stub — a
-  // reply must never appear to point at nothing.
-  const gone = !parent || parent.deleted;
+  // A parent can be missing (paged out) or deleted. A deleted parent renders
+  // as a stub — a reply must never appear to point at nothing — but a merely
+  // paged-out one still jumps: the jump loads history until it finds it.
+  const deleted = parent?.deleted === true;
   return (
-    <div className="flex min-w-0 items-center gap-1 pb-0.5 text-[10.5px] text-text-tertiary">
+    <button
+      type="button"
+      onClick={deleted ? undefined : onJump}
+      disabled={deleted}
+      title={deleted ? undefined : "Jump to message"}
+      className={cn(
+        "group/reply flex w-full min-w-0 items-center gap-1 pb-0.5 text-left text-[10.5px] text-text-tertiary",
+        !deleted && "cursor-pointer",
+      )}
+    >
       <CornerUpRight size={10} className="shrink-0 -scale-y-100 opacity-50" />
-      <span className="shrink-0 font-medium text-text-secondary">{author?.name ?? "Unknown"}</span>
-      <span className="min-w-0 truncate opacity-80">
-        {gone ? <span className="italic">original message deleted</span> : parent.body}
+      <span
+        className={cn(
+          "shrink-0 font-medium text-text-secondary",
+          !deleted && "group-hover/reply:underline",
+        )}
+      >
+        {author?.name ?? "Unknown"}
       </span>
-    </div>
+      <span className="min-w-0 truncate opacity-80">
+        {deleted ? <span className="italic">original message deleted</span> : (parent?.body ?? "…")}
+      </span>
+    </button>
   );
 }
 
@@ -351,7 +391,10 @@ function ReactionRow({
 function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
   const isImage = attachment.content_type.startsWith("image/");
   const isVideo = attachment.content_type.startsWith("video/");
-  const inline = isImage || isVideo;
+  const isAudio = attachment.content_type.startsWith("audio/");
+  // Audio rides the same eager local-cache fetch as media: the block is
+  // interactive the moment it paints, and audio files are small.
+  const inline = isImage || isVideo || isAudio;
 
   const [path, setPath] = useState<string | null>(
     () => cachedAttachmentPath(attachment.id) ?? null,
@@ -359,6 +402,9 @@ function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
   const [ratio, setRatio] = useState<number | undefined>(() => cachedRatio(attachment.id));
   const [failed, setFailed] = useState(false);
   const [zoomed, setZoomed] = useState(false);
+  // Per-attachment download slice: exists only while the save is in flight.
+  const progress = useCommsStore((s) => s.downloads[attachment.id]);
+  const downloading = progress !== undefined;
 
   useEffect(() => {
     if (!inline || path || failed) return;
@@ -373,6 +419,18 @@ function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
       alive = false;
     };
   }, [attachment.id, attachment.filename, inline, path, failed]);
+
+  if (isAudio && !failed) {
+    return (
+      <AudioPlayer
+        src={path ? convertFileSrc(path) : null}
+        filename={attachment.filename}
+        subtitle={formatBytes(attachment.bytes)}
+        buffering={false}
+        onDownload={() => void saveAttachment(attachment)}
+      />
+    );
+  }
 
   if (inline && !failed) {
     // Until the ratio is known, reserve a 16/10 box — close enough for most
@@ -432,10 +490,33 @@ function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
     );
   }
 
-  // Everything else — and any image whose fetch failed — is an honest file card.
+  // Everything else — and any image whose fetch failed — is a file card: a real
+  // affordance, not a label. Clicking it downloads; hover reveals copy-link and
+  // download. It is a div rather than a button because it CONTAINS buttons, and
+  // nesting interactive elements is invalid.
   return (
-    <div className="flex max-w-[420px] items-center gap-2 rounded-lg border border-border-default bg-bg-elevated px-2.5 py-2">
-      <FileText size={15} className="shrink-0 text-text-tertiary" />
+    <div
+      role="button"
+      tabIndex={0}
+      title={`Download ${attachment.filename}`}
+      onClick={() => {
+        if (!downloading) void saveAttachment(attachment);
+      }}
+      onKeyDown={(e) => {
+        if ((e.key === "Enter" || e.key === " ") && !downloading) {
+          e.preventDefault();
+          void saveAttachment(attachment);
+        }
+      }}
+      className="group/file flex max-w-[420px] cursor-pointer items-center gap-2 rounded-lg border border-border-default bg-bg-elevated px-2.5 py-2 transition-colors hover:border-border-strong hover:bg-bg-hover"
+    >
+      {progress ? (
+        <span className="flex h-[15px] w-[15px] shrink-0 items-center justify-center text-[var(--comms-unread)]">
+          <ArcProgress got={progress.got} total={progress.total} />
+        </span>
+      ) : (
+        <FileText size={15} className="shrink-0 text-text-tertiary" />
+      )}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[11.5px] text-text-secondary">
           {attachment.filename}
@@ -445,14 +526,78 @@ function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
           {failed && " · could not load"}
         </span>
       </span>
+      <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/file:opacity-100 focus-within:opacity-100">
+        <button
+          type="button"
+          title="Copy link"
+          onClick={(e) => {
+            e.stopPropagation();
+            void copyAttachmentLink(attachment);
+          }}
+          className={fileActionBtn}
+        >
+          <LinkIcon size={12} />
+        </button>
+        <button
+          type="button"
+          title="Download"
+          disabled={downloading}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!downloading) void saveAttachment(attachment);
+          }}
+          className={fileActionBtn}
+        >
+          <Download size={12} />
+        </button>
+      </span>
     </div>
   );
+}
+
+const fileActionBtn =
+  "flex h-6 w-6 items-center justify-center rounded text-text-tertiary transition-colors hover:bg-bg-active hover:text-text-primary cursor-pointer";
+
+/** Save an attachment wherever the user wants it. */
+async function saveAttachment(attachment: ChatAttachment): Promise<void> {
+  try {
+    const dest = await saveFileDialog({ defaultPath: attachment.filename });
+    if (!dest) return;
+    await comms.saveAttachment(attachment.id, attachment.filename, dest, attachment.id);
+    toast.success(`Saved ${attachment.filename}`);
+  } catch (e) {
+    console.warn("comms: save attachment failed:", attachment.id, e);
+    toast.error("Could not save that file.");
+  }
+}
+
+/**
+ * Copy the attachment's canonical URL.
+ *
+ * NOT a public share link — this API has no such concept by design (ADR-0010
+ * §3: no presigned URLs; `GET /files/{id}` answers a 302 to a ticket that dies
+ * in sixty seconds). What this copies is the addressable resource, which
+ * resolves for a colleague who is signed in and in the conversation, and 404s
+ * for everyone else. The toast says so rather than implying a share.
+ */
+async function copyAttachmentLink(attachment: ChatAttachment): Promise<void> {
+  try {
+    const base = await comms.baseUrl();
+    const org = useCommsStore.getState().connection.orgId;
+    const url = `${base}/files/${attachment.id}${org ? `?org=${org}` : ""}`;
+    await copyText(url);
+    toast.success("Link copied — opens for members of this conversation.");
+  } catch (e) {
+    console.warn("comms: copy link failed:", attachment.id, e);
+    toast.error("Could not copy that link.");
+  }
 }
 
 function HoverActions({
   pinned,
   canEdit,
   canDelete,
+  onOpenChange,
   onReact,
   onReply,
   onEdit,
@@ -463,6 +608,8 @@ function HoverActions({
   pinned: boolean;
   canEdit: boolean;
   canDelete: boolean;
+  /** Tells the row to keep this mounted while a menu is open. */
+  onOpenChange: (open: boolean) => void;
   onReact: (emoji: string) => void;
   onReply: () => void;
   onEdit: () => void;
@@ -473,6 +620,9 @@ function HoverActions({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const forceShow = pickerOpen || menuOpen;
+  useEffect(() => {
+    onOpenChange(forceShow);
+  }, [forceShow, onOpenChange]);
 
   return (
     <div
