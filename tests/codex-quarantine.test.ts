@@ -142,7 +142,10 @@ describe("nothing that ships depends on the vendored engine", () => {
   it("no Atlas crate declares a codex dependency", () => {
     const offenders = atlasManifests()
       .filter((m) => CODEX_DEP.test(uncommented(read(m))))
-      .map((m) => path.relative(REPO_ROOT, m))
+      // Forward slashes regardless of host: `path.relative` answers with the
+      // native separator, and on Windows `cratestlas-native-agent\Cargo.toml`
+      // misses the allowlist above and the seam is reported as an offender.
+      .map((m) => path.relative(REPO_ROOT, m).split(path.sep).join("/"))
       .filter((rel) => !ALLOWED_CODEX_CONSUMERS.has(rel));
     expect(
       offenders,
