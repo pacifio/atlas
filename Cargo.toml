@@ -663,10 +663,31 @@ panic = "unwind"    # REQUIRED — three independent `catch_unwind` guards depen
                     # little binary size for unwind tables.
 opt-level = 3       # Default for release, restated for clarity
 
+# Build scripts and proc-macro crates are COMPILE-TIME ONLY — none of their
+# code is linked into the shipped binary, and LTO never touches them. Without
+# this stanza they inherit `opt-level = 3` / `codegen-units = 1` from the
+# profile above, so the build spends real time optimizing 317 build scripts and
+# 143 proc-macro dylibs whose only job is to run once and exit.
+#
+# `opt-level = 0` makes them compile fast and run slower; the trade is only
+# worth it while the running is cheap relative to the compiling, which it is
+# here (measure before assuming it holds — a proc-macro-bound build can invert
+# it). Shipped output is bit-identical either way: this cannot affect binary
+# size, speed, or the `panic = "unwind"` guarantees above.
+[profile.release.build-override]
+opt-level = 0
+codegen-units = 256
+
 # Dev profile — Atlas's own app crate is small (~170 LOC + a handful of
 # command modules). Keep it at the default `opt-level = 0` so incremental
 # rebuilds stay snappy. Its per-package stanza is deliberately absent below.
 [profile.dev]
+# Full DWARF for 130 members + their deps produced a 104 GB `target/debug` and
+# paid for itself on every link. `line-tables-only` keeps what is actually read
+# day to day — panic backtraces with file:line, and profiler symbols — and drops
+# only variable inspection in a debugger. Restore `debug = true` locally (never
+# commit it) on the rare occasion you need to step through Rust in lldb.
+debug = "line-tables-only"
 
 # Optimize ALL transitive dependencies in dev mode at `opt-level = 1`
 # (Tauri, wry, tao, tokio, serde, reqwest, the vendored cersei forks, etc.).
@@ -706,6 +727,8 @@ opt-level = 1
 [profile.dev.package.atlas-checkpoint]
 opt-level = 1
 [profile.dev.package.atlas-codeindex]
+opt-level = 1
+[profile.dev.package.atlas-comms]
 opt-level = 1
 [profile.dev.package.atlas-embed]
 opt-level = 1
