@@ -88,7 +88,7 @@
     "lowlight": "^3.3.0",
     "lucide-react": "^0.468",
     "matter-js": "^0.20.0",
-    "mermaid": "^11.15.0",
+    "mermaid": "^11.17.2",
     "pdfjs-dist": "^5.4.296",
     "pixi.js": "^8.18.1",
     "posthog-js": "^1.396.3",
@@ -132,7 +132,7 @@
     "oxlint": "^1.77.0",
     "tailwindcss": "^4",
     "typescript": "^5.7",
-    "vite": "^6",
+    "vite": "^6.4.3",
     "vitest": "^4.1.10"
   },
   "resolutions": {
@@ -141,7 +141,9 @@
   },
   "overrides": {
     "@codemirror/state": "^6.6.0",
-    "@codemirror/view": "^6.43.0"
+    "@codemirror/view": "^6.43.0",
+    "tar": "7.5.21",
+    "js-yaml": "4.3.1"
   },
   "packageManager": "pnpm@11.24.0+sha512.bd27e345e976dcb0be0b7a1228217b049a817e21b1f355c90dbe7dc46671895a8bc1e6d06c24554505ea93ea0b45f489a27ec1bfbc8de6a9659fca0f16fa0000"
 }
