@@ -128,84 +128,130 @@ export default defineConfig(async () => ({
     // needs (React + the chat panel). Heavy panel-specific vendors live in
     // their own chunks and load on demand when the user opens a tab that
     // pulls them in.
-    rollupOptions: {
+    //
+    // PORTED from `rollupOptions.output.manualChunks` (a Rollup if-chain) to
+    // Rolldown's `codeSplitting.groups` when Vite 8 made Rolldown the bundler.
+    // The function form still "works" under Rolldown's compat shim, but it does
+    // NOT preserve exclusivity: measured on this repo, `clsx` was claimed by
+    // `vendor-pdf` and React's CJS build by `vendor-markdown` despite rules
+    // assigning both elsewhere, which made the entry statically import ~1 MB of
+    // lazy-panel vendors (rolldown#7473). `priority` is what fixes it — a
+    // higher-priority group matches first and its modules are REMOVED from
+    // lower-priority groups. Ordering alone cannot express that.
+    //
+    // Numbers are spaced by 10 so a rule can be slotted between two others
+    // without renumbering the file.
+    rolldownOptions: {
       output: {
-        manualChunks: (id) => {
-          if (!id.includes("node_modules")) return undefined;
-          // Never route a STYLESHEET into a vendor JS chunk. `highlight.js/
-          // styles/github-dark.css` matched the markdown rule below, which
-          // made the entry emit a bare `import "./vendor-markdown.js"` purely
-          // to attach that CSS — 554 KB of JS parsed before first paint for a
-          // theme file, even after every real JS edge had been cut.
-          if (id.endsWith(".css")) return undefined;
-          // Tiny shared utils get their OWN chunk, and this rule must come
-          // first. `cn()` (clsx + tailwind-merge) is used all over the eager
-          // boot path AND by react-pdf; left unassigned, Rollup folded clsx
-          // into the `vendor-pdf` manual chunk, so the entry imported a single
-          // 200-byte function from a 482 KB chunk and `index.html` preloaded
-          // all of pdfjs before first paint — silently defeating the lazy
-          // `PdfViewer` boundary in center-panel.tsx.
-          if (
-            id.includes("/node_modules/clsx/") ||
-            id.includes("/node_modules/tailwind-merge/")
-          ) {
-            return "vendor-utils";
-          }
-          // Language grammars are dynamically imported per-language in
-          // editor/lib/languages.ts. Leaving them unassigned lets Rollup give
-          // each its own chunk; folding them into `vendor-codemirror` (as the
-          // old blanket `@codemirror`/`@lezer` match did) collapsed all 13
-          // lazy boundaries into one chunk, so opening a JSON file loaded
-          // every grammar. `@lezer/{common,highlight,lr}` are core runtime,
-          // not grammars, and stay with the editor chunk.
-          if (id.includes("@codemirror/lang-")) return undefined;
-          if (
-            id.includes("@codemirror") ||
-            /@lezer\/(common|highlight|lr)\//.test(id)
-          ) {
-            return "vendor-codemirror";
-          }
-          if (id.includes("@xterm") || id.includes("/xterm/") || id.includes("/xterm-")) {
-            return "vendor-xterm";
-          }
-          if (
-            id.includes("react-markdown") ||
-            id.includes("remark-") ||
-            id.includes("rehype-") ||
-            id.includes("shiki") ||
-            id.includes("highlight.js")
-          ) {
-            return "vendor-markdown";
-          }
-          if (id.includes("@radix-ui")) {
-            return "vendor-radix";
-          }
-          if (id.includes("@tanstack")) {
-            return "vendor-tanstack";
-          }
-          if (id.includes("pdfjs-dist") || id.includes("react-pdf")) {
-            return "vendor-pdf";
-          }
-          if (id.includes("@tauri-apps")) {
-            return "vendor-tauri";
-          }
-          // Keep the heavy lazy-panel libs OUT of vendor-react. `@xyflow/react`
-          // (Canvas) and `@tiptap/react` (Knowledge) are only reached through
-          // lazy() panels, so they must land in their own lazy chunks — the old
-          // `/react/` substring match pulled them into the EAGER vendor-react
-          // chunk, loading ~500KB+ at startup and defeating those lazy boundaries.
-          if (id.includes("@xyflow")) return "vendor-xyflow";
-          if (id.includes("@tiptap")) return "vendor-tiptap";
-          // Exact package roots only — NOT a `/react/` substring (which matches
-          // @xyflow/react, @tiptap/react, react-markdown, …).
-          if (
-            id.includes("/node_modules/react/") ||
-            id.includes("/node_modules/react-dom/") ||
-            id.includes("/node_modules/scheduler/")
-          ) {
-            return "vendor-react";
-          }
-          return undefined;
+        codeSplitting: {
+          groups: [
+            // Tiny shared utils, highest priority. `cn()` (clsx +
+            // tailwind-merge) is used all over the eager boot path AND by
+            // react-pdf. Left to a lower priority, clsx gets folded into
+            // `vendor-pdf`, so the entry imports a 200-byte function from a
+            // 425 KB chunk and preloads all of pdfjs before first paint —
+            // silently defeating the lazy `PdfViewer` boundary in
+            // center-panel.tsx. `\0vite/preload-helper` (the `__vitePreload`
+            // runtime) rides along for the same reason: it is needed eagerly,
+            // and wherever it lands the entry must import that chunk.
+            {
+              name: "vendor-utils",
+              priority: 100,
+              test: (id) =>
+                !id.endsWith(".css") &&
+                (id.includes("/node_modules/clsx/") ||
+                  id.includes("/node_modules/tailwind-merge/") ||
+                  id.includes("vite/preload-helper")),
+            },
+            // Exact package roots only — NOT a `/react/` substring (which
+            // matches @xyflow/react, @tiptap/react, react-markdown, …). Above
+            // vendor-markdown deliberately: react-markdown pulls React in, and
+            // at equal priority React's CJS build lands in `vendor-markdown`.
+            {
+              name: "vendor-react",
+              priority: 90,
+              test: (id) =>
+                !id.endsWith(".css") &&
+                (id.includes("/node_modules/react/") ||
+                  id.includes("/node_modules/react-dom/") ||
+                  id.includes("/node_modules/scheduler/")),
+            },
+            // `@codemirror/lang-*` is deliberately absent from every group, so
+            // each grammar keeps its own chunk. They are dynamically imported
+            // per-language in editor/lib/languages.ts; capturing them here
+            // collapses all 13 lazy boundaries into one chunk, so opening a
+            // JSON file would load every grammar. `@lezer/{common,highlight,lr}`
+            // are core runtime, not grammars, and stay with the editor chunk.
+            {
+              name: "vendor-codemirror",
+              priority: 80,
+              test: (id) =>
+                !id.endsWith(".css") &&
+                !id.includes("@codemirror/lang-") &&
+                (id.includes("@codemirror") ||
+                  /@lezer\/(common|highlight|lr)\//.test(id)),
+            },
+            {
+              name: "vendor-xterm",
+              priority: 70,
+              test: (id) =>
+                !id.endsWith(".css") &&
+                (id.includes("@xterm") || id.includes("/xterm/") || id.includes("/xterm-")),
+            },
+            // Never route a STYLESHEET into a vendor JS chunk (every `test`
+            // here guards `.css` for this reason). `highlight.js/styles/
+            // github-dark.css` matched this rule once, which made the entry
+            // emit a bare `import "./vendor-markdown.js"` purely to attach that
+            // CSS — 554 KB of JS parsed before first paint for a theme file.
+            {
+              name: "vendor-markdown",
+              priority: 60,
+              test: (id) =>
+                !id.endsWith(".css") &&
+                (id.includes("react-markdown") ||
+                  id.includes("remark-") ||
+                  id.includes("rehype-") ||
+                  id.includes("shiki") ||
+                  id.includes("highlight.js")),
+            },
+            {
+              name: "vendor-radix",
+              priority: 50,
+              test: (id) => !id.endsWith(".css") && id.includes("@radix-ui"),
+            },
+            {
+              name: "vendor-tanstack",
+              priority: 40,
+              test: (id) => !id.endsWith(".css") && id.includes("@tanstack"),
+            },
+            {
+              name: "vendor-pdf",
+              priority: 30,
+              test: (id) =>
+                !id.endsWith(".css") &&
+                (id.includes("pdfjs-dist") || id.includes("react-pdf")),
+            },
+            {
+              name: "vendor-tauri",
+              priority: 20,
+              test: (id) => !id.endsWith(".css") && id.includes("@tauri-apps"),
+            },
+            // Keep the heavy lazy-panel libs OUT of vendor-react. `@xyflow/react`
+            // (Canvas) and `@tiptap/react` (Knowledge) are only reached through
+            // lazy() panels, so they must land in their own lazy chunks — an
+            // earlier `/react/` substring match pulled them into the EAGER
+            // vendor-react chunk, loading ~500KB+ at startup.
+            {
+              name: "vendor-xyflow",
+              priority: 10,
+              test: (id) => !id.endsWith(".css") && id.includes("@xyflow"),
+            },
+            {
+              name: "vendor-tiptap",
+              priority: 10,
+              test: (id) => !id.endsWith(".css") && id.includes("@tiptap"),
+            },
+          ],
         },
       },
     },
