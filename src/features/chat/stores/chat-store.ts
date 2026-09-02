@@ -238,9 +238,11 @@ function pushAcpModelToAgent(state: ChatState, sessionId: string): void {
   }).catch((err) => console.warn("agents_set_model failed:", err));
 }
 
-/** Push the native Cersei agent's `provider/model` selection to its bound
- *  agent via `agents_set_model`. The backend's `set_model` parses the
- *  `provider/model` form (see `atlas_cersei::CerseiRuntime::set_model`).
+/** Push the native agent's `provider/model` selection to its bound agent via
+ *  `agents_set_model`. The id is forwarded verbatim: `AgentHost::set_model`
+ *  (`src-tauri/src/commands/agent_host.rs`) hands it to the connection's model
+ *  selector, and the native agent validates it against its catalogue
+ *  (`crates/atlas-native-agent/src/engine/connection.rs`, `select_model`).
  *  No-op until the session is bound and both provider + model are chosen. */
 function pushCerseiModelToAgent(state: ChatState, sessionId: string): void {
   const session = state.sessions[sessionId];
