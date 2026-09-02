@@ -160,6 +160,7 @@ jobs:
           - crate: atlas-checkpoint
             clippy: true
           - crate: atlas-codeindex
+          - crate: atlas-comms
           - crate: atlas-embed
           - crate: atlas-git
           - crate: atlas-gitdiff

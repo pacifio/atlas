@@ -573,7 +573,7 @@ impl CommsManager {
         );
 
         let row = LocalMessage {
-            message: message.clone(),
+            message,
             client_msg_id: Some(client_msg_id.clone()),
             status: SendStatus::Sending,
             deleted: false,
@@ -1438,7 +1438,7 @@ mod tests {
             assert!(row.deleted);
             assert!(row.message.body.is_empty());
             // A rail must never point at something that is gone.
-            assert!(s.pins.get("c1").is_none_or(|rail| rail.is_empty()));
+            assert!(s.pins.get("c1").is_none_or(Vec::is_empty));
         });
     }
 
