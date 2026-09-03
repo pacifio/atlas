@@ -226,7 +226,7 @@ pub fn apply_frame(
                 return Vec::new();
             };
             let optimistic_id = optimistic_id(&client_msg_id);
-            let conv_id = sent.conv_id.clone();
+            let conv_id = sent.conv_id;
 
             // The optimistic row may already have been replaced by a
             // `message.new` from our own other device; if so there is nothing

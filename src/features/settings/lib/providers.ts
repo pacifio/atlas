@@ -156,6 +156,15 @@ export const PROVIDERS: ProviderDef[] = [
     placeholder: "pplx-...",
     chat: true,
   },
+  {
+    id: "empero",
+    name: "Empero",
+    env: "EMPERO_API_KEY",
+    category: "Inference",
+    docsUrl: "https://free.empero.org",
+    placeholder: "free",
+    chat: true,
+  },
 
   // ── Gateways / proxies ───────────────────────────────────────────
   {

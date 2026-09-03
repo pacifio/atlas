@@ -79,6 +79,7 @@ const ENV_KEY_VARS: &[(&str, &[&str])] = &[
     ("huggingface", &["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_API_KEY"]),
     ("jina", &["JINA_API_KEY"]),
     ("elevenlabs", &["ELEVENLABS_API_KEY", "ELEVEN_API_KEY", "XI_API_KEY"]),
+    ("empero", &["EMPERO_API_KEY"]),
 ];
 
 /// One env-imported key: which provider it maps to, the variable it came from,

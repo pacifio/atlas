@@ -114,7 +114,7 @@ pub fn install(app: &AppHandle) {
 
     // Sends that never got an ack become visibly failed rather than silently
     // stuck. Frames carry no correlation id, so a timer is the honest signal.
-    let sweep = manager.clone();
+    let sweep = manager;
     tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
         loop {
