@@ -246,6 +246,9 @@ pub fn browser_embed_create(
     let id_started = id.clone();
     let id_finished = id;
 
+    // `WebviewBuilder` (unlike `WebviewWindowBuilder`) has no `.visible()`
+    // knob — the child webview is created shown, then hidden immediately
+    // below to match the "initially hidden" contract callers rely on.
     let builder = tauri::webview::WebviewBuilder::new(&label, WebviewUrl::External(parsed))
         .data_directory(profile)
         .on_page_load(move |webview, payload| {
