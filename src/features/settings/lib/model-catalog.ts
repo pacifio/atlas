@@ -31,6 +31,7 @@ const PREFERRED: Record<string, string[]> = {
   openrouter: ["anthropic/claude-sonnet-4.6", "google/gemini-3.1-pro", "qwen/qwen3-coder"],
   perplexity: ["sonar-reasoning-pro", "sonar-pro"],
   cohere: ["command-a-03-2025"],
+  empero: ["glm-5.3-flash"],
 };
 
 const MAX_MODELS = 18;
