@@ -89,7 +89,7 @@
     "lowlight": "^3.3.0",
     "lucide-react": "^0.468",
     "matter-js": "^0.20.0",
-    "mermaid": "^11.15.0",
+    "mermaid": "^11.17.2",
     "pdfjs-dist": "^5.4.296",
     "pixi.js": "^8.18.1",
     "posthog-js": "^1.396.3",
@@ -142,7 +142,9 @@
   },
   "overrides": {
     "@codemirror/state": "^6.6.0",
-    "@codemirror/view": "^6.43.0"
+    "@codemirror/view": "^6.43.0",
+    "tar": "7.5.21",
+    "js-yaml": "4.3.1"
   },
   "packageManager": "bun@1.4.0"
 }

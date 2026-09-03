@@ -99,15 +99,15 @@ You don't have to read the raw transcript to get the context back: select a chec
 
 ### Agents
 
-| Capability | Description |
-|---|---|
-| **Multi-agent sessions** | Claude Code, Codex, and Atlas's native agent, selectable per session and running in parallel across tabs. Sessions are independent of tabs, so switching never drops a run in flight |
-| **Shared agent memory** | On-device semantic index (local embeddings, HNSW search) that every agent reads from and writes to |
-| **`@` mentions** | Local resolution of files, folders, symbols, branches, commits, notes, skills, papers, and past sessions |
-| **Skills** | `SKILL.md` files scoped globally or per project, enabled per agent by symlinking into that agent's own skills directory |
-| **Packs** | Install a GitHub repo of skills, subagents, commands, hooks, rules, and scripts, discovered through the skills.sh index |
-| **Model chat** | Talk to a model directly in its own tab, with no agent loop around it |
-| **Organisations** | Sign in, create an organisation, and sync across devices and teammates |
+| Capability | Description | Link |
+|---|---|---|
+| Multi-agent sessions | Claude Code, Codex, and Atlas's native agent, selectable per session and running in parallel across tabs. Sessions are independent of tabs, so switching never drops a run in flight | [Chat & Sessions](https://docs.tryatlas.cc/docs/product/chat) |
+| Shared agent memory | On-device semantic index (local embeddings, HNSW search) that every agent reads from and writes to | [Memory](https://docs.tryatlas.cc/docs/context/memory) |
+| @ mentions | Local resolution of files, folders, symbols, branches, commits, notes, skills, papers, and past sessions | [Chat & Sessions](https://docs.tryatlas.cc/docs/product/chat) |
+| Skills | SKILL.md files scoped globally or per project, enabled per agent by symlinking into that agent's own skills directory | [Skills](https://docs.tryatlas.cc/docs/context/skills) |
+| Packs | Install a GitHub repo of skills, subagents, commands, hooks, rules, and scripts, discovered through the skills.sh index | [Skills](https://docs.tryatlas.cc/docs/context/skills) |
+| Model chat | Talk to a model directly in its own tab, with no agent loop around it | [Chat & Sessions](https://docs.tryatlas.cc/docs/product/chat) |
+| Organisations | Sign in, create an organisation, and sync across devices and teammates | [Organisations](https://docs.tryatlas.cc/docs/organisation/organisations) |
 
 ### Agent history
 
@@ -125,17 +125,17 @@ Works with no account and no network.
 
 ### The workspace
 
-| Capability | Description |
-|---|---|
-| **Editor** | CodeMirror editing surface, with per-project editor state restored across restarts |
-| **Git** | Real commit graph with lane assignment, stage/unstage/commit, branch operations, and file-level diffs |
-| **Terminal** | Block terminal where each command carries its own output, exit code, and duration, plus a full interactive surface for `vim`, `htop`, and friends |
-| **Knowledge base** | Plain markdown notes in `.atlas/knowledge/`, versioned next to the code, with backlinks, a link graph, and export to HTML or a standalone server binary |
-| **Research** | Search arXiv and Semantic Scholar, pull papers in, read them in-app, and `@`-mention them into a prompt |
-| **Browser** | Native WebKit webview in a tab, with real logins, cookies, and a reader mode |
-| **Spaces** | Spatial board for notes and their connections, persisted as JSON in the project |
-| **Split view** | Up to three resizable columns, each with its own tabs |
-| **Activity log** | Every significant event in the project, filterable, with rows you can pin across restarts |
+| Capability | Description | Link |
+|---|---|---|
+| **Editor** | CodeMirror editing surface, with per-project editor state restored across restarts | [Editor](https://docs.tryatlas.cc/docs/product/editor) |
+| **Git** | Real commit graph with lane assignment, stage/unstage/commit, branch operations, and file-level diffs | [Git & Diff](https://docs.tryatlas.cc/docs/source-control/git) |
+| **Terminal** | Block terminal where each command carries its own output, exit code, and duration, plus a full interactive surface for `vim`, `htop`, and friends | [Terminal](https://docs.tryatlas.cc/docs/product/terminal) |
+| **Knowledge base** | Plain markdown notes in `.atlas/knowledge/`, versioned next to the code, with backlinks, a link graph, and export to HTML or a standalone server binary | [Knowledge base](https://docs.tryatlas.cc/docs/context/knowledge-base) |
+| **Research** | Search arXiv and Semantic Scholar, pull papers in, read them in-app, and `@`-mention them into a prompt | [Research](https://docs.tryatlas.cc/docs/context/research) |
+| **Browser** | Native WebKit webview in a tab, with real logins, cookies, and a reader mode | [Explorer](https://docs.tryatlas.cc/docs/product/explorer) |
+| **Spaces** | Spatial board for notes and their connections, persisted as JSON in the project | [Chat & Sessions](https://docs.tryatlas.cc/docs/product/chat) |
+| **Split view** | Up to three resizable columns, each with its own tabs | [Editor](https://docs.tryatlas.cc/docs/product/editor) |
+| **Activity log** | Every significant event in the project, filterable, with rows you can pin across restarts | [Timeline](https://docs.tryatlas.cc/docs/source-control/timeline) |
 
 ---
 
@@ -220,6 +220,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). One thing catches people out:
 - **Discord:** [discord.gg/GmnFggaPfP](https://discord.gg/GmnFggaPfP)
 - **Issues:** [github.com/pacifio/atlas/issues](https://github.com/pacifio/atlas/issues)
 - **Telemetry:** [what Atlas collects, and how to turn it off](TELEMETRY.md)
+
+## Contributors
+<a href="https://github.com/pacifio/atlas/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=pacifio/atlas" />
+</a>
 
 ## License
 
