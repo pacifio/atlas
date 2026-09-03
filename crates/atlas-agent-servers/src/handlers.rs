@@ -325,23 +325,32 @@ pub fn handle_complete_elicitation(
 // Served from disk, not from editor buffers — see the divergence note in
 // `atlas_acp_thread`'s module docs. An agent reading a file the user has
 // modified but not saved sees the on-disk version.
+//
+// Bound to the session's granted directories (`AcpThread::work_dirs` — cwd
+// plus any `additionalDirectories`), the same set advertised to the agent in
+// `session/new`. Without this an agent that merely knows a session id can
+// hand back an absolute path or a `../` climb and read or overwrite anything
+// the OS user can touch, not just the project the user granted.
 
 pub fn handle_write_text_file(
     args: acp::WriteTextFileRequest,
     responder: Responder<acp::WriteTextFileResponse>,
     ctx: &ClientContext,
 ) {
-    if let Err(err) = ctx.sessions.thread(&args.session_id) {
-        return respond_err(responder, err);
-    }
+    let thread = match ctx.sessions.thread(&args.session_id) {
+        Ok(thread) => thread,
+        Err(err) => return respond_err(responder, err),
+    };
+    let roots = lock(&thread).work_dirs().to_vec();
 
     // Disk IO off the queue: a write to a slow volume must not stall the
     // messages behind it.
     tokio::spawn(async move {
         let path = args.path.clone();
-        let result = tokio::task::spawn_blocking(move || write_text_file(&path, &args.content))
-            .await
-            .unwrap_or_else(|err| Err(anyhow::anyhow!("write task panicked: {err}")));
+        let result =
+            tokio::task::spawn_blocking(move || write_text_file(&path, &args.content, &roots))
+                .await
+                .unwrap_or_else(|err| Err(anyhow::anyhow!("write task panicked: {err}")));
 
         match result {
             Ok(()) => {
@@ -355,11 +364,12 @@ pub fn handle_write_text_file(
     });
 }
 
-fn write_text_file(path: &Path, content: &str) -> anyhow::Result<()> {
+fn write_text_file(path: &Path, content: &str, roots: &[PathBuf]) -> anyhow::Result<()> {
+    let path = resolve_within_roots(path, roots)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, content)?;
+    std::fs::write(&path, content)?;
     Ok(())
 }
 
@@ -368,9 +378,11 @@ pub fn handle_read_text_file(
     responder: Responder<acp::ReadTextFileResponse>,
     ctx: &ClientContext,
 ) {
-    if let Err(err) = ctx.sessions.thread(&args.session_id) {
-        return respond_err(responder, err);
-    }
+    let thread = match ctx.sessions.thread(&args.session_id) {
+        Ok(thread) => thread,
+        Err(err) => return respond_err(responder, err),
+    };
+    let roots = lock(&thread).work_dirs().to_vec();
 
     let cancellation = responder.cancellation();
     let path = args.path.clone();
@@ -379,7 +391,7 @@ pub fn handle_read_text_file(
     tokio::spawn(async move {
         let result = cancellation
             .run_until_cancelled(async move {
-                tokio::task::spawn_blocking(move || read_text_file(&path, line, limit))
+                tokio::task::spawn_blocking(move || read_text_file(&path, line, limit, &roots))
                     .await
                     .unwrap_or_else(|err| Err(anyhow::anyhow!("read task panicked: {err}")))
                     .map_err(|err| acp::Error::internal_error().data(err.to_string()))
@@ -391,8 +403,14 @@ pub fn handle_read_text_file(
 }
 
 /// `line` is 1-based and `limit` counts lines, matching the ACP field docs.
-fn read_text_file(path: &Path, line: Option<u32>, limit: Option<u32>) -> anyhow::Result<String> {
-    let content = std::fs::read_to_string(path)?;
+fn read_text_file(
+    path: &Path,
+    line: Option<u32>,
+    limit: Option<u32>,
+    roots: &[PathBuf],
+) -> anyhow::Result<String> {
+    let path = resolve_within_roots(path, roots)?;
+    let content = std::fs::read_to_string(&path)?;
     if line.is_none() && limit.is_none() {
         return Ok(content);
     }
@@ -401,6 +419,124 @@ fn read_text_file(path: &Path, line: Option<u32>, limit: Option<u32>) -> anyhow:
     let take = limit.map(|limit| limit as usize).unwrap_or(usize::MAX);
     let selected: Vec<&str> = content.lines().skip(skip).take(take).collect();
     Ok(selected.join("\n"))
+}
+
+/// Reject a path outside every root in `roots`, before it ever reaches
+/// `std::fs`. `path` may not exist yet (a write's target), so this resolves
+/// `.`/`..` lexically rather than calling `canonicalize` on it directly —
+/// canonicalize only the roots, which are expected to exist, and compare
+/// against those.
+///
+/// Lexical resolution does not chase symlinks inside an allowed root, so a
+/// symlink planted there that points back out is not caught here — the ACP
+/// permission prompt (`request_permission`) is the place for that class of
+/// check, same as Zed's own model. This closes the reported gap: an agent
+/// handing back an absolute path or a `../` climb outside every granted
+/// directory.
+fn resolve_within_roots(path: &Path, roots: &[PathBuf]) -> anyhow::Result<PathBuf> {
+    let normalized = normalize_lexically(path);
+    for root in roots {
+        let canon_root = root.canonicalize().unwrap_or_else(|_| normalize_lexically(root));
+        if normalized.starts_with(&canon_root) || normalized.starts_with(root) {
+            return Ok(normalized);
+        }
+    }
+    anyhow::bail!(
+        "path {} is outside this session's granted directories",
+        path.display()
+    )
+}
+
+/// Resolve `.`/`..` components without touching the filesystem. Not a
+/// substitute for `canonicalize` on a path that already exists (it does not
+/// follow symlinks), only for the case `canonicalize` cannot handle here: a
+/// write's target, which may not exist yet.
+fn normalize_lexically(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod fs_bound_tests {
+    use super::*;
+
+    /// A fresh, real directory per test (`resolve_within_roots` canonicalizes
+    /// roots, which requires them to exist) — unique per call so parallel
+    /// `cargo test` runs never collide.
+    fn test_root() -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "atlas-fs-bound-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create test root");
+        root
+    }
+
+    #[test]
+    fn normalize_lexically_resolves_dot_dot_without_touching_disk() {
+        // Neither `/a/b/../c` nor `/a/c` need to exist on disk — this must not
+        // shell out to `canonicalize`, which is exactly why a write's
+        // not-yet-existing target can still be checked.
+        assert_eq!(
+            normalize_lexically(Path::new("/a/b/../c/./d")),
+            PathBuf::from("/a/c/d")
+        );
+    }
+
+    #[test]
+    fn a_path_inside_the_granted_root_resolves() {
+        let root = test_root();
+        let target = root.join("notes.md");
+        assert_eq!(
+            resolve_within_roots(&target, &[root.clone()]).expect("inside the root"),
+            target
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_dot_dot_climb_out_of_the_root_is_rejected() {
+        let root = test_root();
+        let escape = root.join("../../../../etc/passwd");
+        let err = resolve_within_roots(&escape, &[root.clone()]).expect_err("outside every root");
+        assert!(err.to_string().contains("outside this session's granted directories"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_unrelated_absolute_path_is_rejected() {
+        let root = test_root();
+        let err = resolve_within_roots(Path::new("/etc/passwd"), &[root.clone()])
+            .expect_err("outside every root");
+        assert!(err.to_string().contains("outside this session's granted directories"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_path_under_any_granted_directory_resolves() {
+        // Mirrors `AcpThread::work_dirs()`: cwd plus `additionalDirectories`.
+        let cwd = test_root();
+        let extra_dir = test_root();
+        let target = extra_dir.join("readme.txt");
+        assert_eq!(
+            resolve_within_roots(&target, &[cwd.clone(), extra_dir.clone()])
+                .expect("inside the second granted directory"),
+            target
+        );
+        let _ = std::fs::remove_dir_all(&cwd);
+        let _ = std::fs::remove_dir_all(&extra_dir);
+    }
 }
 
 // ------------------------------------------------------------- session/update
