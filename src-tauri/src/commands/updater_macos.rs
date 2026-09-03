@@ -37,6 +37,8 @@ use std::time::Duration;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+
+use super::{UpdateStatus, UpdaterSnapshot};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::AsyncWriteExt;
 
@@ -122,24 +124,6 @@ fn save_manifest(app: &AppHandle, m: &Staging) -> Result<(), String> {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateStatus {
-    pub available: bool,
-    pub version: Option<String>,
-    pub current_version: String,
-}
-
-/// UI-hydration snapshot (Settings / titlebar on mount).
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdaterSnapshot {
-    /// "idle" | "downloading" | "ready"
-    pub phase: String,
-    pub version: Option<String>,
-    pub current_version: String,
-}
 
 /// Semver "is `remote` strictly newer than `current`?". False on parse failure.
 fn is_newer(remote: &str, current: &str) -> bool {
@@ -227,8 +211,7 @@ async fn maybe_start_update(app: &AppHandle, cfg: RemoteUpdateConfig, _force: bo
 
 /// Manual "Check for updates" — bypasses the auto_update / ignored gates (an
 /// explicit user action). Triggers the background download when newer.
-#[tauri::command]
-pub async fn update_check_now(app: AppHandle) -> Result<UpdateStatus, String> {
+pub(super) async fn update_check_now(app: AppHandle) -> Result<UpdateStatus, String> {
     emit_checking(&app, true);
     let cfg = fetch_remote(&app).await;
     emit_checking(&app, false);
@@ -248,8 +231,7 @@ pub async fn update_check_now(app: AppHandle) -> Result<UpdateStatus, String> {
 }
 
 /// Current updater state for UI hydration on mount.
-#[tauri::command]
-pub fn update_state(app: AppHandle, state: State<'_, UpdaterState>) -> UpdaterSnapshot {
+pub(super) fn update_state(app: AppHandle, state: State<'_, UpdaterState>) -> UpdaterSnapshot {
     if let Some(v) = state.ready.lock().clone() {
         return UpdaterSnapshot {
             phase: "ready".into(),
@@ -283,8 +265,7 @@ pub fn update_state(app: AppHandle, state: State<'_, UpdaterState>) -> UpdaterSn
 }
 
 /// Persist a "don't prompt for this version again" choice.
-#[tauri::command]
-pub async fn update_ignore(version: String, app: AppHandle) -> Result<(), String> {
+pub(super) async fn update_ignore(version: String, app: AppHandle) -> Result<(), String> {
     let patch = crate::state::SettingsPatch {
         updater_ignored_version: Some(Some(version)),
         ..Default::default()
@@ -655,8 +636,7 @@ fn stage_from_mount(mount_point: &Path, dir: &Path) -> Result<PathBuf, String> {
 // ── Apply (swap) ─────────────────────────────────────────────────────────────
 
 /// "Restart now": swap the staged `.app` over the running install and relaunch.
-#[tauri::command]
-pub async fn update_apply(app: AppHandle) -> Result<(), String> {
+pub(super) async fn update_apply(app: AppHandle) -> Result<(), String> {
     let m = load_manifest(&app).ok_or("no update is staged")?;
     if !m.ready {
         return Err("update not ready yet".into());
