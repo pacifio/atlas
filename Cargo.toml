@@ -400,7 +400,10 @@ insta = "1.46.3"
 inventory = "0.3.19"
 itertools = "0.14.0"
 jsonptr = { version = "0.7.1", default-features = false }
-jsonwebtoken = "9.3.1"
+jsonwebtoken = { version = "10.4.0", default-features = false, features = [
+    "use_pem",
+    "aws_lc_rs",
+] }
 keyring = { version = "3.6", default-features = false }
 landlock = "0.4.4"
 lazy_static = "1"
