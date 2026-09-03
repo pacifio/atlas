@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { KeymapWire } from "@/features/keybindings/lib/keymap-api";
 import type { AppSettings } from "./app-settings";
 
 /**
@@ -29,13 +30,14 @@ export interface ConfigInfo {
   schemaVersion: number;
   status: ConfigStatus;
   effectiveSettings: AppSettings;
+  effectiveKeymap: KeymapWire;
   generation: number;
   unknownKeys: string[];
 }
 
 export type UpdateOutcome =
-  | { kind: "applied"; settings: AppSettings; generation: number }
-  | { kind: "conflict"; settings: AppSettings; generation: number };
+  | { kind: "applied"; settings: AppSettings; keymap: KeymapWire; generation: number }
+  | { kind: "conflict"; settings: AppSettings; keymap: KeymapWire; generation: number };
 
 export function getConfigInfo(): Promise<ConfigInfo> {
   return invoke<ConfigInfo>("get_atlas_config_info");
@@ -48,7 +50,7 @@ export function updateSettings(
   return invoke<UpdateOutcome>("update_atlas_settings", { patch, expectedGeneration });
 }
 
-export function resetConfig(): Promise<{ settings: AppSettings; generation: number }> {
+export function resetConfig(): Promise<ConfigChangedPayload> {
   return invoke("reset_atlas_config");
 }
 
@@ -58,6 +60,7 @@ export function openConfigFile(): Promise<void> {
 
 interface ConfigChangedPayload {
   settings: AppSettings;
+  keymap: KeymapWire;
   generation: number;
 }
 

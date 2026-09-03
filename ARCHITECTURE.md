@@ -54,7 +54,7 @@ src/features/<feature>/
   lib/          — pure helpers, and the invoke()/listen() wrappers (<domain>-api.ts)
 ```
 
-`src/features/` holds ~30 slices: chat, editor, terminal, browser, git, github, explorer, knowledge, canvas, layout, log, monitor, settings, memory, mission-control, model-chat, organisations, packs, skills, telemetry, updater, workspaces, and more.
+`src/features/` holds ~30 slices: chat, editor, terminal, browser, git, github, explorer, keybindings, knowledge, canvas, layout, log, monitor, settings, memory, mission-control, model-chat, organisations, packs, skills, telemetry, updater, workspaces, and more.
 
 - **Cross-feature widgets** live in `src/components/`.
 - **UI primitives** live in `src/ui/`.
@@ -91,6 +91,18 @@ Other stores: `project/stores/project-store.ts` (current project, recents), `git
 `src/lib/constants.ts` holds `TAB_TYPES` (the tab-type registry); `src/features/layout/components/center-panel.tsx` holds the lazy-import map keyed off it. New panel type = lazy import in `center-panel.tsx` + entry in `TAB_TYPES` + entry in `NEW_TAB_OPTIONS` if it should reach the `+` menu.
 
 **Persistent module types — editor, terminal, browser, knowledge-graph, pdf — stay mounted across tab switches** via `display: contents` / `display: none` instead of unmounting. Remounting would rebuild CodeMirror instances, kill the PTY's rendered scrollback, or tear down the native embedded webview.
+
+### Keybindings
+
+`features/keybindings` owns every shortcut. There is **one** `keydown` listener in the app (`use-keybinding-dispatcher.ts`, capture phase, mounted at the root); a component declares what a command *does*, never which keys run it.
+
+- **Commands** are declared once in `lib/actions.ts`: a kebab-case id, a label, a scope, and Atlas's default chord. The id is also the key used in `[keymap.bindings]` in `config.toml`.
+- **Handlers** register with `useActionHandlers({ "editor-save": fn }, tabId)`. Passing a pane's `tabId` makes the handler live only while that pane holds the focused tab, so ⌘F can mean "find in chat", "find in terminal" and "find in page" at once.
+- **Scopes** (`global`, `editor`, `chat`, `terminal`, `knowledge`) come from the focused column's active tab type — not `document.activeElement`, which moves differently from pane focus. A scoped binding wins over a global one; two commands sharing a chord *within* a scope is a conflict Settings won't save.
+- **The keymap** is `catalogue defaults → preset → the user's overrides`, resolved in `lib/resolve.ts`. Only the last two layers are stored, so preset and default changes reach existing users.
+- **Persistence** is the `[keymap]` section of `config.toml` (`docs/reference/configuration.md`), through the same validated, generation-checked write path as `[settings]`.
+
+Adding a command = an entry in `lib/actions.ts` + a handler in the component that performs it. Nothing else needs touching: Settings, the command palette's chord hints, and the presets all read the catalogue.
 
 ## Backend (`src-tauri/src/`)
 

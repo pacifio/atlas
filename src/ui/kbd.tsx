@@ -26,18 +26,19 @@ function KbdGroup({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-/** Split a string like "⌘⇧F" or "⌘," into individual key glyphs. */
-function splitKeys(combo: string): string[] {
-  // Modifier glyphs are single chars; non-modifier "keys" may be multi-char names like "Enter".
-  // We just split codepoints — works because all our combos are single-char per slot.
-  return Array.from(combo);
-}
-
-/** Convenience: render a combo string ("⌘⇧F") as a KbdGroup of individual Kbds. */
-function KbdCombo({ combo, className }: { combo: string; className?: string }) {
+/**
+ * Render a chord as one `Kbd` per key.
+ *
+ * Takes either the parts (`["Ctrl", "Shift", "K"]`, what `formatCombo` returns)
+ * or a glyph string (`"⌘⇧F"`), which is split by codepoint. The string form
+ * only works where every key is a single glyph, which is why anything driven by
+ * the keymap passes parts instead.
+ */
+function KbdCombo({ combo, className }: { combo: string | string[]; className?: string }) {
+  const keys = Array.isArray(combo) ? combo : Array.from(combo);
   return (
     <KbdGroup className={className}>
-      {splitKeys(combo).map((k, i) => (
+      {keys.map((k, i) => (
         <Kbd key={`${k}-${i}`}>{k}</Kbd>
       ))}
     </KbdGroup>

@@ -14,6 +14,7 @@ import { editorThemeExtensions } from "../themes/build-cm-theme";
 import { useEditorStore } from "../stores/editor-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { useActionHandlers } from "@/features/keybindings/hooks/use-action-handlers";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ChevronRight, RefreshCw } from "lucide-react";
@@ -54,7 +55,6 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   const layoutActions = useLayoutStore.use.actions();
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const onSaveRef = useRef<() => void>(() => {});
   const refreshGutterRef = useRef<() => void>(() => {});
   const refreshBlameRef = useRef<() => void>(() => {});
   const dirtyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -175,7 +175,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     }
   }, [path, markSaved, isUntitled, projectPath, openBuffer, layoutActions, tabId]);
 
-  onSaveRef.current = handleSave;
+  // The handler registry keeps the latest closure itself, so this needs no
+  // ref of its own.
+  useActionHandlers({ "editor-save": handleSave }, tabId);
 
   // Fetch this file's git diff vs HEAD and paint the gutter (added/changed/
   // deleted bars). No-op for untitled scratch buffers or files outside the repo.
@@ -352,13 +354,10 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
           history(),
           highlightSelectionMatches(),
           keymap.of([
-            {
-              key: "Mod-s",
-              run: () => {
-                onSaveRef.current();
-                return true;
-              },
-            },
+            // Save is NOT bound here: it is the `editor-save` command, and its
+            // chord is the user's to change. CodeMirror keeps only the editing
+            // keymaps below, which are the editor's own behaviour rather than
+            // Atlas commands.
             indentWithTab,
             ...defaultKeymap,
             ...historyKeymap,

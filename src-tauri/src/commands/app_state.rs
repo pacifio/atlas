@@ -5,6 +5,7 @@ use tauri::{AppHandle, State};
 
 use crate::state::{
     AppSettings, AppState, AppStateHandle, AppStatePatch, AtlasConfigHandle, ConfigStatus,
+    KeymapConfig,
 };
 
 /// Bootstrap response: `AppState` (workspaces/recents/orgs) plus the
@@ -19,6 +20,10 @@ pub struct BootstrapPayload {
     #[serde(flatten)]
     pub state: AppState,
     pub settings: AppSettings,
+    /// Shipped in the same payload as `settings` for the same reason: the
+    /// keybinding dispatcher installs before first paint, and a second round
+    /// trip for it would leave a window where no shortcut works.
+    pub keymap: KeymapConfig,
     pub config_generation: u64,
     /// Whether `config.toml` actually loaded. This is the ONLY signal the UI
     /// gets at boot that the file on disk is broken and the settings on
@@ -41,6 +46,7 @@ pub fn bootstrap_app_state(
     BootstrapPayload {
         state: state.lock().clone(),
         settings: config_guard.effective().clone(),
+        keymap: config_guard.keymap().clone(),
         config_generation: config_guard.generation(),
         config_status: config_guard.status().clone(),
     }
@@ -56,6 +62,30 @@ pub fn bootstrap_app_state(
 /// the wire shape the frontend already sends, and taking the narrower type is
 /// what stops a settings save from wiping Rust-owned fields. See that type's
 /// doc for the analytics bug this prevents.
+/// Record that the first-run keymap picker has been answered.
+///
+/// Its own command rather than a field of [`AppStatePatch`]: the frontend's
+/// save payload is coarse, and a field it doesn't send comes back as the
+/// default — which for this one would mean asking every user the same question
+/// on every launch.
+#[tauri::command]
+pub fn mark_keymap_onboarding_seen(
+    state: State<'_, AppStateHandle>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let snapshot = {
+        let mut guard = state.lock();
+        guard.keymap_onboarding_seen = true;
+        guard.clone()
+    };
+    std::thread::spawn(move || {
+        if let Err(e) = AppState::save(&app, &snapshot) {
+            tracing::warn!(target: "atlas::app_state", "save failed: {e}");
+        }
+    });
+    Ok(())
+}
+
 #[tauri::command]
 pub fn save_app_state(
     payload: AppStatePatch,

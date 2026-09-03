@@ -3,7 +3,8 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Keyboard, LayoutTemplate, LogIn, LogOut, Palette, Settings, Zap } from "lucide-react";
 import { toast } from "sonner";
 
-import { KbdCombo } from "@/ui/kbd";
+import { ActionShortcut } from "@/features/keybindings/components/action-shortcut";
+import type { ActionId } from "@/features/keybindings/lib/actions";
 import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import type { SettingsSection } from "@/features/settings/stores/settings-nav-store";
 import { type AccountUser, type SignedIn, type SignedOut } from "../lib/auth-api";
@@ -16,16 +17,16 @@ import { AccountAvatar } from "./account-avatar";
  * `label` is what the user is looking for and `section` is where it lives —
  * "Themes" is the Appearance section, not one of its own.
  *
- * `shortcut` is set only where Atlas really binds one, so a hint here always
- * survives being pressed.
+ * `command` is set only where a keybinding command really exists, so the chord
+ * shown beside an item is whatever that command is currently bound to.
  */
 const ITEMS: Array<{
   label: string;
   icon: typeof Settings;
   section: SettingsSection;
-  shortcut?: string;
+  command?: ActionId;
 }> = [
-  { label: "Settings", icon: Settings, section: "general", shortcut: "⌘," },
+  { label: "Settings", icon: Settings, section: "general", command: "open-settings" },
   { label: "Keybindings", icon: Keyboard, section: "keybindings" },
   { label: "Themes", icon: Palette, section: "appearance" },
   { label: "Skills", icon: Zap, section: "skills" },
@@ -132,7 +133,7 @@ export function AccountMenu({
             >
               <item.icon size={13} className="shrink-0 text-[var(--text-tertiary)]" />
               <span className="flex-1 text-left">{item.label}</span>
-              {item.shortcut && <KbdCombo combo={item.shortcut} />}
+              {item.command && <ActionShortcut actionId={item.command} />}
             </DropdownMenu.Item>
           ))}
           {/* Separated from the destinations above: everything else in this

@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { safeUnlistenPromise } from "@/lib/safe-unlisten";
 import { openFileOrReveal } from "@/lib/open-file";
 import { useProjectStore } from "@/features/project/stores/project-store";
+import { useActionHandlers } from "@/features/keybindings/hooks/use-action-handlers";
 import { resolveTerminalFont } from "../utils/resolve-font";
 import { resolveTerminalOutput, type AnsiSegment } from "../lib/ansi-to-segments";
 import { linkifySegments, normalizeUrl } from "../lib/linkify-paths";
@@ -328,7 +329,10 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
       }
 
       // Interactive-surface parity with the classic terminal: word/line
-      // navigation + ⌘C/⌘V/⌘A copy-paste, and ⌘-click file paths.
+      // navigation, and ⌘-click file paths. Copy/paste/select-all are Atlas
+      // commands now (`terminal-*`), bound below — this handler keeps only the
+      // line-editing translation, which is terminal behaviour rather than
+      // something a user would rebind.
       const keymap = createTerminalKeymap(term);
       term.attachCustomKeyEventHandler((e) => {
         if (e.type !== "keydown") return true;
@@ -339,28 +343,6 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
             id,
             data: Array.from(new TextEncoder().encode(nav)),
           }).catch(() => {});
-          return false;
-        }
-        const mod = e.metaKey || (e.ctrlKey && e.shiftKey);
-        const key = e.key.toLowerCase();
-        if (mod && key === "c") {
-          if (term.hasSelection()) {
-            e.preventDefault();
-            void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
-          }
-          return false;
-        }
-        if (mod && key === "v") {
-          e.preventDefault();
-          void navigator.clipboard
-            .readText()
-            .then((t) => t && term.paste(t))
-            .catch(() => {});
-          return false;
-        }
-        if (e.metaKey && key === "a") {
-          e.preventDefault();
-          term.selectAll();
           return false;
         }
         return true;
@@ -575,19 +557,34 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
     }).catch(() => {});
   }, []);
 
-  // ⌘F / Ctrl+F opens search over the block history.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!isActive || altScreen) return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        setSearch((s) => ({ ...s, open: true }));
-        requestAnimationFrame(() => searchInputRef.current?.focus());
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isActive, altScreen]);
+  // This terminal's own commands, live only while its tab holds the focused
+  // pane. Copy and paste go through the xterm instance rather than the
+  // browser's own clipboard handling, which sees the canvas, not the selection.
+  useActionHandlers(
+    {
+      // Search runs over the block history, which the alternate screen (vim,
+      // less) has replaced — there is nothing to search there.
+      "terminal-find": altScreen
+        ? undefined
+        : () => {
+            setSearch((s) => ({ ...s, open: true }));
+            requestAnimationFrame(() => searchInputRef.current?.focus());
+          },
+      "terminal-copy": () => {
+        const term = xtermRef.current;
+        if (!term?.hasSelection()) return;
+        void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+      },
+      "terminal-paste": () => {
+        void navigator.clipboard
+          .readText()
+          .then((text) => text && xtermRef.current?.paste(text))
+          .catch(() => {});
+      },
+      "terminal-select-all": () => xtermRef.current?.selectAll(),
+    },
+    tabId,
+  );
 
   // Recount matches whenever the query or content changes. Skip entirely when
   // there is no query — this used to run a full-subtree querySelectorAll on

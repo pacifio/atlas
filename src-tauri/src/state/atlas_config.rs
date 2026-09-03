@@ -204,6 +204,74 @@ impl Default for AppSettings {
     }
 }
 
+// ---------------------------------------------------------------------------
+// KeymapConfig
+// ---------------------------------------------------------------------------
+
+/// Preset id used when the file names none.
+///
+/// The catalogue of presets — and of the command ids `bindings` may name —
+/// lives in the frontend (`src/features/keybindings/lib`), which is the only
+/// side that can act on either. Validating them here would mean keeping a
+/// second copy of two lists that grow with the UI, the same trade this module
+/// already declines for theme ids: structure is checked in Rust, vocabulary
+/// belongs to whoever owns the catalogue.
+pub const DEFAULT_KEYMAP_PRESET: &str = "atlas";
+
+/// A binding written as the empty string: "this command has no shortcut".
+///
+/// Unbinding needs a value of its own because an absent key already means
+/// something else here — "not overridden, use the preset's chord or Atlas's" —
+/// and TOML has no null to spend on the difference.
+pub const UNBOUND_BINDING: &str = "";
+
+/// A command's chord, or chords.
+///
+/// A command can genuinely need more than one: on a US layout ⌘+ arrives as
+/// ⇧=, and an editor that binds only one of that pair is an editor where zoom
+/// sometimes does nothing. Both spellings are accepted in the file — a bare
+/// string for the ordinary case, an array where a command needs two — and each
+/// is written back the way it was given.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Binding {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Binding {
+    fn chords(&self) -> &[String] {
+        match self {
+            Binding::One(chord) => std::slice::from_ref(chord),
+            Binding::Many(chords) => chords,
+        }
+    }
+}
+
+/// The `[keymap]` section: which editor's shortcuts to start from, and the
+/// per-command changes on top of them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeymapConfig {
+    #[serde(default = "default_keymap_preset")]
+    pub preset: String,
+    /// Command id → chord(s), or [`UNBOUND_BINDING`]. A `BTreeMap` so a
+    /// rewritten table keeps a stable, diffable order regardless of what the UI
+    /// happened to send.
+    #[serde(default)]
+    pub bindings: std::collections::BTreeMap<String, Binding>,
+}
+
+pub fn default_keymap_preset() -> String {
+    DEFAULT_KEYMAP_PRESET.to_string()
+}
+
+impl Default for KeymapConfig {
+    fn default() -> Self {
+        Self { preset: default_keymap_preset(), bindings: std::collections::BTreeMap::new() }
+    }
+}
+
 /// The full set of keys `AppSettings` knows about, in wire (camelCase) form.
 /// Used to flag anything else in `[settings]` as an unknown key — preserved
 /// on disk and surfaced as a diagnostic, never treated as an error.
@@ -225,6 +293,29 @@ const CONFIG_HEADER: &str = "\
 const SCHEMA_VERSION_DOC: &str = "
 # Format version of this file. Atlas manages it; leave it alone.
 ";
+
+const KEYMAP_SECTION_DOC: &str = "\
+# Keyboard shortcuts. Settings -> Keybindings edits this section, and lists
+# every command's id, its current chord and its default.";
+
+const KEYMAP_PRESET_DOC: &str = "\
+# Which editor's shortcuts to start from: \"atlas\", \"vscode\" or \"zed\".
+# A preset only moves the commands that editor has an equivalent for;
+# everything else keeps its Atlas chord. (default: \"atlas\")";
+
+const KEYMAP_BINDINGS_DOC: &str = "\
+# Your changes on top of the preset, one line per command:
+#
+#   close-tab = \"mod+w\"        # `mod` is Cmd on macOS, Ctrl elsewhere
+#   toggle-terminal = \"ctrl+`\" # `ctrl` is literally Control
+#   zoom-in = [\"mod+=\", \"mod+shift+=\"]  # an array binds several chords
+#   command-palette = \"\"       # empty string = no shortcut at all
+#
+# Delete a line to go back to the preset's chord. A command Atlas doesn't
+# recognize is left here untouched and reported in Settings rather than
+# removed — that is what a keymap from a newer Atlas looks like.";
+
+const KEYMAP_BINDINGS_HEADER: &str = "[keymap.bindings]";
 
 /// camelCase key → the comment written directly above it in a generated
 /// `config.toml`.
@@ -372,6 +463,41 @@ pub fn validate(settings: &AppSettings) -> Result<(), ValidationIssue> {
     Ok(())
 }
 
+/// Structural validation of `[keymap]` only — that a preset was named and that
+/// every binding line has a command to bind. Whether the command exists, and
+/// whether the chord is one Atlas can press, are questions the frontend
+/// catalogue answers; see [`DEFAULT_KEYMAP_PRESET`] for why this side doesn't.
+pub fn validate_keymap(keymap: &KeymapConfig) -> Result<(), ValidationIssue> {
+    if keymap.preset.trim().is_empty() {
+        return Err(ValidationIssue {
+            key: "keymap.preset",
+            message: "must not be empty".to_string(),
+        });
+    }
+    if let Some(blank) = keymap.bindings.keys().find(|k| k.trim().is_empty()) {
+        return Err(ValidationIssue {
+            key: "keymap.bindings",
+            message: format!("has a binding with no command id (`{blank}`)"),
+        });
+    }
+    // Whitespace is not a chord, and it is not the unbind sentinel either — it
+    // is a line someone half-deleted. The frontend would read it as neither,
+    // so say so here rather than letting the command go quietly dead.
+    if let Some((action, _)) = keymap
+        .bindings
+        .iter()
+        .find(|(_, b)| b.chords().iter().any(|c| !c.is_empty() && c.trim().is_empty()))
+    {
+        return Err(ValidationIssue {
+            key: "keymap.bindings",
+            message: format!(
+                "`{action}` is set to whitespace — write a shortcut, or \"{UNBOUND_BINDING}\" to leave the command unbound"
+            ),
+        });
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // On-disk document shape
 // ---------------------------------------------------------------------------
@@ -383,6 +509,11 @@ struct AtlasConfigFile {
     schema_version: u32,
     #[serde(default)]
     settings: AppSettings,
+    /// Declared after `settings` because TOML tables serialize in field order
+    /// and `[keymap]` must land after `[settings]`'s scalars, not between
+    /// them.
+    #[serde(default)]
+    keymap: KeymapConfig,
 }
 
 fn default_config_schema_version() -> u32 {
@@ -400,8 +531,12 @@ fn unknown_keys_in(document: &toml_edit::DocumentMut) -> Vec<String> {
         .collect()
 }
 
-fn document_for(settings: &AppSettings) -> toml_edit::DocumentMut {
-    let file = AtlasConfigFile { schema_version: CONFIG_SCHEMA_VERSION, settings: settings.clone() };
+fn document_for(settings: &AppSettings, keymap: &KeymapConfig) -> toml_edit::DocumentMut {
+    let file = AtlasConfigFile {
+        schema_version: CONFIG_SCHEMA_VERSION,
+        settings: settings.clone(),
+        keymap: keymap.clone(),
+    };
     let text = toml::to_string_pretty(&file).expect("AppSettings always serializes to TOML");
     annotate(&text).parse().expect("freshly-generated TOML always parses")
 }
@@ -427,8 +562,29 @@ fn annotate(generated: &str) -> String {
     // Comments for keys that serialized to nothing, waiting for the next key
     // that did.
     let mut carried: Vec<&str> = Vec::new();
+    // `[keymap]` has its own comments and none of `SETTINGS_DOCS`'. Tracked
+    // rather than inferred from an exhausted iterator: the keys in this
+    // section are the user's command ids, and letting them walk the settings
+    // docs would hand a settings comment to whatever the first binding line
+    // happened to be.
+    let mut in_keymap = false;
 
     for line in generated.lines() {
+        if line.trim_start().starts_with("[keymap") {
+            in_keymap = true;
+            // No leading blank line of our own: the serializer already put one
+            // before the table header, and the comment belongs against it.
+            out.push_str(if line.trim() == KEYMAP_BINDINGS_HEADER {
+                KEYMAP_BINDINGS_DOC
+            } else {
+                KEYMAP_SECTION_DOC
+            });
+            out.push('\n');
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
         // A key line, not the `[settings]` header or a blank: it has an `=`,
         // and something before it. Getting this wrong once meant `[settings]`
         // was read as a key, which drained every remaining doc entry into
@@ -442,6 +598,16 @@ fn annotate(generated: &str) -> String {
             out.push('\n');
             continue;
         };
+
+        if in_keymap {
+            if assigned == "preset" {
+                out.push_str(KEYMAP_PRESET_DOC);
+                out.push('\n');
+            }
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
 
         if assigned == "schemaVersion" {
             out.push_str(SCHEMA_VERSION_DOC);
@@ -548,6 +714,21 @@ where
     Ok(Some(Option::deserialize(deserializer)?))
 }
 
+/// One editable region of `config.toml`.
+///
+/// Both patch types go through the same compare-and-swap in
+/// [`ConfigManager::apply_patch`]: one write path, one validation gate, one
+/// generation counter. A second copy of that machinery for the keymap is
+/// exactly how the two would come to disagree about what "saved" means.
+pub trait ConfigPatch {
+    /// Fold this patch into a candidate snapshot. The candidate is validated
+    /// in full before anything reaches disk.
+    fn apply_to(&self, settings: &mut AppSettings, keymap: &mut KeymapConfig);
+    /// Mutate only the keys this patch touches, so comments, ordering and
+    /// unknown keys survive exactly as `toml_edit` parsed them.
+    fn write_into(&self, doc: &mut toml_edit::DocumentMut);
+}
+
 /// A partial settings update — every field optional so a UI/skill edit can
 /// touch exactly the key it means to change, leaving everything else (and
 /// its comments/formatting) alone.
@@ -571,8 +752,8 @@ pub struct SettingsPatch {
     pub enter_to_send: Option<bool>,
 }
 
-impl SettingsPatch {
-    fn apply_to(&self, settings: &mut AppSettings) {
+impl ConfigPatch for SettingsPatch {
+    fn apply_to(&self, settings: &mut AppSettings, _keymap: &mut KeymapConfig) {
         if let Some(v) = self.auto_add_atlas_gitignore {
             settings.auto_add_atlas_gitignore = v;
         }
@@ -666,6 +847,73 @@ impl SettingsPatch {
                 Some(v) => table["updaterIgnoredVersion"] = toml_edit::value(v.as_str()),
                 None => {
                     table.remove("updaterIgnoredVersion");
+                }
+            }
+        }
+    }
+}
+
+/// A partial keymap update from Settings → Keybindings.
+///
+/// A binding maps to `Some(chord)` to set it, or to `None` — JSON `null` — to
+/// drop the override entirely and go back to whatever the preset says. That is
+/// a different action from binding it to [`UNBOUND_BINDING`], which means "this
+/// command has no shortcut", and Settings offers both: "reset" and "unbind".
+///
+/// Per-key rather than a whole-table replacement so a binding for a command
+/// this build doesn't know — a keymap written by a newer Atlas — isn't quietly
+/// deleted by the next save from an older one.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeymapPatch {
+    pub preset: Option<String>,
+    #[serde(default)]
+    pub bindings: std::collections::BTreeMap<String, Option<Binding>>,
+}
+
+impl ConfigPatch for KeymapPatch {
+    fn apply_to(&self, _settings: &mut AppSettings, keymap: &mut KeymapConfig) {
+        if let Some(preset) = &self.preset {
+            keymap.preset = preset.clone();
+        }
+        for (action, binding) in &self.bindings {
+            match binding {
+                Some(chord) => {
+                    keymap.bindings.insert(action.clone(), chord.clone());
+                }
+                None => {
+                    keymap.bindings.remove(action);
+                }
+            }
+        }
+    }
+
+    fn write_into(&self, doc: &mut toml_edit::DocumentMut) {
+        if doc.get("keymap").and_then(|i| i.as_table()).is_none() {
+            doc["keymap"] = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        let keymap = doc["keymap"].as_table_mut().expect("just ensured keymap is a table");
+        if let Some(preset) = &self.preset {
+            keymap["preset"] = toml_edit::value(preset.as_str());
+        }
+        if self.bindings.is_empty() {
+            return;
+        }
+        if keymap.get("bindings").and_then(|i| i.as_table()).is_none() {
+            keymap["bindings"] = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        let bindings = keymap["bindings"].as_table_mut().expect("just ensured bindings is a table");
+        for (action, binding) in &self.bindings {
+            match binding {
+                Some(Binding::One(chord)) => {
+                    bindings[action.as_str()] = toml_edit::value(chord.as_str())
+                }
+                Some(Binding::Many(chords)) => {
+                    bindings[action.as_str()] =
+                        toml_edit::value(chords.iter().collect::<toml_edit::Array>())
+                }
+                None => {
+                    bindings.remove(action);
                 }
             }
         }
@@ -771,6 +1019,7 @@ pub enum ConfigStatus {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigSnapshot {
     pub settings: AppSettings,
+    pub keymap: KeymapConfig,
     pub generation: u64,
 }
 
@@ -778,10 +1027,10 @@ pub struct ConfigSnapshot {
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum UpdateOutcome {
     /// The patch applied and was persisted.
-    Applied { settings: AppSettings, generation: u64 },
-    /// `expected_generation` was stale — nothing was written. `settings`
+    Applied { settings: AppSettings, keymap: KeymapConfig, generation: u64 },
+    /// `expected_generation` was stale — nothing was written. The snapshot
     /// carries what's actually on disk now so the caller can reconcile.
-    Conflict { settings: AppSettings, generation: u64 },
+    Conflict { settings: AppSettings, keymap: KeymapConfig, generation: u64 },
 }
 
 #[derive(Debug)]
@@ -789,6 +1038,7 @@ pub struct ConfigManager {
     path: PathBuf,
     document: toml_edit::DocumentMut,
     effective: AppSettings,
+    keymap: KeymapConfig,
     /// Raw bytes of the last content this manager itself considers current —
     /// used both to dedup the file watcher's self-write echo and as the base
     /// a patch re-reads before merging.
@@ -811,6 +1061,18 @@ impl ConfigManager {
         &self.effective
     }
 
+    pub fn keymap(&self) -> &KeymapConfig {
+        &self.keymap
+    }
+
+    pub fn snapshot(&self) -> ConfigSnapshot {
+        ConfigSnapshot {
+            settings: self.effective.clone(),
+            keymap: self.keymap.clone(),
+            generation: self.generation,
+        }
+    }
+
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -825,11 +1087,13 @@ impl ConfigManager {
 
     fn in_memory_defaults(path: PathBuf) -> Self {
         let settings = AppSettings::default();
-        let document = document_for(&settings);
+        let keymap = KeymapConfig::default();
+        let document = document_for(&settings, &keymap);
         Self {
             path,
             document,
             effective: settings,
+            keymap,
             last_raw: String::new(),
             generation: 0,
             status: ConfigStatus::Ok,
@@ -847,11 +1111,13 @@ impl ConfigManager {
             return Err(ConfigError::UnsupportedVersion(file.schema_version));
         }
         validate(&file.settings).map_err(ConfigError::Invalid)?;
+        validate_keymap(&file.keymap).map_err(ConfigError::Invalid)?;
         let unknown_keys = unknown_keys_in(&document);
         Ok(Self {
             path,
             document,
             effective: file.settings,
+            keymap: file.keymap,
             last_raw: raw.to_string(),
             generation: 0,
             status: ConfigStatus::Ok,
@@ -934,6 +1200,7 @@ impl ConfigManager {
         };
         self.document = fresh.document;
         self.effective = fresh.effective;
+        self.keymap = fresh.keymap;
         self.last_raw = fresh.last_raw;
         self.unknown_keys = fresh.unknown_keys;
         self.generation += 1;
@@ -966,7 +1233,7 @@ impl ConfigManager {
     /// snapshot.
     pub fn apply_patch(
         &mut self,
-        patch: &SettingsPatch,
+        patch: &dyn ConfigPatch,
         expected_generation: Option<u64>,
     ) -> Result<UpdateOutcome, ConfigError> {
         for _ in 0..CAS_ATTEMPTS {
@@ -982,7 +1249,7 @@ impl ConfigManager {
     /// written — the caller retries against the new content.
     fn try_apply_patch(
         &mut self,
-        patch: &SettingsPatch,
+        patch: &dyn ConfigPatch,
         expected_generation: Option<u64>,
     ) -> Result<Option<UpdateOutcome>, ConfigError> {
         self.reload_from_disk()?;
@@ -991,14 +1258,17 @@ impl ConfigManager {
             if expected != self.generation {
                 return Ok(Some(UpdateOutcome::Conflict {
                     settings: self.effective.clone(),
+                    keymap: self.keymap.clone(),
                     generation: self.generation,
                 }));
             }
         }
 
-        let mut candidate = self.effective.clone();
-        patch.apply_to(&mut candidate);
-        validate(&candidate).map_err(ConfigError::Invalid)?;
+        let mut settings = self.effective.clone();
+        let mut keymap = self.keymap.clone();
+        patch.apply_to(&mut settings, &mut keymap);
+        validate(&settings).map_err(ConfigError::Invalid)?;
+        validate_keymap(&keymap).map_err(ConfigError::Invalid)?;
 
         let mut doc = self.document.clone();
         patch.write_into(&mut doc);
@@ -1011,12 +1281,13 @@ impl ConfigManager {
 
         self.document = doc;
         self.unknown_keys = unknown_keys_in(&self.document);
-        self.effective = candidate.clone();
+        self.effective = settings.clone();
+        self.keymap = keymap.clone();
         self.last_raw = text;
         self.generation += 1;
         self.status = ConfigStatus::Ok;
 
-        Ok(Some(UpdateOutcome::Applied { settings: candidate, generation: self.generation }))
+        Ok(Some(UpdateOutcome::Applied { settings, keymap, generation: self.generation }))
     }
 
     /// Swap `text` in only if the file still holds exactly the content this
@@ -1048,30 +1319,37 @@ impl ConfigManager {
             let _ = fs::write(&backup, existing);
         }
         let settings = AppSettings::default();
-        let document = document_for(&settings);
+        let keymap = KeymapConfig::default();
+        let document = document_for(&settings, &keymap);
         let text = document.to_string();
         write_atomic(&self.path, &text).map_err(|e| ConfigError::Io(e.to_string()))?;
 
         self.document = document;
         self.effective = settings.clone();
+        self.keymap = keymap.clone();
         self.last_raw = text;
         self.generation += 1;
         self.status = ConfigStatus::Ok;
         self.unknown_keys.clear();
 
-        Ok(ConfigSnapshot { settings, generation: self.generation })
+        Ok(ConfigSnapshot { settings, keymap, generation: self.generation })
     }
 
-    /// Write a specific `AppSettings` as a brand-new file (migration's entry
+    /// Write a specific snapshot as a brand-new file (migration's entry
     /// point — there is no existing document to preserve yet).
-    fn create_fresh_with(path: PathBuf, settings: AppSettings) -> Result<Self, ConfigError> {
-        let document = document_for(&settings);
+    fn create_fresh_with(
+        path: PathBuf,
+        settings: AppSettings,
+        keymap: KeymapConfig,
+    ) -> Result<Self, ConfigError> {
+        let document = document_for(&settings, &keymap);
         let text = document.to_string();
         write_atomic(&path, &text).map_err(|e| ConfigError::Io(e.to_string()))?;
         Ok(Self {
             path,
             document,
             effective: settings,
+            keymap,
             last_raw: text,
             generation: 0,
             status: ConfigStatus::Ok,
@@ -1192,8 +1470,10 @@ pub fn update(app: &AppHandle, patch: SettingsPatch) -> Result<ConfigSnapshot, C
     let handle = app.state::<AtlasConfigHandle>();
     let mut guard = handle.lock();
     match guard.apply_patch(&patch, None)? {
-        UpdateOutcome::Applied { settings, generation }
-        | UpdateOutcome::Conflict { settings, generation } => Ok(ConfigSnapshot { settings, generation }),
+        UpdateOutcome::Applied { settings, keymap, generation }
+        | UpdateOutcome::Conflict { settings, keymap, generation } => {
+            Ok(ConfigSnapshot { settings, keymap, generation })
+        }
     }
 }
 
@@ -1264,7 +1544,7 @@ fn bootstrap_at(
             // user still spends the whole session on defaults with, say,
             // telemetry back on. The broken file itself is left untouched.
             manager.effective = settings_from_legacy_json(legacy_settings_raw.as_ref());
-            manager.document = document_for(&manager.effective);
+            manager.document = document_for(&manager.effective, &manager.keymap);
         }
         return MigrationOutcome { manager, mark_migrated };
     }
@@ -1276,7 +1556,10 @@ fn bootstrap_at(
         settings_from_legacy_json(legacy_settings_raw.as_ref())
     };
 
-    match ConfigManager::create_fresh_with(path.clone(), settings.clone()) {
+    // No keymap ever existed before `config.toml` did, so there is nothing to
+    // migrate into it — a first file starts on the Atlas preset with no
+    // overrides, which is exactly what every pre-keymap install was running.
+    match ConfigManager::create_fresh_with(path.clone(), settings.clone(), KeymapConfig::default()) {
         Ok(manager) => MigrationOutcome { manager, mark_migrated: true },
         Err(e) => {
             tracing::warn!(target: "atlas::config", "failed to write migrated config.toml: {e}");
@@ -1287,7 +1570,7 @@ fn bootstrap_at(
             // flag the write failure instead.
             let mut manager = ConfigManager::load_at(path);
             manager.effective = settings;
-            manager.document = document_for(&manager.effective);
+            manager.document = document_for(&manager.effective, &manager.keymap);
             manager.status =
                 ConfigStatus::UsingDefaults { error: format!("could not write config.toml: {e}") };
             MigrationOutcome { manager, mark_migrated: false }
@@ -1400,7 +1683,7 @@ someFutureKey = \"left alone\"
         let patch = SettingsPatch { enter_to_send: Some(false), ..Default::default() };
         let outcome = mgr.apply_patch(&patch, None).expect("patch applies");
         match outcome {
-            UpdateOutcome::Applied { settings, generation } => {
+            UpdateOutcome::Applied { settings, generation, .. } => {
                 assert!(!settings.enter_to_send);
                 assert_eq!(generation, 1);
             }
@@ -1482,7 +1765,7 @@ someFutureKey = \"left alone\"
         let patch = SettingsPatch { enter_to_send: Some(false), ..Default::default() };
         let outcome = mgr.apply_patch(&patch, Some(mgr.generation() + 1)).expect("conflict is not an error");
         match outcome {
-            UpdateOutcome::Conflict { settings, generation } => {
+            UpdateOutcome::Conflict { settings, generation, .. } => {
                 assert!(settings.enter_to_send); // unchanged
                 assert_eq!(generation, mgr.generation());
             }
@@ -1778,7 +2061,7 @@ someFutureKey = \"left alone\"
     fn reload_adopts_a_valid_external_edit_and_bumps_the_generation() {
         let path = tmp_config_path();
         let mut mgr =
-            ConfigManager::create_fresh_with(path.clone(), AppSettings::default()).unwrap();
+            ConfigManager::create_fresh_with(path.clone(), AppSettings::default(), KeymapConfig::default()).unwrap();
         let before = mgr.generation();
         assert!(mgr.effective().git_blame_inline);
 
@@ -1806,7 +2089,7 @@ someFutureKey = \"left alone\"
     #[test]
     fn a_write_whose_base_went_stale_is_refused_rather_than_clobbering() {
         let path = tmp_config_path();
-        let mgr = ConfigManager::create_fresh_with(path.clone(), AppSettings::default()).unwrap();
+        let mgr = ConfigManager::create_fresh_with(path.clone(), AppSettings::default(), KeymapConfig::default()).unwrap();
 
         // Simulate the racing writer landing inside the window: disk now holds
         // something `mgr.last_raw` doesn't know about.
@@ -1830,7 +2113,7 @@ someFutureKey = \"left alone\"
     #[test]
     fn a_write_on_a_current_base_goes_through() {
         let path = tmp_config_path();
-        let mgr = ConfigManager::create_fresh_with(path.clone(), AppSettings::default()).unwrap();
+        let mgr = ConfigManager::create_fresh_with(path.clone(), AppSettings::default(), KeymapConfig::default()).unwrap();
 
         let text = "schemaVersion = 1\n\n[settings]\nenterToSend = false\n";
         assert!(mgr.write_if_unchanged(text).unwrap());
@@ -1880,7 +2163,7 @@ someFutureKey = \"left alone\"
     /// leave an agent with nothing to read.
     #[test]
     fn settings_docs_cover_every_setting() {
-        let rendered = document_for(&AppSettings::default()).to_string();
+        let rendered = document_for(&AppSettings::default(), &KeymapConfig::default()).to_string();
         for key in known_settings_keys() {
             let documented = SETTINGS_DOCS
                 .iter()
@@ -1921,7 +2204,7 @@ someFutureKey = \"left alone\"
     /// whose *absence* is meaningful is the one nothing explains.
     #[test]
     fn a_key_that_serializes_to_nothing_still_gets_documented() {
-        let rendered = document_for(&AppSettings::default()).to_string();
+        let rendered = document_for(&AppSettings::default(), &KeymapConfig::default()).to_string();
         assert!(
             !rendered.contains("updaterIgnoredVersion ="),
             "unset means the key is absent, not written as a sentinel"
@@ -1942,10 +2225,191 @@ someFutureKey = \"left alone\"
     fn the_annotated_file_round_trips() {
         let path = tmp_config_path();
         let settings = AppSettings { ui_scale: 1.25, enter_to_send: false, ..Default::default() };
-        let rendered = document_for(&settings).to_string();
+        let rendered = document_for(&settings, &KeymapConfig::default()).to_string();
 
         let mgr = ConfigManager::from_raw(path, &rendered).expect("the generated file parses");
         assert_eq!(mgr.effective(), &settings);
         assert!(mgr.unknown_keys().is_empty(), "comments must not read as unknown keys");
+    }
+
+    // ── Keymap ───────────────────────────────────────────────────────────
+
+    /// The ordinary one-chord binding, spelled the way the file spells it.
+    fn chord(text: &str) -> Binding {
+        Binding::One(text.to_string())
+    }
+
+    #[test]
+    fn a_file_with_no_keymap_section_reads_as_the_default_preset() {
+        let path = tmp_config_path();
+        let raw = "schemaVersion = 1\n\n[settings]\nenterToSend = true\n";
+
+        let mgr = ConfigManager::from_raw(path, raw).expect("a pre-keymap file still loads");
+
+        assert_eq!(mgr.keymap(), &KeymapConfig::default());
+        assert_eq!(mgr.keymap().preset, DEFAULT_KEYMAP_PRESET);
+        assert!(mgr.keymap().bindings.is_empty());
+    }
+
+    #[test]
+    fn the_generated_file_documents_the_keymap_and_round_trips() {
+        let path = tmp_config_path();
+        let keymap = KeymapConfig {
+            preset: "vscode".to_string(),
+            bindings: [
+                ("close-tab".to_string(), chord("mod+shift+w")),
+                (
+                    "zoom-in".to_string(),
+                    Binding::Many(vec!["mod+=".to_string(), "mod+shift+=".to_string()]),
+                ),
+            ]
+            .into(),
+        };
+        let rendered = document_for(&AppSettings::default(), &keymap).to_string();
+
+        assert!(rendered.contains("[keymap]"), "the section must be there to be found");
+        assert!(rendered.contains(KEYMAP_BINDINGS_HEADER));
+        assert!(rendered.contains("preset = \"vscode\""));
+        assert!(rendered.contains("close-tab = \"mod+shift+w\""));
+        // A command with two chords keeps both, as an array (the generator
+        // spreads it over lines; a patch writes it inline — both parse).
+        assert!(rendered.contains("zoom-in = ["));
+        assert!(rendered.contains("\"mod+shift+=\""));
+        // Its comments, and no settings comment leaking into the section.
+        let bindings_at = rendered.find(KEYMAP_BINDINGS_HEADER).unwrap();
+        let preset_doc_at = rendered.find("# Which editor's shortcuts").unwrap();
+        assert!(preset_doc_at < bindings_at, "the preset comment sits above the preset key");
+
+        let mgr = ConfigManager::from_raw(path, &rendered).expect("the generated file parses");
+        assert_eq!(mgr.keymap(), &keymap);
+        assert!(mgr.unknown_keys().is_empty());
+    }
+
+    /// The keymap rides the same compare-and-swap as the settings, so a
+    /// binding change has to preserve a hand-written file the same way a
+    /// settings change does.
+    #[test]
+    fn a_keymap_patch_preserves_comments_settings_and_unknown_commands() {
+        let path = tmp_config_path();
+        let raw = "\
+schemaVersion = 1
+
+[settings]
+enterToSend = false
+
+[keymap]
+preset = \"zed\"
+
+[keymap.bindings]
+# my own note about this one
+close-tab = \"mod+w\"
+warp-drive = \"mod+9\"
+";
+        fs::write(&path, raw).unwrap();
+        let mut mgr = ConfigManager::from_raw(path.clone(), raw).unwrap();
+
+        let patch = KeymapPatch {
+            preset: Some("vscode".to_string()),
+            bindings: [("new-chat".to_string(), Some(chord("mod+l")))].into(),
+        };
+        let outcome = mgr.apply_patch(&patch, None).expect("keymap patch applies");
+        match outcome {
+            UpdateOutcome::Applied { keymap, settings, generation } => {
+                assert_eq!(keymap.preset, "vscode");
+                assert_eq!(keymap.bindings["new-chat"], chord("mod+l"));
+                assert!(!settings.enter_to_send, "a keymap patch must not touch the settings");
+                assert_eq!(generation, 1);
+            }
+            UpdateOutcome::Conflict { .. } => panic!("no expected_generation was given"),
+        }
+
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(on_disk.contains("# my own note about this one"));
+        assert!(on_disk.contains("enterToSend = false"));
+        assert!(on_disk.contains("new-chat = \"mod+l\""));
+        // A command from some other Atlas build is left exactly where it was:
+        // the frontend reports it, this side never deletes it.
+        assert!(on_disk.contains("warp-drive = \"mod+9\""));
+    }
+
+    /// "Reset this command" and "leave this command unbound" are different
+    /// actions, and the file has to be able to say both.
+    #[test]
+    fn a_null_binding_removes_the_override_and_an_empty_one_unbinds() {
+        let path = tmp_config_path();
+        let raw = "schemaVersion = 1\n\n[keymap.bindings]\nclose-tab = \"mod+q\"\nnew-chat = \"mod+l\"\n";
+        fs::write(&path, raw).unwrap();
+        let mut mgr = ConfigManager::from_raw(path.clone(), raw).unwrap();
+
+        let patch = KeymapPatch {
+            preset: None,
+            bindings: [
+                ("close-tab".to_string(), None),
+                ("new-chat".to_string(), Some(chord(UNBOUND_BINDING))),
+            ]
+            .into(),
+        };
+        mgr.apply_patch(&patch, None).expect("patch applies");
+
+        assert!(!mgr.keymap().bindings.contains_key("close-tab"), "the override is gone entirely");
+        assert_eq!(mgr.keymap().bindings["new-chat"], chord(UNBOUND_BINDING));
+
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(!on_disk.contains("close-tab"));
+        assert!(on_disk.contains("new-chat = \"\""));
+    }
+
+    #[test]
+    fn a_whitespace_binding_is_rejected_rather_than_read_as_unbound() {
+        let path = tmp_config_path();
+        let raw = "schemaVersion = 1\n\n[keymap.bindings]\nclose-tab = \"   \"\n";
+
+        let err = ConfigManager::from_raw(path, raw).expect_err("whitespace is not a chord");
+
+        assert!(matches!(err, ConfigError::Invalid(ref issue) if issue.key == "keymap.bindings"));
+    }
+
+    #[test]
+    fn a_keymap_with_no_preset_named_is_rejected_whole() {
+        let path = tmp_config_path();
+        let raw = "schemaVersion = 1\n\n[keymap]\npreset = \"  \"\n";
+
+        let err = ConfigManager::from_raw(path, raw).expect_err("an empty preset is not a preset");
+
+        assert!(matches!(err, ConfigError::Invalid(ref issue) if issue.key == "keymap.preset"));
+    }
+
+    /// The frontend and this module both have to agree on what an unbound
+    /// command looks like on the wire; nothing but this stops them drifting.
+    #[test]
+    fn the_unbound_sentinel_matches_the_frontend() {
+        const KEYMAP_API_TS: &str =
+            include_str!("../../../src/features/keybindings/lib/keymap-api.ts");
+        assert!(
+            KEYMAP_API_TS.contains(&format!("const UNBOUND = \"{UNBOUND_BINDING}\";")),
+            "keymap-api.ts has drifted from UNBOUND_BINDING"
+        );
+    }
+
+    /// Same drift guard for the default preset id, which the frontend
+    /// catalogue owns and this module only has to name.
+    #[test]
+    fn the_default_preset_matches_the_frontend_catalogue() {
+        const PRESETS_TS: &str = include_str!("../../../src/features/keybindings/lib/presets.ts");
+        assert!(
+            PRESETS_TS
+                .contains(&format!("DEFAULT_PRESET_ID: PresetId = \"{DEFAULT_KEYMAP_PRESET}\"")),
+            "presets.ts has drifted from DEFAULT_KEYMAP_PRESET"
+        );
+    }
+
+    #[test]
+    fn the_keymap_section_is_documented_in_the_configuration_reference() {
+        for key in ["[keymap]", "[keymap.bindings]", "preset"] {
+            assert!(
+                CONFIGURATION_DOC.contains(key),
+                "docs/reference/configuration.md is missing `{key}`"
+            );
+        }
     }
 }

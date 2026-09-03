@@ -153,6 +153,71 @@ trading one drift bug for another. An unrecognized-but-well-formed theme id
 is accepted here and handled the same way the frontend already handles one
 from a newer Atlas version.
 
+The `[keymap]` section below is the same call, for the same reason: Rust
+checks its structure, the frontend owns its vocabulary.
+
+## `[keymap]` — keyboard shortcuts
+
+```toml
+[keymap]
+preset = "vscode"
+
+[keymap.bindings]
+close-tab = "mod+w"
+toggle-terminal = "ctrl+`"
+zoom-in = ["mod+=", "mod+shift+="]
+command-palette = ""
+```
+
+| Key | Type | Default | Validation |
+|---|---|---|---|
+| `preset` | string | `"atlas"` | non-empty (not checked against the preset catalog — see [Non-goals](#non-goals-for-validation)) |
+| `bindings` | table of command id → chord, or array of chords | empty | every key non-empty, no whitespace-only chord; chord syntax is parsed by the frontend |
+
+**Presets.** `"atlas"`, `"vscode"` (also Cursor) or `"zed"`. A preset is an
+overlay, not a replacement keymap: it moves only the commands the other editor
+has a well-known equivalent for, and every other command keeps its Atlas chord.
+That is also why a new Atlas command works under every preset the day it lands.
+
+**Bindings.** One line per command you want to change, on top of the preset.
+The command ids, their defaults and their scopes are listed in
+Settings → Keybindings, and defined in `src/features/keybindings/lib/actions.ts`.
+Ids are dot-free so they need no quoting here.
+
+**Chords** are written `modifier+modifier+key`, lowercase:
+
+- `mod` — ⌘ on macOS, Ctrl everywhere else. Presets are written with `mod` so
+  one entry is right on both.
+- `ctrl` — literally Control. Off macOS that *is* `mod`, and normalizes to it.
+- `alt` (`opt`, `option`), `shift`, and `cmd`/`meta`/`super` as spellings of
+  `mod`.
+- The key is the unshifted character on the keycap (`=`, not `+`) or a name:
+  `enter`, `escape`, `tab`, `space`, `backspace`, `delete`, `home`, `end`,
+  `pageup`, `pagedown`, `arrowup`/`arrowdown`/`arrowleft`/`arrowright`,
+  `f1`–`f24`. `up`/`down`/`left`/`right`, `esc`, `del` and `return` are
+  accepted as the spellings other editors' keymaps use.
+
+**More than one chord.** An array binds them all to the same command, which is
+how `zoom-in` ships: on a US layout ⌘+ arrives as ⇧=, so binding only one of
+the pair leaves zoom working half the time. Settings records a single chord and
+replaces the list; write an array here to keep several.
+
+**Unbinding vs. resetting.** An empty string (`command-palette = ""`) means the
+command has no shortcut. Deleting the line instead gives it back the preset's
+chord — TOML has no null, so the two need different spellings.
+
+**Scopes.** A binding belongs to the surface its command lives on — editor,
+chat, terminal, knowledge base — or is global. While a surface holds the
+focused pane, its bindings win over the global ones, which is how `mod+f` can
+mean "find in chat" and "find in terminal" at once. Two commands in the *same*
+scope on the same chord conflict, and Settings won't save until one moves.
+
+**Unknown commands.** A binding naming a command this build doesn't have is
+left on disk untouched and reported in Settings — that is what a keymap from a
+newer Atlas looks like, and deleting the line would be the wrong repair.
+(Unlike `[settings]`, these are not reported as `unknownKeys`: the command
+catalog lives in the frontend, so the frontend is what notices.)
+
 ## Schema versioning
 
 `config.toml`'s `schemaVersion` is independent of `state.json`'s

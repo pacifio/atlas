@@ -28,7 +28,10 @@ import {
   type ConfigStatus,
   type SettingsPatch,
 } from "@/features/settings/lib/atlas-config-api";
+import { commitConfigPatch, setConfigGeneration } from "@/features/settings/lib/config-write";
 import { DEFAULT_SETTINGS, type AppSettings } from "@/features/settings/lib/app-settings";
+import { useKeybindingsStore } from "@/features/keybindings/stores/keybindings-store";
+import type { KeymapWire } from "@/features/keybindings/lib/keymap-api";
 
 // Re-exported because most of the app reaches for `AppSettings` through the
 // store it reads settings from; the definition itself belongs to the settings
@@ -69,8 +72,15 @@ export interface AppStateWire {
    *  because the bootstrap-failure fallback path constructs a payload by
    *  hand without it; `hydrate` merges over `DEFAULT_SETTINGS` regardless. */
   settings?: AppSettings;
-  /** Optimistic-concurrency counter for `update_atlas_settings` — see
-   *  `atlas-config-api.ts`. */
+  /** The `[keymap]` section of the same file, hydrated into the keybindings
+   *  store on the way through — see `keybindings-store.ts`. Optional for the
+   *  same reason `settings` is. */
+  keymap?: KeymapWire;
+  /** Whether the first-run keymap picker has been answered. Rust-owned state
+   *  (`state.json`), so it rides in here rather than in `config.toml`. */
+  keymapOnboardingSeen?: boolean;
+  /** Optimistic-concurrency counter for both `update_atlas_settings` and
+   *  `update_atlas_keymap` — see `config-write.ts`. */
   configGeneration?: number;
   /** Whether `config.toml` actually loaded. Anything other than `ok` means
    *  `settings` above are Atlas's defaults, not the user's. Optional only
@@ -83,10 +93,6 @@ interface ProjectState {
   currentProject: Project | null;
   recentProjects: RecentProject[];
   settings: AppSettings;
-  /** The generation of `settings` currently reflected here — every
-   *  `updateSettings` call and every `atlas:config-changed` event advances
-   *  it. See `atlas-config-api.ts`. */
-  configGeneration: number;
   /** Set when `config.toml` is currently malformed (external edit or a
    *  rejected write) — `settings` still holds the last valid snapshot.
    *  `null` when there's nothing to report. Settings UI surfaces this. */
@@ -310,10 +316,6 @@ function applySettingsSideEffects(next: AppSettings, previous: AppSettings): voi
   if (next.atlasTheme !== previous.atlasTheme) applyAtlasTheme(next.atlasTheme);
 }
 
-/** How many times a settings write adopts the latest generation and retries
- *  before giving up and telling the user. See `updateSettings`. */
-const SETTINGS_WRITE_ATTEMPTS = 3;
-
 /** Turn a boot-time `ConfigStatus` into the banner string, or `null` when the
  *  file loaded cleanly. */
 function configErrorFrom(status: ConfigStatus | undefined): string | null {
@@ -328,7 +330,6 @@ export const useProjectStore = createSelectors(
     currentProject: null,
     recentProjects: [],
     settings: DEFAULT_SETTINGS,
-    configGeneration: 0,
     configError: null,
     hydrated: false,
     actions: {
@@ -394,68 +395,42 @@ export const useProjectStore = createSelectors(
         // reconcile with whatever `config.toml` actually ends up holding.
         // Rust validates the full candidate and can reject it outright, or —
         // on a stale `configGeneration` — refuse to apply and return a
-        // Conflict instead (see `atlas-config-api.ts`). A generation can go
-        // stale without any UI involvement at all (an internal Rust-side
-        // write, e.g. the Local Model Manager persisting a model switch, or
-        // an external edit), so a Conflict here does NOT mean someone else
-        // wanted this same key — it just means the base this patch was
-        // computed against is out of date. Adopt the fresh generation and
-        // retry the original patch; only surface an error once
-        // `SETTINGS_WRITE_ATTEMPTS` of them have conflicted in a row (an
-        // actual sustained race, not just staleness). A single retry wasn't
-        // enough: during a burst of rapid changes — dragging the zoom slider,
-        // say — a second unrelated write can land between the retry and its
-        // read, silently dropping the user's action.
+        // Conflict instead; `commitConfigPatch` owns the adopt-and-retry
+        // policy for that, and a conflict here means it gave up.
         const previous = get().settings;
         const optimistic = { ...previous, ...partial };
         set({ settings: optimistic });
         applySettingsSideEffects(optimistic, previous);
 
-        const attempt = (generation: number, attemptsLeft: number) => {
-          updateAtlasConfig(partial as SettingsPatch, generation)
-            .then((outcome) => {
-              if (outcome.kind === "conflict") {
-                if (attemptsLeft <= 1) {
-                  console.warn(
-                    "updateSettings: still conflicting after adopting the latest generation",
-                  );
-                  set({
-                    settings: outcome.settings,
-                    configGeneration: outcome.generation,
-                    configError:
-                      "Settings change conflicted with a concurrent edit — please try again.",
-                  });
-                  applySettingsSideEffects(outcome.settings, optimistic);
-                  return;
-                }
-                set({ configGeneration: outcome.generation });
-                attempt(outcome.generation, attemptsLeft - 1);
-                return;
-              }
-              set({
-                settings: outcome.settings,
-                configGeneration: outcome.generation,
-                configError: null,
-              });
-              applySettingsSideEffects(outcome.settings, optimistic);
-            })
-            .catch((e) => {
-              console.warn("update_atlas_settings failed:", e);
-              set({ settings: previous, configError: String(e) });
-              applySettingsSideEffects(previous, optimistic);
+        commitConfigPatch((generation) => updateAtlasConfig(partial as SettingsPatch, generation))
+          .then((outcome) => {
+            if (outcome.kind === "conflict") {
+              console.warn(
+                "updateSettings: still conflicting after adopting the latest generation",
+              );
+            }
+            set({
+              settings: outcome.settings,
+              configError:
+                outcome.kind === "conflict"
+                  ? "Settings change conflicted with a concurrent edit — please try again."
+                  : null,
             });
-        };
-        attempt(get().configGeneration, SETTINGS_WRITE_ATTEMPTS);
+            applySettingsSideEffects(outcome.settings, optimistic);
+          })
+          .catch((e) => {
+            console.warn("update_atlas_settings failed:", e);
+            set({ settings: previous, configError: String(e) });
+            applySettingsSideEffects(previous, optimistic);
+          });
       },
       clearConfigError: () => set({ configError: null }),
       resetConfig: async () => {
         const previous = get().settings;
         const snapshot = await resetAtlasConfig();
-        set({
-          settings: snapshot.settings,
-          configGeneration: snapshot.generation,
-          configError: null,
-        });
+        setConfigGeneration(snapshot.generation);
+        set({ settings: snapshot.settings, configError: null });
+        useKeybindingsStore.getState().actions.hydrate(snapshot.keymap);
         applySettingsSideEffects(snapshot.settings, previous);
       },
       hydrate: (payload: AppStateWire, opts?: { skipActiveSwitch?: boolean }) => {
@@ -466,11 +441,15 @@ export const useProjectStore = createSelectors(
           ...DEFAULT_SETTINGS,
           ...payload.settings,
         };
+        setConfigGeneration(payload.configGeneration ?? 0);
+        if (payload.keymap) useKeybindingsStore.getState().actions.hydrate(payload.keymap);
+        useKeybindingsStore
+          .getState()
+          .actions.hydrateOnboardingSeen(payload.keymapOnboardingSeen ?? false);
         set({
           currentProject: null,
           recentProjects: payload.recentProjects ?? [],
           settings,
-          configGeneration: payload.configGeneration ?? 0,
           // A `config.toml` that failed to load at startup is the one case the
           // user cannot otherwise notice: every preference silently reads back
           // as an Atlas default (`shareTelemetry` included). Rust computes the
@@ -537,9 +516,11 @@ export const useProjectStore = createSelectors(
 // `atlas-self-configure` skill wrote to it directly. Both land here as a hot
 // reload; `applySettingsSideEffects` re-applies exactly the side effects that
 // actually changed, same as a UI-driven update.
-void onConfigChanged(({ settings, generation }) => {
+void onConfigChanged(({ settings, keymap, generation }) => {
   const previous = useProjectStore.getState().settings;
-  useProjectStore.setState({ settings, configGeneration: generation, configError: null });
+  setConfigGeneration(generation);
+  useProjectStore.setState({ settings, configError: null });
+  useKeybindingsStore.getState().actions.hydrate(keymap);
   applySettingsSideEffects(settings, previous);
 });
 

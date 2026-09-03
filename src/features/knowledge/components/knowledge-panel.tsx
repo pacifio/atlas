@@ -11,6 +11,7 @@ import {
 } from "../stores/knowledge-links-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { useActionHandlers } from "@/features/keybindings/hooks/use-action-handlers";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { registerFlush } from "@/features/workspaces/lib/flush-registry";
 import {
@@ -38,7 +39,7 @@ import { Copy, ExternalLink, GitBranch, PanelLeft, PanelRight } from "lucide-rea
 
 const RECENTS_MAX = 5;
 
-export function KnowledgePanel() {
+export function KnowledgePanel({ tabId }: { tabId: string }) {
   const entries = useKnowledgeStore.use.entries();
   const activeEntryId = useKnowledgeStore.use.activeEntryId();
   const editContent = useKnowledgeStore.use.editContent();
@@ -235,49 +236,20 @@ export function KnowledgePanel() {
     };
   }, [flushAndSave]);
 
-  // Cmd+; / Cmd+' — toggle KB sidebar / inspector. Picked over the old
-  // Cmd+{ / Cmd+} bindings because those conflicted with the global
-  // Cmd+Shift+[ / Cmd+Shift+] tab-cycle shortcut.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.shiftKey || e.altKey) return;
-      if (e.key === ";") {
-        e.preventDefault();
-        toggleKnowledgeSidebar();
-      } else if (e.key === "'") {
-        e.preventDefault();
-        toggleKnowledgeInspector();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [toggleKnowledgeSidebar, toggleKnowledgeInspector]);
-
-  // Cmd+F — open the KB finder, but only when focus is inside this KB panel
-  // (so it doesn't hijack the shortcut for other tabs / the app).
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === "f") {
-        if (!rootRef.current?.contains(document.activeElement)) return;
-        e.preventDefault();
-        setFinderOpen(true);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
-
-  // Cmd+S
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-        e.preventDefault();
-        // Force-blur the active element first. The page-header title
-        // input commits its draft to `_meta.json` on blur — without
-        // this, Cmd+S while typing in the title saves the body but
-        // leaves the title patch pending until the next outside click,
-        // making the sidebar tree appear to lag behind the save.
+  // The Knowledge Base's own commands. They are live only while this tab holds
+  // the focused pane, which is what lets ⌘F mean "find in this page" here and
+  // something else everywhere it is also bound.
+  useActionHandlers(
+    {
+      "knowledge-toggle-sidebar": toggleKnowledgeSidebar,
+      "knowledge-toggle-inspector": toggleKnowledgeInspector,
+      "knowledge-find": () => setFinderOpen(true),
+      "knowledge-save": () => {
+        // Force-blur the active element first. The page-header title input
+        // commits its draft to `_meta.json` on blur — without this, saving
+        // while typing in the title saves the body but leaves the title patch
+        // pending until the next outside click, making the sidebar tree appear
+        // to lag behind the save.
         const ae = document.activeElement;
         if (ae instanceof HTMLElement && ae !== document.body) {
           ae.blur();
@@ -287,11 +259,10 @@ export function KnowledgePanel() {
         if (currentProject) {
           void flushAndSave();
         }
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [currentProject, flushAndSave]);
+      },
+    },
+    tabId,
+  );
 
   // Open a non-note file (image, code) in the CodeMirror editor rather than the
   // KB note editor.

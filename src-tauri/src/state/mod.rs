@@ -16,6 +16,6 @@ pub mod atlas_config;
 
 pub use app_state::{AppState, AppStateHandle, AppStatePatch};
 pub use atlas_config::{
-    AppSettings, AtlasConfigHandle, ConfigError, ConfigSnapshot, ConfigStatus, SettingsPatch,
-    UpdateOutcome,
+    AppSettings, AtlasConfigHandle, ConfigError, ConfigSnapshot, ConfigStatus, KeymapConfig,
+    KeymapPatch, SettingsPatch, UpdateOutcome,
 };
