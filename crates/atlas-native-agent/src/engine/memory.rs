@@ -129,7 +129,7 @@ pub fn parse_arguments(arguments: &serde_json::Value) -> Option<(String, usize)>
     }
     let limit = arguments
         .get("limit")
-        .and_then(|l| l.as_u64())
+        .and_then(serde_json::Value::as_u64)
         .map(|l| l as usize)
         .unwrap_or(DEFAULT_LIMIT)
         .clamp(1, MAX_LIMIT);

@@ -91,11 +91,21 @@ struct GatewayError {
 /// The gateway sets `1` for a concurrency refusal and `60` for the per-minute
 /// limit. Absent or unparseable falls back to 60: the longer of the two, since
 /// retrying too soon against a rate limit earns another one.
+///
+/// Clamped at 60 either way (#68): the value is slept verbatim downstream,
+/// and a *parseable* absurd one — `Retry-After: 86400` from an intervening
+/// CDN or WAF, whose 429 reaches this arm because `classify` falls back
+/// gracefully on a non-envelope body — would stall the turn for hours behind
+/// "Reconnecting…". 60 is the longest interval the gateway documents, and the
+/// same bound the connection-retry branch already enforces; a source that
+/// really wants a longer wait will answer the retry with another 429.
 fn retry_after(header: Option<&str>) -> Duration {
+    const LONGEST_DOCUMENTED: Duration = Duration::from_secs(60);
     header
         .and_then(|v| v.trim().parse::<u64>().ok())
         .map(Duration::from_secs)
-        .unwrap_or(Duration::from_secs(60))
+        .unwrap_or(LONGEST_DOCUMENTED)
+        .min(LONGEST_DOCUMENTED)
 }
 
 fn cap_detail(err: &GatewayError) -> String {
@@ -331,6 +341,19 @@ mod tests {
         assert!(matches!(d, Disposition::RetryAfter { delay, .. } if delay == Duration::from_secs(60)));
         let d = classify(StatusCode::TOO_MANY_REQUESTS, &body("rate_limited", "x"), Some("garbage"));
         assert!(matches!(d, Disposition::RetryAfter { delay, .. } if delay == Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn an_absurd_retry_after_is_clamped_rather_than_slept() {
+        // A parseable value is honoured downstream verbatim, so a CDN's
+        // `Retry-After: 86400` would stall the turn for a day behind
+        // "Reconnecting…" (#68). 60 is the longest interval the gateway
+        // documents; nothing may wait longer on this header's say-so.
+        let d = classify(StatusCode::TOO_MANY_REQUESTS, &body("rate_limited", "x"), Some("86400"));
+        assert!(matches!(d, Disposition::RetryAfter { delay, .. } if delay == Duration::from_secs(60)));
+        // The documented short interval still passes through untouched.
+        let d = classify(StatusCode::TOO_MANY_REQUESTS, &body("rate_limited", "x"), Some("1"));
+        assert!(matches!(d, Disposition::RetryAfter { delay, .. } if delay == Duration::from_secs(1)));
     }
 
     #[test]

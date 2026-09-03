@@ -236,6 +236,9 @@ pub fn analyze_source(lang: Language, source: &str) -> Option<FileIntel> {
             // The stack is LIFO, so push children reversed to pop them — and
             // therefore emit imports/symbols — in source order.
             let mut cursor = node.walk();
+            // The collect is load-bearing: tree-sitter's children iterator is
+            // not double-ended, so reversing needs the Vec.
+            #[allow(clippy::needless_collect)]
             let children: Vec<_> = node.children(&mut cursor).collect();
             for child in children.into_iter().rev() {
                 stack.push(child);

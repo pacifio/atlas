@@ -43,7 +43,39 @@
      Atlas Black theme clears the overrides so these defaults apply verbatim. */
   --panel-rail-bg: #0f0f0f; /* workspace sidebar (<aside>, rendered at /80) */
   --panel-bg: #060706; /* left panel — file tree / explorer */
-  --panel-bg-2: #0d0e0d; /* right panel — source control */
+  --panel-bg-2: #0d0e0d; /* right panel — source control AND team chat */
+  --comms-outer: #0f0f0f; /* team chat — backdrop the surface floats on */
+  --comms-surface: #000000; /* team chat — the interface card, pure black */
+
+  /* === Team chat (comms) ===
+     The transcript is LINEAR (Discord/Slack), not bubbles — the panel is ~390px
+     wide and a max-width bubble wrapped nearly every sentence. The former
+     `--comms-bubble-*` fills are gone with it.
+     A mention of *you* — deliberately warmer than a mention of anyone else. */
+  --comms-mention-bg: rgba(255, 255, 255, 0.16);
+  --comms-mention-text: #ffffff;
+  --comms-mention-other-bg: rgba(255, 255, 255, 0.08);
+  --comms-mention-other-text: #cfcfcf;
+  /* The team-chat green: unread counts, the tab-strip dot, and the presence dot
+     on an avatar. Green rather than the bubble blue — a blue pill sat too close
+     to the own-message bubble colour to read as a *count*.
+     As a DOT this is ideal: 10.5:1 against the panel. Carrying white digits it
+     is not — white on it is 1.84:1 — so the badge grades to `-deep` and the
+     digits take a dark text-shadow, the usual candy-pill treatment. Black text
+     would measure 11.4:1 if legibility ever matters more than the look. */
+  /* Monochrome by house preference — signal strength is carried by SHADE
+     (white = mention, mid-gray = unread/active), never by hue. */
+  --comms-unread: #b8b8b8;
+  --comms-unread-deep: #8a8a8a;
+  /* The Connect call-to-action on an unconnected org. Chromatic for the same
+     reason `--capture-live` is, and NOT `--status-success` (deliberately grey):
+     this is the only action on an otherwise empty panel, so it has to read as
+     the way forward rather than as ordinary chrome.
+     Darker than `--stat-added`'s #3fb950 on purpose — this one carries a label,
+     and white on the lighter green is ~2.3:1. At this value it clears 4.5:1,
+     which is what makes the text legible rather than merely present. */
+  --comms-connect: #1a7f37;
+  --comms-connect-hover: #21924a;
 
   /* === Text — monochromatic grays === */
   --text-primary: #ffffff;

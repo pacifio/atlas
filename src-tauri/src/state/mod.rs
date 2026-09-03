@@ -12,5 +12,10 @@
 //!   Windows: `%APPDATA%\dev.atlas.ide\state.json`
 
 pub mod app_state;
+pub mod atlas_config;
 
 pub use app_state::{AppState, AppStateHandle, AppStatePatch};
+pub use atlas_config::{
+    AppSettings, AtlasConfigHandle, ConfigError, ConfigSnapshot, ConfigStatus, SettingsPatch,
+    UpdateOutcome,
+};

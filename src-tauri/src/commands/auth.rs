@@ -60,7 +60,12 @@ impl AuthState {
 /// because of that: a signed-in relaunch is covered for free, and no future
 /// transition can forget to update who events are attributed to.
 fn broadcast(app: &AppHandle, snapshot: AuthSnapshot) {
-    sync_identity(app, &snapshot);
+    sync_identity(app, &snapshot, crate::state::atlas_config::read(app).link_telemetry_to_account);
+    // Team chat's socket follows the active Organisation, and every transition
+    // that can change it — launch restore, sign-in, sign-out, `set_active_org`
+    // — passes through here. Hooking the funnel rather than each call site is
+    // what makes "connect" have no separate path that could be forgotten.
+    crate::commands::comms::retarget(app, &snapshot);
     let _ = app.emit("atlas:auth-changed", snapshot);
 }
 
@@ -74,7 +79,24 @@ fn broadcast(app: &AppHandle, snapshot: AuthSnapshot) {
 /// alone: the next successful validation broadcasts a snapshot that has `user`,
 /// and resetting in the gap would bounce attribution back to the device for no
 /// reason.
-fn sync_identity(app: &AppHandle, snapshot: &AuthSnapshot) {
+/// Re-apply the current auth snapshot to the telemetry identity after
+/// `linkTelemetryToAccount` changed.
+///
+/// [`sync_identity`] only ever runs on an auth transition, but that setting
+/// gates it from the settings side and can flip with no transition at all —
+/// so `commands::atlas_config::notify_settings_changed` calls this on every
+/// committed settings change. The flag is passed in rather than read here
+/// because that caller already holds the freshly committed snapshot, and
+/// reaching back into the config mutex from a path that may be running under
+/// it is how a deadlock gets written.
+pub fn resync_telemetry_identity(app: &AppHandle, link_to_account: bool) {
+    if let Some(state) = app.try_state::<AuthState>() {
+        let snapshot = state.core().snapshot();
+        sync_identity(app, &snapshot, link_to_account);
+    }
+}
+
+fn sync_identity(app: &AppHandle, snapshot: &AuthSnapshot, link_to_account: bool) {
     let tel = telemetry(app);
     match snapshot {
         AuthSnapshot::SignedIn {
@@ -83,12 +105,7 @@ fn sync_identity(app: &AppHandle, snapshot: &AuthSnapshot) {
             active_org_id,
         } => {
             // Honour the user's choice to keep analytics off their account.
-            if !app
-                .state::<crate::state::AppStateHandle>()
-                .lock()
-                .settings
-                .link_telemetry_to_account
-            {
+            if !link_to_account {
                 tel.reset_identity();
                 return;
             }
@@ -105,7 +122,7 @@ fn sync_identity(app: &AppHandle, snapshot: &AuthSnapshot) {
                 org_role: active
                     .and_then(|o| o.role)
                     .map(|r| format!("{r:?}").to_lowercase()),
-                org_count: orgs.as_ref().map(|v| v.len()).unwrap_or(0),
+                org_count: orgs.as_ref().map(std::vec::Vec::len).unwrap_or(0),
             });
         }
         AuthSnapshot::SignedOut => tel.reset_identity(),
@@ -165,7 +182,7 @@ pub async fn auth_sign_in(
                 raise(&task_app);
                 let (org_count, has_active) = match &snap {
                     AuthSnapshot::SignedIn { orgs, active_org_id, .. } => (
-                        orgs.as_ref().map(|v| v.len()).unwrap_or(0),
+                        orgs.as_ref().map(std::vec::Vec::len).unwrap_or(0),
                         active_org_id.is_some(),
                     ),
                     _ => (0, false),
@@ -197,6 +214,30 @@ pub fn auth_cancel_sign_in(app: AppHandle, state: State<'_, AuthState>) -> AuthS
     snapshot
 }
 
+/// Which organisation the desktop acts for — billing included (#73).
+///
+/// The org switcher used to be frontend-only: it re-pointed workspaces and
+/// telemetry and told the Rust side nothing, while every gateway request
+/// reads the active org from the auth snapshot. So the switch changed what
+/// the user SAW and not who they BILLED — an unentitled org appeared to work
+/// because its turns were charged to the entitled one. The switcher calls
+/// this now; broadcast after writing so every window's auth state agrees.
+///
+/// `org_id` is the SERVER org id (`remoteId`), or `None` for a local-only
+/// org, which clears the desktop's choice and falls back the way the store
+/// documents.
+#[tauri::command]
+pub async fn auth_set_active_org(
+    app: AppHandle,
+    state: State<'_, AuthState>,
+    org_id: Option<String>,
+) -> Result<(), String> {
+    let core = state.core();
+    core.set_active_org(org_id)?;
+    broadcast(&app, core.snapshot());
+    Ok(())
+}
+
 /// Sign out (ATL-50).
 ///
 /// Local state is gone and the signed-out snapshot has been broadcast to every
@@ -214,6 +255,15 @@ pub fn auth_cancel_sign_in(app: AppHandle, state: State<'_, AuthState>) -> AuthS
 pub async fn auth_sign_out(app: AppHandle, state: State<'_, AuthState>) -> Result<bool, String> {
     let core = state.core();
     let ticket = core.sign_out();
+    // The native agent's connection caches an access JWT that outlives the
+    // revoked session token — the JWT verifies statelessly against JWKS — and
+    // would keep making org-billed gateway calls until its own expiry, up to
+    // ~9 minutes (#62). Signing out locally means the engine's credential goes
+    // too, in-flight turn included. `try_state` because sign-out must work
+    // even if the agent host never initialised.
+    if let Some(host) = app.try_state::<std::sync::Arc<super::agent_host::AgentHost>>() {
+        host.drop_native_connection();
+    }
     // Capture BEFORE broadcasting. `broadcast` resets the telemetry identity to
     // the device, so the order matters: reversed, the event that describes the
     // account leaving would be filed against the anonymous device person.

@@ -445,7 +445,7 @@ mod tests {
         }
         // The prompt is answered; Running arrives again for turn 7.
         st.begin_turn("s1", 7);
-        st.with_turn("s1", |a| a.note_permission_resolved());
+        st.with_turn("s1", super::TurnAcc::note_permission_resolved);
 
         let props = st.finish_turn("s1", 7).expect("event");
         assert_eq!(props["tool_call_count"], json!(3));

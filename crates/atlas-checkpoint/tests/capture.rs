@@ -136,13 +136,13 @@ fn the_title_derives_from_the_user_prompt_which_is_not_on_the_delta_stream() {
         Some("Investigate why the watcher misses renames")
     );
 
-    let prompts: Vec<_> = store
+    let prompts = store
         .messages_for_session(&session_id)
         .unwrap()
         .into_iter()
         .filter(|m| m.role == Role::User)
-        .collect();
-    assert_eq!(prompts.len(), 1, "the prompt itself is stored, not only its title");
+        .count();
+    assert_eq!(prompts, 1, "the prompt itself is stored, not only its title");
 }
 
 #[test]

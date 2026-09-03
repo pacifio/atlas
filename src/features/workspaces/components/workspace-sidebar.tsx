@@ -34,6 +34,7 @@ import { AgentIcons } from "@/components/agent-icons";
 import { useRecentChatsStore, type RecentChat } from "../stores/recent-chats-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
+import { useActiveOrgWorkspaces, useActiveOrgGroups } from "../lib/org-scope";
 import { OrgSwitcher } from "@/features/organisations/components/org-switcher";
 import { CaptureControl } from "@/features/capture/components/capture-control";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
@@ -522,18 +523,10 @@ type Row =
 
 export function WorkspaceSidebar() {
   const allWorkspaces = useWorkspaceStore.use.workspaces();
-  const allGroups = useWorkspaceStore.use.groups();
-  const activeOrganisationId = useOrgStore.use.activeOrganisationId();
-  // The sidebar shows only the ACTIVE org's workspaces/groups. A null `orgId`
-  // (transient pre-migration state) is treated as belonging to the active org.
-  const workspaces = useMemo(
-    () => allWorkspaces.filter((w) => w.orgId === activeOrganisationId || w.orgId == null),
-    [allWorkspaces, activeOrganisationId],
-  );
-  const groups = useMemo(
-    () => allGroups.filter((g) => g.orgId === activeOrganisationId || g.orgId == null),
-    [allGroups, activeOrganisationId],
-  );
+  // The sidebar shows only the ACTIVE org's workspaces/groups (strict filter —
+  // see org-scope.ts for why there is no null-orgId fallback).
+  const workspaces = useActiveOrgWorkspaces();
+  const groups = useActiveOrgGroups();
   const activeWorkspaceId = useWorkspaceStore.use.activeWorkspaceId();
   const optimisticActiveId = useWorkspaceStore.use.optimisticActiveId();
   // Highlight the clicked workspace INSTANTLY (optimistic), falling back to the
@@ -722,8 +715,7 @@ export function WorkspaceSidebar() {
       //    row when this org has none.
       const st = useWorkspaceStore.getState();
       const orgId = useOrgStore.getState().activeOrganisationId;
-      const twins = st.workspaces.filter((w) => w.path === chat.projectPath);
-      const ws = twins.find((w) => w.orgId === orgId || w.orgId == null) ?? twins[0];
+      const ws = st.workspaces.find((w) => w.path === chat.projectPath && w.orgId === orgId);
       if (ws) await st.actions.switchTo(ws.id);
       else await addWorkspace(chat.projectPath);
       // 2. Open THIS session (by acp session id — not the tab id, which is reused

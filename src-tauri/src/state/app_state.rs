@@ -3,7 +3,7 @@
 //! JS side via `#[serde(rename_all = "camelCase")]` so the frontend can use
 //! the deserialized payload verbatim.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -22,7 +22,14 @@ use tauri::{AppHandle, Manager};
 /// (`organisations`/`active_organisation_id`, plus `org_id` on each
 /// workspace/group). v2 payloads are migrated by wrapping all existing
 /// workspaces in a default local "Personal" org.
-pub const SCHEMA_VERSION: u32 = 3;
+///
+/// v4 removed `AppSettings` from this struct entirely (issue #64) — user
+/// preferences now live in their own validated `config.toml`
+/// (`crate::state::atlas_config`). `settings_config_migrated` records whether
+/// that one-time export already happened, so a user who deletes `config.toml`
+/// afterward gets fresh defaults rather than a silent re-import of whatever
+/// was last in `state.json`.
+pub const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -139,13 +146,16 @@ pub struct AppState {
     pub organisations: Vec<Organisation>,
     #[serde(default)]
     pub active_organisation_id: Option<String>,
-    #[serde(default)]
-    pub settings: AppSettings,
     /// Stable anonymous id for opt-in product telemetry (PostHog `distinct_id`).
     /// Generated once on first launch (see `lib.rs` setup); never contains PII.
     /// `None` on old `state.json` files — backfilled + persisted at startup.
     #[serde(default)]
     pub telemetry_anon_id: Option<String>,
+    /// Whether the one-time `state.json.settings` → `config.toml` export
+    /// (issue #64) has already run. See the `SCHEMA_VERSION` doc for why this
+    /// can't just be "does config.toml exist".
+    #[serde(default)]
+    pub settings_config_migrated: bool,
     #[serde(default = "default_version")]
     pub version: u32,
 }
@@ -181,8 +191,6 @@ pub struct AppStatePatch {
     pub organisations: Vec<Organisation>,
     #[serde(default)]
     pub active_organisation_id: Option<String>,
-    #[serde(default)]
-    pub settings: AppSettings,
 }
 
 impl Default for AppState {
@@ -195,8 +203,8 @@ impl Default for AppState {
             active_workspace_id: None,
             organisations: Vec::new(),
             active_organisation_id: None,
-            settings: AppSettings::default(),
             telemetry_anon_id: None,
+            settings_config_migrated: false,
             version: SCHEMA_VERSION,
         }
     }
@@ -291,148 +299,52 @@ impl AppState {
         }
 
         // Backfill org ownership on any untagged workspace/group (covers both
-        // the fresh migration above and stray untagged entries).
-        if let Some(default_org) = self.active_organisation_id.clone() {
-            for ws in &mut self.workspaces {
-                if ws.org_id.is_none() {
-                    ws.org_id = Some(default_org.clone());
-                }
-            }
+        // the fresh migration above and stray untagged entries — the frontend
+        // can mint `org_id: null` rows during a boot race, and every render
+        // surface filters strictly by org, so an untagged row would otherwise
+        // be invisible in one org and leak into all of them). When no active
+        // org is set, fall back to the first org rather than leaving rows
+        // untagged forever.
+        let default_org = self
+            .active_organisation_id
+            .clone()
+            .or_else(|| self.organisations.first().map(|o| o.id.clone()));
+        if let Some(default_org) = default_org {
+            let group_orgs: std::collections::HashMap<String, String> = self
+                .groups
+                .iter()
+                .filter_map(|g| Some((g.id.clone(), g.org_id.clone()?)))
+                .collect();
+            let mut backfilled = 0usize;
             for group in &mut self.groups {
                 if group.org_id.is_none() {
                     group.org_id = Some(default_org.clone());
+                    backfilled += 1;
                 }
+            }
+            for ws in &mut self.workspaces {
+                if ws.org_id.is_none() {
+                    // A workspace inside an org-tagged group belongs to that
+                    // group's org; only truly orphaned rows get the default.
+                    ws.org_id = Some(
+                        ws.group_id
+                            .as_ref()
+                            .and_then(|gid| group_orgs.get(gid).cloned())
+                            .unwrap_or_else(|| default_org.clone()),
+                    );
+                    backfilled += 1;
+                }
+            }
+            if backfilled > 0 {
+                tracing::info!(
+                    count = backfilled,
+                    default_org = %default_org,
+                    "backfilled org_id on untagged workspaces/groups"
+                );
             }
         }
 
         self.version = SCHEMA_VERSION;
-    }
-}
-
-/// User-facing toggles surfaced in Settings → General.
-///
-/// New fields MUST be `#[serde(default = "…")]` or have an obvious zero
-/// value so old `state.json` files (written before the field existed)
-/// load cleanly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AppSettings {
-    /// On project open, ensure `.atlas/` is listed in the project's
-    /// `.gitignore` (creating the file if needed). No-op on non-git
-    /// projects. Default ON because Atlas writes caches / state into
-    /// `.atlas/` that don't belong in version control.
-    #[serde(default = "default_true")]
-    pub auto_add_atlas_gitignore: bool,
-    /// Record Atlas-internal events (sign-in, agent start/finish,
-    /// browser/file open, etc.) into the Logs panel under the `atlas`
-    /// source. Default ON so early users can share their logs without
-    /// flipping a flag first.
-    #[serde(default = "default_true")]
-    pub enable_atlas_logs: bool,
-    /// Show dotfiles / dot-directories (e.g. `.git`, `.atlas`, `.env`) in
-    /// the explorer file tree. Default ON so nothing is silently hidden;
-    /// users who want a cleaner tree can turn it off.
-    #[serde(default = "default_true")]
-    pub show_hidden_files: bool,
-    /// Global interface zoom (1.0 == 100%). Applied via the native WebView zoom
-    /// on the frontend (⌘+/⌘-/⌘0); persisted so it survives relaunch.
-    #[serde(default = "default_ui_scale")]
-    pub ui_scale: f32,
-    /// Anonymous product telemetry (PostHog). Default **ON** (opt-out, like
-    /// VS Code / Zed) — privacy-preserving metadata only; the user can turn it
-    /// off anytime in Settings → General. Gates both the Rust emitter and the
-    /// frontend `posthog-js` crash reporter. Still inert unless a key resolves.
-    /// See `crate::telemetry`.
-    #[serde(default = "default_true")]
-    pub share_telemetry: bool,
-    /// Attribute telemetry to the signed-in Atlas account (PostHog `$identify`),
-    /// rather than keeping it on the anonymous per-device person. Default **ON**,
-    /// and irrelevant while signed out or while `share_telemetry` is off — both
-    /// gate this. Turning it off calls `reset_identity`, so subsequent events go
-    /// back to the device person; it does not un-merge what PostHog has already
-    /// attributed. See `crate::telemetry`.
-    #[serde(default = "default_true")]
-    pub link_telemetry_to_account: bool,
-    /// Selected on-device **embedding** model id (== its dir name under
-    /// `app_data/models/`). Drives `memory_graph::model_dir` and every embedding
-    /// consumer via the shared provider. Switching it wipes + rebuilds the
-    /// per-project memory index (different model = different vector space).
-    /// See `crate::commands::models`.
-    #[serde(default = "default_embedding_model")]
-    pub embedding_model_id: String,
-    /// Code-editor color theme id (see `src/features/editor/themes`). Drives the
-    /// CodeMirror editor, the diff viewer and the source-control diff views on
-    /// the frontend; persisted so it survives relaunch.
-    #[serde(default = "default_code_editor_theme")]
-    pub code_editor_theme: String,
-    /// Atlas interface-theme id (see `src/features/theme/themes`). Swaps the
-    /// whole dark UI palette on the frontend — independent of the editor syntax
-    /// theme; persisted so it survives relaunch.
-    #[serde(default = "default_atlas_theme")]
-    pub atlas_theme: String,
-    /// Inline Git blame in the code editor — a dim author / age / commit
-    /// summary annotation trailing the active line. Default ON; when off the
-    /// editor doesn't even load the extension (no blame IPC).
-    #[serde(default = "default_true")]
-    pub git_blame_inline: bool,
-    /// Auto-update master switch. When ON (default), every startup runs a
-    /// non-blocking check against PostHog remote config and prompts if a newer
-    /// version is available. See `crate::commands::updater`.
-    #[serde(default = "default_true")]
-    pub auto_update: bool,
-    /// A version the user chose to "Ignore" in the update prompt — the startup
-    /// check won't re-prompt for exactly this version. `None` = nothing ignored.
-    #[serde(default)]
-    pub updater_ignored_version: Option<String>,
-    /// Chat composer send gesture. Default ON: Enter sends, Shift+Enter inserts
-    /// a newline (Slack/Discord/ChatGPT convention). OFF: only Cmd/Ctrl+Enter
-    /// sends, matching Atlas's original behavior. Cmd/Ctrl+Enter always sends
-    /// regardless of this setting. See `src/features/chat/components/chat-input.tsx`.
-    #[serde(default = "default_true")]
-    pub enter_to_send: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-/// Default code-editor theme — the historical monochrome "atlas" look.
-pub fn default_code_editor_theme() -> String {
-    "atlas".to_string()
-}
-
-/// Default Atlas interface theme — the historical AMOLED-black look.
-pub fn default_atlas_theme() -> String {
-    "atlas-black".to_string()
-}
-
-/// Default embedding model — the historical `all-MiniLM-L6-v2` dir, so existing
-/// installs keep using their already-downloaded model with no migration.
-pub fn default_embedding_model() -> String {
-    "all-MiniLM-L6-v2".to_string()
-}
-
-fn default_ui_scale() -> f32 {
-    1.0
-}
-
-impl Default for AppSettings {
-    fn default() -> Self {
-        Self {
-            auto_add_atlas_gitignore: true,
-            enable_atlas_logs: true,
-            show_hidden_files: true,
-            ui_scale: default_ui_scale(),
-            share_telemetry: true,
-            link_telemetry_to_account: true,
-            embedding_model_id: default_embedding_model(),
-            code_editor_theme: default_code_editor_theme(),
-            atlas_theme: default_atlas_theme(),
-            git_blame_inline: true,
-            auto_update: true,
-            updater_ignored_version: None,
-            enter_to_send: true,
-        }
     }
 }
 
@@ -454,7 +366,6 @@ impl AppState {
         self.active_workspace_id = p.active_workspace_id;
         self.organisations = p.organisations;
         self.active_organisation_id = p.active_organisation_id;
-        self.settings = p.settings;
         self.version = SCHEMA_VERSION;
         // `telemetry_anon_id` (and anything Rust adds later) is deliberately
         // NOT assigned here. See the `AppStatePatch` doc.
@@ -471,21 +382,76 @@ impl AppState {
     /// before the webview opens — the cost is one `fs::read_to_string` of a
     /// few-KB JSON file (~1 ms on warm cache). Returns `Self::default()` on
     /// any I/O or parse failure so a corrupt file never blocks app launch.
-    pub fn load(app: &AppHandle) -> Self {
+    ///
+    /// Also returns the raw `settings` object, if any, exactly as it appeared
+    /// in the file — the typed `AppState` no longer has a `settings` field
+    /// (issue #64) so `serde_json` would otherwise silently drop it on the
+    /// floor as an unrecognized key. The caller feeds this to
+    /// `atlas_config::bootstrap` for the one-time `config.toml` export.
+    pub fn load(app: &AppHandle) -> (Self, Option<serde_json::Value>) {
         let Some(path) = Self::path(app) else {
-            return Self::default();
+            return (Self::default(), None);
         };
         let Ok(raw) = std::fs::read_to_string(&path) else {
-            return Self::default();
+            return (Self::default(), None);
         };
+        let legacy_settings = serde_json::from_str::<serde_json::Value>(&raw)
+            .ok()
+            .and_then(|v| v.get("settings").cloned());
         let mut state: AppState = serde_json::from_str(&raw).unwrap_or_default();
         state.migrate();
-        state
+        (state, legacy_settings)
     }
 
-    /// Atomic write — `state.json.tmp` then `rename` so a crash mid-write
-    /// can never leave a torn JSON file behind.
+    /// Merge `state` over whatever `state.json` already holds, rather than
+    /// replacing the file wholesale.
+    ///
+    /// The typed `AppState` deliberately has no `settings` field any more
+    /// (issue #64), so `to_string_pretty(state)` DROPS the legacy `settings`
+    /// object — the very thing `atlas_config::bootstrap` still needs whenever
+    /// migration hasn't succeeded yet. A save triggered for some unrelated
+    /// reason (a rotated telemetry id, say) would then destroy the user's only
+    /// surviving copy of their preferences. Merging preserves it, and any
+    /// other key an older or newer build writes, for exactly the reason
+    /// `config.toml` patches preserve unknown TOML keys.
+    ///
+    /// Once migration IS recorded as done the legacy copy has served its
+    /// purpose and is dropped, so `state.json` doesn't carry a stale shadow of
+    /// `config.toml` forever.
+    fn merged_for_save(path: &Path, state: &AppState) -> serde_json::Result<serde_json::Value> {
+        let mut merged = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .filter(serde_json::Value::is_object)
+            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+
+        let fresh = serde_json::to_value(state)?;
+        if let (Some(dst), Some(src)) = (merged.as_object_mut(), fresh.as_object()) {
+            for (k, v) in src {
+                dst.insert(k.clone(), v.clone());
+            }
+            if state.settings_config_migrated {
+                dst.remove("settings");
+            }
+        }
+        Ok(merged)
+    }
+
+    /// Atomic write — a uniquely-named temp file then `rename`, so a crash
+    /// mid-write can never leave a torn JSON file behind.
+    ///
+    /// The temp name carries a UUID rather than being the fixed
+    /// `state.json.tmp`: saves overlap in practice (the boot-time telemetry-id
+    /// / migration-marker write against the frontend's debounced flush), and
+    /// two of them sharing one temp path can interleave into exactly the torn
+    /// file the rename is supposed to prevent. That matters more since
+    /// [`Self::merged_for_save`] made this a read-modify-write, and because
+    /// this file holds the only copy of the legacy settings until migration
+    /// succeeds. `sync_all` before the rename is what makes the atomicity
+    /// real — otherwise the rename can reach disk ahead of its bytes.
     pub fn save(app: &AppHandle, state: &AppState) -> std::io::Result<()> {
+        use std::io::Write;
+
         let Some(path) = Self::path(app) else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -495,12 +461,26 @@ impl AppState {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let tmp = path.with_extension("json.tmp");
-        let raw = serde_json::to_string_pretty(state).map_err(|e| {
+        let tmp = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
+        let merged = Self::merged_for_save(&path, state).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
         })?;
-        std::fs::write(&tmp, raw)?;
-        std::fs::rename(tmp, path)?;
+        let raw = serde_json::to_string_pretty(&merged).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        })?;
+        let written = (|| -> std::io::Result<()> {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(raw.as_bytes())?;
+            f.sync_all()
+        })();
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
         Ok(())
     }
 }
@@ -508,6 +488,82 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tmp_state_path() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("atlas-state-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("state.json")
+    }
+
+    fn state_file_with_legacy_settings(path: &Path) {
+        std::fs::write(
+            path,
+            serde_json::json!({
+                "version": 1,
+                "recentProjects": [],
+                "settings": { "enterToSend": false, "gitBlameInline": false },
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
+    /// The typed `AppState` has no `settings` field any more (issue #64), so
+    /// serializing it over `state.json` wholesale silently DELETES the legacy
+    /// settings object. While `settings_config_migrated` is still false that
+    /// object is the only surviving copy of the user's preferences —
+    /// `config.toml` either doesn't exist yet or couldn't be read — and a save
+    /// fired for an entirely unrelated reason (a rotated telemetry id) must
+    /// not destroy it.
+    #[test]
+    fn a_save_before_migration_preserves_the_legacy_settings() {
+        let path = tmp_state_path();
+        state_file_with_legacy_settings(&path);
+
+        let state = AppState { settings_config_migrated: false, ..AppState::default() };
+        let merged = AppState::merged_for_save(&path, &state).unwrap();
+
+        assert_eq!(
+            merged.get("settings").and_then(|s| s.get("enterToSend")),
+            Some(&serde_json::json!(false)),
+            "the legacy settings must survive a save made for an unrelated reason"
+        );
+    }
+
+    /// ...and once migration IS recorded, the legacy copy has served its
+    /// purpose: drop it rather than carrying a stale shadow of `config.toml`
+    /// in `state.json` forever.
+    #[test]
+    fn a_save_after_migration_drops_the_legacy_settings() {
+        let path = tmp_state_path();
+        state_file_with_legacy_settings(&path);
+
+        let state = AppState { settings_config_migrated: true, ..AppState::default() };
+        let merged = AppState::merged_for_save(&path, &state).unwrap();
+
+        assert!(merged.get("settings").is_none(), "a migrated state.json keeps no settings shadow");
+    }
+
+    /// Merging must not resurrect stale values for keys the struct owns — the
+    /// fresh state always wins on its own fields.
+    #[test]
+    fn merging_lets_the_live_state_win_on_its_own_fields() {
+        let path = tmp_state_path();
+        std::fs::write(
+            &path,
+            serde_json::json!({ "version": 1, "settingsConfigMigrated": false, "recentProjects": [
+                { "name": "old", "path": "/old", "lastOpened": "then" }
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+
+        let state = AppState { settings_config_migrated: true, ..AppState::default() };
+        let merged = AppState::merged_for_save(&path, &state).unwrap();
+
+        assert_eq!(merged["settingsConfigMigrated"], serde_json::json!(true));
+        assert_eq!(merged["recentProjects"], serde_json::json!([]));
+    }
 
     /// Exactly the payload `buildAppStatePayload()` sends — note the absence of
     /// `telemetryAnonId`, which is the whole point.
@@ -520,8 +576,7 @@ mod tests {
             "activeWorkspaceId": null,
             "organisations": [],
             "activeOrganisationId": null,
-            "settings": { "shareTelemetry": false },
-            "version": 3,
+            "version": 4,
         }))
         .expect("frontend payload deserializes as a patch")
     }
@@ -540,8 +595,6 @@ mod tests {
         state.apply_patch(frontend_payload());
 
         assert_eq!(state.telemetry_anon_id.as_deref(), Some("device-uuid"));
-        // ...while the frontend-owned half really was applied.
-        assert!(!state.settings.share_telemetry);
     }
 
     /// A patch with unknown/extra keys (an older or newer frontend) still parses,
@@ -560,20 +613,25 @@ mod tests {
         assert_eq!(state.version, SCHEMA_VERSION);
     }
 
-    /// The retired built-in toggle is gone from `AppSettings` (ADR-0002:
-    /// nothing ships that can be switched off), but a user's `state.json` may
-    /// still carry the key. Their OTHER settings must survive it.
-    ///
-    /// `enter_to_send` is the probe precisely because its default is `true`:
-    /// reading `false` back proves the file was parsed, not that `load` fell
-    /// through to `AppState::default()` — which is what a strict deserializer
-    /// would have done, silently resetting every setting the user had.
+    /// `AppState` no longer has a `settings` field at all (issue #64) — user
+    /// preferences live in `config.toml` now. A `state.json` written by an
+    /// older Atlas build still carries a `settings` object; `serde_json`
+    /// silently drops unrecognized keys for structs without
+    /// `deny_unknown_fields`, so this must parse cleanly and leave every other
+    /// field intact rather than erroring or resetting anything. What happens
+    /// to that dropped value is `AppState::load`'s job (it re-parses the raw
+    /// JSON separately to recover it for migration) and
+    /// `atlas_config::settings_from_legacy_json`'s job (extracting it into
+    /// `AppSettings`) — both tested on their own.
     #[test]
-    fn a_retired_key_in_state_json_does_not_reset_the_other_settings() {
+    fn a_legacy_settings_key_in_state_json_does_not_break_parsing() {
         let state: AppState = serde_json::from_value(serde_json::json!({
-            "settings": { "disabledBuiltinAgents": ["kilo"], "enterToSend": false }
+            "settings": { "disabledBuiltinAgents": ["kilo"], "enterToSend": false },
+            "recentProjects": [
+                { "name": "demo", "path": "/tmp/demo", "lastOpened": "2024-01-01T00:00:00Z" }
+            ],
         }))
-        .expect("an older state file parses");
-        assert!(!state.settings.enter_to_send);
+        .expect("an older state file parses even with the retired settings key present");
+        assert_eq!(state.recent_projects.len(), 1);
     }
 }

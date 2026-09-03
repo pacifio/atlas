@@ -66,8 +66,8 @@ fn parse_catalog(v: &serde_json::Value) -> BTreeMap<String, ModelPrice> {
         };
         for (mid, mval) in models {
             let cost = mval.get("cost");
-            let input = cost.and_then(|c| c.get("input")).and_then(|x| x.as_f64());
-            let output = cost.and_then(|c| c.get("output")).and_then(|x| x.as_f64());
+            let input = cost.and_then(|c| c.get("input")).and_then(serde_json::Value::as_f64);
+            let output = cost.and_then(|c| c.get("output")).and_then(serde_json::Value::as_f64);
             if let (Some(input), Some(output)) = (input, output) {
                 let price = ModelPrice { input, output };
                 out.insert(format!("{pid}/{mid}"), price.clone());

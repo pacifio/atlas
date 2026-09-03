@@ -62,7 +62,9 @@ export function AppLayout() {
     if (showLeft && panel.isCollapsed()) panel.expand();
     else if (!showLeft && !panel.isCollapsed()) panel.collapse();
   }, [showLeft]);
-  const showRight = rightPanel.visible && !!currentProject;
+  // Source control needs a project; team chat is org-scoped and is reachable
+  // with no project open, so the slot stays available in chat mode.
+  const showRight = rightPanel.visible && (!!currentProject || rightPanel.mode === "chat");
   const showStatus = bottomPanel.visible;
   const isLinux =
     typeof window !== "undefined" && navigator.userAgent.toLowerCase().includes("linux");

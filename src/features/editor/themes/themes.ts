@@ -3,7 +3,8 @@ import type { EditorColorTheme, EditorThemeColors } from "./types";
 /**
  * Built-in editor color themes. `atlas` is the default; `atlas-mono` keeps the
  * historical monochrome look for anyone who prefers it. The others are the
- * standard dark palettes (Dracula, One Dark, Monokai, Tokyo Night, Vesper).
+ * standard dark palettes (Dracula, One Dark, Monokai, Tokyo Night, Catppuccin
+ * Frappé/Macchiato/Mocha, Vesper).
  *
  * Every theme renders on the interface base surface (see `resolveEditorColors`),
  * which is AMOLED black or near it in all three Atlas interface themes. Syntax
@@ -322,6 +323,160 @@ const tokyoNight: EditorColorTheme = {
   },
 };
 
+/**
+ * Catppuccin ships four flavors; Latte (light) is skipped because Atlas forces
+ * every editor theme onto its own near-black interface base (see
+ * `resolveEditorColors`), which would fight a light palette's whole premise.
+ * The other three port scope-for-scope from catppuccin/vscode's own token
+ * mapping (mauve keywords, blue functions/tags, green strings, peach
+ * numbers/constants/booleans, yellow types/attributes, teal operators/
+ * properties, pink regexp/escapes, rosewater caret, mauve accent on the active
+ * line number) rather than inventing a new arrangement.
+ */
+const catppuccinFrappe: EditorColorTheme = {
+  id: "catppuccin-frappe",
+  name: "Catppuccin Frappé",
+  description: "Soft pastel palette, the lightest of the three dark Catppuccin flavors.",
+  dark: true,
+  colors: {
+    bg: "#303446",
+    fg: "#c6d0f5",
+    caret: "#f2d5cf",
+    gutterBg: "#303446",
+    gutterFg: "#838ba7",
+    activeLineGutterFg: "#ca9ee6",
+    activeLineBg: "#ffffff0a",
+    selectionBg: "#51576d",
+    matchBracketBg: "#414559",
+    matchBracketOutline: "#949cbb",
+    foldBg: "#292c3c",
+    foldBorder: "#414559",
+    foldFg: "#838ba7",
+
+    comment: "#949cbb",
+    keyword: "#ca9ee6",
+    string: "#a6d189",
+    number: "#ef9f76",
+    type: "#e5c890",
+    func: "#8caaee",
+    variable: "#c6d0f5",
+    operator: "#81c8be",
+    tagName: "#8caaee",
+    attributeName: "#e5c890",
+    constant: "#ef9f76",
+    regexp: "#f4b8e4",
+    escape: "#f4b8e4",
+    definition: "#8caaee",
+    propertyName: "#81c8be",
+    bool: "#ef9f76",
+    null: "#ef9f76",
+
+    addLineBg: "#242c1e",
+    removeLineBg: "#301d1d",
+    contextBg: "#292c3c",
+    addSideBg: "rgba(166,209,137,0.13)",
+    removeSideBg: "rgba(231,130,132,0.13)",
+    emphAddBg: "rgba(166,209,137,0.30)",
+    emphRemoveBg: "rgba(231,130,132,0.30)",
+  },
+};
+
+const catppuccinMacchiato: EditorColorTheme = {
+  id: "catppuccin-macchiato",
+  name: "Catppuccin Macchiato",
+  description: "Medium-contrast pastel palette, between Frappé and Mocha.",
+  dark: true,
+  colors: {
+    bg: "#24273a",
+    fg: "#cad3f5",
+    caret: "#f4dbd6",
+    gutterBg: "#24273a",
+    gutterFg: "#8087a2",
+    activeLineGutterFg: "#c6a0f6",
+    activeLineBg: "#ffffff0a",
+    selectionBg: "#494d64",
+    matchBracketBg: "#363a4f",
+    matchBracketOutline: "#939ab7",
+    foldBg: "#1e2030",
+    foldBorder: "#363a4f",
+    foldFg: "#8087a2",
+
+    comment: "#939ab7",
+    keyword: "#c6a0f6",
+    string: "#a6da95",
+    number: "#f5a97f",
+    type: "#eed49f",
+    func: "#8aadf4",
+    variable: "#cad3f5",
+    operator: "#8bd5ca",
+    tagName: "#8aadf4",
+    attributeName: "#eed49f",
+    constant: "#f5a97f",
+    regexp: "#f5bde6",
+    escape: "#f5bde6",
+    definition: "#8aadf4",
+    propertyName: "#8bd5ca",
+    bool: "#f5a97f",
+    null: "#f5a97f",
+
+    addLineBg: "#242d20",
+    removeLineBg: "#311e21",
+    contextBg: "#1e2030",
+    addSideBg: "rgba(166,218,149,0.13)",
+    removeSideBg: "rgba(237,135,150,0.13)",
+    emphAddBg: "rgba(166,218,149,0.30)",
+    emphRemoveBg: "rgba(237,135,150,0.30)",
+  },
+};
+
+const catppuccinMocha: EditorColorTheme = {
+  id: "catppuccin-mocha",
+  name: "Catppuccin Mocha",
+  description: "The flagship Catppuccin flavor: soothing pastels on the darkest base.",
+  dark: true,
+  colors: {
+    bg: "#1e1e2e",
+    fg: "#cdd6f4",
+    caret: "#f5e0dc",
+    gutterBg: "#1e1e2e",
+    gutterFg: "#7f849c",
+    activeLineGutterFg: "#cba6f7",
+    activeLineBg: "#ffffff0a",
+    selectionBg: "#45475a",
+    matchBracketBg: "#313244",
+    matchBracketOutline: "#9399b2",
+    foldBg: "#181825",
+    foldBorder: "#313244",
+    foldFg: "#7f849c",
+
+    comment: "#9399b2",
+    keyword: "#cba6f7",
+    string: "#a6e3a1",
+    number: "#fab387",
+    type: "#f9e2af",
+    func: "#89b4fa",
+    variable: "#cdd6f4",
+    operator: "#94e2d5",
+    tagName: "#89b4fa",
+    attributeName: "#f9e2af",
+    constant: "#fab387",
+    regexp: "#f5c2e7",
+    escape: "#f5c2e7",
+    definition: "#89b4fa",
+    propertyName: "#94e2d5",
+    bool: "#fab387",
+    null: "#fab387",
+
+    addLineBg: "#242f23",
+    removeLineBg: "#321e24",
+    contextBg: "#181825",
+    addSideBg: "rgba(166,227,161,0.13)",
+    removeSideBg: "rgba(243,139,168,0.13)",
+    emphAddBg: "rgba(166,227,161,0.30)",
+    emphRemoveBg: "rgba(243,139,168,0.30)",
+  },
+};
+
 const vesper: EditorColorTheme = {
   id: "vesper",
   name: "Vesper",
@@ -377,6 +532,9 @@ export const EDITOR_THEMES: EditorColorTheme[] = [
   oneDark,
   monokai,
   tokyoNight,
+  catppuccinFrappe,
+  catppuccinMacchiato,
+  catppuccinMocha,
   vesper,
 ];
 

@@ -757,6 +757,6 @@ mod tests {
         e.session_id = "abc".into();
         e.agent = "codex".into();
         let s = fold_events(vec![e]);
-        assert_eq!(s.session_agents.get("abc").map(|x| x.as_str()), Some("codex"));
+        assert_eq!(s.session_agents.get("abc").map(std::string::String::as_str), Some("codex"));
     }
 }

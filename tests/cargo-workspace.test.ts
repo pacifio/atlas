@@ -225,11 +225,6 @@ describe("dev-profile opt-levels survive the move into the workspace", () => {
     );
   });
 
-  // Scoped to Atlas's own members on purpose. The vendored engine (#42) is
-  // deliberately NOT given per-member opt-level stanzas: it is quarantined, on
-  // no runtime path until the seam is rewired (#45), and paying opt-level 1 on
-  // ~600k LOC would slow every dev build for a runtime benefit nothing can yet
-  // collect. Revisit in #45, when the engine starts doing work.
   it("restates opt-level 1 for every member the `*` override no longer reaches", () => {
     const missing: string[] = [];
     for (const rel of expectedMembers()) {
@@ -245,6 +240,29 @@ describe("dev-profile opt-levels survive the move into the workspace", () => {
       );
       if (!stanza.test(rootSrc())) missing.push(name);
     }
+    expect(missing).toEqual([]);
+  });
+
+  // The exemption this test replaced — "the vendored engine is quarantined, on
+  // no runtime path until the seam is rewired (#45); revisit in #45" — expired
+  // when #45 and #54 landed: the engine now runs on every dev turn, and at the
+  // profile's opt-level 0 it was ~600k LOC of streaming, rollout I/O,
+  // sandboxing and apply-patch running unoptimized on the hottest path (#65).
+  it("restates opt-level 1 for the vendored engine members too", () => {
+    const vendored = workspaceList("members").filter((m) => m.startsWith("vendor/codex/"));
+    expect(vendored.length, "member-list parser health").toBeGreaterThan(50);
+    const missing: string[] = [];
+    for (const rel of vendored) {
+      const name = packageName(path.join(REPO_ROOT, rel, "Cargo.toml"));
+      const stanza = new RegExp(
+        `^\\s*\\[profile\\.dev\\.package\\.(?:"${escapeForRegExp(name)}"|${escapeForRegExp(name)})\\]\\s*$` +
+          `(?:(?!^\\s*\\[)[\\s\\S])*?opt-level\\s*=\\s*1`,
+        "m",
+      );
+      if (!stanza.test(rootSrc())) missing.push(name);
+    }
+    // A new vendored member gets a stanza in the block the root manifest
+    // keeps for them (#65) — the `"*"` override cannot reach members.
     expect(missing).toEqual([]);
   });
 

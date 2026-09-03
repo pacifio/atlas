@@ -107,7 +107,7 @@ pub async fn save_knowledge_note(
 ) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let kb_dir = Path::new(&project_path).join(".atlas").join("knowledge");
-        let filepath = kb_dir.join(format!("{}.md", id));
+        let filepath = kb_dir.join(format!("{id}.md"));
         if let Some(parent) = filepath.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
@@ -132,7 +132,7 @@ fn unique_dest(dest: &Path) -> std::path::PathBuf {
     }
     let stem = dest.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
     let ext = dest.extension().map(|e| e.to_string_lossy().to_string());
-    let parent = dest.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let parent = dest.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
     for n in 1.. {
         let name = match &ext {
             Some(e) => format!("{stem}-{n}.{e}"),
@@ -213,7 +213,7 @@ pub async fn delete_knowledge_note(
         let filepath = Path::new(&project_path)
             .join(".atlas")
             .join("knowledge")
-            .join(format!("{}.md", id));
+            .join(format!("{id}.md"));
         if filepath.exists() {
             fs::remove_file(&filepath).map_err(|e| e.to_string())?;
         }
@@ -260,7 +260,7 @@ pub async fn knowledge_cover_upload(
         // Flatten the entry id so a nested note (`folder/note-123`) still
         // gets a flat filename safe for the covers directory.
         let safe_name = entry_id.replace('/', "__");
-        let rel = format!("covers/{}.{}", safe_name, ext);
+        let rel = format!("covers/{safe_name}.{ext}");
         let dest = Path::new(&project_path)
             .join(".atlas")
             .join("knowledge")
@@ -299,7 +299,7 @@ pub async fn knowledge_cover_data_url(
         let mime = match abs
             .extension()
             .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
+            .map(str::to_lowercase)
             .as_deref()
         {
             Some("png") => "image/png",
@@ -310,7 +310,7 @@ pub async fn knowledge_cover_data_url(
             _ => "image/jpeg",
         };
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        Ok(format!("data:{};base64,{}", mime, b64))
+        Ok(format!("data:{mime};base64,{b64}"))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -395,11 +395,11 @@ pub async fn fetch_readable(url: String) -> Result<ReadableContent, String> {
         .unwrap_or_default();
 
     let response = client.get(&url).send().await
-        .map_err(|e| format!("Fetch failed: {}", e))?;
+        .map_err(|e| format!("Fetch failed: {e}"))?;
 
     let final_url = response.url().to_string();
     let html = response.text().await
-        .map_err(|e| format!("Read failed: {}", e))?;
+        .map_err(|e| format!("Read failed: {e}"))?;
 
     let title = extract_html_title(&html).unwrap_or_else(|| url.clone());
     let sanitized = sanitize_html(&html, &final_url);
@@ -434,11 +434,7 @@ fn strip_style_attributes(html: &str) -> String {
         // Find style=" or style='
         let pos = if let Some(p) = lower.find("style=\"") {
             Some((p, '"', 7))
-        } else if let Some(p) = lower.find("style='") {
-            Some((p, '\'', 7))
-        } else {
-            None
-        };
+        } else { lower.find("style='").map(|p| (p, '\'', 7)) };
 
         if let Some((start, quote, offset)) = pos {
             if let Some(end) = result[start + offset..].find(quote) {
@@ -479,8 +475,8 @@ fn sanitize_html(html: &str, base_url: &str) -> String {
 fn remove_tags(html: &str, tags: &[&str]) -> String {
     let mut result = html.to_string();
     for tag in tags {
-        let open = format!("<{}", tag);
-        let close = format!("</{}>", tag);
+        let open = format!("<{tag}");
+        let close = format!("</{tag}>");
         loop {
             let rl = result.to_lowercase();
             if let Some(start) = rl.find(&open) {
@@ -529,11 +525,11 @@ fn resolve_urls(html: &str, base: &str, origin: &str) -> String {
                     let resolved = if url_val.starts_with("http://") || url_val.starts_with("https://") || url_val.starts_with("data:") || url_val.starts_with("mailto:") || url_val.starts_with('#') {
                         url_val.to_string()
                     } else if url_val.starts_with("//") {
-                        format!("https:{}", url_val)
+                        format!("https:{url_val}")
                     } else if url_val.starts_with('/') {
-                        format!("{}{}", origin, url_val)
+                        format!("{origin}{url_val}")
                     } else {
-                        format!("{}/{}", base, url_val)
+                        format!("{base}/{url_val}")
                     };
                     if resolved != url_val {
                         result = format!("{}{}{}", &result[..abs_start], resolved, &result[abs_start + end..]);

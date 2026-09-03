@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { useWorkspaceStore } from "../stores/workspace-store";
 import { useWorkspaceGitStore } from "../stores/workspace-git-store";
+import { useActiveOrgWorkspaces } from "./org-scope";
 
 /**
  * Warm the workspace-pane data at startup so the first sidebar slide is smooth.
@@ -15,9 +15,12 @@ import { useWorkspaceGitStore } from "../stores/workspace-git-store";
  * `atlas:git-changed`, so this is idempotent and cheap on re-runs.
  */
 export function useWorkspaceGitPrefetch() {
-  // Re-runs only when the SET of workspace paths changes (the signature string
-  // is stable otherwise), not on every store mutation.
-  const pathsSig = useWorkspaceStore((s) => s.workspaces.map((w) => w.path).join("\n"));
+  // Only the ACTIVE org's workspaces — prefetching every org's paths warmed
+  // caches for projects the current org never renders. Re-runs only when the
+  // SET of paths changes (the signature string is stable otherwise), which
+  // includes an org switch: the incoming org's summaries warm automatically.
+  const workspaces = useActiveOrgWorkspaces();
+  const pathsSig = workspaces.map((w) => w.path).join("\n");
 
   useEffect(() => {
     if (!pathsSig) return;

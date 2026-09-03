@@ -58,6 +58,8 @@ You need:
 - [Rust](https://rustup.rs/), stable
 - Xcode Command Line Tools
 
+We suggest using [mise](https://mise.jdx.dev/) to manage the Bun version — the repo ships an `mise.toml` pinning it, so `mise install` picks up the right version automatically. Not required; installing Bun directly works too.
+
 **No API keys, no `.env` file, no account.** Atlas builds and runs from a clean clone:
 
 ```bash
@@ -172,9 +174,9 @@ anywhere — as does running from inside the crate's own directory, which is wha
 CI does:
 
 ```bash
-cargo test -p atlas-cersei                                # the native agent
-cargo test -p atlas-cersei --test tools_eval              # a single file
-cd crates/atlas-cersei && cargo test                      # same thing, from the crate
+cargo test -p atlas-native-agent                          # the native agent
+cargo test -p atlas-native-agent --test engine_turn       # a single file
+cd crates/atlas-native-agent && cargo test                # same thing, from the crate
 ```
 
 Run `bun run test:rust` from the repository root to test every crate and the

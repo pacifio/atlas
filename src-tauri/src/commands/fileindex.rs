@@ -515,7 +515,7 @@ pub fn fileindex_search_dirs(
                 .map(|score| (score, (rel, abs)))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     scored
         .into_iter()
         .take(limit.max(1))
@@ -576,7 +576,7 @@ pub fn fileindex_search(
         })
         .collect();
     // Highest score first; stable order on ties (insertion = file walk order).
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     scored
         .into_iter()
         .take(limit.max(1))

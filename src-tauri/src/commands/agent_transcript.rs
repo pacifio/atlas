@@ -311,7 +311,7 @@ pub fn list(config_dir: &Path, cwd: &str) -> Vec<AgentSessionMeta> {
         return Vec::new();
     };
     let mut out: Vec<AgentSessionMeta> = entries
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .filter_map(|e| {
             let bytes = std::fs::read(e.path()).ok()?;

@@ -79,11 +79,10 @@ impl<T: HttpTransport> ChatCompletionsClient<T> {
         // switch org mid-session and the next request must bill the new one.
         // Absent = personal attribution, per the contract.
         let mut extra_headers = extra_headers;
-        if let Some(org) = crate::atlas_chat::org::current_org() {
-            if let Ok(value) = HeaderValue::from_str(&org) {
+        if let Some(org) = crate::atlas_chat::org::current_org()
+            && let Ok(value) = HeaderValue::from_str(&org) {
                 extra_headers.insert("atlas-org", value);
             }
-        }
 
         let stream_response = self
             .session

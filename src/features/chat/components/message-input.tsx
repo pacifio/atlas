@@ -64,7 +64,14 @@ import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import { ComposerOptionsPill } from "./composer-options-pill";
 import { FeaturedAgentOffers } from "./featured-agent-offers";
 import { RetryPill } from "./retry-pill";
-import { QUALITY_LADDER, exceedsBudget, targetDimensions } from "../lib/image-policy";
+import { AiGrantBar } from "./ai-grant-bar";
+import { useAiGrantProbe, useNoAiGrant } from "../stores/ai-grant-store";
+import {
+  QUALITY_LADDER,
+  aggregateExceedsBudget,
+  exceedsBudget,
+  targetDimensions,
+} from "../lib/image-policy";
 import { ComposerAddMenu } from "./composer-add-menu";
 import type { GithubRepo } from "@/features/github/types";
 import { imageMimeFromPath } from "@/lib/byok/model-capabilities";
@@ -148,6 +155,12 @@ async function downscaleAttachment(image: ImageAttachment): Promise<ImageAttachm
     canvas.height = height;
     const ctx = canvas.getContext("2d");
     if (!ctx) return image;
+    // A fresh canvas is transparent and JPEG has no alpha channel, so
+    // transparent pixels composite to BLACK — a macOS window capture (rounded
+    // corners, drop shadow, routinely over budget) came out with black
+    // corners and a black halo (#71). Paint the ground white first.
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, width, height);
     ctx.drawImage(bitmap, 0, 0, width, height);
     bitmap.close?.();
 
@@ -773,7 +786,7 @@ export function MessageInput({
   onStop,
   running = false,
   stopping = false,
-  disabled = false,
+  disabled: disabledProp = false,
   placeholder = "Message Atlas... (@ to mention, / for commands)",
 }: MessageInputProps) {
   const { enqueueMessage, removeQueueItem, setAcpModes, setAcpModesPending, setCerseiEffort } =
@@ -851,6 +864,27 @@ export function MessageInput({
   // external ids through and collapses only the legacy "custom" placeholder,
   // which is what the transcript and sidebar already did.
   const switchableAgent: SwitchableAgent = switchableAgentOf(agentType);
+
+  // The org's AI grant, and the composer lock it drives.
+  //
+  // Owned here because this component always renders while a chat is open;
+  // `AiGrantBar` below only reads the result (see `ai-grant-store.ts` for why
+  // the two must not probe independently).
+  useAiGrantProbe();
+  const noAiGrant = useNoAiGrant();
+  // Scoped to the NATIVE agent, which is the only one that talks to the Atlas
+  // gateway. Claude Code, Codex and every registry agent run on the user's own
+  // credentials — an org with no AI grant says nothing about them, and locking
+  // their composer would break agents that work fine.
+  //
+  // This is the one thing ADR-0002 permits: the ban is on a composer disabled
+  // by an agent's *readiness*, because the agent switcher lives inside it. The
+  // `disabled` path below pointer-blocks only the text area and the send
+  // button — the toolbar, and with it the switcher, stays live, so the user can
+  // always move to an agent that runs. Verified against the escape hatch: this
+  // must never disable the toolbar.
+  const blockedByGrant = noAiGrant && agentType === "cersei";
+  const disabled = disabledProp || blockedByGrant;
   // The BYOK provider/model bindings for the native agent stood here — the
   // provider pick, the model re-push on bind, the whole BYOK selection path.
   // Gone: the native agent's model comes from the seam's published catalogue
@@ -1163,6 +1197,25 @@ export function MessageInput({
   useEffect(() => {
     if (!imageSupported) setStagedImages([]);
   }, [imageSupported]);
+
+  // The per-image budget is per image only: several in-budget attachments
+  // plus the prompt, tools and history can still blow the gateway's body cap
+  // (#71). The gateway's 413 stays the backstop — this is the warning the
+  // user is owed BEFORE pressing send, once per crossing, cleared when they
+  // remove enough to fit again.
+  const stagedOverAggregateBudget = aggregateExceedsBudget(
+    stagedImages.map((img) => img.dataBase64.length),
+  );
+  const warnedAggregateRef = useRef(false);
+  useEffect(() => {
+    if (stagedOverAggregateBudget && !warnedAggregateRef.current) {
+      warnedAggregateRef.current = true;
+      toast.warning(
+        "These attachments together are near the 2 MB request limit — the send may be refused. Consider removing one.",
+      );
+    }
+    if (!stagedOverAggregateBudget) warnedAggregateRef.current = false;
+  }, [stagedOverAggregateBudget]);
 
   // "+" menu → "Add files or photos". The Tauri dialog hands back real
   // paths (a browser file input wouldn't), which is what makes the routing
@@ -1714,7 +1767,15 @@ export function MessageInput({
   // composer no longer mirrors the setup phase here (the setup pill above the
   // input already communicates install/auth state). Only the queue hint
   // overrides it.
-  const effectivePlaceholder = running ? "Type to queue the next message…" : placeholder;
+  // The no-grant wording names the way OUT, not just the wall — and it lives in
+  // the placeholder rather than only in the bar above because the bar can be
+  // dismissed, and a composer that is dead with no visible reason is worse than
+  // one that explains itself.
+  const effectivePlaceholder = blockedByGrant
+    ? "No AI access — ask your admin, or switch agent below"
+    : running
+      ? "Type to queue the next message…"
+      : placeholder;
 
   return (
     <div className="px-4 pb-4 pt-2 bg-transparent">
@@ -1748,6 +1809,13 @@ export function MessageInput({
         {/* Transient-failure retry countdown (native agent). */}
         <RetryPill tabId={tabId} />
 
+        {/* The no-grant setup state (D15a), tucked into the top of the
+            composer — the explanation for the input being locked below.
+            Scoped to the native agent for the same reason the lock is: the
+            other agents do not use the Atlas gateway, so an org with no grant
+            is not their problem and a bar over a working composer is noise. */}
+        {agentType === "cersei" && <AiGrantBar />}
+
         {/* Live plan docked on top of the input bar (JetBrains-Air style). */}
 
         <div
@@ -1775,14 +1843,13 @@ export function MessageInput({
             "shadow-[0_8px_24px_rgba(0,0,0,0.35)]",
             // Drag-over highlight: a clear accent ring while OS files hover.
             isDropTarget && "border-[var(--accent-primary)] ring-2 ring-[var(--accent-primary)]/40",
-            // Hard-disable when the bound agent isn't ready. Dim only — the
-            // pointer block lives on the INPUT wrapper below, never on the
-            // whole composer: the agent switcher sits in this toolbar, and
-            // blocking it meant a user without Claude Code could never reach
-            // another agent (the composer was a dead end on a fresh install).
-            // No red tint — the send button is already disabled and
-            // submit()/Cmd+Enter are gated on `disabled`.
-            disabled && "opacity-60",
+            // NOTE: the disabled dim is NOT applied here. It used to be
+            // (`disabled && "opacity-60"` on this shell), and it faded the
+            // whole composer — footer pills, the agent switcher, and every
+            // dropup, since the menus are absolutely-positioned CHILDREN of
+            // this element (not portals) and inherit its opacity. The escape
+            // hatch has to look reachable, not just be reachable, so the dim
+            // now lives on the inner input surface alone.
             // Lock the composer while a GitHub repo syncs into `.atlas/repos`.
             githubSyncing !== null && "opacity-60 pointer-events-none",
           )}
@@ -1814,6 +1881,11 @@ export function MessageInput({
               // /20 accent ring read far too loud on the nested surface.
               "focus-within:border-[color-mix(in_srgb,var(--border-focus)_50%,var(--border-default))]",
               "focus-within:ring-1 focus-within:ring-[var(--accent-primary)]/10",
+              // The disabled dim, scoped to the field the lock actually
+              // applies to (see the shell above). No red tint — the send
+              // button is already disabled and submit()/Cmd+Enter are gated
+              // on `disabled`.
+              disabled && "opacity-60",
             )}
           >
             {stagedImages.length > 0 && (
@@ -1929,7 +2001,11 @@ export function MessageInput({
           <div className="flex items-center justify-between px-2 pb-1.5 pt-1">
             <div className="flex items-center gap-1">
               <ComposerAddMenu
-                disabled={disabled || githubSyncing !== null}
+                // `disabledProp`, NOT `disabled`: a missing org AI grant locks
+                // the input, not the toolbar. Greying the + here made the whole
+                // footer read as dead while the fix (switch agent, request a
+                // grant) is one row away.
+                disabled={disabledProp || githubSyncing !== null}
                 projectPath={useProjectStore.getState().currentProject?.path ?? null}
                 agentId={switchableAgent}
                 imageSupported={imageSupported}

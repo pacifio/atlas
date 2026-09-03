@@ -17,9 +17,16 @@ pub fn telemetry_config(client: State<'_, Arc<TelemetryClient>>) -> TelemetryCon
     client.config()
 }
 
-/// Flip the live opt-in gate (mirrors the persisted `share_telemetry` setting,
-/// which the frontend saves via `save_app_state`). Records a single
-/// opt-in/opt-out event at the boundary.
+/// Flip the live opt-in gate directly. Records a single opt-in/opt-out event
+/// at the boundary.
+///
+/// Kept for completeness/tests, but no longer the only path that keeps this
+/// in sync with the persisted `shareTelemetry` setting: every committer of a
+/// new `config.toml` snapshot (a Settings UI change, `reset_atlas_config`, an
+/// external edit picked up by the watcher, or an internal Rust-side write)
+/// already calls `commands::atlas_config::notify_settings_changed`, which
+/// re-syncs this gate itself — so `shareTelemetry` stays live-accurate no
+/// matter which of those paths changed it, not just the Settings toggle.
 #[tauri::command]
 pub fn telemetry_set_enabled(enabled: bool, client: State<'_, Arc<TelemetryClient>>) {
     client.set_enabled(enabled);

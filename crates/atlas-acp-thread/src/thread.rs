@@ -29,7 +29,7 @@ use tokio::sync::oneshot;
 
 use crate::connection::{AgentConnection, ClientUserMessageId, PermissionOptions};
 use crate::elicitation::{ElicitationEntryId, ElicitationStore};
-use crate::terminal::{AcpTerminal, TerminalProviderEvent, TerminalRegistry};
+use crate::terminal::{AcpTerminal, TerminalAppend, TerminalProviderEvent, TerminalRegistry};
 use crate::EventSink;
 
 /// One piece of renderable content.
@@ -514,7 +514,7 @@ pub struct ToolCall {
 
 impl ToolCall {
     pub fn from_acp(tool_call: acp::ToolCall, status: ToolCallStatus) -> Result<Self> {
-        let label = Self::label_for(&tool_call.kind, tool_call.title);
+        let label = Self::label_for(tool_call.kind, tool_call.title);
         let mut content = Vec::with_capacity(tool_call.content.len());
         for item in tool_call.content {
             if let Some(item) = ToolCallContent::from_acp(item)? {
@@ -539,8 +539,8 @@ impl ToolCall {
     /// label as markdown. Nothing renders markdown in this crate, so only the
     /// multi-line truncation — which is real behaviour, not presentation —
     /// is ported.
-    fn label_for(kind: &acp::ToolKind, title: String) -> String {
-        if *kind == acp::ToolKind::Execute || *kind == acp::ToolKind::Edit {
+    fn label_for(kind: acp::ToolKind, title: String) -> String {
+        if kind == acp::ToolKind::Execute || kind == acp::ToolKind::Edit {
             title
         } else if let Some((first_line, _)) = title.split_once('\n') {
             first_line.to_owned() + "…"
@@ -578,7 +578,7 @@ impl ToolCall {
         }
 
         if let Some(title) = title {
-            self.label = Self::label_for(&self.kind, title);
+            self.label = Self::label_for(self.kind, title);
         }
 
         if let Some(content) = content {
@@ -852,6 +852,25 @@ pub struct AcpThread {
     parent_session_id: Option<acp::SessionId>,
     title: Option<Arc<str>>,
     entries: Vec<AgentThreadEntry>,
+    /// When each entry was first appended, parallel to `entries`.
+    ///
+    /// Kept beside the list rather than inside `AgentThreadEntry` because every
+    /// variant wants it and none of them constructs itself here — the entries
+    /// are built from protocol updates in a dozen places, and a field on each
+    /// would have to be threaded through all of them.
+    ///
+    /// Both vectors are only ever appended to (`push_entry`) or truncated
+    /// together (`remove_entries_from`), which is what keeps the indices
+    /// aligned; `push_entry` asserts it in debug builds.
+    ///
+    /// This is the time Atlas learned of the entry, which is the message's real
+    /// time for anything the app watched happen. It is NOT recoverable for a
+    /// thread rebuilt by an agent's `session/load` replay: ACP carries no
+    /// per-message timestamp, so a replayed conversation is stamped at replay
+    /// time. That is a limit of the protocol, not a choice — but it is stable
+    /// per thread, which is the property the projection actually needed
+    /// (ATL-221).
+    entry_created_at: Vec<chrono::DateTime<chrono::Utc>>,
     elicitations: ElicitationStore,
     plan: Plan,
     turn_id: u32,
@@ -880,6 +899,7 @@ impl AcpThread {
             parent_session_id: None,
             title,
             entries: Vec::new(),
+            entry_created_at: Vec::new(),
             elicitations: ElicitationStore::default(),
             plan: Plan::default(),
             turn_id: 0,
@@ -947,6 +967,17 @@ impl AcpThread {
     /// id is worth nothing to history until a message has gone through it.
     pub fn is_draft(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// When the entry at `ix` was appended.
+    ///
+    /// Read by the projection instead of stamping the clock at read time: a
+    /// snapshot that minted its own timestamps reported every message in a past
+    /// conversation as sent just now, and two snapshots of an unchanged thread
+    /// disagreed with each other (ATL-221). See `entry_created_at` for what
+    /// this value does and does not mean.
+    pub fn entry_created_at(&self, ix: usize) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.entry_created_at.get(ix).copied()
     }
 
     pub fn entries(&self) -> &[AgentThreadEntry] {
@@ -1018,6 +1049,7 @@ impl AcpThread {
             return;
         }
         self.entries.truncate(from);
+        self.entry_created_at.truncate(from);
         self.emit(AcpThreadEvent::EntriesRemoved(from..len));
     }
 
@@ -1130,6 +1162,8 @@ impl AcpThread {
 
     fn push_entry(&mut self, entry: AgentThreadEntry) {
         self.entries.push(entry);
+        self.entry_created_at.push(chrono::Utc::now());
+        debug_assert_eq!(self.entries.len(), self.entry_created_at.len());
         self.emit(AcpThreadEvent::NewEntry);
     }
 
@@ -1712,6 +1746,15 @@ impl AcpThread {
 
     /// Closes the running turn. `stop_reason` is emitted so the UI leaves the
     /// generating state for the same reasons Zed does.
+    ///
+    /// Deliberately NOT guarded on `running_turn`. A guard would make
+    /// `set_error()` followed by `end_turn()` emit nothing instead of a second
+    /// `Stopped` — but no caller does that pair (`atlas-agent-manager`'s
+    /// `prompt` reaches `end_turn` only on the Ok arm and `set_error` only on
+    /// the Err one), and both this crate's callers and
+    /// `atlas-agent-delta`'s tests use `end_turn` as "announce Stopped" without
+    /// a turn open. Adding the guard would break that use for a case nothing
+    /// reaches. Checked while fixing `cancel_inner` below (ATL-218 finding 4).
     pub fn end_turn(&mut self, stop_reason: acp::StopReason) {
         self.running_turn = None;
         self.emit(AcpThreadEvent::Stopped(stop_reason));
@@ -1737,13 +1780,32 @@ impl AcpThread {
         self.cancel_inner(RequestPermissionOutcome::Cancelled)
     }
 
+    /// Resolving the thread's own state is unconditional; telling the AGENT is
+    /// what needs a running turn.
+    ///
+    /// The two halves used to sit on opposite sides of the early return, and
+    /// the split was the bug. `set_error()` and `emit_load_error()` both clear
+    /// `running_turn` before anything can cancel, so after either one every
+    /// later `cancel()` returned above `mark_pending_entries_as_canceled` and
+    /// a tool call sat in `WaitingForConfirmation` forever — holding a
+    /// `respond_tx` nobody would ever send on, and masking the error state,
+    /// since the projection reads `WaitingForConfirmation` before `had_error`
+    /// and reports the session as Waiting. `begin_turn()` cancels BEFORE it
+    /// sets `running_turn`, so the next turn early-returned too: there was no
+    /// self-heal path, and the only escape was the user clicking an option on a
+    /// prompt belonging to a dead turn.
+    ///
+    /// So: entries and elicitations are resolved on every call, because they
+    /// are ours and a turn that is gone cannot advance them either way. Only
+    /// `connection.cancel()` stays behind the check — an idle thread must not
+    /// send `session/cancel` for a turn the agent already finished.
     fn cancel_inner(&mut self, permission_outcome: RequestPermissionOutcome) {
         self.cancel_outstanding_elicitations();
+        self.mark_pending_entries_as_canceled(permission_outcome);
 
         if self.running_turn.take().is_none() {
             return;
         }
-        self.mark_pending_entries_as_canceled(permission_outcome);
         self.connection.cancel(&self.session_id);
         self.emit(AcpThreadEvent::StatusChanged);
     }
@@ -1845,6 +1907,22 @@ impl AcpThread {
     /// and the tool call's status is where the UI shows it. Zed's
     /// `Terminal::to_markdown` (`terminal.rs:604-609`) is content-only for the
     /// same reason.
+    /// How [`Self::terminal_output`]'s answer has grown past `from` bytes.
+    ///
+    /// `None` when the id names no terminal this thread holds, or when the
+    /// answer cannot be served as a pure extension of `from` — see
+    /// [`AcpTerminal::output_appended`] for the cases. A caller that gets
+    /// `None` falls back to [`Self::terminal_output`]; this exists so the case
+    /// that actually happens on every output chunk does not cost a copy of
+    /// everything the command has printed so far (ATL-219).
+    pub fn terminal_output_appended(
+        &self,
+        id: &acp::TerminalId,
+        from: usize,
+    ) -> Option<TerminalAppend> {
+        self.terminals.get(id)?.output_appended(from)
+    }
+
     pub fn terminal_output(&self, id: &acp::TerminalId) -> Option<String> {
         self.terminals.get(id).map(|terminal| {
             let response = terminal.current_output();

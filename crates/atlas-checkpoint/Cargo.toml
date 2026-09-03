@@ -37,3 +37,8 @@ reqwest = { version = "0.12", default-features = false, features = [
 
 [dev-dependencies]
 tempfile = "3"
+
+# The workspace lint table is only real for members that opt in —
+# without this stanza it is dead configuration (#60).
+[lints]
+workspace = true

@@ -45,7 +45,7 @@ fn derive_display_name(repo_dir: &Path, dir_name: &str) -> String {
             // Normalise `git@host:owner/repo.git` and `https://host/owner/repo.git`
             // down to `owner/repo`.
             let tail = url
-                .rsplit(|c| c == '/' || c == ':')
+                .rsplit(['/', ':'])
                 .take(2)
                 .collect::<Vec<_>>();
             if tail.len() == 2 {
@@ -80,10 +80,10 @@ pub async fn search_github(query: String) -> Result<Vec<GithubRepo>, String> {
         .unwrap_or_default();
 
     let resp = client.get(&url).send().await
-        .map_err(|e| format!("GitHub API request failed: {}", e))?;
+        .map_err(|e| format!("GitHub API request failed: {e}"))?;
 
     let json: serde_json::Value = resp.json().await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
 
     let items = json.get("items").and_then(|v| v.as_array()).cloned().unwrap_or_default();
 
@@ -95,8 +95,8 @@ pub async fn search_github(query: String) -> Result<Vec<GithubRepo>, String> {
             html_url: item.get("html_url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             clone_url: item.get("clone_url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             language: item.get("language").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            stars: item.get("stargazers_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-            forks: item.get("forks_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            stars: item.get("stargazers_count").and_then(serde_json::Value::as_u64).unwrap_or(0) as u32,
+            forks: item.get("forks_count").and_then(serde_json::Value::as_u64).unwrap_or(0) as u32,
             updated_at: item.get("updated_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         }
     }).collect();
@@ -115,7 +115,7 @@ pub async fn clone_github_repo(
 
     let dest = repos_dir.join(&repo_name);
     if dest.exists() {
-        return Err(format!("Repository '{}' already cloned", repo_name));
+        return Err(format!("Repository '{repo_name}' already cloned"));
     }
 
     let dest_str = dest.to_string_lossy().to_string();
@@ -123,7 +123,7 @@ pub async fn clone_github_repo(
         let output = std::process::Command::new("git")
             .args(["clone", "--depth", "1", &clone_url, &dest_str])
             .output()
-            .map_err(|e| format!("Git clone failed: {}", e))?;
+            .map_err(|e| format!("Git clone failed: {e}"))?;
 
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).to_string());

@@ -41,6 +41,10 @@ skills-lock.json
 !docs/atlas-agent-codex-port-spec.md
 !docs/research/*.md
 !docs/reference/*.md
+# The bundled `atlas-self-configure` skill's content — `include_str!`'d into
+# the binary at compile time (`commands/skills.rs`), so it has to ship from a
+# fresh clone the same way the vendored Codex prompts below do.
+!src-tauri/resources/**/*.md
 graphify-out/
 # Local-only working folders (plans/specs + helper scripts)
 plans/

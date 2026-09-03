@@ -100,8 +100,8 @@ impl AcpDebugMessage {
                     params: object.get("params").cloned(),
                 },
             }
-        } else if let Some(parsed_id) = parsed_id {
-            let id = match parsed_id {
+        } else {
+            let id = match parsed_id? {
                 Ok(id) => id,
                 Err(err) => {
                     tracing::warn!("skipping JSON-RPC response with unparsable id: {err}");
@@ -125,8 +125,6 @@ impl AcpDebugMessage {
                     result: Ok(object.get("result").cloned()),
                 }
             }
-        } else {
-            return None;
         };
 
         Some(Self { direction, message })
@@ -219,6 +217,6 @@ impl AcpDebugLog {
     fn lock(&self) -> std::sync::MutexGuard<'_, AcpDebugLogState> {
         self.state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }

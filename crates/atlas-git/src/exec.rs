@@ -63,7 +63,7 @@ impl GitCommand {
     pub fn new(cwd: impl Into<PathBuf>, args: &[&str]) -> Self {
         GitCommand {
             cwd: cwd.into(),
-            args: args.iter().map(|s| s.to_string()).collect(),
+            args: args.iter().map(std::string::ToString::to_string).collect(),
             envs: Vec::new(),
             success_exit_codes: HashSet::from([0]),
             stdin: None,

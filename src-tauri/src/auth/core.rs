@@ -331,6 +331,38 @@ impl AuthCore {
         }
     }
 
+    /// Record which organisation the desktop is acting for (#73).
+    ///
+    /// This writes the same field the web's `/organization/set-active` feeds,
+    /// but locally only — the server is not told, deliberately: web and
+    /// desktop each keep their own last choice, the same independence they
+    /// had before, just symmetric now.
+    ///
+    /// The store's doc used to say this field is "never written from the
+    /// desktop". That held while it only decided which organisation the
+    /// sidebar displays — and stopped holding the moment it became the
+    /// organisation every gateway request bills: the `Atlas-Org` source reads
+    /// the snapshot per request, so a switch that never lands here keeps
+    /// billing (and entitlement-checking) the previous org, which is exactly
+    /// how an unentitled org appeared to work — its turns were quietly
+    /// charged to the entitled one.
+    ///
+    /// `None` clears the desktop's choice; display and billing then fall back
+    /// the way [`StoredIdentity::active_org`] documents (web-set value, else
+    /// the first org). An id that is not in the org list is stored anyway and
+    /// tolerated on the read side, same as the web's value — membership lists
+    /// can lag.
+    pub fn set_active_org(&self, org_id: Option<String>) -> Result<(), String> {
+        let Some(mut session) = self.stored() else {
+            return Err("not signed in".to_string());
+        };
+        let Some(identity) = session.identity.as_mut() else {
+            return Err("no identity yet — try again in a moment".to_string());
+        };
+        identity.active_org_id = org_id;
+        store::save(&self.dir, &session)
+    }
+
     // ---- identity --------------------------------------------------------
 
     /// Read the signed-in user from the server.
@@ -501,7 +533,24 @@ impl AuthCore {
                     avatar_url: avatar.url,
                     avatar_path: avatar.path,
                     orgs,
-                    active_org_id: session.session.active_organization_id,
+                    // The desktop's own choice survives the refresh. #73 made
+                    // this field the organisation every gateway request bills,
+                    // and `set_active_org` documents the independence: web and
+                    // desktop each keep their own last choice. The server's
+                    // value is therefore a *seed* for a session that has never
+                    // chosen — never an override of one that has. Clobbering it
+                    // here was what re-pointed the chat socket (and the billing
+                    // header) at `orgs.first()` a few seconds after every
+                    // launch, until the next manual org switch wrote it back.
+                    //
+                    // Read from `current` (re-fetched after the network work),
+                    // not `previous`: a `set_active_org` that landed during the
+                    // round trips above must not be undone by this write.
+                    active_org_id: current
+                        .identity
+                        .as_ref()
+                        .and_then(|i| i.active_org_id.clone())
+                        .or(session.session.active_organization_id),
                 }),
                 ..current
             },
@@ -1291,11 +1340,14 @@ impl AuthCore {
     /// here pretends otherwise: [`Self::snapshot`] is derived from the file, so
     /// the state the caller broadcasts next is whatever is really on disk.
     ///
-    /// There is still no in-memory access token to clear. ATL-51 added none:
-    /// the JWT it needs for the `orgs` claim is minted, read, and dropped inside
-    /// a single call, and nothing else in the desktop consumes one. A cache
-    /// would buy nothing and would be one more thing this function had to
-    /// remember to clear.
+    /// One in-memory access token DOES exist elsewhere: #51 gave the native
+    /// agent's connection a cache that serves the JWT until its own `exp`,
+    /// and this function cannot reach it. The `auth_sign_out` command drops
+    /// that connection alongside calling this (#62) — a future caller of
+    /// `sign_out` from anywhere else must do the same, or the engine keeps
+    /// making org-billed calls for up to ~9 minutes on a revoked account.
+    /// (The JWT verifies statelessly against JWKS; revoking the session
+    /// token does not invalidate it.)
     pub fn sign_out(&self) -> Option<RevocationTicket> {
         let stored = self.stored();
         // Before the credential, not after: the identity is where the path to

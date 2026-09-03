@@ -1,15 +1,49 @@
 //! Tauri command surface for the Rust-owned `AppState`.
 
+use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use crate::state::{AppState, AppStateHandle, AppStatePatch};
+use crate::state::{
+    AppSettings, AppState, AppStateHandle, AppStatePatch, AtlasConfigHandle, ConfigStatus,
+};
 
-/// One-shot bootstrap: returns the full `AppState` snapshot. Called by the
-/// frontend exactly once on app mount, before any UI that depends on
-/// `currentProject` / `recentProjects` renders.
+/// Bootstrap response: `AppState` (workspaces/recents/orgs) plus the
+/// `config.toml`-sourced settings snapshot, combined into one payload so the
+/// frontend pays a single IPC round trip at boot. The two remain separately
+/// stored/versioned on the Rust side — this struct exists only at the wire
+/// boundary, matching the issue #64 design record's "bootstrap may combine
+/// state and config for latency; they still don't share a source of truth".
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootstrapPayload {
+    #[serde(flatten)]
+    pub state: AppState,
+    pub settings: AppSettings,
+    pub config_generation: u64,
+    /// Whether `config.toml` actually loaded. This is the ONLY signal the UI
+    /// gets at boot that the file on disk is broken and the settings on
+    /// screen are Atlas's defaults rather than the user's — computed since
+    /// #64 but, until now, reachable only through `get_atlas_config_info`,
+    /// which nothing called. A malformed config silently reverted every
+    /// preference (`shareTelemetry` back to ON included) with no banner.
+    pub config_status: ConfigStatus,
+}
+
+/// One-shot bootstrap: returns the full `AppState` snapshot plus the current
+/// settings. Called by the frontend exactly once on app mount, before any UI
+/// that depends on `currentProject` / `recentProjects` / settings renders.
 #[tauri::command]
-pub fn bootstrap_app_state(state: State<'_, AppStateHandle>) -> AppState {
-    state.lock().clone()
+pub fn bootstrap_app_state(
+    state: State<'_, AppStateHandle>,
+    config: State<'_, AtlasConfigHandle>,
+) -> BootstrapPayload {
+    let config_guard = config.lock();
+    BootstrapPayload {
+        state: state.lock().clone(),
+        settings: config_guard.effective().clone(),
+        config_generation: config_guard.generation(),
+        config_status: config_guard.status().clone(),
+    }
 }
 
 /// Merge a frontend save into the in-memory snapshot and persist it to disk.

@@ -10,6 +10,7 @@
     "tauri": "tauri",
     "dev:app": "node scripts/with-posthog-env.mjs tauri dev",
     "build:app": "node scripts/with-posthog-env.mjs tauri build --bundles app",
+    "build:app:fast": "CARGO_TARGET_DIR=\"$PWD/target/fast\" CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 node scripts/with-posthog-env.mjs tauri build --bundles app",
     "build:app:dmg": "bash scripts/build-dmg.sh arm",
     "build:app:dmg:arm": "bash scripts/build-dmg.sh arm",
     "build:app:dmg:intel": "bash scripts/build-dmg.sh intel",
@@ -124,7 +125,7 @@
     "@types/node": "^26.1.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@vitejs/plugin-react": "^4",
+    "@vitejs/plugin-react": "^6",
     "happy-dom": "^20.11.1",
     "husky": "^9.1.7",
     "lint-staged": "^17.3.0",
@@ -132,7 +133,7 @@
     "oxlint": "^1.77.0",
     "tailwindcss": "^4",
     "typescript": "^5.7",
-    "vite": "^6.4.3",
+    "vite": "^8",
     "vitest": "^4.1.10"
   },
   "resolutions": {
@@ -145,5 +146,5 @@
     "tar": "7.5.21",
     "js-yaml": "4.3.1"
   },
-  "packageManager": "pnpm@11.24.0+sha512.bd27e345e976dcb0be0b7a1228217b049a817e21b1f355c90dbe7dc46671895a8bc1e6d06c24554505ea93ea0b45f489a27ec1bfbc8de6a9659fca0f16fa0000"
+  "packageManager": "bun@1.4.0"
 }

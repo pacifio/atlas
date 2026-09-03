@@ -174,7 +174,7 @@ fn threads_are_grouped_by_project_across_every_project() {
     let atlas_one = thread("cersei", &["/tmp/atlas"]);
     let atlas_two = thread("claude-code", &["/tmp/atlas"]);
     let other = thread("cersei", &["/tmp/other"]);
-    store.save_all(vec![atlas_one.clone(), atlas_two.clone(), other.clone()]);
+    store.save_all(vec![atlas_one.clone(), atlas_two.clone(), other]);
     store.flush().unwrap();
 
     let atlas = PathList::new(&[PathBuf::from("/tmp/atlas")]);
@@ -202,7 +202,7 @@ fn a_project_opened_in_either_order_is_the_same_group() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);
     let saved = thread("cersei", &["/tmp/b", "/tmp/a"]);
-    store.save_one(saved.clone());
+    store.save_one(saved);
     store.flush().unwrap();
 
     let queried = PathList::new(&[PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")]);
@@ -219,7 +219,7 @@ fn a_thread_in_a_linked_worktree_is_findable_under_its_main_project() {
         PathList::new(&[PathBuf::from("/tmp/atlas-feature")]),
     )
     .unwrap();
-    store.save_one(saved.clone());
+    store.save_one(saved);
     store.flush().unwrap();
 
     let main = PathList::new(&[PathBuf::from("/tmp/atlas")]);
@@ -629,7 +629,7 @@ fn clearing_the_history_view_deletes_every_thread_it_showed() {
     let store = open(&dir);
     let one = thread("cersei", &["/tmp/atlas"]);
     let two = thread("claude-code", &["/tmp/other"]);
-    store.save_all(vec![one.clone(), two.clone()]);
+    store.save_all(vec![one, two.clone()]);
     store.archive(two.thread_id);
 
     store.delete_all(store.history(ThreadFilter::All).into_iter().map(|t| t.thread_id));
@@ -656,7 +656,7 @@ fn the_sidebar_sees_every_project_at_once_newest_first() {
     };
     let shelved = thread("cersei", &["/tmp/atlas"]);
     store.save_all(vec![
-        older_project.clone(),
+        older_project,
         this_project_old.clone(),
         this_project_new.clone(),
         shelved.clone(),

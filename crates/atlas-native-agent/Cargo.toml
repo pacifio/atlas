@@ -73,3 +73,8 @@ tokio = { version = "1", features = ["full", "test-util"] }
 # Seam-1 contract tests drive a real turn against a local mock model, so the
 # streaming path is exercised without a live provider or a credential.
 wiremock = "0.6"
+
+# The workspace lint table is only real for members that opt in —
+# without this stanza it is dead configuration (#60).
+[lints]
+workspace = true

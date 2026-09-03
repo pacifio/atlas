@@ -16,6 +16,7 @@ import type { PendingPermission } from "@/types/acp";
 import type {
   AgentDelta,
   ToolCall as AgentToolCall,
+  ToolCallStatus,
   ImageAttachment,
   SessionModeInfo,
 } from "@/types/agents";
@@ -34,6 +35,7 @@ import { defaultAgentForNewSession } from "../lib/default-agent";
 import { loadCachedContextUsage, saveCachedContextUsage } from "../lib/context-usage-cache";
 import { saveCerseiModelPref, saveCerseiEffort } from "../lib/cersei-model-pref";
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 import { extractPlanMarkdown, type PlanRecord } from "../lib/plans";
 import { extractNextSteps } from "../lib/next-steps";
 import {
@@ -134,31 +136,67 @@ function aggregateTurnFiles(tools: Record<string, TurnFile>): TurnFile[] {
  * No-op until the session is bound (the create-time setMode in chat-panel
  * covers the not-yet-bound case).
  */
-function pushPermissionModeToAgent(state: ChatState, sessionId: string): void {
+function pushPermissionModeToAgent(
+  state: ChatState,
+  sessionId: string,
+  previousMode?: ClaudePermissionMode,
+): void {
   const session = state.sessions[sessionId];
   if (!session?.acpAgentId || !session.acpSessionId) return;
   if (session.agentType !== "claude-code") return;
+  const pushed = session.claudePermissionMode ?? "default";
   void invoke("agents_set_mode", {
     key: { agent_id: session.acpAgentId, session_id: session.acpSessionId },
-    modeId: session.claudePermissionMode ?? "default",
-  }).catch((err) => console.warn("agents_set_mode failed:", err));
+    modeId: pushed,
+  }).catch((err) => {
+    console.warn("agents_set_mode failed:", err);
+    revertRefusedMode(sessionId, err, (sess) => {
+      if (sess.claudePermissionMode === pushed && previousMode !== undefined) {
+        sess.claudePermissionMode = previousMode;
+      }
+    });
+  });
 }
 
 /** Push a generic ACP session mode (Codex's read-only / auto / full-access)
  *  to its bound agent. Agent-agnostic sibling of `pushPermissionModeToAgent`.
  *  No-op until the session is bound. */
-function pushAcpModeToAgent(state: ChatState, sessionId: string): void {
+function pushAcpModeToAgent(state: ChatState, sessionId: string, previousMode?: string): void {
   const session = state.sessions[sessionId];
   if (!session?.acpAgentId || !session.acpSessionId || !session.acpCurrentMode) return;
   // Only push ids this session's agent actually advertised. A mode carried over
-  // from another agent is rejected (`invalidParams`), and the actor rolls its
-  // optimistic flip back — which reads as a picker that silently does nothing.
+  // from another agent is rejected (`invalidParams`) before it is ever pushed.
   const modes = session.acpAvailableModes ?? [];
   if (modes.length > 0 && !modes.some((m) => m.id === session.acpCurrentMode)) return;
+  const pushed = session.acpCurrentMode;
   void invoke("agents_set_mode", {
     key: { agent_id: session.acpAgentId, session_id: session.acpSessionId },
-    modeId: session.acpCurrentMode,
-  }).catch((err) => console.warn("agents_set_mode failed:", err));
+    modeId: pushed,
+  }).catch((err) => {
+    console.warn("agents_set_mode failed:", err);
+    revertRefusedMode(sessionId, err, (sess) => {
+      if (sess.acpCurrentMode === pushed && previousMode !== undefined) {
+        sess.acpCurrentMode = previousMode;
+      }
+    });
+  });
+}
+
+/** The agent refused a mode change the picker already shows (the flip is
+ *  optimistic). Leaving the label on the refused mode is the picker lying —
+ *  the native agent refuses mid-turn switches precisely because the running
+ *  turn keeps the permissions it started with (#61) — so roll the label back
+ *  (unless the user has since picked something else) and say why. */
+function revertRefusedMode(
+  sessionId: string,
+  err: unknown,
+  revert: (sess: ChatSession) => void,
+): void {
+  useChatStore.setState((s) => {
+    const sess = s.sessions[sessionId];
+    if (sess) revert(sess);
+  });
+  toast.error(typeof err === "string" ? err : String(err));
 }
 
 /** Hydrate the per-agent persisted mode preference (last explicit pick) into
@@ -200,9 +238,11 @@ function pushAcpModelToAgent(state: ChatState, sessionId: string): void {
   }).catch((err) => console.warn("agents_set_model failed:", err));
 }
 
-/** Push the native Cersei agent's `provider/model` selection to its bound
- *  agent via `agents_set_model`. The backend's `set_model` parses the
- *  `provider/model` form (see `atlas_cersei::CerseiRuntime::set_model`).
+/** Push the native agent's `provider/model` selection to its bound agent via
+ *  `agents_set_model`. The id is forwarded verbatim: `AgentHost::set_model`
+ *  (`src-tauri/src/commands/agent_host.rs`) hands it to the connection's model
+ *  selector, and the native agent validates it against its catalogue
+ *  (`crates/atlas-native-agent/src/engine/connection.rs`, `select_model`).
  *  No-op until the session is bound and both provider + model are chosen. */
 function pushCerseiModelToAgent(state: ChatState, sessionId: string): void {
   const session = state.sessions[sessionId];
@@ -395,10 +435,17 @@ interface ChatActions {
          *  per-message badge survives session reloads. */
         model?: string | null;
         toolCalls?: Array<{
+          /** The agent's own tool call id, when the caller has it. Optional
+           *  only because not every paint path carries one; a caller that has
+           *  it MUST pass it — it is the key later deltas are matched on. */
+          id?: string;
           toolName: string;
           kind?: string | null;
           arguments: Record<string, unknown>;
           result?: string | null;
+          /** How the tool call actually ended. Absent means unknown, which is
+           *  the only case that may be assumed completed. */
+          status?: ToolCallStatus;
         }>;
       }>,
     ) => void;
@@ -957,10 +1004,12 @@ export const useChatStore = createSelectors(
           }),
         cycleClaudePermissionMode: (sessionId) => {
           let next: ClaudePermissionMode | undefined;
+          let previous: ClaudePermissionMode | undefined;
           set((s) => {
             const session = s.sessions[sessionId];
             if (!session) return;
             const cur = session.claudePermissionMode ?? "default";
+            previous = cur;
             const i = CLAUDE_PERMISSION_MODES.indexOf(cur);
             next = CLAUDE_PERMISSION_MODES[(i + 1) % CLAUDE_PERMISSION_MODES.length];
             session.claudePermissionMode = next;
@@ -969,7 +1018,7 @@ export const useChatStore = createSelectors(
           // "default" means "defer to the CLI's own configured default" —
           // cycling back to it DROPS the persisted pick rather than storing it.
           if (next) saveLastModePref("claude-code", next === "default" ? null : next);
-          pushPermissionModeToAgent(get(), sessionId);
+          pushPermissionModeToAgent(get(), sessionId, previous);
         },
         hydrateClaudePermissionMode: (sessionId, mode) =>
           set((s) => {
@@ -979,6 +1028,7 @@ export const useChatStore = createSelectors(
             session.claudePermissionModeExplicit = false;
           }),
         setClaudePermissionMode: (sessionId, mode) => {
+          const previous = get().sessions[sessionId]?.claudePermissionMode ?? "default";
           set((s) => {
             const session = s.sessions[sessionId];
             if (session) {
@@ -987,7 +1037,7 @@ export const useChatStore = createSelectors(
             }
           });
           saveLastModePref("claude-code", mode === "default" ? null : mode);
-          pushPermissionModeToAgent(get(), sessionId);
+          pushPermissionModeToAgent(get(), sessionId, previous);
         },
         setAcpModes: (sessionId, currentMode, availableModes, sourceAgentType) => {
           const at = get().sessions[sessionId]?.agentType;
@@ -1037,6 +1087,7 @@ export const useChatStore = createSelectors(
             if (session) session.acpModesPending = pending;
           }),
         setAcpMode: (sessionId, modeId) => {
+          const previous = get().sessions[sessionId]?.acpCurrentMode;
           set((s) => {
             const session = s.sessions[sessionId];
             if (session) {
@@ -1049,7 +1100,7 @@ export const useChatStore = createSelectors(
           // or installed — keeps its own record.
           const at = get().sessions[sessionId]?.agentType;
           if (at && at !== "claude-code") saveLastModePref(at, modeId);
-          pushAcpModeToAgent(get(), sessionId);
+          pushAcpModeToAgent(get(), sessionId, previous);
         },
         clearElicitation: (sessionId) =>
           set((s) => {
@@ -1212,13 +1263,18 @@ export const useChatStore = createSelectors(
                 id: `msg-${Date.now()}-${i}`,
                 role: m.role,
                 content: m.content,
+                // Keep the agent's own id and outcome when the caller has
+                // them. Re-minting both is what made every tool call in a
+                // resumed transcript render as succeeded, failed ones included
+                // (ATL-220). The fallbacks stand only for a paint path that
+                // genuinely has neither.
                 toolCalls: (m.toolCalls ?? []).map((tc, j) => ({
-                  id: `tc-${Date.now()}-${i}-${j}`,
+                  id: tc.id ?? `tc-${Date.now()}-${i}-${j}`,
                   toolName: tc.toolName,
                   kind: tc.kind ?? null,
                   arguments: tc.arguments,
                   result: tc.result ?? null,
-                  status: "completed" as const,
+                  status: tc.status ?? ("completed" as const),
                   duration: null,
                 })),
                 fileChanges: [],
@@ -1977,11 +2033,15 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       }));
       if (last && last.role === "assistant") {
         last.plan = planSteps;
-      } else {
+      } else if (planSteps.length > 0) {
         const fresh = stampProducingModel(session, makeAssistantTextMessage(""));
         fresh.plan = planSteps;
         session.messages.push(fresh);
       }
+      // A CLEARED plan now reaches here rather than being swallowed by the
+      // backend (ATL-222), and it has nothing to hang on a message that does
+      // not exist — minting an empty assistant bubble to carry an empty plan
+      // would trade the stale card for a blank one.
       // Mirror onto the session so the docked plan panel selects it directly.
       session.livePlan = planSteps;
       return;
