@@ -105,10 +105,11 @@ describe("groupMessages", () => {
   it("breaks the stack across midnight so the day divider can render", () => {
     // The divider is drawn BETWEEN groups. Two messages minutes apart either
     // side of midnight used to stay in one group, which suppressed it entirely.
-    // LOCAL midnight, not UTC: grouping asks `toDateString()`, which is local,
-    // so a `…T23:59:00Z` fixture is only "either side of midnight" in UTC. East
-    // of it those two instants land on the same local day and the stack never
-    // breaks — green in CI, red on the author's machine.
+    //
+    // Local-time components, not a UTC string: `crossesDay` compares local
+    // calendar dates, so a fixture pinned to UTC midnight only straddles a day
+    // when the machine's zone IS UTC — anywhere else both instants land on the
+    // same date and the assertion fails.
     const groups = groupMessages(
       [
         msg({ id: "m1", created_at: new Date(2026, 7, 31, 23, 59).getTime() }),
