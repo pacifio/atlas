@@ -463,13 +463,161 @@ fn sanitize_html(html: &str, base_url: &str) -> String {
         "nav", "footer", "aside", "dialog", "template",
     ]);
 
+    // Strip inline event handlers (onclick, onerror, onload, ...). The tags
+    // above are gone, but a surviving element such as <p onclick="..."> still
+    // runs script in the main webview — CSP is null (tauri.conf.json), so
+    // nothing else downstream of this function stops it.
+    let no_handlers = strip_event_handler_attributes(&cleaned);
+
     // Resolve relative URLs in href attributes so links work
     let base = base_url.trim_end_matches(|c: char| c != '/').to_string();
     let origin = extract_origin(base_url);
-    let resolved = resolve_urls(&cleaned, &base, &origin);
+    let resolved = resolve_urls(&no_handlers, &base, &origin);
 
     // Strip all inline style attributes
     strip_style_attributes(&resolved)
+}
+
+/// Strip every `on*` event-handler attribute (`onclick`, `onerror`, `onload`,
+/// …) — inline-JS surface that `remove_tags`/`strip_style_attributes` do not
+/// touch. Matched by the `on` prefix rather than an enumerated list of names:
+/// browsers keep adding handler names, and any fixed list is a standing
+/// bypass waiting for the next one. Handles quoted (`"..."`/`'...'`) and bare
+/// unquoted values (`onclick=alert(1)` is tolerated, sloppy-but-valid, HTML
+/// and still executes).
+///
+/// String-level, like `strip_style_attributes` above (no HTML parser in this
+/// file) — safe on multi-byte UTF-8 since the copy path advances by whole
+/// `char`s, not bytes.
+fn strip_event_handler_attributes(html: &str) -> String {
+    let bytes = html.as_bytes();
+    let mut result = String::with_capacity(html.len());
+    let mut i = 0;
+    // An attribute only exists INSIDE a tag. Without this the same scan runs
+    // over text nodes, where any word starting with `on` followed by `=` looks
+    // like a handler: `<p>let one = 1;</p>` lost its text *and* its closing
+    // tag (the unquoted-value branch runs to the next `>`), and
+    // `href="…/?online=true"` was eaten past its closing quote. Over-stripping
+    // is not a security hole, but mangling captured pages is a real one for
+    // the reader, so the scan is scoped to where attributes can occur.
+    let mut in_tag = false;
+    // Quote state within the current tag, so a `>` inside an attribute value
+    // (`<a title="a > b">`) does not end the tag early.
+    let mut quote: Option<u8> = None;
+
+    while i < bytes.len() {
+        let byte = bytes[i];
+
+        if in_tag {
+            match quote {
+                Some(q) => {
+                    if byte == q {
+                        quote = None;
+                    }
+                }
+                None => match byte {
+                    b'"' | b'\'' => quote = Some(byte),
+                    b'>' => in_tag = false,
+                    _ => {}
+                },
+            }
+        } else if byte == b'<' {
+            // Only a tag NAME start opens a tag: `a < b` in prose is text.
+            // `</p>` counts, so a closing tag's `>` is not mistaken for the
+            // opener of the next one.
+            let next = bytes.get(i + 1).copied();
+            if matches!(next, Some(c) if c.is_ascii_alphabetic() || c == b'/' || c == b'!') {
+                in_tag = true;
+            }
+        }
+
+        // Attributes live inside a tag and outside any quoted value.
+        if in_tag && quote.is_none() {
+            if let Some(after_value) = event_handler_attr_end(bytes, i) {
+                i = after_value;
+                // Drop one attribute-separating space too, so the removal does
+                // not leave a double space behind (`<p  onclick="x" id="y">`).
+                if bytes.get(i) == Some(&b' ') {
+                    i += 1;
+                }
+                continue;
+            }
+        }
+
+        match html[i..].chars().next() {
+            Some(ch) => {
+                result.push(ch);
+                i += ch.len_utf8();
+            }
+            None => break,
+        }
+    }
+
+    result
+}
+
+/// If an `on<name>=<value>` attribute starts at byte offset `i`, the offset
+/// just past its value; `None` otherwise.
+///
+/// An attribute boundary, not free text, is required before `on`: the
+/// preceding byte must not be alphanumeric, so `"button"` and `"phenomenon"`
+/// are left alone (`t`/`n` before their trailing `on` are letters) while
+/// `<p onclick=` and `<p data-onclick=` both match — the latter is not a
+/// real DOM event handler, but stripping an inert custom attribute is a
+/// content nit, not a bypass, so this errs toward removing rather than
+/// enumerating what "real" means.
+fn event_handler_attr_end(bytes: &[u8], i: usize) -> Option<usize> {
+    let is_on = matches!(bytes.get(i), Some(b'o' | b'O')) && matches!(bytes.get(i + 1), Some(b'n' | b'N'));
+    if !is_on {
+        return None;
+    }
+    if !matches!(bytes.get(i + 2), Some(c) if c.is_ascii_alphabetic()) {
+        return None; // bare "on"/"on1" is not a handler name
+    }
+    if let Some(prev) = i.checked_sub(1).and_then(|p| bytes.get(p)) {
+        if prev.is_ascii_alphanumeric() {
+            return None;
+        }
+    }
+
+    let mut j = i + 2;
+    while matches!(bytes.get(j), Some(c) if c.is_ascii_alphanumeric()) {
+        j += 1;
+    }
+    while matches!(bytes.get(j), Some(c) if c.is_ascii_whitespace()) {
+        j += 1;
+    }
+    if bytes.get(j) != Some(&b'=') {
+        return None;
+    }
+    j += 1;
+    while matches!(bytes.get(j), Some(c) if c.is_ascii_whitespace()) {
+        j += 1;
+    }
+
+    match bytes.get(j) {
+        Some(b'"') => {
+            j += 1;
+            while matches!(bytes.get(j), Some(c) if *c != b'"') {
+                j += 1;
+            }
+            Some((j + 1).min(bytes.len()))
+        }
+        Some(b'\'') => {
+            j += 1;
+            while matches!(bytes.get(j), Some(c) if *c != b'\'') {
+                j += 1;
+            }
+            Some((j + 1).min(bytes.len()))
+        }
+        _ => {
+            // Unquoted — runs to the next whitespace or tag close.
+            while matches!(bytes.get(j), Some(c) if !c.is_ascii_whitespace() && *c != b'>') {
+                j += 1;
+            }
+            Some(j)
+        }
+    }
 }
 
 fn remove_tags(html: &str, tags: &[&str]) -> String {
@@ -552,4 +700,122 @@ fn find_body(html: &str, lower: &str) -> Option<String> {
     let gt = html[start..].find('>')? + start + 1;
     let end = lower[gt..].find("</body")? + gt;
     Some(html[gt..end].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strips_a_quoted_onclick_handler() {
+        // The space between `<p` and `onclick` was copied through before the
+        // scanner ever saw "onclick" coming, so it is not this function's to
+        // remove — the attribute itself is gone, which is what matters;
+        // `<p >` and `<p>` parse identically.
+        assert_eq!(
+            strip_event_handler_attributes(r#"<p onclick="alert(1)">hi</p>"#),
+            "<p >hi</p>"
+        );
+    }
+
+    #[test]
+    fn strips_a_single_quoted_and_an_unquoted_handler() {
+        // The unquoted case is the real bypass risk: sloppy-but-valid HTML
+        // that a quote-only scanner would leave running.
+        assert_eq!(
+            strip_event_handler_attributes(r#"<img src='x' onerror='alert(1)' onload=alert(2)>"#),
+            "<img src='x' >"
+        );
+    }
+
+    #[test]
+    fn survives_a_handler_that_is_never_closed() {
+        // Malformed markup must not panic or hang the scanner — it can fail
+        // to strip, but it must return.
+        let input = r#"<p onclick="alert(1)"#;
+        let _ = strip_event_handler_attributes(input);
+    }
+
+    #[test]
+    fn a_word_that_merely_contains_on_is_left_alone() {
+        // "button" and "phenomenon" both contain "on" — must not be treated
+        // as an attribute boundary just because a scan finds the substring.
+        let input = "<button>the phenomenon continues</button>";
+        assert_eq!(strip_event_handler_attributes(input), input);
+    }
+
+    #[test]
+    fn ordinary_attributes_and_multibyte_text_survive() {
+        let input = "<p id=\"café\" data-x=\"1\">café</p>";
+        assert_eq!(strip_event_handler_attributes(input), input);
+    }
+
+    #[test]
+    fn sanitize_html_removes_a_handler_that_remove_tags_would_leave_behind() {
+        // remove_tags only drops whole dangerous elements (script, iframe,
+        // ...); a plain <p> with an inline handler sailed through untouched
+        // before this fix — this is the exact reported gap.
+        let html = "<html><body><p onclick=\"fetch('https://evil.example/x')\">hi</p></body></html>";
+        let sanitized = sanitize_html(html, "https://example.com/");
+        assert!(!sanitized.to_lowercase().contains("onclick"));
+        assert!(sanitized.contains("hi"));
+    }
+}
+
+
+#[cfg(test)]
+mod event_handler_scope_tests {
+    use super::*;
+
+    /// Text is not attribute space. The first version of this scan ran over
+    /// the whole document, so any prose word starting with `on` followed by
+    /// `=` was eaten — along with the rest of the line, because an unquoted
+    /// value runs to the next `>` and swallowed the closing tag with it.
+    #[test]
+    fn prose_that_looks_like_a_handler_is_left_alone() {
+        for input in [
+            "<p>let one = 1;</p>",
+            "<p>run it once = twice</p>",
+            "<p>only = 5 items</p>",
+            "<p>phenomenon and button are fine</p>",
+        ] {
+            assert_eq!(strip_event_handler_attributes(input), input, "mangled: {input}");
+        }
+    }
+
+    /// A query parameter starting with `on` sits inside a quoted attribute
+    /// value, where no new attribute can begin. Losing this ate the closing
+    /// quote and broke the URL.
+    #[test]
+    fn an_on_query_param_inside_a_value_survives() {
+        let input = r#"<a href="https://x.com/?online=true">link</a>"#;
+        assert_eq!(strip_event_handler_attributes(input), input);
+    }
+
+    /// A `>` inside an attribute value must not end the tag early, or the
+    /// handler after it would be treated as text and left in place.
+    #[test]
+    fn a_gt_inside_a_value_does_not_end_the_tag() {
+        let out = strip_event_handler_attributes(r#"<a title="a > b" onclick="x()">t</a>"#);
+        assert!(!out.contains("onclick"), "handler survived: {out}");
+        assert!(out.contains(r#"title="a > b""#), "value damaged: {out}");
+    }
+
+    /// The whole point: handlers still go, quoted and unquoted alike.
+    #[test]
+    fn handlers_are_still_stripped() {
+        for input in [
+            r#"<p onclick="alert(1)">x</p>"#,
+            r#"<p onclick=alert(1) id="k">x</p>"#,
+            r#"<img src=x onerror='boom()'>"#,
+            r#"<body ONLOAD="evil()">x</body>"#,
+        ] {
+            let out = strip_event_handler_attributes(input);
+            let lowered = out.to_ascii_lowercase();
+            assert!(
+                !lowered.contains("onclick") && !lowered.contains("onerror") && !lowered.contains("onload"),
+                "handler survived: {out}"
+            );
+        }
+    }
 }
