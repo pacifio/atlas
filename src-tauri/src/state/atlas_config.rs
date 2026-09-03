@@ -1517,7 +1517,7 @@ someFutureKey = \"left alone\"
         let dir = path.parent().unwrap();
         let has_backup = fs::read_dir(dir)
             .unwrap()
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .any(|e| e.file_name().to_string_lossy().starts_with("config.toml.bak-"));
         assert!(has_backup, "reset() must back up the previous file before overwriting");
     }

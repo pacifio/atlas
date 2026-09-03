@@ -20,7 +20,6 @@
     "test": "vitest run",
     "test:rust": "bash scripts/test-rust.sh",
     "test:watch": "vitest",
-    "acp:test": "SDKROOT=\"$(xcrun --show-sdk-path)\" cargo run --manifest-path crates/atlas-agents/Cargo.toml --example backend_suite",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "clean:app": "bash scripts/clean-atlas-config.sh",
     "clean:rust": "find . crates vendor -maxdepth 2 -type d -name target -prune -exec sh -c 'test -f \"$1/CACHEDIR.TAG\" && du -sh \"$1\" && rm -rf \"$1\"' _ {} \\;",
