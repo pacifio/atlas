@@ -36,7 +36,7 @@ jobs:
     name: frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Full history, not the depth-1 default: vendor-licensing.test.ts
           # derives its fork point as the oldest commit touching vendor/codex,
@@ -78,7 +78,7 @@ jobs:
     name: app (src-tauri)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -114,7 +114,7 @@ jobs:
     name: engine dialect (codex-api)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -160,6 +160,8 @@ jobs:
           - crate: atlas-checkpoint
             clippy: true
           - crate: atlas-codeindex
+          - crate: atlas-comms
+            clippy: true
           - crate: atlas-embed
           - crate: atlas-git
           - crate: atlas-gitdiff
@@ -173,7 +175,7 @@ jobs:
           - crate: atlas-thread-metadata
             clippy: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

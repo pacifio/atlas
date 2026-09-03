@@ -122,10 +122,22 @@ impl Harness {
     /// The session table holds threads weakly, so a test that dropped its
     /// handle would silently stop receiving every update for that session.
     async fn open_thread(&self) -> acp::SessionId {
+        self.open_thread_in(PathBuf::from(".")).await
+    }
+
+    /// Open a thread rooted at a specific directory.
+    ///
+    /// A test whose command WRITES a file has to say where: the engine runs
+    /// tools under a workspace-write sandbox, so a path outside the session's
+    /// roots is denied — silently, as far as the protocol is concerned. On
+    /// macOS seatbelt a tempdir under `/tmp` slips through anyway; Linux
+    /// landlock does not, which is why those tests passed locally and failed
+    /// in CI with the command never having run.
+    async fn open_thread_in(&self, root: PathBuf) -> acp::SessionId {
         let thread = self
             .connection
             .clone()
-            .new_session(vec![PathBuf::from(".")])
+            .new_session(vec![root])
             .await
             .expect("the engine should start a thread");
         let id = thread
@@ -933,7 +945,7 @@ async fn cancelling_mid_tool_stops_the_command_it_started() {
         (None, sse_ok(assistant_turn("done"))),
     ])
     .await;
-    let session_id = h.open_thread().await;
+    let session_id = h.open_thread_in(dir.path().to_path_buf()).await;
 
     let connection = h.connection.clone();
     let prompting = {
@@ -998,7 +1010,7 @@ async fn a_retried_turn_does_not_re_run_a_tool_call_that_already_executed() {
         (None, sse_ok(assistant_turn("finished"))),
     ])
     .await;
-    let session_id = h.open_thread().await;
+    let session_id = h.open_thread_in(dir.path().to_path_buf()).await;
 
     let connection = h.connection.clone();
     let prompting = {
@@ -1059,7 +1071,7 @@ async fn control_an_approved_command_really_does_run() {
         (None, sse_ok(assistant_turn("done"))),
     ])
     .await;
-    let session_id = h.open_thread().await;
+    let session_id = h.open_thread_in(dir.path().to_path_buf()).await;
 
     let connection = h.connection.clone();
     let prompting = {
