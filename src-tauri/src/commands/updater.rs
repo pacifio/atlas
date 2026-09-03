@@ -295,7 +295,7 @@ pub async fn update_ignore(version: String, app: AppHandle) -> Result<(), String
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
-    crate::commands::atlas_config::notify_settings_changed(&app, &snapshot.settings, snapshot.generation);
+    crate::commands::atlas_config::notify_config_changed(&app, &snapshot);
     Ok(())
 }
 

@@ -156,6 +156,15 @@ pub struct AppState {
     /// can't just be "does config.toml exist".
     #[serde(default)]
     pub settings_config_migrated: bool,
+    /// Whether the first-run keymap picker has been answered — including with
+    /// "decide later", which is an answer and must not be asked again.
+    ///
+    /// State, not preference: it records what happened, not what the user
+    /// wants, so it stays out of `config.toml` (where it would be a key nobody
+    /// could meaningfully edit) and out of `AppStatePatch` (where a coarse
+    /// frontend save could reset it — see that type's doc).
+    #[serde(default)]
+    pub keymap_onboarding_seen: bool,
     #[serde(default = "default_version")]
     pub version: u32,
 }
@@ -205,6 +214,7 @@ impl Default for AppState {
             active_organisation_id: None,
             telemetry_anon_id: None,
             settings_config_migrated: false,
+            keymap_onboarding_seen: false,
             version: SCHEMA_VERSION,
         }
     }

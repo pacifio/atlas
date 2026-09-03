@@ -2,9 +2,10 @@
 //!
 //! Atlas previously shipped no menu, so Tauri installed its *default* menu —
 //! whose Window ▸ Close item (Cmd+W) calls `performClose:` on the key window.
-//! In the main webview that's harmless: the React hotkey handler
-//! (`useHotkeys` in `App.tsx`) catches Cmd+W and `preventDefault()`s it, so
-//! WebKit reports the key equivalent as handled and the menu never fires.
+//! In the main webview that's harmless: the keybinding dispatcher
+//! (`features/keybindings`) catches the "close tab" chord and
+//! `preventDefault()`s it, so WebKit reports the key equivalent as handled and
+//! the menu never fires.
 //!
 //! But the embedded browser (`commands::browser`) is a *separate* native child
 //! webview loading remote pages. Those pages don't preventDefault Cmd+W, so the
@@ -19,10 +20,31 @@
 //! this only takes effect when a child webview has focus.
 
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::{Manager, Wry};
 
 /// Menu item id for the Cmd+W "close tab" action. Matched in the
 /// `on_menu_event` handler in `lib.rs`.
 pub const CLOSE_TAB_ID: &str = "atlas-close-tab";
+
+/// The Close Tab item, kept as managed state so its accelerator can follow the
+/// user's `close-tab` binding. Rebuilding the whole menu to change one chord
+/// would drop the macOS application menu for as long as it took.
+pub struct CloseTabItem(pub MenuItem<Wry>);
+
+/// Point the native Close Tab item at `accelerator` (Tauri's spelling, sent by
+/// the frontend — see `native-accelerator.ts`), or unbind it with `None`.
+///
+/// This item only ever fires while a child webview holds focus, since the
+/// dispatcher handles the chord itself everywhere else. Keeping it in step is
+/// what stops the embedded browser from closing tabs on a chord the user
+/// retired.
+#[tauri::command]
+pub fn set_close_tab_accelerator(
+    accelerator: Option<String>,
+    item: tauri::State<'_, CloseTabItem>,
+) -> Result<(), String> {
+    item.0.set_accelerator(accelerator.as_deref()).map_err(|e| e.to_string())
+}
 
 pub fn build(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     // App menu (first submenu → becomes the macOS application menu).
@@ -72,7 +94,10 @@ pub fn build(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
     // Window menu — Cmd+W is our custom "close tab" item, NOT the predefined
     // close-window (which would tear down the app from a focused child webview).
+    // Starts on the default chord and is re-pointed once the frontend has read
+    // the keymap out of `config.toml` (`set_close_tab_accelerator`).
     let close_tab = MenuItem::with_id(app, CLOSE_TAB_ID, "Close Tab", true, Some("CmdOrCtrl+W"))?;
+    app.manage(CloseTabItem(close_tab.clone()));
     let window_menu = Submenu::with_items(
         app,
         "Window",

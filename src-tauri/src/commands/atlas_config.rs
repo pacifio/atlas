@@ -14,8 +14,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::state::{
-    AppSettings, AtlasConfigHandle, ConfigError, ConfigSnapshot, ConfigStatus, SettingsPatch,
-    UpdateOutcome,
+    AppSettings, AtlasConfigHandle, ConfigError, ConfigSnapshot, ConfigStatus, KeymapConfig,
+    KeymapPatch, SettingsPatch, UpdateOutcome,
 };
 use crate::telemetry::TelemetryClient;
 
@@ -26,6 +26,7 @@ pub struct ConfigInfo {
     pub schema_version: u32,
     pub status: ConfigStatus,
     pub effective_settings: AppSettings,
+    pub effective_keymap: KeymapConfig,
     pub generation: u64,
     pub unknown_keys: Vec<String>,
 }
@@ -41,6 +42,7 @@ pub fn get_atlas_config_info(state: State<'_, AtlasConfigHandle>) -> ConfigInfo 
         schema_version: crate::state::atlas_config::CONFIG_SCHEMA_VERSION,
         status: guard.status().clone(),
         effective_settings: guard.effective().clone(),
+        effective_keymap: guard.keymap().clone(),
         generation: guard.generation(),
         unknown_keys: guard.unknown_keys().to_vec(),
     }
@@ -71,10 +73,40 @@ pub async fn update_atlas_settings(
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
-    if let UpdateOutcome::Applied { ref settings, generation } = outcome {
-        notify_settings_changed(&app, settings, generation);
-    }
+    notify_if_applied(&app, &outcome);
     Ok(outcome)
+}
+
+/// Apply a keybinding change from Settings → Keybindings. Same optimistic
+/// generation check, same file, same write path as `update_atlas_settings` —
+/// see [`crate::state::atlas_config::ConfigPatch`] for why the two share one.
+#[tauri::command]
+pub async fn update_atlas_keymap(
+    patch: KeymapPatch,
+    expected_generation: u64,
+    app: AppHandle,
+    state: State<'_, AtlasConfigHandle>,
+) -> Result<UpdateOutcome, String> {
+    let handle = state.inner().clone();
+    let outcome = tokio::task::spawn_blocking(move || handle.lock().apply_patch(&patch, Some(expected_generation)))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    notify_if_applied(&app, &outcome);
+    Ok(outcome)
+}
+
+fn notify_if_applied(app: &AppHandle, outcome: &UpdateOutcome) {
+    if let UpdateOutcome::Applied { settings, keymap, generation } = outcome {
+        notify_config_changed(
+            app,
+            &ConfigSnapshot {
+                settings: settings.clone(),
+                keymap: keymap.clone(),
+                generation: *generation,
+            },
+        );
+    }
 }
 
 /// "Recreate defaults" — the sole action authorized to overwrite a malformed
@@ -87,7 +119,7 @@ pub async fn reset_atlas_config(app: AppHandle, state: State<'_, AtlasConfigHand
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
-    notify_settings_changed(&app, &snapshot.settings, snapshot.generation);
+    notify_config_changed(&app, &snapshot);
     Ok(snapshot)
 }
 
@@ -101,35 +133,32 @@ pub fn open_atlas_config(app: AppHandle, state: State<'_, AtlasConfigHandle>) ->
     app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
 }
 
-/// The one thing every committer of a new settings snapshot must do —
-/// whichever of the four paths produced it (a UI patch, `reset`, a hot
-/// reload, or an internal Rust-side write from `commands::models`/
-/// `commands::updater` via `state::atlas_config::update`):
+/// The one thing every committer of a new config snapshot must do — whichever
+/// of the four paths produced it (a UI patch, `reset`, a hot reload, or an
+/// internal Rust-side write from `commands::models`/`commands::updater` via
+/// `state::atlas_config::update`):
 ///
 /// 1. tell the frontend (`atlas:config-changed`), so its mirrored
-///    `settings`/`configGeneration` never goes stale — a stale generation on
-///    the frontend is exactly what turns its next legitimate edit into a
-///    spurious `Conflict`;
+///    `settings`/`keymap`/`configGeneration` never goes stale — a stale
+///    generation on the frontend is exactly what turns its next legitimate
+///    edit into a spurious `Conflict`;
 /// 2. re-sync the live telemetry opt-in gate. `TelemetryClient::enabled` is a
 ///    cached flag, not read fresh from settings per event; without this, a
 ///    `shareTelemetry` change that didn't come from the Settings UI's own
 ///    toggle handler (an external edit, the self-configure skill, "Recreate
 ///    defaults") would leave telemetry emitting — or silently gated off —
 ///    out of sync with what the file says until restart.
-pub fn notify_settings_changed(app: &AppHandle, settings: &AppSettings, generation: u64) {
-    let _ = app.emit(
-        "atlas:config-changed",
-        serde_json::json!({ "settings": settings, "generation": generation }),
-    );
+pub fn notify_config_changed(app: &AppHandle, snapshot: &ConfigSnapshot) {
+    let _ = app.emit("atlas:config-changed", snapshot);
     if let Some(client) = app.try_state::<Arc<TelemetryClient>>() {
-        client.set_enabled(settings.share_telemetry);
+        client.set_enabled(snapshot.settings.share_telemetry);
     }
     // 3. re-apply `linkTelemetryToAccount`. It is read by
     //    `commands::auth::sync_identity`, which otherwise only runs on an auth
     //    *transition* — so without this, turning account linkage off while
     //    signed in left PostHog attributing events to the account until the
     //    next sign-out, which is the opposite of what the toggle says.
-    crate::commands::auth::resync_telemetry_identity(app, settings.link_telemetry_to_account);
+    crate::commands::auth::resync_telemetry_identity(app, snapshot.settings.link_telemetry_to_account);
 }
 
 fn emit_error(app: &AppHandle, error: &ConfigError) {
@@ -186,10 +215,9 @@ pub fn start_watcher(app: &AppHandle, handle: AtlasConfigHandle) {
                 let mut guard = handle_for_cb.lock();
                 match guard.reload_from_disk() {
                     Ok(true) => {
-                        let settings = guard.effective().clone();
-                        let generation = guard.generation();
+                        let snapshot = guard.snapshot();
                         drop(guard);
-                        notify_settings_changed(&app_for_cb, &settings, generation);
+                        notify_config_changed(&app_for_cb, &snapshot);
                     }
                     Ok(false) => {} // self-write echo or no-op — nothing to do
                     Err(e) => {

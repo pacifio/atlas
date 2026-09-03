@@ -577,7 +577,7 @@ const TabContentContainer = memo(function TabContentContainer({
               ) : tab.type === "chat" ? (
                 <ChatPanel tabId={tab.id} />
               ) : tab.type === "knowledge" ? (
-                <KnowledgePanel />
+                <KnowledgePanel tabId={tab.id} />
               ) : tab.type === "browser" ? (
                 <BrowserPanel
                   tabId={tab.id}
@@ -616,7 +616,7 @@ function TabContent({ tab }: { tab: Tab }) {
     case "canvas":
       return <CanvasPanel />;
     case "knowledge":
-      return <KnowledgePanel />;
+      return <KnowledgePanel tabId={tab.id} />;
     case "knowledge-graph":
       return <KnowledgeGraph />;
     case "memory":

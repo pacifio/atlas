@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { ScrollArea } from "@/ui/scroll-area";
-import { KbdCombo } from "@/ui/kbd";
 import { cn } from "@/lib/utils";
 import {
   Settings,
@@ -36,6 +35,7 @@ import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
 import { updater } from "@/features/updater/lib/updater-api";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
 import { useSettingsNav, type SettingsSection } from "../stores/settings-nav-store";
+import { KeybindingsSettings } from "@/features/keybindings/components/keybindings-settings";
 import { openConfigFile } from "../lib/atlas-config-api";
 
 const SECTIONS: Array<{
@@ -624,105 +624,6 @@ function UpdatesSettings() {
       >
         {control}
       </SettingRow>
-    </div>
-  );
-}
-
-function KeybindingsSettings() {
-  const settings = useProjectStore.use.settings();
-  const groups: Array<{
-    title: string;
-    bindings: Array<{ action: string; keys: string }>;
-  }> = [
-    {
-      title: "General",
-      bindings: [
-        { action: "Command Palette", keys: "⌘K" },
-        { action: "Global Search", keys: "⌘⇧F" },
-        { action: "Settings", keys: "⌘," },
-        { action: "New Window", keys: "⌘⇧N" },
-        { action: "Open Session Capture", keys: "⌘⌥C" },
-        { action: "Zoom in", keys: "⌘+" },
-        { action: "Zoom out", keys: "⌘-" },
-        { action: "Reset zoom", keys: "⌘0" },
-      ],
-    },
-    {
-      title: "Tabs",
-      bindings: [
-        { action: "New Chat tab", keys: "⌘T" },
-        { action: "New Terminal tab", keys: "⌘⇧T" },
-        { action: "Close current tab", keys: "⌘W" },
-        { action: "Previous tab", keys: "⌘⇧[" },
-        { action: "Next tab", keys: "⌘⇧]" },
-        { action: "Switch to tab 1–9", keys: "⌘1…9" },
-      ],
-    },
-    {
-      title: "Split View",
-      bindings: [
-        { action: "Split right (new column)", keys: "⌘\\" },
-        { action: "Focus split left", keys: "⌥;" },
-        { action: "Focus split right", keys: "⌥'" },
-        { action: "Close split", keys: "⌥W" },
-        { action: "New tab in focused split", keys: "⌘⌥N" },
-        { action: "Switch layout (templates)", keys: "⌘⌥L" },
-        { action: "Zen mode (Knowledge │ Chat │ Browser)", keys: "⌥Z" },
-      ],
-    },
-    {
-      title: "Layout",
-      bindings: [
-        { action: "Toggle Left Panel", keys: "⌘B" },
-        { action: "Toggle Right Panel", keys: "⌘⇧B" },
-        { action: "Toggle Tab Bar", keys: "⌘⌥T" },
-        { action: "Toggle Status Bar", keys: "⌘⌥B" },
-        { action: "Toggle Agent Sidebar", keys: "⌘⌥J" },
-        { action: "Toggle Terminal", keys: "⌘J" },
-      ],
-    },
-    {
-      title: "Chat",
-      bindings: [
-        { action: "Find in chat", keys: "⌘F" },
-        { action: "Send message", keys: settings.enterToSend ? "↵" : "⌘↵" },
-        { action: "Cycle permission mode", keys: "⇧⇥" },
-      ],
-    },
-    {
-      title: "Knowledge Base",
-      bindings: [
-        { action: "Toggle KB Sidebar", keys: "⌘;" },
-        { action: "Toggle KB Inspector", keys: "⌘'" },
-        { action: "Save note", keys: "⌘S" },
-      ],
-    },
-  ];
-
-  return (
-    <div className="space-y-6">
-      <SectionTitle title="Keybindings" subtitle="Keyboard shortcuts" />
-      {groups.map((g) => (
-        <div key={g.title} className="space-y-2">
-          <div className="text-[10px] uppercase tracking-wider text-text-tertiary px-1">
-            {g.title}
-          </div>
-          <div className="rounded-lg border border-border-default overflow-hidden">
-            {g.bindings.map((b, i) => (
-              <div
-                key={b.action}
-                className={cn(
-                  "flex items-center justify-between px-3 h-[32px]",
-                  i > 0 && "border-t border-border-subtle",
-                )}
-              >
-                <span className="text-[11px] text-text-secondary">{b.action}</span>
-                <KbdCombo combo={b.keys} />
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
     </div>
   );
 }

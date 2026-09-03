@@ -3,7 +3,6 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
-import { KbdCombo } from "@/ui/kbd";
 import { AtlasIcon } from "@/components/atlas-icon";
 import {
   Globe,
@@ -33,11 +32,16 @@ import {
   Circle,
 } from "lucide-react";
 import type { TabType } from "@/lib/constants";
+import type { ActionId } from "@/features/keybindings/lib/actions";
+import { ActionShortcut } from "@/features/keybindings/components/action-shortcut";
 
 interface Command {
   id: string;
   label: string;
-  shortcut?: string;
+  /** The keybinding command this entry runs, when there is one. The palette
+   *  shows its current chord — these used to be literal glyph strings, and
+   *  they had already drifted from what the keys did. */
+  command?: ActionId;
   icon: React.ElementType;
   action: () => void;
   category: string;
@@ -128,7 +132,7 @@ export function CommandPalette({
       {
         id: "new-agents-chat",
         label: "New Agents Chat",
-        shortcut: "⌘T",
+        command: "new-chat",
         icon: AtlasIcon,
         category: "Open",
         action: () => openTab("chat", "Agents"),
@@ -143,7 +147,7 @@ export function CommandPalette({
       {
         id: "new-terminal",
         label: "New Terminal",
-        shortcut: "⌘⇧T",
+        command: "new-terminal",
         icon: Terminal,
         category: "Open",
         action: () => openTab("terminal", "Terminal"),
@@ -151,7 +155,7 @@ export function CommandPalette({
       {
         id: "new-editor",
         label: "New Untitled Editor",
-        shortcut: "⌘N",
+        command: "new-editor",
         icon: Code,
         category: "Open",
         action: () => openTab("editor", "Untitled"),
@@ -203,7 +207,7 @@ export function CommandPalette({
       {
         id: "toggle-left",
         label: "Toggle Left Panel",
-        shortcut: "⌘B",
+        command: "toggle-left-panel",
         icon: PanelLeft,
         category: "Layout",
         action: toggleLeftPanel,
@@ -211,7 +215,7 @@ export function CommandPalette({
       {
         id: "toggle-right",
         label: "Toggle Source Control Panel",
-        shortcut: "⌘⇧B",
+        command: "toggle-right-panel",
         icon: PanelRight,
         category: "Layout",
         action: toggleRightPanel,
@@ -219,7 +223,7 @@ export function CommandPalette({
       {
         id: "toggle-right-chat",
         label: "Toggle Team Chat Panel",
-        shortcut: "⌘⇧C",
+        command: "toggle-team-chat",
         icon: MessageSquare,
         category: "Layout",
         action: toggleRightChatPanel,
@@ -227,7 +231,7 @@ export function CommandPalette({
       {
         id: "toggle-bottom",
         label: "Toggle Bottom Panel",
-        shortcut: "⌘⌥B",
+        command: "toggle-bottom-panel",
         icon: PanelBottom,
         category: "Layout",
         action: toggleBottomPanel,
@@ -235,7 +239,7 @@ export function CommandPalette({
       {
         id: "toggle-chat-sidebar",
         label: "Toggle Chat Sidebar",
-        shortcut: "⌘⌥J",
+        command: "toggle-agent-sidebar",
         icon: Sidebar,
         category: "Layout",
         action: toggleChatSidebar,
@@ -243,7 +247,7 @@ export function CommandPalette({
       {
         id: "toggle-tab-bar",
         label: "Toggle Tab Bar",
-        shortcut: "⌘⌥T",
+        command: "toggle-tab-bar",
         icon: PanelTop,
         category: "Layout",
         action: toggleTabBar,
@@ -258,7 +262,7 @@ export function CommandPalette({
       {
         id: "toggle-zen",
         label: "Toggle Zen Mode",
-        shortcut: "⌥Z",
+        command: "toggle-zen-mode",
         icon: Maximize2,
         category: "Layout",
         action: toggleZenMode,
@@ -268,7 +272,7 @@ export function CommandPalette({
       {
         id: "split-new",
         label: "Split: New Column",
-        shortcut: "⌘\\",
+        command: "split-right",
         icon: Columns2,
         category: "Split",
         action: () => addGroup(),
@@ -276,7 +280,7 @@ export function CommandPalette({
       {
         id: "split-focus-left",
         label: "Split: Focus Left",
-        shortcut: "⌥;",
+        command: "focus-split-left",
         icon: ArrowLeftToLine,
         category: "Split",
         action: () => focusAdjacentGroup(-1),
@@ -284,7 +288,7 @@ export function CommandPalette({
       {
         id: "split-focus-right",
         label: "Split: Focus Right",
-        shortcut: "⌥'",
+        command: "focus-split-right",
         icon: ArrowRightToLine,
         category: "Split",
         action: () => focusAdjacentGroup(1),
@@ -292,7 +296,7 @@ export function CommandPalette({
       {
         id: "split-close",
         label: "Split: Close Column",
-        shortcut: "⌥W",
+        command: "close-split",
         icon: Columns2,
         category: "Split",
         action: () => closeGroup(useLayoutStore.getState().focusedGroupId),
@@ -332,7 +336,7 @@ export function CommandPalette({
       {
         id: "settings",
         label: "Open Settings",
-        shortcut: "⌘,",
+        command: "open-settings",
         icon: Settings,
         category: "App",
         action: () => openTab("settings", "Settings"),
@@ -340,7 +344,7 @@ export function CommandPalette({
       {
         id: "open-capture",
         label: "Open Session Capture",
-        shortcut: "⌘⌥C",
+        command: "open-capture",
         icon: Circle,
         category: "App",
         action: () => window.dispatchEvent(new CustomEvent("atlas:open-capture")),
@@ -468,7 +472,7 @@ export function CommandPalette({
                   >
                     <Icon size={14} className="shrink-0 text-[var(--text-tertiary)]" />
                     <span className="flex-1 truncate">{cmd.label}</span>
-                    {cmd.shortcut && <KbdCombo combo={cmd.shortcut} />}
+                    {cmd.command && <ActionShortcut actionId={cmd.command} />}
                   </button>
                 </Fragment>
               );

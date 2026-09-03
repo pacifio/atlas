@@ -115,7 +115,8 @@ export function HintOverlay() {
   }, []);
 
   // Key handling while open. Capture-phase + stopImmediatePropagation so it
-  // beats useHotkeys, the terminal's capture handler, and any focused input.
+  // beats the keybinding dispatcher, the terminal's capture handler, and any
+  // focused input.
   useEffect(() => {
     if (!open) return;
     const STEP = 120;
