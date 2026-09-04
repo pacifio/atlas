@@ -281,6 +281,19 @@ describe("dev-profile opt-levels survive the move into the workspace", () => {
   });
 });
 
+describe("the app crate emits one crate type", () => {
+  // `staticlib`/`cdylib` are the Tauri mobile template's defaults and there is
+  // no mobile target here. A lib emitting a staticlib forces cargo to compile
+  // every dependency with object code *and* bitcode, so LTO optimises the whole
+  // graph twice and the lib unit writes a 1.7 GB archive nothing loads —
+  // measured 2026-09-04, docs/research/build-performance.md (R2).
+  it("the app lib is an rlib only (staticlib/cdylib double every dependency's codegen)", () => {
+    expect(read(path.join(REPO_ROOT, "src-tauri", "Cargo.toml"))).toMatch(
+      /^\s*crate-type\s*=\s*\["rlib"\]\s*$/m,
+    );
+  });
+});
+
 describe("the build scripts follow the target dir into the workspace", () => {
   /**
    * A workspace moves cargo's output from `src-tauri/target/` to the root's
