@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "bun run dev",
-    "beforeBuildCommand": "bun run build"
+    "beforeBuildCommand": "node scripts/build-frontend.mjs"
   },
   "app": {
     "macOSPrivateApi": true,
