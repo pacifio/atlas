@@ -12,7 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import { useLayoutStore, type Tab, type WorkspaceView } from "../stores/layout-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 // Chat is the default landing surface — always loaded so the first paint
@@ -268,18 +268,28 @@ const WorkspaceColumns = memo(function WorkspaceColumns({
   runningTabIds: Set<string>;
 }) {
   const solo = view.groupOrder.length === 1;
+  // Same storage id as before the v4 upgrade, so saved split widths carry over.
+  // v4 dropped `autoSaveId` in favour of this hook; the Group takes the stored
+  // layout as `defaultLayout` and writes back through `onLayoutChanged`.
+  const layoutId = `atlas-center-split-${workspaceId}`;
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: layoutId });
   return (
-    <PanelGroup
-      direction="horizontal"
-      autoSaveId={`atlas-center-split-${workspaceId}`}
+    <Group
+      id={layoutId}
+      orientation="horizontal"
+      defaultLayout={defaultLayout}
+      onLayoutChanged={onLayoutChanged}
       className="h-full bg-bg-surface"
     >
       {view.groupOrder.map((gid, i) => (
         <Fragment key={gid}>
           {i > 0 && (
-            <PanelResizeHandle className="w-px bg-border-default hover:bg-accent data-[resize-handle-active]:bg-accent transition-colors cursor-col-resize" />
+            <Separator className="w-px bg-border-default hover:bg-accent data-[separator=active]:bg-accent transition-colors cursor-col-resize" />
           )}
-          <Panel id={gid} order={i + 1} minSize={20} className="min-w-0">
+          {/* Sizes are percentages: v4 reads bare numbers as PIXELS and
+              unit-less strings as percentages. `order` is gone — panels are
+              ordered by DOM position — but `id` still keys the saved layout. */}
+          <Panel id={gid} minSize="20" className="min-w-0">
             <TabColumn
               groupId={gid}
               view={view}
@@ -290,7 +300,7 @@ const WorkspaceColumns = memo(function WorkspaceColumns({
           </Panel>
         </Fragment>
       ))}
-    </PanelGroup>
+    </Group>
   );
 });
 

@@ -26,12 +26,7 @@ import {
   type DiffSide,
   type DiffRow,
 } from "../lib/git-diff-api";
-import {
-  Panel,
-  PanelGroup,
-  PanelResizeHandle,
-  type ImperativePanelHandle,
-} from "react-resizable-panels";
+import { Group, Panel, Separator, useDefaultLayout, usePanelRef } from "react-resizable-panels";
 import { useGitStore } from "../stores/git-store";
 import { ChangedFilesTree } from "./changed-files-tree";
 import { DiffMinimap } from "./diff-minimap";
@@ -74,6 +69,9 @@ function sideLen(side: DiffSide | null): number {
   for (const s of side.segments) n += s.text.length;
   return n;
 }
+
+// Kept from the v3 `autoSaveId` so existing saved tree widths still load.
+const TREE_LAYOUT_ID = "git-diff-tree";
 
 interface GitDiffPanelProps {
   /** Falls back to the active repo when opened as a standalone module. */
@@ -325,8 +323,10 @@ export function GitDiffPanel({
   const lang = getLanguage(file);
 
   // Collapsible left tree (changed files + commit picker).
-  const treePanelRef = useRef<ImperativePanelHandle>(null);
+  const treePanelRef = usePanelRef();
   const [treeCollapsed, setTreeCollapsed] = useState(false);
+  // v4 replaced `autoSaveId`; same storage id, so saved tree widths carry over.
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: TREE_LAYOUT_ID });
   const toggleTree = () =>
     treeCollapsed ? treePanelRef.current?.expand() : treePanelRef.current?.collapse();
 
@@ -454,22 +454,28 @@ export function GitDiffPanel({
   }, [maxLineLen]);
 
   return (
-    <PanelGroup
-      direction="horizontal"
-      autoSaveId="git-diff-tree"
+    <Group
+      id={TREE_LAYOUT_ID}
+      orientation="horizontal"
+      defaultLayout={defaultLayout}
+      onLayoutChanged={onLayoutChanged}
       className="h-full bg-[var(--bg-primary)]"
     >
       {/* Left: resizable + collapsible tree of changed files (+ commit picker) */}
+      {/* Sizes are percentages: v4 reads bare numbers as PIXELS and unit-less
+          strings as percentages. `onCollapse`/`onExpand` are gone; with a
+          `collapsedSize` of 0 the collapsed state is exactly "zero width", so
+          `onResize` carries the same signal. */}
       <Panel
-        ref={treePanelRef}
+        id="git-diff-tree-files"
+        panelRef={treePanelRef}
         collapsible
-        collapsedSize={0}
-        defaultSize={22}
-        minSize={12}
-        maxSize={45}
+        collapsedSize="0"
+        defaultSize="22"
+        minSize="12"
+        maxSize="45"
         className="min-w-0"
-        onCollapse={() => setTreeCollapsed(true)}
-        onExpand={() => setTreeCollapsed(false)}
+        onResize={(size) => setTreeCollapsed(size.inPixels === 0)}
       >
         <ChangedFilesTree
           repoPath={repoPath}
@@ -481,10 +487,10 @@ export function GitDiffPanel({
           onSelect={onSelectFile}
         />
       </Panel>
-      <PanelResizeHandle className="w-px bg-border-default hover:bg-accent data-[resize-handle-active]:bg-accent transition-colors cursor-col-resize" />
+      <Separator className="w-px bg-border-default hover:bg-accent data-[separator=active]:bg-accent transition-colors cursor-col-resize" />
 
       {/* Main column: toolbar + diff body */}
-      <Panel className="min-w-0">
+      <Panel id="git-diff-tree-diff" className="min-w-0">
         <div className="flex h-full min-w-0 flex-col">
           {/* Toolbar */}
           <div className="flex h-8 shrink-0 items-center gap-2 border-b border-[var(--border-default)] px-3">
@@ -591,6 +597,6 @@ export function GitDiffPanel({
           )}
         </div>
       </Panel>
-    </PanelGroup>
+    </Group>
   );
 }
