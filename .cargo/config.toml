@@ -20,11 +20,19 @@
 # mere presence as "prune every command no capability allows", so it silently
 # changed what the shipped binary exposes.
 #
-# One difference therefore remains and cannot be expressed as config: the CLI
-# invokes cargo as `cargo build --bins --features tauri/custom-protocol
-# --release` from src-tauri/, and that extra feature re-resolves `tauri` and the
-# six tauri-plugin-* crates. A plain `cargo build --release -p atlas` still
-# recompiles those eight crates plus the app. `cargo check`/`cargo test` are
-# unaffected; release builds go through `bun run build:app` (the CLI) only.
+# One difference remains and cannot be expressed as config, because it is a
+# cargo *argument* rather than an env var: the CLI invokes cargo as
+# `cargo build --bins --features tauri/custom-protocol --release`, and that
+# feature re-resolves `tauri` and the six tauri-plugin-* crates. So a plain
+# `cargo build --release -p atlas` recompiles those eight plus the app (16
+# rustc invocations), while
+#
+#   cargo build --release -p atlas --features tauri/custom-protocol
+#
+# is a complete cache hit against `bun run build:app` — 0 rustc invocations,
+# verified 2026-09-04. `custom-protocol` cannot simply become a default
+# feature: it makes tauri serve the embedded assets instead of the dev server,
+# which is why the CLI adds it on release builds only. `cargo check`, `cargo
+# test` and `tauri dev` are unaffected by any of this.
 [env]
 MACOSX_DEPLOYMENT_TARGET = "11.0"
