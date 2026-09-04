@@ -4,6 +4,8 @@ bun.lockb
 
 # Build output
 dist/
+# Staging dir for scripts/build-frontend.mjs (content-aware sync into dist/).
+dist-next/
 target/
 
 # IDE
