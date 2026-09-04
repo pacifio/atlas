@@ -10,12 +10,12 @@ import {
   ChevronRight,
   Copy,
   ExternalLink,
-  Github,
   Loader2,
   Package,
   RefreshCw,
   Trash2,
 } from "lucide-react";
+import { GithubIcon } from "@/components/github-icon";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { cn } from "@/lib/utils";
@@ -579,7 +579,7 @@ function PackManageModal({
             />
             <ModalAction icon={Copy} label="Copy as markdown" onClick={copyMarkdown} />
             <ModalAction
-              icon={Github}
+              icon={GithubIcon}
               label="View on GitHub"
               onClick={() => void openUrl(githubUrl)}
             />

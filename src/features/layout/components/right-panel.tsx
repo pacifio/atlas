@@ -2,7 +2,8 @@ import { lazy, Suspense } from "react";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "../stores/layout-store";
 import { PanelSkeleton } from "@/components/panel-skeleton";
-import { GitCommit, GitCompare, Github } from "lucide-react";
+import { GitCommit, GitCompare } from "lucide-react";
+import { GithubIcon } from "@/components/github-icon";
 
 // All three right-panel sub-panels are lazy so they don't run their first
 // invokes / vendor parses during the boot-cascade window. The user lands
@@ -38,7 +39,7 @@ const CommsPanel = lazy(() =>
 const sections = [
   { id: "changes" as const, label: "Source Control", icon: GitCompare },
   { id: "git-graph" as const, label: "Commit", icon: GitCommit },
-  { id: "github" as const, label: "GitHub", icon: Github },
+  { id: "github" as const, label: "GitHub", icon: GithubIcon },
 ];
 
 export function RightPanel() {

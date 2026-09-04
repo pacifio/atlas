@@ -2,7 +2,8 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { ScrollArea } from "@/ui/scroll-area";
-import { Search, Star, GitFork, ExternalLink, Download, Loader2, Github } from "lucide-react";
+import { Search, Star, GitFork, ExternalLink, Download, Loader2 } from "lucide-react";
+import { GithubIcon } from "@/components/github-icon";
 import { cn } from "@/lib/utils";
 import { logEvent } from "@/features/log/lib/log";
 import type { GithubRepo } from "@/features/github/types";
@@ -105,7 +106,7 @@ export function GithubPanel() {
 
         {!loading && !error && results.length === 0 && !query.trim() && (
           <div className="px-3 py-8 text-center">
-            <Github size={16} className="text-text-tertiary mx-auto mb-2" />
+            <GithubIcon size={16} className="text-text-tertiary mx-auto mb-2" />
             <p className="text-[11px] text-text-tertiary">Search for repositories</p>
           </div>
         )}
