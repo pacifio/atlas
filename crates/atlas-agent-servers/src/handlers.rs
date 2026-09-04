@@ -54,7 +54,9 @@ pub struct ClientContext {
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 // ------------------------------------------------------------------- dispatch
@@ -92,7 +94,11 @@ where
     Res: JsonRpcResponse + Send + 'static,
 {
     fn run(self: Box<Self>, ctx: &ClientContext) {
-        let Self { request, responder, handler } = *self;
+        let Self {
+            request,
+            responder,
+            handler,
+        } = *self;
         handler(request, responder, ctx);
     }
 
@@ -114,7 +120,10 @@ where
     Notif: Send + 'static,
 {
     fn run(self: Box<Self>, ctx: &ClientContext) {
-        let Self { notification, handler } = *self;
+        let Self {
+            notification,
+            handler,
+        } = *self;
         handler(notification, ctx);
     }
 
@@ -140,7 +149,11 @@ pub fn enqueue_request<Req, Res>(
     Req: Send + 'static,
     Res: JsonRpcResponse + Send + 'static,
 {
-    let work: DispatchWork = Box::new(RequestWork { request, responder, handler });
+    let work: DispatchWork = Box::new(RequestWork {
+        request,
+        responder,
+        handler,
+    });
     if let Err(err) = dispatch_tx.send(work) {
         err.0.reject();
     }
@@ -153,7 +166,10 @@ pub fn enqueue_notification<Notif>(
 ) where
     Notif: Send + 'static,
 {
-    let work: DispatchWork = Box::new(NotificationWork { notification, handler });
+    let work: DispatchWork = Box::new(NotificationWork {
+        notification,
+        handler,
+    });
     if let Err(err) = dispatch_tx.send(work) {
         err.0.reject();
     }
@@ -240,7 +256,10 @@ pub fn handle_request_permission(
     // The prompt can be open for as long as the user takes to answer — that
     // wait must not hold the dispatch queue.
     tokio::spawn(async move {
-        match cancellation.run_until_cancelled(async { Ok(waiter.await) }).await {
+        match cancellation
+            .run_until_cancelled(async { Ok(waiter.await) })
+            .await
+        {
             Ok(outcome) => {
                 let _ = responder.respond(acp::RequestPermissionResponse::new(outcome.into()));
             }
@@ -295,7 +314,10 @@ pub fn handle_create_elicitation(
     // is deferred so the queue keeps draining.
     let cancellation = responder.cancellation();
     tokio::spawn(async move {
-        match cancellation.run_until_cancelled(async { Ok(waiter.await) }).await {
+        match cancellation
+            .run_until_cancelled(async { Ok(waiter.await) })
+            .await
+        {
             Ok(response) => {
                 let _ = responder.respond(response);
             }
@@ -444,7 +466,9 @@ fn resolve_within_roots(path: &Path, roots: &[PathBuf]) -> anyhow::Result<PathBu
     // disk — and re-joining the not-yet-existing tail closes both.
     let resolved = canonicalize_deepest_ancestor(&normalize_lexically(path));
     for root in roots {
-        let canon_root = root.canonicalize().unwrap_or_else(|_| normalize_lexically(root));
+        let canon_root = root
+            .canonicalize()
+            .unwrap_or_else(|_| normalize_lexically(root));
         if resolved.starts_with(&canon_root) {
             return Ok(resolved);
         }
@@ -541,7 +565,7 @@ mod fs_bound_tests {
         // the canonical expectation rather than the raw input.
         let expected = root.canonicalize().unwrap().join("notes.md");
         assert_eq!(
-            resolve_within_roots(&target, &[root.clone()]).expect("inside the root"),
+            resolve_within_roots(&target, std::slice::from_ref(&root)).expect("inside the root"),
             expected
         );
         let _ = std::fs::remove_dir_all(&root);
@@ -556,7 +580,8 @@ mod fs_bound_tests {
         let canon = raw.canonicalize().unwrap();
         let expected = canon.join("a.md");
         assert_eq!(
-            resolve_within_roots(&canon.join("a.md"), &[raw.clone()]).expect("raw root"),
+            resolve_within_roots(&canon.join("a.md"), std::slice::from_ref(&raw))
+                .expect("raw root"),
             expected
         );
         assert_eq!(
@@ -577,7 +602,8 @@ mod fs_bound_tests {
         {
             std::os::unix::fs::symlink(&outside, root.join("exit")).expect("plant symlink");
             assert!(
-                resolve_within_roots(&root.join("exit/escape.md"), &[root.clone()]).is_err(),
+                resolve_within_roots(&root.join("exit/escape.md"), std::slice::from_ref(&root))
+                    .is_err(),
                 "write through a planted symlink resolved inside the root"
             );
         }
@@ -589,17 +615,22 @@ mod fs_bound_tests {
     fn a_dot_dot_climb_out_of_the_root_is_rejected() {
         let root = test_root();
         let escape = root.join("../../../../etc/passwd");
-        let err = resolve_within_roots(&escape, &[root.clone()]).expect_err("outside every root");
-        assert!(err.to_string().contains("outside this session's granted directories"));
+        let err = resolve_within_roots(&escape, std::slice::from_ref(&root))
+            .expect_err("outside every root");
+        assert!(err
+            .to_string()
+            .contains("outside this session's granted directories"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn an_unrelated_absolute_path_is_rejected() {
         let root = test_root();
-        let err = resolve_within_roots(Path::new("/etc/passwd"), &[root.clone()])
+        let err = resolve_within_roots(Path::new("/etc/passwd"), std::slice::from_ref(&root))
             .expect_err("outside every root");
-        assert!(err.to_string().contains("outside this session's granted directories"));
+        assert!(err
+            .to_string()
+            .contains("outside this session's granted directories"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -622,10 +653,7 @@ mod fs_bound_tests {
 
 // ------------------------------------------------------------- session/update
 
-pub fn handle_session_notification(
-    notification: acp::SessionNotification,
-    ctx: &ClientContext,
-) {
+pub fn handle_session_notification(notification: acp::SessionNotification, ctx: &ClientContext) {
     let Ok(thread) = ctx.sessions.thread(&notification.session_id) else {
         // Not an error to answer — notifications have no response — but worth
         // saying, because it means an update was dropped.
@@ -641,20 +669,22 @@ pub fn handle_session_notification(
     match &notification.update {
         acp::SessionUpdate::CurrentModeUpdate(update) => {
             let mode_id = update.current_mode_id.clone();
-            ctx.sessions.with_session(&notification.session_id, |session| {
-                if let Some(modes) = &session.session_modes {
-                    lock(modes).current_mode_id = mode_id;
-                }
-            });
+            ctx.sessions
+                .with_session(&notification.session_id, |session| {
+                    if let Some(modes) = &session.session_modes {
+                        lock(modes).current_mode_id = mode_id;
+                    }
+                });
         }
         acp::SessionUpdate::ConfigOptionUpdate(update) => {
             let options = update.config_options.clone();
-            ctx.sessions.with_session(&notification.session_id, |session| {
-                if let Some(config) = &session.config_options {
-                    *lock(&config.config_options) = options;
-                    config.notify();
-                }
-            });
+            ctx.sessions
+                .with_session(&notification.session_id, |session| {
+                    if let Some(config) = &session.config_options {
+                        *lock(&config.config_options) = options;
+                        config.notify();
+                    }
+                });
         }
         _ => {}
     }
@@ -711,7 +741,10 @@ pub fn handle_session_notification(
         if let Some(exit) = meta.and_then(|meta| meta.get("terminal_exit")) {
             if let Some(terminal_id) = exit.get("terminal_id").and_then(|v| v.as_str()) {
                 let mut status = acp::TerminalExitStatus::new();
-                status.exit_code = exit.get("exit_code").and_then(serde_json::Value::as_u64).map(|c| c as u32);
+                status.exit_code = exit
+                    .get("exit_code")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|c| c as u32);
                 status.signal = exit
                     .get("signal")
                     .and_then(|v| v.as_str())
@@ -784,9 +817,7 @@ pub fn handle_create_terminal(
         if let Err(err) = resolve_within_roots(dir, &roots) {
             return respond_err(
                 responder,
-                acp::Error::internal_error().data(format!(
-                    "terminal cwd refused: {err}"
-                )),
+                acp::Error::internal_error().data(format!("terminal cwd refused: {err}")),
             );
         }
     }
@@ -859,12 +890,14 @@ pub fn handle_create_terminal(
 
         // Register-before-respond still holds: the agent cannot name this
         // terminal until the response below hands it the id.
-        let spawned =
-            CommandTerminal::spawn(&command, &cmd_args, &env, cwd.as_deref(), byte_limit);
+        let spawned = CommandTerminal::spawn(&command, &cmd_args, &env, cwd.as_deref(), byte_limit);
         let terminal = match spawned {
             Ok(terminal) => Arc::new(terminal),
             Err(err) => {
-                respond_err(responder, acp::Error::internal_error().data(err.to_string()));
+                respond_err(
+                    responder,
+                    acp::Error::internal_error().data(err.to_string()),
+                );
                 return;
             }
         };
@@ -920,12 +953,16 @@ pub fn follow_terminal_output(
         loop {
             // Nothing left to report to: stop before parking on a command whose
             // output no longer has a reader.
-            let Some(alive) = thread.upgrade() else { return };
+            let Some(alive) = thread.upgrade() else {
+                return;
+            };
             drop(alive);
 
             terminal.output_changed().await;
 
-            let Some(alive) = thread.upgrade() else { return };
+            let Some(alive) = thread.upgrade() else {
+                return;
+            };
             lock(&alive).note_terminal_output(&terminal_id);
             drop(alive);
 
@@ -1021,15 +1058,13 @@ pub fn handle_wait_for_terminal_exit(
         // Display-only: the agent owns the process — it announced this
         // terminal through `terminal_info` meta and reports the exit the same
         // way. There is nothing on our side to await.
-        Ok(None) => {
-            return respond_err(
-                responder,
-                acp::Error::invalid_params().data(format!(
-                    "terminal {} is agent-owned (display-only); its exit arrives as terminal_exit meta",
-                    args.terminal_id
-                )),
-            )
-        }
+        Ok(None) => return respond_err(
+            responder,
+            acp::Error::invalid_params().data(format!(
+                "terminal {} is agent-owned (display-only); its exit arrives as terminal_exit meta",
+                args.terminal_id
+            )),
+        ),
         Err(err) => return respond_err(responder, err),
     };
 
@@ -1043,10 +1078,7 @@ pub fn handle_wait_for_terminal_exit(
             })
             .await;
 
-        respond_result(
-            responder,
-            result.map(acp::WaitForTerminalExitResponse::new),
-        );
+        respond_result(responder, result.map(acp::WaitForTerminalExitResponse::new));
     });
 }
 
@@ -1075,10 +1107,21 @@ mod terminal_gate_tests {
 
     #[test]
     fn preload_class_env_is_denied_and_ordinary_env_is_not() {
-        for denied in ["DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "LD_PRELOAD", "LD_AUDIT"] {
+        for denied in [
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_LIBRARY_PATH",
+            "LD_PRELOAD",
+            "LD_AUDIT",
+        ] {
             assert!(env_is_denied(denied), "{denied} must be dropped");
         }
-        for ok in ["PATH", "HOME", "GIT_TERMINAL_PROMPT", "MY_LD_THING", "BUILD_DYLD"] {
+        for ok in [
+            "PATH",
+            "HOME",
+            "GIT_TERMINAL_PROMPT",
+            "MY_LD_THING",
+            "BUILD_DYLD",
+        ] {
             assert!(!env_is_denied(ok), "{ok} must survive");
         }
     }
@@ -1101,6 +1144,8 @@ mod terminal_gate_tests {
         assert!(outcome_allows(&allow_always));
         assert!(!outcome_allows(&reject));
         assert!(!outcome_allows(&RequestPermissionOutcome::Cancelled));
-        assert!(!outcome_allows(&RequestPermissionOutcome::InterruptedByFollowUp));
+        assert!(!outcome_allows(
+            &RequestPermissionOutcome::InterruptedByFollowUp
+        ));
     }
 }
