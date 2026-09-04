@@ -1,0 +1,16 @@
+# bun auto-installs peer dependencies (`install.peer` defaults to true), and
+# @lobehub/icons declares @lobehub/ui and antd as peers. Nothing in Atlas
+# imports either: `provider-logo.tsx` deep-imports 21 icon components from
+# `@lobehub/icons/es/…` precisely so the package's index — which pulls in the
+# antd-backed `.Avatar` members — never enters the graph.
+#
+# The peers were still installed, for ~170 MB on disk (antd 59 MB,
+# @ant-design 47 MB, @lobehub/fluent-emoji 44 MB, @lobehub/ui 17 MB) that never
+# reaches the bundle. Turning auto-install off keeps them out of the tree, off
+# every fresh `bun install` in CI, and out of the file-watch/scan surface.
+#
+# Anything Atlas genuinely needs is a real dependency in `package.json`, so a
+# peer that stops resolving is a missing dependency to declare, not a reason to
+# turn this back on.
+[install]
+peer = false

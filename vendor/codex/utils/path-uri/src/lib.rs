@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 //! Typed, immutable `file:` URIs with cross-platform path inspection.
 //!
 //! See [`PathUri`] for scheme, normalization, and serialization behavior.
@@ -729,8 +730,10 @@ fn infer_opaque_path_convention(path_bytes: &[u8]) -> Option<PathConvention> {
     }
 
     let mut path_wide = path_bytes
-        .chunks_exact(2)
-        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]));
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&bytes| u16::from_le_bytes(bytes));
     let first = path_wide.next()?;
     let second = path_wide.next()?;
     let has_drive = u8::try_from(first).is_ok_and(|drive| drive.is_ascii_alphabetic())

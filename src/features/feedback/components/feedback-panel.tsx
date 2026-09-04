@@ -1,13 +1,6 @@
 import { useEffect, useRef } from "react";
-import {
-  Camera,
-  Check,
-  EyeOff,
-  Github,
-  MessageCircleQuestion,
-  MessagesSquare,
-  X,
-} from "lucide-react";
+import { Camera, Check, EyeOff, MessageCircleQuestion, MessagesSquare, X } from "lucide-react";
+import { GithubIcon } from "@/components/github-icon";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { AccountAvatar } from "@/features/auth/components/account-avatar";
@@ -293,7 +286,7 @@ export function FeedbackPanel() {
           onClick={() => void openExternal(issueUrl(category, message))}
           className="inline-flex items-center gap-1.5 text-[10px] text-text-tertiary hover:text-text-primary transition-colors cursor-pointer"
         >
-          <Github size={10} />
+          <GithubIcon size={10} />
           Open a GitHub issue
         </button>
         <div className="w-px h-3 bg-white/10" aria-hidden />
