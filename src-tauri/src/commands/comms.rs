@@ -242,7 +242,7 @@ pub fn comms_status(app: AppHandle) -> Result<ConnectionInfoDto, String> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn comms_snapshot(app: AppHandle) -> Result<CommsSnapshot, String> {
     let mgr = manager(&app)?;
     let info = mgr.connection();
@@ -347,7 +347,7 @@ pub fn comms_close_conversation(app: AppHandle, conv_id: String) -> Result<(), S
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn comms_conversation_snapshot(
     app: AppHandle,
     conv_id: String,
@@ -747,6 +747,7 @@ pub async fn comms_save_recording(
     dest: String,
     download_id: String,
 ) -> Result<(), String> {
+    crate::commands::save_guard::guard_save_dest(&dest)?;
     let mgr = manager(&app)?;
     let bytes = mgr
         .download_recording(&url, &download_id)
@@ -883,6 +884,7 @@ pub async fn comms_save_attachment(
     dest: String,
     download_id: String,
 ) -> Result<(), String> {
+    crate::commands::save_guard::guard_save_dest(&dest)?;
     let cached = cache_attachment(&app, &file_id, &filename, Some(&download_id)).await?;
     std::fs::copy(&cached, &dest).map_err(|e| e.to_string())?;
     Ok(())

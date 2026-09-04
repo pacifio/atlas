@@ -1,12 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { createSelectors } from "@/lib/create-selectors";
-import { useExplorerStore } from "@/features/explorer/stores/explorer-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
-import { useGitStore } from "@/features/git/stores/git-store";
-import { useSessionStore } from "./session-store";
-import { useKnowledgeStore } from "@/features/knowledge/stores/knowledge-store";
-import { useKnowledgeMetaStore } from "@/features/knowledge/stores/knowledge-meta-store";
 import { logEvent } from "@/features/log/lib/log";
 import {
   useWorkspaceStore,
@@ -249,22 +244,25 @@ export async function loadProjectStores(path: string): Promise<void> {
   // IPC of the batch. The awaited pair below is the actual critical path:
   // tabs/splits (first paint of the center panel) and the KB meta bind (cheap;
   // the @-/~ mention picker shows raw note-ids without it).
-  void useExplorerStore
-    .getState()
-    .actions.openFolder(path)
+  //
+  // The stores load through `import()` on purpose: this file is in the BOOT
+  // chunk (project hydration runs before first paint), and its static imports
+  // dragged the git/knowledge/session/explorer stores — ~340KB of app code —
+  // into that chunk. Nothing here runs before a project opens, so the chunks
+  // can arrive when a project does. All of them are prefetched by the time a
+  // human clicks anything; the split is for cold boot, not for these calls.
+  void import("@/features/explorer/stores/explorer-store")
+    .then((m) => m.useExplorerStore.getState().actions.openFolder(path))
     .catch((e) => console.error("Explorer failed:", e));
-  void useGitStore
-    .getState()
-    .actions.loadStatus(path)
+  void import("@/features/git/stores/git-store")
+    .then((m) => m.useGitStore.getState().actions.loadStatus(path))
     .catch((e) => console.error("Git failed:", e));
-  void useSessionStore
-    .getState()
-    .actions.loadSession(path)
+  void import("./session-store")
+    .then((m) => m.useSessionStore.getState().actions.loadSession(path))
     .catch((e) => console.error("Session load failed:", e));
   await Promise.all([
-    useKnowledgeMetaStore
-      .getState()
-      .actions.bind(path)
+    import("@/features/knowledge/stores/knowledge-meta-store")
+      .then((m) => m.useKnowledgeMetaStore.getState().actions.bind(path))
       .catch((e) => console.error("Knowledge bind failed:", e)),
     useLayoutStore
       .getState()
@@ -280,9 +278,8 @@ export async function loadProjectStores(path: string): Promise<void> {
   // while still warming the @-/~ mention cache shortly after open. Fire-and-
   // forget; a stale project is harmless (entries are keyed by path).
   const warmEntries = () => {
-    void useKnowledgeStore
-      .getState()
-      .actions.loadEntries(path)
+    void import("@/features/knowledge/stores/knowledge-store")
+      .then((m) => m.useKnowledgeStore.getState().actions.loadEntries(path))
       .catch((e) => console.error("Knowledge entries load failed:", e));
   };
   if (typeof requestIdleCallback === "function") {
@@ -303,7 +300,9 @@ function applySettingsSideEffects(next: AppSettings, previous: AppSettings): voi
   // filter immediately. `refresh()` reconciles the root and every expanded
   // subtree, so the user's expansion state survives.
   if (next.showHiddenFiles !== previous.showHiddenFiles) {
-    void useExplorerStore.getState().actions.refresh();
+    void import("@/features/explorer/stores/explorer-store").then((m) =>
+      m.useExplorerStore.getState().actions.refresh(),
+    );
   }
   if (next.uiScale !== previous.uiScale) applyUiScale(next.uiScale);
   if (next.codeEditorTheme !== previous.codeEditorTheme) applyEditorTheme(next.codeEditorTheme);

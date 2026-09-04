@@ -90,6 +90,18 @@ pub async fn read_file_content(path: String) -> Result<String, String> {
 pub async fn read_file_base64(path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         use base64::Engine;
+        // Sanity ceiling, not a policy: this feeds PDFs and pasted images, so
+        // it has to accept real documents — but a base64 string is 4/3 the
+        // file and every byte crosses IPC and lives in the JS heap. Above
+        // this, the asset protocol is the right transport.
+        const MAX_INLINE_BYTES: u64 = 50 * 1024 * 1024;
+        let meta = fs::metadata(&path).map_err(|e| format!("Failed to read {path}: {e}"))?;
+        if meta.len() > MAX_INLINE_BYTES {
+            return Err(format!(
+                "file is too large to inline ({} MB; 50 MB max)",
+                meta.len() / (1024 * 1024)
+            ));
+        }
         let bytes = fs::read(&path).map_err(|e| format!("Failed to read {path}: {e}"))?;
         Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
     })
@@ -207,17 +219,79 @@ pub async fn is_text_file(path: String) -> Result<bool, String> {
     .map_err(|e| e.to_string())?
 }
 
-/// Grant the asset protocol read access to a project directory (recursive), so
-/// the media viewer can serve images/video/audio from it via `convertFileSrc`.
-/// The static scope (tauri.conf.json) is intentionally narrow ($HOME) rather
-/// than `**`; this adds the open project's tree at runtime so projects on
-/// external volumes (outside $HOME) also work without serving the whole disk.
+/// Grant the asset protocol read access to a directory (recursive), so the
+/// media viewer can serve images/video/audio from it via `convertFileSrc`.
+///
+/// BOUNDED: the old version passed the renderer's string straight to
+/// `allow_directory`, so `asset_allow_dir("/")` made the entire filesystem
+/// readable over `asset://` for the rest of the session. A grant now has to
+/// be either (a) under a known workspace root — the project-open case, external
+/// volumes included — or (b) a *visible* directory under `$HOME` (the
+/// "@-mention a screenshot on the Desktop" case). Hidden directories
+/// (`~/.ssh`, `~/.aws`), `~/Library`, and system roots are refused.
 #[tauri::command]
-pub fn asset_allow_dir(path: String, app: tauri::AppHandle) -> Result<(), String> {
+pub fn asset_allow_dir(
+    path: String,
+    app: tauri::AppHandle,
+    app_state: tauri::State<'_, crate::AppStateHandle>,
+) -> Result<(), String> {
     use tauri::Manager;
+    let requested = std::path::Path::new(&path);
+    if !requested.is_absolute() {
+        return Err("asset grant must be an absolute path".into());
+    }
+    let canonical = requested
+        .canonicalize()
+        .map_err(|e| format!("cannot grant a directory that does not resolve: {e}"))?;
+
+    let workspace_roots: Vec<std::path::PathBuf> = {
+        let state = app_state.lock();
+        state
+            .workspaces
+            .iter()
+            .map(|w| std::path::PathBuf::from(&w.path))
+            .collect()
+    };
+    if !asset_grant_allowed(&canonical, &workspace_roots, dirs::home_dir().as_deref()) {
+        return Err("that directory is outside what the media viewer may serve".into());
+    }
+
     app.asset_protocol_scope()
-        .allow_directory(&path, true)
+        .allow_directory(&canonical, true)
         .map_err(|e| e.to_string())
+}
+
+/// The asset-grant policy, pure so it is testable: a canonical directory may
+/// be granted when it sits under a known workspace root, or when it is a
+/// VISIBLE directory under `$HOME` — hidden dirs (`~/.ssh`), `~/Library`, and
+/// `$HOME` itself are refused, and anything else (system roots, other users)
+/// falls through to refusal.
+fn asset_grant_allowed(
+    canonical: &std::path::Path,
+    workspace_roots: &[std::path::PathBuf],
+    home: Option<&std::path::Path>,
+) -> bool {
+    let under_workspace = workspace_roots.iter().any(|root| {
+        let root = root.canonicalize().unwrap_or_else(|_| root.clone());
+        canonical.starts_with(&root)
+    });
+    if under_workspace {
+        return true;
+    }
+    home.is_some_and(|home| {
+        let Ok(rel) = canonical.strip_prefix(home) else {
+            return false;
+        };
+        match rel.components().next() {
+            // `$HOME` itself would grant every dotfile below it.
+            None => false,
+            Some(std::path::Component::Normal(first)) => {
+                let first = first.to_string_lossy();
+                !first.starts_with('.') && first != "Library"
+            }
+            Some(_) => false,
+        }
+    })
 }
 
 /// File modification time as unix milliseconds (0 if the file is missing).
@@ -581,4 +655,57 @@ fn atlas_pattern_present(contents: &str) -> bool {
         }
         matches!(line, ".atlas" | ".atlas/" | "/.atlas" | "/.atlas/")
     })
+}
+
+#[cfg(test)]
+mod inline_cap_tests {
+    use super::read_file_base64;
+
+    #[tokio::test]
+    async fn the_inline_ceiling_holds() {
+        let dir = std::env::temp_dir().join(format!("atlas-b64-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let small = dir.join("small.pdf");
+        std::fs::write(&small, b"pdf bytes").unwrap();
+        assert!(read_file_base64(small.to_string_lossy().into()).await.is_ok());
+
+        // 51MB: a real document ceiling, not a policy about content.
+        let big = dir.join("big.bin");
+        let f = std::fs::File::create(&big).unwrap();
+        f.set_len(51 * 1024 * 1024).unwrap();
+        let err = read_file_base64(big.to_string_lossy().into()).await.unwrap_err();
+        assert!(err.contains("too large"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod asset_grant_tests {
+    use super::asset_grant_allowed;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_grant_policy_table() {
+        let home = Path::new("/Users/me");
+        let ws = vec![PathBuf::from("/Volumes/ext/project")];
+
+        // Visible home dirs and workspace roots pass.
+        for ok in ["/Users/me/Desktop/shots", "/Users/me/Documents", "/Volumes/ext/project/media"] {
+            assert!(asset_grant_allowed(Path::new(ok), &ws, Some(home)), "{ok}");
+        }
+        // The audit shapes: root grant, hidden dirs, Library, home itself,
+        // system paths, another user's tree.
+        for bad in [
+            "/",
+            "/Users/me",
+            "/Users/me/.ssh",
+            "/Users/me/.aws/credentials",
+            "/Users/me/Library/Keychains",
+            "/etc",
+            "/Users/other/Desktop",
+        ] {
+            assert!(!asset_grant_allowed(Path::new(bad), &ws, Some(home)), "{bad}");
+        }
+    }
 }

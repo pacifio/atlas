@@ -1,3 +1,4 @@
+# Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 [package]
 name = "codex-feedback"
 version.workspace = true
@@ -12,7 +13,7 @@ anyhow = { workspace = true }
 codex-login = { workspace = true }
 codex-protocol = { workspace = true }
 mime_guess = { workspace = true }
-sentry = { version = "0.46" }
+sentry-types = { version = "0.46" }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 

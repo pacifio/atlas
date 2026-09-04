@@ -87,6 +87,7 @@ export type CommsEvent =
       discoverable: ChatConversation[];
     }
   | { kind: "readsChanged"; reads: ChatReadState[] }
+  | { kind: "readChanged"; read: ChatReadState }
   | { kind: "presence"; online: string[] }
   | { kind: "typing"; conv_id: string; user_id: string; at_ms: number }
   | { kind: "reactionsChanged"; message_id: string; rows: ChatReaction[] }

@@ -3,6 +3,7 @@ pub mod agent_host;
 pub mod agent_analytics;
 pub mod agent_memory;
 pub mod auth;
+pub mod save_guard;
 pub mod agent_transcript;
 pub mod agents;
 pub mod app_state;

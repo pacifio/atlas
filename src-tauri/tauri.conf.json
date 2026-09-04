@@ -23,24 +23,35 @@
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "acceptFirstMouse": true,
-        "backgroundColor": [0, 0, 0, 255]
+        "backgroundColor": [
+          0,
+          0,
+          0,
+          255
+        ]
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost https://www.gravatar.com; media-src 'self' blob: asset: http://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost blob: data: https://us.i.posthog.com; worker-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'",
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["$HOME/**"],
+          "allow": [
+            "$HOME/**"
+          ],
           "deny": []
         }
-      }
+      },
+      "devCsp": "default-src 'self'; script-src 'self' http://localhost:1420 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost https://www.gravatar.com; media-src 'self' blob: asset: http://asset.localhost; font-src 'self' data:; connect-src 'self' ws://localhost:1420 http://localhost:1420 ipc: http://ipc.localhost asset: http://asset.localhost blob: data: https://us.i.posthog.com; worker-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'"
     }
   },
   "plugins": {},
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "resources": {
       "resources/nvm.sh": "resources/nvm.sh",
       "../LICENSE": "licenses/Atlas-LICENSE.txt",
@@ -48,7 +59,7 @@
       "../vendor/codex/NOTICE": "licenses/OpenAI-Codex-NOTICE.txt"
     },
     "category": "DeveloperTool",
-    "shortDescription": "Atlas — agent-first ideation and planning tool",
+    "shortDescription": "Atlas \u2014 agent-first ideation and planning tool",
     "longDescription": "Atlas is a Tauri-based desktop app that hosts ACP-compatible coding agents (Claude Code, Codex, OpenCode) with first-class file, knowledge, and research integration.",
     "copyright": "https://tryatlas.cc/ Report bugs to Github: https://github.com/pacifio/atlas/issues/",
     "icon": [

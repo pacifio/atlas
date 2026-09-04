@@ -15,7 +15,7 @@ import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store"
  * still belonged to the outgoing one, so a bind landing mid-switch created the
  * session with the WRONG cwd and filed its history row under the wrong project.
  */
-export function workspaceIdForTab(tabId: string): string | null {
+function workspaceIdForTab(tabId: string): string | null {
   const layout = useLayoutStore.getState();
   const ws = useWorkspaceStore.getState();
   if (layout.tabs.some((t) => t.id === tabId)) {

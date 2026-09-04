@@ -355,7 +355,7 @@ pub struct ScannedFile {
     pub exists: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn byok_profile_info() -> ProfileInfo {
     let shell = user_shell();
     let home = home_dir().unwrap_or_default();
@@ -430,7 +430,7 @@ pub fn byok_env_entries(app: AppHandle) -> Vec<EnvEntry> {
 
 /// Reveal one key's full value, for the editor's show/copy affordance. Kept off
 /// [`byok_env_entries`] so a list render never ships every secret to the webview.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn byok_env_reveal(app: AppHandle, env_var: String) -> Option<String> {
     ensure_shell_probe(&app);
     if let Some((_, a)) = locate_in_profiles(&env_var) {
@@ -458,7 +458,16 @@ fn backup_once(path: &Path) {
         return;
     }
     if path.exists() {
-        let _ = fs::copy(path, path.with_extension("atlas-backup"));
+        let backup = path.with_extension("atlas-backup");
+        let _ = fs::copy(path, &backup);
+        // The backup is a second plaintext copy of every exported key —
+        // fs::copy inherits the profile's mode, which shells commonly leave
+        // at 0644. Owner-only, same as the session file.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&backup, fs::Permissions::from_mode(0o600));
+        }
     }
 }
 
@@ -510,7 +519,7 @@ fn apply_live(app: &AppHandle, var: &str, value: Option<&str>) {
 ///
 /// Rewrites the assignment where it already lives; otherwise appends it to the
 /// shell's primary rc file under a marked block.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn byok_env_set(app: AppHandle, env_var: String, value: String) -> Result<String, String> {
     let value = value.trim().to_string();
     if value.is_empty() {
@@ -541,7 +550,7 @@ pub fn byok_env_set(app: AppHandle, env_var: String, value: String) -> Result<St
 }
 
 /// Remove a key's assignment from the profile that defines it.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn byok_env_unset(app: AppHandle, env_var: String) -> Result<(), String> {
     let Some((path, _)) = locate_in_profiles(&env_var) else {
         // Live-env-only: nothing of ours to delete, and we will not guess.
@@ -560,7 +569,9 @@ pub fn byok_env_unset(app: AppHandle, env_var: String) -> Result<(), String> {
 
 /// A provider's key, for the in-process BYOK consumers (Rig model calls, memory
 /// summarisation, the code-index Tier-2 pass). `None` if unset.
-#[tauri::command]
+// NOT a command any more: internal callers only (modelchat.rs). It returns
+// a plaintext provider key and nothing in the renderer ever invoked it — an
+// unused IPC door to secrets is pure attack surface.
 pub fn byok_get(_app: AppHandle, provider: String) -> Result<Option<String>, String> {
     Ok(env_keys().get(&provider).map(|k| k.key.clone()))
 }

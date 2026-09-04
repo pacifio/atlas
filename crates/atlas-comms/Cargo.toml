@@ -8,7 +8,7 @@ description = "Team chat against the `atlas-chat` API: one WebSocket per active 
 name = "atlas_comms"
 
 [dependencies]
-tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "macros", "fs", "io-util"] }
 # The workspace pin, which resolves to the openai-oss-forks 0.28 fork already in
 # the graph via the vendored Codex engine — rustls, and no new resolution. The
 # lockfile also holds a 0.29 from `axum`; declaring a version inline here would

@@ -87,6 +87,11 @@ struct Inner {
     uploaded: Mutex<HashMap<String, crate::wire::Attachment>>,
     /// True while a bulk transition is running: granular emission is off.
     quiet: AtomicBool,
+    /// Whether anything actually changed while `quiet` was set. A reconnect
+    /// whose replay carried zero frames used to end in the same full
+    /// `Resync` → renderer-rehydrate as a five-thousand-frame one; this is
+    /// what lets the empty case settle with two small events instead.
+    quiet_dirty: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -121,6 +126,7 @@ impl CommsManager {
                 cancelled_uploads: Mutex::new(HashSet::new()),
                 uploaded: Mutex::new(HashMap::new()),
                 quiet: AtomicBool::new(false),
+                quiet_dirty: AtomicBool::new(false),
             }),
         }
     }
@@ -339,6 +345,7 @@ impl CommsManager {
 
         // The replay between `hello` and `resumed` is applied quietly.
         self.inner.quiet.store(true, Ordering::SeqCst);
+        self.inner.quiet_dirty.store(false, Ordering::SeqCst);
 
         let exit = loop {
             let Some(event) = ev_rx.recv().await else {
@@ -406,7 +413,15 @@ impl CommsManager {
                         .lock()
                         .unwrap()
                         .set_watermark(&target.org_id, through);
-                    // The replay is over: one repaint, then granular events.
+                    // The replay is over. If it (or the hello before it)
+                    // changed anything, one repaint and then granular events —
+                    // but the COMMON reconnect replays nothing, and answering
+                    // that with a Resync made every wobble of the link cost a
+                    // full snapshot + per-tab window re-read in the renderer.
+                    // The quiet window still refreshed reads and presence from
+                    // the hello (they are snapshot-only on the wire), so the
+                    // clean path forwards exactly those two, which are small.
+                    let dirty = self.inner.quiet_dirty.swap(false, Ordering::SeqCst);
                     self.inner.quiet.store(false, Ordering::SeqCst);
                     self.resend_unacked(out_tx);
                     self.bump_epoch();
@@ -415,7 +430,19 @@ impl CommsManager {
                         None,
                         Some(target.org_id.clone()),
                     );
-                    self.emit(CommsEvent::Resync);
+                    if dirty {
+                        self.emit(CommsEvent::Resync);
+                    } else {
+                        let (reads, online) = {
+                            let state = self.inner.state.lock().unwrap();
+                            (
+                                state.reads.values().cloned().collect::<Vec<_>>(),
+                                state.online.clone(),
+                            )
+                        };
+                        self.emit(CommsEvent::ReadsChanged { reads });
+                        self.emit(CommsEvent::Presence { online });
+                    }
                     self.persist_snapshot();
                 }
                 StateDelta::Hello => {
@@ -445,6 +472,7 @@ impl CommsManager {
     ) {
         tracing::info!(target: "atlas_comms", "cold sync from {snapshot_from}");
         self.inner.quiet.store(true, Ordering::SeqCst);
+        self.inner.quiet_dirty.store(false, Ordering::SeqCst);
 
         // `hello` already restated the lists, but refetching closes the race
         // and is cheap.
@@ -915,7 +943,12 @@ impl CommsManager {
                 self.emit_upload(upload_id, 0, size, "failed", Some(e.to_string()));
             })?;
 
-        let mut file = std::fs::File::open(path).map_err(|e| CommsError::Store(e.to_string()))?;
+        // tokio::fs, not std: each part read is up to 32 MiB off disk, and a
+        // blocking read inside this async fn parks a runtime worker for its
+        // whole duration (tokio::fs routes through spawn_blocking internally).
+        let mut file = tokio::fs::File::open(path)
+            .await
+            .map_err(|e| CommsError::Store(e.to_string()))?;
         let mut parts: Vec<crate::rest::UploadedPart> = Vec::new();
         let mut sent: u64 = 0;
 
@@ -930,7 +963,9 @@ impl CommsManager {
             // whatever remains, which `read` gives us by hitting EOF.
             let want = intent.part_bytes.min(size - sent) as usize;
             let mut buf = vec![0u8; want];
-            read_exact_or_eof(&mut file, &mut buf).map_err(|e| CommsError::Store(e.to_string()))?;
+            read_exact_or_eof(&mut file, &mut buf)
+                .await
+                .map_err(|e| CommsError::Store(e.to_string()))?;
 
             let uploaded = match self
                 .inner
@@ -1211,6 +1246,14 @@ impl CommsManager {
     fn emit_delta(&self, delta: StateDelta) {
         // Bulk transitions apply silently and announce themselves once.
         if self.inner.quiet.load(Ordering::SeqCst) {
+            // `Hello` fires on EVERY connect and is a restatement, not a
+            // change: journaled history arrives as replay frames (which do
+            // mark dirty), and the ephemeral snapshot it carries (reads,
+            // presence) is exactly what the clean-reconnect path forwards.
+            // Counting it would make every reconnect look dirty.
+            if !matches!(delta, StateDelta::Hello) {
+                self.inner.quiet_dirty.store(true, Ordering::SeqCst);
+            }
             return;
         }
         let state = self.inner.state.lock().unwrap();
@@ -1240,9 +1283,10 @@ impl CommsManager {
                 conversations: state.conversations.clone(),
                 discoverable: state.discoverable.clone(),
             }),
-            StateDelta::ReadsChanged { .. } => Some(CommsEvent::ReadsChanged {
-                reads: state.reads.values().cloned().collect(),
-            }),
+            StateDelta::ReadsChanged { conv_id } => state
+                .reads
+                .get(&conv_id)
+                .map(|read| CommsEvent::ReadChanged { read: read.clone() }),
             StateDelta::Presence => Some(CommsEvent::Presence {
                 online: state.online.clone(),
             }),
@@ -1380,11 +1424,14 @@ fn backoff_ms(attempt: u32) -> u64 {
 }
 
 /// Fill `buf`, tolerating a short final read at EOF.
-fn read_exact_or_eof(file: &mut std::fs::File, buf: &mut Vec<u8>) -> std::io::Result<()> {
-    use std::io::Read;
+async fn read_exact_or_eof(
+    file: &mut tokio::fs::File,
+    buf: &mut Vec<u8>,
+) -> std::io::Result<()> {
+    use tokio::io::AsyncReadExt;
     let mut filled = 0;
     while filled < buf.len() {
-        let n = file.read(&mut buf[filled..])?;
+        let n = file.read(&mut buf[filled..]).await?;
         if n == 0 {
             buf.truncate(filled);
             break;
@@ -1471,6 +1518,69 @@ mod tests {
     /// never advances the watermark — looked like a loaded transcript and
     /// suppressed the fetch. The channel then rendered exactly that one
     /// message after a restart.
+    /// One read receipt must ship one row. The bulk `ReadsChanged` used to
+    /// carry the WHOLE read table per `read.updated` frame — the
+    /// highest-frequency serialization in an active org.
+    #[tokio::test]
+    async fn a_read_delta_emits_a_single_row_event() {
+        let store = CommsStore::open_in_memory().expect("store");
+        let mgr = CommsManager::new(store, std::sync::Arc::new(NoToken));
+        mgr.set_target(Some(OrgTarget {
+            org_id: "org_a".into(),
+        }));
+        {
+            let mut state = mgr.inner.state.lock().unwrap();
+            for conv in ["c1", "c2", "c3"] {
+                state.reads.insert(
+                    conv.to_string(),
+                    crate::wire::ReadState {
+                        conv_id: conv.to_string(),
+                        last_read_seq: 1,
+                        unread: 2,
+                        mentions: 0,
+                    },
+                );
+            }
+        }
+        let mut rx = mgr.subscribe();
+        mgr.emit_delta(StateDelta::ReadsChanged {
+            conv_id: "c2".into(),
+        });
+        match rx.try_recv().expect("one event").ev {
+            CommsEvent::ReadChanged { read } => assert_eq!(read.conv_id, "c2"),
+            other => panic!("expected the single-row event, got {other:?}"),
+        }
+    }
+
+    /// The quiet window's dirty bit: replay frames set it, `Hello` — which
+    /// fires on EVERY connect and is a restatement — must not, or every clean
+    /// reconnect would still cost the renderer a full re-hydrate.
+    #[tokio::test]
+    async fn hello_alone_does_not_dirty_a_quiet_window() {
+        let store = CommsStore::open_in_memory().expect("store");
+        let mgr = CommsManager::new(store, std::sync::Arc::new(NoToken));
+        mgr.set_target(Some(OrgTarget {
+            org_id: "org_a".into(),
+        }));
+        mgr.inner.quiet.store(true, Ordering::SeqCst);
+        mgr.inner.quiet_dirty.store(false, Ordering::SeqCst);
+
+        mgr.emit_delta(StateDelta::Hello);
+        assert!(
+            !mgr.inner.quiet_dirty.load(Ordering::SeqCst),
+            "a restatement must not look like history"
+        );
+
+        mgr.emit_delta(StateDelta::MessageAppended {
+            conv_id: "c1".into(),
+            id: "m1".into(),
+        });
+        assert!(
+            mgr.inner.quiet_dirty.load(Ordering::SeqCst),
+            "a real replay frame must mark the window dirty"
+        );
+    }
+
     /// REST call history merges ADDITIVELY: a row the socket already
     /// delivered is never overwritten by a page fetched before the frame, and
     /// only genuinely new calls are announced.

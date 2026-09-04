@@ -177,9 +177,16 @@ exclude = [
 # `openai/codex` @ 42b5f05 with `target/` excluded; upstream's LICENSE and
 # NOTICE travel with the code in `vendor/codex/`, as Apache-2.0 §4 requires.
 #
-# **Quarantined.** These compile as workspace members and NOTHING that ships
-# depends on them. `tests/codex-quarantine.test.ts` is what keeps that true —
-# the compiler cannot, because "unused member" is not an error.
+# **"Quarantined" here means the phone-home PATHS are severed, not that the
+# crates are unused** — the Sep-03 audit misread the old wording exactly that
+# way, so say it precisely: 104 of these 110 members ARE in the shipping
+# binary's closure. What does not ship is their telemetry: `codex-analytics`
+# had its destination, POST and capture sink removed (#43, spec D2; the local
+# fact-reducer stays for its 79 tests), `codex-otel` defaults to
+# `exporter: None` (upstream defaulted to a hardcoded Statsig endpoint), and
+# `codex-feedback`'s uploader is gone — its `sentry` dep is now `sentry-types`
+# for one test-only attachment builder. `tests/codex-quarantine.test.ts`
+# documents which crates the containment rules cover.
 #
 # Closure size, because it is not the number the spec quotes: the Port
 # Inventory's "77 crates, 63 droppable" is the closure of `codex-core`. D1
@@ -449,6 +456,12 @@ rcgen = { version = "0.14.7", default-features = false, features = [
 regex = "1.12.3"
 regex-lite = "0.1.8"
 reqwest = { version = "0.12", features = ["cookies"] }
+# NOTE (Sep-03 audit): rmcp, rig-core and posthog-rs are the three crates
+# holding a second reqwest (0.13) tower in the lock, duplicating hyper/h2/
+# http/tower behind it. The collapse runs FORWARD, not back: all three have
+# 0.13 as their floor in every current release, so unification means moving
+# the app AND the vendored engine to 0.13 — an upstream-sync-sized change,
+# not a pin. Left as-is deliberately.
 rmcp = { version = "=3.0.0", default-features = false }
 runfiles = { git = "https://github.com/dzbarsky/rules_rust", rev = "b56cbaa8465e74127f1ea216f813cd377295ad81" }
 rustix = { version = "1.1.4", features = ["net"] }
@@ -461,7 +474,11 @@ rustls-pki-types = "1.14.0"
 schemars = "0.8.22"
 seccompiler = "0.5.0"
 semver = "1.0"
-sentry = "0.46.0"
+# Types only. The full `sentry` client (transport, panic hooks, its own HTTP
+# stack) was pulled for ONE dead function's `protocol::Attachment` structs —
+# feedback's uploader was removed with the rest of the phone-home paths (#43)
+# and only its tests still build attachments.
+sentry-types = "0.46.0"
 serde = { version = "1", features = ["rc"] }
 serde_ignored = "0.1.14"
 serde_json = "1"

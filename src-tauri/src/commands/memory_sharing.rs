@@ -204,7 +204,7 @@ pub fn memory_sharing_get(
     Ok(state.is_enabled(&project_path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn memory_sharing_set(
     project_path: String,
     enabled: bool,
@@ -222,7 +222,7 @@ pub fn memory_summarizer_get(project_path: String) -> Result<SummarizerPref, Str
     Ok(read_summarizer_pref(&project_path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn memory_summarizer_set(project_path: String, pref: SummarizerPref) -> Result<(), String> {
     let payload = serde_json::to_string_pretty(&pref).map_err(|e| e.to_string())?;
     atomic_write(&summarizer_path(&project_path), &payload)?;

@@ -205,11 +205,40 @@ export function captureClientError(error: unknown, context: Record<string, unkno
   // Drop known-benign, non-actionable noise before it hits PostHog quota.
   if (isIgnoredError(error)) return;
   try {
-    const err = error instanceof Error ? error : new Error(safeString(error));
+    const raw = error instanceof Error ? error : new Error(safeString(error));
+    // TELEMETRY.md's rule is "never send user content" — but a rejected
+    // invoke's message routinely interpolates whatever the command touched:
+    // absolute home paths, repo names, note ids, raw git/cargo stderr. Scrub
+    // to shapes (paths → placeholders) rather than trusting each of ~365
+    // command error strings to be clean, and cap the length so a stderr dump
+    // cannot ride along.
+    const err = new Error(scrubMessage(raw.message));
+    err.name = raw.name;
+    if (raw.stack) err.stack = scrubMessage(raw.stack);
     posthog.captureException(err, { $lib: "atlas-js", ...context });
   } catch {
     /* never throw into the app */
   }
+}
+
+/** Collapse identifying strings to their SHAPE. Order matters: home first.
+ *  Exported for its test only. */
+export function scrubMessage(text: string): string {
+  return (
+    text
+      // Home directories, any user: `/Users/x/…` (mac), `/home/x/…` (linux).
+      .replace(/\/(?:Users|home)\/[^/\s]+/g, "~")
+      // Anything path-like that survives — keep the extension, drop the rest.
+      .replace(/(?:~|\/)[\w.@-]+(?:\/[\w.@\-\u00C0-\uFFFF]+)+/g, (m) => {
+        // Extension from the LEAF only \u2014 a dot in a middle segment is not one.
+        const leaf = m.slice(m.lastIndexOf("/") + 1);
+        const ext = leaf.includes(".") ? leaf.slice(leaf.lastIndexOf(".")) : "";
+        return `<path${ext}>`;
+      })
+      // Bearer-ish tokens, defense in depth.
+      .replace(/\b(?:ey[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9-]{20,})\b/g, "<token>")
+      .slice(0, 600)
+  );
 }
 
 function safeString(value: unknown): string {

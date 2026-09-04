@@ -98,6 +98,31 @@ fn walk_knowledge(dir: &Path, root: &Path, entries: &mut Vec<KnowledgeEntry>) {
     }
 }
 
+/// A renderer-supplied path fragment, held inside the knowledge root.
+///
+/// Nested ids ("Adib/note-123") are legitimate, so `/` is allowed — what is
+/// not is anything that climbs or escapes: absolute paths, `..` anywhere,
+/// backslashes, or empty input. Every KB command that joins renderer input
+/// under `.atlas/knowledge` goes through here; before it, `id =
+/// "../../../../.zshrc"` was an arbitrary write and `cover =
+/// "../../../.ssh/id_rsa"` an arbitrary read handed back as a data URL.
+/// Same rule as `log.rs::org_log_dir`, extended for nesting.
+fn kb_rel(fragment: &str) -> Result<&str, String> {
+    let f = fragment;
+    // No trimming: `"/etc/passwd".trim_matches('/')` would come out RELATIVE
+    // and sail through — an absolute path is rejected, not laundered.
+    if f.is_empty()
+        || f.contains('\\')
+        || Path::new(f).is_absolute()
+        || Path::new(f)
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err("invalid knowledge path".to_string());
+    }
+    Ok(f)
+}
+
 /// Save a knowledge note (supports nested paths like "Adib/note-123")
 #[tauri::command]
 pub async fn save_knowledge_note(
@@ -105,6 +130,7 @@ pub async fn save_knowledge_note(
     id: String,
     content: String,
 ) -> Result<String, String> {
+    let id = kb_rel(&id)?.to_string();
     tokio::task::spawn_blocking(move || {
         let kb_dir = Path::new(&project_path).join(".atlas").join("knowledge");
         let filepath = kb_dir.join(format!("{id}.md"));
@@ -209,6 +235,7 @@ pub async fn delete_knowledge_note(
     project_path: String,
     id: String,
 ) -> Result<(), String> {
+    let id = kb_rel(&id)?.to_string();
     tokio::task::spawn_blocking(move || {
         let filepath = Path::new(&project_path)
             .join(".atlas")
@@ -226,6 +253,7 @@ pub async fn delete_knowledge_note(
 /// Create a directory inside .atlas/knowledge/
 #[tauri::command]
 pub async fn create_knowledge_dir(project_path: String, dir_name: String) -> Result<(), String> {
+    let dir_name = kb_rel(&dir_name)?.to_string();
     tokio::task::spawn_blocking(move || {
         let dir = Path::new(&project_path)
             .join(".atlas")
@@ -260,6 +288,13 @@ pub async fn knowledge_cover_upload(
         // Flatten the entry id so a nested note (`folder/note-123`) still
         // gets a flat filename safe for the covers directory.
         let safe_name = entry_id.replace('/', "__");
+        if !safe_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ' '))
+            || safe_name.contains("..")
+        {
+            return Err("invalid entry id".to_string());
+        }
         let rel = format!("covers/{safe_name}.{ext}");
         let dest = Path::new(&project_path)
             .join(".atlas")
@@ -290,11 +325,21 @@ pub async fn knowledge_cover_data_url(
     if cover.starts_with("gradient:") {
         return Ok(cover);
     }
+    let cover = kb_rel(&cover)?.to_string();
     tokio::task::spawn_blocking(move || {
+        // Cap before reading into a data URL: a 6MB PNG becomes an 8MB JS
+        // string crossing IPC, retained in the store, and re-serialized into
+        // any snapshot that captures it. Covers are decorative; 2MiB is
+        // generous.
+        const MAX_COVER_BYTES: u64 = 2 * 1024 * 1024;
         let abs = Path::new(&project_path)
             .join(".atlas")
             .join("knowledge")
             .join(&cover);
+        let meta = fs::metadata(&abs).map_err(|e| e.to_string())?;
+        if meta.len() > MAX_COVER_BYTES {
+            return Err("cover image is too large to inline (2MB max)".to_string());
+        }
         let bytes = fs::read(&abs).map_err(|e| e.to_string())?;
         let mime = match abs
             .extension()
@@ -385,17 +430,111 @@ pub async fn load_editor_state(project_path: String) -> Result<String, String> {
 }
 
 /// Fetch a URL and return text-only sanitized HTML (no media, no external CSS)
+/// Refuse URLs that reach anything other than a public web host.
+///
+/// This command fetches an arbitrary renderer-supplied URL and hands the
+/// body back — without this check that is a free read of loopback services,
+/// the cloud metadata endpoint (169.254.169.254) and anything on the LAN.
+/// Scheme must be http(s); the host must not be loopback, link-local,
+/// RFC1918-private, or unique-local. Hostnames are resolved and every
+/// address is held to the same rule — a DNS name pointing at 127.0.0.1 is
+/// exactly the bypass this exists to stop.
+async fn assert_public_http_url(url: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| format!("Bad URL: {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("only http(s) URLs can be fetched".into());
+    }
+    let Some(host) = parsed.host() else {
+        return Err("URL has no host".into());
+    };
+    let addrs: Vec<std::net::IpAddr> = match host {
+        url::Host::Ipv4(ip) => vec![ip.into()],
+        url::Host::Ipv6(ip) => vec![ip.into()],
+        url::Host::Domain(name) => {
+            let port = parsed.port_or_known_default().unwrap_or(443);
+            tokio::net::lookup_host((name, port))
+                .await
+                .map_err(|e| format!("Could not resolve {name}: {e}"))?
+                .map(|sa| sa.ip())
+                .collect()
+        }
+    };
+    if addrs.is_empty() {
+        return Err("host resolved to no addresses".into());
+    }
+    for ip in addrs {
+        if !ip_is_public(&ip) {
+            return Err("that address is not reachable from here".into());
+        }
+    }
+    Ok(())
+}
+
+fn ip_is_public(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                // CGNAT 100.64/10 — Tailscale et al. live here.
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64))
+        }
+        std::net::IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return ip_is_public(&std::net::IpAddr::V4(mapped));
+            }
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                // fe80::/10 link-local, fc00::/7 unique-local.
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || (v6.segments()[0] & 0xfe00) == 0xfc00)
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn fetch_readable(url: String) -> Result<ReadableContent, String> {
+    assert_public_http_url(&url).await?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-        .redirect(reqwest::redirect::Policy::limited(10))
+        // No automatic redirects: each hop is re-checked, or a public host
+        // could 302 straight into 169.254.169.254.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap_or_default();
 
-    let response = client.get(&url).send().await
-        .map_err(|e| format!("Fetch failed: {e}"))?;
+    let mut current = url.clone();
+    let mut response = None;
+    for _ in 0..10 {
+        let resp = client
+            .get(&current)
+            .send()
+            .await
+            .map_err(|e| format!("Fetch failed: {e}"))?;
+        if resp.status().is_redirection() {
+            let Some(loc) = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+            else {
+                return Err("redirect with no destination".into());
+            };
+            // Relative redirects resolve against the current URL.
+            let next = reqwest::Url::parse(&current)
+                .and_then(|b| b.join(loc))
+                .map_err(|e| format!("Bad redirect: {e}"))?
+                .to_string();
+            assert_public_http_url(&next).await?;
+            current = next;
+            continue;
+        }
+        response = Some(resp);
+        break;
+    }
+    let response = response.ok_or_else(|| "too many redirects".to_string())?;
 
     let final_url = response.url().to_string();
     let html = response.text().await
@@ -426,273 +565,40 @@ fn extract_html_title(html: &str) -> Option<String> {
     Some(html[gt..end].trim().to_string())
 }
 
-fn strip_style_attributes(html: &str) -> String {
-    // Use regex-like find/replace on the string level (safe for multi-byte UTF-8)
-    let mut result = html.to_string();
-    loop {
-        let lower = result.to_lowercase();
-        // Find style=" or style='
-        let pos = if let Some(p) = lower.find("style=\"") {
-            Some((p, '"', 7))
-        } else { lower.find("style='").map(|p| (p, '\'', 7)) };
-
-        if let Some((start, quote, offset)) = pos {
-            if let Some(end) = result[start + offset..].find(quote) {
-                // Remove style="..." including trailing space
-                let remove_end = start + offset + end + 1;
-                let remove_end = if result.as_bytes().get(remove_end) == Some(&b' ') { remove_end + 1 } else { remove_end };
-                result = format!("{}{}", &result[..start], &result[remove_end..]);
-                continue;
-            }
-        }
-        break;
-    }
-    result
-}
-
 /// Sanitize HTML: remove dangerous tags, media, styles. Resolve link URLs. Text-only content.
 fn sanitize_html(html: &str, base_url: &str) -> String {
     let lower = html.to_lowercase();
-
     let body = find_body(html, &lower).unwrap_or_else(|| html.to_string());
 
-    // Remove: scripts, styles, media, interactive, nav chrome
-    let cleaned = remove_tags(&body, &[
-        "script", "style", "noscript", "iframe", "object", "embed", "form",
-        "img", "video", "audio", "picture", "figure", "canvas", "svg",
-        "nav", "footer", "aside", "dialog", "template",
-    ]);
+    // An ALLOWLIST parser, not our former string-level denylist. The denylist
+    // kept losing: <meta http-equiv=refresh>, <base href>, <link stylesheet>,
+    // unquoted `javascript:` hrefs and `</script >` all survived one revision
+    // or another, and the output lands in the MAIN webview via
+    // dangerouslySetInnerHTML. ammonia parses with html5ever (same engine as
+    // the renderer class), keeps only what is named here, resolves relative
+    // links against the page URL, and rejects every scheme but the two named.
+    use std::collections::HashSet;
+    let tags: HashSet<&str> = [
+        "a", "abbr", "b", "blockquote", "br", "code", "dd", "del", "details",
+        "div", "dl", "dt", "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr",
+        "i", "ins", "kbd", "li", "main", "mark", "ol", "p", "pre", "q", "s",
+        "section", "small", "span", "strong", "sub", "summary", "sup",
+        "table", "tbody", "td", "tfoot", "th", "thead", "time", "tr", "u",
+        "ul",
+    ]
+    .into();
 
-    // Strip inline event handlers (onclick, onerror, onload, ...). The tags
-    // above are gone, but a surviving element such as <p onclick="..."> still
-    // runs script in the main webview — CSP is null (tauri.conf.json), so
-    // nothing else downstream of this function stops it.
-    let no_handlers = strip_event_handler_attributes(&cleaned);
-
-    // Resolve relative URLs in href attributes so links work
-    let base = base_url.trim_end_matches(|c: char| c != '/').to_string();
-    let origin = extract_origin(base_url);
-    let resolved = resolve_urls(&no_handlers, &base, &origin);
-
-    // Strip all inline style attributes
-    strip_style_attributes(&resolved)
-}
-
-/// Strip every `on*` event-handler attribute (`onclick`, `onerror`, `onload`,
-/// …) — inline-JS surface that `remove_tags`/`strip_style_attributes` do not
-/// touch. Matched by the `on` prefix rather than an enumerated list of names:
-/// browsers keep adding handler names, and any fixed list is a standing
-/// bypass waiting for the next one. Handles quoted (`"..."`/`'...'`) and bare
-/// unquoted values (`onclick=alert(1)` is tolerated, sloppy-but-valid, HTML
-/// and still executes).
-///
-/// String-level, like `strip_style_attributes` above (no HTML parser in this
-/// file) — safe on multi-byte UTF-8 since the copy path advances by whole
-/// `char`s, not bytes.
-fn strip_event_handler_attributes(html: &str) -> String {
-    let bytes = html.as_bytes();
-    let mut result = String::with_capacity(html.len());
-    let mut i = 0;
-    // An attribute only exists INSIDE a tag. Without this the same scan runs
-    // over text nodes, where any word starting with `on` followed by `=` looks
-    // like a handler: `<p>let one = 1;</p>` lost its text *and* its closing
-    // tag (the unquoted-value branch runs to the next `>`), and
-    // `href="…/?online=true"` was eaten past its closing quote. Over-stripping
-    // is not a security hole, but mangling captured pages is a real one for
-    // the reader, so the scan is scoped to where attributes can occur.
-    let mut in_tag = false;
-    // Quote state within the current tag, so a `>` inside an attribute value
-    // (`<a title="a > b">`) does not end the tag early.
-    let mut quote: Option<u8> = None;
-
-    while i < bytes.len() {
-        let byte = bytes[i];
-
-        if in_tag {
-            match quote {
-                Some(q) => {
-                    if byte == q {
-                        quote = None;
-                    }
-                }
-                None => match byte {
-                    b'"' | b'\'' => quote = Some(byte),
-                    b'>' => in_tag = false,
-                    _ => {}
-                },
-            }
-        } else if byte == b'<' {
-            // Only a tag NAME start opens a tag: `a < b` in prose is text.
-            // `</p>` counts, so a closing tag's `>` is not mistaken for the
-            // opener of the next one.
-            let next = bytes.get(i + 1).copied();
-            if matches!(next, Some(c) if c.is_ascii_alphabetic() || c == b'/' || c == b'!') {
-                in_tag = true;
-            }
-        }
-
-        // Attributes live inside a tag and outside any quoted value.
-        if in_tag && quote.is_none() {
-            if let Some(after_value) = event_handler_attr_end(bytes, i) {
-                i = after_value;
-                // Drop one attribute-separating space too, so the removal does
-                // not leave a double space behind (`<p  onclick="x" id="y">`).
-                if bytes.get(i) == Some(&b' ') {
-                    i += 1;
-                }
-                continue;
-            }
-        }
-
-        match html[i..].chars().next() {
-            Some(ch) => {
-                result.push(ch);
-                i += ch.len_utf8();
-            }
-            None => break,
-        }
+    let mut builder = ammonia::Builder::empty();
+    builder
+        .tags(tags)
+        .generic_attributes(HashSet::new())
+        .add_tag_attributes("a", ["href"])
+        .url_schemes(["http", "https"].into())
+        .link_rel(Some("noopener noreferrer nofollow"));
+    if let Ok(base) = url::Url::parse(base_url) {
+        builder.url_relative(ammonia::UrlRelative::RewriteWithBase(base));
     }
-
-    result
-}
-
-/// If an `on<name>=<value>` attribute starts at byte offset `i`, the offset
-/// just past its value; `None` otherwise.
-///
-/// An attribute boundary, not free text, is required before `on`: the
-/// preceding byte must not be alphanumeric, so `"button"` and `"phenomenon"`
-/// are left alone (`t`/`n` before their trailing `on` are letters) while
-/// `<p onclick=` and `<p data-onclick=` both match — the latter is not a
-/// real DOM event handler, but stripping an inert custom attribute is a
-/// content nit, not a bypass, so this errs toward removing rather than
-/// enumerating what "real" means.
-fn event_handler_attr_end(bytes: &[u8], i: usize) -> Option<usize> {
-    let is_on = matches!(bytes.get(i), Some(b'o' | b'O')) && matches!(bytes.get(i + 1), Some(b'n' | b'N'));
-    if !is_on {
-        return None;
-    }
-    if !matches!(bytes.get(i + 2), Some(c) if c.is_ascii_alphabetic()) {
-        return None; // bare "on"/"on1" is not a handler name
-    }
-    if let Some(prev) = i.checked_sub(1).and_then(|p| bytes.get(p)) {
-        if prev.is_ascii_alphanumeric() {
-            return None;
-        }
-    }
-
-    let mut j = i + 2;
-    while matches!(bytes.get(j), Some(c) if c.is_ascii_alphanumeric()) {
-        j += 1;
-    }
-    while matches!(bytes.get(j), Some(c) if c.is_ascii_whitespace()) {
-        j += 1;
-    }
-    if bytes.get(j) != Some(&b'=') {
-        return None;
-    }
-    j += 1;
-    while matches!(bytes.get(j), Some(c) if c.is_ascii_whitespace()) {
-        j += 1;
-    }
-
-    match bytes.get(j) {
-        Some(b'"') => {
-            j += 1;
-            while matches!(bytes.get(j), Some(c) if *c != b'"') {
-                j += 1;
-            }
-            Some((j + 1).min(bytes.len()))
-        }
-        Some(b'\'') => {
-            j += 1;
-            while matches!(bytes.get(j), Some(c) if *c != b'\'') {
-                j += 1;
-            }
-            Some((j + 1).min(bytes.len()))
-        }
-        _ => {
-            // Unquoted — runs to the next whitespace or tag close.
-            while matches!(bytes.get(j), Some(c) if !c.is_ascii_whitespace() && *c != b'>') {
-                j += 1;
-            }
-            Some(j)
-        }
-    }
-}
-
-fn remove_tags(html: &str, tags: &[&str]) -> String {
-    let mut result = html.to_string();
-    for tag in tags {
-        let open = format!("<{tag}");
-        let close = format!("</{tag}>");
-        loop {
-            let rl = result.to_lowercase();
-            if let Some(start) = rl.find(&open) {
-                if let Some(end) = rl[start..].find(&close) {
-                    result = format!("{}{}", &result[..start], &result[start + end + close.len()..]);
-                    continue;
-                } else {
-                    // Self-closing or unclosed — remove just the tag
-                    if let Some(gt) = rl[start..].find('>') {
-                        result = format!("{}{}", &result[..start], &result[start + gt + 1..]);
-                        continue;
-                    }
-                }
-            }
-            break;
-        }
-    }
-    result
-}
-
-fn extract_origin(url: &str) -> String {
-    // https://example.com/path -> https://example.com
-    if let Some(idx) = url.find("://") {
-        let after = &url[idx + 3..];
-        if let Some(slash) = after.find('/') {
-            return url[..idx + 3 + slash].to_string();
-        }
-        return url.to_string();
-    }
-    url.to_string()
-}
-
-fn resolve_urls(html: &str, base: &str, origin: &str) -> String {
-    let mut result = html.to_string();
-
-    // Resolve href="..." and src="..."
-    for attr in &["href=\"", "src=\"", "href='", "src='"] {
-        let quote = if attr.ends_with('"') { '"' } else { '\'' };
-        let mut offset = 0;
-        loop {
-            let lower = result[offset..].to_lowercase();
-            if let Some(start) = lower.find(attr) {
-                let abs_start = offset + start + attr.len();
-                if let Some(end) = result[abs_start..].find(quote) {
-                    let url_val = &result[abs_start..abs_start + end];
-                    let resolved = if url_val.starts_with("http://") || url_val.starts_with("https://") || url_val.starts_with("data:") || url_val.starts_with("mailto:") || url_val.starts_with('#') {
-                        url_val.to_string()
-                    } else if url_val.starts_with("//") {
-                        format!("https:{url_val}")
-                    } else if url_val.starts_with('/') {
-                        format!("{origin}{url_val}")
-                    } else {
-                        format!("{base}/{url_val}")
-                    };
-                    if resolved != url_val {
-                        result = format!("{}{}{}", &result[..abs_start], resolved, &result[abs_start + end..]);
-                    }
-                    offset = abs_start + resolved.len() + 1;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-    }
-
-    result
+    builder.clean(&body).to_string()
 }
 
 fn find_body(html: &str, lower: &str) -> Option<String> {
@@ -703,119 +609,147 @@ fn find_body(html: &str, lower: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod sanitize_tests {
+    use super::sanitize_html;
+
+    /// The whole bypass corpus from the audit, plus the cases the previous
+    /// two revisions fixed one at a time. ammonia is an allowlist parser, so
+    /// each of these falls out structurally rather than by special case.
+    #[test]
+    fn the_bypass_corpus_is_neutralized() {
+        let base = "https://example.com/a/";
+        for (input, must_not_contain) in [
+            (r#"<p onclick="fetch('https://evil/x')">hi</p>"#, "onclick"),
+            (r#"<img src='x' onerror='alert(1)' onload=alert(2)>"#, "onerror"),
+            (r#"<body ONLOAD="evil()">x</body>"#, "onload"),
+            (r#"<meta http-equiv="refresh" content="0;url=https://evil/">"#, "http-equiv"),
+            (r#"<base href="https://evil/">"#, "<base"),
+            (r#"<link rel="stylesheet" href="//evil/x.css">"#, "<link"),
+            (r#"<a href=javascript:alert(1)>x</a>"#, "javascript:"),
+            (r#"<a href="data:text/html,<script>alert(1)</script>">x</a>"#, "data:"),
+            (r#"<script>alert(1)</script >leftover"#, "<script"),
+            (r#"<svg><script>alert(1)</script></svg>"#, "<script"),
+            (r#"<math><mi xlink:href="javascript:alert(1)">x</mi></math>"#, "javascript:"),
+            (r#"<iframe src="https://evil/"></iframe>"#, "<iframe"),
+            (r#"<p style="background:url(https://evil/beacon)">x</p>"#, "style="),
+        ] {
+            let out = sanitize_html(input, base).to_lowercase();
+            assert!(
+                !out.contains(must_not_contain),
+                "`{must_not_contain}` survived: {input} -> {out}"
+            );
+        }
+    }
 
     #[test]
-    fn strips_a_quoted_onclick_handler() {
-        // The space between `<p` and `onclick` was copied through before the
-        // scanner ever saw "onclick" coming, so it is not this function's to
-        // remove — the attribute itself is gone, which is what matters;
-        // `<p >` and `<p>` parse identically.
-        assert_eq!(
-            strip_event_handler_attributes(r#"<p onclick="alert(1)">hi</p>"#),
-            "<p >hi</p>"
+    fn text_and_structure_survive() {
+        let html = "<html><body><h1>Title</h1><p>let one = 1; only = 5 café</p>\
+            <ul><li>a</li></ul><pre><code>x</code></pre></body></html>";
+        let out = sanitize_html(html, "https://example.com/");
+        for keep in ["Title", "let one = 1; only = 5 café", "<li>a</li>", "<code>x</code>"] {
+            assert!(out.contains(keep), "lost `{keep}`: {out}");
+        }
+    }
+
+    #[test]
+    fn relative_links_resolve_against_the_page() {
+        let out = sanitize_html(
+            r#"<a href="/docs/x">doc</a><a href="y.html">rel</a>"#,
+            "https://example.com/a/page.html",
         );
+        assert!(out.contains("https://example.com/docs/x"), "{out}");
+        assert!(out.contains("https://example.com/a/y.html"), "{out}");
+        // And links get the rel we asked for.
+        assert!(out.contains("noopener"), "{out}");
     }
 
     #[test]
-    fn strips_a_single_quoted_and_an_unquoted_handler() {
-        // The unquoted case is the real bypass risk: sloppy-but-valid HTML
-        // that a quote-only scanner would leave running.
-        assert_eq!(
-            strip_event_handler_attributes(r#"<img src='x' onerror='alert(1)' onload=alert(2)>"#),
-            "<img src='x' >"
-        );
-    }
-
-    #[test]
-    fn survives_a_handler_that_is_never_closed() {
-        // Malformed markup must not panic or hang the scanner — it can fail
-        // to strip, but it must return.
-        let input = r#"<p onclick="alert(1)"#;
-        let _ = strip_event_handler_attributes(input);
-    }
-
-    #[test]
-    fn a_word_that_merely_contains_on_is_left_alone() {
-        // "button" and "phenomenon" both contain "on" — must not be treated
-        // as an attribute boundary just because a scan finds the substring.
-        let input = "<button>the phenomenon continues</button>";
-        assert_eq!(strip_event_handler_attributes(input), input);
-    }
-
-    #[test]
-    fn ordinary_attributes_and_multibyte_text_survive() {
-        let input = "<p id=\"café\" data-x=\"1\">café</p>";
-        assert_eq!(strip_event_handler_attributes(input), input);
-    }
-
-    #[test]
-    fn sanitize_html_removes_a_handler_that_remove_tags_would_leave_behind() {
-        // remove_tags only drops whole dangerous elements (script, iframe,
-        // ...); a plain <p> with an inline handler sailed through untouched
-        // before this fix — this is the exact reported gap.
-        let html = "<html><body><p onclick=\"fetch('https://evil.example/x')\">hi</p></body></html>";
-        let sanitized = sanitize_html(html, "https://example.com/");
-        assert!(!sanitized.to_lowercase().contains("onclick"));
-        assert!(sanitized.contains("hi"));
+    fn malformed_markup_does_not_panic() {
+        for input in [r#"<p onclick="alert(1)"#, "<a href=", "<<<<", "</p></p>"] {
+            let _ = sanitize_html(input, "https://example.com/");
+        }
     }
 }
 
-
 #[cfg(test)]
-mod event_handler_scope_tests {
+mod kb_rel_tests {
     use super::*;
 
-    /// Text is not attribute space. The first version of this scan ran over
-    /// the whole document, so any prose word starting with `on` followed by
-    /// `=` was eaten — along with the rest of the line, because an unquoted
-    /// value runs to the next `>` and swallowed the closing tag with it.
     #[test]
-    fn prose_that_looks_like_a_handler_is_left_alone() {
-        for input in [
-            "<p>let one = 1;</p>",
-            "<p>run it once = twice</p>",
-            "<p>only = 5 items</p>",
-            "<p>phenomenon and button are fine</p>",
-        ] {
-            assert_eq!(strip_event_handler_attributes(input), input, "mangled: {input}");
+    fn nested_ids_pass_and_climbs_fail() {
+        assert_eq!(kb_rel("note-1").unwrap(), "note-1");
+        assert_eq!(kb_rel("Adib/note-123").unwrap(), "Adib/note-123");
+        assert_eq!(kb_rel("covers/x.png").unwrap(), "covers/x.png");
+        // The two shapes the audit exploited: arbitrary write via note id,
+        // arbitrary read via cover path.
+        assert!(kb_rel("../../../../.zshrc").is_err());
+        assert!(kb_rel("a/../../b").is_err());
+        assert!(kb_rel("/etc/passwd").is_err());
+        assert!(kb_rel("a\\..\\b").is_err());
+        assert!(kb_rel("").is_err());
+        assert!(kb_rel("./note").is_err());
+    }
+}
+
+#[cfg(test)]
+mod ssrf_tests {
+    use super::ip_is_public;
+    use std::net::IpAddr;
+
+    #[test]
+    fn the_audit_address_table() {
+        let private: &[&str] = &[
+            "127.0.0.1",
+            "0.0.0.0",
+            "10.0.0.5",
+            "172.16.3.2",
+            "192.168.1.1",
+            "169.254.169.254", // cloud metadata
+            "100.100.1.1",     // CGNAT / tailnet
+            "::1",
+            "fe80::1",
+            "fd00::2",
+            "::ffff:127.0.0.1", // v4-mapped loopback
+        ];
+        for a in private {
+            assert!(!ip_is_public(&a.parse::<IpAddr>().unwrap()), "{a} should be refused");
+        }
+        for a in ["93.184.216.34", "140.82.112.3", "2606:2800:220:1:248:1893:25c8:1946"] {
+            assert!(ip_is_public(&a.parse::<IpAddr>().unwrap()), "{a} should pass");
         }
     }
+}
 
-    /// A query parameter starting with `on` sits inside a quoted attribute
-    /// value, where no new attribute can begin. Losing this ate the closing
-    /// quote and broke the URL.
-    #[test]
-    fn an_on_query_param_inside_a_value_survives() {
-        let input = r#"<a href="https://x.com/?online=true">link</a>"#;
-        assert_eq!(strip_event_handler_attributes(input), input);
-    }
+#[cfg(test)]
+mod cover_guard_tests {
+    use super::knowledge_cover_data_url;
 
-    /// A `>` inside an attribute value must not end the tag early, or the
-    /// handler after it would be treated as text and left in place.
-    #[test]
-    fn a_gt_inside_a_value_does_not_end_the_tag() {
-        let out = strip_event_handler_attributes(r#"<a title="a > b" onclick="x()">t</a>"#);
-        assert!(!out.contains("onclick"), "handler survived: {out}");
-        assert!(out.contains(r#"title="a > b""#), "value damaged: {out}");
-    }
+    #[tokio::test]
+    async fn covers_are_bounded_and_cannot_climb() {
+        let dir = std::env::temp_dir().join(format!("atlas-cover-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join(".atlas/knowledge/covers")).unwrap();
+        std::fs::write(dir.join(".atlas/knowledge/covers/c.png"), b"png").unwrap();
+        let root = dir.to_string_lossy().to_string();
 
-    /// The whole point: handlers still go, quoted and unquoted alike.
-    #[test]
-    fn handlers_are_still_stripped() {
-        for input in [
-            r#"<p onclick="alert(1)">x</p>"#,
-            r#"<p onclick=alert(1) id="k">x</p>"#,
-            r#"<img src=x onerror='boom()'>"#,
-            r#"<body ONLOAD="evil()">x</body>"#,
-        ] {
-            let out = strip_event_handler_attributes(input);
-            let lowered = out.to_ascii_lowercase();
-            assert!(
-                !lowered.contains("onclick") && !lowered.contains("onerror") && !lowered.contains("onload"),
-                "handler survived: {out}"
-            );
-        }
+        let ok = knowledge_cover_data_url(root.clone(), "covers/c.png".into()).await.unwrap();
+        assert!(ok.starts_with("data:image/png;base64,"));
+
+        // Gradient refs pass through untouched — CSS, not files.
+        assert_eq!(
+            knowledge_cover_data_url(root.clone(), "gradient:a,b".into()).await.unwrap(),
+            "gradient:a,b"
+        );
+
+        // The audit's exfil shape.
+        assert!(knowledge_cover_data_url(root.clone(), "../../../.ssh/id_rsa".into())
+            .await
+            .is_err());
+
+        // Size cap: decorative images do not get to be 8MB IPC strings.
+        let big = vec![0u8; 3 * 1024 * 1024];
+        std::fs::write(dir.join(".atlas/knowledge/covers/big.png"), &big).unwrap();
+        let err = knowledge_cover_data_url(root, "covers/big.png".into()).await.unwrap_err();
+        assert!(err.contains("too large"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

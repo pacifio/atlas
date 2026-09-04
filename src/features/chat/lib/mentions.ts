@@ -30,6 +30,20 @@ import type { PackComponentKind } from "@/features/skills/lib/types";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+/** Strip the category alias from the query so per-provider matching doesn't
+ *  re-match the literal prefix (e.g. with `@note auth`, send `auth` to the
+ *  knowledge provider, not `note auth`). Internal now — the export had no
+ *  outside importers. */
+function stripCategoryAlias(query: string, kind: MentionKind): string {
+  const q = query;
+  for (const a of categoryForKind(kind).aliases) {
+    if (q.toLowerCase().startsWith(a)) {
+      return q.slice(a.length).trimStart();
+    }
+  }
+  return q;
+}
+
 export type MentionKind =
   | "file"
   | "folder"
@@ -299,19 +313,6 @@ export async function listMessagesInPastSession(
     idx += 1;
   }
   return out;
-}
-
-/** Strip the category alias from the query so per-provider matching doesn't
- *  re-match the literal prefix (e.g. with `@note auth`, send `auth` to the
- *  knowledge provider, not `note auth`). */
-export function stripCategoryAlias(query: string, kind: MentionKind): string {
-  const q = query;
-  for (const a of categoryForKind(kind).aliases) {
-    if (q.toLowerCase().startsWith(a)) {
-      return q.slice(a.length).trimStart();
-    }
-  }
-  return q;
 }
 
 // ── Serialization ────────────────────────────────────────────────────────────

@@ -223,16 +223,16 @@ export function ArtifactsPanel() {
       listen("atlas:git-changed", () => void refresh()),
       listen("atlas:capture-changed", () => void refresh()),
     ]);
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible") void refresh();
-    }, 15_000);
+    // No poll: the two events above cover every write path (they are why a
+    // fresh session appears immediately), and the visibility handler below
+    // catches anything that happened while the window was hidden. The 15s
+    // interval predated both and was pure redundancy by the time it died.
     const onVisibility = () => {
       if (document.visibilityState === "visible") void refresh();
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       void unlisten.then((stops) => stops.forEach((stop) => stop()));
-      clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [refresh]);

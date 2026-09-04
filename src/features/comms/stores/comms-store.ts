@@ -339,6 +339,12 @@ export const useCommsStore = createSelectors(
             set((s) => ({ reads: mergeReads(s.reads, ev.reads) }));
             return;
 
+          case "readChanged":
+            // The single-row fast path: one read receipt used to re-ship the
+            // whole table.
+            set((s) => ({ reads: mergeReads(s.reads, [ev.read]) }));
+            return;
+
           case "presence":
             // The whole set — an assignment, not a merge. But an UNCHANGED set
             // must not take a new identity: every socket reconnect and grace-

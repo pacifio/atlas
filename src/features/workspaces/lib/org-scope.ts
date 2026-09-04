@@ -15,12 +15,12 @@ import { useOrgStore } from "@/features/organisations/stores/org-store";
  * a store↔store import cycle.
  */
 
-export function workspacesForOrg(workspaces: Workspace[], orgId: string | null): Workspace[] {
+function workspacesForOrg(workspaces: Workspace[], orgId: string | null): Workspace[] {
   if (orgId == null) return [];
   return workspaces.filter((w) => w.orgId === orgId);
 }
 
-export function groupsForOrg(groups: WorkspaceGroup[], orgId: string | null): WorkspaceGroup[] {
+function groupsForOrg(groups: WorkspaceGroup[], orgId: string | null): WorkspaceGroup[] {
   if (orgId == null) return [];
   return groups.filter((g) => g.orgId === orgId);
 }
