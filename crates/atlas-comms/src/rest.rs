@@ -385,6 +385,33 @@ pub struct RecordingsResponse {
     pub tracks: Vec<RecordingTrack>,
 }
 
+/// A Prompt Draft's metadata (ATL-194) — never its content: the server
+/// stores opaque Yjs bytes it cannot read (ADR-0011), and this client's
+/// Drafts tab only lists and creates. `title` is write-once; there is no
+/// rename or delete route, and no lifecycle broadcast — the list is
+/// poll-refreshed, mirroring the web client.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PromptDraft {
+    pub id: String,
+    pub conv_id: String,
+    pub title: String,
+    pub created_by: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default)]
+    pub sent_at: Option<i64>,
+    #[serde(default)]
+    pub sent_by: Option<String>,
+    #[serde(default)]
+    pub sent_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DraftList {
+    #[serde(default)]
+    pub drafts: Vec<PromptDraft>,
+}
+
 /// The answer to `GET /calls?conv_id=…&include=recent` (ATL-208): every live
 /// call plus the last 10 ended ones, oldest-first by `seq`. This is how the
 /// web client cold-syncs its call cards, and it is why the desktop does not
@@ -397,6 +424,43 @@ pub struct CallList {
 }
 
 impl RestClient {
+    /// A conversation's prompt drafts, newest-updated first. Unpaginated by
+    /// contract; a non-member's answer is the ordinary 404.
+    pub async fn drafts(&self, org: &str, conv_id: &str) -> Result<DraftList> {
+        self.json(
+            reqwest::Method::GET,
+            &format!("/conversations/{conv_id}/drafts"),
+            org,
+            None,
+        )
+        .await
+    }
+
+    /// Create a draft. Title ≤ 200 chars (`CHAT_DRAFT_TITLE_MAX`) — refused,
+    /// not truncated, past that. Deliberately NOT announced by the server, so
+    /// the caller prepends the 201 body and everyone else learns by poll.
+    pub async fn create_draft(
+        &self,
+        org: &str,
+        conv_id: &str,
+        title: &str,
+    ) -> Result<PromptDraft> {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            draft: PromptDraft,
+        }
+        let body = serde_json::json!({ "title": title });
+        let w: Wrapper = self
+            .json(
+                reqwest::Method::POST,
+                &format!("/conversations/{conv_id}/drafts"),
+                org,
+                Some(body),
+            )
+            .await?;
+        Ok(w.draft)
+    }
+
     /// A conversation's calls: all live ones plus the last 10 ended (ATL-208).
     ///
     /// This is the cold-sync path for call history. The journal still delivers

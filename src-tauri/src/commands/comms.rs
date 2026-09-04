@@ -408,6 +408,34 @@ pub async fn comms_load_older(
 }
 
 
+/// A conversation's prompt drafts — REST passthrough, no state. The list is
+/// poll-owned by the renderer (no lifecycle frames exist to keep a cache
+/// honest), so holding it here would only manufacture staleness.
+#[tauri::command]
+pub async fn comms_drafts(
+    app: AppHandle,
+    conv_id: String,
+) -> Result<Vec<atlas_comms::rest::PromptDraft>, String> {
+    let mgr = manager(&app)?;
+    let org_id = org(&mgr)?;
+    let list = mgr.rest().drafts(&org_id, &conv_id).await.map_err(map_err)?;
+    Ok(list.drafts)
+}
+
+#[tauri::command]
+pub async fn comms_create_draft(
+    app: AppHandle,
+    conv_id: String,
+    title: String,
+) -> Result<atlas_comms::rest::PromptDraft, String> {
+    let mgr = manager(&app)?;
+    let org_id = org(&mgr)?;
+    mgr.rest()
+        .create_draft(&org_id, &conv_id, &title)
+        .await
+        .map_err(map_err)
+}
+
 /// The full pin rail for a conversation, message content included.
 ///
 /// A REST passthrough with no state mutation: the store only holds pinned

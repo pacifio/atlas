@@ -101,6 +101,9 @@ interface CommsState {
   pinned: string[];
   /** conv -> user -> when they last said so; aged out on a timer. */
   typing: Record<string, Record<string, number>>;
+  /** Which sub-tab each conversation shows. Not persisted: a fresh open
+   *  lands on Messages, which is where conversations live. */
+  convTab: Record<string, ConvSubTab>;
   /** In-flight downloads by the object's own id (attachment id / track id).
    *  A key exists only while the arc should render; complete/failed delete it. */
   downloads: Record<string, { got: number; total: number }>;
@@ -157,8 +160,11 @@ interface CommsState {
     loadOlder: (convId: string) => Promise<void>;
     /** Re-attempt a conversation's first page after retries were exhausted. */
     retryConversation: (convId: string) => void;
+    setConvTab: (convId: string, tab: ConvSubTab) => void;
   };
 }
+
+export type ConvSubTab = "messages" | "drafts" | "files";
 
 const serverOwned = () => ({
   connection: DISCONNECTED,
@@ -176,6 +182,7 @@ const serverOwned = () => ({
   typing: {} as Record<string, Record<string, number>>,
   calls: {} as Record<string, ChatCall>,
   downloads: {} as Record<string, { got: number; total: number }>,
+  convTab: {} as Record<string, ConvSubTab>,
 });
 
 export const useCommsStore = createSelectors(
@@ -668,6 +675,8 @@ export const useCommsStore = createSelectors(
       joinChannel: (convId) => {
         void comms.join(convId).catch(() => {});
       },
+
+      setConvTab: (convId, tab) => set((s) => ({ convTab: { ...s.convTab, [convId]: tab } })),
 
       retryConversation: (convId) => {
         convAttempts.delete(convId);

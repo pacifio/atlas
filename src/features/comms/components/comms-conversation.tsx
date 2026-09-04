@@ -8,7 +8,19 @@ import {
   useRef,
   useState,
 } from "react";
-import { ChevronDown, ChevronLeft, Hash, Lock, Pencil, RefreshCw, Users } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronLeft,
+  FileText,
+  Folder,
+  Hash,
+  Lock,
+  MessageCircle,
+  Pencil,
+  RefreshCw,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GradualBlur } from "@/components/gradual-blur";
 import { useTranscriptScroll } from "@/features/chat/lib/use-transcript-scroll";
@@ -18,9 +30,11 @@ import { CommsAvatar } from "./comms-avatar";
 import { CommsComposer } from "./comms-composer";
 import { MessageGroup } from "./message-group";
 import { PinnedMenu } from "./pinned-menu";
+import { DraftsTab } from "./drafts-tab";
+import { FilesTab } from "./files-tab";
 import { RenameChannelMenu } from "./rename-channel-menu";
 import { CallActivity } from "./call-activity";
-import { useCommsStore } from "../stores/comms-store";
+import { useCommsStore, type ConvSubTab } from "../stores/comms-store";
 import {
   conversationTitle,
   dmCounterpart,
@@ -58,6 +72,7 @@ export const CommsConversation = memo(function CommsConversation({
   // that had quietly failed and claim the channel had no history.
   const hydrated = useCommsStore((s) => s.hydrated[conv.id] === true);
   const loadError = useCommsStore((s) => s.loadError[conv.id]);
+  const subTab = useCommsStore((s) => s.convTab[conv.id] ?? "messages");
   const actions = useCommsStore.use.actions();
 
   const members = useMemo(() => new Map(memberList.map((m) => [m.id, m])), [memberList]);
@@ -243,138 +258,193 @@ export const CommsConversation = memo(function CommsConversation({
         onBack={actions.goHome}
       />
 
+      <SubTabStrip active={subTab} onSelect={(tab) => actions.setConvTab(conv.id, tab)} />
+
+      {subTab === "drafts" && <DraftsTab convId={conv.id} />}
+      {subTab === "files" && <FilesTab convId={conv.id} />}
+
       {/* Overlays are SIBLINGS of the scroller, never inside the content — the
           transcript pattern. `relative` scopes them; nothing here transforms
-          (the vibrant-panel rule), and both overlays are pointer-events-none. */}
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <GradualBlur
-          position="top"
-          height={`${TOP_FADE}px`}
-          strength={2}
-          layers={4}
-          tint="color-mix(in srgb, var(--comms-surface) 90%, transparent)"
-          style={{ zIndex: 3 }}
-        />
+          (the vibrant-panel rule), and both overlays are pointer-events-none.
+          The messages subtree UNMOUNTS on other tabs rather than hiding with
+          display:none — the transcript's measurement path must never observe
+          a zero-height layout (the hidden-measure poison), and re-entry lands
+          at the live edge exactly like a conversation switch. */}
+      {subTab === "messages" && (
+        <>
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <GradualBlur
+              position="top"
+              height={`${TOP_FADE}px`}
+              strength={2}
+              layers={4}
+              tint="color-mix(in srgb, var(--comms-surface) 90%, transparent)"
+              style={{ zIndex: 3 }}
+            />
 
-        <div
-          ref={scroller}
-          onScroll={onScroll}
-          className="min-h-0 flex-1 overflow-y-auto hide-scrollbar [overflow-anchor:none]"
-        >
-          <div ref={content} style={{ paddingTop: TOP_FADE / 2, paddingBottom: 10 }}>
-            {messages.length === 0 && (loading || (!hydrated && !loadError)) ? (
-              <TranscriptSkeleton />
-            ) : messages.length === 0 && loadError ? (
-              <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
-                <span className="text-[12px] font-medium text-text-primary">
-                  Couldn’t load this conversation
-                </span>
-                <span className="max-w-[260px] text-[11px] text-text-tertiary">{loadError}</span>
-                <button
-                  type="button"
-                  onClick={() => actions.retryConversation(conv.id)}
-                  className="mt-1 flex h-[26px] items-center gap-1.5 rounded-md border border-border-default bg-bg-hover px-3 text-[11px] font-medium text-text-primary transition-colors hover:bg-bg-active cursor-pointer"
-                >
-                  <RefreshCw size={11} />
-                  Try again
-                </button>
+            <div
+              ref={scroller}
+              onScroll={onScroll}
+              className="min-h-0 flex-1 overflow-y-auto hide-scrollbar [overflow-anchor:none]"
+            >
+              <div ref={content} style={{ paddingTop: TOP_FADE / 2, paddingBottom: 10 }}>
+                {messages.length === 0 && (loading || (!hydrated && !loadError)) ? (
+                  <TranscriptSkeleton />
+                ) : messages.length === 0 && loadError ? (
+                  <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
+                    <span className="text-[12px] font-medium text-text-primary">
+                      Couldn’t load this conversation
+                    </span>
+                    <span className="max-w-[260px] text-[11px] text-text-tertiary">
+                      {loadError}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => actions.retryConversation(conv.id)}
+                      className="mt-1 flex h-[26px] items-center gap-1.5 rounded-md border border-border-default bg-bg-hover px-3 text-[11px] font-medium text-text-primary transition-colors hover:bg-bg-active cursor-pointer"
+                    >
+                      <RefreshCw size={11} />
+                      Try again
+                    </button>
+                  </div>
+                ) : (
+                  hydrated && <ConversationIntro conv={conv} title={title} isChannel={isChannel} />
+                )}
+
+                {items.map((item) =>
+                  item.kind === "call" ? (
+                    <CallActivity
+                      key={`call:${item.call.id}`}
+                      call={item.call}
+                      author={members.get(item.call.started_by) ?? null}
+                    />
+                  ) : (
+                    <Fragment key={item.group.key}>
+                      {item.newDay && <DayDivider at={item.group.messages[0].created_at} />}
+                      <MessageGroup
+                        messages={item.group.messages}
+                        own={item.group.own}
+                        author={members.get(item.group.authorId) ?? null}
+                        members={members}
+                        me={me}
+                        lookup={lookup}
+                        onReply={onReply}
+                        onEdit={onEdit}
+                        onDelete={onDelete}
+                        onReact={actions.react}
+                        onPin={actions.togglePin}
+                        onJump={jumpToMessage}
+                        showAuthor={conv.kind !== "dm"}
+                      />
+                    </Fragment>
+                  ),
+                )}
+
+                {typers.length > 0 && (
+                  <TypingHint names={typers.map((id) => members.get(id)?.name ?? "Someone")} />
+                )}
               </div>
-            ) : (
-              hydrated && <ConversationIntro conv={conv} title={title} isChannel={isChannel} />
-            )}
+            </div>
 
-            {items.map((item) =>
-              item.kind === "call" ? (
-                <CallActivity
-                  key={`call:${item.call.id}`}
-                  call={item.call}
-                  author={members.get(item.call.started_by) ?? null}
-                />
-              ) : (
-                <Fragment key={item.group.key}>
-                  {item.newDay && <DayDivider at={item.group.messages[0].created_at} />}
-                  <MessageGroup
-                    messages={item.group.messages}
-                    own={item.group.own}
-                    author={members.get(item.group.authorId) ?? null}
-                    members={members}
-                    me={me}
-                    lookup={lookup}
-                    onReply={onReply}
-                    onEdit={onEdit}
-                    onDelete={onDelete}
-                    onReact={actions.react}
-                    onPin={actions.togglePin}
-                    onJump={jumpToMessage}
-                    showAuthor={conv.kind !== "dm"}
-                  />
-                </Fragment>
-              ),
-            )}
-
-            {typers.length > 0 && (
-              <TypingHint names={typers.map((id) => members.get(id)?.name ?? "Someone")} />
-            )}
-          </div>
-        </div>
-
-        {/* Bottom fade. Overshoots by 2px on purpose: at fractional UI scales
+            {/* Bottom fade. Overshoots by 2px on purpose: at fractional UI scales
             the fade and the scroller bottom round to different device pixels
             and a hairline of text flashes through. Full colour at 72% — a
             two-stop gradient is only ~97% opaque just above the composer and
             text ghosts through on near-black. */}
-        <div
-          aria-hidden
-          className={cn(
-            "pointer-events-none absolute -bottom-[2px] left-0 right-0 z-[1] h-[44px] transition-opacity duration-200",
-            more ? "opacity-100" : "opacity-0",
-          )}
-          style={{
-            background:
-              "linear-gradient(to bottom, transparent, var(--comms-surface) 72%, var(--comms-surface))",
-          }}
-        />
-      </div>
-
-      <div className="relative">
-        {more && (
-          <div className="pointer-events-none absolute bottom-full inset-x-0 mb-2 z-20 flex justify-center">
-            <button
-              type="button"
-              onClick={scrollToBottom}
-              title="Jump to latest"
-              style={{ backdropFilter: "blur(4px)" }}
+            <div
+              aria-hidden
               className={cn(
-                "atlas-pill-in pointer-events-auto inline-flex items-center gap-1.5 rounded-full px-3 py-1.5",
-                "border border-border-default bg-bg-elevated",
-                "text-[11px] font-medium leading-none text-text-secondary",
-                "shadow-[0_2px_8px_rgba(0,0,0,0.35)] transition-colors cursor-pointer",
-                "hover:bg-bg-hover hover:text-text-primary",
+                "pointer-events-none absolute -bottom-[2px] left-0 right-0 z-[1] h-[44px] transition-opacity duration-200",
+                more ? "opacity-100" : "opacity-0",
               )}
-            >
-              <ChevronDown size={11} />
-              <span>
-                {newCount > 0
-                  ? `${newCount} new message${newCount === 1 ? "" : "s"}`
-                  : "Scroll to bottom"}
-              </span>
-            </button>
+              style={{
+                background:
+                  "linear-gradient(to bottom, transparent, var(--comms-surface) 72%, var(--comms-surface))",
+              }}
+            />
           </div>
-        )}
 
-        <CommsComposer
-          convId={conv.id}
-          members={otherMembers}
-          memberMap={members}
-          lookup={lookup}
-          placeholder={isChannel ? `Message #${conv.name}` : `Message ${title}`}
-        />
-      </div>
+          <div className="relative">
+            {more && (
+              <div className="pointer-events-none absolute bottom-full inset-x-0 mb-2 z-20 flex justify-center">
+                <button
+                  type="button"
+                  onClick={scrollToBottom}
+                  title="Jump to latest"
+                  style={{ backdropFilter: "blur(4px)" }}
+                  className={cn(
+                    "atlas-pill-in pointer-events-auto inline-flex items-center gap-1.5 rounded-full px-3 py-1.5",
+                    "border border-border-default bg-bg-elevated",
+                    "text-[11px] font-medium leading-none text-text-secondary",
+                    "shadow-[0_2px_8px_rgba(0,0,0,0.35)] transition-colors cursor-pointer",
+                    "hover:bg-bg-hover hover:text-text-primary",
+                  )}
+                >
+                  <ChevronDown size={11} />
+                  <span>
+                    {newCount > 0
+                      ? `${newCount} new message${newCount === 1 ? "" : "s"}`
+                      : "Scroll to bottom"}
+                  </span>
+                </button>
+              </div>
+            )}
+
+            <CommsComposer
+              convId={conv.id}
+              members={otherMembers}
+              memberMap={members}
+              lookup={lookup}
+              placeholder={isChannel ? `Message #${conv.name}` : `Message ${title}`}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 });
 
 const EMPTY_MESSAGES: never[] = [];
+
+/**
+ * The Slack-style sub-tab strip, at Atlas scale: an underline marks the
+ * active tab. Messages is the transcript; Drafts and Files are the
+ * conversation's other faces. Spaces joins later.
+ */
+function SubTabStrip({
+  active,
+  onSelect,
+}: {
+  active: ConvSubTab;
+  onSelect: (tab: ConvSubTab) => void;
+}) {
+  const tabs: { id: ConvSubTab; label: string; icon: LucideIcon }[] = [
+    { id: "messages", label: "Messages", icon: MessageCircle },
+    { id: "drafts", label: "Drafts", icon: FileText },
+    { id: "files", label: "Files", icon: Folder },
+  ];
+  return (
+    <div className="flex h-[30px] shrink-0 items-center gap-0.5 border-b border-border-default px-2">
+      {tabs.map(({ id, label, icon: Icon }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onSelect(id)}
+          className={cn(
+            "relative flex h-full items-center gap-1.5 px-2 text-[11px] font-medium transition-colors cursor-pointer",
+            active === id ? "text-text-primary" : "text-text-tertiary hover:text-text-secondary",
+          )}
+        >
+          <Icon size={11} className="shrink-0 opacity-80" />
+          {label}
+          {active === id && (
+            <span className="absolute inset-x-1.5 bottom-0 h-[1.5px] rounded-full bg-text-primary" />
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function ConversationHeader({
   conv,

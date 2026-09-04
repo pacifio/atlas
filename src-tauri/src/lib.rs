@@ -359,6 +359,8 @@ pub fn run() {
             commands::comms::comms_conversation_snapshot,
             commands::comms::comms_load_older,
             commands::comms::comms_pins,
+            commands::comms::comms_drafts,
+            commands::comms::comms_create_draft,
             commands::comms::comms_fetch_recording,
             commands::comms::comms_send,
             commands::comms::comms_upload_attachment,

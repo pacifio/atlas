@@ -119,6 +119,21 @@ export interface ChatPin {
   message: ChatMessage | null;
 }
 
+/** A Prompt Draft's metadata — never its content (the server stores opaque
+ *  Yjs bytes it cannot read). `title` is write-once; no rename/delete routes
+ *  exist yet, and no lifecycle frames — lists refresh by poll. */
+export interface PromptDraft {
+  id: string;
+  conv_id: string;
+  title: string;
+  created_by: string;
+  created_at: number;
+  updated_at: number;
+  sent_at: number | null;
+  sent_by: string | null;
+  sent_message_id: string | null;
+}
+
 /** One participant's recorded track. The URL is a 60-second mint. */
 export interface RecordingTrack {
   id: string;

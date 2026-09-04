@@ -14,6 +14,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ChatCall,
   ChatPin,
+  PromptDraft,
   ChatConversation,
   ChatReaction,
   ChatReadState,
@@ -212,6 +213,11 @@ export const comms = {
    *  file already previewed saves without a second round trip. */
   saveAttachment: (fileId: string, filename: string, dest: string, downloadId: string) =>
     invoke<void>("comms_save_attachment", { fileId, filename, dest, downloadId }),
+  /** A conversation's prompt drafts, newest-updated first. Poll-owned by the
+   *  caller — no push channel exists for the list. */
+  drafts: (convId: string) => invoke<PromptDraft[]>("comms_drafts", { convId }),
+  createDraft: (convId: string, title: string) =>
+    invoke<PromptDraft>("comms_create_draft", { convId, title }),
   /** A call's recordings. URLs expire in ~60s, so this is asked at open time
    *  and never cached. */
   callRecordings: (callId: string) =>
