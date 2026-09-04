@@ -26,6 +26,7 @@ import type {
   ChatReadState,
   CommsMessage,
   OrgMemberProfile,
+  PromptDraft,
 } from "../types";
 
 /**
@@ -103,6 +104,11 @@ interface CommsState {
   typing: Record<string, Record<string, number>>;
   /** Which sub-tab each conversation shows. Not persisted: a fresh open
    *  lands on Messages, which is where conversations live. */
+  /** Prompt drafts by conversation. Cached HERE, not in the tab: a tab
+   *  switch unmounted the component and threw the list away, so every return
+   *  re-shimmered. The fetch is now a silent revalidation behind whatever is
+   *  already on screen. Org-scoped, so an org change clears it. */
+  drafts: Record<string, PromptDraft[]>;
   convTab: Record<string, ConvSubTab>;
   /** In-flight downloads by the object's own id (attachment id / track id).
    *  A key exists only while the arc should render; complete/failed delete it. */
@@ -161,6 +167,11 @@ interface CommsState {
     /** Re-attempt a conversation's first page after retries were exhausted. */
     retryConversation: (convId: string) => void;
     setConvTab: (convId: string, tab: ConvSubTab) => void;
+    /** Refresh a conversation's drafts. Silent by design: it never clears the
+     *  cache first, so the list on screen stays put until better data lands. */
+    loadDrafts: (convId: string) => Promise<void>;
+    /** Fold a freshly created draft in — the server never announces one. */
+    adoptDraft: (convId: string, draft: PromptDraft) => void;
   };
 }
 
@@ -183,6 +194,7 @@ const serverOwned = () => ({
   calls: {} as Record<string, ChatCall>,
   downloads: {} as Record<string, { got: number; total: number }>,
   convTab: {} as Record<string, ConvSubTab>,
+  drafts: {} as Record<string, PromptDraft[]>,
 });
 
 export const useCommsStore = createSelectors(
@@ -677,6 +689,26 @@ export const useCommsStore = createSelectors(
       },
 
       setConvTab: (convId, tab) => set((s) => ({ convTab: { ...s.convTab, [convId]: tab } })),
+
+      loadDrafts: async (convId) => {
+        try {
+          const list = await comms.drafts(convId);
+          set((s) => ({ drafts: { ...s.drafts, [convId]: list } }));
+        } catch (e) {
+          // A failed revalidation must not blank a good list — the cached
+          // rows stay exactly as they were. Only a conversation that has
+          // never loaded settles to an empty answer.
+          console.warn("comms: drafts fetch failed:", convId, e);
+          set((s) => (s.drafts[convId] ? {} : { drafts: { ...s.drafts, [convId]: [] } }));
+        }
+      },
+
+      adoptDraft: (convId, draft) =>
+        set((s) => {
+          const current = s.drafts[convId] ?? [];
+          if (current.some((d) => d.id === draft.id)) return {};
+          return { drafts: { ...s.drafts, [convId]: [draft, ...current] } };
+        }),
 
       retryConversation: (convId) => {
         convAttempts.delete(convId);

@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Loader2, Plus } from "lucide-react";
+import { FilePlus2, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { timeAgo } from "@/lib/time-ago";
 import { CommsAvatar } from "./comms-avatar";
 import { comms } from "../lib/comms-api";
 import { useCommsStore } from "../stores/comms-store";
-import type { PromptDraft } from "../types";
 
 /** Web parity: `CHAT_DRAFT_TITLE_MAX`. Refused server-side, not truncated. */
 const TITLE_MAX = 200;
@@ -24,36 +23,31 @@ const POLL_MS = 10_000;
 export function DraftsTab({ convId }: { convId: string }) {
   const memberList = useCommsStore.use.members();
   const members = useMemo(() => new Map(memberList.map((m) => [m.id, m])), [memberList]);
+  // From the STORE, so returning to this tab paints the last list on the
+  // first frame. `undefined` means never fetched (skeleton); an empty array
+  // is a real answer (empty state).
+  const drafts = useCommsStore((s) => s.drafts[convId]);
+  const actions = useCommsStore.use.actions();
 
-  const [drafts, setDrafts] = useState<PromptDraft[] | null>(null);
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    let live = true;
+    // Revalidate silently on entry and on the poll. Nothing clears the cache
+    // first, so a refresh is invisible unless the answer actually differs.
     const load = () => {
       if (document.visibilityState !== "visible") return;
-      comms
-        .drafts(convId)
-        .then((list) => {
-          if (live) setDrafts(list);
-        })
-        .catch((e) => {
-          console.warn("comms: drafts fetch failed:", convId, e);
-          if (live && drafts === null) setDrafts([]);
-        });
+      void actions.loadDrafts(convId);
     };
     load();
     const timer = setInterval(load, POLL_MS);
     document.addEventListener("visibilitychange", load);
     return () => {
-      live = false;
       clearInterval(timer);
       document.removeEventListener("visibilitychange", load);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [convId]);
+  }, [convId, actions]);
 
   const create = async () => {
     const trimmed = title.trim();
@@ -61,8 +55,8 @@ export function DraftsTab({ convId }: { convId: string }) {
     setCreating(true);
     try {
       const draft = await comms.createDraft(convId, trimmed);
-      // The server deliberately does not announce creation — prepend our own.
-      setDrafts((prev) => [draft, ...(prev ?? [])]);
+      // The server deliberately does not announce creation — fold our own in.
+      actions.adoptDraft(convId, draft);
       setTitle("");
       inputRef.current?.focus();
     } catch (e) {
@@ -75,37 +69,39 @@ export function DraftsTab({ convId }: { convId: string }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 px-2 pb-1 pt-2">
-        <div className="flex items-center gap-1.5">
-          <input
-            ref={inputRef}
-            value={title}
-            maxLength={TITLE_MAX}
-            onChange={(e) => setTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void create();
-              }
-            }}
-            placeholder="Name a new draft…"
-            aria-label="New draft title"
-            className="min-w-0 flex-1 rounded-[10px] border border-border-default bg-bg-input px-2.5 py-[5px] text-[11.5px] text-text-primary outline-none placeholder:text-text-ghost focus:border-border-focus"
-          />
-          <button
-            type="button"
-            title="Create draft"
-            disabled={!title.trim() || creating}
-            onClick={() => void create()}
-            className="flex h-[27px] w-[27px] shrink-0 items-center justify-center rounded-[10px] border border-border-default bg-bg-hover text-text-secondary transition-colors hover:bg-bg-active hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
-          >
-            {creating ? <Loader2 size={12} className="animate-spin" /> : <Plus size={13} />}
-          </button>
-        </div>
+      {/* One full-width band with the action inline, matching the agent
+          history sidebar's search row (`session-sidebar.tsx`) — a boxed input
+          floating inside padding read as a second, competing surface. */}
+      <div className="flex h-[32px] shrink-0 items-center gap-1.5 border-b border-border-default px-3">
+        <FilePlus2 size={11} className="shrink-0 text-text-tertiary" />
+        <input
+          ref={inputRef}
+          value={title}
+          maxLength={TITLE_MAX}
+          onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void create();
+            }
+          }}
+          placeholder="Name a new draft…"
+          aria-label="New draft title"
+          className="min-w-0 flex-1 bg-transparent text-[11px] text-text-primary outline-none placeholder:text-text-tertiary"
+        />
+        <button
+          type="button"
+          title="Create draft"
+          disabled={!title.trim() || creating}
+          onClick={() => void create()}
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+        >
+          {creating ? <Loader2 size={11} className="animate-spin" /> : <Plus size={12} />}
+        </button>
       </div>
 
       <div className="hide-scrollbar min-h-0 flex-1 overflow-y-auto pb-3">
-        {drafts === null &&
+        {drafts === undefined &&
           [0, 1, 2].map((i) => (
             <div key={i} className="flex items-center gap-2.5 px-3 py-[9px]">
               <div
@@ -121,40 +117,76 @@ export function DraftsTab({ convId }: { convId: string }) {
               />
             </div>
           ))}
-        {drafts !== null && drafts.length === 0 && (
+        {drafts?.length === 0 && (
           <p className="px-3 pt-4 text-center text-[11px] text-text-ghost">No drafts yet.</p>
         )}
         {drafts?.map((d) => {
           const author = members.get(d.created_by) ?? null;
+          // Table row, not a card: title takes the width it can, then a
+          // fixed author column, then the created date — so the eye scans a
+          // straight edge down the list instead of a ragged one.
           return (
             <div
               key={d.id}
-              className="flex flex-col gap-1 border-b border-border-subtle px-3 py-2 last:border-b-0"
+              className="flex cursor-pointer items-center gap-2 border-b border-border-subtle px-3 py-2 transition-colors last:border-b-0 hover:bg-bg-hover"
             >
-              <div className="flex min-w-0 items-center gap-1.5">
-                <FileText size={12} className="shrink-0 text-text-tertiary" />
-                <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-text-primary">
-                  {d.title}
-                </span>
-                {d.sent_at !== null && (
-                  <span className="shrink-0 rounded-full bg-white/10 px-1.5 py-px text-[9.5px] font-medium text-text-primary">
-                    sent
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="min-w-0 truncate text-[11.5px] font-medium text-text-primary">
+                    {d.title}
                   </span>
-                )}
-                <span className="shrink-0 text-[9.5px] text-text-ghost">
-                  {timeAgo(new Date(d.updated_at).toISOString(), { suffix: true })}
+                  {d.sent_at !== null && (
+                    <span className="shrink-0 rounded-full bg-white/10 px-1.5 py-px text-[9.5px] font-medium text-text-primary">
+                      sent
+                    </span>
+                  )}
+                </div>
+                <span className="mt-0.5 block truncate text-[9.5px] text-text-ghost">
+                  Updated {timeAgo(new Date(d.updated_at).toISOString(), { suffix: true })}
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 pl-[22px]">
-                <CommsAvatar member={author} size={14} />
-                <span className="truncate text-[10px] text-text-tertiary">
-                  {author?.name ?? "Unknown"}
+
+              {/* Native `title`, not a tooltip component: these are
+                  mass-rendered rows and the repo keeps native titles there —
+                  and it is what carries the FULL name, since the label beside
+                  the avatar is only the first. */}
+              <span
+                className="flex min-w-0 shrink-0 items-center gap-1"
+                title={`Created by ${author?.name ?? "Unknown"}`}
+              >
+                <CommsAvatar member={author} size={16} />
+                <span className="max-w-[72px] truncate text-[9.5px] text-text-tertiary">
+                  {firstName(author?.name)}
                 </span>
-              </div>
+              </span>
+
+              <span className="w-[62px] shrink-0 text-right text-[9.5px] tabular-nums text-text-tertiary">
+                {formatCreated(d.created_at)}
+              </span>
             </div>
           );
         })}
       </div>
     </div>
   );
+}
+
+/** Created dates are calendar facts, not elapsed ones — a short absolute date
+ *  reads faster in a column than "3 weeks ago", and the relative form is
+ *  already carrying the updated-at line above it. */
+function formatCreated(at: number): string {
+  const d = new Date(at);
+  const now = new Date();
+  return d.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    ...(d.getFullYear() === now.getFullYear() ? {} : { year: "2-digit" }),
+  });
+}
+
+/** Just the given name — the row has a date column to protect, and the
+ *  avatar's `title` still carries the whole name for anyone who asks. */
+function firstName(name: string | undefined): string {
+  const first = (name ?? "").trim().split(/\s+/)[0];
+  return first || "Unknown";
 }

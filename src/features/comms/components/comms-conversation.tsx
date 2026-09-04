@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   FileText,
   Folder,
+  Frame,
   Hash,
   Lock,
   MessageCircle,
@@ -219,6 +220,10 @@ export const CommsConversation = memo(function CommsConversation({
     scrollToBottom();
     atEndRef.current = true;
     actions.markRead(conv.id);
+    // Warm the drafts cache in the background so the FIRST visit to that tab
+    // paints instantly too, not just returns to it. Cheap (a small list) and
+    // silent — nothing renders until the user goes looking.
+    void actions.loadDrafts(conv.id);
   }, [conv.id, actions, atEndRef, scrollToBottom]);
 
   // Last-resort self-heal: any path that renders a conversation without going
@@ -442,6 +447,19 @@ function SubTabStrip({
           )}
         </button>
       ))}
+
+      {/* Placeholder for the realtime canvas (ATL-252). Disabled rather than
+          wired to nothing: a button that looks live and does nothing is worse
+          than one that says it isn't ready yet. */}
+      <button
+        type="button"
+        disabled
+        title="Spaces — coming soon"
+        className="ml-auto flex h-[20px] shrink-0 cursor-not-allowed items-center gap-1 rounded-full border border-white/10 bg-white/[0.06] px-2.5 text-[10px] font-medium text-text-tertiary"
+      >
+        <Frame size={10} />
+        Spaces
+      </button>
     </div>
   );
 }
@@ -472,67 +490,76 @@ function ConversationHeader({
   const others = (conv.member_ids ?? []).filter((id) => id !== me);
 
   return (
-    <div className="flex h-[29px] shrink-0 items-center gap-1.5 border-b border-border-default px-1.5">
-      {/* Back to the tab's home view — the panel has no sidebar to fall back on. */}
-      <button
-        type="button"
-        title="Back to chats"
-        onClick={onBack}
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary cursor-pointer"
-      >
-        <ChevronLeft size={14} />
-      </button>
-      {isChannel ? (
-        conv.visibility === "private" ? (
-          <Lock size={11} className="shrink-0 text-text-tertiary" />
+    // Three zones, not one row: the two `flex-1` rails let the middle group
+    // sit optically centred whatever the actions weigh, and `min-w-0` on all
+    // three keeps a long channel name truncating instead of shoving the
+    // buttons off the edge.
+    <div className="flex h-[29px] shrink-0 items-center border-b border-border-default px-1.5">
+      <div className="flex min-w-0 flex-1 items-center">
+        {/* Back to the tab's home view — the panel has no sidebar to fall back on. */}
+        <button
+          type="button"
+          title="Back to chats"
+          onClick={onBack}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary cursor-pointer"
+        >
+          <ChevronLeft size={14} />
+        </button>
+      </div>
+
+      <div className="flex min-w-0 items-center gap-1.5">
+        {isChannel ? (
+          conv.visibility === "private" ? (
+            <Lock size={11} className="shrink-0 text-text-tertiary" />
+          ) : (
+            <Hash size={12} className="shrink-0 text-text-tertiary" />
+          )
+        ) : isGroup ? (
+          <Users size={12} className="shrink-0 text-text-tertiary" />
         ) : (
-          <Hash size={12} className="shrink-0 text-text-tertiary" />
-        )
-      ) : isGroup ? (
-        <Users size={12} className="shrink-0 text-text-tertiary" />
-      ) : (
-        <CommsAvatar
-          member={counterpart}
-          size={16}
-          online={counterpart ? online.includes(counterpart.id) : false}
-        />
-      )}
-      {isChannel ? (
-        // Members may rename a channel (the server checks); hover reveals the
-        // pencil, and DMs never get one — a name there is refused outright.
-        <RenameChannelMenu conv={conv}>
-          <button
-            type="button"
-            title="Rename channel"
-            className="group/title flex min-w-0 items-center gap-1 text-left cursor-pointer"
-          >
-            <span className="min-w-0 truncate text-[11.5px] font-medium text-text-primary">
-              {conv.name}
-            </span>
-            <Pencil
-              size={10}
-              className="shrink-0 text-text-tertiary opacity-0 transition-opacity group-hover/title:opacity-100"
-            />
-          </button>
-        </RenameChannelMenu>
-      ) : (
-        <span className="min-w-0 truncate text-[11.5px] font-medium text-text-primary">
-          {title}
-        </span>
-      )}
+          <CommsAvatar
+            member={counterpart}
+            size={16}
+            online={counterpart ? online.includes(counterpart.id) : false}
+          />
+        )}
+        {isChannel ? (
+          // Members may rename a channel (the server checks); hover reveals the
+          // pencil, and DMs never get one — a name there is refused outright.
+          <RenameChannelMenu conv={conv}>
+            <button
+              type="button"
+              title="Rename channel"
+              className="group/title flex min-w-0 items-center gap-1 text-left cursor-pointer"
+            >
+              <span className="min-w-0 truncate text-[11.5px] font-medium text-text-primary">
+                {conv.name}
+              </span>
+              <Pencil
+                size={10}
+                className="shrink-0 text-text-tertiary opacity-0 transition-opacity group-hover/title:opacity-100"
+              />
+            </button>
+          </RenameChannelMenu>
+        ) : (
+          <span className="min-w-0 truncate text-[11.5px] font-medium text-text-primary">
+            {title}
+          </span>
+        )}
 
-      {isGroup && (
-        <span className="shrink-0 text-[10px] text-text-ghost">
-          {others.length + 1} · membership frozen
-        </span>
-      )}
-      {isChannel && conv.workspace_ref_ids.length > 0 && (
-        <span className="shrink-0 rounded bg-bg-hover px-1 py-px text-[9px] text-text-tertiary">
-          {conv.workspace_ref_ids.length} workspace
-        </span>
-      )}
+        {isGroup && (
+          <span className="shrink-0 text-[10px] text-text-ghost">
+            {others.length + 1} · membership frozen
+          </span>
+        )}
+        {isChannel && conv.workspace_ref_ids.length > 0 && (
+          <span className="shrink-0 rounded bg-bg-hover px-1 py-px text-[9px] text-text-tertiary">
+            {conv.workspace_ref_ids.length} workspace
+          </span>
+        )}
+      </div>
 
-      <div className="ml-auto flex shrink-0 items-center gap-0.5">
+      <div className="flex min-w-0 flex-1 items-center justify-end gap-0.5">
         {pinnedCount > 0 && (
           <PinnedMenu
             convId={conv.id}

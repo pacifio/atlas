@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { FileText, Image as ImageIcon, Music, RefreshCw } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { timeAgo } from "@/lib/time-ago";
 import { AudioPlayer } from "./audio-player";
+import { CommsAvatar } from "./comms-avatar";
 import { MediaLightbox } from "./media-lightbox";
 import { formatBytes, saveAttachment } from "./message-group";
 import { attachmentPath, cachedAttachmentPath } from "../lib/attachment-cache";
 import { useCommsStore } from "../stores/comms-store";
+import type { LucideIcon } from "lucide-react";
 import type { ChatAttachment, CommsMessage, OrgMemberProfile } from "../types";
 
 /**
@@ -58,7 +60,12 @@ export function FilesTab({ convId }: { convId: string }) {
 
       {media.length > 0 && (
         <>
-          <SectionHead label="Media" />
+          <SectionHead
+            label="Media"
+            icon={ImageIcon}
+            onRefresh={loadOlder}
+            refreshing={loadingOlder}
+          />
           <div className="grid grid-cols-3 gap-1">
             {media.map(({ message, attachment }) => (
               <MediaThumb key={attachment.id} attachment={attachment} message={message} />
@@ -69,7 +76,7 @@ export function FilesTab({ convId }: { convId: string }) {
 
       {audio.length > 0 && (
         <>
-          <SectionHead label="Audio" />
+          <SectionHead label="Audio" icon={Music} onRefresh={loadOlder} refreshing={loadingOlder} />
           <div className="flex flex-col gap-1">
             {audio.map(({ message, attachment }) => (
               <AudioEntry
@@ -84,8 +91,13 @@ export function FilesTab({ convId }: { convId: string }) {
 
       {files.length > 0 && (
         <>
-          <SectionHead label="Files" />
-          <div className="flex flex-col">
+          <SectionHead
+            label="Files"
+            icon={FileText}
+            onRefresh={loadOlder}
+            refreshing={loadingOlder}
+          />
+          <div className="flex flex-col gap-1">
             {files.map(({ message, attachment }) => (
               <FileRow
                 key={attachment.id}
@@ -97,29 +109,38 @@ export function FilesTab({ convId }: { convId: string }) {
           </div>
         </>
       )}
-
-      <div className="mt-2 flex flex-col items-center gap-1">
-        <span className="text-[9.5px] text-text-ghost">
-          Files from loaded history · {(messages ?? []).length} messages scanned
-        </span>
-        <button
-          type="button"
-          disabled={loadingOlder}
-          onClick={loadOlder}
-          className="flex h-[24px] items-center gap-1.5 rounded-md border border-border-default bg-bg-hover px-2.5 text-[10.5px] text-text-secondary transition-colors hover:bg-bg-active hover:text-text-primary disabled:opacity-50 cursor-pointer"
-        >
-          <RefreshCw size={10} className={loadingOlder ? "animate-spin" : ""} />
-          Load older messages
-        </button>
-      </div>
     </div>
   );
 }
 
-function SectionHead({ label }: { label: string }) {
+function SectionHead({
+  label,
+  icon: Icon,
+  onRefresh,
+  refreshing,
+}: {
+  label: string;
+  icon: LucideIcon;
+  /** Pages older history in — this list only sees what the transcript holds,
+   *  so "refresh" here honestly means "reach further back". */
+  onRefresh: () => void;
+  refreshing: boolean;
+}) {
   return (
-    <div className="px-1 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.06em] text-text-secondary">
-      {label}
+    <div className="flex items-center gap-1.5 px-1 pb-1 pt-2">
+      <Icon size={11} className="shrink-0 text-text-secondary" />
+      <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-secondary">
+        {label}
+      </span>
+      <button
+        type="button"
+        title="Load older messages"
+        disabled={refreshing}
+        onClick={onRefresh}
+        className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border-default text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-50 cursor-pointer"
+      >
+        <RefreshCw size={9} className={refreshing ? "animate-spin" : ""} />
+      </button>
     </div>
   );
 }
@@ -235,16 +256,21 @@ function FileRow({
       title={`Download ${attachment.filename}`}
       disabled={progress !== undefined}
       onClick={() => void saveAttachment(attachment)}
-      className="flex w-full items-center gap-2 rounded-md px-1.5 py-[6px] text-left transition-colors hover:bg-bg-hover cursor-pointer"
+      // A surface of its own: on the panel's pure-black card these rows had
+      // nothing to sit on and read as floating text.
+      className="flex w-full items-center gap-2 rounded-lg bg-[#0D0E0D] px-2.5 py-2 text-left transition-colors hover:bg-bg-hover cursor-pointer"
     >
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[11.5px] text-text-secondary">
           {attachment.filename}
         </span>
-        <span className="block text-[9.5px] text-text-ghost">
-          {author?.name ?? "Unknown"} ·{" "}
-          {timeAgo(new Date(message.created_at).toISOString(), { suffix: true })} ·{" "}
-          {formatBytes(attachment.bytes)}
+        <span className="mt-0.5 flex items-center gap-1 text-[9.5px] text-text-ghost">
+          <CommsAvatar member={author} size={12} />
+          <span className="truncate">{author?.name ?? "Unknown"}</span>·
+          <span className="shrink-0">
+            {timeAgo(new Date(message.created_at).toISOString(), { suffix: true })}
+          </span>
+          ·<span className="shrink-0">{formatBytes(attachment.bytes)}</span>
         </span>
       </span>
     </button>
