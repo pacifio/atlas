@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use base64::Engine;
 use codex_api::ApiError;
 use codex_api::TransportError;
@@ -19,9 +20,7 @@ pub struct ResponseDebugContext {
 pub fn extract_response_debug_context(transport: &TransportError) -> ResponseDebugContext {
     let mut context = ResponseDebugContext::default();
 
-    let TransportError::Http {
-        headers, body: _, ..
-    } = transport
+    let TransportError::Http { headers, .. } = transport
     else {
         return context;
     };

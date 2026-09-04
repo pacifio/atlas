@@ -1154,7 +1154,6 @@ impl AgentConnection for EngineConnection {
         let mut turn_input: Option<Vec<v2::UserInput>> = None;
         match crate::engine::commands::parse(&text, &skills) {
             Some(crate::engine::commands::Command::Compact) => {
-                let thread_id = thread_id;
                 return async move {
                     let _: v2::ThreadCompactStartResponse = requests
                         .request_typed(ClientRequest::ThreadCompactStart {
@@ -1234,7 +1233,6 @@ impl AgentConnection for EngineConnection {
             Some(crate::engine::commands::Command::Undo) => {
                 let sessions = self.sessions.clone();
                 let session_id = params.session_id;
-                let thread_id = thread_id;
                 return async move {
                     let rolled = requests
                         .request_typed::<v2::ThreadRollbackResponse>(ClientRequest::ThreadRollback {
@@ -1299,7 +1297,6 @@ impl AgentConnection for EngineConnection {
             Some(crate::engine::commands::Command::Goal(objective)) => {
                 let sessions = self.sessions.clone();
                 let session_id = params.session_id;
-                let thread_id = thread_id;
                 return async move {
                     let reply = match objective {
                         Some(objective_text) => {
@@ -1357,7 +1354,6 @@ impl AgentConnection for EngineConnection {
             // `review_model` unset on purpose, and the engine then uses the
             // parent thread's model, which the gateway serves.
             Some(crate::engine::commands::Command::Review(instructions)) => {
-                let thread_id = thread_id;
                 let request_ids = self.request_ids.clone();
                 return async move {
                     let target = match instructions {
