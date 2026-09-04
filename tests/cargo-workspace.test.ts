@@ -43,8 +43,8 @@ const ROOT_MANIFEST = path.join(REPO_ROOT, "Cargo.toml");
  * template binary that `commands::knowledge_export` compiles on demand at
  * runtime, and it carries its own `[profile.release]` (`panic = "abort"`,
  * thin LTO). Profiles are workspace-global, so joining the workspace would
- * silently rebuild it under the app's fat-LTO/unwind profile. Excluded so its
- * build stays byte-for-byte what it is today.
+ * silently rebuild it under the app's unwind profile. Excluded so its build
+ * stays byte-for-byte what it is today.
  */
 const EXCLUDED_CRATE_DIRS = new Set(["atlas-kb-server"]);
 
@@ -271,13 +271,19 @@ describe("dev-profile opt-levels survive the move into the workspace", () => {
     expect(src).toMatch(/^\s*\[profile\.release\]/m);
     for (const setting of [
       /codegen-units\s*=\s*1/,
-      /lto\s*=\s*"fat"/,
+      /lto\s*=\s*"thin"/,
       /strip\s*=\s*"symbols"/,
       /panic\s*=\s*"unwind"/,
       /opt-level\s*=\s*3/,
     ]) {
       expect(src).toMatch(setting);
     }
+    // Asserted absent, not merely unasserted: fat LTO's final link is a
+    // 12-minute single-threaded unit that reruns on every rebuild, for a
+    // binary 19 MB smaller (measured 2026-09-04 — clean 23m05s vs 8m14s,
+    // touch 14m59s vs 4m16s; docs/research/build-performance.md). Whoever
+    // wants it back measures first.
+    expect(src).not.toMatch(/lto\s*=\s*"fat"/);
   });
 });
 
