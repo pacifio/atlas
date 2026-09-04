@@ -1,0 +1,70 @@
+# Upstream Codex's `codex-rs/clippy.toml`, restored.
+#
+# The ADR-0003 port copied the engine's source into `vendor/codex/` but not the
+# clippy config that sat beside it, and clippy resolves `clippy.toml` by walking
+# up from the crate manifest — so with no file anywhere in the tree, every
+# vendored crate was being linted under clippy's defaults instead of the config
+# its code was written against. The visible cost was ~510 warnings in
+# `atlas-native-agent`'s dependency graph that no source change had introduced,
+# which is what kept the CI job's `-D warnings` step red.
+#
+# This file lives at the repo root rather than under `vendor/codex/` on purpose:
+# a root config applies to every workspace member, so the first-party Atlas
+# crates are held to the same thresholds as the engine they embed.
+#
+# What each section does here:
+#
+# * `allow-{expect,unwrap}-in-tests` — a panic in a test IS the failure report.
+#   Matches the reasoning already recorded in the root `[workspace.lints.clippy]`
+#   table for why `unwrap_used`/`expect_used` are staged rather than enforced.
+#
+# * `await-holding-invalid-types` — the type list behind `await_holding_invalid_type`,
+#   which the workspace lint table denies. Without the list the lint has nothing
+#   to match, so the deny was inert and the engine's 38 `#[expect(...)]`
+#   attributes covering it all fired as `unfulfilled_lint_expectations`.
+#
+# * `disallowed-methods` — likewise the list behind the table's
+#   `disallowed_methods = "deny"`. The ratatui entries are inert in this tree
+#   (Atlas ships no TUI and ratatui is not in the dependency graph); they are
+#   kept verbatim so the file stays diffable against upstream, which is the
+#   whole point of restoring it rather than writing a new one.
+#
+# * `large-error-threshold = 256` — the engine's error enums are deliberately
+#   rich, and every fallible function in the graph returns one. Raising the
+#   threshold is upstream's considered position on those types; the alternative
+#   would be blanket-allowing `result_large_err` in the workspace lint table,
+#   which would also switch the lint off for first-party Atlas crates where it
+#   still has something to say.
+
+allow-expect-in-tests = true
+allow-unwrap-in-tests = true
+await-holding-invalid-types = [
+    "tokio::sync::MutexGuard",
+    "tokio::sync::RwLockReadGuard",
+    "tokio::sync::RwLockWriteGuard",
+]
+disallowed-methods = [
+    { path = "ratatui::style::Color::Rgb", reason = "Use ANSI colors, which work better in various terminal themes." },
+    { path = "ratatui::style::Color::Indexed", reason = "Use ANSI colors, which work better in various terminal themes." },
+    { path = "ratatui::style::Stylize::white", reason = "Avoid hardcoding white; prefer default fg or dim/bold. Exception: Disable this rule if rendering over a hardcoded ANSI background." },
+    { path = "ratatui::style::Stylize::black", reason = "Avoid hardcoding black; prefer default fg or dim/bold. Exception: Disable this rule if rendering over a hardcoded ANSI background." },
+    { path = "ratatui::style::Stylize::yellow", reason = "Avoid yellow; prefer other colors in `tui/styles.md`." },
+    # Audited against workspace sqlx 0.9.0. Revisit this SQLite escape-hatch list when bumping sqlx.
+    { path = "sqlx::Pool::connect", reason = "Create SQLite pools through codex-state's sqlite shim." },
+    { path = "sqlx::Pool::connect_with", reason = "Create SQLite pools through codex-state's sqlite shim." },
+    { path = "sqlx::Pool::connect_lazy", reason = "Create SQLite pools through codex-state's sqlite shim." },
+    { path = "sqlx::Pool::connect_lazy_with", reason = "Create SQLite pools through codex-state's sqlite shim." },
+    { path = "sqlx::Pool::set_connect_options", reason = "Do not replace options on SQLite pools created by codex-state's sqlite shim." },
+    { path = "sqlx::pool::PoolOptions::connect", reason = "Create SQLite pools through codex-state's sqlite shim." },
+    { path = "sqlx::pool::PoolOptions::connect_with", reason = "Create SQLite pools through codex-state's sqlite shim." },
+    { path = "sqlx::pool::PoolOptions::connect_lazy", reason = "Create SQLite pools through codex-state's sqlite shim." },
+    { path = "sqlx::pool::PoolOptions::connect_lazy_with", reason = "Create SQLite pools through codex-state's sqlite shim." },
+    { path = "sqlx::Connection::connect", reason = "Create SQLite connections through codex-state's sqlite shim." },
+    { path = "sqlx::Connection::connect_with", reason = "Create SQLite connections through codex-state's sqlite shim." },
+    { path = "sqlx::ConnectOptions::connect", reason = "Create SQLite connections through codex-state's sqlite shim." },
+    { path = "sqlx::migrate::MigrateDatabase::create_database", reason = "Create SQLite databases through codex-state's sqlite shim." },
+]
+
+# Increase the size threshold for result_large_err to accommodate
+# richer error variants.
+large-error-threshold = 256
