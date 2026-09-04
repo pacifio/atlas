@@ -10,7 +10,6 @@
     "tauri": "tauri",
     "dev:app": "node scripts/with-posthog-env.mjs tauri dev",
     "build:app": "node scripts/with-posthog-env.mjs tauri build --bundles app",
-    "build:app:fast": "CARGO_TARGET_DIR=\"$PWD/target/fast\" CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 node scripts/with-posthog-env.mjs tauri build --bundles app",
     "build:app:dmg": "bash scripts/build-dmg.sh arm",
     "build:app:dmg:arm": "bash scripts/build-dmg.sh arm",
     "build:app:dmg:intel": "bash scripts/build-dmg.sh intel",
