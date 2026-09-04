@@ -74,8 +74,6 @@
      Darker than `--stat-added`'s #3fb950 on purpose — this one carries a label,
      and white on the lighter green is ~2.3:1. At this value it clears 4.5:1,
      which is what makes the text legible rather than merely present. */
-  --comms-connect: #1a7f37;
-  --comms-connect-hover: #21924a;
 
   /* === Text — monochromatic grays === */
   --text-primary: #ffffff;
