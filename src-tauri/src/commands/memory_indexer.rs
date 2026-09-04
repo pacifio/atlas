@@ -95,6 +95,10 @@ impl MemoryRegistry {
     /// so the MiniLM model is only ever loaded once per app. Returns `None` (with a
     /// log inside [`load_provider`]) when the model isn't downloaded yet — the next
     /// call retries.
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "double-checked lazy load: the guard must span load_provider so the model loads once"
+    )]
     pub async fn provider(&self, app: &AppHandle) -> Option<Arc<MiniLmProvider>> {
         let mut guard = self.provider.lock().await;
         if let Some(p) = guard.as_ref() {
@@ -419,6 +423,10 @@ impl MemoryIndexer {
 /// Gather the corpus for `cwd`, diff+embed it into that project's engine under
 /// the **write lock**, and persist. Reuses `agent_memory::collect_corpus` so the
 /// indexer sees exactly what the old build path saw.
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "the write lock must span index_corpus: reset + re-embed + persist is one atomic pass"
+)]
 async fn index_one(
     registry: &MemoryRegistry,
     cwd: &str,
@@ -495,6 +503,10 @@ async fn compact_one(registry: &MemoryRegistry, cwd: &str) -> Result<(), String>
 ///
 /// No-op (same contract as `memory_compile`) unless the project opted into a BYOK
 /// summarizer provider — so the default-OFF path costs nothing.
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "extract_and_store borrows the graph out of the guard; see the comment at the read()"
+)]
 async fn extract_one(
     app: &AppHandle,
     registry: &MemoryRegistry,

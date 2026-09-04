@@ -184,6 +184,10 @@ impl AgentRegistryStore {
     /// the marketplace show "Registry unavailable" on first open and then fill in
     /// on a manual Refresh: its mount-time refresh collided with the one boot had
     /// already started.
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "joining an in-flight refresh IS holding `refresh_lock` across the fetch; see the doc comment"
+    )]
     pub async fn refresh(&self) -> Result<()> {
         let generation_on_entry = self.state.lock().unwrap().generation;
 
