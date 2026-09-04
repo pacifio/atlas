@@ -31,5 +31,3 @@ ctx.onmessage = (e) => {
   const tokens = lines.map((line) => tokenizeLine(hljsId, line));
   ctx.postMessage({ id, tokens });
 };
-
-export {};
