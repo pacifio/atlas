@@ -147,7 +147,11 @@ async fn start_engine_inner(
     // failure at the first tool call.
     let runtime_paths = ExecServerRuntimePaths::from_optional_paths(
         settings.self_exe.clone(),
-        /* codex_linux_sandbox_exe */ None,
+        // `None` in every shipping build: the macOS seatbelt path needs no
+        // helper. This is the one the Linux seccomp path refuses without, and
+        // the integration tests are the only thing that supplies it today —
+        // see `EngineSettings::linux_sandbox_exe`.
+        settings.linux_sandbox_exe.clone(),
     )
     .context(
         "the engine needs the path to Atlas's own executable for sandboxed execution \
@@ -176,7 +180,9 @@ async fn start_engine_inner(
         // does not survive that reload — this is the one that reaches a thread.
         arg0_paths: Arg0DispatchPaths {
             codex_self_exe: settings.self_exe.clone(),
-            codex_linux_sandbox_exe: None,
+            // Stamped onto every config `ConfigManager` reloads, so the copy in
+            // `runtime_paths` above is not enough on its own.
+            codex_linux_sandbox_exe: settings.linux_sandbox_exe.clone(),
             main_execve_wrapper_exe: None,
         },
         config,
