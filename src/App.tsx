@@ -12,6 +12,7 @@ import { useTerminalStore } from "@/features/terminal/stores/terminal-store";
 import { useProjectStore, type AppStateWire } from "@/features/project/stores/project-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { listenAgents, resetAgentByAgentId } from "@/features/chat/lib/agents-api";
+import { StreamSmoother } from "@/features/chat/lib/stream-smoother";
 import type { PendingPermission } from "@/types/acp";
 import type { AgentDelta } from "@/types/agents";
 import { cycleChatAgent } from "@/features/chat/lib/switch-agent";
@@ -896,15 +897,7 @@ export function App() {
       }
     };
 
-    listenAgents((env) => {
-      if (cancelled) return;
-      if (
-        env.kind === "status" ||
-        env.kind === "message_appended" ||
-        env.kind === "turn_finished"
-      ) {
-        recordRecentChat(env.session_id);
-      }
+    const dispatchAgentDelta = (env: AgentDelta) => {
       const actions = useChatStore.getState().actions;
       switch (env.kind) {
         case "text_chunk":
@@ -1057,6 +1050,34 @@ export function App() {
           schedule();
           return;
       }
+    };
+
+    // Native-agent text arrives in provider-side bursts (~400-650 ms lumps —
+    // measured; see research/stream-smoothing.md). The smoother sits between
+    // the wire and the dispatch above and drips text/thinking chunks out at a
+    // steady rate, preserving wire order (non-text deltas barrier behind the
+    // text ahead of them). ACP sessions pass through untouched.
+    const isNativeAgentSession = (acpSessionId: string): boolean => {
+      for (const s of Object.values(useChatStore.getState().sessions)) {
+        if (s.acpSessionId === acpSessionId) return s.agentType === "cersei";
+      }
+      // Unknown session (delta raced ahead of the tab binding): don't smooth.
+      return false;
+    };
+    const smoother = new StreamSmoother(dispatchAgentDelta, {
+      shouldSmooth: isNativeAgentSession,
+    });
+
+    listenAgents((env) => {
+      if (cancelled) return;
+      if (
+        env.kind === "status" ||
+        env.kind === "message_appended" ||
+        env.kind === "turn_finished"
+      ) {
+        recordRecentChat(env.session_id);
+      }
+      smoother.ingest(env);
     }).then((un) => {
       if (cancelled) un();
       else unlisten = un;
@@ -1072,6 +1093,7 @@ export function App() {
 
     return () => {
       cancelled = true;
+      smoother.dispose();
       if (rafId !== null) cancelAnimationFrame(rafId);
       if (backstopId !== null) clearTimeout(backstopId);
       window.removeEventListener("atlas:window-active", flushOnWake);
