@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use crate::PathConvention;
 use crate::PathUri;
 use crate::is_windows_separator_byte;
@@ -210,8 +211,10 @@ fn render_windows_opaque_fallback(path_bytes: &[u8]) -> Option<String> {
         return None;
     }
     let path_wide = path_bytes
-        .chunks_exact(2)
-        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&bytes| u16::from_le_bytes(bytes))
         .collect::<Vec<_>>();
 
     // Windows absolute paths either have a rooted drive prefix (`C:\\`) or a

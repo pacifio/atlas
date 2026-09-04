@@ -14,7 +14,8 @@
 import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Check, Download, Github, Globe, Loader2, RefreshCw, Search, X } from "lucide-react";
+import { Check, Download, Globe, Loader2, RefreshCw, Search, X } from "lucide-react";
+import { GithubIcon } from "@/components/github-icon";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -503,7 +504,7 @@ const AgentCard = memo(function AgentCard({
             className="hover:text-[var(--text-primary)] transition-colors cursor-pointer"
             title={entry.repository}
           >
-            <Github size={11} />
+            <GithubIcon size={11} />
           </button>
         )}
         {entry.website && (

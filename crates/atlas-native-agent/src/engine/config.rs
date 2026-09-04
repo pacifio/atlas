@@ -177,6 +177,28 @@ pub struct EngineSettings {
     /// whole embedding, and it has an explicit code-level seam precisely so an
     /// embedder can satisfy it without adopting the engine's argv0 dispatch.
     pub self_exe: Option<PathBuf>,
+    /// The path to the `codex-linux-sandbox` helper, on Linux.
+    ///
+    /// The seatbelt sandbox macOS uses is `/usr/bin/sandbox-exec`, already on
+    /// disk, so `self_exe` above is the whole story there. Linux has no such
+    /// binary: `SandboxType::LinuxSeccomp` re-execs a helper whose *arg0* is
+    /// `codex-linux-sandbox`, and with no path for it the engine refuses the
+    /// transform (`MissingLinuxSandboxExecutable`) before spawning anything.
+    /// Under the default `WorkspaceWrite` policy that turns every sandboxed
+    /// tool call into a no-op that still ends the turn normally.
+    ///
+    /// `None` in production and that is correct today: **Atlas ships macOS
+    /// only**, and nothing in the app is the helper. The field exists because
+    /// the integration tests do have a helper — the test binary itself, under
+    /// an arg0 alias — and without a way to hand it over the sandboxed-command
+    /// tests can only pass on macOS.
+    ///
+    /// A real Linux build would have to earn this rather than set it: `main.rs`
+    /// would need the engine's arg0 dispatch, so that Atlas re-entered as
+    /// `codex-linux-sandbox` runs the helper instead of the app, and only then
+    /// could this point at Atlas's own executable. That is deliberately not
+    /// implemented here.
+    pub linux_sandbox_exe: Option<PathBuf>,
     pub approval_policy: AskForApproval,
     pub sandbox_mode: SandboxMode,
     /// How many times the engine retries a dropped stream.
@@ -197,6 +219,9 @@ impl EngineSettings {
             model: model.into(),
             cwd,
             self_exe: std::env::current_exe().ok(),
+            // Never guessed. `current_exe()` is a helper only in a process that
+            // dispatches on arg0, and Atlas does not — see the field's docs.
+            linux_sandbox_exe: None,
             // D5: the sandbox is on from day one on macOS, in the engine's own
             // default approval/sandbox mode. `WorkspaceWrite` plus
             // `OnRequest` is that default — writes confined to the workspace,
