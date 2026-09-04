@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
+  columnFilteringFeature,
+  columnSizingFeature,
+  columnVisibilityFeature,
+  createCoreRowModel,
+  createFilteredRowModel,
+  createSortedRowModel,
   flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getSortedRowModel,
-  useReactTable,
+  rowSortingFeature,
+  tableFeatures,
+  useTable,
   type ColumnDef,
   type Row,
 } from "@tanstack/react-table";
@@ -95,6 +100,22 @@ const SOURCE_COLOR: Record<LogSource, { text: string; bg: string; border: string
     border: "border-[var(--accent-primary)]/30",
   },
 };
+
+// react-table 9 no longer bundles every feature into the hook: what the table
+// can do is declared once, statically, and the row-model factories are slots on
+// the same object (v8's `getCoreRowModel()` / `get*RowModel()` table options).
+// `columnSizingFeature` is what keeps `header.getSize()` / `column.getSize()`
+// available — the column widths this table lays itself out with — and
+// `columnVisibilityFeature` is what keeps `row.getVisibleCells()`.
+const features = tableFeatures({
+  columnFilteringFeature,
+  columnSizingFeature,
+  columnVisibilityFeature,
+  rowSortingFeature,
+  coreRowModel: createCoreRowModel(),
+  filteredRowModel: createFilteredRowModel(),
+  sortedRowModel: createSortedRowModel(),
+});
 
 export function LogPanel() {
   const buffer = useLogStore.use.buffer();
@@ -187,7 +208,7 @@ export function LogPanel() {
     }
   };
 
-  const columns = useMemo<ColumnDef<LogEntry>[]>(
+  const columns = useMemo<ColumnDef<typeof features, LogEntry>[]>(
     () => [
       {
         id: "expander",
@@ -324,13 +345,7 @@ export function LogPanel() {
     [expanded, copiedId, copiedLineId, pin, unpin],
   );
 
-  const table = useReactTable<LogEntry>({
-    data: filtered,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-  });
+  const table = useTable({ features, data: filtered, columns });
 
   // Virtualization on row model.
   const rows = table.getRowModel().rows;
@@ -428,7 +443,7 @@ export function LogPanel() {
             }}
           >
             {virtualizer.getVirtualItems().map((v) => {
-              const row = rows[v.index] as Row<LogEntry>;
+              const row = rows[v.index] as Row<typeof features, LogEntry>;
               const isExpanded = expanded.has(row.original.id);
               return (
                 <div
