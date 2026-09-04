@@ -169,6 +169,7 @@ jobs:
           - crate: atlas-memory
           - crate: atlas-native-agent
             clippy: true
+            sandbox: true
           - crate: atlas-redact
             clippy: true
           - crate: atlas-terminal
@@ -192,6 +193,30 @@ jobs:
         run: |
           git config --global user.name "CI"
           git config --global user.email "ci@example.invalid"
+      # `engine_turn.rs` runs real commands through the ported engine's
+      # sandbox. macOS sandboxes with `/usr/bin/sandbox-exec`, already on disk,
+      # which is why these tests only ever failed here. Linux has no such
+      # binary: the engine re-execs a helper under the arg0
+      # `codex-linux-sandbox`, and that helper delegates the filesystem view to
+      # bubblewrap — which the runner image does not ship.
+      #
+      # Its absence is invisible by construction. The helper panics at
+      # `linux-sandbox/src/launcher.rs` from inside the `#[ctor]` that performs
+      # the arg0 dispatch; a ctor cannot unwind, so the panic aborts and its
+      # message dies with the process. The engine sees only `Sandbox(Signal(6))`
+      # and the suite reports that an approved command never ran — three
+      # translations away from "bwrap is not installed".
+      #
+      # Flagged rather than installed for every crate because
+      # `tests/codex-quarantine.test.ts` keeps `atlas-native-agent` the only
+      # manifest allowed to name a `codex-*` crate, so no other job can reach
+      # this sandbox. Flip the flag on any crate that later can.
+      - name: Install bubblewrap (the engine's Linux sandbox needs it)
+        if: matrix.sandbox
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends bubblewrap
+          bwrap --version
       - name: Test
         working-directory: crates/${{ matrix.crate }}
         run: cargo test --locked
