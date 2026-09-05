@@ -25,15 +25,17 @@ export default defineConfig(async () => ({
         "node_modules/decode-named-character-reference/index.js",
       ),
     },
-    // CRITICAL: dedupe CodeMirror + Lezer. In production the lang packages
-    // (lang-json, lang-rust, …) get lazy-imported as separate chunks and
-    // each transitively imports @codemirror/{state,view,language} and
-    // @lezer/{common,highlight,lr}. Without dedup Rollup can ship two copies;
-    // `EditorView.theme(...)` registers against copy A's StyleModule but the
-    // EditorView constructor uses copy B's, so the theme silently no-ops and
-    // text renders with default styling (often invisible against the dark
-    // background). The dev server doesn't hit this because Vite serves
-    // pre-bundled deps as a single instance.
+    // Dedupe CodeMirror + Lezer. The lang packages (lang-json, lang-rust, …)
+    // are lazy-imported as separate chunks and each transitively imports
+    // @codemirror/{state,view,language} and @lezer/{common,highlight,lr};
+    // without dedup Rollup can ship two copies, and facets/extensions from
+    // one copy are invisible to an EditorView built from the other.
+    //
+    // NOTE (2026-09-06): "CodeMirror unstyled in production, fine in dev" was
+    // NOT this. It was the Tauri CSP: a nonce injected into index.html's
+    // inline <style> disables `style-src 'unsafe-inline'`, blocking every
+    // runtime-injected stylesheet. See the comment in index.html and
+    // `dangerousDisableAssetCspModification` in src-tauri/tauri.conf.json.
     dedupe: [
       "@codemirror/state",
       "@codemirror/view",
