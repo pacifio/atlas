@@ -149,6 +149,23 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
 
   // Build the theme once — sized to the container, transparent
   // background so the parent's chip rounding shows through.
+  //
+  // HEADS UP: seven declarations below are DEAD — `.atlas-chat-cm-host` in
+  // `styles/globals.css` redeclares them and wins. Editing them here alone
+  // does nothing. See that block for why; it is the authoritative copy.
+  //   &: backgroundColor, fontSize, lineHeight
+  //   .cm-scroller: fontFamily, minHeight
+  //   .cm-content: padding
+  //   .cm-line: padding
+  // `.cm-selectionBackground` is dead too, for a different reason: globals.css
+  // declares it `!important` inside `@layer base`, and for important
+  // declarations the layer order inverts — layered beats unlayered.
+  // Everything not in that list (color, maxHeight, caret, placeholder,
+  // scrollbar hiding) is declared only here and does take effect.
+  //
+  // `minHeight` is the trap: it is a public PROP, so `<ChatInput minHeight={80}>`
+  // type-checks, reads as configuration, and silently does nothing against
+  // globals.css's hardcoded 44px. Drive the CSS from it or drop the prop.
   const theme = useMemo(
     () =>
       EditorView.theme(

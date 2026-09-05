@@ -4444,17 +4444,23 @@ mod tests {
     // ── Phase 1: pack parse ──────────────────────────────────────────────────
 
     /// Build a fresh empty temp dir for a pack fixture.
+    ///
+    /// UUID, for the same reason `tmp_root()` above uses one. This helper was
+    /// added a day after `tmp_root()` was switched over (2026-06-25 vs 06-24)
+    /// and kept the discarded `pid` + `SystemTime` form — two months before the
+    /// comment explaining why that form is unsafe was written.
+    ///
+    /// `pid` is constant across every test in the binary, and `SystemTime::now()`
+    /// is not nanosecond-unique: on macOS it advances in 1 µs steps (measured —
+    /// 139,798 duplicate stamps per 160,000 across 8 threads). Two of the 16
+    /// call sites here can land on the SAME directory, and each ends in
+    /// `fs::remove_dir_all`, so the loser's fixture is deleted mid-test —
+    /// observed as `pack_project_claude_links_agent_and_skill_and_records_ledger`
+    /// failing on `skill_link.symlink_metadata().is_ok()` a beat after the agent
+    /// assertion above it passed, and passing on its own or on a re-run.
     fn tmp_pack_dir() -> PathBuf {
         let mut p = std::env::temp_dir();
-        let uniq = format!(
-            "atlas-pack-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        p.push(uniq);
+        p.push(format!("atlas-pack-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&p).unwrap();
         p
     }

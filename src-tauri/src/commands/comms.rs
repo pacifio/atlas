@@ -87,7 +87,7 @@ pub fn install(app: &AppHandle) {
     let spaces = {
         let handle = tauri::async_runtime::handle();
         let _guard = handle.inner().enter();
-        atlas_comms::spaces::SpacesManager::new(tokens.clone())
+        atlas_comms::spaces::SpacesManager::new(tokens)
     };
     app.manage(crate::commands::spaces::SpacesState(spaces.clone()));
     let spaces_app = app.clone();
