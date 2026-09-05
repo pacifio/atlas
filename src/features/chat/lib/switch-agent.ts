@@ -36,7 +36,7 @@ export function switchAgentForTab(tabId: string, next: SwitchableAgent): void {
 
 /** The next agent in the ⌥/ rotation for a tab — first-party agents in their
  *  fixed order, then any installed registry externals. */
-export function nextAgentForTab(tabId: string): SwitchableAgent {
+function nextAgentForTab(tabId: string): SwitchableAgent {
   const rotation = switchableAgentIds();
   const cur = useChatStore.getState().sessions[tabId]?.agentType;
   const idx = rotation.indexOf(cur ?? NATIVE_AGENT);

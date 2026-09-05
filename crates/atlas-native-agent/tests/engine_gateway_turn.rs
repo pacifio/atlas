@@ -593,12 +593,14 @@ async fn the_model_picker_offers_the_gateway_catalogue_and_nothing_else() {
             "claude-opus-4-8",
             "gemini-3.6-flash",
             "gemini-3.5-flash-lite",
+            "glm-5.3-flash",
         ],
         "the picker must offer exactly what the gateway serves",
     );
     assert!(
-        !ids.iter().any(|id| id.starts_with("gpt-")),
-        "a model the gateway does not serve must never be offerable: {ids:?}",
+        !ids.iter()
+            .any(|id| id.starts_with("gpt-") || id.starts_with("openai/")),
+        "a model the gateway cannot generate from must never be offerable: {ids:?}",
     );
     // No prices. The BYOK picker shows per-million provider rates, which are
     // not what an Atlas turn costs — it is metered against the account's cap.

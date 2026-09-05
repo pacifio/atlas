@@ -78,9 +78,40 @@ pub fn install(app: &AppHandle) {
     let manager = {
         let handle = tauri::async_runtime::handle();
         let _guard = handle.inner().enter();
-        CommsManager::new(store, tokens)
+        CommsManager::new(store, tokens.clone())
     };
     app.manage(CommsState(manager.clone()));
+
+    // The Spaces sockets (one per open canvas) share the token source but are
+    // otherwise a separate subsystem: nothing they carry is journaled.
+    let spaces = {
+        let handle = tauri::async_runtime::handle();
+        let _guard = handle.inner().enter();
+        atlas_comms::spaces::SpacesManager::new(tokens.clone())
+    };
+    app.manage(crate::commands::spaces::SpacesState(spaces.clone()));
+    let spaces_app = app.clone();
+    let mut spaces_rx = spaces.subscribe();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match spaces_rx.recv().await {
+                Ok(envelope) => {
+                    if let Err(e) =
+                        spaces_app.emit(crate::commands::spaces::SPACES_EVENT, &envelope)
+                    {
+                        tracing::error!(target: "atlas_comms", "failed to emit spaces event: {e}");
+                    }
+                }
+                // Lagging drops frames, and a dropped Yjs update would fork the
+                // doc — but the renderer heals on the next `page.opened`
+                // (re-open with `since`), so the honest move is to keep going.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(target: "atlas_comms", "spaces bridge lagged {n} frames");
+                }
+                Err(_) => break,
+            }
+        }
+    });
 
     // Forward the crate's broadcast onto the one window channel.
     let forward_app = app.clone();
@@ -157,16 +188,25 @@ pub fn retarget(app: &AppHandle, snapshot: &crate::auth::AuthSnapshot) {
         // Signed out, or mid-grant: there is no credential to dial with.
         _ => None,
     };
+    // A Space socket is only valid for the org it was opened under. On any org
+    // change (or sign-out) they all die; the tabs redial on their own when the
+    // renderer sees the connection drop and the org settle.
+    let changed = state.0.org_id() != target.as_ref().map(|t| t.org_id.clone());
+    if changed {
+        if let Some(spaces) = app.try_state::<crate::commands::spaces::SpacesState>() {
+            spaces.0.disconnect_all();
+        }
+    }
     state.0.set_target(target);
 }
 
-fn manager(app: &AppHandle) -> Result<CommsManager, String> {
+pub(crate) fn manager(app: &AppHandle) -> Result<CommsManager, String> {
     app.try_state::<CommsState>()
         .map(|s| s.0.clone())
         .ok_or_else(|| "chat is not ready".to_string())
 }
 
-fn org(mgr: &CommsManager) -> Result<String, String> {
+pub(crate) fn org(mgr: &CommsManager) -> Result<String, String> {
     mgr.org_id()
         .ok_or_else(|| "no organisation is connected".to_string())
 }
@@ -174,7 +214,7 @@ fn org(mgr: &CommsManager) -> Result<String, String> {
 /// Errors reach the UI as their code plus message; the structured `detail` is
 /// preserved for the refusals that need it — `group_dm_frozen`'s `fork_hint`,
 /// `quota_exceeded`'s byte counts.
-fn map_err(e: CommsError) -> String {
+pub(crate) fn map_err(e: CommsError) -> String {
     match e {
         CommsError::Refused {
             code,
@@ -242,7 +282,7 @@ pub fn comms_status(app: AppHandle) -> Result<ConnectionInfoDto, String> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn comms_snapshot(app: AppHandle) -> Result<CommsSnapshot, String> {
     let mgr = manager(&app)?;
     let info = mgr.connection();
@@ -347,7 +387,7 @@ pub fn comms_close_conversation(app: AppHandle, conv_id: String) -> Result<(), S
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn comms_conversation_snapshot(
     app: AppHandle,
     conv_id: String,
@@ -407,6 +447,34 @@ pub async fn comms_load_older(
     })
 }
 
+
+/// A conversation's prompt drafts — REST passthrough, no state. The list is
+/// poll-owned by the renderer (no lifecycle frames exist to keep a cache
+/// honest), so holding it here would only manufacture staleness.
+#[tauri::command]
+pub async fn comms_drafts(
+    app: AppHandle,
+    conv_id: String,
+) -> Result<Vec<atlas_comms::rest::PromptDraft>, String> {
+    let mgr = manager(&app)?;
+    let org_id = org(&mgr)?;
+    let list = mgr.rest().drafts(&org_id, &conv_id).await.map_err(map_err)?;
+    Ok(list.drafts)
+}
+
+#[tauri::command]
+pub async fn comms_create_draft(
+    app: AppHandle,
+    conv_id: String,
+    title: String,
+) -> Result<atlas_comms::rest::PromptDraft, String> {
+    let mgr = manager(&app)?;
+    let org_id = org(&mgr)?;
+    mgr.rest()
+        .create_draft(&org_id, &conv_id, &title)
+        .await
+        .map_err(map_err)
+}
 
 /// The full pin rail for a conversation, message content included.
 ///
@@ -528,6 +596,30 @@ pub fn comms_pin(app: AppHandle, message_id: String, on: bool) -> Result<(), Str
 #[tauri::command]
 pub fn comms_read(app: AppHandle, conv_id: String, seq: i64) -> Result<(), String> {
     manager(&app)?.read(&conv_id, seq);
+    Ok(())
+}
+
+/// Subscribe the socket to a draft (answered with a `draftOpened` event).
+#[tauri::command]
+pub fn comms_draft_open(app: AppHandle, draft_id: String) -> Result<(), String> {
+    manager(&app)?.draft_open(&draft_id);
+    Ok(())
+}
+
+/// Opaque base64 Yjs bytes; the renderer owns debounce and retention.
+#[tauri::command]
+pub fn comms_draft_update(app: AppHandle, draft_id: String, update: String) -> Result<(), String> {
+    manager(&app)?.draft_update(&draft_id, &update);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn comms_draft_awareness(
+    app: AppHandle,
+    draft_id: String,
+    state: String,
+) -> Result<(), String> {
+    manager(&app)?.draft_awareness(&draft_id, &state);
     Ok(())
 }
 
@@ -723,6 +815,37 @@ pub fn comms_disconnect(app: AppHandle) -> Result<(), String> {
 
 /// A call's recordings. The URLs expire in ~60s, so this is called at open
 /// time rather than cached with the call.
+/// Start a call in a conversation. Returns the call row for optimistic
+/// rendering; the renderer builds the join/guest URLs itself. The server's
+/// `auth_token` never reaches this layer — see `RestClient::start_call`.
+#[tauri::command]
+pub async fn comms_start_call(
+    app: AppHandle,
+    conv_id: String,
+    mode: String,
+    public: bool,
+) -> Result<atlas_comms::wire::Call, String> {
+    if mode != "audio" && mode != "video" {
+        return Err("mode must be audio or video".into());
+    }
+    let mgr = manager(&app)?;
+    mgr.start_call(&conv_id, &mode, public).await.map_err(map_err)
+}
+
+/// Save a call's transcript (CSV) to a path the user picked.
+#[tauri::command]
+pub async fn comms_save_transcript(
+    app: AppHandle,
+    call_id: String,
+    dest: String,
+) -> Result<(), String> {
+    crate::commands::save_guard::guard_save_dest(&dest)?;
+    let mgr = manager(&app)?;
+    let bytes = mgr.download_transcript(&call_id).await.map_err(map_err)?;
+    std::fs::write(&dest, &bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn comms_call_recordings(
     app: AppHandle,
@@ -747,6 +870,7 @@ pub async fn comms_save_recording(
     dest: String,
     download_id: String,
 ) -> Result<(), String> {
+    crate::commands::save_guard::guard_save_dest(&dest)?;
     let mgr = manager(&app)?;
     let bytes = mgr
         .download_recording(&url, &download_id)
@@ -883,6 +1007,7 @@ pub async fn comms_save_attachment(
     dest: String,
     download_id: String,
 ) -> Result<(), String> {
+    crate::commands::save_guard::guard_save_dest(&dest)?;
     let cached = cache_attachment(&app, &file_id, &filename, Some(&download_id)).await?;
     std::fs::copy(&cached, &dest).map_err(|e| e.to_string())?;
     Ok(())

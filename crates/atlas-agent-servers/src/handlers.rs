@@ -38,7 +38,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_client_protocol::{JsonRpcResponse, Responder};
 use atlas_acp_thread::{
     AcpThread, AcpThreadHandle, AuthorizationKind, ElicitationStoreHandle, PermissionOptions,
-    TerminalProviderEvent,
+    RequestPermissionOutcome, TerminalProviderEvent,
 };
 use atlas_terminal::command::{CommandTerminal, DEFAULT_OUTPUT_BYTE_LIMIT};
 
@@ -54,7 +54,9 @@ pub struct ClientContext {
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 // ------------------------------------------------------------------- dispatch
@@ -92,7 +94,11 @@ where
     Res: JsonRpcResponse + Send + 'static,
 {
     fn run(self: Box<Self>, ctx: &ClientContext) {
-        let Self { request, responder, handler } = *self;
+        let Self {
+            request,
+            responder,
+            handler,
+        } = *self;
         handler(request, responder, ctx);
     }
 
@@ -114,7 +120,10 @@ where
     Notif: Send + 'static,
 {
     fn run(self: Box<Self>, ctx: &ClientContext) {
-        let Self { notification, handler } = *self;
+        let Self {
+            notification,
+            handler,
+        } = *self;
         handler(notification, ctx);
     }
 
@@ -140,7 +149,11 @@ pub fn enqueue_request<Req, Res>(
     Req: Send + 'static,
     Res: JsonRpcResponse + Send + 'static,
 {
-    let work: DispatchWork = Box::new(RequestWork { request, responder, handler });
+    let work: DispatchWork = Box::new(RequestWork {
+        request,
+        responder,
+        handler,
+    });
     if let Err(err) = dispatch_tx.send(work) {
         err.0.reject();
     }
@@ -153,7 +166,10 @@ pub fn enqueue_notification<Notif>(
 ) where
     Notif: Send + 'static,
 {
-    let work: DispatchWork = Box::new(NotificationWork { notification, handler });
+    let work: DispatchWork = Box::new(NotificationWork {
+        notification,
+        handler,
+    });
     if let Err(err) = dispatch_tx.send(work) {
         err.0.reject();
     }
@@ -240,7 +256,10 @@ pub fn handle_request_permission(
     // The prompt can be open for as long as the user takes to answer — that
     // wait must not hold the dispatch queue.
     tokio::spawn(async move {
-        match cancellation.run_until_cancelled(async { Ok(waiter.await) }).await {
+        match cancellation
+            .run_until_cancelled(async { Ok(waiter.await) })
+            .await
+        {
             Ok(outcome) => {
                 let _ = responder.respond(acp::RequestPermissionResponse::new(outcome.into()));
             }
@@ -295,7 +314,10 @@ pub fn handle_create_elicitation(
     // is deferred so the queue keeps draining.
     let cancellation = responder.cancellation();
     tokio::spawn(async move {
-        match cancellation.run_until_cancelled(async { Ok(waiter.await) }).await {
+        match cancellation
+            .run_until_cancelled(async { Ok(waiter.await) })
+            .await
+        {
             Ok(response) => {
                 let _ = responder.respond(response);
             }
@@ -434,17 +456,57 @@ fn read_text_file(
 /// handing back an absolute path or a `../` climb outside every granted
 /// directory.
 fn resolve_within_roots(path: &Path, roots: &[PathBuf]) -> anyhow::Result<PathBuf> {
-    let normalized = normalize_lexically(path);
+    // ONE namespace for both sides. The first version compared a lexically
+    // normalized target against canonicalized roots — two namespaces, papered
+    // over with an `|| starts_with(raw_root)` that made the check asymmetric
+    // on symlinked paths (macOS: /tmp vs /private/tmp resolved differently
+    // depending on which form the agent happened to send) and blind to a
+    // symlink planted INSIDE a root pointing out. Canonicalizing the deepest
+    // existing ancestor of the target — following any symlink already on
+    // disk — and re-joining the not-yet-existing tail closes both.
+    let resolved = canonicalize_deepest_ancestor(&normalize_lexically(path));
     for root in roots {
-        let canon_root = root.canonicalize().unwrap_or_else(|_| normalize_lexically(root));
-        if normalized.starts_with(&canon_root) || normalized.starts_with(root) {
-            return Ok(normalized);
+        let canon_root = root
+            .canonicalize()
+            .unwrap_or_else(|_| normalize_lexically(root));
+        if resolved.starts_with(&canon_root) {
+            return Ok(resolved);
         }
     }
     anyhow::bail!(
         "path {} is outside this session's granted directories",
         path.display()
     )
+}
+
+/// Canonicalize the longest prefix of `path` that exists on disk (following
+/// symlinks), then re-append the remaining components untouched. For a path
+/// that exists in full this IS `canonicalize`; for a write's target it
+/// resolves everything up to the missing leaf — which is exactly the part a
+/// planted symlink could bend.
+fn canonicalize_deepest_ancestor(path: &Path) -> PathBuf {
+    let mut existing = path.to_path_buf();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        match existing.canonicalize() {
+            Ok(canon) => {
+                let mut out = canon;
+                for part in tail.iter().rev() {
+                    out.push(part);
+                }
+                return out;
+            }
+            Err(_) => match (existing.file_name(), existing.parent()) {
+                (Some(name), Some(parent)) => {
+                    tail.push(name.to_os_string());
+                    existing = parent.to_path_buf();
+                }
+                // Ran out of parents without anything existing — nothing to
+                // resolve; the lexical form is all there is.
+                _ => return path.to_path_buf(),
+            },
+        }
+    }
 }
 
 /// Resolve `.`/`..` components without touching the filesystem. Not a
@@ -498,28 +560,77 @@ mod fs_bound_tests {
     fn a_path_inside_the_granted_root_resolves() {
         let root = test_root();
         let target = root.join("notes.md");
+        // The resolver answers in CANONICAL form now (temp dirs on macOS are
+        // symlinks — /var/folders → /private/var/folders), so compare against
+        // the canonical expectation rather than the raw input.
+        let expected = root.canonicalize().unwrap().join("notes.md");
         assert_eq!(
-            resolve_within_roots(&target, &[root.clone()]).expect("inside the root"),
-            target
+            resolve_within_roots(&target, std::slice::from_ref(&root)).expect("inside the root"),
+            expected
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The asymmetry regression: a root stored canonically with a target
+    /// handed back in symlinked form (or vice versa) must BOTH resolve — the
+    /// old two-namespace compare accepted one direction and refused the other.
+    #[test]
+    fn symlinked_roots_resolve_in_both_directions() {
+        let raw = test_root();
+        let canon = raw.canonicalize().unwrap();
+        let expected = canon.join("a.md");
+        assert_eq!(
+            resolve_within_roots(&canon.join("a.md"), std::slice::from_ref(&raw))
+                .expect("raw root"),
+            expected
+        );
+        assert_eq!(
+            resolve_within_roots(&raw.join("a.md"), &[canon]).expect("canon root"),
+            expected
+        );
+        let _ = std::fs::remove_dir_all(&raw);
+    }
+
+    /// A symlink planted INSIDE a granted root pointing out must not carry a
+    /// write with it — the deepest-existing-ancestor canonicalization follows
+    /// it and the escape shows up in the compare.
+    #[test]
+    fn a_planted_symlink_does_not_smuggle_a_write_out() {
+        let root = test_root();
+        let outside = test_root();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, root.join("exit")).expect("plant symlink");
+            assert!(
+                resolve_within_roots(&root.join("exit/escape.md"), std::slice::from_ref(&root))
+                    .is_err(),
+                "write through a planted symlink resolved inside the root"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 
     #[test]
     fn a_dot_dot_climb_out_of_the_root_is_rejected() {
         let root = test_root();
         let escape = root.join("../../../../etc/passwd");
-        let err = resolve_within_roots(&escape, &[root.clone()]).expect_err("outside every root");
-        assert!(err.to_string().contains("outside this session's granted directories"));
+        let err = resolve_within_roots(&escape, std::slice::from_ref(&root))
+            .expect_err("outside every root");
+        assert!(err
+            .to_string()
+            .contains("outside this session's granted directories"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn an_unrelated_absolute_path_is_rejected() {
         let root = test_root();
-        let err = resolve_within_roots(Path::new("/etc/passwd"), &[root.clone()])
+        let err = resolve_within_roots(Path::new("/etc/passwd"), std::slice::from_ref(&root))
             .expect_err("outside every root");
-        assert!(err.to_string().contains("outside this session's granted directories"));
+        assert!(err
+            .to_string()
+            .contains("outside this session's granted directories"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -529,10 +640,11 @@ mod fs_bound_tests {
         let cwd = test_root();
         let extra_dir = test_root();
         let target = extra_dir.join("readme.txt");
+        let expected = extra_dir.canonicalize().unwrap().join("readme.txt");
         assert_eq!(
             resolve_within_roots(&target, &[cwd.clone(), extra_dir.clone()])
                 .expect("inside the second granted directory"),
-            target
+            expected
         );
         let _ = std::fs::remove_dir_all(&cwd);
         let _ = std::fs::remove_dir_all(&extra_dir);
@@ -541,10 +653,7 @@ mod fs_bound_tests {
 
 // ------------------------------------------------------------- session/update
 
-pub fn handle_session_notification(
-    notification: acp::SessionNotification,
-    ctx: &ClientContext,
-) {
+pub fn handle_session_notification(notification: acp::SessionNotification, ctx: &ClientContext) {
     let Ok(thread) = ctx.sessions.thread(&notification.session_id) else {
         // Not an error to answer — notifications have no response — but worth
         // saying, because it means an update was dropped.
@@ -560,20 +669,22 @@ pub fn handle_session_notification(
     match &notification.update {
         acp::SessionUpdate::CurrentModeUpdate(update) => {
             let mode_id = update.current_mode_id.clone();
-            ctx.sessions.with_session(&notification.session_id, |session| {
-                if let Some(modes) = &session.session_modes {
-                    lock(modes).current_mode_id = mode_id;
-                }
-            });
+            ctx.sessions
+                .with_session(&notification.session_id, |session| {
+                    if let Some(modes) = &session.session_modes {
+                        lock(modes).current_mode_id = mode_id;
+                    }
+                });
         }
         acp::SessionUpdate::ConfigOptionUpdate(update) => {
             let options = update.config_options.clone();
-            ctx.sessions.with_session(&notification.session_id, |session| {
-                if let Some(config) = &session.config_options {
-                    *lock(&config.config_options) = options;
-                    config.notify();
-                }
-            });
+            ctx.sessions
+                .with_session(&notification.session_id, |session| {
+                    if let Some(config) = &session.config_options {
+                        *lock(&config.config_options) = options;
+                        config.notify();
+                    }
+                });
         }
         _ => {}
     }
@@ -630,7 +741,10 @@ pub fn handle_session_notification(
         if let Some(exit) = meta.and_then(|meta| meta.get("terminal_exit")) {
             if let Some(terminal_id) = exit.get("terminal_id").and_then(|v| v.as_str()) {
                 let mut status = acp::TerminalExitStatus::new();
-                status.exit_code = exit.get("exit_code").and_then(serde_json::Value::as_u64).map(|c| c as u32);
+                status.exit_code = exit
+                    .get("exit_code")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|c| c as u32);
                 status.signal = exit
                     .get("signal")
                     .and_then(|v| v.as_str())
@@ -645,6 +759,29 @@ pub fn handle_session_notification(
 }
 
 // ------------------------------------------------------------------- terminal
+
+/// Does a permission outcome authorize the action? Only an explicit Allow
+/// selection does — Cancelled, InterruptedByFollowUp, and every Reject kind
+/// answer no. Split out so the gate's decision table is testable without a
+/// live prompt.
+fn outcome_allows(outcome: &RequestPermissionOutcome) -> bool {
+    matches!(
+        outcome,
+        RequestPermissionOutcome::Selected(sel)
+            if matches!(
+                sel.option_kind,
+                acp::PermissionOptionKind::AllowOnce | acp::PermissionOptionKind::AllowAlways
+            )
+    )
+}
+
+/// Environment variables an agent may NOT hand to a spawned process: each is
+/// a code-injection lever into the child (and anything it execs) that the
+/// permission prompt cannot render meaningfully — the user approves a command
+/// line, not a preload.
+fn env_is_denied(name: &str) -> bool {
+    name.starts_with("DYLD_") || name.starts_with("LD_")
+}
 
 pub fn handle_create_terminal(
     args: acp::CreateTerminalRequest,
@@ -661,42 +798,122 @@ pub fn handle_create_terminal(
     } else {
         format!("{} {}", args.command, args.args.join(" "))
     };
+    // Preload-class variables are dropped, not errored: erroring would teach
+    // agents to retry without them anyway, and the drop is the actual policy.
     let env: Vec<(String, String)> = args
         .env
         .into_iter()
+        .filter(|env| !env_is_denied(&env.name))
         .map(|env| (env.name, env.value))
         .collect();
     let cwd: Option<PathBuf> = args.cwd.clone();
     let byte_limit = args.output_byte_limit.unwrap_or(DEFAULT_OUTPUT_BYTE_LIMIT);
 
-    // Synchronous on the drain, deliberately. The invariant is only
-    // register-before-respond — the agent cannot name this terminal until the
-    // response hands it the id — and Zed meets it with a deferred task. Doing
-    // it inline instead buys the same invariant with no session-teardown race
-    // mid-create, at the cost of the milliseconds a PTY open takes.
-    let spawned = CommandTerminal::spawn(&args.command, &args.args, &env, cwd.as_deref(), byte_limit);
-
-    let terminal = match spawned {
-        Ok(terminal) => Arc::new(terminal),
-        Err(err) => {
+    // The cwd is held to the same rule as fs reads/writes: inside a granted
+    // root or nowhere. Without this, "run `git status` in /Users/x/.ssh" was
+    // a legal request.
+    let roots = lock(&thread).work_dirs().to_vec();
+    if let Some(dir) = cwd.as_deref() {
+        if let Err(err) = resolve_within_roots(dir, &roots) {
             return respond_err(
                 responder,
-                acp::Error::internal_error().data(err.to_string()),
-            )
+                acp::Error::internal_error().data(format!("terminal cwd refused: {err}")),
+            );
         }
+    }
+
+    // The gate. `terminal/create` used to spawn with agent-chosen argv/env/
+    // cwd and no question asked — which made the fs-handler path bind above
+    // decorative, since an agent denied a write could simply shell one out.
+    // The same authorization machinery every other permission uses carries
+    // this prompt, so session modes (auto-allow etc.) behave identically.
+    let tool_call_id = acp::ToolCallId::new(format!("terminal-{}", uuid::Uuid::new_v4()));
+    let mut fields = acp::ToolCallUpdateFields::default();
+    fields.kind = Some(acp::ToolKind::Execute);
+    fields.title = Some(if let Some(dir) = cwd.as_deref() {
+        format!("Run `{label}` in {}", dir.display())
+    } else {
+        format!("Run `{label}`")
+    });
+    let waiter = {
+        let mut thread_guard = lock(&thread);
+        thread_guard.request_tool_call_authorization(
+            acp::ToolCallUpdate::new(tool_call_id.clone(), fields),
+            PermissionOptions::Flat(vec![
+                acp::PermissionOption::new(
+                    "allow_once",
+                    "Allow once",
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                acp::PermissionOption::new(
+                    "reject_once",
+                    "Reject",
+                    acp::PermissionOptionKind::RejectOnce,
+                ),
+            ]),
+            AuthorizationKind::PermissionGrant,
+        )
+    };
+    let waiter = match waiter {
+        Ok(waiter) => waiter,
+        Err(err) => return respond_err(responder, err),
     };
 
-    let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
-    lock(&thread).on_terminal_provider_event(TerminalProviderEvent::Created {
-        terminal_id: terminal_id.clone(),
-        label,
-        cwd,
-        output_byte_limit: args.output_byte_limit,
-        terminal: Some(terminal.clone()),
-    });
-    follow_terminal_output(thread, terminal, terminal_id.clone());
+    let cancellation = responder.cancellation();
+    let command = args.command.clone();
+    let cmd_args = args.args.clone();
+    let output_byte_limit = args.output_byte_limit;
+    tokio::spawn(async move {
+        let outcome = match cancellation
+            .run_until_cancelled(async { Ok(waiter.await) })
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                // The agent gave up on the turn — take the prompt down.
+                if err.code == acp::ErrorCode::RequestCancelled {
+                    lock(&thread).cancel_tool_call_authorization(&tool_call_id);
+                }
+                respond_err(responder, err);
+                return;
+            }
+        };
 
-    let _ = responder.respond(acp::CreateTerminalResponse::new(terminal_id));
+        let allowed = outcome_allows(&outcome);
+        if !allowed {
+            respond_err(
+                responder,
+                acp::Error::internal_error().data("the user declined to run this command"),
+            );
+            return;
+        }
+
+        // Register-before-respond still holds: the agent cannot name this
+        // terminal until the response below hands it the id.
+        let spawned = CommandTerminal::spawn(&command, &cmd_args, &env, cwd.as_deref(), byte_limit);
+        let terminal = match spawned {
+            Ok(terminal) => Arc::new(terminal),
+            Err(err) => {
+                respond_err(
+                    responder,
+                    acp::Error::internal_error().data(err.to_string()),
+                );
+                return;
+            }
+        };
+
+        let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+        lock(&thread).on_terminal_provider_event(TerminalProviderEvent::Created {
+            terminal_id: terminal_id.clone(),
+            label,
+            cwd,
+            output_byte_limit,
+            terminal: Some(terminal.clone()),
+        });
+        follow_terminal_output(thread, terminal, terminal_id.clone());
+
+        let _ = responder.respond(acp::CreateTerminalResponse::new(terminal_id));
+    });
 }
 
 /// Turn a running command's output into thread events for as long as it runs.
@@ -736,12 +953,16 @@ pub fn follow_terminal_output(
         loop {
             // Nothing left to report to: stop before parking on a command whose
             // output no longer has a reader.
-            let Some(alive) = thread.upgrade() else { return };
+            let Some(alive) = thread.upgrade() else {
+                return;
+            };
             drop(alive);
 
             terminal.output_changed().await;
 
-            let Some(alive) = thread.upgrade() else { return };
+            let Some(alive) = thread.upgrade() else {
+                return;
+            };
             lock(&alive).note_terminal_output(&terminal_id);
             drop(alive);
 
@@ -837,15 +1058,13 @@ pub fn handle_wait_for_terminal_exit(
         // Display-only: the agent owns the process — it announced this
         // terminal through `terminal_info` meta and reports the exit the same
         // way. There is nothing on our side to await.
-        Ok(None) => {
-            return respond_err(
-                responder,
-                acp::Error::invalid_params().data(format!(
-                    "terminal {} is agent-owned (display-only); its exit arrives as terminal_exit meta",
-                    args.terminal_id
-                )),
-            )
-        }
+        Ok(None) => return respond_err(
+            responder,
+            acp::Error::invalid_params().data(format!(
+                "terminal {} is agent-owned (display-only); its exit arrives as terminal_exit meta",
+                args.terminal_id
+            )),
+        ),
         Err(err) => return respond_err(responder, err),
     };
 
@@ -859,10 +1078,7 @@ pub fn handle_wait_for_terminal_exit(
             })
             .await;
 
-        respond_result(
-            responder,
-            result.map(acp::WaitForTerminalExitResponse::new),
-        );
+        respond_result(responder, result.map(acp::WaitForTerminalExitResponse::new));
     });
 }
 
@@ -882,4 +1098,54 @@ fn with_terminal<R>(
         .terminal(terminal_id)
         .ok_or_else(|| unknown_terminal(terminal_id))?;
     Ok(f(terminal))
+}
+
+#[cfg(test)]
+mod terminal_gate_tests {
+    use super::*;
+    use atlas_acp_thread::SelectedPermissionOutcome;
+
+    #[test]
+    fn preload_class_env_is_denied_and_ordinary_env_is_not() {
+        for denied in [
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_LIBRARY_PATH",
+            "LD_PRELOAD",
+            "LD_AUDIT",
+        ] {
+            assert!(env_is_denied(denied), "{denied} must be dropped");
+        }
+        for ok in [
+            "PATH",
+            "HOME",
+            "GIT_TERMINAL_PROMPT",
+            "MY_LD_THING",
+            "BUILD_DYLD",
+        ] {
+            assert!(!env_is_denied(ok), "{ok} must survive");
+        }
+    }
+
+    #[test]
+    fn only_an_explicit_allow_authorizes_a_spawn() {
+        let allow_once = RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("allow_once"),
+            acp::PermissionOptionKind::AllowOnce,
+        ));
+        let allow_always = RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("allow_always"),
+            acp::PermissionOptionKind::AllowAlways,
+        ));
+        let reject = RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("reject_once"),
+            acp::PermissionOptionKind::RejectOnce,
+        ));
+        assert!(outcome_allows(&allow_once));
+        assert!(outcome_allows(&allow_always));
+        assert!(!outcome_allows(&reject));
+        assert!(!outcome_allows(&RequestPermissionOutcome::Cancelled));
+        assert!(!outcome_allows(
+            &RequestPermissionOutcome::InterruptedByFollowUp
+        ));
+    }
 }

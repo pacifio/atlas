@@ -27,5 +27,3 @@ ctx.onmessage = (e) => {
   const { id, source } = e.data;
   ctx.postMessage({ id, html: parseMarkdown(source) });
 };
-
-export {};

@@ -90,7 +90,7 @@ impl MentionCacheState {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mention_cache_set_knowledge(
     items: Vec<KnowledgeInput>,
     workspace_id: Option<String>,
@@ -106,7 +106,7 @@ pub fn mention_cache_set_knowledge(
         .knowledge = items;
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mention_cache_clear(
     workspace_id: Option<String>,
     webview: WebviewWindow,

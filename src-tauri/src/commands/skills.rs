@@ -2007,10 +2007,21 @@ pub async fn skills_set_enabled(
     if res.is_ok() {
         app.state::<Arc<crate::telemetry::TelemetryClient>>().capture(
             if enabled { "skill_enabled" } else { "skill_disabled" },
-            serde_json::json!({ "skill": name_ev, "agent": agent_ev }),
+            serde_json::json!({ "skill": telemetry_skill_id(&name_ev), "agent": agent_ev }),
         );
     }
     res
+}
+
+
+/// A skill name is user-authored for project-scoped skills, so the analytics
+/// event carries a stable hash instead — enough to count and correlate,
+/// nothing to read.
+fn telemetry_skill_id(name: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    name.hash(&mut h);
+    format!("sk_{:016x}", h.finish())
 }
 
 /// Delete a skill: remove every agent symlink, then the canonical dir.
@@ -2029,7 +2040,7 @@ pub async fn skills_delete(
     if res.is_ok() {
         app.state::<Arc<crate::telemetry::TelemetryClient>>().capture(
             "skill_deleted",
-            serde_json::json!({ "skill": name_ev, "scope": scope_ev }),
+            serde_json::json!({ "skill": telemetry_skill_id(&name_ev), "scope": scope_ev }),
         );
     }
     res
@@ -2415,7 +2426,7 @@ fn pack_parse(dir: &Path) -> Result<Pack, String> {
 
 /// Inspect a pack directory on disk and return its manifest + component listing.
 /// Read-only — nothing is installed, projected, or executed.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pack_inspect(dir: String) -> Result<Pack, String> {
     pack_parse(Path::new(&dir))
 }

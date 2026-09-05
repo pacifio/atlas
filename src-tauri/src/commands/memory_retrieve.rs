@@ -71,6 +71,10 @@ pub async fn retrieve(
 /// registry, take the **read lock**, embed+fuse via [`MemoryEngine::retrieve`]
 /// using the registry's **shared** provider, and map `atlas_memory::RetrievedDoc`
 /// onto the local [`RetrievedDoc`] (which keeps `id` for site-C session dedup).
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "retrieve borrows out of the guard; try_read (not read().await) is what keeps this non-blocking"
+)]
 async fn retrieve_engine(
     app: &AppHandle,
     project_path: &str,

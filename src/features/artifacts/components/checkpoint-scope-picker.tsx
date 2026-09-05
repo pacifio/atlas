@@ -153,7 +153,7 @@ export function CheckpointScopePicker({
               "flex max-h-[380px] w-[340px] flex-col overflow-hidden rounded-xl select-none",
               // Border, fill, blur and animation on ONE element — splitting them
               // isolates the layer and flattens the backdrop blur.
-              "border border-white/10 bg-[var(--bg-elevated)]/85 backdrop-blur-2xl",
+              "border border-white/10 bg-[var(--bg-elevated)]/95 backdrop-blur-2xl",
               "data-[state=open]:animate-scale-in",
             )}
           >

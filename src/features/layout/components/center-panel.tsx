@@ -12,7 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import { useLayoutStore, type Tab, type WorkspaceView } from "../stores/layout-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 // Chat is the default landing surface — always loaded so the first paint
@@ -42,6 +42,14 @@ const MediaViewer = lazy(() =>
 );
 const SvgViewer = lazy(() =>
   import("@/features/svg/components/svg-viewer").then((m) => ({ default: m.SvgViewer })),
+);
+const CommsDraftTab = lazy(() =>
+  import("@/features/comms/components/comms-draft-tab").then((m) => ({
+    default: m.CommsDraftTab,
+  })),
+);
+const SpacesTab = lazy(() =>
+  import("@/features/spaces/components/spaces-tab").then((m) => ({ default: m.SpacesTab })),
 );
 const PdfViewer = lazy(() =>
   import("@/features/pdf/components/pdf-viewer").then((m) => ({ default: m.PdfViewer })),
@@ -108,10 +116,12 @@ import {
   ScrollText,
   FileText,
   Columns2,
+  House,
   LayoutDashboard,
   Layers,
+  Frame,
 } from "lucide-react";
-import type { TabType } from "@/lib/constants";
+import { PROJECTLESS_TYPES, type TabType } from "@/lib/constants";
 
 const tabIcons: Record<TabType, React.ElementType> = {
   chat: AtlasIcon,
@@ -132,6 +142,8 @@ const tabIcons: Record<TabType, React.ElementType> = {
   unsupported: Code,
   "mission-control": LayoutDashboard,
   artifacts: Layers,
+  "comms-draft": FileText,
+  spaces: Frame,
 };
 
 const GROUP_OF = (t: Tab) => t.groupId ?? "main";
@@ -218,7 +230,7 @@ export function CenterPanel() {
   );
   const runningTabIds = useMemo(() => new Set(runningTabIdsArray), [runningTabIdsArray]);
 
-  if (!currentProject) return <WelcomeScreen />;
+  if (!currentProject) return <ProjectlessCenter />;
 
   // Render every mounted workspace's shell in a stable container (key=ws.id),
   // only the active one visible. Background workspaces keep the INERT expensive
@@ -268,18 +280,28 @@ const WorkspaceColumns = memo(function WorkspaceColumns({
   runningTabIds: Set<string>;
 }) {
   const solo = view.groupOrder.length === 1;
+  // Same storage id as before the v4 upgrade, so saved split widths carry over.
+  // v4 dropped `autoSaveId` in favour of this hook; the Group takes the stored
+  // layout as `defaultLayout` and writes back through `onLayoutChanged`.
+  const layoutId = `atlas-center-split-${workspaceId}`;
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: layoutId });
   return (
-    <PanelGroup
-      direction="horizontal"
-      autoSaveId={`atlas-center-split-${workspaceId}`}
+    <Group
+      id={layoutId}
+      orientation="horizontal"
+      defaultLayout={defaultLayout}
+      onLayoutChanged={onLayoutChanged}
       className="h-full bg-bg-surface"
     >
       {view.groupOrder.map((gid, i) => (
         <Fragment key={gid}>
           {i > 0 && (
-            <PanelResizeHandle className="w-px bg-border-default hover:bg-accent data-[resize-handle-active]:bg-accent transition-colors cursor-col-resize" />
+            <Separator className="w-px bg-border-default hover:bg-accent data-[separator=active]:bg-accent transition-colors cursor-col-resize" />
           )}
-          <Panel id={gid} order={i + 1} minSize={20} className="min-w-0">
+          {/* Sizes are percentages: v4 reads bare numbers as PIXELS and
+              unit-less strings as percentages. `order` is gone — panels are
+              ordered by DOM position — but `id` still keys the saved layout. */}
+          <Panel id={gid} minSize="20" className="min-w-0">
             <TabColumn
               groupId={gid}
               view={view}
@@ -290,7 +312,7 @@ const WorkspaceColumns = memo(function WorkspaceColumns({
           </Panel>
         </Fragment>
       ))}
-    </PanelGroup>
+    </Group>
   );
 });
 
@@ -603,6 +625,118 @@ const TabContentContainer = memo(function TabContentContainer({
   );
 });
 
+/**
+ * The centre with NO project open. The old gate returned a bare
+ * `<WelcomeScreen/>` and silently discarded the whole tab system — so an
+ * `addTab("comms-draft")` from the chat panel "worked" in the store while
+ * nothing could ever render it. Org-scoped surfaces (settings, prompt
+ * drafts, spaces when it lands) do not need a project; this shell renders
+ * exactly those, with Welcome as an un-closable Home tab, and leaves every
+ * other tab untouched in the store for when a project opens.
+ */
+function ProjectlessCenter() {
+  const tabs = useLayoutStore.use.tabs();
+  const activeByGroup = useLayoutStore.use.activeByGroup();
+  const focusedGroupId = useLayoutStore.use.focusedGroupId();
+  const { setActiveTab, closeTab } = useLayoutStore.use.actions();
+  // Home is LOCAL state, not a store id: `setActiveTab` validates ids and
+  // falls back to `tabs[0]` on a miss, so a sentinel id would re-activate
+  // the very tab the user clicked away from.
+  const [atHome, setAtHome] = useState(false);
+
+  const allowed = tabs.filter((t) => PROJECTLESS_TYPES.has(t.type));
+  // Today's behaviour, exactly, until something project-independent opens.
+  if (allowed.length === 0) return <WelcomeScreen />;
+
+  const storeActive = activeByGroup[focusedGroupId] ?? null;
+  const active = atHome ? null : (allowed.find((t) => t.id === storeActive) ?? null);
+
+  return (
+    <div className="flex h-full w-full flex-col bg-bg-surface">
+      <div className="flex h-9 shrink-0 items-stretch border-b border-border-default bg-bg-base">
+        {/* Home is a pseudo-tab, not a store tab: it cannot close and it is
+            simply "no allowed tab selected". */}
+        <div
+          role="tab"
+          tabIndex={0}
+          onClick={() => setAtHome(true)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") setAtHome(true);
+          }}
+          className={cn(
+            "flex items-center gap-1.5 border-r border-border-default px-3 text-[12px] font-medium cursor-pointer select-none",
+            active === null
+              ? "bg-bg-surface text-text-primary"
+              : "bg-bg-base text-text-tertiary hover:bg-bg-hover hover:text-text-secondary",
+          )}
+        >
+          <House size={12} className="shrink-0" />
+          <span className="leading-none">Home</span>
+        </div>
+
+        {allowed.map((tab) => {
+          const Icon = tabIcons[tab.type] ?? MessageSquare;
+          const isActive = tab.id === active?.id;
+          return (
+            <div
+              key={tab.id}
+              role="tab"
+              tabIndex={0}
+              onClick={() => {
+                setAtHome(false);
+                setActiveTab(tab.id);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  setAtHome(false);
+                  setActiveTab(tab.id);
+                }
+              }}
+              className={cn(
+                "group relative flex shrink-0 cursor-pointer select-none items-center gap-1.5 border-r border-border-default pl-3 text-[12px] font-medium",
+                "transition-[padding-right,background-color,color] duration-150",
+                tab.closable ? "pr-3 hover:pr-7" : "pr-3",
+                isActive
+                  ? "bg-bg-surface text-text-primary"
+                  : "bg-bg-base text-text-tertiary hover:bg-bg-hover hover:text-text-secondary",
+              )}
+            >
+              <Icon
+                size={12}
+                className={cn("shrink-0", isActive ? "text-text-secondary" : "text-text-tertiary")}
+              />
+              <span className="max-w-[140px] truncate leading-none">{tab.title}</span>
+              {tab.closable && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTab(tab.id);
+                  }}
+                  title="Close tab"
+                  className={cn(
+                    "absolute right-1.5 top-1/2 -translate-y-1/2",
+                    "inline-flex h-4 w-4 items-center justify-center rounded-full",
+                    "text-text-tertiary opacity-0 group-hover:opacity-100",
+                    "transition-opacity duration-150 hover:bg-[#ffffff22] hover:text-text-primary",
+                  )}
+                >
+                  <X size={10} strokeWidth={2.2} />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <Suspense fallback={<PanelLoading />}>
+          {active ? <TabContent tab={active} /> : <WelcomeScreen />}
+        </Suspense>
+      </div>
+    </div>
+  );
+}
+
 function PanelLoading() {
   // Structural skeleton (not centered text) so the first open of a lazy panel
   // while its JS chunk downloads reads as "loading content" rather than blank.
@@ -646,6 +780,12 @@ function TabContent({ tab }: { tab: Tab }) {
           commit={(tab.data.commit as string | null | undefined) ?? null}
         />
       );
+    case "comms-draft":
+      return (
+        <CommsDraftTab convId={tab.data.convId as string} draftId={tab.data.draftId as string} />
+      );
+    case "spaces":
+      return <SpacesTab convId={tab.data.convId as string} />;
     case "unsupported":
       return <UnsupportedView filePath={tab.data.filePath as string} />;
     default:

@@ -43,8 +43,8 @@ const ROOT_MANIFEST = path.join(REPO_ROOT, "Cargo.toml");
  * template binary that `commands::knowledge_export` compiles on demand at
  * runtime, and it carries its own `[profile.release]` (`panic = "abort"`,
  * thin LTO). Profiles are workspace-global, so joining the workspace would
- * silently rebuild it under the app's fat-LTO/unwind profile. Excluded so its
- * build stays byte-for-byte what it is today.
+ * silently rebuild it under the app's unwind profile. Excluded so its build
+ * stays byte-for-byte what it is today.
  */
 const EXCLUDED_CRATE_DIRS = new Set(["atlas-kb-server"]);
 
@@ -271,13 +271,88 @@ describe("dev-profile opt-levels survive the move into the workspace", () => {
     expect(src).toMatch(/^\s*\[profile\.release\]/m);
     for (const setting of [
       /codegen-units\s*=\s*1/,
-      /lto\s*=\s*"fat"/,
+      /lto\s*=\s*"thin"/,
       /strip\s*=\s*"symbols"/,
       /panic\s*=\s*"unwind"/,
       /opt-level\s*=\s*3/,
     ]) {
       expect(src).toMatch(setting);
     }
+    // Asserted absent, not merely unasserted: fat LTO's final link is a
+    // 12-minute single-threaded unit that reruns on every rebuild, for a
+    // binary 19 MB smaller (measured 2026-09-04 — clean 23m05s vs 8m14s,
+    // touch 14m59s vs 4m16s; docs/research/build-performance.md). Whoever
+    // wants it back measures first.
+    expect(src).not.toMatch(/lto\s*=\s*"fat"/);
+  });
+});
+
+describe("the app crate emits one crate type", () => {
+  // `staticlib`/`cdylib` are the Tauri mobile template's defaults and there is
+  // no mobile target here. A lib emitting a staticlib forces cargo to compile
+  // every dependency with object code *and* bitcode, so LTO optimises the whole
+  // graph twice and the lib unit writes a 1.7 GB archive nothing loads —
+  // measured 2026-09-04, docs/research/build-performance.md (R2).
+  it("the app lib is an rlib only (staticlib/cdylib double every dependency's codegen)", () => {
+    expect(read(path.join(REPO_ROOT, "src-tauri", "Cargo.toml"))).toMatch(
+      /^\s*crate-type\s*=\s*\["rlib"\]\s*$/m,
+    );
+  });
+});
+
+describe("plain cargo and the Tauri CLI agree on the deployment target", () => {
+  /**
+   * The Tauri CLI exports `MACOSX_DEPLOYMENT_TARGET` (from
+   * `bundle.macOS.minimumSystemVersion`) when it drives cargo, and 72 native
+   * build scripts `rerun-if-env-changed` on it. When `.cargo/config.toml` does
+   * not set the same value, `cargo check` / `cargo test` and `tauri build` have
+   * disjoint caches inside one `target/`: alternating them with nothing changed
+   * recompiled 186 crates and cost 21m36s (measured 2026-09-04,
+   * docs/research/build-performance.md, R3).
+   *
+   * Checked against the tauri config rather than a literal, because a bump to
+   * `minimumSystemVersion` that forgets this file silently reintroduces the
+   * split cache.
+   *
+   * `REMOVE_UNUSED_COMMANDS` is asserted *absent*, against the research doc's
+   * proposal: verified on CLI 2.11.1 (a `tauri build --runner` that dumps its
+   * environment) the CLI never sets it, so setting it here splits the cache the
+   * other way — and `tauri-utils`' `generate_allowed_commands` reads its mere
+   * presence as "prune every command no capability allows", quietly changing
+   * what the shipped binary exposes.
+   */
+  const CARGO_CONFIG = path.join(REPO_ROOT, ".cargo", "config.toml");
+
+  const envTable = (): string => {
+    const src = uncommented(read(CARGO_CONFIG));
+    const block = src.match(/^\s*\[env\]\s*$((?:(?!^\s*\[)[\s\S])*)/m);
+    if (!block) throw new Error("no [env] table in .cargo/config.toml");
+    return block[1];
+  };
+
+  it("exists at the repository root", () => {
+    expect(existsSync(CARGO_CONFIG), "no .cargo/config.toml").toBe(true);
+  });
+
+  it("sets MACOSX_DEPLOYMENT_TARGET to the bundle's minimumSystemVersion", () => {
+    const conf = JSON.parse(read(path.join(REPO_ROOT, "src-tauri", "tauri.conf.json")));
+    const minimum = conf?.bundle?.macOS?.minimumSystemVersion;
+    expect(typeof minimum, "tauri.conf.json has no bundle.macOS.minimumSystemVersion").toBe(
+      "string",
+    );
+    const declared = envTable().match(/^\s*MACOSX_DEPLOYMENT_TARGET\s*=\s*"([^"]+)"/m);
+    expect(declared, "no MACOSX_DEPLOYMENT_TARGET in .cargo/config.toml [env]").not.toBeNull();
+    expect(declared?.[1]).toBe(minimum);
+  });
+
+  it("does not set REMOVE_UNUSED_COMMANDS", () => {
+    expect(envTable()).not.toMatch(/REMOVE_UNUSED_COMMANDS/);
+  });
+
+  it("does not force any value over the CLI's", () => {
+    // `force = true` would override what the CLI exports instead of matching
+    // it — the split cache would come back silently, in the other direction.
+    expect(envTable()).not.toMatch(/force\s*=\s*true/);
   });
 });
 

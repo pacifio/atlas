@@ -4,6 +4,9 @@ import { flushAll } from "@/features/workspaces/lib/flush-registry";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { resetGitSummariesForOrgSwitch } from "@/features/workspaces/stores/workspace-git-store";
 import { commsActions } from "@/features/comms/stores/comms-store";
+import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { useSpacesStore } from "@/features/spaces/stores/spaces-store";
+import { ORG_SCOPED_TYPES } from "@/lib/constants";
 import {
   useProjectStore,
   flushAppStateSave,
@@ -68,6 +71,20 @@ export async function switchOrg(id: string): Promise<void> {
   const startedAt = Date.now();
 
   try {
+    // 0) Close the outgoing org's org-scoped centre tabs FIRST — before the
+    //    flush below, so they are not captured into the outgoing project's
+    //    editor state on the way out. Their ids embed this org's
+    //    conversation/draft ids and mean nothing in the incoming one.
+    //    (The Spaces sockets die with the Rust retarget's `disconnect_all`;
+    //    unmounting the tab closes each canvas's socket first anyway.)
+    {
+      const layout = useLayoutStore.getState();
+      for (const tab of layout.tabs) {
+        if (ORG_SCOPED_TYPES.has(tab.type)) layout.actions.closeTab(tab.id);
+      }
+      useSpacesStore.getState().actions.clearAll();
+    }
+
     const wsActions = useWorkspaceStore.getState().actions;
     const projectActions = useProjectStore.getState().actions;
     const outgoingActiveWs = useWorkspaceStore.getState().activeWorkspaceId;

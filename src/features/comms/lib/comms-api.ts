@@ -14,6 +14,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ChatCall,
   ChatPin,
+  PromptDraft,
   ChatConversation,
   ChatReaction,
   ChatReadState,
@@ -87,11 +88,21 @@ export type CommsEvent =
       discoverable: ChatConversation[];
     }
   | { kind: "readsChanged"; reads: ChatReadState[] }
+  | { kind: "readChanged"; read: ChatReadState }
   | { kind: "presence"; online: string[] }
   | { kind: "typing"; conv_id: string; user_id: string; at_ms: number }
   | { kind: "reactionsChanged"; message_id: string; rows: ChatReaction[] }
   | { kind: "pinsChanged"; conv_id: string; pinned_message_ids: string[] }
   | { kind: "callChanged"; call: ChatCall }
+  | {
+      kind: "draftOpened";
+      draft_id: string;
+      draft: PromptDraft;
+      snapshot: string | null;
+      updates: string[];
+    }
+  | { kind: "draftUpdate"; draft_id: string; update: string }
+  | { kind: "draftAwareness"; draft_id: string; user_id: string; state: string }
   | {
       kind: "downloadProgress";
       download_id: string;
@@ -211,6 +222,25 @@ export const comms = {
    *  file already previewed saves without a second round trip. */
   saveAttachment: (fileId: string, filename: string, dest: string, downloadId: string) =>
     invoke<void>("comms_save_attachment", { fileId, filename, dest, downloadId }),
+  /** A conversation's prompt drafts, newest-updated first. Poll-owned by the
+   *  caller — no push channel exists for the list. */
+  drafts: (convId: string) => invoke<PromptDraft[]>("comms_drafts", { convId }),
+  createDraft: (convId: string, title: string) =>
+    invoke<PromptDraft>("comms_create_draft", { convId, title }),
+  /** Subscribe this socket to a draft; answered with a `draftOpened` event.
+   *  Re-call on every reconnect — the subscription dies with the socket. */
+  draftOpen: (draftId: string) => invoke<void>("comms_draft_open", { draftId }),
+  draftUpdate: (draftId: string, update: string) =>
+    invoke<void>("comms_draft_update", { draftId, update }),
+  draftAwareness: (draftId: string, state: string) =>
+    invoke<void>("comms_draft_awareness", { draftId, state }),
+  /** Start a call. The server's join token never crosses the bridge — the
+   *  browser's call tab mints its own; this answers the call row only. */
+  startCall: (convId: string, mode: "audio" | "video", isPublic: boolean) =>
+    invoke<ChatCall>("comms_start_call", { convId, mode, public: isPublic }),
+  /** Save a call's transcript (CSV) to a user-picked path. */
+  saveTranscript: (callId: string, dest: string) =>
+    invoke<void>("comms_save_transcript", { callId, dest }),
   /** A call's recordings. URLs expire in ~60s, so this is asked at open time
    *  and never cached. */
   callRecordings: (callId: string) =>

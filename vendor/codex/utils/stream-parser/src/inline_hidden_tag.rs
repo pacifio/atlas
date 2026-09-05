@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use crate::StreamTextChunk;
 use crate::StreamTextParser;
 
@@ -92,7 +93,7 @@ where
             .iter()
             .map(|spec| longest_suffix_prefix_len(&self.pending, spec.open))
             .max()
-            .map_or(0, std::convert::identity)
+            .unwrap_or(0)
     }
 
     fn push_visible_prefix(out: &mut StreamTextChunk<ExtractedInlineTag<T>>, pending: &str) {

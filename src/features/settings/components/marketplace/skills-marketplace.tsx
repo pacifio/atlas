@@ -10,7 +10,8 @@
 // fetched lazily on open.
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Boxes, Check, Copy, Download, Github, Loader2, Search, X } from "lucide-react";
+import { Boxes, Check, Copy, Download, Loader2, Search, X } from "lucide-react";
+import { GithubIcon } from "@/components/github-icon";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 
@@ -477,7 +478,7 @@ function SkillDetailModal({
           <ModalAction icon={Copy} label="Copy as markdown" onClick={copyMarkdown} />
           {hit && (
             <ModalAction
-              icon={Github}
+              icon={GithubIcon}
               label="View on GitHub"
               onClick={() => void openUrl(githubUrl)}
             />

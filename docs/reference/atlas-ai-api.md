@@ -261,6 +261,8 @@ the English prose those heuristics are calibrated on.
 | `claude-opus-5` | `anthropic` | Partner model on Vertex, and the most expensive thing we resell. Served over Anthropic's own endpoint (§4.3a). |
 | `claude-opus-4-8` | `anthropic` | Partner model on Vertex, priced identically to Opus 5. Same endpoint (§4.3a). |
 | `claude-sonnet-4-6` | `anthropic` | The mid-tier Claude, ~40% of Opus on input. Same endpoint (§4.3a). |
+| `glm-5.3-flash` | `zai-org` | Served by **Cloudflare Workers AI**, not Vertex, and metered in *neurons* rather than tokens. A reasoning model: it returns `reasoning_content` alongside `content`. Verified generating 2026-09-05. |
+| `openai/gpt-5.6-sol` | `openai` | Served **direct from OpenAI**, not Vertex — the only id carrying a `/`. Listed and `entitled`, but **cannot generate**: every completion is `502 provider_error` wrapping upstream `402` *"Insufficient balance; add money to your gateway or use BYOK"* (measured 2026-09-05). Fund the gateway's OpenAI route or attach BYOK. |
 | `deepseek-v3-2` | — | **Withdrawn** (ATL-173). Same `404`, no grant expected, so migration 0016 writes a newer row with **no publisher**: unroutable, out of the catalogue, refused `403 model_not_allowed` before any spend — while the priced 0014 row still costs the usage recorded against it. Restoring it is one price-console row naming `deepseek-ai` again. |
 
 A model is selectable **if and only if** a price row is effective for it at the request's
@@ -268,6 +270,11 @@ date and that row is *routable* — completely priced, and naming the publisher 
 it (ATL-136, extended by ATL-149). There is no separate allowlist to fall out of sync
 with — which is the point: a second list can disagree with the price table, and the
 disagreement shows up as a customer being offered a model the meter then refuses.
+
+> **Vertex is no longer the only provider (measured 2026-09-05).** `owned_by` now answers
+> `workers-ai` and `openai` as well as `google-vertex-ai`, so the paragraph below describes
+> the Vertex rows rather than the whole catalogue. `openai/gpt-5.6-sol` also breaks the
+> "a slug is one path segment" assumption every other row satisfies.
 
 **Vertex is one provider carrying many publishers, and the publisher is stored per model
 (ATL-149).** The outbound id is `<provider>/<publisher>/<model>` — so Claude is addressed

@@ -1120,7 +1120,7 @@ fn parse_thread_id(raw: &str) -> Result<atlas_thread_metadata::ThreadId, CmdErro
         .map_err(|_| CmdError::new(format!("not a thread id: {raw}"), ErrorClass::Fatal))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn agents_snapshot(
     key: SessionKey,
     host: State<'_, Arc<AgentHost>>,
@@ -1132,7 +1132,7 @@ pub fn agents_snapshot(
 /// message across IPC — multi-MB on long sessions — yet five frontend call
 /// sites (mode seed, model backfill, composer self-heals, model warm) only
 /// read the ~1KB metadata. Same wire shape; `messages` arrives empty.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn agents_snapshot_meta(
     key: SessionKey,
     host: State<'_, Arc<AgentHost>>,

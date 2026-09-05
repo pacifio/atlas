@@ -1,7 +1,9 @@
 {
   "identifier": "default",
-  "description": "Default capability for Atlas",
-  "windows": ["main", "atlas-*"],
+  "description": "Capability for the MAIN window only. Browser windows (atlas-browser-*) and embeds (atlas-embed-*) show arbitrary web content and get NO capability file at all \u2014 a window without one has no IPC surface, which is the correct amount for a hostile page. The old 'atlas-*' glob granted all of this to every page the browser visited; Tauri's remote-origin gate was the only thing between that grant and a live IPC bridge, and one dev-server navigation or `remote` block would have closed the gap from the wrong side.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-create",

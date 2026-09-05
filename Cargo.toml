@@ -177,9 +177,16 @@ exclude = [
 # `openai/codex` @ 42b5f05 with `target/` excluded; upstream's LICENSE and
 # NOTICE travel with the code in `vendor/codex/`, as Apache-2.0 §4 requires.
 #
-# **Quarantined.** These compile as workspace members and NOTHING that ships
-# depends on them. `tests/codex-quarantine.test.ts` is what keeps that true —
-# the compiler cannot, because "unused member" is not an error.
+# **"Quarantined" here means the phone-home PATHS are severed, not that the
+# crates are unused** — the Sep-03 audit misread the old wording exactly that
+# way, so say it precisely: 104 of these 110 members ARE in the shipping
+# binary's closure. What does not ship is their telemetry: `codex-analytics`
+# had its destination, POST and capture sink removed (#43, spec D2; the local
+# fact-reducer stays for its 79 tests), `codex-otel` defaults to
+# `exporter: None` (upstream defaulted to a hardcoded Statsig endpoint), and
+# `codex-feedback`'s uploader is gone — its `sentry` dep is now `sentry-types`
+# for one test-only attachment builder. `tests/codex-quarantine.test.ts`
+# documents which crates the containment rules cover.
 #
 # Closure size, because it is not the number the spec quotes: the Port
 # Inventory's "77 crates, 63 droppable" is the closure of `codex-core`. D1
@@ -449,6 +456,12 @@ rcgen = { version = "0.14.7", default-features = false, features = [
 regex = "1.12.3"
 regex-lite = "0.1.8"
 reqwest = { version = "0.12", features = ["cookies"] }
+# NOTE (Sep-03 audit): rmcp, rig-core and posthog-rs are the three crates
+# holding a second reqwest (0.13) tower in the lock, duplicating hyper/h2/
+# http/tower behind it. The collapse runs FORWARD, not back: all three have
+# 0.13 as their floor in every current release, so unification means moving
+# the app AND the vendored engine to 0.13 — an upstream-sync-sized change,
+# not a pin. Left as-is deliberately.
 rmcp = { version = "=3.0.0", default-features = false }
 runfiles = { git = "https://github.com/dzbarsky/rules_rust", rev = "b56cbaa8465e74127f1ea216f813cd377295ad81" }
 rustix = { version = "1.1.4", features = ["net"] }
@@ -461,7 +474,11 @@ rustls-pki-types = "1.14.0"
 schemars = "0.8.22"
 seccompiler = "0.5.0"
 semver = "1.0"
-sentry = "0.46.0"
+# Types only. The full `sentry` client (transport, panic hooks, its own HTTP
+# stack) was pulled for ONE dead function's `protocol::Attachment` structs —
+# feedback's uploader was removed with the rest of the phone-home paths (#43)
+# and only its tests still build attachments.
+sentry-types = "0.46.0"
 serde = { version = "1", features = ["rc"] }
 serde_ignored = "0.1.14"
 serde_json = "1"
@@ -641,17 +658,20 @@ tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev 
 [patch."ssh://git@github.com/openai-oss-forks/tungstenite-rs.git"]
 tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "4fffad30fe373adbdcffab9545e9e9bf4f2fc19f" }
 
-# Release profile — Atlas previously shipped with Cargo defaults
-# (lto = false, codegen-units = 16, no strip), which means the bundled .app
-# binary was substantially larger and slower than necessary.
-#
-# Trade-off: `bun run build:app` link time roughly doubles on clean builds
-# (~30 s → ~60–90 s). Dev (`tauri dev`) is unaffected — these are
-# release-only settings.
+# Release profile. Thin LTO, not fat: measured 2026-09-04 on an M4 Pro at
+# 422af792 (docs/research/build-performance.md) fat LTO's final link is a
+# 12-minute single-threaded unit that reruns on every rebuild — one-file touch
+# 14m59s, clean 23m05s — for a binary 19 MB smaller. Thin LTO at the same
+# codegen-units, same tree: touch 4m16s, clean 8m14s, 170 MB vs 151 MB.
+# Nothing upstream of that unit can shorten it; making the inputs cheaper to
+# produce (codegen-units = 16 on the dependencies) made the fat merge *worse*,
+# 38 minutes for the link alone. `codegen-units = 1` stays: raising it buys
+# ~50 s per touch for +74 MB of binary (thin/cgu16 measured 243 MB).
+# Before flipping this back to "fat", measure — the research doc has the method.
 [profile.release]
 codegen-units = 1   # Single codegen unit → better cross-function inlining
-lto = "fat"         # Fat LTO: maximum cross-crate dead-code elimination +
-                    # inlining (smaller binary; ~2× link time vs thin)
+lto = "thin"        # Thin LTO: cross-crate inlining and DCE in parallel, per
+                    # codegen unit, instead of one serial whole-program merge
 strip = "symbols"   # Smaller .app bundle, faster dyld load
 panic = "unwind"    # REQUIRED — three independent `catch_unwind` guards depend on
                     # it, so this survived the local-LLM removal:

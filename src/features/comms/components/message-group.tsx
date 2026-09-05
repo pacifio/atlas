@@ -559,7 +559,7 @@ const fileActionBtn =
   "flex h-6 w-6 items-center justify-center rounded text-text-tertiary transition-colors hover:bg-bg-active hover:text-text-primary cursor-pointer";
 
 /** Save an attachment wherever the user wants it. */
-async function saveAttachment(attachment: ChatAttachment): Promise<void> {
+export async function saveAttachment(attachment: ChatAttachment): Promise<void> {
   try {
     const dest = await saveFileDialog({ defaultPath: attachment.filename });
     if (!dest) return;
@@ -720,7 +720,7 @@ const actionBtn =
 const menuItem =
   "flex items-center gap-2 rounded px-2 py-1.5 text-[11.5px] text-text-secondary outline-none transition-colors data-[highlighted]:bg-bg-hover data-[highlighted]:text-text-primary cursor-pointer";
 
-function formatBytes(n: number): string {
+export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;

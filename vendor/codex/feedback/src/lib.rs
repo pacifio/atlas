@@ -494,8 +494,8 @@ impl FeedbackSnapshot {
         extra_attachments: &[FeedbackAttachment],
         extra_attachment_paths: &[FeedbackAttachmentPath],
         logs_override: Option<Vec<u8>>,
-    ) -> Vec<sentry::protocol::Attachment> {
-        use sentry::protocol::Attachment;
+    ) -> Vec<sentry_types::protocol::v7::Attachment> {
+        use sentry_types::protocol::v7::Attachment;
 
         let mut attachments = Vec::new();
 

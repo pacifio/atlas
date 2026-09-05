@@ -312,7 +312,7 @@ pub async fn acp_registry_uninstall(
 
 /// Metadata for any id the registry knows — the timeline/memory fallback for
 /// uninstalled-but-captured agents.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn acp_registry_metadata(
     agent_id: String,
     host: State<'_, Arc<AgentHost>>,

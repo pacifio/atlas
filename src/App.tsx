@@ -2,6 +2,7 @@ import { startTransition, useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AppLayout } from "@/features/layout/components/app-layout";
 import { AppContextMenu } from "@/components/app-context-menu";
+import { TooltipProvider } from "@/ui/tooltip";
 import { CommandPalette } from "@/components/command-palette";
 import { NewTabPalette } from "@/components/new-tab-palette";
 import { LayoutSwitcher } from "@/features/layout/components/layout-switcher";
@@ -64,7 +65,7 @@ import { UpdateAvailableModal } from "@/features/updater/components/update-avail
 import { LoadingOrganisationOverlay } from "@/features/organisations/components/loading-organisation-overlay";
 import { StopAgentsDialog } from "@/features/workspaces/components/stop-agents-dialog";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
-import { comms, listenComms } from "@/features/comms/lib/comms-api";
+import { comms, listenComms, type CommsEnvelope } from "@/features/comms/lib/comms-api";
 import { commsActions, pruneTyping } from "@/features/comms/stores/comms-store";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
 import {
@@ -253,7 +254,33 @@ export function App() {
   // transport), so this listener runs at app scope rather than with the panel —
   // a panel-scoped one would mean "panel closed, no notifications".
   useEffect(() => {
-    const off = listenComms((envelope) => commsActions().applyEnvelope(envelope));
+    // rAF-coalesced, the agent-delta batcher's shape: a burst of socket frames
+    // (a backfill, a reaction flood, a presence storm) used to be one zustand
+    // `set` — and one React commit — PER FRAME. Buffer and drain once per
+    // animation frame; React 18 batches every `set` inside the synchronous
+    // drain into a single commit. The timeout backstop drains while the
+    // window is hidden, where rAF never fires (same trap as the delta path).
+    let buffer: CommsEnvelope[] = [];
+    let scheduled = 0;
+    let backstop = 0;
+    const drain = () => {
+      scheduled = 0;
+      if (backstop) {
+        window.clearTimeout(backstop);
+        backstop = 0;
+      }
+      const batch = buffer;
+      buffer = [];
+      const apply = commsActions().applyEnvelope;
+      for (const envelope of batch) apply(envelope);
+    };
+    const off = listenComms((envelope) => {
+      buffer.push(envelope);
+      if (!scheduled) {
+        scheduled = window.requestAnimationFrame(drain);
+        backstop = window.setTimeout(drain, 120);
+      }
+    });
     // Subscribe FIRST, then ask Rust to re-announce. Tauri events are not
     // buffered and the socket opens seconds after launch — possibly before this
     // component mounts — so a `resync` emitted into a void was leaving the panel
@@ -264,6 +291,8 @@ export function App() {
     return () => {
       void off.then((fn) => fn());
       window.clearInterval(prune);
+      if (scheduled) window.cancelAnimationFrame(scheduled);
+      if (backstop) window.clearTimeout(backstop);
     };
   }, []);
 
@@ -1490,7 +1519,10 @@ export function App() {
   ]);
 
   return (
-    <>
+    // One provider at the root so every tooltip in the app shares a delay and
+    // a SKIP group: hovering along a facepile shows each name instantly after
+    // the first, instead of re-waiting per avatar.
+    <TooltipProvider>
       <AppContextMenu>
         <div className="h-screen w-screen" onContextMenu={(e) => e.preventDefault()}>
           <AppLayout />
@@ -1524,6 +1556,6 @@ export function App() {
           },
         }}
       />
-    </>
+    </TooltipProvider>
   );
 }

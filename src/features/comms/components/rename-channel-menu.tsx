@@ -63,7 +63,7 @@ export function RenameChannelMenu({
             zIndex: 9999,
             boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 16px 48px rgba(0,0,0,0.95)",
           }}
-          className="overflow-hidden rounded-xl select-none border border-white/10 bg-[var(--bg-elevated)]/85 backdrop-blur-2xl atlas-panel-in-tl"
+          className="overflow-hidden rounded-xl select-none border border-white/10 bg-[var(--bg-elevated)]/95 backdrop-blur-2xl atlas-panel-in-tl"
         >
           <div className="flex w-[240px] flex-col">
             <div className="flex h-[32px] items-center gap-1.5 border-b border-white/5 px-3">

@@ -385,6 +385,33 @@ pub struct RecordingsResponse {
     pub tracks: Vec<RecordingTrack>,
 }
 
+/// A Prompt Draft's metadata (ATL-194) — never its content: the server
+/// stores opaque Yjs bytes it cannot read (ADR-0011), and this client's
+/// Drafts tab only lists and creates. `title` is write-once; there is no
+/// rename or delete route, and no lifecycle broadcast — the list is
+/// poll-refreshed, mirroring the web client.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PromptDraft {
+    pub id: String,
+    pub conv_id: String,
+    pub title: String,
+    pub created_by: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default)]
+    pub sent_at: Option<i64>,
+    #[serde(default)]
+    pub sent_by: Option<String>,
+    #[serde(default)]
+    pub sent_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DraftList {
+    #[serde(default)]
+    pub drafts: Vec<PromptDraft>,
+}
+
 /// The answer to `GET /calls?conv_id=…&include=recent` (ATL-208): every live
 /// call plus the last 10 ended ones, oldest-first by `seq`. This is how the
 /// web client cold-syncs its call cards, and it is why the desktop does not
@@ -397,6 +424,84 @@ pub struct CallList {
 }
 
 impl RestClient {
+    /// A conversation's prompt drafts, newest-updated first. Unpaginated by
+    /// contract; a non-member's answer is the ordinary 404.
+    pub async fn drafts(&self, org: &str, conv_id: &str) -> Result<DraftList> {
+        self.json(
+            reqwest::Method::GET,
+            &format!("/conversations/{conv_id}/drafts"),
+            org,
+            None,
+        )
+        .await
+    }
+
+    /// Create a draft. Title ≤ 200 chars (`CHAT_DRAFT_TITLE_MAX`) — refused,
+    /// not truncated, past that. Deliberately NOT announced by the server, so
+    /// the caller prepends the 201 body and everyone else learns by poll.
+    pub async fn create_draft(
+        &self,
+        org: &str,
+        conv_id: &str,
+        title: &str,
+    ) -> Result<PromptDraft> {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            draft: PromptDraft,
+        }
+        let body = serde_json::json!({ "title": title });
+        let w: Wrapper = self
+            .json(
+                reqwest::Method::POST,
+                &format!("/conversations/{conv_id}/drafts"),
+                org,
+                Some(body),
+            )
+            .await?;
+        Ok(w.draft)
+    }
+
+    /// Start a call. `POST /calls` answers `201 {call, auth_token}` — the
+    /// token is deliberately DROPPED here: this client never joins from the
+    /// desktop (the browser's call tab mints its own), and an unused mint
+    /// burns a 30-minute reservation the server has no release route for.
+    /// It must never cross the bridge, be stored, or be logged.
+    pub async fn start_call(
+        &self,
+        org: &str,
+        conv_id: &str,
+        mode: &str,
+        public: bool,
+    ) -> Result<crate::wire::Call> {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            call: crate::wire::Call,
+            // `auth_token` intentionally absent: serde drops it unread.
+        }
+        let body = serde_json::json!({ "conv_id": conv_id, "mode": mode, "public": public });
+        let w: Wrapper = self
+            .json(reqwest::Method::POST, "/calls", org, Some(body))
+            .await?;
+        Ok(w.call)
+    }
+
+    /// A call's transcript as CSV bytes. The route answers a 302 into a
+    /// 60-second ticket, which reqwest follows same-host; not-ready arrives
+    /// as the ordinary refusal envelope (`detail.transcript_state`).
+    pub async fn download_transcript(&self, org: &str, call_id: &str) -> Result<Vec<u8>> {
+        let res = Self::check(
+            self.request(
+                reqwest::Method::GET,
+                &format!("/calls/{call_id}/transcript"),
+                org,
+                None,
+            )
+            .await?,
+        )
+        .await?;
+        Self::drain(res, &mut |_, _| {}).await
+    }
+
     /// A conversation's calls: all live ones plus the last 10 ended (ATL-208).
     ///
     /// This is the cold-sync path for call history. The journal still delivers
@@ -599,5 +704,103 @@ impl RestClient {
             on_chunk(out.len() as u64, total);
         }
         Ok(out)
+    }
+}
+
+/// Spaces REST — the summary pre-flight and the media triangle
+/// (reserve → PUT → ticketed download). Everything else about a Space is
+/// socket-only by contract.
+impl RestClient {
+    /// `GET /spaces?org&conv`. Lazily creates the Space (and its default
+    /// "Canvas" page) server-side; refusals arrive as ordinary 401/403/404,
+    /// which is the whole reason to call this before dialing the socket — a
+    /// failed WS handshake cannot say why.
+    pub async fn space_summary(
+        &self,
+        org: &str,
+        conv_id: &str,
+    ) -> Result<crate::spaces::SpaceSummary> {
+        self.json(
+            reqwest::Method::GET,
+            &format!("/spaces?conv={conv_id}"),
+            org,
+            None,
+        )
+        .await
+    }
+
+    /// Reserve a media object. `stored: true` in the answer is dedup — the
+    /// bytes are already there and no upload should follow.
+    pub async fn space_media_reserve(
+        &self,
+        org: &str,
+        conv_id: &str,
+        content_hash: &str,
+        mime: &str,
+        size: u64,
+    ) -> Result<crate::spaces::SpaceMediaReserved> {
+        let body = serde_json::json!({
+            "content_hash": content_hash,
+            "mime": mime,
+            "size": size,
+        });
+        self.json(
+            reqwest::Method::POST,
+            &format!("/spaces/media?conv={conv_id}"),
+            org,
+            Some(body),
+        )
+        .await
+    }
+
+    /// Deliver reserved bytes. One streamed PUT, never multipart — R2 can only
+    /// verify a whole-object SHA-256 on a single write, and the server holds
+    /// us to `Content-Length == reserved size` exactly.
+    pub async fn space_media_put(
+        &self,
+        org: &str,
+        conv_id: &str,
+        content_hash: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<()> {
+        let token = self.tokens.mint().await?;
+        let url = format!(
+            "{}/spaces/media/{content_hash}?conv={conv_id}&org={org}",
+            self.base
+        );
+        let res = self
+            .http
+            .put(url)
+            .bearer_auth(token)
+            .header(reqwest::header::CONTENT_TYPE, mime)
+            .timeout(std::time::Duration::from_secs(300))
+            .body(bytes)
+            .send()
+            .await?;
+        Self::check(res).await?;
+        Ok(())
+    }
+
+    /// Fetch a media object's bytes: `GET /spaces/media/{hash}` answers a 302
+    /// into the ticketed `/spaces/dl/{token}` (60s life), which reqwest
+    /// follows same-host. Cached by the caller under the immutable hash.
+    pub async fn space_media_download(
+        &self,
+        org: &str,
+        conv_id: &str,
+        content_hash: &str,
+    ) -> Result<Vec<u8>> {
+        let res = Self::check(
+            self.request(
+                reqwest::Method::GET,
+                &format!("/spaces/media/{content_hash}?conv={conv_id}"),
+                org,
+                None,
+            )
+            .await?,
+        )
+        .await?;
+        Self::drain(res, &mut |_, _| {}).await
     }
 }

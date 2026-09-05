@@ -18,7 +18,6 @@ import {
   Crop,
   Download,
   FolderGit2,
-  Github,
   Image as ImageIcon,
   Loader2,
   MessageSquareText,
@@ -28,6 +27,7 @@ import {
   Search,
   Star,
 } from "lucide-react";
+import { GithubIcon } from "@/components/github-icon";
 import { cn } from "@/lib/utils";
 import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import type { GithubRepo, ClonedRepo } from "@/features/github/types";
@@ -280,7 +280,7 @@ function GithubSubmenu({
   return (
     <DropdownMenu.Sub onOpenChange={(o) => o && loadCloned()}>
       <DropdownMenu.SubTrigger className={ITEM_CLASS}>
-        <Github size={11} />
+        <GithubIcon size={11} />
         <span>Add from GitHub</span>
         <ChevronRight size={11} className="ml-auto text-[var(--text-tertiary)]" />
       </DropdownMenu.SubTrigger>

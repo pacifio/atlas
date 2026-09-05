@@ -8,7 +8,7 @@ description = "Team chat against the `atlas-chat` API: one WebSocket per active 
 name = "atlas_comms"
 
 [dependencies]
-tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "macros", "fs", "io-util"] }
 # The workspace pin, which resolves to the openai-oss-forks 0.28 fork already in
 # the graph via the vendored Codex engine — rustls, and no new resolution. The
 # lockfile also holds a 0.29 from `axum`; declaring a version inline here would
@@ -26,6 +26,9 @@ reqwest = { version = "0.12", default-features = false, features = [
 # Guarded by `tests/cargo-deps-unification.test.ts`.
 rusqlite = { version = "0.39", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
+# Spaces binary frames cross the bridge as base64 — the window event channel is
+# JSON, and 0.21 is the version already in the workspace graph.
+base64 = "0.21"
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 thiserror = "2"

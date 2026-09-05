@@ -1,0 +1,38 @@
+# The Tauri CLI exports MACOSX_DEPLOYMENT_TARGET (from
+# bundle.macOS.minimumSystemVersion) when it drives cargo, and 72 native build
+# scripts declare `rerun-if-env-changed` on it. Without this file a plain
+# `cargo build --release` and `tauri build` had disjoint caches inside one
+# target/: alternating them with nothing changed recompiled 186 crates and cost
+# 21m36s (measured 2026-09-04, docs/research/build-performance.md, R3), and it
+# is why target/release had grown to 69 GB of variants cargo never collects.
+#
+# The value must equal what the CLI sets, which is why it is checked against
+# tauri.conf.json in tests/cargo-workspace.test.ts rather than trusted here.
+# Deliberately not `force`: if the CLI ever disagrees, its value wins and the
+# contract test fails loudly instead of the build silently diverging.
+#
+# REMOVE_UNUSED_COMMANDS is deliberately NOT set here, though the research doc
+# proposed it. Verified on Tauri CLI 2.11.1 by running `tauri build` with a
+# fake `--runner` that dumps its environment: the CLI passes exactly one
+# variable, MACOSX_DEPLOYMENT_TARGET, and never sets REMOVE_UNUSED_COMMANDS.
+# Setting it here does not align the two caches — it un-aligns them, and worse,
+# `tauri-utils::acl::build::generate_allowed_commands` treats the variable's
+# mere presence as "prune every command no capability allows", so it silently
+# changed what the shipped binary exposes.
+#
+# One difference remains and cannot be expressed as config, because it is a
+# cargo *argument* rather than an env var: the CLI invokes cargo as
+# `cargo build --bins --features tauri/custom-protocol --release`, and that
+# feature re-resolves `tauri` and the six tauri-plugin-* crates. So a plain
+# `cargo build --release -p atlas` recompiles those eight plus the app (16
+# rustc invocations), while
+#
+#   cargo build --release -p atlas --features tauri/custom-protocol
+#
+# is a complete cache hit against `bun run build:app` — 0 rustc invocations,
+# verified 2026-09-04. `custom-protocol` cannot simply become a default
+# feature: it makes tauri serve the embedded assets instead of the dev server,
+# which is why the CLI adds it on release builds only. `cargo check`, `cargo
+# test` and `tauri dev` are unaffected by any of this.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "11.0"

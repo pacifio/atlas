@@ -1,9 +1,11 @@
 import { memo, useCallback, useState } from "react";
-import { ChevronDown, Loader2, Phone, Video } from "lucide-react";
+import { ChevronDown, ExternalLink, FileText, Link2, Loader2, Phone, Video } from "lucide-react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { comms } from "../lib/comms-api";
+import { comms, parseRefusal } from "../lib/comms-api";
+import { copyShareLink, memberCallUrl } from "../lib/call-links";
 import { useCommsStore } from "../stores/comms-store";
 import { AudioPlayer } from "./audio-player";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -32,6 +34,7 @@ export const CallActivity = memo(function CallActivity({
   const [open, setOpen] = useState(false);
   const [tracks, setTracks] = useState<RecordingTrack[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const orgId = useCommsStore((s) => s.connection.orgId) ?? "";
 
   const live = call.ended_at === null;
   const hasRecording = call.recording_state === "ready";
@@ -59,7 +62,7 @@ export const CallActivity = memo(function CallActivity({
   const Icon = call.mode === "video" ? Video : Phone;
 
   return (
-    <div className="relative flex gap-2 px-3 py-[3px]">
+    <div className="group/call relative flex gap-2 px-3 py-[3px]">
       <div className="flex w-9 shrink-0 justify-center">
         <span
           className={cn(
@@ -105,7 +108,54 @@ export const CallActivity = memo(function CallActivity({
             </span>
           )}
           <span className="text-text-ghost">{formatClock(call.started_at)}</span>
+
+          {/* Row actions: the log carries the meeting link. Join only while
+              the room is still open. */}
+          {live && (
+            <button
+              type="button"
+              title="Join this call in your browser"
+              onClick={() => void joinCall(orgId, call.id)}
+              className="flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-[10.5px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+            >
+              <ExternalLink size={10} />
+              Join
+            </button>
+          )}
+          <button
+            type="button"
+            title={call.join_slug !== null ? "Copy the guest link" : "Copy the call link"}
+            onClick={() => void copyShareLink(orgId, call)}
+            className="flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-[10.5px] text-text-secondary opacity-0 transition-all hover:bg-bg-hover hover:text-text-primary group-hover/call:opacity-100"
+          >
+            <Link2 size={10} />
+            Copy link
+          </button>
         </div>
+
+        {/* Transcript: the state IS the live update (frames patch it); when
+            ready the CSV is one save away. Wording mirrors the web's card. */}
+        {call.transcript_state === "pending" && (
+          <span className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-text-tertiary">
+            <Loader2 size={10} className="animate-spin" />
+            Transcript is being produced…
+          </span>
+        )}
+        {call.transcript_state === "failed" && (
+          <span className="mt-0.5 block text-[10.5px] text-text-ghost">
+            No transcript arrived for this call.
+          </span>
+        )}
+        {call.transcript_state === "ready" && (
+          <button
+            type="button"
+            onClick={() => void saveTranscript(call.id)}
+            className="-ml-1 mt-0.5 flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-[11px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+          >
+            <FileText size={11} />
+            Save transcript
+          </button>
+        )}
 
         {hasRecording && (
           <button
@@ -173,6 +223,26 @@ function TrackRow({ track }: { track: RecordingTrack }) {
       onDownload={() => void saveTrack(track)}
     />
   );
+}
+
+async function joinCall(orgId: string, callId: string): Promise<void> {
+  try {
+    await openUrl(memberCallUrl(orgId, callId));
+  } catch {
+    toast.error("Could not open your browser.");
+  }
+}
+
+async function saveTranscript(callId: string): Promise<void> {
+  try {
+    const dest = await saveFileDialog({ defaultPath: `transcript-${callId}.csv` });
+    if (!dest) return;
+    await comms.saveTranscript(callId, dest);
+    toast.success("Transcript saved.");
+  } catch (e) {
+    const refusal = parseRefusal(e);
+    toast.error(refusal?.message || "Could not save the transcript.");
+  }
 }
 
 async function saveTrack(track: RecordingTrack): Promise<void> {

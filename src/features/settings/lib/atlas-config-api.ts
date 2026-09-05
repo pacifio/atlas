@@ -37,10 +37,6 @@ export type UpdateOutcome =
   | { kind: "applied"; settings: AppSettings; generation: number }
   | { kind: "conflict"; settings: AppSettings; generation: number };
 
-export function getConfigInfo(): Promise<ConfigInfo> {
-  return invoke<ConfigInfo>("get_atlas_config_info");
-}
-
 export function updateSettings(
   patch: SettingsPatch,
   expectedGeneration: number,

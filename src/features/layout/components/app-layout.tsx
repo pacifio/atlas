@@ -1,10 +1,5 @@
 import { useEffect, useRef } from "react";
-import {
-  Panel,
-  PanelGroup,
-  PanelResizeHandle,
-  type ImperativePanelHandle,
-} from "react-resizable-panels";
+import { Group, Panel, Separator, useDefaultLayout, usePanelRef } from "react-resizable-panels";
 import { useLayoutStore } from "../stores/layout-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
@@ -16,6 +11,13 @@ import { cn } from "@/lib/utils";
 import { LeftPanel } from "./left-panel";
 import { RightPanel } from "./right-panel";
 import { CenterPanel } from "./center-panel";
+
+// Stable across the v3 -> v4 upgrade on purpose: `useDefaultLayout` reads
+// `react-resizable-panels:<id>` out of localStorage and understands the v3
+// payload shape, so an existing user's saved column widths are picked up
+// rather than reset. Panel ids (`atlas-left` / `atlas-center` / `atlas-right`)
+// are load-bearing for the same reason — a layout is a map keyed by them.
+const MAIN_LAYOUT_ID = "atlas-main-layout";
 
 export function AppLayout() {
   const leftPanel = useLayoutStore.use.leftPanel();
@@ -31,6 +33,10 @@ export function AppLayout() {
 
   // Warm the workspace-pane git data at startup so the first slide is smooth.
   useWorkspaceGitPrefetch();
+
+  // v4 replaced `autoSaveId` with this hook: it owns the localStorage read and
+  // write, and the Group takes the result as `defaultLayout` + `onLayoutChanged`.
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: MAIN_LAYOUT_ID });
 
   // Esc closes the OVERLAY workspace panel (same animated slide-out as a
   // scrim click). Only active while the overlay is open — when docked or
@@ -54,7 +60,7 @@ export function AppLayout() {
   // Panel below). `defaultSize` is only read on first mount, so the initial
   // visibility is captured once — otherwise a panel that starts hidden would
   // render at full width for a frame and then snap shut.
-  const leftPanelRef = useRef<ImperativePanelHandle>(null);
+  const leftPanelRef = usePanelRef();
   const leftInitiallyVisible = useRef(showLeft);
   useEffect(() => {
     const panel = leftPanelRef.current;
@@ -97,7 +103,7 @@ export function AppLayout() {
           MIN-CONTENT width — and min-content propagates up from the deepest
           `whitespace-nowrap` text in any panel (e.g. a 400-char commit subject
           in the git History list). The column then grows PAST the window,
-          `PanelGroup`'s `width: 100%` resolves against that inflated width, and
+          the `Group`'s `width: 100%` resolves against that inflated width, and
           every panel scales with it: the left panel balloons and the right
           panel is pushed off-screen entirely. `overflow: hidden` on the panels
           does NOT prevent this — it stops a panel's USED size being overridden
@@ -108,7 +114,12 @@ export function AppLayout() {
         <Titlebar />
 
         <div className="flex-1 min-h-0">
-          <PanelGroup direction="horizontal" autoSaveId="atlas-main-layout">
+          <Group
+            id={MAIN_LAYOUT_ID}
+            orientation="horizontal"
+            defaultLayout={defaultLayout}
+            onLayoutChanged={onLayoutChanged}
+          >
             {/* The left panel is ALWAYS MOUNTED and collapsed to zero width when
                 hidden — never conditionally rendered.
 
@@ -126,38 +137,37 @@ export function AppLayout() {
                 without one its layout state corrupts.) */}
             <Panel
               id="atlas-left"
-              order={1}
-              ref={leftPanelRef}
+              panelRef={leftPanelRef}
               collapsible
-              collapsedSize={0}
-              defaultSize={leftInitiallyVisible.current ? 18 : 0}
-              minSize={14}
-              maxSize={28}
+              collapsedSize="0"
+              defaultSize={leftInitiallyVisible.current ? "18" : "0"}
+              minSize="14"
+              maxSize="28"
             >
               <LeftPanel />
             </Panel>
-            <PanelResizeHandle
+            <Separator
               className={cn(
-                "w-px bg-border-default hover:bg-accent data-[resize-handle-active]:bg-accent transition-colors cursor-col-resize",
+                "w-px bg-border-default hover:bg-accent data-[separator=active]:bg-accent transition-colors cursor-col-resize",
                 // Kept in the tree (removing it would re-derive the layout, the
                 // very thing we're avoiding) but inert while collapsed.
                 !showLeft && "pointer-events-none invisible",
               )}
             />
 
-            <Panel id="atlas-center" order={2} defaultSize={64} minSize={30}>
+            <Panel id="atlas-center" defaultSize="64" minSize="30">
               <CenterPanel />
             </Panel>
 
             {showRight && (
               <>
-                <PanelResizeHandle className="w-px bg-border-default hover:bg-accent data-[resize-handle-active]:bg-accent transition-colors cursor-col-resize" />
-                <Panel id="atlas-right" order={3} defaultSize={18} minSize={12} maxSize={30}>
+                <Separator className="w-px bg-border-default hover:bg-accent data-[separator=active]:bg-accent transition-colors cursor-col-resize" />
+                <Panel id="atlas-right" defaultSize="18" minSize="12" maxSize="50">
                   <RightPanel />
                 </Panel>
               </>
             )}
-          </PanelGroup>
+          </Group>
         </div>
 
         {showStatus && <StatusBar />}

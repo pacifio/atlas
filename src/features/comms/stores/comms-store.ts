@@ -16,9 +16,13 @@
 
 import { create } from "zustand";
 import { createSelectors } from "@/lib/create-selectors";
+import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { ORG_SCOPED_TYPES } from "@/lib/constants";
+import { useSpacesStore } from "@/features/spaces/stores/spaces-store";
 import { comms, type CommsEnvelope, type ConnectionInfo } from "../lib/comms-api";
 import type { PendingAttachment } from "../components/comms-composer";
 import { CHAT_MESSAGE_ATTACHMENT_MAX, TYPING_EXPIRY_MS } from "../types";
+import { publishDraftEvent } from "../lib/draft-bus";
 import type {
   ChatCall,
   ChatConversation,
@@ -26,6 +30,7 @@ import type {
   ChatReadState,
   CommsMessage,
   OrgMemberProfile,
+  PromptDraft,
 } from "../types";
 
 /**
@@ -98,9 +103,18 @@ interface CommsState {
    *  message's slice keeps identity and its row's memo holds. A flat array here
    *  meant one reaction anywhere repainted every row everywhere. */
   reactionsByMessage: Record<string, ChatReaction[]>;
+  pinnedByConv: Record<string, string[]>;
   pinned: string[];
   /** conv -> user -> when they last said so; aged out on a timer. */
   typing: Record<string, Record<string, number>>;
+  /** Which sub-tab each conversation shows. Not persisted: a fresh open
+   *  lands on Messages, which is where conversations live. */
+  /** Prompt drafts by conversation. Cached HERE, not in the tab: a tab
+   *  switch unmounted the component and threw the list away, so every return
+   *  re-shimmered. The fetch is now a silent revalidation behind whatever is
+   *  already on screen. Org-scoped, so an org change clears it. */
+  drafts: Record<string, PromptDraft[]>;
+  convTab: Record<string, ConvSubTab>;
   /** In-flight downloads by the object's own id (attachment id / track id).
    *  A key exists only while the arc should render; complete/failed delete it. */
   downloads: Record<string, { got: number; total: number }>;
@@ -157,8 +171,16 @@ interface CommsState {
     loadOlder: (convId: string) => Promise<void>;
     /** Re-attempt a conversation's first page after retries were exhausted. */
     retryConversation: (convId: string) => void;
+    setConvTab: (convId: string, tab: ConvSubTab) => void;
+    /** Refresh a conversation's drafts. Silent by design: it never clears the
+     *  cache first, so the list on screen stays put until better data lands. */
+    loadDrafts: (convId: string) => Promise<void>;
+    /** Fold a freshly created draft in — the server never announces one. */
+    adoptDraft: (convId: string, draft: PromptDraft) => void;
   };
 }
+
+export type ConvSubTab = "messages" | "drafts" | "files";
 
 const serverOwned = () => ({
   connection: DISCONNECTED,
@@ -172,10 +194,18 @@ const serverOwned = () => ({
   hydrated: {} as Record<string, boolean>,
   loadError: {} as Record<string, string>,
   reactionsByMessage: {} as Record<string, ChatReaction[]>,
+  /** Pin rails keyed by conversation. The server's rail for a conversation
+   *  is COMPLETE, so it REPLACES rather than merges — see `withPins`. */
+  pinnedByConv: {} as Record<string, string[]>,
+  /** Flat lookup derived from `pinnedByConv`: message ids are globally
+   *  unique, and a message row renders its own pin without knowing which
+   *  conversation it belongs to. Never written directly. */
   pinned: [] as string[],
   typing: {} as Record<string, Record<string, number>>,
   calls: {} as Record<string, ChatCall>,
   downloads: {} as Record<string, { got: number; total: number }>,
+  convTab: {} as Record<string, ConvSubTab>,
+  drafts: {} as Record<string, PromptDraft[]>,
 });
 
 export const useCommsStore = createSelectors(
@@ -242,7 +272,7 @@ export const useCommsStore = createSelectors(
                   ),
                 },
                 reactionsByMessage: mergeReactions(s.reactionsByMessage, win.reactions),
-                pinned: mergePins(s.pinned, win.pinned_message_ids),
+                ...withPins(s.pinnedByConv, tab.convId as string, win.pinned_message_ids),
               }));
             } catch {
               // A conversation we can no longer read is not an error worth
@@ -265,6 +295,7 @@ export const useCommsStore = createSelectors(
         // generation in Rust, which silences the old supervisor first.)
         const currentOrg = state.connection.orgId;
         if (envelope.org && currentOrg && envelope.org !== currentOrg) {
+          closeOrgScopedTabs();
           set({
             ...serverOwned(),
             // The old org's roster must not survive the retarget — the panel
@@ -339,6 +370,12 @@ export const useCommsStore = createSelectors(
             set((s) => ({ reads: mergeReads(s.reads, ev.reads) }));
             return;
 
+          case "readChanged":
+            // The single-row fast path: one read receipt used to re-ship the
+            // whole table.
+            set((s) => ({ reads: mergeReads(s.reads, [ev.read]) }));
+            return;
+
           case "presence":
             // The whole set — an assignment, not a merge. But an UNCHANGED set
             // must not take a new identity: every socket reconnect and grace-
@@ -371,7 +408,7 @@ export const useCommsStore = createSelectors(
             return;
 
           case "pinsChanged":
-            set((s) => ({ pinned: mergePins(s.pinned, ev.pinned_message_ids) }));
+            set((s) => withPins(s.pinnedByConv, ev.conv_id, ev.pinned_message_ids));
             return;
 
           case "uploadProgress":
@@ -418,6 +455,41 @@ export const useCommsStore = createSelectors(
             }
             return;
           }
+
+          case "draftOpened":
+            // Content bytes ride the bus (below); the store only takes the
+            // fresher METADATA so the list row's sent/updated state tracks.
+            set((s) => {
+              const list = s.drafts[ev.draft.conv_id];
+              if (!list) return {};
+              return {
+                drafts: {
+                  ...s.drafts,
+                  [ev.draft.conv_id]: list.map((d) => (d.id === ev.draft.id ? ev.draft : d)),
+                },
+              };
+            });
+            publishDraftEvent({
+              kind: "opened",
+              draft_id: ev.draft_id,
+              draft: ev.draft,
+              snapshot: ev.snapshot,
+              updates: ev.updates,
+            });
+            return;
+
+          case "draftUpdate":
+            publishDraftEvent({ kind: "update", draft_id: ev.draft_id, update: ev.update });
+            return;
+
+          case "draftAwareness":
+            publishDraftEvent({
+              kind: "awareness",
+              draft_id: ev.draft_id,
+              user_id: ev.user_id,
+              state: ev.state,
+            });
+            return;
 
           case "callChanged":
             set((s) => ({ calls: { ...s.calls, [ev.call.id]: ev.call } }));
@@ -649,6 +721,19 @@ export const useCommsStore = createSelectors(
       },
 
       togglePin: (messageId, on) => {
+        // Optimistic FIRST, in this process — instant feedback must not ride
+        // on the round trip to Rust's own optimistic echo (invoke → manager
+        // broadcast → Tauri event → rAF drain). The echo then replays the
+        // same rail through `pinsChanged`, which is idempotent under
+        // replace semantics: no flicker, no divergence.
+        const messages = get().messages;
+        const convId = Object.keys(messages).find((c) =>
+          (messages[c] ?? []).some((m) => m.id === messageId),
+        );
+        if (convId) {
+          const next = toggleRail(get().pinnedByConv[convId] ?? [], messageId, on);
+          if (next) set((s) => withPins(s.pinnedByConv, convId, next));
+        }
         void comms.pin(messageId, on).catch(() => {});
       },
 
@@ -662,6 +747,28 @@ export const useCommsStore = createSelectors(
       joinChannel: (convId) => {
         void comms.join(convId).catch(() => {});
       },
+
+      setConvTab: (convId, tab) => set((s) => ({ convTab: { ...s.convTab, [convId]: tab } })),
+
+      loadDrafts: async (convId) => {
+        try {
+          const list = await comms.drafts(convId);
+          set((s) => ({ drafts: { ...s.drafts, [convId]: list } }));
+        } catch (e) {
+          // A failed revalidation must not blank a good list — the cached
+          // rows stay exactly as they were. Only a conversation that has
+          // never loaded settles to an empty answer.
+          console.warn("comms: drafts fetch failed:", convId, e);
+          set((s) => (s.drafts[convId] ? {} : { drafts: { ...s.drafts, [convId]: [] } }));
+        }
+      },
+
+      adoptDraft: (convId, draft) =>
+        set((s) => {
+          const current = s.drafts[convId] ?? [];
+          if (current.some((d) => d.id === draft.id)) return {};
+          return { drafts: { ...s.drafts, [convId]: [draft, ...current] } };
+        }),
 
       retryConversation: (convId) => {
         convAttempts.delete(convId);
@@ -785,7 +892,7 @@ function loadConversation(
       set((s) => ({
         messages: { ...s.messages, [convId]: mergeWindow(s.messages[convId], win.messages ?? []) },
         reactionsByMessage: mergeReactions(s.reactionsByMessage, win.reactions),
-        pinned: mergePins(s.pinned, win.pinned_message_ids),
+        ...withPins(s.pinnedByConv, convId, win.pinned_message_ids),
         loading: { ...s.loading, [convId]: false },
         hydrated: { ...s.hydrated, [convId]: true },
       }));
@@ -871,6 +978,22 @@ function withoutTyper(
   return { ...typing, [convId]: rest };
 }
 
+/**
+ * Close center tabs whose content belongs to ONE org (draft editors,
+ * Spaces canvases — their ids embed conversation ids). Called on every path
+ * that moves the org under the renderer: the deliberate `switchOrg` and the
+ * boot-reconciliation branch above. Settings is org-agnostic and stays.
+ */
+function closeOrgScopedTabs(): void {
+  const layout = useLayoutStore.getState();
+  for (const tab of layout.tabs) {
+    if (ORG_SCOPED_TYPES.has(tab.type)) layout.actions.closeTab(tab.id);
+  }
+  // The spaces metadata cache is org-scoped too — page trees and authors
+  // for the outgoing org's conversations must not survive into the next.
+  useSpacesStore.getState().actions.clearAll();
+}
+
 function mergeReads(current: ChatReadState[], incoming: ChatReadState[]): ChatReadState[] {
   const byId = new Map(current.map((r) => [r.conv_id, r]));
   for (const r of incoming) byId.set(r.conv_id, r);
@@ -893,6 +1016,46 @@ function mergeReactions(
   return next;
 }
 
-function mergePins(current: string[], incoming: string[]): string[] {
-  return [...new Set([...current.filter((id) => !incoming.includes(id)), ...incoming])];
+/**
+ * Replace ONE conversation's pin rail and rebuild the flat lookup.
+ *
+ * A rail is authoritative and complete for its conversation, so an id the
+ * server did not send is an id that is no longer pinned. This used to be a
+ * flat union across every conversation, which could only ever ADD: an unpin
+ * arrives as a rail with the id absent, and a union re-added it from the
+ * local copy every time — the pin came back the instant it was removed,
+ * while the server had already accepted the unpin.
+ *
+ * Keeping rails per conversation is what makes a removal expressible at all:
+ * against one flat list there is no way to tell "gone from this
+ * conversation" from "belongs to a different one".
+ */
+/**
+ * One pin toggle against a rail, or `null` when it is already in the asked
+ * state (no wasted store write). Pins go to the FRONT — Rust's optimistic
+ * block and the server's rail both order newest-first.
+ */
+export function toggleRail(
+  rail: readonly string[],
+  messageId: string,
+  on: boolean,
+): string[] | null {
+  if (on) {
+    if (rail.includes(messageId)) return null;
+    return [messageId, ...rail];
+  }
+  if (!rail.includes(messageId)) return null;
+  return rail.filter((id) => id !== messageId);
+}
+
+export function withPins(
+  current: Record<string, string[]>,
+  convId: string,
+  rail: readonly string[] | undefined,
+): { pinnedByConv: Record<string, string[]>; pinned: string[] } {
+  const pinnedByConv = { ...current, [convId]: [...(rail ?? [])] };
+  return {
+    pinnedByConv,
+    pinned: [...new Set(Object.values(pinnedByConv).flat())],
+  };
 }

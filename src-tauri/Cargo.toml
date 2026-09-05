@@ -5,7 +5,19 @@ edition = "2021"
 
 [lib]
 name = "atlas_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# rlib only. `staticlib`/`cdylib` are the Tauri mobile template's crate types
+# (a native shell loads the app as a library); Atlas ships a macOS binary via
+# main.rs → atlas_lib::run(). They are not free: a lib that emits a staticlib
+# needs object code from every dependency, so cargo compiled all ~1,150 of
+# them with machine code AND bitcode and fat LTO optimised everything twice,
+# and this unit wrote a 1.7 GB libatlas_lib.a on every rebuild. Measured
+# 2026-09-04 (docs/research/build-performance.md): with the fat profile this
+# change alone took a clean build from 22m46s to 18m34s and cut 14% of total
+# CPU; under the thin profile that replaced it (see the root Cargo.toml) a
+# clean build is 8m14s at 422af792. No trade-off — nothing consumes the
+# staticlib or the cdylib. Restore the two crate types only with a real
+# iOS/Android target in gen/.
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -31,6 +43,11 @@ tauri = { version = "2", features = ["protocol-asset", "macos-private-api", "uns
 # hidden `.atlas/` dir, which the asset protocol won't serve). Pinned to the
 # version already in the lockfile so no new resolution is pulled in.
 base64 = "0.21"
+# Allowlist HTML sanitizer (html5ever-based) for the browser reader. Replaces
+# a hand-rolled string-level denylist whose bypass list kept growing —
+# <meta refresh>, <base>, unquoted javascript: hrefs, `</script >` variants.
+# A real parser closes the class, not the instance.
+ammonia = "4"
 # Plugin selection — only what JS actually invokes is kept. The Atlas
 # Rust command surface does all its own fs/shell/http work via the std,
 # reqwest, etc. directly; the JS side only touches: `dialog` (Open
@@ -56,7 +73,20 @@ serde_json = "1"
 # rationale — and the reason 0.38 and 0.40 are both wrong — lives on the same
 # declaration in `crates/atlas-thread-metadata/Cargo.toml`. Issue #39.
 rusqlite = { version = "0.39", features = ["bundled"] }
-tokio = { version = "1", features = ["full"] }
+# NOT `full`: that pulls every driver (process, signal, net, io-std, …)
+# whether used or not. This is the measured set — add a feature when the
+# compiler asks for it, which is exactly the error `full` suppressed.
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "macros",
+  "sync",
+  "time",
+  "fs",
+  "io-util",
+  "process",
+  "net",
+  "signal",
+] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }

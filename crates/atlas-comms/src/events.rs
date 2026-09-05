@@ -101,6 +101,12 @@ pub enum CommsEvent {
 
     ReadsChanged { reads: Vec<ReadState> },
 
+    /// One conversation's read state moved. The common case — every
+    /// `read.updated` frame names a single conversation — used to ride the
+    /// bulk event above, re-serializing the WHOLE read table per read
+    /// receipt. Bulk stays for snapshot restatements (clean reconnect).
+    ReadChanged { read: ReadState },
+
     /// The **whole** online set — an assignment, not a delta.
     Presence { online: Vec<String> },
 
@@ -147,6 +153,28 @@ pub enum CommsEvent {
         /// `"downloading" | "complete" | "failed"`.
         state: &'static str,
         error: Option<String>,
+    },
+
+    /// The answer to `draft.open`: metadata + content as opaque base64 Yjs
+    /// bytes. Forwarded to the renderer untouched — Yjs lives there.
+    DraftOpened {
+        draft_id: String,
+        draft: Box<crate::rest::PromptDraft>,
+        snapshot: Option<String>,
+        updates: Vec<String>,
+    },
+
+    /// Another subscriber's Yjs bytes for a draft this client has open.
+    DraftUpdate {
+        draft_id: String,
+        update: String,
+    },
+
+    /// Another subscriber's cursor. `user_id` is server-stamped.
+    DraftAwareness {
+        draft_id: String,
+        user_id: String,
+        state: String,
     },
 
     /// A call started, ended, or changed recording/transcript state. Carries

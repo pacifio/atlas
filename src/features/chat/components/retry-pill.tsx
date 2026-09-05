@@ -14,8 +14,18 @@ export function RetryPill({ tabId }: { tabId: string }) {
 
   useEffect(() => {
     if (!retry) return;
-    const t = setInterval(() => setNow(Date.now()), 250);
-    return () => clearInterval(t);
+    // 1s, not 250ms: the label renders whole seconds, so three of every four
+    // ticks were re-rendering the pill to the identical string. And no tick
+    // at all while hidden — `now` re-seeds on the visibility edge.
+    const tick = () => {
+      if (document.visibilityState === "visible") setNow(Date.now());
+    };
+    const t = setInterval(tick, 1_000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", tick);
+    };
   }, [retry]);
 
   if (!retry) return null;

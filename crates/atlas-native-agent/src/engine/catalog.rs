@@ -33,11 +33,36 @@
 //! the dialect flattens freeform tools on the way out and turns the reply back
 //! on the way in, so patching survives the crossing.
 //!
-//! # `deepseek-v3-2` is deliberately absent
+//! # Two catalogued models are deliberately absent
 //!
-//! It is withdrawn (ATL-173): its price row names no publisher, so the gateway
-//! refuses it `403 model_not_allowed` before any spend. Authoring it would put
-//! a model in the picker that cannot answer.
+//! The gateway's `/v1/catalogue` is the set Atlas *resells*; this file is the
+//! set a user may *pick*. Neither model below can generate, so authoring
+//! either would put a model in the picker that cannot answer — but they fail
+//! at different points, and only one of them is visible on the wire at all.
+//!
+//! - **`deepseek-v3-2`** is withdrawn (ATL-173): its price row names no
+//!   publisher, so it is left out of `/v1/catalogue` entirely and refused
+//!   `403 model_not_allowed` before any spend. Nothing advertises it.
+//! - **`openai/gpt-5.6-sol`** is the harder case, because the gateway *does*
+//!   advertise it — `entitled: true` on `/v1/catalogue` — and it still has no
+//!   funded route (measured 2026-09-05). Every completion comes back
+//!   `502 provider_error` wrapping the gateway's own upstream `402`:
+//!   *"Insufficient balance; add money to your gateway or use BYOK"*. The
+//!   catalogue entry is real and the credit behind it is not, so the refusal
+//!   is total rather than intermittent. Adding the row is a one-line change
+//!   once OpenAI is funded or on BYOK — re-probe before making it.
+//!
+//! # The gateway is no longer Vertex-only
+//!
+//! `glm-5.3-flash` is served by Cloudflare Workers AI (`owned_by:
+//! "workers-ai"`, publisher `zai-org`), not by Vertex, and it bills in Workers
+//! AI *neurons* rather than tokens. Nothing in this file has to care — the
+//! broker still answers OpenAI on the same `/v1/chat/completions` — but the
+//! assumption that every row is a Vertex publisher path (§4.3a of
+//! `docs/reference/atlas-ai-api.md`) no longer holds, so do not derive
+//! anything here from it. It replies with a `reasoning_content` field
+//! alongside `content`; the engine reads no such field, so the thinking is
+//! dropped and the answer arrives intact.
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -87,6 +112,12 @@ const MODELS: &[(&str, &str, &str)] = &[
         "gemini-3.5-flash-lite",
         "Gemini 3.5 Flash Lite",
         "The cheap tier — roughly a fifth of Flash on input.",
+    ),
+    (
+        "glm-5.3-flash",
+        "GLM 5.3 Flash",
+        "A reasoning model — it thinks before answering, so even short replies \
+         spend thinking tokens.",
     ),
 ];
 
@@ -225,7 +256,8 @@ mod tests {
     }
 
     #[test]
-    fn the_five_models_the_gateway_serves_are_the_five_here() {
+    fn the_models_the_gateway_actually_serves_are_the_ones_here() {
+        // Order is priority, so this asserts the picker's order too.
         let catalog = catalog();
         let slugs: Vec<&str> = catalog.models.iter().map(|m| m.slug.as_str()).collect();
         assert_eq!(
@@ -236,19 +268,24 @@ mod tests {
                 "claude-opus-4-8",
                 "gemini-3.6-flash",
                 "gemini-3.5-flash-lite",
+                "glm-5.3-flash",
             ],
         );
     }
 
     #[test]
-    fn the_withdrawn_model_is_not_in_the_catalogue() {
-        // `deepseek-v3-2` is withdrawn: its price row names no publisher, so the
-        // gateway refuses it before any spend. Authoring it would put a model in
-        // the picker that answers 403 to everything.
-        assert!(
-            !catalog().models.iter().any(|m| m.slug.contains("deepseek")),
-            "a withdrawn model must not be selectable",
-        );
+    fn a_model_the_gateway_cannot_generate_from_is_not_in_the_catalogue() {
+        // Both are listed by `/v1/catalogue`, and neither can answer:
+        // `deepseek-v3-2` is withdrawn (no publisher on its price row, so
+        // `403 model_not_allowed` before any spend), and `openai/gpt-5.6-sol`
+        // has no funded route (`502` wrapping the gateway's upstream `402`).
+        // Being resold is not the same as being selectable.
+        for unservable in ["deepseek", "gpt-5.6-sol"] {
+            assert!(
+                !catalog().models.iter().any(|m| m.slug.contains(unservable)),
+                "{unservable} cannot generate, so it must not be selectable",
+            );
+        }
     }
 
     #[test]

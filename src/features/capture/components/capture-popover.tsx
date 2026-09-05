@@ -7,7 +7,6 @@ import {
   FolderGit2,
   GitBranch,
   GitCommitHorizontal,
-  Github,
   History,
   Laptop,
   Layers,
@@ -16,6 +15,7 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
+import { GithubIcon } from "@/components/github-icon";
 
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
@@ -264,7 +264,7 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
         // the enter animation transforms. Splitting them across a wrapper would
         // isolate the compositing layer and flatten the blur to flat
         // transparency (see the note beside the keyframes in globals.css).
-        "border border-white/10 bg-[var(--bg-elevated)]/85 backdrop-blur-2xl",
+        "border border-white/10 bg-[var(--bg-elevated)]/95 backdrop-blur-2xl",
         "atlas-panel-in-tl",
       )}
       style={{
@@ -1595,7 +1595,7 @@ function Detected({
       {detection.isGitRepository ? (
         <>
           <StatusRow
-            icon={Github}
+            icon={GithubIcon}
             ok
             value={detection.gitUrl?.replace(/^https?:\/\//, "") ?? "no remote"}
             caption={detection.gitUrl ? "origin" : "local only"}

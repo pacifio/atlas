@@ -87,6 +87,23 @@ pub enum StateDelta {
         conv_id: String,
     },
     Presence,
+    /// Draft frames pass straight through — the document lives in the
+    /// renderer (Yjs), and this state holds nothing for them to change.
+    DraftOpened {
+        draft_id: String,
+        draft: Box<crate::rest::PromptDraft>,
+        snapshot: Option<String>,
+        updates: Vec<String>,
+    },
+    DraftUpdate {
+        draft_id: String,
+        update: String,
+    },
+    DraftAwareness {
+        draft_id: String,
+        user_id: String,
+        state: String,
+    },
     Typing {
         conv_id: String,
         user_id: String,
@@ -593,6 +610,29 @@ pub fn apply_frame(
         },
 
         // The server ships ahead of us; a frame we do not model is not an error.
+        ServerFrame::DraftOpened {
+            draft,
+            snapshot,
+            updates,
+        } => vec![StateDelta::DraftOpened {
+            draft_id: draft.id.clone(),
+            draft,
+            snapshot,
+            updates,
+        }],
+        ServerFrame::DraftUpdate { draft_id, update } => {
+            vec![StateDelta::DraftUpdate { draft_id, update }]
+        }
+        ServerFrame::DraftAwareness {
+            draft_id,
+            user_id,
+            state: st,
+        } => vec![StateDelta::DraftAwareness {
+            draft_id,
+            user_id,
+            state: st,
+        }],
+
         ServerFrame::Unknown => Vec::new(),
     }
 }

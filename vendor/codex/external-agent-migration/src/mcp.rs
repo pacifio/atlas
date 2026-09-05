@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use crate::invalid_data_error;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
@@ -222,7 +223,8 @@ fn mcp_server_toml_table(
         if let Some(env) = server_config.get("env").and_then(JsonValue::as_object) {
             append_env_config(&mut table, env)?;
         }
-    } else if let Some(url) = server_config.get("url").and_then(json_string) {
+    } else {
+        let url = server_config.get("url").and_then(json_string)?;
         if !matches!(
             transport_type,
             None | Some("http") | Some("streamable_http")
@@ -236,8 +238,6 @@ fn mcp_server_toml_table(
         if let Some(headers) = server_config.get("headers").and_then(JsonValue::as_object) {
             append_header_config(&mut table, headers)?;
         }
-    } else {
-        return None;
     }
 
     Some(table)

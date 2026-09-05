@@ -88,7 +88,7 @@ fn thread_path(app: &AppHandle, agent_session_id: &str, id: &str) -> Result<Path
     Ok(session_dir(app, agent_session_id)?.join(format!("{}.json", safe(id)?)))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_chat_threads_list(
     app: AppHandle,
     agent_session_id: String,
@@ -116,7 +116,7 @@ pub fn session_chat_threads_list(
     Ok(metas)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_chat_thread_get(
     app: AppHandle,
     agent_session_id: String,
@@ -127,7 +127,7 @@ pub fn session_chat_thread_get(
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_chat_thread_save(app: AppHandle, thread: SessionChatThread) -> Result<(), String> {
     let path = thread_path(&app, &thread.agent_session_id, &thread.id)?;
     // Tmp-and-rename: a thread is rewritten on every streamed message, so a
@@ -139,7 +139,7 @@ pub fn session_chat_thread_save(app: AppHandle, thread: SessionChatThread) -> Re
     fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_chat_thread_delete(
     app: AppHandle,
     agent_session_id: String,
