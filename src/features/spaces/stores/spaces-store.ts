@@ -12,6 +12,10 @@ export interface SpaceMeta {
    *  Nothing here is optimistic; rows come only from `page.tree`. */
   pages: SpacePage[];
   archived: boolean;
+  /** The document speaks a NEWER dialect than this build (doc_version above
+   *  ours). Contract rule: render it, never write into it — a write from an
+   *  older client could silently corrupt fields it cannot see. */
+  stale: boolean;
   connection: SpaceConnState;
   /** A human refusal for the "cannot open at all" states. */
   error: string | null;
@@ -21,6 +25,7 @@ const EMPTY: SpaceMeta = {
   summary: null,
   pages: [],
   archived: false,
+  stale: false,
   connection: "disconnected",
   error: null,
 };
@@ -41,7 +46,8 @@ interface SpacesState {
     patch: (convId: string, patch: Partial<SpaceMeta>) => void;
     adoptSummary: (convId: string, summary: SpaceSummary) => void;
     notePageAuthor: (convId: string, pageId: string, userId: string) => void;
-    clear: (convId: string) => void;
+    /** Org-switch teardown: every Space belongs to exactly one org. */
+    clearAll: () => void;
   };
 }
 
@@ -77,20 +83,7 @@ export const useSpacesStore = createSelectors(
             [convId]: { ...s.pageAuthors[convId], [pageId]: userId },
           },
         })),
-      clear: (convId) =>
-        set((s) => {
-          const next = { ...s.byConv };
-          delete next[convId];
-          const authors = { ...s.pageAuthors };
-          delete authors[convId];
-          return { byConv: next, pageAuthors: authors };
-        }),
+      clearAll: () => set({ byConv: {}, pageAuthors: {} }),
     },
   })),
 );
-
-export function spaceMeta(convId: string): SpaceMeta {
-  return useSpacesStore.getState().byConv[convId] ?? EMPTY;
-}
-
-export const EMPTY_SPACE_META = EMPTY;

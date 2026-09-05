@@ -52,6 +52,8 @@ export interface SpaceCanvasProps {
   onTogglePages: () => void;
   dock: SpaceDock;
   onDock: (dock: SpaceDock) => void;
+  /** Newer-dialect document (doc_version above ours): render, never write. */
+  forceReadOnly?: boolean;
 }
 
 export function SpaceCanvas(props: SpaceCanvasProps) {
@@ -69,9 +71,10 @@ function SpaceSurface({
   onTogglePages,
   dock,
   onDock,
+  forceReadOnly = false,
 }: SpaceCanvasProps) {
   const { revision, actors, readOnly, ready } = session;
-  const editable = readOnly === null && ready;
+  const editable = readOnly === null && ready && !forceReadOnly;
   const rf = useReactFlow();
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -80,49 +83,84 @@ function SpaceSurface({
   const [uploading, setUploading] = useState(false);
   const armed = activeTool === "note" || activeTool === "text" || activeTool.startsWith("shape:");
 
+  // Deps deliberately EXCLUDE `session` (a new object per revision): the
+  // context reaches every node component, and its identity churning at drag
+  // rate would defeat every memo below it. `session.doc` is a stable ref.
+  const docRef = session.doc;
   const ctx = useMemo<SpaceCanvasCtx>(
     () => ({
       convId,
-      doc: () => session.doc.current,
+      doc: () => docRef.current,
       readOnly: !editable,
     }),
-    [convId, session, editable],
+    [convId, docRef, editable],
   );
 
   // ---- doc → xyflow -------------------------------------------------------
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const peerOutlines = useMemo(() => selectionColours(actors), [actors]);
 
+  // Node objects are IDENTITY-CACHED per id: a drag changes one node's row,
+  // and the other ~199 must keep their references so their memo'd components
+  // hold. The signature covers everything the produced object encodes; a
+  // stale-signature hit returns the exact previous object.
+  const nodeCache = useRef<Map<string, { sig: string; node: Node }>>(new Map());
   const rfNodes = useMemo<Node[]>(() => {
     void revision; // the dependency that makes the doc re-read
     const doc = session.doc.current;
     if (!doc) return [];
-    return readNodes(doc).map((n) => ({
-      id: n.id,
-      type: n.kind,
-      position: { x: n.x, y: n.y },
-      width: n.width,
-      height: n.height,
-      selected: selectedSet.has(n.id),
-      draggable: editable,
-      style: peerOutlines.has(n.id)
-        ? {
-            outline: `2px solid ${peerOutlines.get(n.id)}`,
-            outlineOffset: 2,
-            borderRadius: 6,
-          }
-        : undefined,
-      data: {
-        title: n.title,
-        body: n.body,
-        text: n.text,
-        color: n.color,
-        shapeType: n.shapeType,
-        mediaKind: n.mediaKind,
-        contentHash: n.contentHash,
-        mime: n.mime,
-      },
-    }));
+    const cache = nodeCache.current;
+    const seen = new Set<string>();
+    const out = readNodes(doc).map((n) => {
+      seen.add(n.id);
+      const outline = peerOutlines.get(n.id);
+      const sig = [
+        n.kind,
+        n.x,
+        n.y,
+        n.width,
+        n.height,
+        n.title,
+        n.body,
+        n.text,
+        n.color,
+        n.shapeType,
+        n.mediaKind,
+        n.contentHash,
+        n.mime,
+        selectedSet.has(n.id),
+        editable,
+        outline ?? "",
+      ].join("\u0000");
+      const hit = cache.get(n.id);
+      if (hit && hit.sig === sig) return hit.node;
+      const node: Node = {
+        id: n.id,
+        type: n.kind,
+        position: { x: n.x, y: n.y },
+        width: n.width,
+        height: n.height,
+        selected: selectedSet.has(n.id),
+        draggable: editable,
+        style: outline
+          ? { outline: `2px solid ${outline}`, outlineOffset: 2, borderRadius: 6 }
+          : undefined,
+        data: {
+          title: n.title,
+          body: n.body,
+          text: n.text,
+          color: n.color,
+          shapeType: n.shapeType,
+          mediaKind: n.mediaKind,
+          contentHash: n.contentHash,
+          mime: n.mime,
+        },
+      };
+      cache.set(n.id, { sig, node });
+      return node;
+    });
+    for (const id of cache.keys()) if (!seen.has(id)) cache.delete(id);
+    return out;
   }, [revision, session.doc, selectedSet, peerOutlines, editable]);
 
   const rfEdges = useMemo<Edge[]>(() => {

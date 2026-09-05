@@ -18,6 +18,7 @@ import { create } from "zustand";
 import { createSelectors } from "@/lib/create-selectors";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { ORG_SCOPED_TYPES } from "@/lib/constants";
+import { useSpacesStore } from "@/features/spaces/stores/spaces-store";
 import { comms, type CommsEnvelope, type ConnectionInfo } from "../lib/comms-api";
 import type { PendingAttachment } from "../components/comms-composer";
 import { CHAT_MESSAGE_ATTACHMENT_MAX, TYPING_EXPIRY_MS } from "../types";
@@ -988,6 +989,9 @@ function closeOrgScopedTabs(): void {
   for (const tab of layout.tabs) {
     if (ORG_SCOPED_TYPES.has(tab.type)) layout.actions.closeTab(tab.id);
   }
+  // The spaces metadata cache is org-scoped too — page trees and authors
+  // for the outgoing org's conversations must not survive into the next.
+  useSpacesStore.getState().actions.clearAll();
 }
 
 function mergeReads(current: ChatReadState[], incoming: ChatReadState[]): ChatReadState[] {

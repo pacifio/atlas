@@ -4,9 +4,8 @@ import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { copyText } from "@/lib/clipboard";
 import { comms, parseRefusal } from "../lib/comms-api";
-import { guestCallUrl, memberCallUrl } from "../lib/call-links";
+import { copyShareLink, memberCallUrl } from "../lib/call-links";
 import { useCommsStore } from "../stores/comms-store";
 import { AudioPlayer } from "./audio-player";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -126,7 +125,7 @@ export const CallActivity = memo(function CallActivity({
           <button
             type="button"
             title={call.join_slug !== null ? "Copy the guest link" : "Copy the call link"}
-            onClick={() => void copyLink(orgId, call)}
+            onClick={() => void copyShareLink(orgId, call)}
             className="flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-[10.5px] text-text-secondary opacity-0 transition-all hover:bg-bg-hover hover:text-text-primary group-hover/call:opacity-100"
           >
             <Link2 size={10} />
@@ -232,14 +231,6 @@ async function joinCall(orgId: string, callId: string): Promise<void> {
   } catch {
     toast.error("Could not open your browser.");
   }
-}
-
-async function copyLink(orgId: string, call: ChatCall): Promise<void> {
-  const url =
-    call.join_slug !== null ? guestCallUrl(call.join_slug) : memberCallUrl(orgId, call.id);
-  const ok = await copyText(url);
-  if (ok) toast.success(call.join_slug !== null ? "Guest link copied." : "Call link copied.");
-  else toast.error("Could not reach the clipboard.");
 }
 
 async function saveTranscript(callId: string): Promise<void> {

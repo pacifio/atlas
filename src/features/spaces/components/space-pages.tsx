@@ -5,6 +5,7 @@ import { timeAgo } from "@/lib/time-ago";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { CommsAvatar } from "@/features/comms/components/comms-avatar";
 import { useCommsStore } from "@/features/comms/stores/comms-store";
+import { SPACE_PAGE_NAME_MAX } from "../lib/space-wire";
 import type { SpacePage } from "../lib/spaces-api";
 import type { SpaceSession } from "../lib/use-space-session";
 import { useSpacesStore } from "../stores/spaces-store";
@@ -27,12 +28,10 @@ export function SpacePages({
   convId,
   session,
   editable,
-  width = 260,
 }: {
   convId: string;
   session: SpaceSession;
   editable: boolean;
-  width?: number;
 }) {
   const pages = session.meta?.pages ?? [];
   const activeId = session.pageId;
@@ -127,7 +126,10 @@ export function SpacePages({
       setDragId(p.id);
       listRef.current?.setPointerCapture(e.pointerId);
     }
-    setDrop(hitTest(e));
+    const next = hitTest(e);
+    // Same target, same edge: keep the state identity so the list does not
+    // re-render once per pointermove while nothing visible changed.
+    setDrop((cur) => (cur?.id === next?.id && cur?.where === next?.where ? cur : next));
   };
 
   const onListPointerUp = () => {
@@ -167,7 +169,7 @@ export function SpacePages({
   return (
     <div
       className="flex h-full shrink-0 flex-col border-r border-border-default bg-[#090909]"
-      style={{ width }}
+      style={{ width: 260 }}
     >
       {/* Quiet header — no divider, the local panel's recipe. */}
       <div className="flex h-8 shrink-0 items-center gap-1 px-2 pl-3">
@@ -253,6 +255,7 @@ export function SpacePages({
                   {renamingId === page.id ? (
                     <input
                       autoFocus
+                      maxLength={SPACE_PAGE_NAME_MAX}
                       defaultValue={page.name}
                       onClick={(e) => e.stopPropagation()}
                       onPointerDown={(e) => e.stopPropagation()}

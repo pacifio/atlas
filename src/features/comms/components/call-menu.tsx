@@ -7,9 +7,9 @@ import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { comms, parseRefusal } from "../lib/comms-api";
-import { guestCallUrl, memberCallUrl, shareUrl } from "../lib/call-links";
+import { copyShareLink, memberCallUrl, shareUrl } from "../lib/call-links";
 import { useCommsStore } from "../stores/comms-store";
-import type { CallMode, ChatCall } from "../types";
+import type { CallMode } from "../types";
 
 /**
  * One header call button (audio or video): a blur menu, never an instant
@@ -118,7 +118,7 @@ export function CallMenu({ convId, mode }: { convId: string; mode: CallMode }) {
                   icon={<Link2 size={12} />}
                   label="Copy call link"
                   onClick={() => {
-                    void copyCallLink(orgId ?? "", liveCall);
+                    void copyShareLink(orgId ?? "", liveCall);
                     setOpen(false);
                   }}
                 />
@@ -158,14 +158,6 @@ export function CallMenu({ convId, mode }: { convId: string; mode: CallMode }) {
       </Popover.Portal>
     </Popover.Root>
   );
-}
-
-async function copyCallLink(orgId: string, call: ChatCall): Promise<void> {
-  const url =
-    call.join_slug !== null ? guestCallUrl(call.join_slug) : memberCallUrl(orgId, call.id);
-  const ok = await copyText(url);
-  if (ok) toast.success(call.join_slug !== null ? "Guest link copied." : "Call link copied.");
-  else toast.error("Could not reach the clipboard.");
 }
 
 function MenuRow({

@@ -15,6 +15,19 @@ pub const SPACES_EVENT: &str = "atlas:spaces";
 
 pub struct SpacesState(pub SpacesManager);
 
+/// Ids reach URLs and filenames; hold them to their server shape so a
+/// compromised renderer cannot splice `&`, `/` or `..` into a path or query
+/// built around them. (Server ids are ULIDs / UUID-ish tokens.)
+fn safe_id(id: &str) -> Result<(), String> {
+    if id.is_empty() || id.len() > 128 {
+        return Err("bad id".to_string());
+    }
+    if !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return Err("bad id".to_string());
+    }
+    Ok(())
+}
+
 fn spaces(app: &AppHandle) -> Result<SpacesManager, String> {
     app.try_state::<SpacesState>()
         .map(|s| s.0.clone())
@@ -33,6 +46,7 @@ fn ctx(app: &AppHandle) -> Result<(SpacesManager, atlas_comms::CommsManager, Str
 /// Open (or share) the socket for a conversation's Space.
 #[tauri::command(async)]
 pub async fn spaces_connect(app: AppHandle, conv_id: String) -> Result<(), String> {
+    safe_id(&conv_id)?;
     let (sp, _, org) = ctx(&app)?;
     sp.connect(&org, &conv_id);
     Ok(())
@@ -40,6 +54,7 @@ pub async fn spaces_connect(app: AppHandle, conv_id: String) -> Result<(), Strin
 
 #[tauri::command(async)]
 pub async fn spaces_disconnect(app: AppHandle, conv_id: String) -> Result<(), String> {
+    safe_id(&conv_id)?;
     spaces(&app)?.disconnect(&conv_id);
     Ok(())
 }
@@ -48,6 +63,7 @@ pub async fn spaces_disconnect(app: AppHandle, conv_id: String) -> Result<(), St
 /// and redial for fresh slots.
 #[tauri::command(async)]
 pub async fn spaces_cycle(app: AppHandle, conv_id: String) -> Result<(), String> {
+    safe_id(&conv_id)?;
     spaces(&app)?.cycle(&conv_id);
     Ok(())
 }
@@ -82,6 +98,7 @@ pub async fn spaces_send_binary(
 /// refusals a UI can render — a failed WS handshake cannot say why.
 #[tauri::command(async)]
 pub async fn spaces_summary(app: AppHandle, conv_id: String) -> Result<SpaceSummary, String> {
+    safe_id(&conv_id)?;
     let (_, mgr, org) = ctx(&app)?;
     mgr.rest()
         .space_summary(&org, &conv_id)
@@ -125,11 +142,18 @@ pub async fn spaces_media_upload(
     conv_id: String,
     path: String,
 ) -> Result<SpaceMediaUploaded, String> {
+    safe_id(&conv_id)?;
     let (_, mgr, org) = ctx(&app)?;
     let file = std::path::PathBuf::from(&path);
     let Some((mime, kind)) = media_mime(&file) else {
         return Err("unsupported media type".to_string());
     };
+    // Size gate BEFORE the read: a 4GB .mp4 must be refused from metadata,
+    // not loaded into RAM to be measured.
+    let size_on_disk = tokio::fs::metadata(&file).await.map_err(|e| e.to_string())?.len();
+    if size_on_disk > SPACE_MEDIA_MAX_BYTES {
+        return Err("file is larger than the 64 MiB media limit".to_string());
+    }
     let bytes = tokio::fs::read(&file).await.map_err(|e| e.to_string())?;
     if bytes.len() as u64 > SPACE_MEDIA_MAX_BYTES {
         return Err("file is larger than the 64 MiB media limit".to_string());
@@ -174,6 +198,7 @@ pub async fn spaces_media_fetch(
     content_hash: String,
     mime: String,
 ) -> Result<String, String> {
+    safe_id(&conv_id)?;
     // The hash is the filename; hold it to its contract shape so it can never
     // be a path.
     if content_hash.len() != 64 || !content_hash.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -205,6 +230,18 @@ pub async fn spaces_media_fetch(
         .space_media_download(&org, &conv_id, &content_hash)
         .await
         .map_err(map_comms_err)?;
+    // The hash IS the object's identity, and this cache is immutable by
+    // name — verify before the bytes become permanent, or a misbehaving
+    // server poisons that hash's slot forever.
+    let actual = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        format!("{:x}", hasher.finalize())
+    };
+    if actual != content_hash {
+        return Err("media bytes did not match their content hash".to_string());
+    }
     let tmp = dir.join(format!(".{content_hash}.part"));
     std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;

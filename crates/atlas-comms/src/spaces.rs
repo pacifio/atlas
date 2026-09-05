@@ -75,12 +75,18 @@ enum SpaceOutbound {
     Binary(Vec<u8>),
 }
 
+/// Outbound queue bound. A stalled-but-open TCP connection must not let
+/// per-mousemove updates balloon RAM; past this, awareness (byte[0] = 0x02,
+/// only the newest matters) is dropped first, then anything — the renderer's
+/// held-merge path already covers updates that never made it out.
+const OUTBOUND_CAP: usize = 512;
+
 struct SpaceSlot {
     org_id: String,
     /// Refreshed per attempt; `None` while between attempts. A send while
     /// disconnected is dropped — the renderer holds and merges unsent Yjs
     /// updates itself, per the protocol.
-    outbound: Mutex<Option<mpsc::UnboundedSender<SpaceOutbound>>>,
+    outbound: Mutex<Option<mpsc::Sender<SpaceOutbound>>>,
     /// Bumped to invalidate this slot's supervisor. A task that observes a
     /// stale generation exits without touching anything.
     generation: AtomicU64,
@@ -184,7 +190,19 @@ impl SpacesManager {
         let Some(slot) = slot else { return };
         let guard = slot.outbound.lock().unwrap();
         if let Some(tx) = guard.as_ref() {
-            let _ = tx.send(out);
+            if let Err(mpsc::error::TrySendError::Full(rejected)) = tx.try_send(out) {
+                // Queue full = the socket is stalled. Awareness is safe to
+                // drop (only the newest position means anything); a dropped
+                // update is the renderer's held-merge contract.
+                let droppable =
+                    matches!(&rejected, SpaceOutbound::Binary(b) if b.first() == Some(&0x02));
+                if !droppable {
+                    tracing::warn!(
+                        target: "atlas_comms::spaces",
+                        "outbound queue full; dropping a non-awareness frame"
+                    );
+                }
+            }
         }
         // No sender = between attempts. Dropped by design; see SpaceSlot.
     }
@@ -270,7 +288,7 @@ impl SpacesManager {
             return ExitReason::Closed;
         }
 
-        let (tx, mut outbound) = mpsc::unbounded_channel::<SpaceOutbound>();
+        let (tx, mut outbound) = mpsc::channel::<SpaceOutbound>(OUTBOUND_CAP);
         *slot.outbound.lock().unwrap() = Some(tx);
         self.emit(&slot.org_id, conv_id, SpaceConnState::Open);
         tracing::info!(target: "atlas_comms::spaces", "space socket open");

@@ -5,6 +5,7 @@ import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store"
 import { resetGitSummariesForOrgSwitch } from "@/features/workspaces/stores/workspace-git-store";
 import { commsActions } from "@/features/comms/stores/comms-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { useSpacesStore } from "@/features/spaces/stores/spaces-store";
 import { ORG_SCOPED_TYPES } from "@/lib/constants";
 import {
   useProjectStore,
@@ -81,6 +82,7 @@ export async function switchOrg(id: string): Promise<void> {
       for (const tab of layout.tabs) {
         if (ORG_SCOPED_TYPES.has(tab.type)) layout.actions.closeTab(tab.id);
       }
+      useSpacesStore.getState().actions.clearAll();
     }
 
     const wsActions = useWorkspaceStore.getState().actions;

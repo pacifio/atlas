@@ -14,6 +14,7 @@ import { subscribeSpaceBus } from "./spaces-bus";
 import {
   applyAwareness,
   decodeSpaceFrame,
+  SPACE_DOC_VERSION,
   frameAwareness,
   hasNewcomer,
   HELD_MERGE_AT,
@@ -95,12 +96,40 @@ export function useSpaceSession(convId: string) {
   );
 
   // ---- outbound doc updates ----------------------------------------------
+  // Batched on a short timer, MERGED: a local drag produces one Y update per
+  // pointermove, and an invoke per mousemove is a bridge round-trip the web
+  // client (raw ws.send) never pays. ~33ms keeps a drag visually live for
+  // peers (the server fans out on its own 50ms tick anyway) at a fraction of
+  // the IPC. Yjs merge keeps it one frame on the wire.
+  const outboundRef = useRef<Uint8Array[]>([]);
+  const outboundTimer = useRef<number | undefined>(undefined);
+
+  const flushOutbound = useCallback(() => {
+    outboundTimer.current = undefined;
+    const batch = outboundRef.current;
+    if (batch.length === 0) return;
+    outboundRef.current = [];
+    const merged = batch.length === 1 ? batch[0] : Y.mergeUpdates(batch);
+    const slot = slotRef.current;
+    if (slot !== null && connRef.current === "open") {
+      void spacesApi.sendBinary(convId, toBase64(frameUpdate(slot, merged))).catch(() => {});
+    } else {
+      // The socket went away between enqueue and flush: hold, merged.
+      heldRef.current.push(merged);
+      if (heldRef.current.length >= HELD_MERGE_AT) {
+        heldRef.current = [Y.mergeUpdates(heldRef.current)];
+      }
+    }
+  }, [convId]);
+
   const relayUpdate = useCallback(
     (update: Uint8Array, origin: unknown) => {
       if (origin === REMOTE) return;
-      const slot = slotRef.current;
-      if (slot !== null && connRef.current === "open") {
-        void spacesApi.sendBinary(convId, toBase64(frameUpdate(slot, update))).catch(() => {});
+      if (slotRef.current !== null && connRef.current === "open") {
+        outboundRef.current.push(update);
+        if (outboundTimer.current === undefined) {
+          outboundTimer.current = window.setTimeout(flushOutbound, 33);
+        }
         return;
       }
       // Offline: hold, and collapse at the web's threshold so a long
@@ -110,8 +139,24 @@ export function useSpaceSession(convId: string) {
         heldRef.current = [Y.mergeUpdates(heldRef.current)];
       }
     },
-    [convId],
+    [flushOutbound],
   );
+
+  // One repaint per animation frame, however many updates land inside it —
+  // a remote drag delivers batches at ~20Hz and a local one at pointermove
+  // rate, and each `revision` bump re-reads the whole doc in the canvas.
+  // The timeout backstop covers a hidden window, where rAF never fires.
+  const repaintScheduled = useRef(false);
+  const scheduleRepaint = useCallback(() => {
+    if (repaintScheduled.current) return;
+    repaintScheduled.current = true;
+    const bump = () => {
+      repaintScheduled.current = false;
+      setRevision((r) => r + 1);
+    };
+    if (document.visibilityState === "visible") requestAnimationFrame(bump);
+    else window.setTimeout(bump, 100);
+  }, []);
 
   const attachDoc = useCallback(
     (doc: Y.Doc) => {
@@ -121,10 +166,10 @@ export function useSpaceSession(convId: string) {
       undoRef.current = localUndo(doc);
       doc.on("update", (update: Uint8Array, origin: unknown) => {
         relayUpdate(update, origin);
-        setRevision((r) => r + 1);
+        scheduleRepaint();
       });
     },
-    [relayUpdate],
+    [relayUpdate, scheduleRepaint],
   );
 
   const requestPage = useCallback(
@@ -143,6 +188,8 @@ export function useSpaceSession(convId: string) {
   const openPage = useCallback(
     (id: string) => {
       if (pageIdRef.current === id) return;
+      // The tail of an edit must go out on the OLD page's slot.
+      flushOutbound();
       pageIdRef.current = id;
       slotRef.current = null;
       heldRef.current = [];
@@ -155,7 +202,7 @@ export function useSpaceSession(convId: string) {
       requestPage(id);
       void spacesApi.sendControl(convId, { t: "page.active", page_id: id }).catch(() => {});
     },
-    [attachDoc, convId, requestPage],
+    [attachDoc, convId, flushOutbound, requestPage],
   );
 
   // ---- inbound ------------------------------------------------------------
@@ -177,7 +224,12 @@ export function useSpaceSession(convId: string) {
         if (msg === null) return; // a newer server's frame — dropped, not fatal
         switch (msg.t) {
           case "space.hello": {
-            patch(convId, { pages: msg.pages, archived: msg.archived, error: null });
+            patch(convId, {
+              pages: msg.pages,
+              archived: msg.archived,
+              stale: msg.doc_version > SPACE_DOC_VERSION,
+              error: null,
+            });
             // Reconnect: re-open the page we were on (fresh slot). First
             // hello: land on the remembered page, else the first real page.
             const current = pageIdRef.current;
@@ -300,6 +352,9 @@ export function useSpaceSession(convId: string) {
       console.error("spaces: connect failed:", convId, e);
     });
     return () => {
+      // A mid-drag edit must not die with the unmount.
+      flushOutbound();
+      if (outboundTimer.current !== undefined) window.clearTimeout(outboundTimer.current);
       // Cursor off the canvas for everyone else, then the socket down.
       void spacesApi.disconnect(convId).catch(() => {});
       docRef.current?.destroy();
@@ -310,7 +365,7 @@ export function useSpaceSession(convId: string) {
       slotRef.current = null;
       if (awarenessTimer.current !== undefined) window.clearTimeout(awarenessTimer.current);
     };
-  }, [convId, patch]);
+  }, [convId, flushOutbound, patch]);
 
   // ---- tree actions (non-optimistic; the server broadcasts the tree) ------
   const send = useCallback(

@@ -48,7 +48,8 @@ function SpaceHost({ convId }: { convId: string }) {
 
   const connection = meta?.connection ?? "disconnected";
   const archived = meta?.archived ?? false;
-  const treeEditable = connection === "open" && !archived;
+  const stale = meta?.stale ?? false;
+  const treeEditable = connection === "open" && !archived && !stale;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg-base">
@@ -56,6 +57,11 @@ function SpaceHost({ convId }: { convId: string }) {
         <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-white/[0.03] px-3 py-1 text-[10px] text-text-tertiary">
           This conversation is archived — the canvas is read-only. Cursors still show who is
           looking.
+        </div>
+      )}
+      {stale && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-white/[0.03] px-3 py-1 text-[10px] text-text-tertiary">
+          This Space was made with a newer version of Atlas — viewing only. Update to edit it.
         </div>
       )}
       {session.readOnly === "actor_ceiling" && (
@@ -90,6 +96,7 @@ function SpaceHost({ convId }: { convId: string }) {
           <SpaceCanvas
             convId={convId}
             session={session}
+            forceReadOnly={stale}
             pagesOpen={pagesOpen}
             onTogglePages={() => setPagesOpen((o) => !o)}
             dock={dock}

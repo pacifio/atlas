@@ -36,7 +36,7 @@ export const SPACE_PAGE_MAX = 200;
 export const SPACE_PAGE_DEPTH_MAX = 8;
 export const SPACE_PROTOCOL_VERSION = 1;
 export const SPACE_DOC_VERSION = 1;
-/** Web parity: reconnect backoff and held-update merge threshold. */
+/** Web parity: collapse held offline updates past this many. */
 export const HELD_MERGE_AT = 64;
 
 export interface SpaceFrame {
