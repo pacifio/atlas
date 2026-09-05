@@ -4,6 +4,8 @@ import { flushAll } from "@/features/workspaces/lib/flush-registry";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { resetGitSummariesForOrgSwitch } from "@/features/workspaces/stores/workspace-git-store";
 import { commsActions } from "@/features/comms/stores/comms-store";
+import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { PROJECTLESS_TYPES } from "@/lib/constants";
 import {
   useProjectStore,
   flushAppStateSave,
@@ -109,6 +111,21 @@ export async function switchOrg(id: string): Promise<void> {
     //    every other path that changes the active org is correct for free.
     await invoke("comms_disconnect").catch(() => {});
     commsActions().reset();
+
+    //    Close the outgoing org's CENTER tabs for org-scoped surfaces
+    //    (draft editors, realtime Spaces). Their ids embed the old org's
+    //    conversation/draft ids, which do not exist in the incoming org —
+    //    left open they render "no longer available" husks. Settings is the
+    //    one projectless tab that is org-agnostic and stays. (The Spaces
+    //    sockets themselves die in Rust: the auth broadcast's retarget calls
+    //    `disconnect_all`.)
+    {
+      const layout = useLayoutStore.getState();
+      const orgScoped = layout.tabs.filter(
+        (t) => PROJECTLESS_TYPES.has(t.type) && t.type !== "settings",
+      );
+      for (const tab of orgScoped) layout.actions.closeTab(tab.id);
+    }
 
     // 4) Make the org swap authoritative. `setActiveOrganisation` also
     //    re-points analytics attribution (see `syncOrgTelemetry`), so events

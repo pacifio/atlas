@@ -5,7 +5,6 @@ import {
   ConnectionMode,
   ReactFlow,
   ReactFlowProvider,
-  ViewportPortal,
   useReactFlow,
   type Connection,
   type Edge,
@@ -14,8 +13,6 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { MousePointer2 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import {
   addEdge as docAddEdge,
   addNode as docAddNode,
@@ -28,13 +25,14 @@ import {
   type SpaceAnchor,
   type SpaceShapeType,
 } from "../lib/space-doc";
-import { selectionColours, type SpaceActor } from "../lib/space-wire";
+import { selectionColours } from "../lib/space-wire";
 import { spacesApi } from "../lib/spaces-api";
 import type { SpaceDock } from "../lib/dock";
 import type { SpaceSession } from "../lib/use-space-session";
 import { SpaceCanvasContext, type SpaceCanvasCtx } from "./space-canvas-ctx";
 import { SPACE_NODE_TYPES } from "./space-nodes";
 import { SpaceActionPill, SpaceHeaderPill, type SyncState } from "./space-chrome";
+import { SpaceCursors } from "./space-cursors";
 import { SpaceToolbar, type SpaceTool } from "./space-toolbar";
 
 /**
@@ -496,35 +494,5 @@ function SpaceSurface({
         />
       </div>
     </SpaceCanvasContext.Provider>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-/** Peer cursors, inside the pane transform so canvas coordinates just work. */
-function SpaceCursors({ actors }: { actors: ReadonlyMap<string, SpaceActor> }) {
-  const list = [...actors.values()].filter((a) => a.cursor !== null);
-  if (list.length === 0) return null;
-  return (
-    <ViewportPortal>
-      {list.map((a) => (
-        <div
-          key={a.id}
-          className="pointer-events-none absolute z-50"
-          style={{ transform: `translate(${a.cursor!.x}px, ${a.cursor!.y}px)` }}
-        >
-          <MousePointer2 size={14} style={{ color: a.colour }} fill={a.colour} />
-          <span
-            className={cn(
-              "ml-3 -mt-0.5 block max-w-[140px] truncate rounded-full px-1.5 py-0.5",
-              "text-[9px] font-medium leading-none text-white",
-            )}
-            style={{ backgroundColor: a.colour }}
-          >
-            {a.name}
-          </span>
-        </div>
-      ))}
-    </ViewportPortal>
   );
 }

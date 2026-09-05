@@ -16,6 +16,7 @@
 
 import { create } from "zustand";
 import { createSelectors } from "@/lib/create-selectors";
+import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { comms, type CommsEnvelope, type ConnectionInfo } from "../lib/comms-api";
 import type { PendingAttachment } from "../components/comms-composer";
 import { CHAT_MESSAGE_ATTACHMENT_MAX, TYPING_EXPIRY_MS } from "../types";
@@ -292,6 +293,7 @@ export const useCommsStore = createSelectors(
         // generation in Rust, which silences the old supervisor first.)
         const currentOrg = state.connection.orgId;
         if (envelope.org && currentOrg && envelope.org !== currentOrg) {
+          closeOrgScopedTabs();
           set({
             ...serverOwned(),
             // The old org's roster must not survive the retarget — the panel
@@ -972,6 +974,21 @@ function withoutTyper(
   if (!room || !(userId in room)) return typing;
   const { [userId]: _gone, ...rest } = room;
   return { ...typing, [convId]: rest };
+}
+
+/**
+ * Close center tabs whose content belongs to ONE org (draft editors,
+ * Spaces canvases — their ids embed conversation ids). Called on every path
+ * that moves the org under the renderer: the deliberate `switchOrg` and the
+ * boot-reconciliation branch above. Settings is org-agnostic and stays.
+ */
+function closeOrgScopedTabs(): void {
+  const layout = useLayoutStore.getState();
+  for (const tab of layout.tabs) {
+    if (tab.type === "comms-draft" || tab.type === "spaces") {
+      layout.actions.closeTab(tab.id);
+    }
+  }
 }
 
 function mergeReads(current: ChatReadState[], incoming: ChatReadState[]): ChatReadState[] {
