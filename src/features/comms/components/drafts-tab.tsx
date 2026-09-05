@@ -2,9 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FilePlus2, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { timeAgo } from "@/lib/time-ago";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { CommsAvatar } from "./comms-avatar";
 import { comms } from "../lib/comms-api";
 import { useCommsStore } from "../stores/comms-store";
+import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import type { ChatConversation, PromptDraft } from "../types";
 
 /** Web parity: `CHAT_DRAFT_TITLE_MAX`. Refused server-side, not truncated. */
 const TITLE_MAX = 200;
@@ -20,7 +23,8 @@ const POLL_MS = 10_000;
  * residency would only manufacture staleness. Poll while visible, refresh on
  * mount, prepend our own 201s.
  */
-export function DraftsTab({ convId }: { convId: string }) {
+export function DraftsTab({ conv }: { conv: ChatConversation }) {
+  const convId = conv.id;
   const memberList = useCommsStore.use.members();
   const members = useMemo(() => new Map(memberList.map((m) => [m.id, m])), [memberList]);
   // From the STORE, so returning to this tab paints the last list on the
@@ -65,6 +69,26 @@ export function DraftsTab({ convId }: { convId: string }) {
     } finally {
       setCreating(false);
     }
+  };
+
+  // A draft opens as a CENTER tab — a co-written document wants editor real
+  // estate and a tab of its own; the chat panel is for glancing. Keyed by
+  // draft id so a second click refocuses the existing tab.
+  const openInCenter = (d: PromptDraft) => {
+    const layout = useLayoutStore.getState();
+    const tabId = `comms-draft-${d.id}`;
+    if (layout.tabs.some((t) => t.id === tabId)) {
+      layout.actions.setActiveTab(tabId);
+      return;
+    }
+    layout.actions.addTab({
+      id: tabId,
+      type: "comms-draft",
+      title: d.title,
+      closable: true,
+      dirty: false,
+      data: { convId, draftId: d.id },
+    });
   };
 
   return (
@@ -128,6 +152,12 @@ export function DraftsTab({ convId }: { convId: string }) {
           return (
             <div
               key={d.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => openInCenter(d)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") openInCenter(d);
+              }}
               className="flex cursor-pointer items-center gap-2 border-b border-border-subtle px-3 py-2 transition-colors last:border-b-0 hover:bg-bg-hover"
             >
               <div className="min-w-0 flex-1">
@@ -146,19 +176,23 @@ export function DraftsTab({ convId }: { convId: string }) {
                 </span>
               </div>
 
-              {/* Native `title`, not a tooltip component: these are
-                  mass-rendered rows and the repo keeps native titles there —
-                  and it is what carries the FULL name, since the label beside
-                  the avatar is only the first. */}
-              <span
-                className="flex min-w-0 shrink-0 items-center gap-1"
-                title={`Created by ${author?.name ?? "Unknown"}`}
-              >
-                <CommsAvatar member={author} size={16} />
-                <span className="max-w-[72px] truncate text-[9.5px] text-text-tertiary">
-                  {firstName(author?.name)}
-                </span>
-              </span>
+              {/* The tooltip carries the FULL name — the label beside the
+                  avatar is only the first. A draft list is short and
+                  deliberate (not a mass-rendered transcript row), so it earns
+                  the real component over a native title. */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="flex min-w-0 shrink-0 items-center gap-1">
+                    <CommsAvatar member={author} size={16} />
+                    <span className="max-w-[72px] truncate text-[9.5px] text-text-tertiary">
+                      {firstName(author?.name)}
+                    </span>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={4}>
+                  Created by {author?.name ?? "Unknown"}
+                </TooltipContent>
+              </Tooltip>
 
               <span className="w-[62px] shrink-0 text-right text-[9.5px] tabular-nums text-text-tertiary">
                 {formatCreated(d.created_at)}

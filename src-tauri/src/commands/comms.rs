@@ -559,6 +559,30 @@ pub fn comms_read(app: AppHandle, conv_id: String, seq: i64) -> Result<(), Strin
     Ok(())
 }
 
+/// Subscribe the socket to a draft (answered with a `draftOpened` event).
+#[tauri::command]
+pub fn comms_draft_open(app: AppHandle, draft_id: String) -> Result<(), String> {
+    manager(&app)?.draft_open(&draft_id);
+    Ok(())
+}
+
+/// Opaque base64 Yjs bytes; the renderer owns debounce and retention.
+#[tauri::command]
+pub fn comms_draft_update(app: AppHandle, draft_id: String, update: String) -> Result<(), String> {
+    manager(&app)?.draft_update(&draft_id, &update);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn comms_draft_awareness(
+    app: AppHandle,
+    draft_id: String,
+    state: String,
+) -> Result<(), String> {
+    manager(&app)?.draft_awareness(&draft_id, &state);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn comms_typing(app: AppHandle, conv_id: String) -> Result<(), String> {
     manager(&app)?.typing(&conv_id);

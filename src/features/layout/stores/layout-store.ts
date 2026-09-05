@@ -458,6 +458,9 @@ export const useLayoutStore = createSelectors(
                 tab.type === "media" ||
                 tab.type === "svg" ||
                 tab.type === "pdf" ||
+                // One per DRAFT (id is `comms-draft-{id}`): the singleton rule
+                // would focus draft A when asked to open draft B.
+                tab.type === "comms-draft" ||
                 tab.type === "unsupported";
 
               let targetId = tab.id;

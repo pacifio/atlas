@@ -349,6 +349,42 @@ pub enum ServerFrame {
     #[serde(rename = "error")]
     Error { error: WireError },
 
+    /// The answer to `draft.open` (and to a repeated `draft.send`): the
+    /// draft's metadata plus its content as a snapshot (null until the first
+    /// compaction) and the update log after it — all opaque base64 Yjs bytes
+    /// this crate never decodes. To the asking socket only.
+    /// NOTE the shape: `DraftContent + t` — there is NO top-level `draft_id`
+    /// (the id lives inside `draft`). The API doc's frame table claims one;
+    /// the zod contract (`ChatDraftOpened = DraftContent.extend({t})`) does
+    /// not, and the contract file wins by its own preamble. Requiring the
+    /// phantom field made serde drop every real `draft.opened`, which
+    /// presented as an editor that loaded forever.
+    #[serde(rename = "draft.opened")]
+    DraftOpened {
+        // Boxed: nine owned fields would make this the largest ServerFrame
+        // variant and fatten every frame the channel moves.
+        draft: Box<crate::rest::PromptDraft>,
+        #[serde(default)]
+        snapshot: Option<String>,
+        #[serde(default)]
+        updates: Vec<String>,
+    },
+
+    /// Somebody else's Yjs bytes, relayed verbatim to this draft's OTHER
+    /// subscribers. Durable server-side but never journaled — no seq, never
+    /// replayed on resume.
+    #[serde(rename = "draft.update")]
+    DraftUpdate { draft_id: String, update: String },
+
+    /// Somebody else's cursor. `user_id` is stamped by the server from the
+    /// socket identity — there is no field a client could forge it in.
+    #[serde(rename = "draft.awareness")]
+    DraftAwareness {
+        draft_id: String,
+        user_id: String,
+        state: String,
+    },
+
     /// Any `t` this build does not model — dropped, never an error.
     #[serde(other)]
     Unknown,
@@ -450,6 +486,11 @@ pub fn is_journaled(frame: &ServerFrame) -> bool {
         | ServerFrame::Presence { .. }
         | ServerFrame::Typing { .. }
         | ServerFrame::Error { .. }
+        // Draft traffic is durable server-side but NEVER journaled: no seq,
+        // never replayed on resume, must never advance a watermark.
+        | ServerFrame::DraftOpened { .. }
+        | ServerFrame::DraftUpdate { .. }
+        | ServerFrame::DraftAwareness { .. }
         | ServerFrame::Unknown => false,
     }
 }
@@ -523,6 +564,22 @@ pub enum ClientFrame {
 
     #[serde(rename = "typing")]
     Typing { conv_id: String },
+
+    /// Subscribe THIS SOCKET to a draft (ATL-194). Answered with
+    /// `draft.opened`; the subscription dies with the socket (cap 16,
+    /// LRU-evicted, no close frame), so a reconnect must re-open.
+    #[serde(rename = "draft.open")]
+    DraftOpen { draft_id: String },
+
+    /// Opaque base64 Yjs bytes, ≤128KB decoded, ~100ms debounced by the
+    /// caller. The server stores and relays them and parses NOTHING —
+    /// that is the whole of the confidentiality claim (ADR-0011).
+    #[serde(rename = "draft.update")]
+    DraftUpdate { draft_id: String, update: String },
+
+    /// Cursor state, ≤16KB decoded. Ephemeral: no table, no journal, no seq.
+    #[serde(rename = "draft.awareness")]
+    DraftAwareness { draft_id: String, state: String },
 }
 
 /// The reaction allowlist, vendored verbatim from the contract. A `react`

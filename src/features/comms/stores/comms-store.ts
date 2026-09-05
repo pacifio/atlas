@@ -19,6 +19,7 @@ import { createSelectors } from "@/lib/create-selectors";
 import { comms, type CommsEnvelope, type ConnectionInfo } from "../lib/comms-api";
 import type { PendingAttachment } from "../components/comms-composer";
 import { CHAT_MESSAGE_ATTACHMENT_MAX, TYPING_EXPIRY_MS } from "../types";
+import { publishDraftEvent } from "../lib/draft-bus";
 import type {
   ChatCall,
   ChatConversation,
@@ -443,6 +444,41 @@ export const useCommsStore = createSelectors(
             }
             return;
           }
+
+          case "draftOpened":
+            // Content bytes ride the bus (below); the store only takes the
+            // fresher METADATA so the list row's sent/updated state tracks.
+            set((s) => {
+              const list = s.drafts[ev.draft.conv_id];
+              if (!list) return {};
+              return {
+                drafts: {
+                  ...s.drafts,
+                  [ev.draft.conv_id]: list.map((d) => (d.id === ev.draft.id ? ev.draft : d)),
+                },
+              };
+            });
+            publishDraftEvent({
+              kind: "opened",
+              draft_id: ev.draft_id,
+              draft: ev.draft,
+              snapshot: ev.snapshot,
+              updates: ev.updates,
+            });
+            return;
+
+          case "draftUpdate":
+            publishDraftEvent({ kind: "update", draft_id: ev.draft_id, update: ev.update });
+            return;
+
+          case "draftAwareness":
+            publishDraftEvent({
+              kind: "awareness",
+              draft_id: ev.draft_id,
+              user_id: ev.user_id,
+              state: ev.state,
+            });
+            return;
 
           case "callChanged":
             set((s) => ({ calls: { ...s.calls, [ev.call.id]: ev.call } }));

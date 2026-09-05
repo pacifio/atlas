@@ -462,3 +462,37 @@ fn the_reaction_allowlist_matches_the_contract() {
     assert!(!wire::is_allowed_reaction("\u{1F604}"));
     assert!(!wire::is_allowed_reaction("\u{2615}"));
 }
+
+#[test]
+fn draft_frames_are_ephemeral_passthroughs() {
+    // Draft traffic must never advance the watermark (no seq, never
+    // replayed), and each frame becomes exactly one passthrough delta — the
+    // document itself lives in the renderer.
+    let frames = [
+        // NB: draft.opened carries NO top-level draft_id — the shape is
+        // DraftContent + t, and requiring the phantom field is exactly the
+        // bug that made the editor load forever.
+        serde_json::json!({
+            "t": "draft.opened",
+            "draft": {
+                "id": "d1", "conv_id": "c1", "title": "spec", "created_by": "u1",
+                "created_at": 1, "updated_at": 2,
+                "sent_at": null, "sent_by": null, "sent_message_id": null
+            },
+            "snapshot": null,
+            "updates": ["AAEC"]
+        }),
+        serde_json::json!({ "t": "draft.update", "draft_id": "d1", "update": "AAEC" }),
+        serde_json::json!({ "t": "draft.awareness", "draft_id": "d1", "user_id": "u2", "state": "e30=" }),
+    ];
+    for f in frames {
+        let parsed = frame(f.clone());
+        assert_ne!(parsed, ServerFrame::Unknown, "unmodelled: {f}");
+        assert!(!wire::is_journaled(&parsed), "{parsed:?} must not journal");
+        assert_eq!(wire::frame_seq(&parsed), None);
+
+        let (mut state, mut pending) = fresh();
+        let deltas = apply_frame(&mut state, parsed, &mut pending, NOW);
+        assert_eq!(deltas.len(), 1, "one passthrough delta expected: {f}");
+    }
+}

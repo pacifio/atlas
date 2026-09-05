@@ -155,6 +155,28 @@ pub enum CommsEvent {
         error: Option<String>,
     },
 
+    /// The answer to `draft.open`: metadata + content as opaque base64 Yjs
+    /// bytes. Forwarded to the renderer untouched — Yjs lives there.
+    DraftOpened {
+        draft_id: String,
+        draft: Box<crate::rest::PromptDraft>,
+        snapshot: Option<String>,
+        updates: Vec<String>,
+    },
+
+    /// Another subscriber's Yjs bytes for a draft this client has open.
+    DraftUpdate {
+        draft_id: String,
+        update: String,
+    },
+
+    /// Another subscriber's cursor. `user_id` is server-stamped.
+    DraftAwareness {
+        draft_id: String,
+        user_id: String,
+        state: String,
+    },
+
     /// A call started, ended, or changed recording/transcript state. Carries
     /// the whole call — like `conversation.updated`, a replayed pair then
     /// converges whichever order it arrives in.

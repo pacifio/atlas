@@ -49,6 +49,7 @@
     "@radix-ui/react-dialog": "^1.1.23",
     "@radix-ui/react-dropdown-menu": "^2.1.24",
     "@radix-ui/react-popover": "^1.1.23",
+    "@radix-ui/react-tooltip": "^1.2.16",
     "@tanstack/react-query": "^5.102.8",
     "@tanstack/react-table": "^9.2.4",
     "@tanstack/react-virtual": "^3.14.10",
@@ -108,6 +109,9 @@
     "tailwind-merge": "^3.6.0",
     "tiptap-markdown": "^0.9.0",
     "unified": "^11.0.5",
+    "y-codemirror.next": "^0.3.6",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.32",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

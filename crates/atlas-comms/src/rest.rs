@@ -390,7 +390,7 @@ pub struct RecordingsResponse {
 /// Drafts tab only lists and creates. `title` is write-once; there is no
 /// rename or delete route, and no lifecycle broadcast — the list is
 /// poll-refreshed, mirroring the web client.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PromptDraft {
     pub id: String,
     pub conv_id: String,

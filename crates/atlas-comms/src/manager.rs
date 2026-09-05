@@ -844,6 +844,33 @@ impl CommsManager {
         });
     }
 
+    /// Subscribe this socket to a draft. The renderer re-calls this on every
+    /// reconnect — the subscription dies with the socket.
+    pub fn draft_open(&self, draft_id: &str) {
+        self.write(ClientFrame::DraftOpen {
+            draft_id: draft_id.to_string(),
+        });
+    }
+
+    /// Relay opaque Yjs bytes. NO retention here: a drop with no socket is
+    /// recovered by the renderer's unsent buffer, which re-flushes after the
+    /// `draft.opened` a reconnect produces — the same recovery the web
+    /// client uses, so the two stay behaviourally identical.
+    pub fn draft_update(&self, draft_id: &str, update: &str) {
+        self.write(ClientFrame::DraftUpdate {
+            draft_id: draft_id.to_string(),
+            update: update.to_string(),
+        });
+    }
+
+    /// Cursor state. Losing one is meaningless — the 5s heartbeat restates it.
+    pub fn draft_awareness(&self, draft_id: &str, state: &str) {
+        self.write(ClientFrame::DraftAwareness {
+            draft_id: draft_id.to_string(),
+            state: state.to_string(),
+        });
+    }
+
     fn write(&self, frame: ClientFrame) {
         let out = self.inner.outbound.lock().unwrap();
         match out.as_ref() {
@@ -1289,6 +1316,29 @@ impl CommsManager {
                 .map(|read| CommsEvent::ReadChanged { read: read.clone() }),
             StateDelta::Presence => Some(CommsEvent::Presence {
                 online: state.online.clone(),
+            }),
+            StateDelta::DraftOpened {
+                draft_id,
+                draft,
+                snapshot,
+                updates,
+            } => Some(CommsEvent::DraftOpened {
+                draft_id,
+                draft,
+                snapshot,
+                updates,
+            }),
+            StateDelta::DraftUpdate { draft_id, update } => {
+                Some(CommsEvent::DraftUpdate { draft_id, update })
+            }
+            StateDelta::DraftAwareness {
+                draft_id,
+                user_id,
+                state: st,
+            } => Some(CommsEvent::DraftAwareness {
+                draft_id,
+                user_id,
+                state: st,
             }),
             StateDelta::Typing {
                 conv_id,

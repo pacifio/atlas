@@ -2,6 +2,7 @@ import { startTransition, useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AppLayout } from "@/features/layout/components/app-layout";
 import { AppContextMenu } from "@/components/app-context-menu";
+import { TooltipProvider } from "@/ui/tooltip";
 import { CommandPalette } from "@/components/command-palette";
 import { NewTabPalette } from "@/components/new-tab-palette";
 import { LayoutSwitcher } from "@/features/layout/components/layout-switcher";
@@ -1518,7 +1519,10 @@ export function App() {
   ]);
 
   return (
-    <>
+    // One provider at the root so every tooltip in the app shares a delay and
+    // a SKIP group: hovering along a facepile shows each name instantly after
+    // the first, instead of re-waiting per avatar.
+    <TooltipProvider>
       <AppContextMenu>
         <div className="h-screen w-screen" onContextMenu={(e) => e.preventDefault()}>
           <AppLayout />
@@ -1552,6 +1556,6 @@ export function App() {
           },
         }}
       />
-    </>
+    </TooltipProvider>
   );
 }

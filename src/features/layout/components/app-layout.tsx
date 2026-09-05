@@ -162,7 +162,7 @@ export function AppLayout() {
             {showRight && (
               <>
                 <Separator className="w-px bg-border-default hover:bg-accent data-[separator=active]:bg-accent transition-colors cursor-col-resize" />
-                <Panel id="atlas-right" defaultSize="18" minSize="12" maxSize="30">
+                <Panel id="atlas-right" defaultSize="18" minSize="12" maxSize="50">
                   <RightPanel />
                 </Panel>
               </>

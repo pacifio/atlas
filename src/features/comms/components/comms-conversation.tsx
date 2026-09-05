@@ -30,6 +30,7 @@ import { toast } from "sonner";
 import { CommsAvatar } from "./comms-avatar";
 import { CommsComposer } from "./comms-composer";
 import { MessageGroup } from "./message-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { PinnedMenu } from "./pinned-menu";
 import { DraftsTab } from "./drafts-tab";
 import { FilesTab } from "./files-tab";
@@ -265,7 +266,7 @@ export const CommsConversation = memo(function CommsConversation({
 
       <SubTabStrip active={subTab} onSelect={(tab) => actions.setConvTab(conv.id, tab)} />
 
-      {subTab === "drafts" && <DraftsTab convId={conv.id} />}
+      {subTab === "drafts" && <DraftsTab conv={conv} />}
       {subTab === "files" && <FilesTab convId={conv.id} />}
 
       {/* Overlays are SIBLINGS of the scroller, never inside the content — the
@@ -571,12 +572,22 @@ function ConversationHeader({
         {(isChannel || isGroup) && (
           <div className="flex items-center -space-x-1.5 pl-1">
             {others.slice(0, 3).map((id) => (
-              <CommsAvatar
-                key={id}
-                member={members.get(id) ?? null}
-                size={16}
-                className="ring-2 ring-[var(--comms-surface)] rounded-full"
-              />
+              <Tooltip key={id}>
+                <TooltipTrigger asChild>
+                  {/* Wrapped: the trigger needs an element that takes a ref
+                      and the ring must stay on the avatar itself. */}
+                  <span className="inline-flex">
+                    <CommsAvatar
+                      member={members.get(id) ?? null}
+                      size={16}
+                      className="ring-2 ring-[var(--comms-surface)] rounded-full"
+                    />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={4}>
+                  {members.get(id)?.name ?? "Unknown"}
+                </TooltipContent>
+              </Tooltip>
             ))}
           </div>
         )}
