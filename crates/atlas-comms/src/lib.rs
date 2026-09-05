@@ -26,6 +26,7 @@
 //! the whole seam.
 
 pub mod conn;
+pub mod spaces;
 pub mod error;
 pub mod events;
 pub mod manager;
@@ -78,15 +79,25 @@ pub fn chat_base() -> String {
         .to_string()
 }
 
-/// The socket URL for an Organisation.
-pub fn socket_url(org_id: &str) -> String {
+/// `chat_base()` with the scheme rewritten for a WebSocket dial.
+fn ws_base() -> String {
     let base = chat_base();
-    let ws = if let Some(rest) = base.strip_prefix("https://") {
+    if let Some(rest) = base.strip_prefix("https://") {
         format!("wss://{rest}")
     } else if let Some(rest) = base.strip_prefix("http://") {
         format!("ws://{rest}")
     } else {
         base
-    };
-    format!("{ws}/ws?org={org_id}")
+    }
+}
+
+/// The socket URL for an Organisation.
+pub fn socket_url(org_id: &str) -> String {
+    format!("{}/ws?org={org_id}", ws_base())
+}
+
+/// The Spaces socket for one conversation's realtime canvas. A second, separate
+/// socket per open Space — the chat socket stays one-per-org.
+pub fn spaces_socket_url(org_id: &str, conv_id: &str) -> String {
+    format!("{}/spaces/ws?org={org_id}&conv={conv_id}", ws_base())
 }

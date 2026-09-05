@@ -100,6 +100,7 @@ interface CommsState {
    *  message's slice keeps identity and its row's memo holds. A flat array here
    *  meant one reaction anywhere repainted every row everywhere. */
   reactionsByMessage: Record<string, ChatReaction[]>;
+  pinnedByConv: Record<string, string[]>;
   pinned: string[];
   /** conv -> user -> when they last said so; aged out on a timer. */
   typing: Record<string, Record<string, number>>;
@@ -190,6 +191,12 @@ const serverOwned = () => ({
   hydrated: {} as Record<string, boolean>,
   loadError: {} as Record<string, string>,
   reactionsByMessage: {} as Record<string, ChatReaction[]>,
+  /** Pin rails keyed by conversation. The server's rail for a conversation
+   *  is COMPLETE, so it REPLACES rather than merges — see `withPins`. */
+  pinnedByConv: {} as Record<string, string[]>,
+  /** Flat lookup derived from `pinnedByConv`: message ids are globally
+   *  unique, and a message row renders its own pin without knowing which
+   *  conversation it belongs to. Never written directly. */
   pinned: [] as string[],
   typing: {} as Record<string, Record<string, number>>,
   calls: {} as Record<string, ChatCall>,
@@ -262,7 +269,7 @@ export const useCommsStore = createSelectors(
                   ),
                 },
                 reactionsByMessage: mergeReactions(s.reactionsByMessage, win.reactions),
-                pinned: mergePins(s.pinned, win.pinned_message_ids),
+                ...withPins(s.pinnedByConv, tab.convId as string, win.pinned_message_ids),
               }));
             } catch {
               // A conversation we can no longer read is not an error worth
@@ -397,7 +404,7 @@ export const useCommsStore = createSelectors(
             return;
 
           case "pinsChanged":
-            set((s) => ({ pinned: mergePins(s.pinned, ev.pinned_message_ids) }));
+            set((s) => withPins(s.pinnedByConv, ev.conv_id, ev.pinned_message_ids));
             return;
 
           case "uploadProgress":
@@ -710,6 +717,19 @@ export const useCommsStore = createSelectors(
       },
 
       togglePin: (messageId, on) => {
+        // Optimistic FIRST, in this process — instant feedback must not ride
+        // on the round trip to Rust's own optimistic echo (invoke → manager
+        // broadcast → Tauri event → rAF drain). The echo then replays the
+        // same rail through `pinsChanged`, which is idempotent under
+        // replace semantics: no flicker, no divergence.
+        const messages = get().messages;
+        const convId = Object.keys(messages).find((c) =>
+          (messages[c] ?? []).some((m) => m.id === messageId),
+        );
+        if (convId) {
+          const next = toggleRail(get().pinnedByConv[convId] ?? [], messageId, on);
+          if (next) set((s) => withPins(s.pinnedByConv, convId, next));
+        }
         void comms.pin(messageId, on).catch(() => {});
       },
 
@@ -868,7 +888,7 @@ function loadConversation(
       set((s) => ({
         messages: { ...s.messages, [convId]: mergeWindow(s.messages[convId], win.messages ?? []) },
         reactionsByMessage: mergeReactions(s.reactionsByMessage, win.reactions),
-        pinned: mergePins(s.pinned, win.pinned_message_ids),
+        ...withPins(s.pinnedByConv, convId, win.pinned_message_ids),
         loading: { ...s.loading, [convId]: false },
         hydrated: { ...s.hydrated, [convId]: true },
       }));
@@ -976,6 +996,46 @@ function mergeReactions(
   return next;
 }
 
-function mergePins(current: string[], incoming: string[]): string[] {
-  return [...new Set([...current.filter((id) => !incoming.includes(id)), ...incoming])];
+/**
+ * Replace ONE conversation's pin rail and rebuild the flat lookup.
+ *
+ * A rail is authoritative and complete for its conversation, so an id the
+ * server did not send is an id that is no longer pinned. This used to be a
+ * flat union across every conversation, which could only ever ADD: an unpin
+ * arrives as a rail with the id absent, and a union re-added it from the
+ * local copy every time — the pin came back the instant it was removed,
+ * while the server had already accepted the unpin.
+ *
+ * Keeping rails per conversation is what makes a removal expressible at all:
+ * against one flat list there is no way to tell "gone from this
+ * conversation" from "belongs to a different one".
+ */
+/**
+ * One pin toggle against a rail, or `null` when it is already in the asked
+ * state (no wasted store write). Pins go to the FRONT — Rust's optimistic
+ * block and the server's rail both order newest-first.
+ */
+export function toggleRail(
+  rail: readonly string[],
+  messageId: string,
+  on: boolean,
+): string[] | null {
+  if (on) {
+    if (rail.includes(messageId)) return null;
+    return [messageId, ...rail];
+  }
+  if (!rail.includes(messageId)) return null;
+  return rail.filter((id) => id !== messageId);
+}
+
+export function withPins(
+  current: Record<string, string[]>,
+  convId: string,
+  rail: readonly string[] | undefined,
+): { pinnedByConv: Record<string, string[]>; pinned: string[] } {
+  const pinnedByConv = { ...current, [convId]: [...(rail ?? [])] };
+  return {
+    pinnedByConv,
+    pinned: [...new Set(Object.values(pinnedByConv).flat())],
+  };
 }

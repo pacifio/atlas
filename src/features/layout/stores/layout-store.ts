@@ -461,6 +461,8 @@ export const useLayoutStore = createSelectors(
                 // One per DRAFT (id is `comms-draft-{id}`): the singleton rule
                 // would focus draft A when asked to open draft B.
                 tab.type === "comms-draft" ||
+                // One per CONVERSATION (id is `spaces-{convId}`), same rule.
+                tab.type === "spaces" ||
                 tab.type === "unsupported";
 
               let targetId = tab.id;

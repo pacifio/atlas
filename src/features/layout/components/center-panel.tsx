@@ -48,6 +48,9 @@ const CommsDraftTab = lazy(() =>
     default: m.CommsDraftTab,
   })),
 );
+const SpacesTab = lazy(() =>
+  import("@/features/spaces/components/spaces-tab").then((m) => ({ default: m.SpacesTab })),
+);
 const PdfViewer = lazy(() =>
   import("@/features/pdf/components/pdf-viewer").then((m) => ({ default: m.PdfViewer })),
 );
@@ -116,6 +119,7 @@ import {
   House,
   LayoutDashboard,
   Layers,
+  Frame,
 } from "lucide-react";
 import { PROJECTLESS_TYPES, type TabType } from "@/lib/constants";
 
@@ -139,6 +143,7 @@ const tabIcons: Record<TabType, React.ElementType> = {
   "mission-control": LayoutDashboard,
   artifacts: Layers,
   "comms-draft": FileText,
+  spaces: Frame,
 };
 
 const GROUP_OF = (t: Tab) => t.groupId ?? "main";
@@ -779,6 +784,8 @@ function TabContent({ tab }: { tab: Tab }) {
       return (
         <CommsDraftTab convId={tab.data.convId as string} draftId={tab.data.draftId as string} />
       );
+    case "spaces":
+      return <SpacesTab convId={tab.data.convId as string} />;
     case "unsupported":
       return <UnsupportedView filePath={tab.data.filePath as string} />;
     default:

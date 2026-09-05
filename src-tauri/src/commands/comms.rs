@@ -78,9 +78,40 @@ pub fn install(app: &AppHandle) {
     let manager = {
         let handle = tauri::async_runtime::handle();
         let _guard = handle.inner().enter();
-        CommsManager::new(store, tokens)
+        CommsManager::new(store, tokens.clone())
     };
     app.manage(CommsState(manager.clone()));
+
+    // The Spaces sockets (one per open canvas) share the token source but are
+    // otherwise a separate subsystem: nothing they carry is journaled.
+    let spaces = {
+        let handle = tauri::async_runtime::handle();
+        let _guard = handle.inner().enter();
+        atlas_comms::spaces::SpacesManager::new(tokens.clone())
+    };
+    app.manage(crate::commands::spaces::SpacesState(spaces.clone()));
+    let spaces_app = app.clone();
+    let mut spaces_rx = spaces.subscribe();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match spaces_rx.recv().await {
+                Ok(envelope) => {
+                    if let Err(e) =
+                        spaces_app.emit(crate::commands::spaces::SPACES_EVENT, &envelope)
+                    {
+                        tracing::error!(target: "atlas_comms", "failed to emit spaces event: {e}");
+                    }
+                }
+                // Lagging drops frames, and a dropped Yjs update would fork the
+                // doc — but the renderer heals on the next `page.opened`
+                // (re-open with `since`), so the honest move is to keep going.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(target: "atlas_comms", "spaces bridge lagged {n} frames");
+                }
+                Err(_) => break,
+            }
+        }
+    });
 
     // Forward the crate's broadcast onto the one window channel.
     let forward_app = app.clone();
@@ -157,16 +188,25 @@ pub fn retarget(app: &AppHandle, snapshot: &crate::auth::AuthSnapshot) {
         // Signed out, or mid-grant: there is no credential to dial with.
         _ => None,
     };
+    // A Space socket is only valid for the org it was opened under. On any org
+    // change (or sign-out) they all die; the tabs redial on their own when the
+    // renderer sees the connection drop and the org settle.
+    let changed = state.0.org_id() != target.as_ref().map(|t| t.org_id.clone());
+    if changed {
+        if let Some(spaces) = app.try_state::<crate::commands::spaces::SpacesState>() {
+            spaces.0.disconnect_all();
+        }
+    }
     state.0.set_target(target);
 }
 
-fn manager(app: &AppHandle) -> Result<CommsManager, String> {
+pub(crate) fn manager(app: &AppHandle) -> Result<CommsManager, String> {
     app.try_state::<CommsState>()
         .map(|s| s.0.clone())
         .ok_or_else(|| "chat is not ready".to_string())
 }
 
-fn org(mgr: &CommsManager) -> Result<String, String> {
+pub(crate) fn org(mgr: &CommsManager) -> Result<String, String> {
     mgr.org_id()
         .ok_or_else(|| "no organisation is connected".to_string())
 }
@@ -174,7 +214,7 @@ fn org(mgr: &CommsManager) -> Result<String, String> {
 /// Errors reach the UI as their code plus message; the structured `detail` is
 /// preserved for the refusals that need it — `group_dm_frozen`'s `fork_hint`,
 /// `quota_exceeded`'s byte counts.
-fn map_err(e: CommsError) -> String {
+pub(crate) fn map_err(e: CommsError) -> String {
     match e {
         CommsError::Refused {
             code,

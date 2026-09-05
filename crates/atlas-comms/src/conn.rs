@@ -49,6 +49,28 @@ pub enum ConnEvent {
     Closed(ExitReason),
 }
 
+/// Build the dial request with the two-value subprotocol offer. Shared with
+/// the Spaces socket, which authenticates identically.
+///
+/// The pinned fork validates the server's echo against this list, so a server
+/// that echoed something else fails the handshake rather than proceeding on a
+/// protocol nobody agreed to.
+pub(crate) fn ticket_request(
+    url: String,
+    token: &str,
+) -> Result<tokio_tungstenite::tungstenite::handshake::client::Request> {
+    let mut request = url
+        .into_client_request()
+        .map_err(|e| CommsError::Transport(format!("bad url: {e}")))?;
+    let protocols = format!("atlas.v1, atlas.ticket.{token}");
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_str(&protocols)
+            .map_err(|_| CommsError::Protocol("token is not a valid header value".into()))?,
+    );
+    Ok(request)
+}
+
 /// Dial, hand every frame to `events`, and write everything from `outbound`
 /// until one side closes.
 ///
@@ -62,19 +84,7 @@ pub async fn run(
     mut outbound: mpsc::UnboundedReceiver<ClientFrame>,
     events: mpsc::UnboundedSender<ConnEvent>,
 ) -> Result<()> {
-    let mut request = url
-        .into_client_request()
-        .map_err(|e| CommsError::Transport(format!("bad url: {e}")))?;
-
-    // The two-value offer. The pinned fork validates the server's echo against
-    // this list, so a server that echoed something else fails the handshake
-    // rather than proceeding on a protocol nobody agreed to.
-    let protocols = format!("atlas.v1, atlas.ticket.{token}");
-    request.headers_mut().insert(
-        "Sec-WebSocket-Protocol",
-        HeaderValue::from_str(&protocols)
-            .map_err(|_| CommsError::Protocol("token is not a valid header value".into()))?,
-    );
+    let request = ticket_request(url, &token)?;
 
     let (stream, _response) = match tokio_tungstenite::connect_async(request).await {
         Ok(ok) => ok,
@@ -168,7 +178,7 @@ pub async fn run(
 /// The three that matter are distinguishable only by status: `401` is worth one
 /// re-mint, `403` is worth nothing at all, and everything else is worth a
 /// backoff.
-fn classify_handshake(err: &tokio_tungstenite::tungstenite::Error) -> ExitReason {
+pub(crate) fn classify_handshake(err: &tokio_tungstenite::tungstenite::Error) -> ExitReason {
     use tokio_tungstenite::tungstenite::Error;
     match err {
         Error::Http(response) => match response.status().as_u16() {

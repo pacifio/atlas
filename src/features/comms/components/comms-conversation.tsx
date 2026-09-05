@@ -36,6 +36,7 @@ import { DraftsTab } from "./drafts-tab";
 import { FilesTab } from "./files-tab";
 import { RenameChannelMenu } from "./rename-channel-menu";
 import { CallActivity } from "./call-activity";
+import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useCommsStore, type ConvSubTab } from "../stores/comms-store";
 import {
   conversationTitle,
@@ -264,7 +265,12 @@ export const CommsConversation = memo(function CommsConversation({
         onBack={actions.goHome}
       />
 
-      <SubTabStrip active={subTab} onSelect={(tab) => actions.setConvTab(conv.id, tab)} />
+      <SubTabStrip
+        active={subTab}
+        onSelect={(tab) => actions.setConvTab(conv.id, tab)}
+        convId={conv.id}
+        title={title}
+      />
 
       {subTab === "drafts" && <DraftsTab conv={conv} />}
       {subTab === "files" && <FilesTab convId={conv.id} />}
@@ -420,10 +426,33 @@ const EMPTY_MESSAGES: never[] = [];
 function SubTabStrip({
   active,
   onSelect,
+  convId,
+  title,
 }: {
   active: ConvSubTab;
   onSelect: (tab: ConvSubTab) => void;
+  convId: string;
+  title: string;
 }) {
+  // The realtime canvas opens as a CENTER tab (like a draft), not a sub-tab —
+  // a canvas wants the whole window and should not move when somebody posts a
+  // message underneath it. Open-or-refocus, one tab per conversation.
+  const openSpace = () => {
+    const layout = useLayoutStore.getState();
+    const tabId = `spaces-${convId}`;
+    if (layout.tabs.some((t) => t.id === tabId)) {
+      layout.actions.setActiveTab(tabId);
+      return;
+    }
+    layout.actions.addTab({
+      id: tabId,
+      type: "spaces",
+      title: `${title} — Space`,
+      closable: true,
+      dirty: false,
+      data: { convId },
+    });
+  };
   const tabs: { id: ConvSubTab; label: string; icon: LucideIcon }[] = [
     { id: "messages", label: "Messages", icon: MessageCircle },
     { id: "drafts", label: "Drafts", icon: FileText },
@@ -449,14 +478,12 @@ function SubTabStrip({
         </button>
       ))}
 
-      {/* Placeholder for the realtime canvas (ATL-252). Disabled rather than
-          wired to nothing: a button that looks live and does nothing is worse
-          than one that says it isn't ready yet. */}
+      {/* The realtime canvas (ATL-252) — opens in the center panel. */}
       <button
         type="button"
-        disabled
-        title="Spaces — coming soon"
-        className="ml-auto flex h-[20px] shrink-0 cursor-not-allowed items-center gap-1 rounded-full border border-white/10 bg-white/[0.06] px-2.5 text-[10px] font-medium text-text-tertiary"
+        onClick={openSpace}
+        title="Open this conversation's Space"
+        className="ml-auto flex h-[20px] shrink-0 cursor-pointer items-center gap-1 rounded-full border border-white/10 bg-white/[0.06] px-2.5 text-[10px] font-medium text-text-tertiary transition-colors hover:bg-white/[0.1] hover:text-text-primary"
       >
         <Frame size={10} />
         Spaces

@@ -21,6 +21,7 @@ pub mod catalog;
 pub mod clipboard;
 pub mod codebase_index;
 pub mod comms;
+pub mod spaces;
 pub mod fs;
 pub mod git;
 pub mod git_graph;

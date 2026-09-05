@@ -665,3 +665,101 @@ impl RestClient {
         Ok(out)
     }
 }
+
+/// Spaces REST — the summary pre-flight and the media triangle
+/// (reserve → PUT → ticketed download). Everything else about a Space is
+/// socket-only by contract.
+impl RestClient {
+    /// `GET /spaces?org&conv`. Lazily creates the Space (and its default
+    /// "Canvas" page) server-side; refusals arrive as ordinary 401/403/404,
+    /// which is the whole reason to call this before dialing the socket — a
+    /// failed WS handshake cannot say why.
+    pub async fn space_summary(
+        &self,
+        org: &str,
+        conv_id: &str,
+    ) -> Result<crate::spaces::SpaceSummary> {
+        self.json(
+            reqwest::Method::GET,
+            &format!("/spaces?conv={conv_id}"),
+            org,
+            None,
+        )
+        .await
+    }
+
+    /// Reserve a media object. `stored: true` in the answer is dedup — the
+    /// bytes are already there and no upload should follow.
+    pub async fn space_media_reserve(
+        &self,
+        org: &str,
+        conv_id: &str,
+        content_hash: &str,
+        mime: &str,
+        size: u64,
+    ) -> Result<crate::spaces::SpaceMediaReserved> {
+        let body = serde_json::json!({
+            "content_hash": content_hash,
+            "mime": mime,
+            "size": size,
+        });
+        self.json(
+            reqwest::Method::POST,
+            &format!("/spaces/media?conv={conv_id}"),
+            org,
+            Some(body),
+        )
+        .await
+    }
+
+    /// Deliver reserved bytes. One streamed PUT, never multipart — R2 can only
+    /// verify a whole-object SHA-256 on a single write, and the server holds
+    /// us to `Content-Length == reserved size` exactly.
+    pub async fn space_media_put(
+        &self,
+        org: &str,
+        conv_id: &str,
+        content_hash: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<()> {
+        let token = self.tokens.mint().await?;
+        let url = format!(
+            "{}/spaces/media/{content_hash}?conv={conv_id}&org={org}",
+            self.base
+        );
+        let res = self
+            .http
+            .put(url)
+            .bearer_auth(token)
+            .header(reqwest::header::CONTENT_TYPE, mime)
+            .timeout(std::time::Duration::from_secs(300))
+            .body(bytes)
+            .send()
+            .await?;
+        Self::check(res).await?;
+        Ok(())
+    }
+
+    /// Fetch a media object's bytes: `GET /spaces/media/{hash}` answers a 302
+    /// into the ticketed `/spaces/dl/{token}` (60s life), which reqwest
+    /// follows same-host. Cached by the caller under the immutable hash.
+    pub async fn space_media_download(
+        &self,
+        org: &str,
+        conv_id: &str,
+        content_hash: &str,
+    ) -> Result<Vec<u8>> {
+        let res = Self::check(
+            self.request(
+                reqwest::Method::GET,
+                &format!("/spaces/media/{content_hash}?conv={conv_id}"),
+                org,
+                None,
+            )
+            .await?,
+        )
+        .await?;
+        Self::drain(res, &mut |_, _| {}).await
+    }
+}
