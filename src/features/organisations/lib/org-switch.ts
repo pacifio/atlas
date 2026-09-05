@@ -5,7 +5,7 @@ import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store"
 import { resetGitSummariesForOrgSwitch } from "@/features/workspaces/stores/workspace-git-store";
 import { commsActions } from "@/features/comms/stores/comms-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
-import { PROJECTLESS_TYPES } from "@/lib/constants";
+import { ORG_SCOPED_TYPES } from "@/lib/constants";
 import {
   useProjectStore,
   flushAppStateSave,
@@ -70,6 +70,19 @@ export async function switchOrg(id: string): Promise<void> {
   const startedAt = Date.now();
 
   try {
+    // 0) Close the outgoing org's org-scoped centre tabs FIRST — before the
+    //    flush below, so they are not captured into the outgoing project's
+    //    editor state on the way out. Their ids embed this org's
+    //    conversation/draft ids and mean nothing in the incoming one.
+    //    (The Spaces sockets die with the Rust retarget's `disconnect_all`;
+    //    unmounting the tab closes each canvas's socket first anyway.)
+    {
+      const layout = useLayoutStore.getState();
+      for (const tab of layout.tabs) {
+        if (ORG_SCOPED_TYPES.has(tab.type)) layout.actions.closeTab(tab.id);
+      }
+    }
+
     const wsActions = useWorkspaceStore.getState().actions;
     const projectActions = useProjectStore.getState().actions;
     const outgoingActiveWs = useWorkspaceStore.getState().activeWorkspaceId;
@@ -111,21 +124,6 @@ export async function switchOrg(id: string): Promise<void> {
     //    every other path that changes the active org is correct for free.
     await invoke("comms_disconnect").catch(() => {});
     commsActions().reset();
-
-    //    Close the outgoing org's CENTER tabs for org-scoped surfaces
-    //    (draft editors, realtime Spaces). Their ids embed the old org's
-    //    conversation/draft ids, which do not exist in the incoming org —
-    //    left open they render "no longer available" husks. Settings is the
-    //    one projectless tab that is org-agnostic and stays. (The Spaces
-    //    sockets themselves die in Rust: the auth broadcast's retarget calls
-    //    `disconnect_all`.)
-    {
-      const layout = useLayoutStore.getState();
-      const orgScoped = layout.tabs.filter(
-        (t) => PROJECTLESS_TYPES.has(t.type) && t.type !== "settings",
-      );
-      for (const tab of orgScoped) layout.actions.closeTab(tab.id);
-    }
 
     // 4) Make the org swap authoritative. `setActiveOrganisation` also
     //    re-points analytics attribution (see `syncOrgTelemetry`), so events

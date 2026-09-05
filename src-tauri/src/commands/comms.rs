@@ -815,6 +815,37 @@ pub fn comms_disconnect(app: AppHandle) -> Result<(), String> {
 
 /// A call's recordings. The URLs expire in ~60s, so this is called at open
 /// time rather than cached with the call.
+/// Start a call in a conversation. Returns the call row for optimistic
+/// rendering; the renderer builds the join/guest URLs itself. The server's
+/// `auth_token` never reaches this layer — see `RestClient::start_call`.
+#[tauri::command]
+pub async fn comms_start_call(
+    app: AppHandle,
+    conv_id: String,
+    mode: String,
+    public: bool,
+) -> Result<atlas_comms::wire::Call, String> {
+    if mode != "audio" && mode != "video" {
+        return Err("mode must be audio or video".into());
+    }
+    let mgr = manager(&app)?;
+    mgr.start_call(&conv_id, &mode, public).await.map_err(map_err)
+}
+
+/// Save a call's transcript (CSV) to a path the user picked.
+#[tauri::command]
+pub async fn comms_save_transcript(
+    app: AppHandle,
+    call_id: String,
+    dest: String,
+) -> Result<(), String> {
+    crate::commands::save_guard::guard_save_dest(&dest)?;
+    let mgr = manager(&app)?;
+    let bytes = mgr.download_transcript(&call_id).await.map_err(map_err)?;
+    std::fs::write(&dest, &bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn comms_call_recordings(
     app: AppHandle,

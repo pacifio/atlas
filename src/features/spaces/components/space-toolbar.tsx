@@ -74,11 +74,19 @@ export function SpaceToolbar({
   dock: SpaceDock;
   onDock: (dock: SpaceDock) => void;
 }) {
+  // Bottom is a row; left/right are columns pinned to the middle of that edge.
+  const horizontal = dock === "bottom";
+  const divider = horizontal ? "mx-0.5 h-5 w-px bg-white/10" : "my-0.5 h-px w-5 bg-white/10";
   return (
     <div
       className={cn(
-        "absolute left-3 top-1/2 z-40 flex -translate-y-1/2 flex-col items-center gap-1 p-1",
+        "absolute z-40 flex items-center gap-1 p-1",
         "rounded-xl border border-white/10 bg-[var(--bg-secondary)]/70 shadow-[var(--shadow-overlay)] backdrop-blur-2xl",
+        horizontal
+          ? "bottom-3 left-1/2 -translate-x-1/2 flex-row"
+          : "top-1/2 -translate-y-1/2 flex-col",
+        dock === "left" && "left-3",
+        dock === "right" && "right-3",
         disabled && "pointer-events-none opacity-40",
       )}
     >
@@ -91,7 +99,7 @@ export function SpaceToolbar({
         />
       ))}
 
-      <div className="my-0.5 h-px w-5 bg-white/10" />
+      <div className={divider} />
 
       {SHAPES.map((t) => (
         <ToolButton
@@ -102,7 +110,7 @@ export function SpaceToolbar({
         />
       ))}
 
-      <div className="my-0.5 h-px w-5 bg-white/10" />
+      <div className={divider} />
       <button
         type="button"
         title="Insert image or video"
@@ -112,7 +120,7 @@ export function SpaceToolbar({
         <ImageIcon size={16} />
       </button>
 
-      <div className="my-0.5 h-px w-5 bg-white/10" />
+      <div className={divider} />
       <button
         type="button"
         title="Undo (⌘Z)"
@@ -132,8 +140,8 @@ export function SpaceToolbar({
         <Redo2 size={16} />
       </button>
 
-      <div className="my-0.5 h-px w-5 bg-white/10" />
-      <DockMenu dock={dock} onDock={onDock} />
+      <div className={divider} />
+      <DockMenu dock={dock} onDock={onDock} horizontal={horizontal} />
     </div>
   );
 }
@@ -144,16 +152,24 @@ const DOCKS: Array<{ dock: SpaceDock; label: string; icon: typeof PanelLeft }> =
   { dock: "right", label: "Dock right", icon: PanelRight },
 ];
 
-/** Where the pages panel sits. Last in the dock, below the divider — a
- *  layout preference, not a drawing tool, so it does not belong among them. */
-function DockMenu({ dock, onDock }: { dock: SpaceDock; onDock: (d: SpaceDock) => void }) {
+/** Where this dock sits. Last in it, below the divider — a layout
+ *  preference, not a drawing tool, so it does not belong among them. */
+function DockMenu({
+  dock,
+  onDock,
+  horizontal,
+}: {
+  dock: SpaceDock;
+  onDock: (d: SpaceDock) => void;
+  horizontal: boolean;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
         <button
           type="button"
-          title="Panel position"
+          title="Dock position"
           className={cn(
             "flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg transition-colors",
             open
@@ -166,18 +182,18 @@ function DockMenu({ dock, onDock }: { dock: SpaceDock; onDock: (d: SpaceDock) =>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
-          side="right"
+          side={horizontal ? "top" : dock === "right" ? "left" : "right"}
           align="end"
           sideOffset={8}
           style={{
             zIndex: 9999,
             boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 16px 48px rgba(0,0,0,0.95)",
           }}
-          className="atlas-panel-in-tl select-none overflow-hidden rounded-xl border border-white/10 bg-[var(--bg-elevated)]/85 backdrop-blur-2xl"
+          className="atlas-panel-in-tl select-none overflow-hidden rounded-xl border border-white/10 bg-[var(--bg-elevated)]/95 backdrop-blur-2xl"
         >
           <div className="flex w-[168px] flex-col py-1">
-            <div className="px-3 pb-1 pt-1 text-[9.5px] font-semibold uppercase tracking-wider text-text-ghost">
-              Panel position
+            <div className="px-3 pb-1 pt-1 text-[9.5px] font-semibold uppercase tracking-wider text-text-tertiary">
+              Dock position
             </div>
             {DOCKS.map((d) => (
               <button

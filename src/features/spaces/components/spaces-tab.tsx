@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { AlertTriangle, Frame, X } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { useCommsStore } from "@/features/comms/stores/comms-store";
 import { useSpaceSession } from "../lib/use-space-session";
 import { useSpacesStore } from "../stores/spaces-store";
@@ -83,12 +82,10 @@ function SpaceHost({ convId }: { convId: string }) {
         </div>
       )}
 
-      {/* The dock decides the axis: left/right are columns beside the canvas,
-          bottom is a row under it. */}
-      <div className={cn("flex min-h-0 flex-1", dock === "bottom" ? "flex-col" : "flex-row")}>
-        {pagesOpen && dock === "left" && (
-          <SpacePages convId={convId} session={session} editable={treeEditable} dock={dock} />
-        )}
+      {/* Pages are always the left column. `dock` moves the floating TOOL
+          dock over the canvas, which is the canvas's own business. */}
+      <div className="flex min-h-0 flex-1">
+        {pagesOpen && <SpacePages convId={convId} session={session} editable={treeEditable} />}
         <div className="min-h-0 min-w-0 flex-1">
           <SpaceCanvas
             convId={convId}
@@ -99,9 +96,6 @@ function SpaceHost({ convId }: { convId: string }) {
             onDock={changeDock}
           />
         </div>
-        {pagesOpen && dock !== "left" && (
-          <SpacePages convId={convId} session={session} editable={treeEditable} dock={dock} />
-        )}
       </div>
     </div>
   );

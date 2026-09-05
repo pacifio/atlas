@@ -1252,6 +1252,38 @@ impl CommsManager {
     /// delivered — a frame is always fresher than a page fetched before it.
     /// Announces each newly learned call so an already-hydrated renderer
     /// paints it without waiting for a snapshot.
+    /// Start a call and adopt it optimistically — the row appears the moment
+    /// the 201 lands rather than when the socket's `call.started` echo comes
+    /// round. The echo then overwrites the same key harmlessly (the pins
+    /// idempotent-echo rule).
+    pub async fn start_call(
+        &self,
+        conv_id: &str,
+        mode: &str,
+        public: bool,
+    ) -> Result<crate::wire::Call> {
+        let org = self
+            .org_id()
+            .ok_or_else(|| CommsError::Token("no organisation is connected".into()))?;
+        let call = self.inner.rest.start_call(&org, conv_id, mode, public).await?;
+        self.inner
+            .state
+            .lock()
+            .unwrap()
+            .calls
+            .insert(call.id.clone(), call.clone());
+        self.emit(CommsEvent::CallChanged { call: call.clone() });
+        Ok(call)
+    }
+
+    /// A call's transcript, as CSV bytes.
+    pub async fn download_transcript(&self, call_id: &str) -> Result<Vec<u8>> {
+        let org = self
+            .org_id()
+            .ok_or_else(|| CommsError::Token("no organisation is connected".into()))?;
+        self.inner.rest.download_transcript(&org, call_id).await
+    }
+
     pub fn adopt_calls(&self, calls: Vec<crate::wire::Call>) {
         let mut fresh = Vec::new();
         {

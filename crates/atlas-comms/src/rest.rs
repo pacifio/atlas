@@ -461,6 +461,47 @@ impl RestClient {
         Ok(w.draft)
     }
 
+    /// Start a call. `POST /calls` answers `201 {call, auth_token}` — the
+    /// token is deliberately DROPPED here: this client never joins from the
+    /// desktop (the browser's call tab mints its own), and an unused mint
+    /// burns a 30-minute reservation the server has no release route for.
+    /// It must never cross the bridge, be stored, or be logged.
+    pub async fn start_call(
+        &self,
+        org: &str,
+        conv_id: &str,
+        mode: &str,
+        public: bool,
+    ) -> Result<crate::wire::Call> {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            call: crate::wire::Call,
+            // `auth_token` intentionally absent: serde drops it unread.
+        }
+        let body = serde_json::json!({ "conv_id": conv_id, "mode": mode, "public": public });
+        let w: Wrapper = self
+            .json(reqwest::Method::POST, "/calls", org, Some(body))
+            .await?;
+        Ok(w.call)
+    }
+
+    /// A call's transcript as CSV bytes. The route answers a 302 into a
+    /// 60-second ticket, which reqwest follows same-host; not-ready arrives
+    /// as the ordinary refusal envelope (`detail.transcript_state`).
+    pub async fn download_transcript(&self, org: &str, call_id: &str) -> Result<Vec<u8>> {
+        let res = Self::check(
+            self.request(
+                reqwest::Method::GET,
+                &format!("/calls/{call_id}/transcript"),
+                org,
+                None,
+            )
+            .await?,
+        )
+        .await?;
+        Self::drain(res, &mut |_, _| {}).await
+    }
+
     /// A conversation's calls: all live ones plus the last 10 ended (ATL-208).
     ///
     /// This is the cold-sync path for call history. The journal still delivers

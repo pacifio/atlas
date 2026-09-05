@@ -6,14 +6,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { CommsAvatar } from "@/features/comms/components/comms-avatar";
 import { useCommsStore } from "@/features/comms/stores/comms-store";
 import type { SpacePage } from "../lib/spaces-api";
-import type { SpaceDock } from "../lib/dock";
 import type { SpaceSession } from "../lib/use-space-session";
 import { useSpacesStore } from "../stores/spaces-store";
 
 /**
- * The pages dock — the local Spaces panel's chrome (quiet header, circular
- * compact buttons) over the server-authoritative tree, with rows in the
- * drafts-list shape: name over "Updated …", author on the right.
+ * The pages sidebar — the local Spaces panel's chrome (quiet header,
+ * circular compact buttons) over the server-authoritative tree, with rows in
+ * the drafts-list shape: name over "Updated …", author on the right. Always
+ * the left column; the TOOL dock is the movable one.
  *
  * Deliberately non-optimistic: every row comes from the last `page.tree`
  * broadcast and every edit is one control frame. Reordering is a pointer
@@ -27,12 +27,12 @@ export function SpacePages({
   convId,
   session,
   editable,
-  dock,
+  width = 260,
 }: {
   convId: string;
   session: SpaceSession;
   editable: boolean;
-  dock: SpaceDock;
+  width?: number;
 }) {
   const pages = session.meta?.pages ?? [];
   const activeId = session.pageId;
@@ -164,17 +164,10 @@ export function SpacePages({
     session.createPage(opts);
   };
 
-  const horizontal = dock === "bottom";
-
   return (
     <div
-      className={cn(
-        "flex shrink-0 flex-col bg-[#090909]",
-        dock === "left" && "h-full border-r border-border-default",
-        dock === "right" && "h-full border-l border-border-default",
-        horizontal && "w-full border-t border-border-default",
-      )}
-      style={horizontal ? { height: 220 } : { width: 260 }}
+      className="flex h-full shrink-0 flex-col border-r border-border-default bg-[#090909]"
+      style={{ width }}
     >
       {/* Quiet header — no divider, the local panel's recipe. */}
       <div className="flex h-8 shrink-0 items-center gap-1 px-2 pl-3">

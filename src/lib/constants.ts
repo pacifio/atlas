@@ -34,3 +34,20 @@ export const PROJECTLESS_TYPES: ReadonlySet<TabType> = new Set<TabType>([
   "comms-draft",
   "spaces",
 ]);
+
+/**
+ * Tab types whose CONTENT belongs to one Organisation — their ids and data
+ * embed conversation/draft ids that exist in exactly one org.
+ *
+ * Two consequences, both load-bearing:
+ *  - they are closed on every org change (`switchOrg`, and the boot
+ *    reconciliation branch in the comms store);
+ *  - they are NEVER written to the per-project editor state. That file is
+ *    keyed by PROJECT PATH, and the same path is commonly open in several
+ *    orgs — a persisted Space tab came back on the incoming org's mount
+ *    pointing at the outgoing org's conversation ("This Space is no longer
+ *    available"), which is what closing alone could not fix.
+ *
+ * Settings is deliberately absent: it is projectless but org-agnostic.
+ */
+export const ORG_SCOPED_TYPES: ReadonlySet<TabType> = new Set<TabType>(["comms-draft", "spaces"]);

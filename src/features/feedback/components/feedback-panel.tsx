@@ -105,7 +105,7 @@ export function FeedbackPanel() {
         // Border, translucent fill and blur all on THIS element — which is also
         // the one the enter animation transforms. Splitting them would isolate
         // the layer and flatten the blur.
-        "border border-white/10 bg-[var(--bg-elevated)]/85 backdrop-blur-2xl",
+        "border border-white/10 bg-[var(--bg-elevated)]/95 backdrop-blur-2xl",
         "atlas-panel-in-br",
         // Still laid out (and animated in) while `screencapture` is on screen,
         // just invisible, so the panel never lands in the user's own shot.

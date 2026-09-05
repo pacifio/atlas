@@ -17,6 +17,7 @@
 import { create } from "zustand";
 import { createSelectors } from "@/lib/create-selectors";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { ORG_SCOPED_TYPES } from "@/lib/constants";
 import { comms, type CommsEnvelope, type ConnectionInfo } from "../lib/comms-api";
 import type { PendingAttachment } from "../components/comms-composer";
 import { CHAT_MESSAGE_ATTACHMENT_MAX, TYPING_EXPIRY_MS } from "../types";
@@ -985,9 +986,7 @@ function withoutTyper(
 function closeOrgScopedTabs(): void {
   const layout = useLayoutStore.getState();
   for (const tab of layout.tabs) {
-    if (tab.type === "comms-draft" || tab.type === "spaces") {
-      layout.actions.closeTab(tab.id);
-    }
+    if (ORG_SCOPED_TYPES.has(tab.type)) layout.actions.closeTab(tab.id);
   }
 }
 

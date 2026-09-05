@@ -32,6 +32,7 @@ import { CommsComposer } from "./comms-composer";
 import { MessageGroup } from "./message-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { PinnedMenu } from "./pinned-menu";
+import { CallMenu } from "./call-menu";
 import { DraftsTab } from "./drafts-tab";
 import { FilesTab } from "./files-tab";
 import { RenameChannelMenu } from "./rename-channel-menu";
@@ -459,21 +460,21 @@ function SubTabStrip({
     { id: "files", label: "Files", icon: Folder },
   ];
   return (
-    <div className="flex h-[30px] shrink-0 items-center gap-0.5 border-b border-border-default px-2">
+    <div className="flex h-[36px] shrink-0 items-center gap-0.5 border-b border-border-default px-2">
       {tabs.map(({ id, label, icon: Icon }) => (
         <button
           key={id}
           type="button"
           onClick={() => onSelect(id)}
           className={cn(
-            "relative flex h-full items-center gap-1.5 px-2 text-[11px] font-medium transition-colors cursor-pointer",
+            "relative flex h-full items-center gap-1.5 px-2.5 text-[11.5px] font-medium transition-colors cursor-pointer",
             active === id ? "text-text-primary" : "text-text-tertiary hover:text-text-secondary",
           )}
         >
           <Icon size={11} className="shrink-0 opacity-80" />
           {label}
           {active === id && (
-            <span className="absolute inset-x-1.5 bottom-0 h-[1.5px] rounded-full bg-text-primary" />
+            <span className="absolute inset-x-2 bottom-0 h-[1.5px] rounded-full bg-text-primary" />
           )}
         </button>
       ))}
@@ -483,9 +484,9 @@ function SubTabStrip({
         type="button"
         onClick={openSpace}
         title="Open this conversation's Space"
-        className="ml-auto flex h-[20px] shrink-0 cursor-pointer items-center gap-1 rounded-full border border-white/10 bg-white/[0.06] px-2.5 text-[10px] font-medium text-text-tertiary transition-colors hover:bg-white/[0.1] hover:text-text-primary"
+        className="ml-auto flex h-[22px] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.06] px-3 text-[10.5px] font-medium text-text-tertiary transition-colors hover:bg-white/[0.1] hover:text-text-primary"
       >
-        <Frame size={10} />
+        <Frame size={11} />
         Spaces
       </button>
     </div>
@@ -518,36 +519,37 @@ function ConversationHeader({
   const others = (conv.member_ids ?? []).filter((id) => id !== me);
 
   return (
-    // Three zones, not one row: the two `flex-1` rails let the middle group
-    // sit optically centred whatever the actions weigh, and `min-w-0` on all
-    // three keeps a long channel name truncating instead of shoving the
-    // buttons off the edge.
-    <div className="flex h-[29px] shrink-0 items-center border-b border-border-default px-1.5">
-      <div className="flex min-w-0 flex-1 items-center">
-        {/* Back to the tab's home view — the panel has no sidebar to fall back on. */}
-        <button
-          type="button"
-          title="Back to chats"
-          onClick={onBack}
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary cursor-pointer"
-        >
-          <ChevronLeft size={14} />
-        </button>
-      </div>
+    // Two zones, not three: the title sits at the START, next to the back
+    // button, and everything else is one right-hand action rail. It used to
+    // be optically centred between two `flex-1` rails, which only works
+    // while the actions stay light — calls, and whatever follows them, make
+    // the right side grow, and a centred title would drift with every
+    // addition. `min-w-0` on both keeps a long name truncating rather than
+    // shoving the buttons off the edge.
+    <div className="flex h-[38px] shrink-0 items-center gap-1 border-b border-border-default px-2">
+      {/* Back to the tab's home view — the panel has no sidebar to fall back on. */}
+      <button
+        type="button"
+        title="Back to chats"
+        onClick={onBack}
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary cursor-pointer"
+      >
+        <ChevronLeft size={15} />
+      </button>
 
-      <div className="flex min-w-0 items-center gap-1.5">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
         {isChannel ? (
           conv.visibility === "private" ? (
-            <Lock size={11} className="shrink-0 text-text-tertiary" />
+            <Lock size={12} className="shrink-0 text-text-tertiary" />
           ) : (
-            <Hash size={12} className="shrink-0 text-text-tertiary" />
+            <Hash size={13} className="shrink-0 text-text-tertiary" />
           )
         ) : isGroup ? (
-          <Users size={12} className="shrink-0 text-text-tertiary" />
+          <Users size={13} className="shrink-0 text-text-tertiary" />
         ) : (
           <CommsAvatar
             member={counterpart}
-            size={16}
+            size={18}
             online={counterpart ? online.includes(counterpart.id) : false}
           />
         )}
@@ -560,7 +562,7 @@ function ConversationHeader({
               title="Rename channel"
               className="group/title flex min-w-0 items-center gap-1 text-left cursor-pointer"
             >
-              <span className="min-w-0 truncate text-[11.5px] font-medium text-text-primary">
+              <span className="min-w-0 truncate text-[12.5px] font-medium text-text-primary">
                 {conv.name}
               </span>
               <Pencil
@@ -570,7 +572,7 @@ function ConversationHeader({
             </button>
           </RenameChannelMenu>
         ) : (
-          <span className="min-w-0 truncate text-[11.5px] font-medium text-text-primary">
+          <span className="min-w-0 truncate text-[12.5px] font-medium text-text-primary">
             {title}
           </span>
         )}
@@ -587,15 +589,25 @@ function ConversationHeader({
         )}
       </div>
 
-      <div className="flex min-w-0 flex-1 items-center justify-end gap-0.5">
+      {/* The action rail: what this conversation HAS (pins), then a rule,
+          then what you can DO to it (call). The divider only appears when
+          there is something on both sides of it to separate. */}
+      <div className="flex shrink-0 items-center gap-0.5">
         {pinnedCount > 0 && (
-          <PinnedMenu
-            convId={conv.id}
-            count={pinnedCount}
-            members={members}
-            onJump={onJumpToMessage}
-          />
+          <>
+            <PinnedMenu
+              convId={conv.id}
+              count={pinnedCount}
+              members={members}
+              onJump={onJumpToMessage}
+            />
+            <div className="mx-1 h-4 w-px bg-border-default" />
+          </>
         )}
+        <div className="flex items-center gap-0.5">
+          <CallMenu convId={conv.id} mode="audio" />
+          <CallMenu convId={conv.id} mode="video" />
+        </div>
         {(isChannel || isGroup) && (
           <div className="flex items-center -space-x-1.5 pl-1">
             {others.slice(0, 3).map((id) => (
@@ -606,7 +618,7 @@ function ConversationHeader({
                   <span className="inline-flex">
                     <CommsAvatar
                       member={members.get(id) ?? null}
-                      size={16}
+                      size={18}
                       className="ring-2 ring-[var(--comms-surface)] rounded-full"
                     />
                   </span>

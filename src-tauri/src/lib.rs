@@ -351,6 +351,8 @@ pub fn run() {
             commands::comms::comms_fetch_attachment,
             commands::comms::comms_save_attachment,
             commands::comms::comms_call_recordings,
+            commands::comms::comms_start_call,
+            commands::comms::comms_save_transcript,
             commands::comms::comms_save_recording,
             commands::comms::comms_status,
             commands::comms::comms_snapshot,

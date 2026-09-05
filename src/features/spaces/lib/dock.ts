@@ -1,8 +1,13 @@
-/** Where the pages panel is docked. Persisted per app, not per Space — it is
- *  a workspace-layout preference, like the local canvas's pages toggle. */
+/** Where the floating TOOL dock sits over the canvas. Persisted per app, not
+ *  per Space — a pointing-hand preference, like a Figma toolbar position.
+ *
+ *  The pages panel is NOT affected by this: it is always the left sidebar. */
 export type SpaceDock = "left" | "bottom" | "right";
 
-const KEY = "atlas:spaces:dock";
+// Renamed key: the setting used to move the pages panel, which is a different
+// thing entirely — an old value would place the toolbar somewhere the user
+// never asked for.
+const KEY = "atlas:spaces:toolDock";
 
 export function readDock(): SpaceDock {
   try {

@@ -234,6 +234,13 @@ export const comms = {
     invoke<void>("comms_draft_update", { draftId, update }),
   draftAwareness: (draftId: string, state: string) =>
     invoke<void>("comms_draft_awareness", { draftId, state }),
+  /** Start a call. The server's join token never crosses the bridge — the
+   *  browser's call tab mints its own; this answers the call row only. */
+  startCall: (convId: string, mode: "audio" | "video", isPublic: boolean) =>
+    invoke<ChatCall>("comms_start_call", { convId, mode, public: isPublic }),
+  /** Save a call's transcript (CSV) to a user-picked path. */
+  saveTranscript: (callId: string, dest: string) =>
+    invoke<void>("comms_save_transcript", { callId, dest }),
   /** A call's recordings. URLs expire in ~60s, so this is asked at open time
    *  and never cached. */
   callRecordings: (callId: string) =>

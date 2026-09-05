@@ -3,7 +3,7 @@ import { persist } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
 import { createSelectors } from "@/lib/create-selectors";
 import { invoke } from "@tauri-apps/api/core";
-import { TAB_TYPES, type TabType } from "@/lib/constants";
+import { ORG_SCOPED_TYPES, TAB_TYPES, type TabType } from "@/lib/constants";
 import type { LayoutTemplate } from "../templates";
 
 export interface Tab {
@@ -787,8 +787,10 @@ export const useLayoutStore = createSelectors(
             // quitting in zen reopens the underlying layout).
             if (state.zen) return;
             // Persist every closable tab (welcome-chat is the recreated baseline).
+            // Org-scoped tabs are excluded: this file is keyed by project
+            // path, and the same project is often open in several orgs.
             const tabs = state.tabs
-              .filter((t) => t.closable)
+              .filter((t) => t.closable && !ORG_SCOPED_TYPES.has(t.type))
               .map((t) => ({
                 id: t.id,
                 type: t.type,
@@ -812,8 +814,10 @@ export const useLayoutStore = createSelectors(
           flushEditorState: async (projectPath) => {
             const state = useLayoutStore.getState();
             if (state.zen) return;
+            // Org-scoped tabs are excluded: this file is keyed by project
+            // path, and the same project is often open in several orgs.
             const tabs = state.tabs
-              .filter((t) => t.closable)
+              .filter((t) => t.closable && !ORG_SCOPED_TYPES.has(t.type))
               .map((t) => ({
                 id: t.id,
                 type: t.type,
@@ -880,6 +884,9 @@ export const useLayoutStore = createSelectors(
                   // Add the saved tabs into their columns.
                   for (const saved of data.tabs!) {
                     if (s.tabs.find((t) => t.id === saved.id)) continue;
+                    // Already-written files can still carry these; they point
+                    // at another org's conversation and must not come back.
+                    if (ORG_SCOPED_TYPES.has(saved.type as TabType)) continue;
                     let gid = saved.groupId ?? DEFAULT_GROUP;
                     if (!s.groupOrder.includes(gid)) gid = s.groupOrder[0];
                     s.tabs.push({
