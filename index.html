@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
     <title>Atlas</title>
+    <!-- CSP NOTE: this inline <style> is why `src-tauri/tauri.conf.json` sets
+         `dangerousDisableAssetCspModification: ["style-src"]`. In a bundled
+         build Tauri stamps every inline <style> with a nonce and appends that
+         nonce to `style-src`; once a nonce is present browsers IGNORE
+         'unsafe-inline', so every stylesheet created at runtime (CodeMirror's
+         style-mod, sonner, mermaid) is refused and editors render unstyled.
+         Dev never shows it because Vite serves this file and Tauri applies no
+         CSP there. Keep the exclusion; do not "clean it up". -->
     <style>
       /* html / body / #root are transparent so the NSVisualEffectView blur
          applied in `src-tauri/src/lib.rs` is visible during the brief

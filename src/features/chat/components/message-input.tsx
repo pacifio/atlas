@@ -1875,7 +1875,14 @@ export function MessageInput({
               double-layer composer). The send button lives INSIDE it. */}
           <div
             className={cn(
-              "relative m-1 rounded-xl border border-[var(--border-default)] bg-[var(--bg-base)]",
+              // `min-h-[44px]`: the send button is absolutely positioned 8px
+              // from the top at 28px tall, so it needs 36px of field to sit
+              // inside. CodeMirror's own min-height normally provides it —
+              // but if its theme fails to inject (see globals.css's
+              // `.atlas-chat-cm-host` block) the field collapses and the
+              // button hangs out over the footer. The floor makes the
+              // geometry hold even with no editor mounted at all.
+              "relative m-1 min-h-[44px] rounded-xl border border-[var(--border-default)] bg-[var(--bg-base)]",
               "transition-[border-color,box-shadow] duration-150",
               // Focus treatment at HALF strength: the full border-focus +
               // /20 accent ring read far too loud on the nested surface.

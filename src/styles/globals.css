@@ -147,6 +147,35 @@
 .atlas-chat-cm-host .cm-editor {
   border: none;
   background: transparent;
+  /* The composer is UI, not code. These three mirror the EditorView.theme in
+     `chat-input.tsx` ON PURPOSE as a belt-and-braces fallback: if CodeMirror's
+     runtime stylesheet injection ever fails again (the 2026-09 cause was the
+     Tauri CSP nonce blocking `style-src 'unsafe-inline'` in bundled builds —
+     see index.html), the composer falls back to CM's defaults: monospace,
+     ~2px inset, and a ~28px field that the 28px send button — absolutely
+     positioned 8px from the top — hangs out the bottom of. Structure must not
+     depend on an injection that can fail, so it lives here too. Unlayered, so
+     it also beats the `@layer base` .cm-editor rules that dress the CODE
+     editor in JetBrains Mono. Keep in step with chat-input.tsx. */
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.atlas-chat-cm-host .cm-scroller {
+  font-family: inherit;
+  line-height: inherit;
+  /* One line = 12 + 20 + 12. The send button's 8px inset + 28px box needs 36
+     of those 44 to sit inside the field. */
+  min-height: 44px;
+}
+.atlas-chat-cm-host .cm-content {
+  padding: 12px 16px;
+  font-family: inherit;
 }
 .atlas-chat-cm-host .cm-gutters {
   display: none;
@@ -418,16 +447,14 @@
     contain: layout style paint;
   }
 
-  /* CodeMirror — authoritative color overrides for production builds.
+  /* CodeMirror — fallback color overrides for production builds.
      `EditorView.theme(...)` injects styles via @codemirror/view's StyleModule
-     at runtime, which works reliably in `vite dev` (single instance, served
-     unbundled) but loses the race in `vite build` once Rollup splits the
-     lazy-loaded lang packages into separate chunks: lang chunks transitively
-     import @codemirror/view, and even with `resolve.dedupe` Tauri's WKWebView
-     can mount the theme stylesheet against a different `StyleModule` than
-     the EditorView constructor uses. Net effect: the theme is silently a
-     no-op, text inherits CodeMirror's defaults (often invisible on AMOLED
-     black) while gutters render with their base styles.
+     at runtime by appending a <style> element. In bundled builds that
+     injection has been blocked before by the Tauri CSP (a nonce on
+     index.html's inline <style> disables `style-src 'unsafe-inline'`; fixed
+     via `dangerousDisableAssetCspModification` in tauri.conf.json, see
+     index.html). When it fails, the theme is silently a no-op and text
+     inherits CodeMirror's defaults (often invisible on AMOLED black).
 
      These rules sit at the same specificity as the runtime injection so they
      always win when the runtime fails, and harmlessly co-exist when it
