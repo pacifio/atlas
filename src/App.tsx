@@ -2,6 +2,7 @@ import { startTransition, useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AppLayout } from "@/features/layout/components/app-layout";
 import { AppContextMenu } from "@/components/app-context-menu";
+import { TooltipProvider } from "@/ui/tooltip";
 import { CommandPalette } from "@/components/command-palette";
 import { NewTabPalette } from "@/components/new-tab-palette";
 import { LayoutSwitcher } from "@/features/layout/components/layout-switcher";
@@ -64,6 +65,8 @@ import { UpdateAvailableModal } from "@/features/updater/components/update-avail
 import { LoadingOrganisationOverlay } from "@/features/organisations/components/loading-organisation-overlay";
 import { StopAgentsDialog } from "@/features/workspaces/components/stop-agents-dialog";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
+import { comms, listenComms, type CommsEnvelope } from "@/features/comms/lib/comms-api";
+import { commsActions, pruneTyping } from "@/features/comms/stores/comms-store";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
 import {
   updater,
@@ -80,6 +83,7 @@ import {
   listenAuthSignedOut,
 } from "@/features/auth/lib/auth-api";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
+import { useMembersStore } from "@/features/organisations/stores/members-store";
 import { ConnectDialog } from "@/features/auth/components/connect-dialog";
 import { clampScale, SCALE_STEP, DEFAULT_SCALE } from "@/features/settings/lib/ui-scale";
 import { useModelsStore } from "@/features/settings/stores/models-store";
@@ -223,6 +227,89 @@ export function App() {
     };
   }, []);
 
+  // Boot reconciliation of the ACTIVE org. Rust's stored value is seeded from
+  // the web and historically fell back to the account's *first* organisation,
+  // while the desktop's real choice lives in the local org store and is only
+  // pushed on an explicit switch. Push it once at boot too, so the auth
+  // snapshot — and everything keyed off it: the chat socket's target and the
+  // gateway `atlas-org` billing header — follows the org actually on screen
+  // rather than whichever one the server listed first.
+  const orgReconciledRef = useRef(false);
+  const bootAuthStatus = useAuthStore((s) => s.snapshot.status);
+  const bootLocalActiveOrg = useOrgStore.use.activeOrganisationId();
+  const bootOrganisations = useOrgStore.use.organisations();
+  useEffect(() => {
+    if (orgReconciledRef.current) return;
+    if (bootAuthStatus !== "signed-in" || !bootLocalActiveOrg) return;
+    const active = bootOrganisations.find((o) => o.id === bootLocalActiveOrg);
+    if (!active) return;
+    orgReconciledRef.current = true;
+    void invoke("auth_set_active_org", { orgId: active.remoteId ?? null }).catch((e) => {
+      console.warn("boot org reconciliation failed:", e);
+    });
+  }, [bootAuthStatus, bootLocalActiveOrg, bootOrganisations]);
+
+  // Team chat: the renderer is a projection of Rust's chat state. The socket
+  // lives in Rust for the app's lifetime (it is also the notification
+  // transport), so this listener runs at app scope rather than with the panel —
+  // a panel-scoped one would mean "panel closed, no notifications".
+  useEffect(() => {
+    // rAF-coalesced, the agent-delta batcher's shape: a burst of socket frames
+    // (a backfill, a reaction flood, a presence storm) used to be one zustand
+    // `set` — and one React commit — PER FRAME. Buffer and drain once per
+    // animation frame; React 18 batches every `set` inside the synchronous
+    // drain into a single commit. The timeout backstop drains while the
+    // window is hidden, where rAF never fires (same trap as the delta path).
+    let buffer: CommsEnvelope[] = [];
+    let scheduled = 0;
+    let backstop = 0;
+    const drain = () => {
+      scheduled = 0;
+      if (backstop) {
+        window.clearTimeout(backstop);
+        backstop = 0;
+      }
+      const batch = buffer;
+      buffer = [];
+      const apply = commsActions().applyEnvelope;
+      for (const envelope of batch) apply(envelope);
+    };
+    const off = listenComms((envelope) => {
+      buffer.push(envelope);
+      if (!scheduled) {
+        scheduled = window.requestAnimationFrame(drain);
+        backstop = window.setTimeout(drain, 120);
+      }
+    });
+    // Subscribe FIRST, then ask Rust to re-announce. Tauri events are not
+    // buffered and the socket opens seconds after launch — possibly before this
+    // component mounts — so a `resync` emitted into a void was leaving the panel
+    // empty until an org switch happened to fire another one.
+    void off.then(() => comms.ready()).catch(() => {});
+    // There is no "stopped typing" frame, so hints are aged out on a timer.
+    const prune = window.setInterval(pruneTyping, 2_000);
+    return () => {
+      void off.then((fn) => fn());
+      window.clearInterval(prune);
+      if (scheduled) window.cancelAnimationFrame(scheduled);
+      if (backstop) window.clearTimeout(backstop);
+    };
+  }, []);
+
+  // Warm the member roster at APP scope, so the chat panel's first paint has
+  // names — the panel used to be the only fetcher, which meant a boot with the
+  // panel closed guaranteed an "Unknown"-titled DM list on first open. Guarded
+  // AND keyed on the auth transition (the members-modal pattern): the org id
+  // is persisted locally and ready long before the credential is.
+  const bootRemoteOrgId =
+    bootOrganisations.find((o) => o.id === bootLocalActiveOrg)?.remoteId ?? null;
+  const bootSignedIn = bootAuthStatus === "signed-in";
+  useEffect(() => {
+    if (bootRemoteOrgId && bootSignedIn) {
+      void useMembersStore.getState().actions.load(bootRemoteOrgId);
+    }
+  }, [bootRemoteOrgId, bootSignedIn]);
+
   // NOTE: we intentionally do NOT wipe localStorage on boot anymore. Several
   // stores legitimately persist there via zustand `persist` — the workspace
   // "Chats" list (`atlas-recent-chats`), layout prefs (`atlas-layout-prefs`),
@@ -336,6 +423,7 @@ export function App() {
   const {
     toggleLeftPanel,
     toggleRightPanel,
+    toggleRightChatPanel,
     toggleBottomPanel,
     toggleChatSidebar,
     toggleTabBar,
@@ -1245,6 +1333,13 @@ export function App() {
       action: toggleRightPanel,
     },
     {
+      // ⌘⇧C — team chat. Shares the right slot with source control: pressing
+      // this while source control is open swaps the occupant rather than
+      // opening a second panel, and pressing it again closes the slot.
+      combo: { key: "c", meta: true, shift: true },
+      action: toggleRightChatPanel,
+    },
+    {
       combo: { key: "j", meta: true },
       action: toggleTerminal,
     },
@@ -1424,7 +1519,10 @@ export function App() {
   ]);
 
   return (
-    <>
+    // One provider at the root so every tooltip in the app shares a delay and
+    // a SKIP group: hovering along a facepile shows each name instantly after
+    // the first, instead of re-waiting per avatar.
+    <TooltipProvider>
       <AppContextMenu>
         <div className="h-screen w-screen" onContextMenu={(e) => e.preventDefault()}>
           <AppLayout />
@@ -1458,6 +1556,6 @@ export function App() {
           },
         }}
       />
-    </>
+    </TooltipProvider>
   );
 }

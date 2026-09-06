@@ -29,6 +29,12 @@ pub struct TerminalOutput {
     pub data: Vec<u8>,
 }
 
+impl Default for TerminalManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TerminalManager {
     pub fn new() -> Self {
         Self {
@@ -145,7 +151,7 @@ impl TerminalManager {
         let session = self
             .sessions
             .get(id)
-            .ok_or_else(|| anyhow::anyhow!("Terminal session not found: {}", id))?;
+            .ok_or_else(|| anyhow::anyhow!("Terminal session not found: {id}"))?;
         let mut writer = session.writer.lock().unwrap();
         writer.write_all(data)?;
         writer.flush()?;
@@ -156,7 +162,7 @@ impl TerminalManager {
         let session = self
             .sessions
             .get(id)
-            .ok_or_else(|| anyhow::anyhow!("Terminal session not found: {}", id))?;
+            .ok_or_else(|| anyhow::anyhow!("Terminal session not found: {id}"))?;
         let master = session
             .master
             .lock()
@@ -177,7 +183,7 @@ impl TerminalManager {
         let session = self
             .sessions
             .get(id)
-            .ok_or_else(|| anyhow::anyhow!("Terminal session not found: {}", id))?;
+            .ok_or_else(|| anyhow::anyhow!("Terminal session not found: {id}"))?;
 
         #[cfg(unix)]
         {
@@ -197,7 +203,7 @@ impl TerminalManager {
             if error.raw_os_error() == Some(libc::ESRCH) {
                 return Ok(false);
             }
-            return Err(error.into());
+            Err(error.into())
         }
 
         #[cfg(not(unix))]
@@ -305,7 +311,7 @@ pub fn cwd_of_pid(pid: u32) -> Option<String> {
             .ok()?;
         let s = String::from_utf8_lossy(&out.stdout);
         s.lines()
-            .find_map(|l| l.strip_prefix('n').map(|p| p.to_string()))
+            .find_map(|l| l.strip_prefix('n').map(std::string::ToString::to_string))
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {

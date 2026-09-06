@@ -45,7 +45,7 @@ fn derive_display_name(repo_dir: &Path, dir_name: &str) -> String {
             // Normalise `git@host:owner/repo.git` and `https://host/owner/repo.git`
             // down to `owner/repo`.
             let tail = url
-                .rsplit(|c| c == '/' || c == ':')
+                .rsplit(['/', ':'])
                 .take(2)
                 .collect::<Vec<_>>();
             if tail.len() == 2 {
@@ -80,10 +80,10 @@ pub async fn search_github(query: String) -> Result<Vec<GithubRepo>, String> {
         .unwrap_or_default();
 
     let resp = client.get(&url).send().await
-        .map_err(|e| format!("GitHub API request failed: {}", e))?;
+        .map_err(|e| format!("GitHub API request failed: {e}"))?;
 
     let json: serde_json::Value = resp.json().await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
 
     let items = json.get("items").and_then(|v| v.as_array()).cloned().unwrap_or_default();
 
@@ -95,13 +95,50 @@ pub async fn search_github(query: String) -> Result<Vec<GithubRepo>, String> {
             html_url: item.get("html_url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             clone_url: item.get("clone_url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             language: item.get("language").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            stars: item.get("stargazers_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-            forks: item.get("forks_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            stars: item.get("stargazers_count").and_then(serde_json::Value::as_u64).unwrap_or(0) as u32,
+            forks: item.get("forks_count").and_then(serde_json::Value::as_u64).unwrap_or(0) as u32,
             updated_at: item.get("updated_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         }
     }).collect();
 
     Ok(repos)
+}
+
+/// A single path/URL segment safe to hand to git and to `Path::join`:
+/// non-empty, no leading `-` (git would parse it as a flag), and only
+/// `[A-Za-z0-9._-]` (no separators, no `..` — the `.` rule below).
+/// Mirrors `skills.rs::is_safe_gh_segment`; duplicated because the two
+/// modules deliberately do not depend on each other.
+fn safe_segment(s: &str) -> bool {
+    !s.is_empty()
+        && s != "."
+        && s != ".."
+        && !s.starts_with('-')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// Parse and re-derive the ONLY clone URL shape this command accepts:
+/// `https://github.com/<owner>/<repo>[.git]`. The URL that reaches git is
+/// reconstructed from the validated parts, never the caller's string —
+/// `clone_url` used to be passed through verbatim with no `--` terminator,
+/// which made `--upload-pack=<cmd>` and the `ext::` transport remote code
+/// execution from the renderer.
+fn parse_github_https(clone_url: &str) -> Result<(String, String), String> {
+    let rest = clone_url
+        .trim()
+        .strip_prefix("https://github.com/")
+        .ok_or_else(|| "only https://github.com/<owner>/<repo> URLs can be cloned".to_string())?;
+    let mut parts = rest.trim_end_matches('/').splitn(2, '/');
+    let owner = parts.next().unwrap_or_default();
+    let repo = parts
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(".git");
+    if !safe_segment(owner) || !safe_segment(repo) || repo.contains('/') {
+        return Err("that does not look like a GitHub repository URL".to_string());
+    }
+    Ok((owner.to_string(), repo.to_string()))
 }
 
 #[tauri::command]
@@ -110,20 +147,36 @@ pub async fn clone_github_repo(
     clone_url: String,
     repo_name: String,
 ) -> Result<String, String> {
+    let (owner, repo) = parse_github_https(&clone_url)?;
+    // `repo_name` becomes a path segment under .atlas/repos — hold it to the
+    // same rule so it cannot climb out (`../../…` was a renderer-directed
+    // write location before this).
+    if !safe_segment(&repo_name) {
+        return Err("invalid repository name".to_string());
+    }
+
     let repos_dir = Path::new(&project_path).join(".atlas").join("repos");
     fs::create_dir_all(&repos_dir).map_err(|e| e.to_string())?;
 
     let dest = repos_dir.join(&repo_name);
     if dest.exists() {
-        return Err(format!("Repository '{}' already cloned", repo_name));
+        return Err(format!("Repository '{repo_name}' already cloned"));
     }
 
     let dest_str = dest.to_string_lossy().to_string();
     tokio::task::spawn_blocking(move || {
+        let url = format!("https://github.com/{owner}/{repo}.git");
         let output = std::process::Command::new("git")
-            .args(["clone", "--depth", "1", &clone_url, &dest_str])
+            // `--` so nothing after it can ever parse as a flag, and no
+            // terminal prompt — an auth failure fails fast instead of
+            // wedging a hidden child process.
+            .args(["clone", "--depth", "1", "--no-tags", "--"])
+            .arg(&url)
+            .arg(&dest_str)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_LFS_SKIP_SMUDGE", "1")
             .output()
-            .map_err(|e| format!("Git clone failed: {}", e))?;
+            .map_err(|e| format!("Git clone failed: {e}"))?;
 
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).to_string());
@@ -175,6 +228,9 @@ pub async fn read_repo_readme(
     project_path: String,
     repo_name: String,
 ) -> Result<String, String> {
+    if !safe_segment(&repo_name) {
+        return Err("invalid repository name".to_string());
+    }
     tokio::task::spawn_blocking(move || {
         let repo_dir = Path::new(&project_path)
             .join(".atlas")
@@ -204,6 +260,11 @@ pub async fn delete_cloned_repo(
     project_path: String,
     repo_name: String,
 ) -> Result<(), String> {
+    // `remove_dir_all` steered by the renderer: the name MUST be a plain
+    // segment or this deletes wherever `../..` points.
+    if !safe_segment(&repo_name) {
+        return Err("invalid repository name".to_string());
+    }
     tokio::task::spawn_blocking(move || {
         let repo_dir = Path::new(&project_path)
             .join(".atlas")
@@ -220,4 +281,33 @@ pub async fn delete_cloned_repo(
 
 fn urlencoded(s: &str) -> String {
     s.replace(' ', "+").replace('&', "%26").replace('=', "%3D").replace('?', "%3F")
+}
+
+#[cfg(test)]
+mod clone_guard_tests {
+    use super::*;
+
+    #[test]
+    fn only_github_https_urls_parse() {
+        assert!(parse_github_https("https://github.com/pacifio/atlas").is_ok());
+        assert!(parse_github_https("https://github.com/pacifio/atlas.git").is_ok());
+        // The RCE shapes: flag injection and shell transports.
+        assert!(parse_github_https("--upload-pack=touch /tmp/pwn").is_err());
+        assert!(parse_github_https("ext::sh -c 'touch /tmp/pwn'").is_err());
+        assert!(parse_github_https("file:///etc").is_err());
+        assert!(parse_github_https("https://github.com/-flag/repo").is_err());
+        assert!(parse_github_https("https://github.com/a/b/c").is_err());
+        assert!(parse_github_https("https://evil.com/a/b").is_err());
+    }
+
+    #[test]
+    fn repo_name_cannot_climb() {
+        assert!(safe_segment("atlas"));
+        assert!(safe_segment("my.repo-2_x"));
+        assert!(!safe_segment(".."));
+        assert!(!safe_segment("../../../Users"));
+        assert!(!safe_segment("a/b"));
+        assert!(!safe_segment("-rf"));
+        assert!(!safe_segment(""));
+    }
 }

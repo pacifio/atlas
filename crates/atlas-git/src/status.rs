@@ -54,7 +54,7 @@ pub fn parse(bytes: &[u8]) -> StatusV2 {
             // `2 XY sub mH mI mW hH hI Xscore path` NUL origPath
             Some('2') => {
                 if let Some((xy, sub, path)) = split_fields(tok, 9) {
-                    let orig = tokens.next().map(|s| s.to_string());
+                    let orig = tokens.next().map(std::string::ToString::to_string);
                     out.entries.push(entry(path, orig, xy, sub, None, false));
                 }
             }

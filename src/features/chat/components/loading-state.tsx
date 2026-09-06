@@ -60,11 +60,20 @@ function useElapsed() {
   useEffect(() => {
     const start = performance.now();
     const paint = () => {
+      // A backgrounded window with a running agent was repainting this label
+      // 10×/s forever; elapsed time is derived from `start` at paint time, so
+      // skipping ticks while hidden loses nothing — the next visible paint is
+      // exact.
+      if (document.visibilityState !== "visible") return;
       if (ref.current) ref.current.textContent = format(performance.now() - start);
     };
     paint();
     const id = window.setInterval(paint, 100);
-    return () => window.clearInterval(id);
+    document.addEventListener("visibilitychange", paint);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", paint);
+    };
   }, []);
   return ref;
 }

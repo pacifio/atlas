@@ -17,14 +17,6 @@ pub fn telemetry_config(client: State<'_, Arc<TelemetryClient>>) -> TelemetryCon
     client.config()
 }
 
-/// Flip the live opt-in gate (mirrors the persisted `share_telemetry` setting,
-/// which the frontend saves via `save_app_state`). Records a single
-/// opt-in/opt-out event at the boundary.
-#[tauri::command]
-pub fn telemetry_set_enabled(enabled: bool, client: State<'_, Arc<TelemetryClient>>) {
-    client.set_enabled(enabled);
-}
-
 /// Attribute subsequent events to an Organisation.
 ///
 /// Takes **only an id**: everything else telemetry is allowed to know — whether

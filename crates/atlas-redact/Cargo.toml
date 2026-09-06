@@ -13,3 +13,8 @@ regex = "1"
 # transcripts are JSON-shaped and a redactor that mangles the envelope makes the
 # transcript unreadable.
 serde_json = "1"
+
+# The workspace lint table is only real for members that opt in —
+# without this stanza it is dead configuration (#60).
+[lints]
+workspace = true

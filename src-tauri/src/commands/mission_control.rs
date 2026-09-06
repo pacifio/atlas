@@ -272,6 +272,7 @@ pub async fn mission_control_export_markdown(
 
 #[tauri::command]
 pub async fn mission_control_write_file(target_path: String, bytes: Vec<u8>) -> Result<(), String> {
+    crate::commands::save_guard::guard_save_dest(&target_path)?;
     tokio::task::spawn_blocking(move || std::fs::write(&target_path, bytes).map_err(|e| e.to_string()))
         .await
         .map_err(|e| e.to_string())?

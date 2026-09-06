@@ -6,8 +6,10 @@ graph** engine in this crate. Covers the on-disk layout, the legacy migration,
 the feature flags, the retained rollback fallbacks, and the **manual** 3-agent
 runtime verification.
 
-Background: `plans/atlas-cersei-rag-replan.md` (full build plan) and
-`crates/atlas-cersei/ARCHITECTURE.md` §6e (the frozen `search_memory` seam).
+Background: the originating plan (`plans/atlas-cersei-rag-replan.md`) and the
+frozen-seam spec (`crates/atlas-cersei/ARCHITECTURE.md` §6e) were deleted with
+the Cersei path (#54); the frozen seam is restated just below, and the native
+consumer is now `atlas-native-agent`'s `search_memory` dynamic tool.
 
 > **Frozen seam — unchanged.** `MemDoc { title, source, text }` +
 > `MemorySearchFn(cwd, query, limit) -> Vec<MemDoc>` are untouched. All three

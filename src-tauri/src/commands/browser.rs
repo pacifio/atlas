@@ -132,13 +132,25 @@ fn browser_profile_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 /// Normalize a user-entered URL the same way the reader panel does: bare hosts
 /// get an `https://` scheme so `youtube.com` works without typing the protocol.
-fn normalize_url(input: &str) -> String {
+/// Browser address input → a URL, http(s)-only.
+///
+/// Anything already carrying a SCHEME that is not http(s) is refused rather
+/// than prefixed: the old version turned `file:///etc/passwd` into
+/// `https://file:///etc/passwd` — unloadable, so "safe" by accident rather
+/// than by policy, and one URL-parser quirk away from not being. Bare input
+/// ("example.com") still gets https:// like every address bar.
+fn normalize_url(input: &str) -> Result<String, String> {
     let trimmed = input.trim();
     if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        trimmed.to_string()
-    } else {
-        format!("https://{trimmed}")
+        return Ok(trimmed.to_string());
     }
+    // A scheme separator anywhere before the first slash means the caller
+    // named a non-http scheme (file:, javascript:, data:, ftp:, …).
+    let head = trimmed.split('/').next().unwrap_or(trimmed);
+    if head.contains(':') && !head.split(':').nth(1).is_some_and(|p| p.parse::<u16>().is_ok()) {
+        return Err("only http(s) URLs can be opened".to_string());
+    }
+    Ok(format!("https://{trimmed}"))
 }
 
 fn embed_label(id: &str) -> String {
@@ -180,7 +192,7 @@ fn emit_nav(
 /// Open `url` in a new native browser window. Returns the window label.
 #[tauri::command]
 pub fn browser_open_window(app: tauri::AppHandle, url: String) -> Result<String, String> {
-    let url = normalize_url(&url);
+    let url = normalize_url(&url)?;
     let parsed = url.parse().map_err(|e| format!("invalid URL {url:?}: {e}"))?;
 
     let profile = browser_profile_dir(&app)?;
@@ -219,7 +231,7 @@ pub fn browser_embed_create(
     if !rect.is_valid() {
         return Err(format!("invalid embed bounds: {rect:?}"));
     }
-    let url = normalize_url(&url);
+    let url = normalize_url(&url)?;
     let parsed: url::Url = url.parse().map_err(|e| format!("invalid URL {url:?}: {e}"))?;
     let label = embed_label(&id);
 
@@ -242,10 +254,13 @@ pub fn browser_embed_create(
     let nav_started = state.nav.clone();
     let nav_finished = state.nav.clone();
     let app_started = app.clone();
-    let app_finished = app.clone();
+    let app_finished = app;
     let id_started = id.clone();
-    let id_finished = id.clone();
+    let id_finished = id;
 
+    // `WebviewBuilder` (unlike `WebviewWindowBuilder`) has no `.visible()`
+    // knob — the child webview is created shown, then hidden immediately
+    // below to match the "initially hidden" contract callers rely on.
     let builder = tauri::webview::WebviewBuilder::new(&label, WebviewUrl::External(parsed))
         .data_directory(profile)
         .on_page_load(move |webview, payload| {
@@ -262,7 +277,7 @@ pub fn browser_embed_create(
                     let app2 = app_finished.clone();
                     let nav2 = nav_finished.clone();
                     let id2 = id_finished.clone();
-                    let url2 = url.clone();
+                    let url2 = url;
                     let _ = webview.eval_with_callback("document.title", move |raw| {
                         let title = raw.trim().trim_matches('"').to_string();
                         let title = if title.is_empty() { None } else { Some(title) };
@@ -287,7 +302,7 @@ pub fn browser_embed_create(
 /// Navigate the embed to a new URL.
 #[tauri::command]
 pub fn browser_embed_navigate(app: tauri::AppHandle, id: String, url: String) -> Result<(), String> {
-    let url = normalize_url(&url);
+    let url = normalize_url(&url)?;
     let parsed: url::Url = url.parse().map_err(|e| format!("invalid URL {url:?}: {e}"))?;
     let webview = app
         .get_webview(&embed_label(&id))
@@ -369,4 +384,27 @@ pub fn browser_embed_destroy(
         webview.close().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod normalize_url_tests {
+    use super::normalize_url;
+
+    #[test]
+    fn bare_hosts_get_https_and_http_passes() {
+        assert_eq!(normalize_url("example.com").unwrap(), "https://example.com");
+        assert_eq!(normalize_url("  https://a.dev/x  ").unwrap(), "https://a.dev/x");
+        assert_eq!(normalize_url("http://a.dev").unwrap(), "http://a.dev");
+        // host:port is an address, not a scheme.
+        assert_eq!(normalize_url("localhost:3000").unwrap(), "https://localhost:3000");
+    }
+
+    #[test]
+    fn non_http_schemes_are_refused_not_laundered() {
+        // The old version turned these into https://file:///… — unloadable,
+        // so safe by accident. Refusal is the policy now.
+        for bad in ["file:///etc/passwd", "javascript:alert(1)", "data:text/html,x", "ftp://x"] {
+            assert!(normalize_url(bad).is_err(), "{bad} must be refused");
+        }
+    }
 }

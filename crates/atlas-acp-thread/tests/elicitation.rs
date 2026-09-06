@@ -268,3 +268,41 @@ async fn an_unknown_elicitation_mode_is_rejected() {
 
     assert!(store.request_elicitation(request).is_err());
 }
+
+/// Regression, ATL-218 finding 2. `entry_id_for_url_elicitation` resolves an
+/// agent-supplied `elicitationId` by reverse-scanning, so a duplicate meant
+/// last-wins: the older entry could never be completed, stayed `Accepted`
+/// (which `clear_resolved` deliberately keeps), and left a stale row on screen
+/// for the life of the session. The schema documents the field as unique;
+/// nothing enforced it.
+#[tokio::test]
+async fn a_duplicate_url_elicitation_id_is_refused_while_the_first_is_outstanding() {
+    let (mut store, _events) = new_store();
+
+    let (_first, _waiter) = store
+        .request_elicitation(url_request("s1", "e1", "https://example.com/device"))
+        .unwrap();
+
+    let duplicate = store.request_elicitation(url_request("s1", "e1", "https://example.com/other"));
+
+    assert!(duplicate.is_err(), "a second live elicitation took the same id");
+    assert_eq!(store.elicitations().len(), 1);
+}
+
+/// The scope of that refusal matters: a device-code login legitimately retries
+/// with the same id after the first attempt was cancelled, and refusing THAT
+/// would break the retry rather than fix anything.
+#[tokio::test]
+async fn a_url_elicitation_id_can_be_reused_once_the_first_is_resolved() {
+    let (mut store, _events) = new_store();
+
+    let (first, waiter) = store
+        .request_elicitation(url_request("s1", "e1", "https://example.com/device"))
+        .unwrap();
+    store.cancel_elicitation(&first);
+    let _ = waiter.await;
+
+    assert!(store
+        .request_elicitation(url_request("s1", "e1", "https://example.com/device"))
+        .is_ok());
+}

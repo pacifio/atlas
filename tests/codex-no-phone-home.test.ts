@@ -180,3 +180,33 @@ describe("the ChatGPT analytics client is gone", () => {
     expect(manifest).not.toMatch(/^\s*reqwest/m);
   });
 });
+
+describe("the Sentry feedback uploader is gone", () => {
+  it("has no Sentry DSN", () => {
+    // The fourth phone-home path (#63): `codex-feedback` shipped a hardcoded
+    // ingest DSN and built a client around it inside `upload_feedback` — a
+    // path the in-process app-server would honour on a `feedback/upload`
+    // request. The key is split so this file is not itself a hit.
+    const dsn = ["ae32ed50620d7a", "7792c1ce5df38b3e3e"].join("");
+    expect(filesMatching(new RegExp(dsn))).toEqual([]);
+    expect(filesMatching(/o33249\.ingest/)).toEqual([]);
+  });
+
+  it("parses no DSN and builds no Sentry client", () => {
+    expect(codeMatching(/Dsn::from_str|sentry::init/)).toEqual([]);
+  });
+});
+
+describe("no telemetry ingest marker anywhere in vendored code", () => {
+  // The removals above are point checks against sites already known. The
+  // fourth path (#63) shipped precisely because only known sites were
+  // asserted: the guard could not fail on one it had never heard of. This is
+  // the structural half — any ingest-service marker in vendored CODE fails
+  // here (comments explaining a removal don't count), so a fifth site fails
+  // rather than passes.
+  it("matches no known telemetry vendor", () => {
+    const markers =
+      /sentry\.io|statsig|posthog\.com|segment\.io|datadoghq|bugsnag|honeycomb\.io|o33249/i;
+    expect(codeMatching(markers)).toEqual([]);
+  });
+});

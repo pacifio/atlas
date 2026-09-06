@@ -25,18 +25,86 @@ pub struct Run {
     pub text: String,
 }
 
-/// Group an assistant entry's chunks into runs.
-pub fn runs(chunks: &[AssistantMessageChunk]) -> Vec<Run> {
-    let mut runs: Vec<Run> = Vec::new();
-    for chunk in chunks {
+/// Where one run sits in an entry's chunk list.
+///
+/// Deliberately carries no text. A streamed assistant message arrives as one
+/// `EntryUpdated` per chunk, so anything that rebuilds the whole text to answer
+/// "what is new" costs the entire message on every token of it — which is what
+/// made assistant streaming quadratic in message length (ATL-223). A caller
+/// that only needs the new part asks [`run_span_len`] and [`run_span_tail`],
+/// which cost the tail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunSpan {
+    pub is_thought: bool,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Group an assistant entry's chunks into runs, without touching their text.
+pub fn run_spans(chunks: &[AssistantMessageChunk]) -> Vec<RunSpan> {
+    let mut spans: Vec<RunSpan> = Vec::new();
+    for (ix, chunk) in chunks.iter().enumerate() {
         let is_thought = chunk.is_thought();
-        let text = block_text(chunk.block());
-        match runs.last_mut() {
-            Some(run) if run.is_thought == is_thought => run.text.push_str(&text),
-            _ => runs.push(Run { is_thought, text }),
+        match spans.last_mut() {
+            Some(span) if span.is_thought == is_thought => span.end = ix + 1,
+            _ => spans.push(RunSpan {
+                is_thought,
+                start: ix,
+                end: ix + 1,
+            }),
         }
     }
-    runs
+    spans
+}
+
+/// The byte length of a span's text, without building it.
+pub fn run_span_len(chunks: &[AssistantMessageChunk], span: &RunSpan) -> usize {
+    chunks[span.start..span.end]
+        .iter()
+        .map(|chunk| block_str(chunk.block()).len())
+        .sum()
+}
+
+/// A span's text from `from` bytes on.
+///
+/// `None` when `from` is past the end — the text shrank, which the wire has no
+/// way to express — or when it does not land on a character boundary. Both are
+/// "do not stream this", not "nothing changed".
+///
+/// Reading the tail against a byte offset instead of comparing strings is safe
+/// because a run's text only ever grows at its end: chunks are appended, and
+/// `ContentBlock::append` in `atlas-acp-thread` either pushes onto the existing
+/// text or replaces a block whose own rendering was the empty string.
+pub fn run_span_tail(
+    chunks: &[AssistantMessageChunk],
+    span: &RunSpan,
+    from: usize,
+) -> Option<String> {
+    let mut seen = 0usize;
+    let mut out = String::new();
+    for chunk in &chunks[span.start..span.end] {
+        let text = block_str(chunk.block());
+        let end = seen + text.len();
+        if end > from {
+            out.push_str(text.get(from.saturating_sub(seen)..)?);
+        }
+        seen = end;
+    }
+    (seen >= from).then_some(out)
+}
+
+/// Group an assistant entry's chunks into runs, text and all.
+///
+/// For the paths that need the whole thing — a snapshot, or a run being
+/// announced for the first time. Streaming updates go through [`run_spans`].
+pub fn runs(chunks: &[AssistantMessageChunk]) -> Vec<Run> {
+    run_spans(chunks)
+        .into_iter()
+        .map(|span| Run {
+            text: run_span_tail(chunks, &span, 0).unwrap_or_default(),
+            is_thought: span.is_thought,
+        })
+        .collect()
 }
 
 /// The text of a content block.
@@ -45,17 +113,33 @@ pub fn runs(chunks: &[AssistantMessageChunk]) -> Vec<Run> {
 /// to a file, and dropping the reference would make the transcript read as
 /// though it never did. Images have no text and contribute none.
 pub fn block_text(block: &ContentBlock) -> String {
+    block_str(block).to_string()
+}
+
+/// [`block_text`] without the copy. Every variant already owns its text, so a
+/// caller that only measures or slices it need not allocate.
+pub fn block_str(block: &ContentBlock) -> &str {
     match block {
-        ContentBlock::Empty => String::new(),
-        ContentBlock::Text(text) => text.clone(),
-        ContentBlock::EmbeddedResource { text, .. } => text.clone(),
-        ContentBlock::ResourceLink { resource_link } => resource_link.uri.clone(),
-        ContentBlock::Image { .. } => String::new(),
+        ContentBlock::Empty => "",
+        ContentBlock::Text(text) => text,
+        ContentBlock::EmbeddedResource { text, .. } => text,
+        ContentBlock::ResourceLink { resource_link } => &resource_link.uri,
+        ContentBlock::Image { .. } => "",
     }
 }
 
 /// A wire message carrying one assistant run.
-pub fn run_message(id: String, run: &Run, model: Option<String>) -> Message {
+///
+/// `timestamp` is passed in rather than minted here: the live stream is
+/// building a message that is being said now, but a snapshot is describing one
+/// that was said earlier, and a clock read at snapshot time reported every
+/// message in a past conversation as sent just now (ATL-221).
+pub fn run_message(
+    id: String,
+    run: &Run,
+    model: Option<String>,
+    timestamp: chrono::DateTime<chrono::Utc>,
+) -> Message {
     let (mode, content, thinking) = if run.is_thought {
         (MessageMode::Thinking, String::new(), run.text.clone())
     } else {
@@ -70,7 +154,7 @@ pub fn run_message(id: String, run: &Run, model: Option<String>) -> Message {
         tool_calls: Vec::new(),
         plan: None,
         model,
-        timestamp: chrono::Utc::now(),
+        timestamp,
     }
 }
 
@@ -78,7 +162,12 @@ pub fn run_message(id: String, run: &Run, model: Option<String>) -> Message {
 ///
 /// The wire nests tool calls inside a message, so each one gets a message of its
 /// own — the same shape the old stack produced (`new_assistant_tool`).
-pub fn tool_message(id: String, tool_call: ToolCall, model: Option<String>) -> Message {
+pub fn tool_message(
+    id: String,
+    tool_call: ToolCall,
+    model: Option<String>,
+    timestamp: chrono::DateTime<chrono::Utc>,
+) -> Message {
     Message {
         id,
         role: MessageRole::Assistant,
@@ -88,7 +177,7 @@ pub fn tool_message(id: String, tool_call: ToolCall, model: Option<String>) -> M
         tool_calls: vec![tool_call],
         plan: None,
         model,
-        timestamp: chrono::Utc::now(),
+        timestamp,
     }
 }
 
@@ -99,6 +188,19 @@ pub fn tool_message(id: String, tool_call: ToolCall, model: Option<String>) -> M
 /// name when it sent one; when it did not, this falls back to the display title
 /// and then the kind, which is what the old stack always did.
 pub fn tool_call(call: &ThreadToolCall, thread: &atlas_acp_thread::AcpThread) -> ToolCall {
+    let mut out = tool_call_meta(call);
+    out.result = tool_result(&call.content, thread);
+    out
+}
+
+/// Everything about a tool call except its flattened result.
+///
+/// Split out because the result is the only field whose cost grows with what a
+/// command printed, and the projector needs to know whether anything *else*
+/// changed before it can decide to ship only the result's tail (ATL-219).
+/// Every field here is bounded by the tool call itself, so building it per
+/// output chunk is cheap.
+pub fn tool_call_meta(call: &ThreadToolCall) -> ToolCall {
     let title = call.label.clone();
     let kind = tool_kind_token(call.kind).to_string();
     ToolCall {
@@ -106,7 +208,7 @@ pub fn tool_call(call: &ThreadToolCall, thread: &atlas_acp_thread::AcpThread) ->
         tool_name: call
             .tool_name
             .as_ref()
-            .map(|name| name.to_string())
+            .map(std::string::ToString::to_string)
             .unwrap_or_else(|| {
                 if title.is_empty() {
                     kind.clone()
@@ -118,7 +220,7 @@ pub fn tool_call(call: &ThreadToolCall, thread: &atlas_acp_thread::AcpThread) ->
         kind: Some(kind),
         status: tool_status(&call.status),
         arguments: call.raw_input.clone().unwrap_or(serde_json::Value::Null),
-        result: tool_result(&call.content, thread),
+        result: None,
         locations: call
             .locations
             .iter()
@@ -138,9 +240,8 @@ pub fn tool_call(call: &ThreadToolCall, thread: &atlas_acp_thread::AcpThread) ->
 /// Takes the whole thread because a terminal block carries only an id — that is
 /// all the protocol sends — and the output it names lives on the client side,
 /// growing after the block was announced. Both the delta stream and the
-/// snapshot resolve it the same way, because a snapshot that flattened
-/// terminals differently from the deltas applied on top of it is exactly the
-/// disagreement [`snapshot_messages`] exists to avoid.
+/// snapshot resolve it the same way, so a resumed transcript shows the same
+/// command output the live one did.
 pub fn tool_result(
     content: &[ToolCallContent],
     thread: &atlas_acp_thread::AcpThread,
@@ -168,6 +269,19 @@ pub fn tool_result(
         out.push_str(&piece);
     }
     (!out.is_empty()).then_some(out)
+}
+
+/// The one terminal a tool call's result is made entirely of, when it is.
+///
+/// The projector's incremental path is only sound when the whole flattened
+/// result IS one terminal's output: with a second block in `content`, growth is
+/// not confined to the end of the string, and a byte offset into the previous
+/// result names the wrong place.
+pub fn sole_terminal(content: &[ToolCallContent]) -> Option<&acp::TerminalId> {
+    match content {
+        [ToolCallContent::Terminal(id)] => Some(id),
+        _ => None,
+    }
 }
 
 /// The blocks the UI renders structurally rather than as text.
@@ -302,10 +416,19 @@ pub fn stop_reason_token(reason: acp::StopReason) -> String {
 /// Every entry in a thread, as the wire's message list.
 ///
 /// This is what `agents_snapshot` answers with, and it is deliberately built
-/// from the same functions the delta stream uses. A snapshot assembled any
-/// other way could disagree with the deltas that follow it — the frontend
-/// paints the snapshot and then applies deltas on top, so a disagreement shows
-/// up as a duplicated or missing message rather than as an error.
+/// from the same functions the delta stream uses — not because the two must
+/// agree field for field, but because a second flattening of the same entry is
+/// a second thing to keep correct. They already differ where it does not
+/// matter: the ids here are positional (`msg-{ix}`, `msg-{ix}-{run_ix}`) while
+/// the delta stream mints a uuid per message, and nothing consumes either. The
+/// frontend drops snapshot ids on the way in (`snapshot-message.ts`) and
+/// matches deltas by `tool_call.id`, never by `message_id`. Do NOT "fix" the id
+/// schemes to match each other; `tool_call.id` is the key that actually has to
+/// hold, and it is the one worth protecting.
+///
+/// What the two DO have to agree on is which entries produce a message at all —
+/// a run the stream announces and the snapshot skips is a bubble that vanishes
+/// on reload (ATL-224). Both skip empty runs.
 ///
 /// User messages DO appear here, unlike on the delta stream: a snapshot is the
 /// conversation, and one with the user's half missing is not one. The wire
@@ -319,6 +442,12 @@ pub fn snapshot_messages(
 
     let mut out = Vec::new();
     for (ix, entry) in thread.entries().iter().enumerate() {
+        // The time the thread learned of the entry, not the time this snapshot
+        // was taken. Reading the clock here made two snapshots of an unchanged
+        // conversation disagree, and collapsed every historical pause to zero
+        // (ATL-221). `Utc::now()` remains the fallback only for an entry with
+        // no recorded time, which the accessor's contract makes unreachable.
+        let at = thread.entry_created_at(ix).unwrap_or_else(chrono::Utc::now);
         match entry {
             AgentThreadEntry::UserMessage(message) => out.push(Message {
                 id: format!("msg-{ix}"),
@@ -329,9 +458,11 @@ pub fn snapshot_messages(
                 tool_calls: Vec::new(),
                 plan: None,
                 model: None,
-                timestamp: chrono::Utc::now(),
+                timestamp: at,
             }),
             AgentThreadEntry::AssistantMessage(message) => {
+                // `run_ix` counts over the UNFILTERED list, so skipping an
+                // empty run does not shift the ids of the ones after it.
                 for (run_ix, run) in runs(&message.chunks).iter().enumerate() {
                     if run.text.is_empty() {
                         continue;
@@ -340,6 +471,7 @@ pub fn snapshot_messages(
                         format!("msg-{ix}-{run_ix}"),
                         run,
                         model.map(str::to_string),
+                        at,
                     ));
                 }
             }
@@ -347,10 +479,16 @@ pub fn snapshot_messages(
                 format!("msg-{ix}"),
                 tool_call(call, thread),
                 model.map(str::to_string),
+                at,
             )),
             // Elicitations are their own UI, driven by `elicitation_requested`;
             // a compaction is a status, not conversation; a completed plan is
             // carried by the snapshot's `plan` field, not as a message.
+            //
+            // `CompletedPlan` has no constructor anywhere in the ported stack
+            // today, so this arm is unreachable rather than merely unused; it
+            // stays because the match must be exhaustive, and because the
+            // variant is the shape a compacted plan would arrive in.
             AgentThreadEntry::Elicitation(_)
             | AgentThreadEntry::CompletedPlan(_)
             | AgentThreadEntry::ContextCompaction(_) => {}

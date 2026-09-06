@@ -164,6 +164,31 @@ export const ATLAS_THEMES: AtlasTheme[] = [
     },
   },
   {
+    // Atom One Dark's blue-slate chrome + vivid selection blue — balanced, familiar.
+    id: "one-dark",
+    name: "One Dark",
+    description: "Deep blue-slate with Atom's cool blue accent — balanced, familiar.",
+    spec: {
+      base: "#0b0e14",
+      panel: "#11151c",
+      elevated: "#181d25",
+      overlay: "#21252b",
+      input: "#0e1117",
+      tabActive: "#1d232c",
+      textPrimary: "#abb2bf",
+      textSecondary: "#8b929f",
+      textTertiary: "#5c6370",
+      textGhost: "#252a33",
+      textMuted: "#4b5263",
+      borderDefault: "#282c34",
+      borderSubtle: "#1b2028",
+      borderStrong: "#3e4451",
+      accent: "#528bff",
+      accentHover: "#6fa0ff",
+      accentForeground: "#08111a",
+    },
+  },
+  {
     // Amber CRT phosphor glow — classic terminal nostalgia, dark and warm.
     id: "phosphor",
     name: "Phosphor",

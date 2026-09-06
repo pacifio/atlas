@@ -27,10 +27,71 @@ use atlas_acp_thread::{AcpThreadEvent, AgentConnection, AgentId};
 use atlas_agent_servers::ThreadEventSink;
 use atlas_native_agent::engine::config::{EngineHome, EngineProvider, EngineSettings};
 use atlas_native_agent::engine::connection::EngineConnection;
+use codex_sandboxing::landlock::CODEX_LINUX_SANDBOX_ARG0;
+use codex_test_binary_support::{
+    TestBinaryDispatchGuard, TestBinaryDispatchMode, configure_test_binary_dispatch,
+};
 use serde_json::json;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+// ---------------------------------------------------------------------------
+// This test binary doubles as the Linux sandbox helper.
+// ---------------------------------------------------------------------------
+//
+// On macOS the engine sandboxes a command with `/usr/bin/sandbox-exec`, which
+// is already on disk. Linux has no equivalent: `SandboxType::LinuxSeccomp`
+// re-execs a helper binary whose *arg0* is `codex-linux-sandbox`, and if the
+// embedder supplied no path for one the engine returns
+// `MissingLinuxSandboxExecutable` from the sandbox transform — before spawning
+// anything. The tool call fails, the turn ends normally, and the three tests
+// below that watch for a file on disk see nothing. That is exactly the CI
+// failure they showed: `EndTurn` instead of `Cancelled`, and a command that
+// "ran 0 times".
+//
+// Atlas ships macOS and has no arg0 dispatch, so the app has no helper to
+// offer (see `EngineSettings::linux_sandbox_exe`). The tests do: upstream's own
+// suites make the *test binary* the helper, and this is that same construction
+// — `vendor/codex/core/tests/suite/mod.rs`. The `#[ctor]` runs before any test
+// thread exists, which is what makes the `set_var`/PATH work inside it sound.
+// Re-entered under one of the helper identities it dispatches and never
+// returns; on the ordinary first entry it installs the arg0 aliases and hands
+// back a guard naming their paths.
+#[ctor::ctor]
+static TEST_BINARY_DISPATCH: Option<TestBinaryDispatchGuard> = {
+    configure_test_binary_dispatch("atlas-native-agent-tests", |exe_name, argv1| {
+        #[cfg(unix)]
+        if argv1 == Some(codex_exec_server::CODEX_ARG0_EXEC_HELPER_ARG1) {
+            return TestBinaryDispatchMode::DispatchArg0Only;
+        }
+        if argv1 == Some(codex_exec_server::CODEX_FS_HELPER_ARG1) {
+            return TestBinaryDispatchMode::DispatchArg0Only;
+        }
+        if exe_name == CODEX_LINUX_SANDBOX_ARG0 {
+            return TestBinaryDispatchMode::DispatchArg0Only;
+        }
+        TestBinaryDispatchMode::InstallAliases
+    })
+};
+
+/// The helper path the engine is handed on Linux, and nothing elsewhere.
+///
+/// The alias the guard installed is preferred over `current_exe()` because its
+/// basename is `codex-linux-sandbox`, which is what re-triggers arg0 dispatch
+/// on bubblewrap builds that cannot pass `--argv0`.
+#[cfg(target_os = "linux")]
+fn test_linux_sandbox_exe() -> Option<PathBuf> {
+    TEST_BINARY_DISPATCH
+        .as_ref()
+        .and_then(|guard| guard.paths().codex_linux_sandbox_exe.clone())
+        .or_else(|| std::env::current_exe().ok())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn test_linux_sandbox_exe() -> Option<PathBuf> {
+    None
+}
 
 /// The Responses SSE framing the engine parses: `event:` then `data:`.
 fn sse(events: Vec<serde_json::Value>) -> String {
@@ -70,6 +131,33 @@ fn assistant_turn(text: &str) -> String {
     ])
 }
 
+/// Like [`assistant_turn`], with a real token-usage block (#74).
+fn assistant_turn_with_usage(text: &str) -> String {
+    sse(vec![
+        json!({"type": "response.created", "response": {"id": "resp-u"}}),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "id": "msg-1",
+                "content": [{"type": "output_text", "text": text}]
+            }
+        }),
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp-u",
+                "usage": {
+                    "input_tokens": 100, "input_tokens_details": {"cached_tokens": 40},
+                    "output_tokens": 42, "output_tokens_details": null,
+                    "total_tokens": 142
+                }
+            }
+        }),
+    ])
+}
+
 struct Harness {
     _server: MockServer,
     _home: tempfile::TempDir,
@@ -95,20 +183,32 @@ impl Harness {
     /// The session table holds threads weakly, so a test that dropped its
     /// handle would silently stop receiving every update for that session.
     async fn open_thread(&self) -> acp::SessionId {
+        self.open_thread_in(PathBuf::from(".")).await
+    }
+
+    /// Open a thread rooted at a specific directory.
+    ///
+    /// A test whose command WRITES a file has to say where: the engine runs
+    /// tools under a workspace-write sandbox, so a path outside the session's
+    /// roots is denied — silently, as far as the protocol is concerned. On
+    /// macOS seatbelt a tempdir under `/tmp` slips through anyway; Linux
+    /// landlock does not, which is why those tests passed locally and failed
+    /// in CI with the command never having run.
+    async fn open_thread_in(&self, root: PathBuf) -> acp::SessionId {
         let thread = self
             .connection
             .clone()
-            .new_session(vec![PathBuf::from(".")])
+            .new_session(vec![root])
             .await
             .expect("the engine should start a thread");
         let id = thread
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .session_id()
             .clone();
         self.threads
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(thread);
         id
     }
@@ -116,7 +216,7 @@ impl Harness {
     /// The assistant text currently rendered in the newest thread.
     fn assistant_text(&self) -> String {
         let thread = self.thread();
-        let thread = thread.lock().unwrap_or_else(|p| p.into_inner());
+        let thread = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         thread
             .entries()
             .iter()
@@ -133,7 +233,7 @@ impl Harness {
     fn thread(&self) -> atlas_acp_thread::AcpThreadHandle {
         self.threads
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .last()
             .cloned()
             .expect("a thread must be open")
@@ -176,7 +276,7 @@ async fn harness_full(
     let key_var = "ATLAS_ENGINE_TEST_KEY";
     unsafe_set_var(key_var, "test-key");
 
-    let settings = tune(EngineSettings::new(
+    let mut settings = EngineSettings::new(
         EngineHome::at(home.path().join("engine")),
         EngineProvider::dev(
             "atlas-test",
@@ -185,7 +285,11 @@ async fn harness_full(
         ),
         "gpt-5-codex",
         home.path().to_path_buf(),
-    ));
+    );
+    // Production leaves this `None`. Without it every sandboxed command in this
+    // file is refused before it spawns on Linux — see the module header.
+    settings.linux_sandbox_exe = test_linux_sandbox_exe();
+    let settings = tune(settings);
 
     let (tx, events) = std::sync::mpsc::channel();
     let tx = Arc::new(std::sync::Mutex::new(tx));
@@ -196,7 +300,7 @@ async fn harness_full(
             while let Some(event) = thread_rx.recv().await {
                 if out
                     .lock()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .send(event)
                     .is_err()
                 {
@@ -284,6 +388,32 @@ async fn a_turn_completes_end_to_end_on_the_ported_engine() {
 }
 
 #[tokio::test]
+async fn token_usage_reaches_the_thread_the_app_reads() {
+    // #74. The engine emits `thread/tokenUsage/updated` after a completion,
+    // and everything downstream of the thread is already built: the
+    // TokenUsageUpdated event drives the projector's UsageUpdated delta,
+    // which is what the Timeline's token-consumption display and capture's
+    // record_usage consume. The sink ignoring the notification is why the
+    // native agent — the one agent that reports a REAL input/output split —
+    // showed no consumption at all.
+    let h = harness(assistant_turn_with_usage("ok")).await;
+    let session_id = h.open_thread().await;
+
+    h.connection
+        .prompt(acp::PromptRequest::new(session_id, text("count me")))
+        .await
+        .expect("the turn should complete");
+
+    let thread = h.thread();
+    let locked = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let usage = locked
+        .token_usage()
+        .expect("a turn that reported usage must leave it on the thread");
+    assert_eq!(usage.input_tokens, 100);
+    assert_eq!(usage.output_tokens, 42);
+}
+
+#[tokio::test]
 async fn the_engine_reports_a_session_id_the_app_can_address() {
     // The engine's thread id *is* the ACP session id — no translation table.
     // If that ever stops holding, every stored row stops resolving.
@@ -334,24 +464,20 @@ async fn a_cancelled_turn_ends_aborted_rather_than_hanging_or_ending_normally() 
         })
     };
 
-    // Cancel needs a turn in flight, and `turn/start` has to have returned
-    // before the seam knows the turn id to interrupt. Rather than sleep a
-    // guessed interval, retry the cancel until the prompt finishes: a cancel
-    // with nothing running is a documented no-op, so repeating it is safe.
-    let cancelled = tokio::time::timeout(Duration::from_secs(20), async {
-        while !prompting.is_finished() {
-            h.connection.cancel(&session_id);
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await;
-    assert!(
-        cancelled.is_ok(),
-        "the cancel never took effect — the turn was still running after 20s",
-    );
+    // ONE press, like production (#57). The earlier version of this test
+    // retried cancel in a 100 ms loop, which could never fail on the lost
+    // press: a stop landing while `turn/start` is still in flight used to be
+    // silently dropped, and the loop's next iteration papered over it. The
+    // press may land before or after the turn registers — the seam records
+    // a too-early stop and honours it the moment the turn id exists, so a
+    // single press must take the turn down from either side of that line.
+    // (`connection.rs` unit-tests both interleavings deterministically.)
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    h.connection.cancel(&session_id);
 
-    let response = prompting
+    let response = tokio::time::timeout(Duration::from_secs(20), prompting)
         .await
+        .expect("one press must take the turn down — 20s later it was still running")
         .expect("the prompt task should not panic")
         .expect("a cancelled turn is an outcome, not an error");
 
@@ -553,6 +679,59 @@ async fn a_turn_still_completes_after_switching_into_plan_mode() {
 }
 
 #[tokio::test]
+async fn a_mode_switch_during_a_turn_is_refused_rather_than_relabelling_the_picker() {
+    // #61. The engine's `update_settings` writes the session configuration; a
+    // RUNNING turn keeps the frozen context it started with. Accepting the
+    // switch mid-turn would flip the picker to "Plan — read-only, no edits or
+    // commands" while the turn's remaining tool calls execute with whatever
+    // the turn began with — a security control displayed as active while
+    // absent. Refusing is the honest answer.
+    let h = harness_with(vec![
+        (
+            Some(1),
+            sse_ok(assistant_turn("slow answer")).set_delay(Duration::from_secs(5)),
+        ),
+        (None, sse_ok(assistant_turn("ok"))),
+    ])
+    .await;
+    let session_id = h.open_thread().await;
+    let modes = h.connection.session_modes(&session_id).expect("modes");
+
+    let connection = h.connection.clone();
+    let prompting = {
+        let session_id = session_id.clone();
+        tokio::spawn(async move {
+            connection
+                .prompt(acp::PromptRequest::new(session_id, text("take your time")))
+                .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    assert!(
+        modes.set_mode(acp::SessionModeId::new("plan")).await.is_err(),
+        "a mid-turn mode switch must be refused, not displayed",
+    );
+    assert_eq!(
+        modes.current_mode().to_string(),
+        "default",
+        "the picker must keep reporting the mode really in force",
+    );
+
+    let response = prompting
+        .await
+        .expect("the prompt task should not panic")
+        .expect("the refused switch must not break the running turn");
+    assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+    // With the turn over, the same switch is accepted.
+    modes
+        .set_mode(acp::SessionModeId::new("plan"))
+        .await
+        .expect("the switch is accepted once nothing is running");
+}
+
+#[tokio::test]
 async fn per_session_controls_share_the_connection_request_id_counter() {
     // Regression, with an honest caveat about how strong it is.
     //
@@ -662,7 +841,7 @@ async fn answer_first_authorization(
                     .unwrap_or_else(|| panic!("no {pick:?} option was offered"));
                 h.thread()
                     .lock()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .authorize_tool_call(
                         id,
                         atlas_acp_thread::SelectedPermissionOutcome::new(
@@ -831,7 +1010,7 @@ async fn cancelling_mid_tool_stops_the_command_it_started() {
         (None, sse_ok(assistant_turn("done"))),
     ])
     .await;
-    let session_id = h.open_thread().await;
+    let session_id = h.open_thread_in(dir.path().to_path_buf()).await;
 
     let connection = h.connection.clone();
     let prompting = {
@@ -896,7 +1075,7 @@ async fn a_retried_turn_does_not_re_run_a_tool_call_that_already_executed() {
         (None, sse_ok(assistant_turn("finished"))),
     ])
     .await;
-    let session_id = h.open_thread().await;
+    let session_id = h.open_thread_in(dir.path().to_path_buf()).await;
 
     let connection = h.connection.clone();
     let prompting = {
@@ -957,7 +1136,7 @@ async fn control_an_approved_command_really_does_run() {
         (None, sse_ok(assistant_turn("done"))),
     ])
     .await;
-    let session_id = h.open_thread().await;
+    let session_id = h.open_thread_in(dir.path().to_path_buf()).await;
 
     let connection = h.connection.clone();
     let prompting = {
@@ -1024,7 +1203,7 @@ fn recording_search() -> (atlas_native_agent::engine::memory::MemorySearch, Sear
     let search: atlas_native_agent::engine::memory::MemorySearch =
         Arc::new(move |cwd: String, query: String, limit: usize| {
             seen.lock()
-                .unwrap_or_else(|p| p.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push((cwd, query.clone(), limit));
             Box::pin(async move {
                 vec![atlas_native_agent::engine::memory::MemDoc {
@@ -1061,7 +1240,7 @@ async fn search_memory_is_registered_and_returns_live_results() {
         .expect("the turn should complete");
     assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
 
-    let calls = calls.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    let calls = calls.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
     assert_eq!(calls.len(), 1, "the engine should have called search_memory once");
     let (cwd, query, limit) = &calls[0];
     assert_eq!(query, "how does auth work");
@@ -1110,7 +1289,7 @@ async fn a_memory_call_with_no_query_is_answered_rather_than_left_hanging() {
         .expect("an empty query must not hang the turn");
     assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
     assert!(
-        calls.lock().unwrap_or_else(|p| p.into_inner()).is_empty(),
+        calls.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty(),
         "an empty query should never reach retrieval",
     );
 }
@@ -1140,12 +1319,12 @@ async fn a_row_from_before_the_engine_changed_opens_instead_of_erroring() {
 
     let session_id = thread
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .session_id()
         .clone();
     h.threads
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .push(thread);
 
     // And the conversation continues from there, which is what the notice
@@ -1203,14 +1382,10 @@ async fn a_turn_emits_the_events_the_live_thread_feed_records_on() {
         .await
         .expect("the turn should complete");
 
-    let recorded: Vec<_> = h
-        .drained()
-        .into_iter()
-        .filter(atlas_thread_metadata::affects_thread_metadata)
-        .collect();
-
     assert!(
-        !recorded.is_empty(),
+        h.drained()
+            .into_iter()
+            .any(|event| atlas_thread_metadata::affects_thread_metadata(&event)),
         "an engine turn produced no event the live feed records on, so its \
          store row would never be created or updated",
     );

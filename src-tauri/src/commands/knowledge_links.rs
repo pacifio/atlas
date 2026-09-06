@@ -209,7 +209,7 @@ fn find_refs(body: &str) -> Vec<RefHit> {
 
     // @kind:id mentions (only the kinds we treat as knowledge refs).
     for kind in &["knowledge", "note", "page"] {
-        let needle = format!("@{}:", kind);
+        let needle = format!("@{kind}:");
         let mut search_from = 0;
         while let Some(pos_in_slice) = body[search_from..].find(&needle) {
             let pos = search_from + pos_in_slice;
@@ -286,15 +286,11 @@ fn read_quoted_attr(src: &str, name: &str) -> Option<String> {
 fn extract_snippet(body: &str, start: usize, end: usize) -> String {
     let lo = body
         .char_indices()
-        .map(|(i, _)| i)
-        .filter(|i| *i + SNIPPET_RADIUS >= start)
-        .next()
+        .map(|(i, _)| i).find(|i| *i + SNIPPET_RADIUS >= start)
         .unwrap_or(start.saturating_sub(SNIPPET_RADIUS));
     let hi = body
         .char_indices()
-        .map(|(i, c)| i + c.len_utf8())
-        .filter(|i| *i >= end + SNIPPET_RADIUS)
-        .next()
+        .map(|(i, c)| i + c.len_utf8()).find(|i| *i >= end + SNIPPET_RADIUS)
         .unwrap_or((end + SNIPPET_RADIUS).min(body.len()));
 
     let lo = clamp_to_char_boundary(body, lo);
@@ -373,8 +369,8 @@ pub async fn knowledge_link_counts(
             _ => return Ok(LinkCounts::default()),
         };
         Ok(LinkCounts {
-            backlinks: graph.backlinks.get(&entry_id).map(|v| v.len()).unwrap_or(0),
-            forwardlinks: graph.forwardlinks.get(&entry_id).map(|v| v.len()).unwrap_or(0),
+            backlinks: graph.backlinks.get(&entry_id).map(std::vec::Vec::len).unwrap_or(0),
+            forwardlinks: graph.forwardlinks.get(&entry_id).map(std::vec::Vec::len).unwrap_or(0),
         })
     })
     .await

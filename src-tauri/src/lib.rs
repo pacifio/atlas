@@ -29,6 +29,29 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Pick the rustls crypto provider, once, before anything can open a TLS
+    // connection.
+    //
+    // rustls 0.23 refuses to guess when more than one provider is compiled in,
+    // and this graph has two: `ring` (via sqlx, through the vendored Codex
+    // state store) and `aws-lc-rs` (via rama-tls / aws-smithy, through the
+    // vendored network proxy). Neither is removable, and cargo's feature
+    // unification turns "two dependencies each chose one" into "rustls sees
+    // both and panics at the first handshake" — on a background worker, far
+    // from anything that looks related.
+    //
+    // It was dormant until team chat opened the first rustls socket at runtime.
+    // Installing explicitly is the documented remedy and it is process-global,
+    // so it belongs here rather than in whichever subsystem happens to connect
+    // first. `aws-lc-rs` is rustls's own default of the two.
+    if rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .is_err()
+    {
+        // Already installed — only possible if something ran earlier than this.
+        tracing::debug!("rustls crypto provider was already installed");
+    }
+
     // Install a tracing subscriber that prints `tracing::info!` etc. to
     // stderr. Verbosity is controlled by `RUST_LOG`; see `logging.rs`.
     logging::init();
@@ -79,7 +102,7 @@ pub fn run() {
         // Custom menu: replaces the default Window ▸ Close (Cmd+W) with a
         // "Close Tab" item so Cmd+W in a focused embedded browser webview closes
         // the tab instead of tearing down the window. See `menu.rs`.
-        .menu(|handle| menu::build(handle))
+        .menu(menu::build)
         .on_menu_event(|app, event| {
             if event.id() == menu::CLOSE_TAB_ID {
                 use tauri::Emitter;
@@ -105,8 +128,12 @@ pub fn run() {
             }
             // Pre-load the Rust-owned `AppState` (currentProject + recents)
             // before the webview starts loading — paid in parallel with the
-            // WebView framework init, ~1ms on warm cache.
-            let mut loaded = AppState::load(&app.handle());
+            // WebView framework init, ~1ms on warm cache. `legacy_settings_raw`
+            // is the old `settings` object exactly as it appeared in a
+            // pre-#64 `state.json`, if any — `AppState` no longer has that
+            // field, so it's carried separately for the one-time migration
+            // below rather than being silently dropped by serde.
+            let (mut loaded, legacy_settings_raw) = AppState::load(app.handle());
             // Device-stable telemetry identity, owned by Rust in its own file.
             // It used to live in `state.json` as `telemetry_anon_id`, where every
             // settings save wiped it (the frontend payload omitted the field and
@@ -114,23 +141,49 @@ pub fn run() {
             // new PostHog person on every save. An install upgrading from that
             // era ADOPTS its existing id here rather than forking a new person.
             let (device, is_new_device) =
-                telemetry::device::load_or_create(&app.handle(), loaded.telemetry_anon_id.as_deref());
+                telemetry::device::load_or_create(app.handle(), loaded.telemetry_anon_id.as_deref());
             let device_id = device.device_id.clone();
-            let device_id_source = device.source.clone();
-            // Mirror it back into `state.json` so the two agree and a downgrade
-            // still finds an id. `AppStatePatch` now stops the frontend wiping it.
-            if loaded.telemetry_anon_id.as_deref() != Some(device_id.as_str()) {
+            let device_id_source = device.source;
+            let telemetry_id_changed = loaded.telemetry_anon_id.as_deref() != Some(device_id.as_str());
+            if telemetry_id_changed {
                 loaded.telemetry_anon_id = Some(device_id.clone());
-                let _ = AppState::save(&app.handle(), &loaded);
             }
-            let telemetry_enabled = loaded.settings.share_telemetry;
+
+            // `config.toml` (issue #64): user preferences move out of
+            // `state.json.settings` into their own validated, human-editable
+            // file. `bootstrap` imports the legacy settings exactly once,
+            // guarded by `settings_config_migrated` so a user who later
+            // deletes `config.toml` on purpose never gets it silently
+            // resurrected from stale `state.json` data.
+            let migration =
+                state::atlas_config::bootstrap(loaded.settings_config_migrated, legacy_settings_raw);
+            let migration_marker_changed = migration.mark_migrated && !loaded.settings_config_migrated;
+            if migration_marker_changed {
+                loaded.settings_config_migrated = true;
+            }
+            let telemetry_enabled = migration.manager.effective().share_telemetry;
+            let atlas_config: state::AtlasConfigHandle = Arc::new(Mutex::new(migration.manager));
+            app.manage(atlas_config.clone());
+            commands::atlas_config::start_watcher(app.handle(), atlas_config);
+
+            // Mirror the (possibly updated) telemetry id + migration marker
+            // back into `state.json` so both agree and a downgrade still
+            // finds them. `AppStatePatch` stops the frontend wiping either.
+            if telemetry_id_changed || migration_marker_changed {
+                let _ = AppState::save(app.handle(), &loaded);
+            }
             let app_state: AppStateHandle = Arc::new(Mutex::new(loaded));
             app.manage(app_state);
+
+            // Bundled `atlas-self-configure` skill (issue #64): install/
+            // upgrade it into the canonical global skills store so it's
+            // discoverable the same way any other managed skill is.
+            commands::skills::ensure_bundled_skills();
 
             // Opt-in product telemetry. Inert unless the user has enabled it AND
             // a PostHog key resolves (env / telemetry.json / build-time default).
             let (telemetry, flush_rx) =
-                telemetry::TelemetryClient::new(&app.handle(), device_id, telemetry_enabled);
+                telemetry::TelemetryClient::new(app.handle(), device_id, telemetry_enabled);
             app.manage(telemetry.clone());
             if let Some(rx) = flush_rx {
                 let tclient = telemetry.clone();
@@ -154,7 +207,7 @@ pub fn run() {
                         .payload()
                         .downcast_ref::<&str>()
                         .copied()
-                        .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.as_str()))
+                        .or_else(|| info.payload().downcast_ref::<String>().map(std::string::String::as_str))
                         .unwrap_or("panic");
                     tclient.capture_panic_blocking(serde_json::json!({
                         "location": location,
@@ -173,10 +226,10 @@ pub fn run() {
                 }),
             );
 
-            commands::agents::install_manager(&app.handle());
+            commands::agents::install_manager(app.handle());
             // Silent background refresh of model pricing from models.dev — first
             // launch populates the cache; later launches update only on change.
-            commands::models_pricing::refresh_in_background(&app.handle());
+            commands::models_pricing::refresh_in_background(app.handle());
             // Auto-update: clean up any staged update that already took effect,
             // then run a non-blocking background check + a periodic re-check. The
             // download/verify/stage happens silently; the user is only prompted
@@ -191,7 +244,11 @@ pub fn run() {
                     .app_config_dir()
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
                 app.manage(commands::auth::AuthState::new(config_dir));
-                commands::auth::restore_on_launch(&app.handle());
+                // Team chat's socket, before `restore_on_launch` broadcasts:
+                // that broadcast is what points it at an Organisation, and a
+                // manager that is not yet managed would miss the first one.
+                commands::comms::install(app.handle());
+                commands::auth::restore_on_launch(app.handle());
 
                 // Seed the Organisation every event is attributed to, from the
                 // state we just loaded. The app has an active org from its first
@@ -229,9 +286,9 @@ pub fn run() {
                     }));
             }
 
-            commands::updater::init_on_startup(&app.handle());
-            commands::updater::check_in_background(&app.handle());
-            commands::updater::spawn_periodic(&app.handle());
+            commands::updater::init_on_startup(app.handle());
+            commands::updater::check_in_background(app.handle());
+            commands::updater::spawn_periodic(app.handle());
 
             // Background memory indexer (Step 4): a single owned Tokio task drains
             // a bounded queue and indexes each open project's corpus into its
@@ -284,10 +341,60 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::agent_entitlement::native_agent_entitlement,
+            commands::agent_entitlement::native_agent_request_access,
             commands::auth::auth_snapshot,
             commands::auth::auth_sign_in,
             commands::auth::auth_cancel_sign_in,
             commands::auth::auth_sign_out,
+            commands::auth::auth_set_active_org,
+            commands::comms::comms_ready,
+            commands::comms::comms_fetch_attachment,
+            commands::comms::comms_save_attachment,
+            commands::comms::comms_call_recordings,
+            commands::comms::comms_start_call,
+            commands::comms::comms_save_transcript,
+            commands::comms::comms_save_recording,
+            commands::comms::comms_status,
+            commands::comms::comms_snapshot,
+            commands::comms::comms_open_conversation,
+            commands::comms::comms_close_conversation,
+            commands::comms::comms_conversation_snapshot,
+            commands::comms::comms_load_older,
+            commands::comms::comms_pins,
+            commands::comms::comms_drafts,
+            commands::comms::comms_create_draft,
+            commands::comms::comms_draft_open,
+            commands::comms::comms_draft_update,
+            commands::comms::comms_draft_awareness,
+            commands::comms::comms_fetch_recording,
+            commands::comms::comms_send,
+            commands::comms::comms_upload_attachment,
+            commands::comms::comms_cancel_upload,
+            commands::comms::comms_edit,
+            commands::comms::comms_delete,
+            commands::comms::comms_react,
+            commands::comms::comms_pin,
+            commands::comms::comms_read,
+            commands::comms::comms_typing,
+            commands::comms::comms_create_channel,
+            commands::comms::comms_create_dm,
+            commands::comms::comms_create_group_dm,
+            commands::comms::comms_join,
+            commands::comms::comms_invite,
+            commands::comms::comms_leave,
+            commands::comms::comms_patch_conversation,
+            commands::comms::comms_search,
+            commands::comms::comms_reconnect,
+            commands::comms::comms_disconnect,
+            commands::comms::comms_base_url,
+            commands::spaces::spaces_connect,
+            commands::spaces::spaces_disconnect,
+            commands::spaces::spaces_cycle,
+            commands::spaces::spaces_send_control,
+            commands::spaces::spaces_send_binary,
+            commands::spaces::spaces_summary,
+            commands::spaces::spaces_media_upload,
+            commands::spaces::spaces_media_fetch,
             commands::auth::auth_create_org,
             commands::auth::auth_check_org_slug,
             commands::auth::auth_list_members,
@@ -340,7 +447,6 @@ pub fn run() {
             commands::fs::fs_duplicate,
             commands::fs::fs_open_in_terminal,
             commands::fs::fs_add_to_gitignore,
-            commands::git::git_status,
             commands::git::git_status_fresh,
             commands::git::git_log,
             commands::git::git_diff_all,
@@ -482,8 +588,11 @@ pub fn run() {
             commands::log::clear_project_log,
             commands::app_state::bootstrap_app_state,
             commands::app_state::save_app_state,
+            commands::atlas_config::get_atlas_config_info,
+            commands::atlas_config::update_atlas_settings,
+            commands::atlas_config::reset_atlas_config,
+            commands::atlas_config::open_atlas_config,
             commands::telemetry::telemetry_config,
-            commands::telemetry::telemetry_set_enabled,
             commands::telemetry::telemetry_set_org,
             commands::feedback::feedback_submit,
             commands::updater::update_check_now,
@@ -539,7 +648,6 @@ pub fn run() {
             commands::agents::agents_run_auth_method,
             commands::agents::agents_authenticate,
             commands::agents::agents_drop_session,
-            commands::byok::byok_get,
             commands::byok::byok_env_list,
             commands::byok::byok_env_entries,
             commands::byok::byok_env_reveal,

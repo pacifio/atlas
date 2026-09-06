@@ -68,7 +68,9 @@ function walk(dir: string, extensions: string[]): string[] {
  */
 function declaredCommands(): Map<string, string[]> {
   const found = new Map<string, string[]>();
-  const attribute = /^[ \t]*#\[tauri::command\]/gm;
+  // `(async)` and other attribute arguments count: `#[tauri::command(async)]`
+  // moves a sync handler off the main thread and is still a command.
+  const attribute = /^[ \t]*#\[tauri::command(\([^)]*\))?\]/gm;
   for (const file of walk(RUST_SRC, [".rs"])) {
     const src = readFileSync(file, "utf8");
     for (const attr of src.matchAll(attribute)) {

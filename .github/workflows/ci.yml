@@ -36,7 +36,13 @@ jobs:
     name: frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          # Full history, not the depth-1 default: vendor-licensing.test.ts
+          # derives its fork point as the oldest commit touching vendor/codex,
+          # and on a shallow clone that resolves to HEAD — the modification
+          # set comes back empty and the suite fails (#58).
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
       - name: Install
         run: bun install --frozen-lockfile
@@ -72,8 +78,10 @@ jobs:
     name: app (src-tauri)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       # One cargo workspace since #38: the lockfile and the target dir both
       # live at the repo root, so that is what the cache keys off.
       - uses: Swatinem/rust-cache@v2
@@ -86,7 +94,33 @@ jobs:
       # Compiles the app and its command surface, then runs its 194 tests.
       - name: Test
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --locked
+      # Plain clippy, no `-D warnings`: the workspace lint table (`[lints]`
+      # in the manifest, #60) already carries its own denies, and this is the
+      # crate where the #54 cfg outage happened — the deny has to be able to
+      # fail a build here, not only warn.
+      - name: Clippy (workspace lint table)
+        working-directory: src-tauri
+        run: cargo clippy --locked --all-targets
+
+  engine-dialect:
+    # The Atlas-authored gateway dialect (~2,700 lines under
+    # vendor/codex/codex-api/src/atlas_chat/) is first-party code that happens
+    # to live in vendor/ — its request/SSE fixture suites are the primary
+    # evidence for the dialect's correctness, and until #64 they ran in no CI
+    # job at all. One package, deliberately not a blanket vendor job: several
+    # upstream suites are permanently red after the phone-home removals (#43),
+    # and re-greening crates Atlas does not ship is not the point.
+    name: engine dialect (codex-api)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+      - name: Test
+        run: cargo test --locked -p codex-api
 
   crates:
     # Every crate gets its own job so a failure names the crate rather than the
@@ -126,6 +160,8 @@ jobs:
           - crate: atlas-checkpoint
             clippy: true
           - crate: atlas-codeindex
+          - crate: atlas-comms
+            clippy: true
           - crate: atlas-embed
           - crate: atlas-git
           - crate: atlas-gitdiff
@@ -133,13 +169,14 @@ jobs:
           - crate: atlas-memory
           - crate: atlas-native-agent
             clippy: true
+            sandbox: true
           - crate: atlas-redact
             clippy: true
           - crate: atlas-terminal
           - crate: atlas-thread-metadata
             clippy: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -156,10 +193,40 @@ jobs:
         run: |
           git config --global user.name "CI"
           git config --global user.email "ci@example.invalid"
+      # `engine_turn.rs` runs real commands through the ported engine's
+      # sandbox. macOS sandboxes with `/usr/bin/sandbox-exec`, already on disk,
+      # which is why these tests only ever failed here. Linux has no such
+      # binary: the engine re-execs a helper under the arg0
+      # `codex-linux-sandbox`, and that helper delegates the filesystem view to
+      # bubblewrap — which the runner image does not ship.
+      #
+      # Its absence is invisible by construction. The helper panics at
+      # `linux-sandbox/src/launcher.rs` from inside the `#[ctor]` that performs
+      # the arg0 dispatch; a ctor cannot unwind, so the panic aborts and its
+      # message dies with the process. The engine sees only `Sandbox(Signal(6))`
+      # and the suite reports that an approved command never ran — three
+      # translations away from "bwrap is not installed".
+      #
+      # Flagged rather than installed for every crate because
+      # `tests/codex-quarantine.test.ts` keeps `atlas-native-agent` the only
+      # manifest allowed to name a `codex-*` crate, so no other job can reach
+      # this sandbox. Flip the flag on any crate that later can.
+      - name: Install bubblewrap (the engine's Linux sandbox needs it)
+        if: matrix.sandbox
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends bubblewrap
+          bwrap --version
       - name: Test
         working-directory: crates/${{ matrix.crate }}
-        run: cargo test
+        run: cargo test --locked
+      # Every member crate, no flag: plain clippy enforces the workspace lint
+      # table (`[lints] workspace = true`, #60), whose entries are denies of
+      # their own. The stricter `-D warnings` step below stays opt-in.
+      - name: Clippy (workspace lint table)
+        working-directory: crates/${{ matrix.crate }}
+        run: cargo clippy --locked --all-targets
       - name: Clippy
         if: matrix.clippy
         working-directory: crates/${{ matrix.crate }}
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings

@@ -22,11 +22,18 @@ import {
 } from "../lib/stop-agents-confirm";
 import { markFileIndexClosedFor } from "@/features/file-picker/lib/file-picker-api";
 
-/** The active org id, used to tag newly-created workspaces/groups so they
- *  belong to the org the user is currently in. Read lazily to avoid an
- *  import-time dependency cycle with the org store. */
-const activeOrgId = (): string | undefined =>
-  useOrgStore.getState().activeOrganisationId ?? undefined;
+/** The org id used to tag newly-created workspaces/groups so they belong to
+ *  the org the user is currently in. Read lazily to avoid an import-time
+ *  dependency cycle with the org store. Falls back to the first org when no
+ *  active org is set (org store mid-hydration) — an untagged row would render
+ *  in EVERY org's sidebar under the strict per-org filters, so creation must
+ *  never mint `orgId: undefined`. Returns undefined only when the org store
+ *  holds zero orgs (pre-bootstrap race; Rust always seeds "Personal"), and
+ *  callers refuse to create in that case. */
+const requireActiveOrgId = (): string | undefined => {
+  const org = useOrgStore.getState();
+  return org.activeOrganisationId ?? org.organisations[0]?.id;
+};
 
 /** Default hot-set cap — how many workspaces stay mounted/resident at once.
  *  Set above a typical open-project count (users commonly keep ~7) so cycling
@@ -46,9 +53,13 @@ export interface Workspace {
   name: string;
   path: string;
   groupId: string | null;
-  /** Owning Organisation (mirrors `app_state.rs:Workspace::org_id`). The
-   *  sidebar shows only the active org's workspaces. Legacy/undefined is
-   *  treated as belonging to the active org during the migration window. */
+  /** Owning Organisation (mirrors `app_state.rs:Workspace::org_id`). Every
+   *  render surface filters STRICTLY by `orgId === activeOrganisationId` —
+   *  an untagged row is invisible. Creation always tags (see
+   *  `requireActiveOrgId`), Rust `migrate()` backfills legacy null rows at
+   *  boot, and the add actions adopt an in-memory null row in place. The
+   *  field stays optional only because rows can transit through JSON where
+   *  `undefined` is dropped. */
   orgId?: string;
   /** Optional git remote — the only field besides id/name that syncs to the
    *  server (`workspace_refs.git_url`) for one-click clone. */
@@ -108,10 +119,10 @@ interface WorkspaceState {
   actions: {
     /** Add a workspace for `path`, or focus the existing one if `path` is
      *  already open. Returns the workspace id. Switches to it (mounts it). */
-    addWorkspace: (path: string) => Promise<string>;
+    addWorkspace: (path: string) => Promise<string | null>;
     /** Add a registry entry for `path` WITHOUT opening/mounting it — a
      *  bookmark for "open later". Returns the id (or the existing one). */
-    addProjectEntry: (path: string) => string;
+    addProjectEntry: (path: string) => string | null;
     /** Flush the outgoing workspace, then restore the incoming one. */
     switchTo: (id: string) => Promise<void>;
     /** Flush + remove a workspace from the registry, tearing down its state. */
@@ -139,7 +150,7 @@ interface WorkspaceState {
     /** Move a workspace into a group (or ungroup with `null`). */
     setGroup: (id: string, groupId: string | null) => void;
     reorder: (orderedIds: string[]) => void;
-    addGroup: (name: string) => string;
+    addGroup: (name: string) => string | null;
     renameGroup: (id: string, name: string) => void;
     /** Enter inline-rename for a group header. */
     beginRenameGroup: (id: string) => void;
@@ -250,15 +261,31 @@ export const useWorkspaceStore = createSelectors(
         // while invisible in the new org's switcher — the "added a project in
         // a fresh org and it never appeared" bug. Opening the same folder
         // from a second org now creates that org's own workspace row.
-        // Legacy untagged rows (orgId == null, shown in every org) still
-        // dedupe against any org so they aren't duplicated post-migration.
-        const org = activeOrgId();
-        const existing = get().workspaces.find(
-          (w) => w.path === path && (w.orgId === org || w.orgId == null),
-        );
+        const org = requireActiveOrgId();
+        if (!org) {
+          logEvent({
+            source: "project",
+            kind: "workspace-add-refused",
+            summary: "no organisation available to own a new workspace",
+            payload: { path },
+          });
+          return null;
+        }
+        const existing = get().workspaces.find((w) => w.path === path && w.orgId === org);
         if (existing) {
           await get().actions.switchTo(existing.id);
           return existing.id;
+        }
+        // Legacy untagged row for this path (predates the Rust org backfill):
+        // adopt it into the active org in place instead of duplicating it.
+        const legacy = get().workspaces.find((w) => w.path === path && w.orgId == null);
+        if (legacy) {
+          set((s) => ({
+            workspaces: s.workspaces.map((w) => (w.id === legacy.id ? { ...w, orgId: org } : w)),
+          }));
+          scheduleAppStateSave();
+          await get().actions.switchTo(legacy.id);
+          return legacy.id;
         }
         const ws: Workspace = {
           id: uuid(),
@@ -274,12 +301,27 @@ export const useWorkspaceStore = createSelectors(
       },
 
       addProjectEntry: (path: string) => {
-        // Same (path, org) identity rule as addWorkspace above.
-        const org = activeOrgId();
-        const existing = get().workspaces.find(
-          (w) => w.path === path && (w.orgId === org || w.orgId == null),
-        );
+        // Same (path, org) identity + legacy-adopt rules as addWorkspace above.
+        const org = requireActiveOrgId();
+        if (!org) {
+          logEvent({
+            source: "project",
+            kind: "workspace-add-refused",
+            summary: "no organisation available to own a new project entry",
+            payload: { path },
+          });
+          return null;
+        }
+        const existing = get().workspaces.find((w) => w.path === path && w.orgId === org);
         if (existing) return existing.id;
+        const legacy = get().workspaces.find((w) => w.path === path && w.orgId == null);
+        if (legacy) {
+          set((s) => ({
+            workspaces: s.workspaces.map((w) => (w.id === legacy.id ? { ...w, orgId: org } : w)),
+          }));
+          scheduleAppStateSave();
+          return legacy.id;
+        }
         const ws: Workspace = {
           id: uuid(),
           name: nameOf(path),
@@ -585,11 +627,20 @@ export const useWorkspaceStore = createSelectors(
         scheduleAppStateSave();
       },
       addGroup: (name) => {
+        const org = requireActiveOrgId();
+        if (!org) {
+          logEvent({
+            source: "project",
+            kind: "workspace-add-refused",
+            summary: "no organisation available to own a new group",
+          });
+          return null;
+        }
         const group: WorkspaceGroup = {
           id: uuid(),
           name,
           order: get().groups.length,
-          orgId: activeOrgId(),
+          orgId: org,
         };
         // Open the new group straight into inline-rename so the user can name it.
         set((s) => ({

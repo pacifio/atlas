@@ -153,7 +153,7 @@ pub async fn recent_files_open_project(
     Ok(items)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn recent_files_close_project(
     workspace_id: Option<String>,
     state: State<'_, RecentFilesState>,

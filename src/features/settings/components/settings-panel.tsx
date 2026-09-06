@@ -36,6 +36,7 @@ import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
 import { updater } from "@/features/updater/lib/updater-api";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
 import { useSettingsNav, type SettingsSection } from "../stores/settings-nav-store";
+import { openConfigFile } from "../lib/atlas-config-api";
 
 const SECTIONS: Array<{
   id: SettingsSection;
@@ -185,9 +186,27 @@ interface CliStatus {
 
 function GeneralSettings() {
   const settings = useProjectStore.use.settings();
-  const { updateSettings } = useProjectStore.use.actions();
+  const configError = useProjectStore.use.configError();
+  const { updateSettings, clearConfigError, resetConfig } = useProjectStore.use.actions();
   const [cli, setCli] = useState<CliStatus | null>(null);
   const [installing, setInstalling] = useState(false);
+  const [resettingConfig, setResettingConfig] = useState(false);
+
+  const recreateConfigDefaults = async () => {
+    setResettingConfig(true);
+    try {
+      // The store action owns both the state write and the resulting side
+      // effects (theme, zoom). Doing it here with `setState` raced the
+      // `atlas:config-changed` listener and skipped those side effects
+      // whenever this path won.
+      await resetConfig();
+      toast.success("config.toml reset to defaults (previous file backed up alongside it)");
+    } catch (e) {
+      toast.error(`Reset failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setResettingConfig(false);
+    }
+  };
 
   // Model pricing (models.dev) — manual refresh + count for the picker.
   const pricingPrices = useModelPricingStore.use.prices();
@@ -243,6 +262,45 @@ function GeneralSettings() {
   return (
     <div className="space-y-6">
       <SectionTitle title="General" subtitle="Application preferences" />
+      {configError && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 space-y-2">
+          <p className="text-[12px] font-medium text-text-primary">
+            Atlas is using the last valid settings — config.toml has a problem
+          </p>
+          <p className="text-[11px] text-text-secondary font-mono break-all">{configError}</p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void openConfigFile()}
+              className={cn(
+                "h-7 rounded-md px-2.5 text-[11px] font-medium border border-border-default bg-bg-elevated",
+                "text-text-primary hover:bg-bg-hover transition-colors",
+              )}
+            >
+              Open config
+            </button>
+            <button
+              type="button"
+              onClick={() => void recreateConfigDefaults()}
+              disabled={resettingConfig}
+              className={cn(
+                "h-7 rounded-md px-2.5 text-[11px] font-medium border border-border-default bg-bg-elevated",
+                "text-text-primary hover:bg-bg-hover transition-colors",
+                "disabled:opacity-50 disabled:cursor-not-allowed",
+              )}
+            >
+              {resettingConfig ? "Resetting…" : "Recreate defaults"}
+            </button>
+            <button
+              type="button"
+              onClick={clearConfigError}
+              className="h-7 rounded-md px-2.5 text-[11px] font-medium text-text-secondary hover:text-text-primary transition-colors"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
       <SettingRow
         label="Enter to send"
         description="Enter sends your message; Shift+Enter inserts a newline — the Slack/Discord/ChatGPT convention. Turn off to restore the old behavior, where only ⌘/Ctrl+Enter sends and Enter always inserts a newline. ⌘/Ctrl+Enter always sends either way."
@@ -295,9 +353,12 @@ function GeneralSettings() {
         <Toggle
           checked={settings.shareTelemetry}
           onChange={(next) => {
+            // Rust re-syncs the live gate itself on every settings commit
+            // (`notify_settings_changed`) — this only needs to flip the
+            // frontend-only `posthog-js` crash reporter, which Rust can't
+            // reach.
             updateSettings({ shareTelemetry: next });
             setTelemetryEnabled(next);
-            void invoke("telemetry_set_enabled", { enabled: next }).catch(() => {});
           }}
         />
       </SettingRow>

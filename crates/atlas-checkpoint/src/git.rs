@@ -657,7 +657,7 @@ fn head_tracked_set(repo: &Path) -> Option<std::sync::Arc<std::collections::Hash
     let head_mtime = mtime(git_dir.join("HEAD"))?;
     let index_mtime = mtime(git_dir.join("index"))?;
 
-    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut cache = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(entry) = cache.get(repo) {
         if entry.head_mtime == head_mtime && entry.index_mtime == index_mtime {
             return Some(entry.paths.clone());

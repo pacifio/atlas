@@ -452,6 +452,87 @@ async fn cancel_resolves_every_pending_permission_and_tells_the_connection() {
     assert!(!thread.is_generating());
 }
 
+/// Regression, ATL-213. A turn that FAILED still has to resolve what it left
+/// open.
+///
+/// `set_error()` clears `running_turn`, and `cancel_inner` used to return on
+/// that before it reached the tool-call half — so the permission prompt stayed
+/// `WaitingForConfirmation` holding a `respond_tx` nobody would ever send on.
+/// The projection reads `WaitingForConfirmation` before `had_error`, so the
+/// session reported Waiting forever and the error was masked rather than
+/// delayed.
+#[tokio::test]
+async fn cancel_after_an_error_still_resolves_an_open_permission_prompt() {
+    let (mut thread, _events, connection) = new_thread();
+
+    thread.begin_turn();
+    thread
+        .upsert_tool_call(tool_call("t1", "run", acp::ToolCallStatus::Pending))
+        .unwrap();
+    let waiter = thread
+        .request_tool_call_authorization(
+            tool_call_update("t1", None),
+            PermissionOptions::Flat(Vec::new()),
+            AuthorizationKind::PermissionGrant,
+        )
+        .unwrap();
+
+    // The turn fails — the agent's `prompt` returned an error, or its process
+    // died and every thread got an `emit_load_error`.
+    thread.set_error();
+    assert_eq!(status_of(&thread, "t1"), "Waiting for confirmation");
+
+    // The user presses stop.
+    thread.cancel();
+
+    // Bounded: with the bug the waiter simply never resolves, and an
+    // unqualified `.await` here would hang CI instead of failing it.
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+        .await
+        .expect("the permission waiter was left stranded by a cancel after an error");
+    assert!(matches!(outcome, RequestPermissionOutcome::Cancelled));
+    assert_eq!(status_of(&thread, "t1"), "Canceled");
+    // Still no `session/cancel`: there is no turn for the agent to cancel. The
+    // fix is about resolving OUR state, not about talking to a dead peer.
+    assert_eq!(connection.cancel_count.load(Ordering::SeqCst), 0);
+}
+
+/// Regression, ATL-213, the follow-up variant. `begin_turn()` cancels BEFORE it
+/// sets `running_turn`, so with the early return in the wrong place a stale
+/// call from a failed turn survived every subsequent turn as `InProgress`.
+#[tokio::test]
+async fn a_new_turn_clears_a_stale_call_left_by_a_failed_one() {
+    let (mut thread, _events, _conn) = new_thread();
+
+    thread.begin_turn();
+    thread
+        .upsert_tool_call(tool_call("t1", "run", acp::ToolCallStatus::InProgress))
+        .unwrap();
+    thread.set_error();
+
+    thread.begin_turn();
+
+    assert_eq!(status_of(&thread, "t1"), "Canceled");
+}
+
+/// The counterpart guard: resolving entries unconditionally must not start
+/// sending `session/cancel` from an idle thread. Complements
+/// `cancelling_an_idle_thread_does_not_notify_the_agent` by putting a
+/// cancellable entry in front of it, which is the case that would regress.
+#[tokio::test]
+async fn cancelling_an_idle_thread_resolves_entries_without_notifying_the_agent() {
+    let (mut thread, _events, connection) = new_thread();
+
+    thread
+        .upsert_tool_call(tool_call("t1", "run", acp::ToolCallStatus::InProgress))
+        .unwrap();
+
+    thread.cancel();
+
+    assert_eq!(status_of(&thread, "t1"), "Canceled");
+    assert_eq!(connection.cancel_count.load(Ordering::SeqCst), 0);
+}
+
 /// Adapted from `run_turn` (`acp_thread.rs:3743`): a follow-up send cancels the
 /// previous turn with `InterruptedByFollowUp`, which is a different outcome from
 /// the user pressing stop and is visible to whoever was awaiting permission.

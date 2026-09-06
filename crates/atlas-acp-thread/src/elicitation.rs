@@ -257,6 +257,7 @@ impl ElicitationStore {
         acp::Error,
     > {
         Self::validate_request(&request)?;
+        self.reject_duplicate_url_elicitation(&request)?;
         let (id, response_rx) = self.insert_pending_elicitation(request);
         self.emit(ElicitationStoreEvent::ElicitationRequested(id.clone()));
 
@@ -359,6 +360,42 @@ impl ElicitationStore {
             .find_map(|(index, elicitation)| {
                 (&elicitation.id == id).then_some((index, elicitation))
             })
+    }
+
+    /// A URL elicitation id the agent is already using for an outstanding
+    /// elicitation is refused rather than accepted as a second entry.
+    ///
+    /// [`Self::entry_id_for_url_elicitation`] resolves an agent-supplied
+    /// `elicitation_id` by reverse-scanning, so with a duplicate the newest
+    /// entry wins every lookup and the older one can never be completed — it is
+    /// stuck `Accepted`, which [`Self::clear_resolved`] deliberately keeps, so
+    /// the stale row stays on screen for the life of the session. The schema
+    /// documents the field as unique; nothing enforced it.
+    ///
+    /// Scoped to entries that are still outstanding on purpose. A device-code
+    /// login legitimately reuses an id after the previous attempt was canceled
+    /// or completed, and refusing that would break the retry.
+    fn reject_duplicate_url_elicitation(
+        &self,
+        request: &acp::CreateElicitationRequest,
+    ) -> Result<(), acp::Error> {
+        let acp::ElicitationMode::Url(mode) = &request.mode else {
+            return Ok(());
+        };
+        let clashes = self.elicitations.iter().any(|elicitation| {
+            matches!(
+                (&elicitation.status, &elicitation.request.mode),
+                (
+                    ElicitationStatus::Pending { .. } | ElicitationStatus::Accepted,
+                    acp::ElicitationMode::Url(existing),
+                ) if existing.elicitation_id == mode.elicitation_id
+            )
+        });
+        if clashes {
+            return Err(acp::Error::invalid_params()
+                .data("elicitationId is already outstanding for another URL elicitation"));
+        }
+        Ok(())
     }
 
     pub(crate) fn entry_id_for_url_elicitation(

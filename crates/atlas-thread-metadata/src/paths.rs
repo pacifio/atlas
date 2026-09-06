@@ -107,7 +107,7 @@ impl PathList {
             order: self
                 .order
                 .iter()
-                .map(|i| i.to_string())
+                .map(std::string::ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(","),
         }

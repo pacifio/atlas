@@ -52,9 +52,24 @@ function git(...args: string[]): string {
  * which makes this the honest fork point to diff against.
  */
 function vendoringCommit(): string {
-  const commits = git("log", "--format=%H", "--", "vendor/codex").trim().split("\n");
+  // `--full-history` disables TREESAME simplification: with merges in the
+  // history, plain `git log -- <path>` follows a single parent and can miss
+  // the commits that actually touched it.
+  const log = git("log", "--full-history", "--format=%H", "--", "vendor/codex").trim();
+  // Empty means no commit in this checkout touched `vendor/codex` at all —
+  // only possible on a shallow clone, since the vendoring commit is always in
+  // full history. Returning "" here would make every later `git diff` compare
+  // against nothing and report an empty modification set, which is how a
+  // missing `fetch-depth: 0` surfaced as "expected 0 to be greater than 5"
+  // rather than as the clone problem it is (#58).
+  if (log === "") return SHALLOW;
+  const commits = log.split("\n");
   return commits[commits.length - 1];
 }
+
+/** Sentinel for "this checkout has no vendor history", so the guard below can
+ *  name the cause instead of every other test failing vacuously. */
+const SHALLOW = "<shallow-clone>";
 
 /**
  * Vendored files Atlas has changed since vendoring, working tree included.
@@ -128,6 +143,22 @@ describe("§4(a) and §4(d) — the licence and NOTICE reach recipients", () => 
 });
 
 describe("§4(b) — modified files say they were modified", () => {
+  it("has the history it needs — a shallow clone cannot run this suite", () => {
+    // On a depth-1 clone the oldest commit touching vendor/codex IS HEAD, so
+    // the diff against it is empty and the rule below holds vacuously. Name
+    // the cause here so the next person reads it instead of the symptom (#58).
+    const resolved = vendoringCommit();
+    const shallowHelp =
+      "this is a shallow clone (actions/checkout defaults to fetch-depth: 1). " +
+      "Check out with fetch-depth: 0 so the vendoring fork point is reachable.";
+    // Two shapes of the same problem: no vendor history at all, or a history
+    // so short that the fork point collapses onto HEAD.
+    expect(resolved, `no commit here touches vendor/codex — ${shallowHelp}`).not.toBe(SHALLOW);
+    expect(resolved, `vendoringCommit() resolved to HEAD — ${shallowHelp}`).not.toBe(
+      git("rev-parse", "HEAD").trim(),
+    );
+  });
+
   it("finds the modification set (parser health)", () => {
     // If this returned nothing, the rule below would hold vacuously forever.
     expect(modifiedVendoredFiles().length).toBeGreaterThan(5);

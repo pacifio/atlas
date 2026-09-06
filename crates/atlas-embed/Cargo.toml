@@ -22,4 +22,16 @@ candle-core = "0.11.0"
 candle-nn = "0.11.0"
 candle-transformers = "0.11.0"
 serde_json = "1.0.150"
-tokenizers = "0.23.1"
+# `esaxx_fast` (on by default) pulls in `esaxx-rs`'s C++ suffix-array backend,
+# whose build.rs hardcodes a static CRT (`.static_crt(true)`) on every
+# platform. That conflicts with the rest of the binary's dynamic CRT (notably
+# `cxx`, pulled in via `usearch`) and fails MSVC linking with LNK2038 on
+# Windows. It only speeds up *training* a Unigram tokenizer (esaxx-rs still
+# has a pure-Rust fallback); loading/running pretrained tokenizers is
+# unaffected, so it's safe to drop.
+tokenizers = { version = "0.23.1", default-features = false, features = ["progressbar", "onig"] }
+
+# The workspace lint table is only real for members that opt in —
+# without this stanza it is dead configuration (#60).
+[lints]
+workspace = true

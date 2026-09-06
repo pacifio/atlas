@@ -1,0 +1,42 @@
+[package]
+name = "atlas-comms"
+version = "0.1.0"
+edition = "2021"
+description = "Team chat against the `atlas-chat` API: one WebSocket per active organisation, the authoritative chat state, and the seq watermark. Owns the access JWT so the renderer never does."
+
+[lib]
+name = "atlas_comms"
+
+[dependencies]
+tokio = { version = "1", features = ["sync", "time", "rt", "macros", "fs", "io-util"] }
+# The workspace pin, which resolves to the openai-oss-forks 0.28 fork already in
+# the graph via the vendored Codex engine — rustls, and no new resolution. The
+# lockfile also holds a 0.29 from `axum`; declaring a version inline here would
+# unify with that one instead.
+tokio-tungstenite = { workspace = true }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+  "stream",
+] }
+# Same pin, same reason, as `atlas-thread-metadata` — which is where that
+# reasoning is written down. `libsqlite3-sys` sets `links = "sqlite3"`, so
+# exactly one may exist in the graph and every declaration must agree.
+# Guarded by `tests/cargo-deps-unification.test.ts`.
+rusqlite = { version = "0.39", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+# Spaces binary frames cross the bridge as base64 — the window event channel is
+# JSON, and 0.21 is the version already in the workspace graph.
+base64 = "0.21"
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "2"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+
+[lints]
+workspace = true

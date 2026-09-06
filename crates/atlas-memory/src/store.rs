@@ -173,7 +173,7 @@ mod tests {
         let q = unit_vec(5);
         let hits = reloaded.search(&q, 3).unwrap();
         assert!(!hits.is_empty());
-        assert_eq!(hits[0].0, 5, "nearest key should be 5, got {:?}", hits);
+        assert_eq!(hits[0].0, 5, "nearest key should be 5, got {hits:?}");
         // Cosine similarity of the (near-)identical vector should be ~1.
         assert!(hits[0].1 > 0.9, "similarity too low: {}", hits[0].1);
 

@@ -1,13 +1,6 @@
 import { useEffect, useRef } from "react";
-import {
-  Camera,
-  Check,
-  EyeOff,
-  Github,
-  MessageCircleQuestion,
-  MessagesSquare,
-  X,
-} from "lucide-react";
+import { Camera, Check, EyeOff, MessageCircleQuestion, MessagesSquare, X } from "lucide-react";
+import { GithubIcon } from "@/components/github-icon";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { AccountAvatar } from "@/features/auth/components/account-avatar";
@@ -112,7 +105,7 @@ export function FeedbackPanel() {
         // Border, translucent fill and blur all on THIS element — which is also
         // the one the enter animation transforms. Splitting them would isolate
         // the layer and flatten the blur.
-        "border border-white/10 bg-[var(--bg-elevated)]/85 backdrop-blur-2xl",
+        "border border-white/10 bg-[var(--bg-elevated)]/95 backdrop-blur-2xl",
         "atlas-panel-in-br",
         // Still laid out (and animated in) while `screencapture` is on screen,
         // just invisible, so the panel never lands in the user's own shot.
@@ -293,7 +286,7 @@ export function FeedbackPanel() {
           onClick={() => void openExternal(issueUrl(category, message))}
           className="inline-flex items-center gap-1.5 text-[10px] text-text-tertiary hover:text-text-primary transition-colors cursor-pointer"
         >
-          <Github size={10} />
+          <GithubIcon size={10} />
           Open a GitHub issue
         </button>
         <div className="w-px h-3 bg-white/10" aria-hidden />

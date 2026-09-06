@@ -249,7 +249,7 @@ fn bench_hnsw_vs_brute_force() {
     }
     let hnsw_build = build_start.elapsed();
 
-    let brute = BruteForce::new(vectors.clone());
+    let brute = BruteForce::new(vectors);
 
     // ── Time HNSW search ──
     let t = Instant::now();

@@ -98,12 +98,12 @@ impl Harness {
         };
         let id = thread
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .session_id()
             .clone();
         self.threads
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(thread);
         id
     }
@@ -112,13 +112,13 @@ impl Harness {
         let Some(thread) = self
             .threads
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .last()
             .cloned()
         else {
             panic!("a thread must be open");
         };
-        let thread = thread.lock().unwrap_or_else(|p| p.into_inner());
+        let thread = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         thread
             .entries()
             .iter()
@@ -142,9 +142,7 @@ impl Harness {
             panic!("the mock server must be recording requests");
         };
         let Some(last) = received
-            .iter()
-            .filter(|r| r.url.path().ends_with("/chat/completions"))
-            .next_back()
+            .iter().rfind(|r| r.url.path().ends_with("/chat/completions"))
         else {
             panic!("no completion request reached the gateway");
         };
@@ -193,7 +191,7 @@ async fn harness_with_token(
             while let Some(event) = thread_rx.recv().await {
                 if out
                     .lock()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .send(event)
                     .is_err()
                 {
@@ -328,9 +326,7 @@ async fn the_minted_token_is_what_authorises_the_request() {
         panic!("the mock server must be recording requests");
     };
     let Some(last) = received
-        .iter()
-        .filter(|r| r.url.path().ends_with("/chat/completions"))
-        .next_back()
+        .iter().rfind(|r| r.url.path().ends_with("/chat/completions"))
     else {
         panic!("no completion request reached the gateway");
     };
@@ -597,12 +593,14 @@ async fn the_model_picker_offers_the_gateway_catalogue_and_nothing_else() {
             "claude-opus-4-8",
             "gemini-3.6-flash",
             "gemini-3.5-flash-lite",
+            "glm-5.3-flash",
         ],
         "the picker must offer exactly what the gateway serves",
     );
     assert!(
-        !ids.iter().any(|id| id.starts_with("gpt-")),
-        "a model the gateway does not serve must never be offerable: {ids:?}",
+        !ids.iter()
+            .any(|id| id.starts_with("gpt-") || id.starts_with("openai/")),
+        "a model the gateway cannot generate from must never be offerable: {ids:?}",
     );
     // No prices. The BYOK picker shows per-million provider rates, which are
     // not what an Atlas turn costs — it is metered against the account's cap.
@@ -631,7 +629,7 @@ async fn a_new_session_advertises_its_commands_and_no_login() {
     let Some(thread) = h
         .threads
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .last()
         .cloned()
     else {
@@ -639,7 +637,7 @@ async fn a_new_session_advertises_its_commands_and_no_login() {
     };
     let names: Vec<String> = thread
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .available_commands()
         .iter()
         .map(|c| c.name.clone())
@@ -669,7 +667,7 @@ async fn the_paying_org_rides_every_request_and_follows_a_switch() {
     let org = Arc::new(std::sync::Mutex::new(Some("org_first".to_string())));
     let reader = org.clone();
     atlas_native_agent::engine::set_org_source(Arc::new(move || {
-        reader.lock().unwrap_or_else(|p| p.into_inner()).clone()
+        reader.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }));
 
     let h = harness(vec![(None, sse_ok(answer("ok")))]).await;
@@ -679,7 +677,7 @@ async fn the_paying_org_rides_every_request_and_follows_a_switch() {
         .prompt(acp::PromptRequest::new(session_id.clone(), text("one")))
         .await;
 
-    *org.lock().unwrap_or_else(|p| p.into_inner()) = Some("org_second".to_string());
+    *org.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some("org_second".to_string());
     let _ = h
         .connection
         .prompt(acp::PromptRequest::new(session_id, text("two")))
@@ -729,7 +727,7 @@ async fn a_resumed_session_advertises_the_same_commands_a_new_one_does() {
     };
     let names: Vec<String> = thread
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .available_commands()
         .iter()
         .map(|c| c.name.clone())
@@ -845,7 +843,7 @@ async fn connection_at(
             while let Some(event) = thread_rx.recv().await {
                 if out
                     .lock()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .send(event)
                     .is_err()
                 {
@@ -870,7 +868,7 @@ async fn connection_at(
 }
 
 fn thread_texts(thread: &atlas_acp_thread::AcpThreadHandle) -> Vec<(String, String)> {
-    let locked = thread.lock().unwrap_or_else(|p| p.into_inner());
+    let locked = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     locked
         .entries()
         .iter()
@@ -916,7 +914,7 @@ async fn a_reopened_session_replays_its_whole_conversation() {
             .expect("a session should open");
         let id = thread
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .session_id()
             .clone();
         let response = connection
@@ -938,7 +936,7 @@ async fn a_reopened_session_replays_its_whole_conversation() {
 
     let reopened_id = thread
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .session_id()
         .clone();
     assert_eq!(
@@ -974,7 +972,7 @@ async fn a_reopened_session_replays_its_whole_conversation() {
 fn push_user(thread: &atlas_acp_thread::AcpThreadHandle, id: &str, text_content: &str) {
     let _ = thread
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .handle_session_update(acp::SessionUpdate::UserMessageChunk(
             acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
                 text_content.to_string(),
@@ -990,7 +988,7 @@ async fn undo_rewinds_the_engine_and_trims_the_transcript_to_match() {
     let thread = h
         .threads
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .last()
         .cloned()
         .expect("thread");
@@ -1012,7 +1010,7 @@ async fn undo_rewinds_the_engine_and_trims_the_transcript_to_match() {
 
     let all = format!(
         "{:?}",
-        thread.lock().unwrap_or_else(|p| p.into_inner()).entries()
+        thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entries()
     );
     assert!(
         !all.contains("first question") && !all.contains("a regrettable answer"),
@@ -1130,13 +1128,13 @@ async fn a_repo_skill_joins_the_picker_and_runs_as_a_skill_turn() {
         .expect("session");
     let session_id = thread
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .session_id()
         .clone();
 
     let names: Vec<String> = thread
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .available_commands()
         .iter()
         .map(|c| c.name.clone())
@@ -1248,7 +1246,7 @@ async fn compact_is_visible_in_the_thread_not_a_silent_shrug() {
     let thread = h
         .threads
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .last()
         .cloned()
         .expect("thread");
@@ -1256,7 +1254,7 @@ async fn compact_is_visible_in_the_thread_not_a_silent_shrug() {
     for _ in 0..200 {
         let has_compaction = thread
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entries()
             .iter()
             .any(|entry| {
@@ -1326,11 +1324,11 @@ async fn an_executed_command_appears_as_a_tool_call_with_its_output() {
     let thread = h
         .threads
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .last()
         .cloned()
         .expect("thread");
-    let locked = thread.lock().unwrap_or_else(|p| p.into_inner());
+    let locked = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let call = locked
         .entries()
         .iter()

@@ -107,3 +107,11 @@ export const useWorkspaceGitStore = createSelectors(
     };
   }),
 );
+
+/** Drop the fetched bookkeeping so the incoming org's paths refetch fresh on
+ *  the next `ensure`. Called from `switchOrg()`. The `summaries` map itself is
+ *  kept — it's path-keyed data that is org-agnostic and still valid; only the
+ *  "already fetched, skip" flags go, so summaries re-validate after a switch. */
+export function resetGitSummariesForOrgSwitch() {
+  fetched.clear();
+}

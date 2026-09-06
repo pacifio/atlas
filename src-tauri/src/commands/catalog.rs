@@ -193,7 +193,7 @@ fn build(host: &AgentHost) -> AgentCatalog {
                     .filter(|d| !d.is_empty()),
                 version: entry
                     .as_ref()
-                    .and_then(|entry| entry.version.as_ref().map(|v| v.to_string()))
+                    .and_then(|entry| entry.version.as_ref().map(std::string::ToString::to_string))
                     .or_else(|| market.as_ref().map(|agent| agent.version().to_string()))
                     .filter(|v| !v.is_empty()),
                 kind: if is_native { "native" } else { "external" }.to_string(),
@@ -223,7 +223,7 @@ fn build(host: &AgentHost) -> AgentCatalog {
                 platform_supported: is_native
                     || market
                         .as_ref()
-                        .map(|agent| agent.supports_current_platform())
+                        .map(atlas_agent_store::RegistryAgent::supports_current_platform)
                         .unwrap_or(true),
                 distribution_kind,
                 unverified: matches!(

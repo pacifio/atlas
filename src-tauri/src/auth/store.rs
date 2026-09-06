@@ -129,9 +129,11 @@ pub struct StoredIdentity {
     ///   is omitted when there is no profile yet.
     #[serde(default)]
     pub orgs: Option<Vec<StoredOrg>>,
-    /// The organisation the user last made active **on the web**, when they ever
-    /// did. Never written from the desktop: `/organization/set-active` is
-    /// ATL-36's, and this ticket is read-only.
+    /// The organisation the user last made active — **on the web**, or, since
+    /// #73, from the desktop's own org switcher (`AuthCore::set_active_org`).
+    /// The desktop write is local-only; `/organization/set-active` stays
+    /// ATL-36's. This stopped being read-only the moment the field became the
+    /// org every gateway request bills.
     ///
     /// Kept separate from "which one to display" — see [`Self::active_org`],
     /// which resolves that and has to cope with this being `None`, the common
@@ -206,12 +208,35 @@ pub(crate) fn load(dir: &Path) -> Option<StoredSession> {
     serde_json::from_str(&raw).ok()
 }
 
-/// Write the credential, owner-only.
+/// Write the credential, owner-only FROM THE FIRST BYTE.
+///
+/// The old order — `fs::write` then chmod — left two gaps: the file existed
+/// at umask permissions for the window between the two calls, and rewriting
+/// a pre-existing file never resets its mode at all. Creating the temp file
+/// with 0600 in `OpenOptions` and renaming it into place closes both, and
+/// the rename keeps the update atomic.
 pub(crate) fn save(dir: &Path, session: &StoredSession) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| format!("create config dir: {e}"))?;
     let path = session_path(dir);
     let json = serde_json::to_string_pretty(session).map_err(|e| e.to_string())?;
-    fs::write(&path, json).map_err(|e| format!("write session: {e}"))?;
+
+    let tmp = path.with_extension("tmp");
+    {
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        use std::io::Write;
+        let mut f = opts.open(&tmp).map_err(|e| format!("write session: {e}"))?;
+        f.write_all(json.as_bytes())
+            .map_err(|e| format!("write session: {e}"))?;
+    }
+    fs::rename(&tmp, &path).map_err(|e| format!("write session: {e}"))?;
+    // Belt-and-braces for a file that predates this change and kept its old
+    // wider mode across the rename target's replacement.
     restrict(&path);
     Ok(())
 }

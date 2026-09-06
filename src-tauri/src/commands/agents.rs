@@ -216,14 +216,14 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for AnalyticsMiddleware {
                 st.with_turn(sid, |a| a.note_context(*used, *size, *cost))
             }
             SessionDelta::PermissionRequest { .. } => {
-                st.with_turn(sid, |a| a.note_permission_request())
+                st.with_turn(sid, super::agent_analytics::TurnAcc::note_permission_request)
             }
             SessionDelta::PermissionResolved { .. } => {
-                st.with_turn(sid, |a| a.note_permission_resolved())
+                st.with_turn(sid, super::agent_analytics::TurnAcc::note_permission_resolved)
             }
-            SessionDelta::RetryStatus { .. } => st.with_turn(sid, |a| a.note_retry()),
+            SessionDelta::RetryStatus { .. } => st.with_turn(sid, super::agent_analytics::TurnAcc::note_retry),
             SessionDelta::Compaction { active } if *active => {
-                st.with_turn(sid, |a| a.note_compaction())
+                st.with_turn(sid, super::agent_analytics::TurnAcc::note_compaction)
             }
             SessionDelta::CompressionSaved { saved_tokens } => {
                 st.with_turn(sid, |a| a.note_compression_saved(*saved_tokens))
@@ -231,13 +231,13 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for AnalyticsMiddleware {
             SessionDelta::ModelChanged { model_id } => {
                 st.with_turn(sid, |a| a.note_model(model_id))
             }
-            SessionDelta::ModeChanged { .. } => st.with_turn(sid, |a| a.note_mode_change()),
+            SessionDelta::ModeChanged { .. } => st.with_turn(sid, super::agent_analytics::TurnAcc::note_mode_change),
             SessionDelta::MessageAppended { message } => {
                 if message.role == MessageRole::Assistant {
-                    st.with_turn(sid, |a| a.note_assistant_message());
+                    st.with_turn(sid, super::agent_analytics::TurnAcc::note_assistant_message);
                 }
             }
-            SessionDelta::PlanUpdated { .. } => st.with_turn(sid, |a| a.note_plan_update()),
+            SessionDelta::PlanUpdated { .. } => st.with_turn(sid, super::agent_analytics::TurnAcc::note_plan_update),
 
             SessionDelta::TurnFinished {
                 stop_reason,
@@ -449,7 +449,7 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for MemoryIngestMiddleware {
                     let _ = registry.enqueue(super::memory_indexer::Job::ExtractSession {
                         cwd,
                         agent: agent_id.0.to_string(),
-                        session: session_id.clone(),
+                        session: session_id,
                     });
                 }
             } else {
@@ -561,7 +561,7 @@ pub fn install_manager(app: &AppHandle) {
     let store = Arc::new(AgentServerStore::new(
         data_dir.clone(),
         http.clone(),
-        NodeRuntime::managed(&data_dir, http.clone()),
+        NodeRuntime::managed(&data_dir, http),
         Arc::new(InheritedProjectEnvironment),
         Some(registry.clone()),
     ));
@@ -658,7 +658,7 @@ pub fn install_manager(app: &AppHandle) {
         // Cache-first, then network: the installed map is what makes agents
         // spawnable, so it is read and applied before anything is fetched.
         let app = app.clone();
-        let host = host.clone();
+        let host = host;
         tauri::async_runtime::spawn(async move {
             let installed = super::agent_host::load_installed(&data_dir);
             let _ = registry.load_cached().await;
@@ -1120,7 +1120,7 @@ fn parse_thread_id(raw: &str) -> Result<atlas_thread_metadata::ThreadId, CmdErro
         .map_err(|_| CmdError::new(format!("not a thread id: {raw}"), ErrorClass::Fatal))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn agents_snapshot(
     key: SessionKey,
     host: State<'_, Arc<AgentHost>>,
@@ -1132,7 +1132,7 @@ pub fn agents_snapshot(
 /// message across IPC — multi-MB on long sessions — yet five frontend call
 /// sites (mode seed, model backfill, composer self-heals, model warm) only
 /// read the ~1KB metadata. Same wire shape; `messages` arrives empty.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn agents_snapshot_meta(
     key: SessionKey,
     host: State<'_, Arc<AgentHost>>,

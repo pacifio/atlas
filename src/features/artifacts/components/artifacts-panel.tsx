@@ -14,9 +14,9 @@ import {
 
 import { AtlasIcon } from "@/components/atlas-icon";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
+import { useActiveOrgWorkspaces } from "@/features/workspaces/lib/org-scope";
 import { BranchLine, GitDot, NumStatPill } from "@/features/workspaces/components/git-summary";
 import { useWorkspaceGitStore } from "@/features/workspaces/stores/workspace-git-store";
-import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { cn } from "@/lib/utils";
 
 import { useArtifactsStore } from "../stores/artifacts-store";
@@ -106,14 +106,9 @@ const BOARD_LIMIT = 500;
 export function ArtifactsPanel() {
   // Every project in the active Organisation, not just the open one: the board
   // answers "what has been happening in our code", which does not stop at the
-  // folder that happens to be focused. Workspaces with no `orgId` are legacy
-  // entries and belong to the active org during the migration window.
-  const allWorkspaces = useWorkspaceStore.use.workspaces();
+  // folder that happens to be focused.
+  const projects = useActiveOrgWorkspaces();
   const activeOrganisationId = useOrgStore.use.activeOrganisationId();
-  const projects = useMemo(
-    () => allWorkspaces.filter((w) => w.orgId === activeOrganisationId || w.orgId == null),
-    [allWorkspaces, activeOrganisationId],
-  );
   // A stable key, so the read effect does not re-fire on unrelated workspace
   // mutations (a rename, a pin) that leave the set of paths unchanged.
   const projectPaths = useMemo(() => projects.map((w) => w.path).sort(), [projects]);
@@ -228,16 +223,16 @@ export function ArtifactsPanel() {
       listen("atlas:git-changed", () => void refresh()),
       listen("atlas:capture-changed", () => void refresh()),
     ]);
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible") void refresh();
-    }, 15_000);
+    // No poll: the two events above cover every write path (they are why a
+    // fresh session appears immediately), and the visibility handler below
+    // catches anything that happened while the window was hidden. The 15s
+    // interval predated both and was pure redundancy by the time it died.
     const onVisibility = () => {
       if (document.visibilityState === "visible") void refresh();
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       void unlisten.then((stops) => stops.forEach((stop) => stop()));
-      clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [refresh]);

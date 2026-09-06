@@ -64,6 +64,25 @@ codex-rollout = { path = "../../vendor/codex/rollout" }
 
 [dev-dependencies]
 async-trait = "0.1"
+# The Linux sandbox helper, for tests only.
+#
+# `SandboxType::LinuxSeccomp` re-execs a binary whose arg0 is
+# `codex-linux-sandbox`; with no path for it the engine refuses the sandbox
+# transform and the tool call never spawns, which is why the three
+# sandboxed-command tests in `engine_turn.rs` passed on macOS seatbelt and
+# failed on Linux CI having run nothing. These three crates let the *test
+# binary* be that helper, exactly as upstream's own suites do
+# (`vendor/codex/core/tests/suite/mod.rs`): `ctor` runs
+# `configure_test_binary_dispatch` before any test, which installs the arg0
+# aliases and hands back the helper's path.
+#
+# Dev-only on purpose. The shipped app has no arg0 dispatch and ships macOS, so
+# giving it a helper path would be a lie about what the binary does.
+codex-sandboxing = { workspace = true }
+codex-test-binary-support = { workspace = true }
+# Pinned by the workspace to the same version `codex-core`'s tests use, so this
+# adds no new lockfile entry.
+ctor = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # The live thread feed's own predicate, so the history test asserts "the
 # recorder will fire" rather than guessing which events matter.
@@ -73,3 +92,8 @@ tokio = { version = "1", features = ["full", "test-util"] }
 # Seam-1 contract tests drive a real turn against a local mock model, so the
 # streaming path is exercised without a live provider or a credential.
 wiremock = "0.6"
+
+# The workspace lint table is only real for members that opt in —
+# without this stanza it is dead configuration (#60).
+[lints]
+workspace = true

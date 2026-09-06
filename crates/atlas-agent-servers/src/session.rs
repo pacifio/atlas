@@ -126,7 +126,7 @@ impl SessionRegistry {
     pub fn thread(&self, session_id: &acp::SessionId) -> Result<Arc<Mutex<AcpThread>>, acp::Error> {
         self.sessions
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(session_id)
             .and_then(|session| session.thread.upgrade())
             .ok_or_else(|| {
@@ -137,7 +137,7 @@ impl SessionRegistry {
     pub fn all_threads(&self) -> Vec<Arc<Mutex<AcpThread>>> {
         self.sessions
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .values()
             .filter_map(|session| session.thread.upgrade())
             .collect()
@@ -150,7 +150,7 @@ impl SessionRegistry {
     ) -> Option<R> {
         self.sessions
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get_mut(session_id)
             .map(f)
     }
@@ -158,27 +158,27 @@ impl SessionRegistry {
     pub fn insert(&self, session_id: acp::SessionId, session: AcpSession) {
         self.sessions
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(session_id, session);
     }
 
     pub fn remove(&self, session_id: &acp::SessionId) -> Option<AcpSession> {
         self.sessions
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(session_id)
     }
 
     pub fn contains(&self, session_id: &acp::SessionId) -> bool {
         self.sessions
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .contains_key(session_id)
     }
 
     /// `Some(new_count)` when the session is known, after decrementing.
     pub fn release(&self, session_id: &acp::SessionId) -> Option<usize> {
-        let mut sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        let mut sessions = self.sessions.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let session = sessions.get_mut(session_id)?;
         session.ref_count = session.ref_count.saturating_sub(1);
         let remaining = session.ref_count;
@@ -190,7 +190,7 @@ impl SessionRegistry {
 
     /// Adds a handle to an already-open session, if there is one.
     pub fn acquire(&self, session_id: &acp::SessionId) -> Option<Arc<Mutex<AcpThread>>> {
-        let mut sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        let mut sessions = self.sessions.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let session = sessions.get_mut(session_id)?;
         let thread = session.thread.upgrade()?;
         session.ref_count += 1;
@@ -198,7 +198,7 @@ impl SessionRegistry {
     }
 
     pub fn pending_acquire(&self, session_id: &acp::SessionId) -> bool {
-        let mut pending = self.pending.lock().unwrap_or_else(|p| p.into_inner());
+        let mut pending = self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match pending.get_mut(session_id) {
             Some(entry) => {
                 entry.ref_count += 1;
@@ -211,21 +211,21 @@ impl SessionRegistry {
     pub fn pending_begin(&self, session_id: acp::SessionId) {
         self.pending
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(session_id, PendingAcpSession { ref_count: 1 });
     }
 
     pub fn pending_take(&self, session_id: &acp::SessionId) -> Option<usize> {
         self.pending
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(session_id)
             .map(|pending| pending.ref_count)
     }
 
     /// `Some(new_count)` when a load is in flight, after decrementing.
     pub fn pending_release(&self, session_id: &acp::SessionId) -> Option<usize> {
-        let mut pending = self.pending.lock().unwrap_or_else(|p| p.into_inner());
+        let mut pending = self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let entry = pending.get_mut(session_id)?;
         entry.ref_count = entry.ref_count.saturating_sub(1);
         let remaining = entry.ref_count;

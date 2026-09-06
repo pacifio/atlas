@@ -151,7 +151,7 @@ function ChatHeaderImpl({
                 // Border, translucent fill, blur AND the enter animation all on
                 // THIS element. Splitting them isolates the layer and kills the
                 // backdrop blur (see the feedback panel for the same rule).
-                "border border-white/10 bg-[var(--bg-elevated)]/85 backdrop-blur-2xl",
+                "border border-white/10 bg-[var(--bg-elevated)]/95 backdrop-blur-2xl",
                 // Grows out of its trigger's top-left corner.
                 "atlas-panel-in-tl",
               )}

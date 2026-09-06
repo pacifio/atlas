@@ -67,7 +67,7 @@ fn request_elicitation_events() -> RequestElicitationSink {
 fn command(path: &str, args: &[&str]) -> AgentServerCommand {
     AgentServerCommand {
         path: PathBuf::from(path),
-        args: args.iter().map(|arg| arg.to_string()).collect(),
+        args: args.iter().map(std::string::ToString::to_string).collect(),
         env: Some(HashMap::new()),
     }
 }
@@ -351,7 +351,7 @@ async fn session_on(config_options: serde_json::Value) -> Option<(Arc<AcpConnect
         .expect("session/new failed");
     let session_id = thread
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .session_id()
         .clone();
     // The thread must outlive this call: the session registry holds it weakly.
@@ -518,7 +518,7 @@ async fn a_pending_permission_does_not_block_the_messages_behind_it() {
         .expect("session/new failed");
     let session_id = thread
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .session_id()
         .clone();
 
@@ -533,7 +533,7 @@ async fn a_pending_permission_does_not_block_the_messages_behind_it() {
     let (mut saw_chunk, mut saw_prompt) = (false, false);
     while std::time::Instant::now() < deadline && !(saw_chunk && saw_prompt) {
         {
-            let thread = thread.lock().unwrap_or_else(|p| p.into_inner());
+            let thread = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             for entry in thread.entries() {
                 match entry {
                     AgentThreadEntry::AssistantMessage(message) => {
@@ -568,7 +568,7 @@ async fn a_pending_permission_does_not_block_the_messages_behind_it() {
     // Answer it; the agent then ends the turn.
     thread
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .authorize_tool_call(
             acp::ToolCallId::new("call-1"),
             atlas_acp_thread::SelectedPermissionOutcome::new(
@@ -649,7 +649,7 @@ async fn an_embedded_terminal_in_tool_call_meta_is_created_and_streams() {
         .expect("session/new failed");
     let session_id = thread
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .session_id()
         .clone();
 
@@ -665,7 +665,7 @@ async fn an_embedded_terminal_in_tool_call_meta_is_created_and_streams() {
     .expect("prompt failed");
     assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
 
-    let thread = thread.lock().unwrap_or_else(|p| p.into_inner());
+    let thread = thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let call = thread
         .entries()
         .iter()

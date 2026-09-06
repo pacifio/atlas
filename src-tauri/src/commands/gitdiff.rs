@@ -248,7 +248,7 @@ pub async fn git_commit_changed_files(
             let mut parts = line.split('\t');
             let status = parts.next().unwrap_or("").to_string();
             // Renames are `R100\told\tnew` — take the last field (new path).
-            let file = parts.last().unwrap_or("").to_string();
+            let file = parts.next_back().unwrap_or("").to_string();
             if !file.is_empty() {
                 out.push(CommitFile { path: file, status });
             }

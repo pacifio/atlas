@@ -277,7 +277,7 @@ pub async fn git_watch_start(
 /// repository look identical from the outside. Making the id mandatory puts that
 /// failure out of reach rather than relying on call sites to remember; genuine
 /// teardown uses [`git_watch_stop_all`], which says what it does.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_watch_stop(workspace_id: String, state: State<'_, GitWatcherState>) {
     state.watchers.write().remove(&workspace_id);
 }

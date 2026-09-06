@@ -90,7 +90,7 @@ impl MentionCacheState {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mention_cache_set_knowledge(
     items: Vec<KnowledgeInput>,
     workspace_id: Option<String>,
@@ -106,7 +106,7 @@ pub fn mention_cache_set_knowledge(
         .knowledge = items;
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mention_cache_clear(
     workspace_id: Option<String>,
     webview: WebviewWindow,
@@ -431,7 +431,7 @@ pub async fn mention_search(
     for scored in [files, folders, symbols_res, knowledge_res, repos, branches] {
         all.extend(scored);
     }
-    all.sort_by(|a, b| b.0.cmp(&a.0));
+    all.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     let mut per_kind: HashMap<&'static str, usize> = HashMap::new();
     let mut out: Vec<MentionResult> = Vec::new();
     for (_, m) in all {
@@ -496,7 +496,7 @@ fn rank_files(query: &str, files: Vec<(String, PathBuf)>) -> Vec<(u32, MentionRe
             pattern.score(utf, &mut matcher).map(|s| (s, (rel, abs)))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     scored
         .into_iter()
         .take(PER_KIND_LIMIT)
@@ -533,7 +533,7 @@ fn rank_folders(
             pattern.score(utf, &mut matcher).map(|s| (s, (rel, abs)))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     scored
         .into_iter()
         .take(PER_KIND_LIMIT)
@@ -566,7 +566,7 @@ fn rank_repos(query: &str, rows: Vec<ClonedRepo>) -> Vec<(u32, MentionResult)> {
             pattern.score(utf, &mut matcher).map(|s| (s, r))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     scored
         .into_iter()
         .take(PER_KIND_LIMIT)
@@ -612,7 +612,7 @@ fn rank_branches(query: &str, refs: GitRefs) -> Vec<(u32, MentionResult)> {
             pattern.score(utf, &mut matcher).map(|s| (s, r))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     scored
         .into_iter()
         .take(PER_KIND_LIMIT)
@@ -655,7 +655,7 @@ fn rank_symbols(query: &str, symbols: Vec<SymbolInput>) -> Vec<(u32, MentionResu
             pattern.score(utf, &mut matcher).map(|sc| (sc, s))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     scored
         .into_iter()
         .take(PER_KIND_LIMIT)
@@ -710,7 +710,7 @@ fn rank_knowledge(query: &str, entries: Vec<KnowledgeInput>) -> Vec<(u32, Mentio
             pattern.score(utf, &mut matcher).map(|s| (s, e, folder))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     scored
         .into_iter()
         .take(PER_KIND_LIMIT)

@@ -404,7 +404,7 @@ async fn build_project_index(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn fileindex_close_project(
     workspace_id: Option<String>,
     webview: WebviewWindow,
@@ -453,7 +453,7 @@ pub struct FolderMatch {
 /// derivation is O(files), which is fine for the few-thousand-file
 /// projects Atlas targets; if it ever becomes a hot path, cache the
 /// derived set inside `ProjectIndex`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn fileindex_search_dirs(
     query: String,
     limit: usize,
@@ -462,36 +462,14 @@ pub fn fileindex_search_dirs(
     state: State<'_, FileIndexState>,
 ) -> Vec<FolderMatch> {
     let key = workspace_id.unwrap_or_else(|| webview.label().to_string());
-    // Clone the Arc (pointer copy) + root, not the whole file Vec, then hold the
-    // inner read lock across the folder derivation (avoids a multi-MB per-call
-    // clone on large repos — same fix as fileindex_search).
-    let (files_arc, root) = {
-        let guard = state.per_window.read();
-        match guard.get(&key) {
-            Some(p) => (p.files.clone(), p.root.clone()),
-            None => return Vec::new(),
-        }
+    // The cached derivation `snapshot_folders` maintains (built once, dropped
+    // by the watcher on file-set changes). This command predated the cache
+    // and kept re-deriving inline — O(files × depth) String allocations per
+    // call, which on a large repo was hundreds of thousands of allocations
+    // per @-mention keystroke.
+    let Some(folders) = state.snapshot_folders(&key) else {
+        return Vec::new();
     };
-    let files = files_arc.read();
-
-    // Collect unique parent directories, in first-seen order. We walk each
-    // file's `rel` up to (but not including) the project root.
-    let mut seen = std::collections::HashSet::<String>::new();
-    let mut folders: Vec<(String, PathBuf)> = Vec::new();
-    for f in files.iter() {
-        let mut cur = Path::new(&f.rel).parent();
-        while let Some(p) = cur {
-            let rel = p.to_string_lossy();
-            if rel.is_empty() {
-                break;
-            }
-            let rel = rel.into_owned();
-            if seen.insert(rel.clone()) {
-                folders.push((rel, root.join(p)));
-            }
-            cur = p.parent();
-        }
-    }
 
     let trimmed = query.trim();
     if trimmed.is_empty() {
@@ -515,7 +493,7 @@ pub fn fileindex_search_dirs(
                 .map(|score| (score, (rel, abs)))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     scored
         .into_iter()
         .take(limit.max(1))
@@ -528,7 +506,7 @@ pub fn fileindex_search_dirs(
 
 /// Fuzzy-search the index. Empty query returns the first `limit` entries —
 /// useful for the palette's empty state ("recent files" effect).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn fileindex_search(
     query: String,
     limit: usize,
@@ -576,7 +554,7 @@ pub fn fileindex_search(
         })
         .collect();
     // Highest score first; stable order on ties (insertion = file walk order).
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     scored
         .into_iter()
         .take(limit.max(1))

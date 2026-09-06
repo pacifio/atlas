@@ -64,23 +64,3 @@ export function saveCerseiEffort(effort: string): void {
     // best-effort
   }
 }
-
-const COMPRESS_KEY = "atlas:cersei-compress-pref";
-
-/** RTK compression preference (default ON when unset). */
-export function loadCerseiCompress(): boolean {
-  try {
-    return localStorage.getItem(COMPRESS_KEY) !== "0";
-  } catch {
-    return true;
-  }
-}
-
-/** Persist the compression preference (best-effort). */
-export function saveCerseiCompress(on: boolean): void {
-  try {
-    localStorage.setItem(COMPRESS_KEY, on ? "1" : "0");
-  } catch {
-    // best-effort
-  }
-}

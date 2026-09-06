@@ -57,6 +57,7 @@ pub(super) fn provider_endpoint(provider: &str) -> Option<(ApiKind, &'static str
         "cerebras" => (ApiKind::OpenAi, "https://api.cerebras.ai/v1"),
         "perplexity" => (ApiKind::OpenAi, "https://api.perplexity.ai"),
         "openrouter" => (ApiKind::OpenAi, "https://openrouter.ai/api/v1"),
+        "empero" => (ApiKind::OpenAi, "https://free.empero.org/v1"),
         _ => return None,
     })
 }
@@ -125,7 +126,7 @@ fn persist_byok_usage(app: &AppHandle, provider: &str, model: &str, input: u64, 
         "outputTokens": output,
         "costUsd": cost,
     });
-    let line = format!("{}\n", entry);
+    let line = format!("{entry}\n");
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -360,6 +361,7 @@ fn fallback_models(provider: &str) -> Vec<&'static str> {
         "openai" => vec!["gpt-4o", "gpt-4o-mini", "o3", "o4-mini"],
         "google" => vec!["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash"],
         "cohere" => vec!["command-a-03-2025", "command-r-plus", "command-r"],
+        "empero" => vec!["glm-5.3-flash"],
         _ => vec![],
     }
 }

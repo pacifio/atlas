@@ -1,8 +1,6 @@
 use atlas_git::{GitCommand, GitErrorPayload};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 use std::process::Command;
-use tauri::{AppHandle, Emitter};
 
 /// `git` for a READ-ONLY query — status, log, diff, blame, rev-parse, refs.
 ///
@@ -90,49 +88,6 @@ pub struct GitRefs {
     pub refs: Vec<GitRef>,
 }
 
-/// Stale-while-revalidate `git_status`:
-///
-/// On a project with thousands of changed files `git status` itself takes
-/// several seconds — even with the parallelization + flag tuning below
-/// (`--ignore-submodules=all`, `--no-renames`). That's git's actual speed,
-/// not something we can squeeze further from app code.
-///
-/// To make the right-panel Changes section feel instant on warm launches we
-/// cache the last result to `<project>/.atlas/git-status-cache.json`:
-///
-/// 1. If a cache exists, return it as the IPC reply (typically <5 ms).
-/// 2. In a background task, compute fresh status, update the cache, and
-///    emit `atlas:git-status-fresh` with the new value. The frontend's
-///    git-store listens for that event and patches its state.
-/// 3. First open of a project has no cache → falls back to the slow path,
-///    and the result is cached for next launch.
-///
-/// Net effect: every launch after the first sees Changes data flow into
-/// the UI immediately, then quietly refresh.
-#[tauri::command]
-pub async fn git_status(path: String, app: AppHandle) -> Result<GitStatus, String> {
-    if let Some(cached) = read_status_cache(&path) {
-        let path_for_task = path.clone();
-        tokio::spawn(async move {
-            if let Ok(fresh) = git_status_compute(&path_for_task).await {
-                write_status_cache(&path_for_task, &fresh);
-                let _ = app.emit(
-                    "atlas:git-status-fresh",
-                    GitStatusFreshPayload {
-                        path: path_for_task,
-                        status: fresh,
-                    },
-                );
-            }
-        });
-        return Ok(cached);
-    }
-
-    let fresh = git_status_compute(&path).await?;
-    write_status_cache(&path, &fresh);
-    Ok(fresh)
-}
-
 /// Force-fresh status — skips the stale-while-revalidate cache read and
 /// computes synchronously, returning the result directly (no event detour).
 ///
@@ -144,44 +99,7 @@ pub async fn git_status(path: String, app: AppHandle) -> Result<GitStatus, Strin
 /// (~50–120 ms) instead of FSEvents-latency + debounce + a stale round-trip.
 #[tauri::command]
 pub async fn git_status_fresh(path: String) -> Result<GitStatus, String> {
-    let fresh = git_status_compute(&path).await?;
-    write_status_cache(&path, &fresh);
-    Ok(fresh)
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct GitStatusFreshPayload {
-    path: String,
-    status: GitStatus,
-}
-
-const STATUS_CACHE_REL: &str = ".atlas/git-status-cache.json";
-
-fn status_cache_path(project_path: &str) -> PathBuf {
-    Path::new(project_path).join(STATUS_CACHE_REL)
-}
-
-fn read_status_cache(project_path: &str) -> Option<GitStatus> {
-    let cache = status_cache_path(project_path);
-    let raw = std::fs::read_to_string(&cache).ok()?;
-    serde_json::from_str(&raw).ok()
-}
-
-fn write_status_cache(project_path: &str, status: &GitStatus) {
-    let cache = status_cache_path(project_path);
-    if let Some(parent) = cache.parent() {
-        if std::fs::create_dir_all(parent).is_err() {
-            return;
-        }
-    }
-    let raw = match serde_json::to_string(status) {
-        Ok(r) => r,
-        Err(_) => return,
-    };
-    let tmp = cache.with_extension("json.tmp");
-    if std::fs::write(&tmp, raw).is_ok() {
-        let _ = std::fs::rename(&tmp, &cache);
-    }
+    git_status_compute(&path).await
 }
 
 /// The actual git work — parallel subprocesses, filtered flags.
@@ -239,7 +157,7 @@ async fn git_status_compute(path: &str) -> Result<GitStatus, String> {
         .lines()
         .filter(|l| l.len() >= 3)
         .map(|line| {
-            let index = line.chars().nth(0).unwrap_or(' ');
+            let index = line.chars().next().unwrap_or(' ');
             let worktree = line.chars().nth(1).unwrap_or(' ');
             let file_path = line[3..].to_string();
             let (status, staged) = if index != ' ' && index != '?' {
@@ -317,7 +235,7 @@ pub(crate) fn git_log_compute(
             }
             let parents: Vec<String> = parts[6]
                 .split_whitespace()
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
             let refs: Vec<String> = parts[7]
                 .split(',')
@@ -456,7 +374,7 @@ pub async fn git_graph_signature(path: String) -> Result<String, String> {
         for b in head.bytes().chain(joined.bytes()) {
             h = h.wrapping_mul(33) ^ (b as u64);
         }
-        Ok(format!("{}-{:016x}", head, h))
+        Ok(format!("{head}-{h:016x}"))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -605,7 +523,7 @@ pub async fn git_list_branches(path: String) -> Result<Vec<GitBranch>, String> {
                 let parts: Vec<&str> = line.split('\x1f').collect();
                 GitBranch {
                     name: parts.first().unwrap_or(&"").to_string(),
-                    is_current: parts.get(1).map_or(false, |h| h.trim() == "*"),
+                    is_current: parts.get(1).is_some_and(|h| h.trim() == "*"),
                 }
             })
             .collect();

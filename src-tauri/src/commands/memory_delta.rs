@@ -68,28 +68,44 @@ pub fn classify(delta: &SessionDelta, session_id: &str, agent: &str) -> Vec<RawE
         }
 
         // A finished tool call that mutates a file → file_changed (on Completed
-        // only; dedup-by-path in the fold collapses repeats).
+        // only; dedup-by-path in the fold collapses repeats). Classification
+        // and path extraction are the checkpoint crate's — the one place that
+        // already solved both per agent family (#67): the native agent's tool
+        // name is a human title ("Edit src/foo.rs"), which the old
+        // exact-string matcher never matched, and its files ride the ACP
+        // `locations`, which the old singular-key probe never read — so
+        // Atlas Agent's edits silently produced no cross-agent memory at all.
         SessionDelta::ToolCallUpserted { tool_call, .. } => {
             if tool_call.status != ToolCallStatus::Completed {
                 return Vec::new();
             }
-            if !is_file_mutation(&tool_call.tool_name) {
+            let name = atlas_checkpoint::tools::canonical_name(
+                Some(&tool_call.tool_name),
+                tool_call.title.as_deref(),
+                tool_call.kind.as_deref(),
+                &tool_call.arguments,
+            );
+            if !name.writes_files() {
                 return Vec::new();
             }
-            let Some(path) = extract_path(&tool_call.arguments) else {
-                return Vec::new();
-            };
             let summary = tool_call
                 .title
                 .clone()
                 .unwrap_or_else(|| tool_call.tool_name.clone());
-            vec![RawEvent {
+            atlas_checkpoint::tools::extract_paths(
+                &tool_call.locations,
+                &[],
+                &tool_call.arguments,
+            )
+            .into_iter()
+            .map(|path| RawEvent {
                 agent: agent.to_string(),
                 session_id: session_id.to_string(),
                 kind: EventKind::FileChanged,
                 key: path.clone(),
                 payload: serde_json::json!({ "path": path, "summary": redact(&cap(&summary)) }),
-            }]
+            })
+            .collect()
         }
 
         // A completed assistant message → conservative keyword scan for explicit
@@ -142,29 +158,6 @@ fn scan_assistant_text(content: &str, session_id: &str, agent: &str) -> Vec<RawE
         }
     }
     out
-}
-
-fn is_file_mutation(tool_name: &str) -> bool {
-    let n = tool_name.to_lowercase();
-    n == "edit"
-        || n == "write"
-        || n == "create"
-        || n.contains("str_replace")
-        || n.contains("create_file")
-        || n.contains("apply_patch")
-        || n.contains("multiedit")
-}
-
-/// Pull a file path out of common tool-argument shapes.
-fn extract_path(args: &serde_json::Value) -> Option<String> {
-    for key in ["file_path", "path", "filePath", "target_file", "file"] {
-        if let Some(p) = args.get(key).and_then(|v| v.as_str()) {
-            if !p.trim().is_empty() {
-                return Some(p.to_string());
-            }
-        }
-    }
-    None
 }
 
 fn cap(s: &str) -> String {
@@ -241,6 +234,41 @@ fn looks_secret(tok: &str) -> bool {
 mod tests {
     use super::*;
     use atlas_agent_wire::PlanEntry;
+
+    fn native_edit_delta() -> SessionDelta {
+        SessionDelta::ToolCallUpserted {
+            message_id: "m1".into(),
+            tool_call: atlas_agent_wire::ToolCall {
+                id: "call-1".into(),
+                tool_name: "Edit src/foo.rs (+1 more)".into(),
+                title: Some("Edit src/foo.rs (+1 more)".into()),
+                kind: Some("edit".into()),
+                status: ToolCallStatus::Completed,
+                arguments: serde_json::json!({ "paths": ["src/foo.rs", "src/bar.rs"] }),
+                result: None,
+                locations: vec![
+                    serde_json::json!({ "path": "src/foo.rs" }),
+                    serde_json::json!({ "path": "src/bar.rs" }),
+                ],
+                raw_output: None,
+                content_blocks: vec![],
+            },
+        }
+    }
+
+    /// Issue #67: the native agent titles its edit call "Edit src/foo.rs" and
+    /// carries the files in ACP `locations` — no exact-string tool name, no
+    /// singular path key. The old matcher saw neither, so Atlas Agent's edits
+    /// never produced a `file_changed` and cross-agent memory silently
+    /// excluded the native agent. Every edited file gets its own event.
+    #[test]
+    fn a_native_agent_edit_reaches_shared_memory() {
+        let evs = classify(&native_edit_delta(), "s1", "cersei");
+        assert_eq!(evs.len(), 2, "one file_changed per edited file");
+        assert!(evs.iter().all(|e| e.kind == EventKind::FileChanged));
+        assert_eq!(evs[0].key, "src/foo.rs");
+        assert_eq!(evs[1].key, "src/bar.rs");
+    }
 
     fn plan_delta() -> SessionDelta {
         SessionDelta::PlanUpdated {

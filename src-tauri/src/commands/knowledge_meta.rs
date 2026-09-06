@@ -257,7 +257,7 @@ fn schedule_flush(state: Arc<KnowledgeMetaState>, app: AppHandle, project_path: 
 
 /* ── Commands ───────────────────────────────────────────────────── */
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn knowledge_meta_load(
     project_path: String,
     state: State<'_, Arc<KnowledgeMetaState>>,
@@ -270,7 +270,7 @@ pub fn knowledge_meta_load(
         .unwrap_or_default())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn knowledge_meta_patch(
     project_path: String,
     entry_id: String,
@@ -286,7 +286,7 @@ pub fn knowledge_meta_patch(
         let entry = writer
             .snapshot
             .pages
-            .entry(entry_id.clone())
+            .entry(entry_id)
             .or_insert_with(PageMeta::default);
         if entry.created_at.is_none() {
             entry.created_at = Some(now.clone());
@@ -299,7 +299,7 @@ pub fn knowledge_meta_patch(
     Ok(updated_meta)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn knowledge_meta_delete(
     project_path: String,
     entry_id: String,

@@ -130,6 +130,14 @@ impl NodeRuntime {
         Ok(command.output().await?)
     }
 
+    // The `install` guard is held across the download and extract on purpose:
+    // it is a double-checked install lock, and the whole point is that a second
+    // caller waits rather than racing a `remove_dir_all(containing_dir)` against
+    // an extraction already in flight. That is what `tokio::sync::Mutex` is for.
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "the install lock must span the download so concurrent callers do not race the extract"
+    )]
     async fn install_if_needed(&self) -> Result<PathBuf> {
         let (containing_dir, http, install) = match &*self.0 {
             Inner::Unavailable(reason) => bail!("Node.js is unavailable: {reason}"),
@@ -272,7 +280,7 @@ fn npm_command_args(
             .to_string_lossy()
             .into_owned(),
     );
-    command_args.extend(args.iter().map(|arg| arg.to_string()));
+    command_args.extend(args.iter().map(std::string::ToString::to_string));
     command_args
 }
 

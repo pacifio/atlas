@@ -98,6 +98,31 @@ fn walk_knowledge(dir: &Path, root: &Path, entries: &mut Vec<KnowledgeEntry>) {
     }
 }
 
+/// A renderer-supplied path fragment, held inside the knowledge root.
+///
+/// Nested ids ("Adib/note-123") are legitimate, so `/` is allowed — what is
+/// not is anything that climbs or escapes: absolute paths, `..` anywhere,
+/// backslashes, or empty input. Every KB command that joins renderer input
+/// under `.atlas/knowledge` goes through here; before it, `id =
+/// "../../../../.zshrc"` was an arbitrary write and `cover =
+/// "../../../.ssh/id_rsa"` an arbitrary read handed back as a data URL.
+/// Same rule as `log.rs::org_log_dir`, extended for nesting.
+fn kb_rel(fragment: &str) -> Result<&str, String> {
+    let f = fragment;
+    // No trimming: `"/etc/passwd".trim_matches('/')` would come out RELATIVE
+    // and sail through — an absolute path is rejected, not laundered.
+    if f.is_empty()
+        || f.contains('\\')
+        || Path::new(f).is_absolute()
+        || Path::new(f)
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err("invalid knowledge path".to_string());
+    }
+    Ok(f)
+}
+
 /// Save a knowledge note (supports nested paths like "Adib/note-123")
 #[tauri::command]
 pub async fn save_knowledge_note(
@@ -105,9 +130,10 @@ pub async fn save_knowledge_note(
     id: String,
     content: String,
 ) -> Result<String, String> {
+    let id = kb_rel(&id)?.to_string();
     tokio::task::spawn_blocking(move || {
         let kb_dir = Path::new(&project_path).join(".atlas").join("knowledge");
-        let filepath = kb_dir.join(format!("{}.md", id));
+        let filepath = kb_dir.join(format!("{id}.md"));
         if let Some(parent) = filepath.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
@@ -132,7 +158,7 @@ fn unique_dest(dest: &Path) -> std::path::PathBuf {
     }
     let stem = dest.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
     let ext = dest.extension().map(|e| e.to_string_lossy().to_string());
-    let parent = dest.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let parent = dest.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
     for n in 1.. {
         let name = match &ext {
             Some(e) => format!("{stem}-{n}.{e}"),
@@ -209,11 +235,12 @@ pub async fn delete_knowledge_note(
     project_path: String,
     id: String,
 ) -> Result<(), String> {
+    let id = kb_rel(&id)?.to_string();
     tokio::task::spawn_blocking(move || {
         let filepath = Path::new(&project_path)
             .join(".atlas")
             .join("knowledge")
-            .join(format!("{}.md", id));
+            .join(format!("{id}.md"));
         if filepath.exists() {
             fs::remove_file(&filepath).map_err(|e| e.to_string())?;
         }
@@ -226,6 +253,7 @@ pub async fn delete_knowledge_note(
 /// Create a directory inside .atlas/knowledge/
 #[tauri::command]
 pub async fn create_knowledge_dir(project_path: String, dir_name: String) -> Result<(), String> {
+    let dir_name = kb_rel(&dir_name)?.to_string();
     tokio::task::spawn_blocking(move || {
         let dir = Path::new(&project_path)
             .join(".atlas")
@@ -260,7 +288,14 @@ pub async fn knowledge_cover_upload(
         // Flatten the entry id so a nested note (`folder/note-123`) still
         // gets a flat filename safe for the covers directory.
         let safe_name = entry_id.replace('/', "__");
-        let rel = format!("covers/{}.{}", safe_name, ext);
+        if !safe_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ' '))
+            || safe_name.contains("..")
+        {
+            return Err("invalid entry id".to_string());
+        }
+        let rel = format!("covers/{safe_name}.{ext}");
         let dest = Path::new(&project_path)
             .join(".atlas")
             .join("knowledge")
@@ -290,16 +325,26 @@ pub async fn knowledge_cover_data_url(
     if cover.starts_with("gradient:") {
         return Ok(cover);
     }
+    let cover = kb_rel(&cover)?.to_string();
     tokio::task::spawn_blocking(move || {
+        // Cap before reading into a data URL: a 6MB PNG becomes an 8MB JS
+        // string crossing IPC, retained in the store, and re-serialized into
+        // any snapshot that captures it. Covers are decorative; 2MiB is
+        // generous.
+        const MAX_COVER_BYTES: u64 = 2 * 1024 * 1024;
         let abs = Path::new(&project_path)
             .join(".atlas")
             .join("knowledge")
             .join(&cover);
+        let meta = fs::metadata(&abs).map_err(|e| e.to_string())?;
+        if meta.len() > MAX_COVER_BYTES {
+            return Err("cover image is too large to inline (2MB max)".to_string());
+        }
         let bytes = fs::read(&abs).map_err(|e| e.to_string())?;
         let mime = match abs
             .extension()
             .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
+            .map(str::to_lowercase)
             .as_deref()
         {
             Some("png") => "image/png",
@@ -310,7 +355,7 @@ pub async fn knowledge_cover_data_url(
             _ => "image/jpeg",
         };
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        Ok(format!("data:{};base64,{}", mime, b64))
+        Ok(format!("data:{mime};base64,{b64}"))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -385,21 +430,115 @@ pub async fn load_editor_state(project_path: String) -> Result<String, String> {
 }
 
 /// Fetch a URL and return text-only sanitized HTML (no media, no external CSS)
+/// Refuse URLs that reach anything other than a public web host.
+///
+/// This command fetches an arbitrary renderer-supplied URL and hands the
+/// body back — without this check that is a free read of loopback services,
+/// the cloud metadata endpoint (169.254.169.254) and anything on the LAN.
+/// Scheme must be http(s); the host must not be loopback, link-local,
+/// RFC1918-private, or unique-local. Hostnames are resolved and every
+/// address is held to the same rule — a DNS name pointing at 127.0.0.1 is
+/// exactly the bypass this exists to stop.
+async fn assert_public_http_url(url: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| format!("Bad URL: {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("only http(s) URLs can be fetched".into());
+    }
+    let Some(host) = parsed.host() else {
+        return Err("URL has no host".into());
+    };
+    let addrs: Vec<std::net::IpAddr> = match host {
+        url::Host::Ipv4(ip) => vec![ip.into()],
+        url::Host::Ipv6(ip) => vec![ip.into()],
+        url::Host::Domain(name) => {
+            let port = parsed.port_or_known_default().unwrap_or(443);
+            tokio::net::lookup_host((name, port))
+                .await
+                .map_err(|e| format!("Could not resolve {name}: {e}"))?
+                .map(|sa| sa.ip())
+                .collect()
+        }
+    };
+    if addrs.is_empty() {
+        return Err("host resolved to no addresses".into());
+    }
+    for ip in addrs {
+        if !ip_is_public(&ip) {
+            return Err("that address is not reachable from here".into());
+        }
+    }
+    Ok(())
+}
+
+fn ip_is_public(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                // CGNAT 100.64/10 — Tailscale et al. live here.
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64))
+        }
+        std::net::IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return ip_is_public(&std::net::IpAddr::V4(mapped));
+            }
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                // fe80::/10 link-local, fc00::/7 unique-local.
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || (v6.segments()[0] & 0xfe00) == 0xfc00)
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn fetch_readable(url: String) -> Result<ReadableContent, String> {
+    assert_public_http_url(&url).await?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-        .redirect(reqwest::redirect::Policy::limited(10))
+        // No automatic redirects: each hop is re-checked, or a public host
+        // could 302 straight into 169.254.169.254.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap_or_default();
 
-    let response = client.get(&url).send().await
-        .map_err(|e| format!("Fetch failed: {}", e))?;
+    let mut current = url.clone();
+    let mut response = None;
+    for _ in 0..10 {
+        let resp = client
+            .get(&current)
+            .send()
+            .await
+            .map_err(|e| format!("Fetch failed: {e}"))?;
+        if resp.status().is_redirection() {
+            let Some(loc) = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+            else {
+                return Err("redirect with no destination".into());
+            };
+            // Relative redirects resolve against the current URL.
+            let next = reqwest::Url::parse(&current)
+                .and_then(|b| b.join(loc))
+                .map_err(|e| format!("Bad redirect: {e}"))?
+                .to_string();
+            assert_public_http_url(&next).await?;
+            current = next;
+            continue;
+        }
+        response = Some(resp);
+        break;
+    }
+    let response = response.ok_or_else(|| "too many redirects".to_string())?;
 
     let final_url = response.url().to_string();
     let html = response.text().await
-        .map_err(|e| format!("Read failed: {}", e))?;
+        .map_err(|e| format!("Read failed: {e}"))?;
 
     let title = extract_html_title(&html).unwrap_or_else(|| url.clone());
     let sanitized = sanitize_html(&html, &final_url);
@@ -426,129 +565,40 @@ fn extract_html_title(html: &str) -> Option<String> {
     Some(html[gt..end].trim().to_string())
 }
 
-fn strip_style_attributes(html: &str) -> String {
-    // Use regex-like find/replace on the string level (safe for multi-byte UTF-8)
-    let mut result = html.to_string();
-    loop {
-        let lower = result.to_lowercase();
-        // Find style=" or style='
-        let pos = if let Some(p) = lower.find("style=\"") {
-            Some((p, '"', 7))
-        } else if let Some(p) = lower.find("style='") {
-            Some((p, '\'', 7))
-        } else {
-            None
-        };
-
-        if let Some((start, quote, offset)) = pos {
-            if let Some(end) = result[start + offset..].find(quote) {
-                // Remove style="..." including trailing space
-                let remove_end = start + offset + end + 1;
-                let remove_end = if result.as_bytes().get(remove_end) == Some(&b' ') { remove_end + 1 } else { remove_end };
-                result = format!("{}{}", &result[..start], &result[remove_end..]);
-                continue;
-            }
-        }
-        break;
-    }
-    result
-}
-
 /// Sanitize HTML: remove dangerous tags, media, styles. Resolve link URLs. Text-only content.
 fn sanitize_html(html: &str, base_url: &str) -> String {
     let lower = html.to_lowercase();
-
     let body = find_body(html, &lower).unwrap_or_else(|| html.to_string());
 
-    // Remove: scripts, styles, media, interactive, nav chrome
-    let cleaned = remove_tags(&body, &[
-        "script", "style", "noscript", "iframe", "object", "embed", "form",
-        "img", "video", "audio", "picture", "figure", "canvas", "svg",
-        "nav", "footer", "aside", "dialog", "template",
-    ]);
+    // An ALLOWLIST parser, not our former string-level denylist. The denylist
+    // kept losing: <meta http-equiv=refresh>, <base href>, <link stylesheet>,
+    // unquoted `javascript:` hrefs and `</script >` all survived one revision
+    // or another, and the output lands in the MAIN webview via
+    // dangerouslySetInnerHTML. ammonia parses with html5ever (same engine as
+    // the renderer class), keeps only what is named here, resolves relative
+    // links against the page URL, and rejects every scheme but the two named.
+    use std::collections::HashSet;
+    let tags: HashSet<&str> = [
+        "a", "abbr", "b", "blockquote", "br", "code", "dd", "del", "details",
+        "div", "dl", "dt", "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr",
+        "i", "ins", "kbd", "li", "main", "mark", "ol", "p", "pre", "q", "s",
+        "section", "small", "span", "strong", "sub", "summary", "sup",
+        "table", "tbody", "td", "tfoot", "th", "thead", "time", "tr", "u",
+        "ul",
+    ]
+    .into();
 
-    // Resolve relative URLs in href attributes so links work
-    let base = base_url.trim_end_matches(|c: char| c != '/').to_string();
-    let origin = extract_origin(base_url);
-    let resolved = resolve_urls(&cleaned, &base, &origin);
-
-    // Strip all inline style attributes
-    strip_style_attributes(&resolved)
-}
-
-fn remove_tags(html: &str, tags: &[&str]) -> String {
-    let mut result = html.to_string();
-    for tag in tags {
-        let open = format!("<{}", tag);
-        let close = format!("</{}>", tag);
-        loop {
-            let rl = result.to_lowercase();
-            if let Some(start) = rl.find(&open) {
-                if let Some(end) = rl[start..].find(&close) {
-                    result = format!("{}{}", &result[..start], &result[start + end + close.len()..]);
-                    continue;
-                } else {
-                    // Self-closing or unclosed — remove just the tag
-                    if let Some(gt) = rl[start..].find('>') {
-                        result = format!("{}{}", &result[..start], &result[start + gt + 1..]);
-                        continue;
-                    }
-                }
-            }
-            break;
-        }
+    let mut builder = ammonia::Builder::empty();
+    builder
+        .tags(tags)
+        .generic_attributes(HashSet::new())
+        .add_tag_attributes("a", ["href"])
+        .url_schemes(["http", "https"].into())
+        .link_rel(Some("noopener noreferrer nofollow"));
+    if let Ok(base) = url::Url::parse(base_url) {
+        builder.url_relative(ammonia::UrlRelative::RewriteWithBase(base));
     }
-    result
-}
-
-fn extract_origin(url: &str) -> String {
-    // https://example.com/path -> https://example.com
-    if let Some(idx) = url.find("://") {
-        let after = &url[idx + 3..];
-        if let Some(slash) = after.find('/') {
-            return url[..idx + 3 + slash].to_string();
-        }
-        return url.to_string();
-    }
-    url.to_string()
-}
-
-fn resolve_urls(html: &str, base: &str, origin: &str) -> String {
-    let mut result = html.to_string();
-
-    // Resolve href="..." and src="..."
-    for attr in &["href=\"", "src=\"", "href='", "src='"] {
-        let quote = if attr.ends_with('"') { '"' } else { '\'' };
-        let mut offset = 0;
-        loop {
-            let lower = result[offset..].to_lowercase();
-            if let Some(start) = lower.find(attr) {
-                let abs_start = offset + start + attr.len();
-                if let Some(end) = result[abs_start..].find(quote) {
-                    let url_val = &result[abs_start..abs_start + end];
-                    let resolved = if url_val.starts_with("http://") || url_val.starts_with("https://") || url_val.starts_with("data:") || url_val.starts_with("mailto:") || url_val.starts_with('#') {
-                        url_val.to_string()
-                    } else if url_val.starts_with("//") {
-                        format!("https:{}", url_val)
-                    } else if url_val.starts_with('/') {
-                        format!("{}{}", origin, url_val)
-                    } else {
-                        format!("{}/{}", base, url_val)
-                    };
-                    if resolved != url_val {
-                        result = format!("{}{}{}", &result[..abs_start], resolved, &result[abs_start + end..]);
-                    }
-                    offset = abs_start + resolved.len() + 1;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-    }
-
-    result
+    builder.clean(&body).to_string()
 }
 
 fn find_body(html: &str, lower: &str) -> Option<String> {
@@ -556,4 +606,150 @@ fn find_body(html: &str, lower: &str) -> Option<String> {
     let gt = html[start..].find('>')? + start + 1;
     let end = lower[gt..].find("</body")? + gt;
     Some(html[gt..end].to_string())
+}
+
+#[cfg(test)]
+mod sanitize_tests {
+    use super::sanitize_html;
+
+    /// The whole bypass corpus from the audit, plus the cases the previous
+    /// two revisions fixed one at a time. ammonia is an allowlist parser, so
+    /// each of these falls out structurally rather than by special case.
+    #[test]
+    fn the_bypass_corpus_is_neutralized() {
+        let base = "https://example.com/a/";
+        for (input, must_not_contain) in [
+            (r#"<p onclick="fetch('https://evil/x')">hi</p>"#, "onclick"),
+            (r#"<img src='x' onerror='alert(1)' onload=alert(2)>"#, "onerror"),
+            (r#"<body ONLOAD="evil()">x</body>"#, "onload"),
+            (r#"<meta http-equiv="refresh" content="0;url=https://evil/">"#, "http-equiv"),
+            (r#"<base href="https://evil/">"#, "<base"),
+            (r#"<link rel="stylesheet" href="//evil/x.css">"#, "<link"),
+            (r#"<a href=javascript:alert(1)>x</a>"#, "javascript:"),
+            (r#"<a href="data:text/html,<script>alert(1)</script>">x</a>"#, "data:"),
+            (r#"<script>alert(1)</script >leftover"#, "<script"),
+            (r#"<svg><script>alert(1)</script></svg>"#, "<script"),
+            (r#"<math><mi xlink:href="javascript:alert(1)">x</mi></math>"#, "javascript:"),
+            (r#"<iframe src="https://evil/"></iframe>"#, "<iframe"),
+            (r#"<p style="background:url(https://evil/beacon)">x</p>"#, "style="),
+        ] {
+            let out = sanitize_html(input, base).to_lowercase();
+            assert!(
+                !out.contains(must_not_contain),
+                "`{must_not_contain}` survived: {input} -> {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn text_and_structure_survive() {
+        let html = "<html><body><h1>Title</h1><p>let one = 1; only = 5 café</p>\
+            <ul><li>a</li></ul><pre><code>x</code></pre></body></html>";
+        let out = sanitize_html(html, "https://example.com/");
+        for keep in ["Title", "let one = 1; only = 5 café", "<li>a</li>", "<code>x</code>"] {
+            assert!(out.contains(keep), "lost `{keep}`: {out}");
+        }
+    }
+
+    #[test]
+    fn relative_links_resolve_against_the_page() {
+        let out = sanitize_html(
+            r#"<a href="/docs/x">doc</a><a href="y.html">rel</a>"#,
+            "https://example.com/a/page.html",
+        );
+        assert!(out.contains("https://example.com/docs/x"), "{out}");
+        assert!(out.contains("https://example.com/a/y.html"), "{out}");
+        // And links get the rel we asked for.
+        assert!(out.contains("noopener"), "{out}");
+    }
+
+    #[test]
+    fn malformed_markup_does_not_panic() {
+        for input in [r#"<p onclick="alert(1)"#, "<a href=", "<<<<", "</p></p>"] {
+            let _ = sanitize_html(input, "https://example.com/");
+        }
+    }
+}
+
+#[cfg(test)]
+mod kb_rel_tests {
+    use super::*;
+
+    #[test]
+    fn nested_ids_pass_and_climbs_fail() {
+        assert_eq!(kb_rel("note-1").unwrap(), "note-1");
+        assert_eq!(kb_rel("Adib/note-123").unwrap(), "Adib/note-123");
+        assert_eq!(kb_rel("covers/x.png").unwrap(), "covers/x.png");
+        // The two shapes the audit exploited: arbitrary write via note id,
+        // arbitrary read via cover path.
+        assert!(kb_rel("../../../../.zshrc").is_err());
+        assert!(kb_rel("a/../../b").is_err());
+        assert!(kb_rel("/etc/passwd").is_err());
+        assert!(kb_rel("a\\..\\b").is_err());
+        assert!(kb_rel("").is_err());
+        assert!(kb_rel("./note").is_err());
+    }
+}
+
+#[cfg(test)]
+mod ssrf_tests {
+    use super::ip_is_public;
+    use std::net::IpAddr;
+
+    #[test]
+    fn the_audit_address_table() {
+        let private: &[&str] = &[
+            "127.0.0.1",
+            "0.0.0.0",
+            "10.0.0.5",
+            "172.16.3.2",
+            "192.168.1.1",
+            "169.254.169.254", // cloud metadata
+            "100.100.1.1",     // CGNAT / tailnet
+            "::1",
+            "fe80::1",
+            "fd00::2",
+            "::ffff:127.0.0.1", // v4-mapped loopback
+        ];
+        for a in private {
+            assert!(!ip_is_public(&a.parse::<IpAddr>().unwrap()), "{a} should be refused");
+        }
+        for a in ["93.184.216.34", "140.82.112.3", "2606:2800:220:1:248:1893:25c8:1946"] {
+            assert!(ip_is_public(&a.parse::<IpAddr>().unwrap()), "{a} should pass");
+        }
+    }
+}
+
+#[cfg(test)]
+mod cover_guard_tests {
+    use super::knowledge_cover_data_url;
+
+    #[tokio::test]
+    async fn covers_are_bounded_and_cannot_climb() {
+        let dir = std::env::temp_dir().join(format!("atlas-cover-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join(".atlas/knowledge/covers")).unwrap();
+        std::fs::write(dir.join(".atlas/knowledge/covers/c.png"), b"png").unwrap();
+        let root = dir.to_string_lossy().to_string();
+
+        let ok = knowledge_cover_data_url(root.clone(), "covers/c.png".into()).await.unwrap();
+        assert!(ok.starts_with("data:image/png;base64,"));
+
+        // Gradient refs pass through untouched — CSS, not files.
+        assert_eq!(
+            knowledge_cover_data_url(root.clone(), "gradient:a,b".into()).await.unwrap(),
+            "gradient:a,b"
+        );
+
+        // The audit's exfil shape.
+        assert!(knowledge_cover_data_url(root.clone(), "../../../.ssh/id_rsa".into())
+            .await
+            .is_err());
+
+        // Size cap: decorative images do not get to be 8MB IPC strings.
+        let big = vec![0u8; 3 * 1024 * 1024];
+        std::fs::write(dir.join(".atlas/knowledge/covers/big.png"), &big).unwrap();
+        let err = knowledge_cover_data_url(root, "covers/big.png".into()).await.unwrap_err();
+        assert!(err.contains("too large"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

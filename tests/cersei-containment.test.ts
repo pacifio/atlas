@@ -27,17 +27,11 @@ import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Manifests that may declare cersei dependencies today: the protocol-free
- *  atlas-cersei wrapper, the in-process native agent built on it, the app crate
- *  (which carries the vendored `cersei-provider` UTF-8 compile guard), and the
- *  workspace root (which owns the two `[patch.crates-io]` vendor overrides —
- *  the only manifest cargo honors a patch table in). */
-const ALLOWED_CERSEI_MANIFESTS = new Set([
-  "Cargo.toml",
-  "crates/atlas-cersei/Cargo.toml",
-  "crates/atlas-native-agent/Cargo.toml",
-  "src-tauri/Cargo.toml",
-]);
+/** Manifests that may still declare cersei-named dependencies. The Cersei
+ *  path is deleted (#54): no manifest should, and the set is empty — kept (and
+ *  the walker with it) so a reintroduced `cersei-*` dependency anywhere fails
+ *  this suite instead of quietly resolving from crates.io. */
+const ALLOWED_CERSEI_MANIFESTS = new Set<string>([]);
 
 /** A dependency-shaped cersei line: `cersei = …`, `cersei-agent = { … }`, and
  *  the `[patch.crates-io]` vendored overrides. Comment lines don't count —
