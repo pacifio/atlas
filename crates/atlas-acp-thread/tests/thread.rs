@@ -515,6 +515,80 @@ async fn a_new_turn_clears_a_stale_call_left_by_a_failed_one() {
     assert_eq!(status_of(&thread, "t1"), "Canceled");
 }
 
+// ----------------------------------------------------------------- turn ids
+
+/// Regression, ATL-229. `begin_turn` returns an id precisely so a turn that
+/// reports back late can tell whether it is still the one running. Closing the
+/// thread's turn unconditionally meant the *cancelled* turn closed the *live*
+/// one, and the UI dropped to idle mid-stream.
+#[tokio::test]
+async fn a_superseded_turn_cannot_close_the_turn_that_replaced_it() {
+    let (mut thread, _events, _conn) = new_thread();
+
+    let first = thread.begin_turn();
+    let second = thread.begin_turn();
+    assert_ne!(first, second, "each turn gets its own id");
+
+    assert!(
+        !thread.end_turn_if_current(first, acp::StopReason::Cancelled),
+        "the superseded turn closes nothing"
+    );
+    assert!(thread.is_generating(), "the live turn is still running");
+
+    assert!(
+        thread.end_turn_if_current(second, acp::StopReason::EndTurn),
+        "and the live turn closes its own"
+    );
+    assert!(!thread.is_generating());
+}
+
+/// The same guard for the failing half: a superseded turn's error is news about
+/// a turn that is already over.
+#[tokio::test]
+async fn a_superseded_turns_error_does_not_mark_the_live_turn() {
+    let (mut thread, _events, _conn) = new_thread();
+
+    let first = thread.begin_turn();
+    thread.begin_turn();
+
+    assert!(!thread.set_error_if_current(first));
+    assert!(thread.is_generating(), "the live turn survives it");
+    assert!(!thread.had_error(), "and is not marked as having failed");
+}
+
+/// A turn that ends twice — a late duplicate response — must not reopen or
+/// re-announce anything either.
+#[tokio::test]
+async fn closing_a_turn_twice_closes_it_once() {
+    let (mut thread, _events, _conn) = new_thread();
+
+    let turn = thread.begin_turn();
+    assert!(thread.end_turn_if_current(turn, acp::StopReason::EndTurn));
+    assert!(
+        !thread.end_turn_if_current(turn, acp::StopReason::EndTurn),
+        "the turn is already closed"
+    );
+}
+
+/// The unguarded `end_turn` stays as it is: `atlas-agent-delta` and this
+/// crate's own callers use it as "announce Stopped" with no turn open, which
+/// ATL-218 finding 4 settled deliberately. The guarded pair is an addition, not
+/// a replacement.
+#[tokio::test]
+async fn end_turn_still_announces_a_stop_with_no_turn_open() {
+    let (mut thread, mut events, _conn) = new_thread();
+
+    thread.end_turn(acp::StopReason::EndTurn);
+
+    let mut stopped = false;
+    while let Ok(event) = events.try_recv() {
+        if matches!(event, AcpThreadEvent::Stopped(_)) {
+            stopped = true;
+        }
+    }
+    assert!(stopped, "the stop is announced whether or not a turn was open");
+}
+
 /// The counterpart guard: resolving entries unconditionally must not start
 /// sending `session/cancel` from an idle thread. Complements
 /// `cancelling_an_idle_thread_does_not_notify_the_agent` by putting a

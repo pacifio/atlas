@@ -839,10 +839,11 @@ pub enum AcpThreadEvent {
 }
 
 /// The turn currently in flight, if any. Zed also holds the send task here; the
-/// task lives with the caller in this port, so only the identity remains.
+/// task lives with the caller in this port, so only the identity remains — and
+/// the identity is the point: it is what tells a turn reporting back late
+/// whether it is still the one running.
 #[derive(Debug)]
 struct RunningTurn {
-    #[allow(dead_code)]
     id: u32,
 }
 
@@ -1766,6 +1767,46 @@ impl AcpThread {
         self.running_turn = None;
         self.emit(AcpThreadEvent::Error);
         self.emit(AcpThreadEvent::StatusChanged);
+    }
+
+    /// Close `turn`, if it is still the turn that is running.
+    ///
+    /// The guarded counterpart to [`Self::end_turn`], for the caller that owns
+    /// one specific turn and may be reporting back long after it stopped being
+    /// the current one. `begin_turn` supersedes deliberately, so a turn that
+    /// was interrupted by a follow-up still has a `prompt` in flight; when it
+    /// finally returns, closing the thread's turn unconditionally closed the
+    /// turn that superseded it, and the UI dropped to idle while the live turn
+    /// was still streaming (ATL-229).
+    ///
+    /// Answers whether it closed anything, so a caller can tell "my turn ended"
+    /// from "my turn had already been replaced".
+    pub fn end_turn_if_current(&mut self, turn: u32, stop_reason: acp::StopReason) -> bool {
+        if !self.is_running_turn(turn) {
+            return false;
+        }
+        self.end_turn(stop_reason);
+        true
+    }
+
+    /// Mark the thread failed, if `turn` is still the turn that is running.
+    ///
+    /// The guarded counterpart to [`Self::set_error`], for the same reason as
+    /// [`Self::end_turn_if_current`]: a superseded turn's failure is news about
+    /// a turn that is already over, and marking the live one as errored on the
+    /// strength of it is a lie the user acts on.
+    pub fn set_error_if_current(&mut self, turn: u32) -> bool {
+        if !self.is_running_turn(turn) {
+            return false;
+        }
+        self.set_error();
+        true
+    }
+
+    fn is_running_turn(&self, turn: u32) -> bool {
+        self.running_turn
+            .as_ref()
+            .is_some_and(|running| running.id == turn)
     }
 
     pub fn emit_load_error(&mut self, error: LoadError) {
