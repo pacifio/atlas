@@ -26,6 +26,17 @@ import { toast } from "sonner";
  *  focus-triggered retry doesn't re-toast the same error on every focus.
  *  Cleared for a pair once its bind finally succeeds. */
 const reportedBindFailures = new Set<string>();
+/** Tab+agent keys whose automatic bind has already been retried once after a
+ *  failure. The mount-time bind is not something the user did, and its first
+ *  failure at boot has a known transient cause: every mounted chat panel
+ *  binds at once, and the native engine's in-process start is not reentrant —
+ *  a second concurrent start on the same engine home failed with "starting
+ *  the in-process app-server runtime", which then surfaced as an error toast
+ *  on a launch that was otherwise fine (the manager's connect dedupe, ATL-226,
+ *  closes the race itself; this is the belt to that brace). One silent retry
+ *  absorbs a transient; a failure that repeats is reported as before. */
+const retriedBinds = new Set<string>();
+const BIND_RETRY_MS = 1500;
 
 /** Tab+agent pairs we have ALREADY walked through sign-in once.
  *
@@ -371,6 +382,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
         // that expires later in the session deserves the dialog again.
         reportedBindFailures.delete(`${tabId}:${pluginId}`);
         signInAttempted.delete(`${tabId}:${pluginId}`);
+        retriedBinds.delete(`${tabId}:${pluginId}`);
         // Seed the composer mode picker from the freshly-created session's
         // advertised modes (Codex: read-only / auto / full-access). The modes
         // are seeded into the Rust SessionState by `new_session`, so the
@@ -473,6 +485,16 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
           useChatStore.getState().actions.setAcpModesPending(tabId, false);
           const at = useChatStore.getState().sessions[tabId]?.agentType;
           const key = `${tabId}:${pluginIdForAgent(at)}`;
+          // First failure of an automatic bind: try once more, quietly, before
+          // telling anyone. `pending` is released in `finally` below, so the
+          // delayed call is not coalesced away.
+          if (!retriedBinds.has(key)) {
+            retriedBinds.add(key);
+            window.setTimeout(() => {
+              if (!cancelled) void ensureBound();
+            }, BIND_RETRY_MS);
+            return;
+          }
           if (!reportedBindFailures.has(key)) {
             reportedBindFailures.add(key);
             // Cursor (and friends) reject `session/new` when signed out, so the
