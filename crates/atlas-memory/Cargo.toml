@@ -20,7 +20,9 @@ uuid = { version = "1", features = ["v4"] }
 # `embedding::EmbeddingError`.
 thiserror = "2"
 # The persistent HNSW vector index — has native save/load/remove (hard deletes).
-usearch = "2.25.3"
+# Declared per target below: usearch's default `numkong` feature pulls in a C
+# kernel library that does not compile under MSVC, and this crate is the only
+# thing that keeps Atlas from building on Windows because of it.
 # On-device MiniLM embedder (384-d, CPU). The `MiniLmProvider` wraps this.
 atlas-embed = { path = "../atlas-embed" }
 
@@ -30,6 +32,18 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "sync"] }
 tracing = "0.1"
+
+[target.'cfg(not(windows))'.dependencies]
+usearch = "2.25.3"
+
+# MSVC cannot compile `numkong` 7.x (usearch's default SIMD backend):
+# `include/numkong/cast/serial.h` fails with C2059/C2065 on every dispatch
+# unit, and 7.8.2 fares no better. Without the feature usearch falls back to
+# its own portable kernels (`USEARCH_USE_NUMKONG=0`), which do build there —
+# slower distance math, same index format, same API. Drop this stanza once
+# a numkong release builds under MSVC.
+[target.'cfg(windows)'.dependencies]
+usearch = { version = "2.25.3", default-features = false }
 
 # The workspace lint table is only real for members that opt in —
 # without this stanza it is dead configuration (#60).
