@@ -23,7 +23,8 @@ import type {
 import { splitAtlasContext } from "../lib/atlas-context";
 import { loadCachedAcpModes, saveCachedAcpModes } from "../lib/acp-modes-cache";
 import { loadLastModePref, saveLastModePref } from "../lib/last-mode-pref";
-import { modelSelectOf } from "../lib/acp-config-options";
+import { modeSelectOf, modelSelectOf } from "../lib/acp-config-options";
+import { exitPlanModeForOption, exitPlanOptionRestartsSession } from "../lib/exit-plan-modes";
 import { saveConfigOptionPref } from "../lib/config-option-prefs";
 import {
   loadCachedAcpConfigOptions,
@@ -366,6 +367,15 @@ interface ChatActions {
      *  treating it as an Atlas user override or sending a second RPC. */
     hydrateClaudePermissionMode: (sessionId: string, mode: ClaudePermissionMode) => void;
     setClaudePermissionMode: (sessionId: string, mode: ClaudePermissionMode) => void;
+    /** A plan-approval option was answered: adopt the mode it selects (or
+     *  `override`, for Atlas's own "approve and bypass") and push it to the
+     *  agent, since the Claude adapter applies it silently. Not persisted as
+     *  the user's preference — it is a per-session decision. */
+    applyExitPlanSelection: (
+      sessionId: string,
+      optionId: string,
+      override?: ClaudePermissionMode,
+    ) => void;
     /** Seed the generic ACP mode state (current + available list) from a
      *  session snapshot. Used for non-Claude agents (e.g. Codex). */
     setAcpModes: (
@@ -1037,6 +1047,27 @@ export const useChatStore = createSelectors(
             }
           });
           saveLastModePref("claude-code", mode === "default" ? null : mode);
+          pushPermissionModeToAgent(get(), sessionId, previous);
+        },
+        applyExitPlanSelection: (sessionId, optionId, override) => {
+          const session = get().sessions[sessionId];
+          if (!session || session.agentType !== "claude-code") return;
+          const mode = override ?? exitPlanModeForOption(optionId);
+          if (!mode) return;
+          const previous = session.claudePermissionMode ?? "default";
+          set((s) => {
+            const sess = s.sessions[sessionId];
+            if (!sess) return;
+            sess.claudePermissionMode = mode;
+            sess.acpCurrentMode = mode;
+          });
+          // A clear-context choice restarts the session; the adapter publishes
+          // the mode itself once the replacement is up, and a set_mode sent
+          // into the restart is refused. The plain choices are applied by the
+          // CLI alone — push so the adapter's own bookkeeping (which builds the
+          // NEXT approval prompt from it) agrees, and so an override actually
+          // takes effect.
+          if (exitPlanOptionRestartsSession(optionId) && !override) return;
           pushPermissionModeToAgent(get(), sessionId, previous);
         },
         setAcpModes: (sessionId, currentMode, availableModes, sourceAgentType) => {
@@ -2128,6 +2159,22 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
           saveCachedAcpModels(session.agentType, {
             availableModels: models.availableModels,
           });
+        }
+      }
+      // The mode pill rides on it too. The official Claude adapter never
+      // sends `current_mode_update` for an ordinary change — its answer to a
+      // `session/set_mode`, and its only word after the SDK switched modes, is
+      // this blob's `mode` select. Same claude-code + known-mode guard as the
+      // `mode_changed` case, for the same reason (Codex's modes stay out of
+      // the Claude pill). No push back: this is the agent telling us.
+      const modes = modeSelectOf(env.config_options);
+      if (modes?.currentMode) {
+        session.acpCurrentMode = modes.currentMode;
+        if (
+          session.agentType === "claude-code" &&
+          (CLAUDE_PERMISSION_MODES as readonly string[]).includes(modes.currentMode)
+        ) {
+          session.claudePermissionMode = modes.currentMode as ClaudePermissionMode;
         }
       }
       return;

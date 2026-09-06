@@ -334,6 +334,15 @@ fn active_org_of(snapshot: &AuthSnapshot) -> Option<String> {
     }
 }
 
+/// The organisation the chat socket should dial — the desktop's explicit
+/// choice, "none" included, as opposed to the billing/display fallback above.
+fn comms_org_of(snapshot: &AuthSnapshot) -> Option<String> {
+    match snapshot {
+        AuthSnapshot::SignedIn { comms_org_id, .. } => comms_org_id.clone(),
+        other => panic!("expected a signed-in snapshot, got {other:?}"),
+    }
+}
+
 /// Drive a grant to completion against an already-scripted stub.
 async fn sign_in(auth: &AuthCore) {
     let grant = auth.start_grant().await.expect("start grant");
@@ -1249,7 +1258,8 @@ async fn a_credential_stored_before_identities_existed_still_loads() {
         AuthSnapshot::SignedIn {
             user: None,
             orgs: None,
-            active_org_id: None
+            active_org_id: None,
+            comms_org_id: None,
         },
         "signed in, just not yet identified — and not yet knowing anything \
          about organisations either, which is not the same as belonging to none"
@@ -1632,10 +1642,171 @@ async fn the_desktop_can_set_the_active_organisation_it_bills() {
     let reopened = core(&stub, &dir);
     assert_eq!(active_org_of(&reopened.snapshot()).as_deref(), Some("org_b"));
 
-    // Clearing returns to the documented fallback (web-set value, else first) —
-    // the state a local-only org (no server id) selects.
+    // Clearing returns billing to the documented fallback (web-set value, else
+    // first) — but the SOCKET honours the choice: a local-only org (no server
+    // id) has nothing to dial.
     auth.set_active_org(None).expect("clearing is a valid state");
     assert_eq!(active_org_of(&auth.snapshot()).as_deref(), Some("org_a"));
+    assert_eq!(comms_org_of(&auth.snapshot()), None);
+}
+
+/// Until a choice is made, the socket follows the same resolution billing
+/// does — there is nothing else to follow.
+#[tokio::test]
+async fn an_unpinned_session_dials_the_resolved_organisation() {
+    let stub = Stub::start().await;
+    let dir = TempDir::new();
+    scripted_grant_with_roles(&stub, &[("org_1", "member"), ("org_2", "admin")]);
+    stub.org_list(&[("org_1", "First"), ("org_2", "Chosen")]);
+    stub.profile_active_org("Ada Lovelace", None, Some("org_2"));
+
+    let auth = core(&stub, &dir);
+    sign_in(&auth).await;
+    let snapshot = auth.snapshot();
+    assert_eq!(comms_org_of(&snapshot).as_deref(), Some("org_2"));
+    assert_eq!(comms_org_of(&snapshot), active_org_of(&snapshot));
+}
+
+/// The org-switch regression: an explicit desktop choice must survive the
+/// identity refresh a revalidation performs, and so must an explicit "none".
+/// Before the pin, a refresh re-seeded `None` from the web's value, so
+/// switching to a local-only org was undone by the next revalidate and the
+/// socket quietly went back to the org the user had left.
+#[tokio::test]
+async fn an_explicit_choice_survives_an_identity_refresh_none_included() {
+    let stub = Stub::start().await;
+    let dir = TempDir::new();
+    scripted_grant_with_roles(&stub, &[("org_1", "member"), ("org_2", "admin")]);
+    stub.org_list(&[("org_1", "First"), ("org_2", "Chosen")]);
+    stub.profile_active_org("Ada Lovelace", None, Some("org_2"));
+
+    let auth = core(&stub, &dir);
+    sign_in(&auth).await;
+
+    auth.set_active_org(Some("org_1".to_string())).expect("switch");
+    stub.profile_active_org("Ada Lovelace", None, Some("org_2"));
+    stub.org_list(&[("org_1", "First"), ("org_2", "Chosen")]);
+    stub.on("/token", vec![Reply::ok(JWT_OK)]);
+    assert_eq!(auth.validate_once().await, Validation::Confirmed);
+    assert_eq!(comms_org_of(&auth.snapshot()).as_deref(), Some("org_1"));
+    assert_eq!(active_org_of(&auth.snapshot()).as_deref(), Some("org_1"));
+
+    // A local-only org: the socket is OFF, and stays off across a refresh
+    // even though the web still names org_2.
+    auth.set_active_org(None).expect("clearing is a valid state");
+    assert_eq!(comms_org_of(&auth.snapshot()), None);
+    stub.profile_active_org("Ada Lovelace", None, Some("org_2"));
+    stub.org_list(&[("org_1", "First"), ("org_2", "Chosen")]);
+    stub.on("/token", vec![Reply::ok(JWT_OK)]);
+    assert_eq!(auth.validate_once().await, Validation::Confirmed);
+    assert_eq!(comms_org_of(&auth.snapshot()), None, "the web's seed must not re-arm");
+    // Billing keeps its documented fallback — list order, since the pinned
+    // "none" is honoured over the web's seed there too. The two are allowed
+    // to differ: billing needs *some* org, the socket needs the truth.
+    assert_eq!(active_org_of(&auth.snapshot()).as_deref(), Some("org_1"));
+}
+
+/// A switch that lands WHILE a revalidate is in flight — the launch-time
+/// refresh overlapping a user's first org click — must not be undone by the
+/// refresh's save.
+#[tokio::test]
+async fn a_switch_during_a_refresh_is_not_undone() {
+    let stub = Stub::start().await;
+    let dir = TempDir::new();
+    scripted_grant_with_roles(&stub, &[("org_1", "member"), ("org_2", "admin")]);
+    stub.org_list(&[("org_1", "First"), ("org_2", "Chosen")]);
+    stub.profile_active_org("Ada Lovelace", None, Some("org_2"));
+
+    let auth = std::sync::Arc::new(core(&stub, &dir));
+    sign_in(&auth).await;
+    assert_eq!(comms_org_of(&auth.snapshot()).as_deref(), Some("org_2"));
+
+    // The refresh's org-list call is observably in flight for 300ms.
+    stub.profile_active_org("Ada Lovelace", None, Some("org_2"));
+    stub.on(
+        "/organization/list",
+        vec![Reply::ok(
+            r#"[{"id":"org_1","name":"First","slug":"org_1","logo":null},
+                {"id":"org_2","name":"Chosen","slug":"org_2","logo":null}]"#,
+        )
+        .slow(300)],
+    );
+    stub.on("/token", vec![Reply::ok(JWT_OK)]);
+    let refreshing = {
+        let auth = auth.clone();
+        tokio::spawn(async move { auth.validate_once().await })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    auth.set_active_org(Some("org_1".to_string())).expect("switch mid-refresh");
+    assert_eq!(refreshing.await.unwrap(), Validation::Confirmed);
+
+    assert_eq!(
+        comms_org_of(&auth.snapshot()).as_deref(),
+        Some("org_1"),
+        "the refresh that started before the switch must not overwrite it"
+    );
+    assert_eq!(active_org_of(&auth.snapshot()).as_deref(), Some("org_1"));
+}
+
+/// The boot-reconciliation window: a switch pushed before the first profile
+/// fetch has landed used to be refused ("no identity yet"), leaving Rust on
+/// the server's first org while the renderer showed the user's choice.
+#[tokio::test]
+async fn a_choice_can_be_pinned_before_the_first_profile_fetch() {
+    let stub = Stub::start().await;
+    let dir = TempDir::new();
+    std::fs::write(
+        dir.path().join("atlas-session.json"),
+        r#"{"sessionToken":"session-tok","savedAt":"2026-07-22T00:00:00Z"}"#,
+    )
+    .unwrap();
+    let auth = core(&stub, &dir);
+    assert_eq!(user_of_opt(&auth.snapshot()), None, "not yet identified");
+
+    auth.set_active_org(Some("org_1".to_string()))
+        .expect("a pin needs a credential, not an identity");
+    assert_eq!(comms_org_of(&auth.snapshot()).as_deref(), Some("org_1"));
+
+    // The identity arrives; the pin wins over the web's seed.
+    stub.profile_active_org("Ada Lovelace", None, Some("org_2"));
+    stub.org_list(&[("org_1", "First"), ("org_2", "Chosen")]);
+    stub.on("/token", vec![Reply::ok(JWT_OK)]);
+    assert_eq!(auth.validate_once().await, Validation::Confirmed);
+    assert_eq!(comms_org_of(&auth.snapshot()).as_deref(), Some("org_1"));
+    assert_eq!(active_org_of(&auth.snapshot()).as_deref(), Some("org_1"));
+}
+
+/// A new grant may be a different person: the pin goes with the identity.
+#[tokio::test]
+async fn a_new_grant_clears_the_previous_pin() {
+    let stub = Stub::start().await;
+    let dir = TempDir::new();
+    scripted_grant_with_roles(&stub, &[("org_1", "member"), ("org_2", "admin")]);
+    stub.org_list(&[("org_1", "First"), ("org_2", "Chosen")]);
+    stub.profile_active_org("Ada Lovelace", None, Some("org_2"));
+    let auth = core(&stub, &dir);
+    sign_in(&auth).await;
+    auth.set_active_org(None).expect("pin none");
+    assert_eq!(comms_org_of(&auth.snapshot()), None);
+
+    auth.sign_out();
+    scripted_grant_with_roles(&stub, &[("org_1", "member"), ("org_2", "admin")]);
+    stub.org_list(&[("org_1", "First"), ("org_2", "Chosen")]);
+    stub.profile_active_org("Ada Lovelace", None, Some("org_2"));
+    sign_in(&auth).await;
+    assert_eq!(
+        comms_org_of(&auth.snapshot()).as_deref(),
+        Some("org_2"),
+        "unpinned again: the socket follows the resolved organisation"
+    );
+}
+
+/// `user_of`, tolerant of the not-yet-identified window.
+fn user_of_opt(snapshot: &AuthSnapshot) -> Option<AccountUser> {
+    match snapshot {
+        AuthSnapshot::SignedIn { user, .. } => user.clone(),
+        other => panic!("expected a signed-in snapshot, got {other:?}"),
+    }
 }
 
 // ---------------------------------------------------------------- sign-out

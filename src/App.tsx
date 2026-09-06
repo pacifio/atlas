@@ -65,6 +65,10 @@ import { UpdateAvailableModal } from "@/features/updater/components/update-avail
 import { LoadingOrganisationOverlay } from "@/features/organisations/components/loading-organisation-overlay";
 import { StopAgentsDialog } from "@/features/workspaces/components/stop-agents-dialog";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
+import {
+  isOrgReconciled,
+  markOrgReconciled,
+} from "@/features/organisations/lib/org-reconciliation";
 import { comms, listenComms, type CommsEnvelope } from "@/features/comms/lib/comms-api";
 import { commsActions, pruneTyping } from "@/features/comms/stores/comms-store";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
@@ -239,11 +243,15 @@ export function App() {
   const bootLocalActiveOrg = useOrgStore.use.activeOrganisationId();
   const bootOrganisations = useOrgStore.use.organisations();
   useEffect(() => {
-    if (orgReconciledRef.current) return;
+    // `isOrgReconciled` covers the other pusher: an explicit `switchOrg` that
+    // ran before sign-in settled has already told Rust, and this push landing
+    // after it would drag the chat socket back to the org just left.
+    if (orgReconciledRef.current || isOrgReconciled()) return;
     if (bootAuthStatus !== "signed-in" || !bootLocalActiveOrg) return;
     const active = bootOrganisations.find((o) => o.id === bootLocalActiveOrg);
     if (!active) return;
     orgReconciledRef.current = true;
+    markOrgReconciled();
     void invoke("auth_set_active_org", { orgId: active.remoteId ?? null }).catch((e) => {
       console.warn("boot org reconciliation failed:", e);
     });

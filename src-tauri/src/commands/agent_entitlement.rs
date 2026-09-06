@@ -214,6 +214,7 @@ pub async fn native_agent_request_access(
         user,
         orgs,
         active_org_id,
+        ..
     } = state.core().snapshot()
     else {
         // Nothing to record and nobody to attribute it to. The button is only

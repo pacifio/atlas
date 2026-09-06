@@ -156,7 +156,29 @@
      positioned 8px from the top — hangs out the bottom of. Structure must not
      depend on an injection that can fail, so it lives here too. Unlayered, so
      it also beats the `@layer base` .cm-editor rules that dress the CODE
-     editor in JetBrains Mono. Keep in step with chat-input.tsx. */
+     editor in JetBrains Mono.
+
+     Stronger than "keep in step with chat-input.tsx": these rules WIN over the
+     runtime theme, they do not merely stand in for it. style-mod prepends CM's
+     <style> to <head> when it first mounts it, so this file comes later in
+     document order — and `.atlas-chat-cm-host .cm-editor` (0,2,0) outranks the
+     theme's `&` → `.ͼN` (0,1,0) outright, while `.cm-scroller` / `.cm-content`
+     / `.cm-line` tie at (0,2,0) and win on order.
+
+     So SEVEN declarations in chat-input.tsx's EditorView.theme are inert —
+     editing them alone changes NOTHING. Edit here, or edit both:
+       &            backgroundColor, fontSize, lineHeight
+       .cm-scroller fontFamily, minHeight
+       .cm-content  padding
+       .cm-line     padding
+     `.cm-selectionBackground` is dead too, by a different route: it is
+     `!important` here inside `@layer base` (see the CodeMirror block below),
+     and for important declarations the layer order inverts, so layered beats
+     the theme's unlayered `!important`.
+
+     Watch the min-height especially: `minHeight` is a PROP on ChatInput, so
+     `<ChatInput minHeight={80}>` type-checks and silently does nothing against
+     the hardcoded 44px below. */
   font-family:
     system-ui,
     -apple-system,

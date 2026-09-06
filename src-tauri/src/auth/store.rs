@@ -178,6 +178,22 @@ impl StoredIdentity {
     }
 }
 
+/// The desktop's explicit organisation choice, recorded even when the choice
+/// is "a local-only org" — `org_id: None`.
+///
+/// Distinct from [`StoredIdentity::active_org_id`] because that field cannot
+/// say "chose none": `None` there means *never chose*, and [`StoredIdentity::
+/// active_org`] resolves it to the first membership. That is right for billing
+/// and display, and wrong for the chat socket — a user on a local-only org
+/// has nothing to dial, and a socket pointed at "whichever org the server
+/// listed first" was the seed of the org-switch failures. A refresh honours a
+/// pin over the web's seed, so an explicit choice survives revalidation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PinnedOrg {
+    pub org_id: Option<String>,
+}
+
 /// The persisted credential, plus who it belongs to.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -194,6 +210,13 @@ pub struct StoredSession {
     /// launch refreshes it.
     #[serde(default)]
     pub identity: Option<StoredIdentity>,
+    /// The desktop's explicit organisation choice, if one has been made this
+    /// session. Session-level rather than inside `identity` so a switch can
+    /// pin before the first profile fetch lands (the boot-reconciliation
+    /// window), and so `refresh_identity`'s `..current` carries it for free.
+    /// A fresh grant writes `None`: a new grant may be a different person.
+    #[serde(default)]
+    pub pinned_org: Option<PinnedOrg>,
 }
 
 pub(crate) fn session_path(dir: &Path) -> PathBuf {

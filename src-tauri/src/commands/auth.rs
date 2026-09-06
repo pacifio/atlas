@@ -103,6 +103,7 @@ fn sync_identity(app: &AppHandle, snapshot: &AuthSnapshot, link_to_account: bool
             user: Some(user),
             orgs,
             active_org_id,
+            ..
         } => {
             // Honour the user's choice to keep analytics off their account.
             if !link_to_account {

@@ -139,6 +139,38 @@ export function parseConfigOptions(raw: unknown): AcpConfigOption[] {
  *  `null` means this agent offers no model selection, which is a real answer:
  *  the pill hides. Gating is on the advertised category, never on which agent
  *  it is (ADR-0002). */
+/** The `mode` select of a config-option blob, if the agent expresses its
+ *  current mode there.
+ *
+ *  The official Claude adapter (`@agentclientprotocol/claude-agent-acp`) does
+ *  NOT send `current_mode_update` for an ordinary mode change — a
+ *  `session/set_mode`, or the mode a plan approval selected — it answers with
+ *  a `config_option_update` whose `mode` select carries the new value. That
+ *  is the only live mode signal it emits, so the pill must read it here or
+ *  stay on the mode the session was bound with. Matched by id OR category:
+ *  the adapter sets `id: "mode"` and a category is what the other agents use. */
+export function modeSelectOf(
+  raw: unknown,
+): { currentMode: string | null; availableModes: SessionModeInfo[] } | null {
+  if (!Array.isArray(raw)) return null;
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    if (str(o.category) !== "mode" && str(o.id) !== "mode") continue;
+    const select = selectOf(o);
+    if (!select) continue;
+    return {
+      currentMode: select.currentValue || null,
+      availableModes: select.choices.map((choice) => ({
+        id: choice.id,
+        name: choice.name,
+        description: choice.description ?? undefined,
+      })),
+    };
+  }
+  return null;
+}
+
 export function modelSelectOf(
   raw: unknown,
 ): { currentModel: string | null; availableModels: SessionModeInfo[] } | null {

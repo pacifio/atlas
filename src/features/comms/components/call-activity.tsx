@@ -1,9 +1,10 @@
 import { memo, useCallback, useState } from "react";
-import { ChevronDown, ExternalLink, FileText, Link2, Loader2, Phone, Video } from "lucide-react";
+import { ChevronDown, ExternalLink, FileText, Loader2, Phone, Video } from "lucide-react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { comms, parseRefusal } from "../lib/comms-api";
 import { copyShareLink, memberCallUrl } from "../lib/call-links";
 import { useCommsStore } from "../stores/comms-store";
@@ -62,7 +63,7 @@ export const CallActivity = memo(function CallActivity({
   const Icon = call.mode === "video" ? Video : Phone;
 
   return (
-    <div className="group/call relative flex gap-2 px-3 py-[3px]">
+    <div className="relative flex gap-2 px-3 py-[3px]">
       <div className="flex w-9 shrink-0 justify-center">
         <span
           className={cn(
@@ -78,10 +79,36 @@ export const CallActivity = memo(function CallActivity({
 
       <div className="min-w-0 flex-1 py-[2px]">
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11.5px] leading-[18px] text-text-tertiary">
-          <span className="text-text-secondary">{who}</span>
-          <span>
-            {verb} a {kind}
-          </span>
+          {/* The sentence IS the share link. A hover-revealed "Copy link"
+              button used to sit at the end of this row; because the row wraps,
+              revealing it pushed the transcript line and the recording
+              disclosure down by a line the moment the pointer arrived. The
+              affordance now lives on text that is always there, so nothing
+              moves — the tooltip is what says it is clickable. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => void copyShareLink(orgId, call)}
+                className="group/link cursor-pointer rounded text-left underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
+              >
+                {/* Both halves brighten together: the name carries its own
+                    colour, so a hover rule on the button alone would lift the
+                    verb and leave the name behind. */}
+                <span className="text-text-secondary transition-colors group-hover/link:text-text-primary">
+                  {who}
+                </span>{" "}
+                <span className="transition-colors group-hover/link:text-text-primary">
+                  {verb} a {kind}
+                </span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {call.join_slug !== null
+                ? "Click to copy the guest link"
+                : "Click to copy the call link"}
+            </TooltipContent>
+          </Tooltip>
           {!live && call.ended_at !== null && (
             <span className="text-text-ghost">
               · {formatDuration(call.started_at, call.ended_at)}
@@ -122,15 +149,6 @@ export const CallActivity = memo(function CallActivity({
               Join
             </button>
           )}
-          <button
-            type="button"
-            title={call.join_slug !== null ? "Copy the guest link" : "Copy the call link"}
-            onClick={() => void copyShareLink(orgId, call)}
-            className="flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-[10.5px] text-text-secondary opacity-0 transition-all hover:bg-bg-hover hover:text-text-primary group-hover/call:opacity-100"
-          >
-            <Link2 size={10} />
-            Copy link
-          </button>
         </div>
 
         {/* Transcript: the state IS the live update (frames patch it); when

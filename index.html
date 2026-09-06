@@ -10,9 +10,33 @@
          build Tauri stamps every inline <style> with a nonce and appends that
          nonce to `style-src`; once a nonce is present browsers IGNORE
          'unsafe-inline', so every stylesheet created at runtime (CodeMirror's
-         style-mod, sonner, mermaid) is refused and editors render unstyled.
-         Dev never shows it because Vite serves this file and Tauri applies no
-         CSP there. Keep the exclusion; do not "clean it up". -->
+         style-mod, sonner, mermaid, xterm, Tiptap) is refused and editors
+         render unstyled. Dev never shows it because Tauri only rewrites HTML it
+         serves itself: `devCsp` IS applied (tauri.conf.json), but the file Vite
+         serves is never stamped, so no nonce reaches `style-src` and
+         'unsafe-inline' keeps working. Keep the exclusion; don't "clean it up".
+
+         What it looks like if it regresses. These are ONE blocked runtime
+         stylesheet, not separate bugs: style-mod concatenates @codemirror/view's
+         base theme, every EditorView.theme and every HighlightStyle module into
+         a single <style> element, so all of it dies together.
+           - phrases like "Selection deleted" appear in the composer — that is
+             CM's aria-live `.cm-announced` div, normally parked off-screen by
+             `position: fixed; top: -10000px`;
+           - selecting a line appears to add a blank one: `.cm-layer` and
+             `.cm-layer > *` lose `position: absolute`, so drawSelection's
+             measured-height rectangles land in the text flow;
+           - the code editor loses syntax highlighting (HighlightStyle registers
+             through the same styleModule facet);
+           - caret, selection tint and placeholder colour go default.
+         NOT a signature any more: the composer turning monospace / losing its
+         padding. That was the 2026-09 report, before the unlayered
+         `.atlas-chat-cm-host` rules in globals.css took over those metrics —
+         they load as a <link> and are unaffected, so the composer now keeps its
+         font and padding through exactly this failure. Only the code editor
+         still leans on the `@layer base` .cm-editor fallback.
+         Reproduce without a build: serve `dist/` behind a CSP whose style-src
+         carries any nonce alongside 'unsafe-inline'. -->
     <style>
       /* html / body / #root are transparent so the NSVisualEffectView blur
          applied in `src-tauri/src/lib.rs` is visible during the brief

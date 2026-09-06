@@ -384,6 +384,8 @@ function claudeModeDotClass(mode: ClaudePermissionMode): string {
       return "bg-[var(--accent-primary)]";
     case "bypassPermissions":
       return "bg-[var(--status-error)]";
+    case "auto":
+      return "bg-[var(--status-warning)]";
     default:
       return "bg-[var(--text-tertiary)]";
   }

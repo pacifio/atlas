@@ -313,8 +313,12 @@ async fn a_connection_request_connects_once_and_is_reused() {
 
     let key = custom("claude-code");
     let first = manager.request_connection(key.clone(), server.clone());
-    // A second request while the first is still connecting joins it rather than
-    // starting a second process.
+    // Sequential, so this is the map lookup and nothing more: the first call's
+    // insert has already landed. The join under genuine concurrency — the
+    // behaviour the doc comments actually claim — is
+    // `concurrent_requests_for_one_agent_start_exactly_one_connection` in
+    // `tests/invariants.rs`, which needs a multi-thread runtime and hundreds of
+    // rounds to be worth anything.
     let second = manager.request_connection(key.clone(), server.clone());
     assert!(Arc::ptr_eq(&first, &second));
 
