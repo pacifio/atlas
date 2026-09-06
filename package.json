@@ -89,6 +89,7 @@
     "lucide-react": "^1.40.0",
     "matter-js": "^0.20.0",
     "mermaid": "^11.17.2",
+    "morphdom": "^2.7.8",
     "pdfjs-dist": "5.4.296",
     "pixi.js": "^8.20.1",
     "posthog-js": "^1.426.3",
