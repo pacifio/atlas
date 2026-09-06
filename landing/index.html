@@ -2025,9 +2025,488 @@
     .roadmap-item { grid-template-columns: 20px 1fr; }
     .roadmap-badge { grid-column: 2 / 3; justify-self: start; margin-top: 4px; }
   }
+
+  /* ============================================================
+     HERO ASCII FIELD + TEAM DITHER — ported from the app's
+     `DitherBackdrop` (comms-not-connected.tsx): two octaves of value
+     noise, a 4×4 Bayer threshold, a radial hollow, stepped at ~12fps.
+     ============================================================ */
+  .hero { position: relative; }
+  .hero-ascii {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 0;
+    /* Fade the field out towards the bottom so it never fights the
+       product frame that follows the hero. */
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+            mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+  }
+
+  /* ---- Session capture: the organisation timeline board ---- */
+  .tl-board {
+    position: relative;
+    padding: 12px 14px 8px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+  }
+  .tl-ticks {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    margin-left: 112px;
+    color: var(--text-ghost);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-default);
+    margin-bottom: 4px;
+  }
+  .tl-lane {
+    display: grid; grid-template-columns: 112px 1fr;
+    align-items: center;
+    height: 38px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .tl-lane:last-of-type { border-bottom: 0; }
+  .tl-who {
+    display: flex; align-items: center; gap: 8px;
+    color: var(--text-tertiary);
+    font-family: var(--font-sans, inherit);
+    font-size: 11.5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tl-avatar {
+    width: 18px; height: 18px; border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 8px; font-weight: 600; letter-spacing: 0.02em;
+    color: #fff;
+    background: hsl(var(--hue) 40% 32%);
+    border: 1px solid hsl(var(--hue) 40% 42%);
+    flex-shrink: 0;
+  }
+  .tl-track {
+    position: relative; height: 100%;
+    background-image: linear-gradient(to right, rgba(255,255,255,0.05) 1px, transparent 1px);
+    background-size: 20% 100%;
+  }
+  .tl-bar {
+    position: absolute; top: 9px; height: 20px;
+    display: inline-flex; align-items: center;
+    padding: 0 8px;
+    border-radius: 5px;
+    background: #161616;
+    border: 1px solid var(--border-strong, #2a2a2a);
+    color: var(--text-secondary);
+    font-size: 10px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tl-bar.is-live {
+    background: rgba(255,255,255,0.09);
+    border-color: rgba(255,255,255,0.22);
+    color: var(--text-primary);
+  }
+  .tl-bar.is-live::after {
+    content: ""; margin-left: 7px;
+    width: 5px; height: 5px; border-radius: 999px;
+    background: var(--status-success);
+    box-shadow: 0 0 0 3px rgba(80,200,120,0.15);
+    animation: tl-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes tl-pulse { 50% { opacity: 0.35; } }
+  .tl-commit {
+    position: absolute; top: 33px;
+    width: 5px; height: 5px; margin-left: -2px;
+    border-radius: 999px;
+    background: #5b8def;
+  }
+  .tl-now {
+    position: absolute; top: 12px; bottom: 8px;
+    width: 1px; background: rgba(255,255,255,0.35);
+    pointer-events: none;
+  }
+  .tl-now span {
+    position: absolute; top: -18px; left: -12px;
+    font-size: 9px; color: var(--text-secondary);
+    background: #050505; padding: 0 3px;
+  }
+  .tl-foot {
+    display: flex; align-items: center; gap: 16px;
+    padding: 9px 14px;
+    border-top: 1px solid var(--border-default);
+    font-size: 11px; color: var(--text-ghost);
+    font-family: var(--font-mono);
+  }
+  .tl-foot > span { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* ---- Teams: the app's unsynced-org panel, verbatim ---- */
+  .team-panel {
+    position: relative;
+    height: 380px;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 10px;
+    padding: 0 32px;
+    text-align: center;
+    overflow: hidden;
+  }
+  .team-dither { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .team-icon {
+    position: relative;
+    width: 36px; height: 36px; border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--bg-elevated, #111);
+    color: var(--text-secondary);
+  }
+  .team-icon svg { width: 16px; height: 16px; }
+  .team-title { position: relative; font-size: 12px; font-weight: 500; color: var(--text-primary); }
+  .team-sub { position: relative; max-width: 220px; font-size: 11px; line-height: 1.6; color: var(--text-secondary); margin: 0; }
+  .team-pill {
+    position: relative;
+    margin-top: 4px;
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 30px; padding: 0 16px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.10);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    color: var(--text-primary);
+    font-size: 11.5px; font-weight: 500;
+  }
+  .team-pill svg { width: 12px; height: 12px; }
+  .team-chips {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border-default);
+  }
+  .team-chips span {
+    font-size: 10.5px; color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    padding: 3px 8px; border-radius: 999px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border-default);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tl-bar.is-live::after { animation: none; }
+  }
+  @media (max-width: 820px) {
+    .tl-lane { grid-template-columns: 88px 1fr; }
+    .tl-ticks { margin-left: 88px; }
+    .tl-now { left: calc(88px + (100% - 88px) * 0.77) !important; }
+    .team-panel { height: 320px; }
+  }
+
+  /* ============================================================
+     LOGO CLOUD — progressive blur rail
+     ============================================================ */
+  .logos { padding: 8px 0 56px; }
+  .logos-label {
+    text-align: center; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--text-ghost); margin-bottom: 26px; font-family: var(--font-mono);
+  }
+  .logos-rail { position: relative; overflow: hidden; height: 52px; }
+  .logos-track {
+    display: flex; align-items: center; gap: 88px; width: max-content;
+    animation: logos-marquee 46s linear infinite;
+    padding-left: 44px;
+  }
+  .logos-rail:hover .logos-track { animation-play-state: paused; }
+  @keyframes logos-marquee { to { transform: translateX(-50%); } }
+  .logo-mark { display: inline-flex; align-items: center; height: 40px; user-select: none; }
+  .logo-mark img { height: 26px; width: auto; max-width: 150px; display: block; }
+  /* Per-mark optical sizing: icon-only marks read larger than wordmarks, and
+     a couple of the wordmarks are set wide. */
+  .lm-netflix img { height: 34px; }
+  .lm-google img { height: 30px; }
+  .lm-kilocode img { height: 22px; }
+  .lm-cloudflare img { height: 30px; }
+  .lm-shopify img { height: 30px; }
+  .lm-cisco img { height: 26px; }
+  .lm-stripe img { height: 30px; }
+  .lm-aws img { height: 30px; }
+  .lm-openai img { height: 28px; }
+  .logos-fade { position: absolute; top: 0; bottom: 0; width: 34%; pointer-events: none; }
+  .logos-fade-l { left: 0; } .logos-fade-r { right: 0; }
+  .logos-fade i { position: absolute; inset: 0; }
+  /* Three bands, each blurrier and more inset; the mask keeps every band
+     soft-edged so the blur ramps instead of stepping. */
+  .logos-fade-l i:nth-child(1) { backdrop-filter: blur(2px);  -webkit-backdrop-filter: blur(2px);  mask-image: linear-gradient(to right, #000 30%, transparent 100%); -webkit-mask-image: linear-gradient(to right, #000 30%, transparent 100%); }
+  .logos-fade-l i:nth-child(2) { backdrop-filter: blur(6px);  -webkit-backdrop-filter: blur(6px);  mask-image: linear-gradient(to right, #000 10%, transparent 70%);  -webkit-mask-image: linear-gradient(to right, #000 10%, transparent 70%); }
+  .logos-fade-l i:nth-child(3) { backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); mask-image: linear-gradient(to right, #000 0%, transparent 40%);   -webkit-mask-image: linear-gradient(to right, #000 0%, transparent 40%); background: linear-gradient(to right, #000 0%, transparent 60%); }
+  .logos-fade-r i:nth-child(1) { backdrop-filter: blur(2px);  -webkit-backdrop-filter: blur(2px);  mask-image: linear-gradient(to left, #000 30%, transparent 100%); -webkit-mask-image: linear-gradient(to left, #000 30%, transparent 100%); }
+  .logos-fade-r i:nth-child(2) { backdrop-filter: blur(6px);  -webkit-backdrop-filter: blur(6px);  mask-image: linear-gradient(to left, #000 10%, transparent 70%);  -webkit-mask-image: linear-gradient(to left, #000 10%, transparent 70%); }
+  .logos-fade-r i:nth-child(3) { backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); mask-image: linear-gradient(to left, #000 0%, transparent 40%);   -webkit-mask-image: linear-gradient(to left, #000 0%, transparent 40%); background: linear-gradient(to left, #000 0%, transparent 60%); }
+
+  /* ============================================================
+     MOCKS — shared chrome. 1:1 with the app: 12–13px UI text,
+     mono meta, #000 surfaces, hairline borders, 6–8px radii.
+     ============================================================ */
+  .mock {
+    background: #000; color: var(--text-primary);
+    font-family: var(--font-ui); font-size: 12.5px; line-height: 1.45;
+    border: 1px solid var(--border-default); border-radius: 12px; overflow: hidden;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 20px 50px -20px rgba(0,0,0,0.6);
+    text-align: left;
+  }
+  .mock svg { width: 13px; height: 13px; flex-shrink: 0; }
+  .mock button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; text-align: left; }
+  /* The views are flex containers; a display rule outranks the UA's [hidden]. */
+  .mock [hidden] { display: none !important; }
+  .mock code { font-family: var(--font-mono); font-size: 11px; background: var(--bg-raised); padding: 1px 5px; border-radius: 4px; color: var(--text-primary); }
+
+  /* ---- Agent chat ---- */
+  .mock-chat { display: flex; flex-direction: column; height: 560px; }
+  .mc-top { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+  .mc-iconbtn { width: 26px; height: 26px; border-radius: 999px; border: 1px solid var(--border-default); display: inline-flex; align-items: center; justify-content: center; color: var(--text-secondary); }
+  .mc-iconbtn svg { width: 12px; height: 12px; }
+  .mc-title { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--border-default); border-radius: 999px; font-size: 12.5px; color: var(--text-primary); }
+  .mc-title svg { width: 11px; height: 11px; color: var(--text-tertiary); }
+  .mc-top-right { margin-left: auto; display: inline-flex; gap: 6px; }
+  .mc-body { flex: 1; min-height: 0; overflow: hidden; padding: 6px 22px 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.6; position: relative; }
+  .mc-body::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 28px; background: linear-gradient(transparent, #000); }
+  .mc-user { margin: 6px 0 14px auto; max-width: 88%; padding: 9px 12px; border-radius: 12px 12px 4px 12px; background: var(--bg-raised); border: 1px solid var(--border-default); color: var(--text-primary); }
+  .mc-assist p { margin: 0 0 10px; }
+  .mc-assist strong { color: var(--text-primary); font-weight: 600; }
+  .mc-files { border: 1px solid var(--border-default); border-radius: 10px; margin-top: 4px; overflow: hidden; }
+  .mc-files-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; font-size: 12px; color: var(--text-primary); border-bottom: 1px solid var(--border-default); }
+  .mc-save { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid var(--border-default); border-radius: 6px; font-size: 11px; color: var(--text-secondary); }
+  .mc-save svg { width: 11px; height: 11px; }
+  .mc-file { display: flex; align-items: center; gap: 10px; padding: 6px 12px; font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
+  .mc-file b { color: var(--text-ghost); font-weight: 500; }
+  .mc-composer { position: relative; padding: 8px 12px 12px; }
+  .mc-input { display: flex; align-items: flex-start; justify-content: space-between; min-height: 64px; padding: 12px 12px 10px 14px; border: 1px solid var(--border-strong, #333); border-radius: 12px; background: #050505; color: var(--text-ghost); font-size: 13px; }
+  .mc-send { width: 26px; height: 26px; border-radius: 999px; background: #1a1a1a; display: inline-flex; align-items: center; justify-content: center; color: var(--text-primary); }
+  .mc-send svg { width: 13px; height: 13px; }
+  .mc-pills { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .mc-pill { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: 999px; font-size: 12px; color: var(--text-secondary); background: #050505; transition: background 0.15s, color 0.15s; }
+  .mc-pill:hover { background: var(--bg-raised); color: var(--text-primary); }
+  .mc-pill-icon { width: 28px; padding: 0; justify-content: center; }
+  .mc-pill-right { margin-left: auto; }
+  .mc-pill svg { width: 12px; height: 12px; }
+  .mc-glyph { display: inline-flex; width: 14px; height: 14px; align-items: center; justify-content: center; color: var(--text-primary); }
+  .mc-glyph svg { width: 14px; height: 14px; }
+  .mc-dot { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
+  .mc-menu { position: absolute; left: 44px; bottom: 52px; width: 260px; padding: 6px; background: #0a0a0a; border: 1px solid var(--border-strong, #2a2a2a); border-radius: 12px; box-shadow: 0 16px 40px -12px rgba(0,0,0,0.8); z-index: 3; animation: scale-in-mock 0.14s ease-out; transform-origin: bottom left; }
+  @keyframes scale-in-mock { from { opacity: 0; transform: scale(0.96) translateY(4px); } }
+  .mc-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border-radius: 8px; font-size: 13px; color: var(--text-primary); }
+  .mc-item:hover { background: var(--bg-raised); }
+  .mc-item.is-on { background: var(--bg-raised); }
+  .mc-item-right { margin-left: auto; color: var(--text-tertiary); }
+  .mc-item-label { padding: 10px 10px 4px; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-ghost); border-top: 1px solid var(--border-default); margin-top: 4px; }
+  .mc-item-more { display: flex; align-items: center; gap: 8px; padding: 9px 10px 6px; border-top: 1px solid var(--border-default); margin-top: 4px; font-size: 12.5px; color: var(--text-secondary); }
+  .mc-item-more svg { width: 12px; height: 12px; }
+
+  /* ---- Timeline ---- */
+  .mock-timeline { height: 560px; font-size: 12px; }
+  .mt-view { height: 100%; display: flex; flex-direction: column; }
+  .mt-search { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--border-default); color: var(--text-ghost); font-size: 12.5px; }
+  .mt-glyph { color: var(--text-secondary); display: inline-flex; }
+  .mt-search-text { display: inline-flex; align-items: center; gap: 8px; flex: 1; }
+  .mt-tools { display: inline-flex; gap: 6px; }
+  .mt-seg { display: inline-flex; border: 1px solid var(--border-default); border-radius: 6px; overflow: hidden; }
+  .mt-seg i { display: inline-flex; padding: 4px 6px; color: var(--text-tertiary); }
+  .mt-seg i.is-on { background: var(--bg-raised); color: var(--text-primary); }
+  .mt-seg i + i { border-left: 1px solid var(--border-default); }
+  .mt-stats { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--border-default); }
+  /* The app's fifth cell (range + sparkline) needs the full-width window; in a
+     600px showcase column it only steals from the four that carry the numbers. */
+  .mt-stat-wide { display: none; }
+  .mt-stat { padding: 14px 16px 12px; border-right: 1px solid var(--border-default); }
+  .mt-stat:last-child { border-right: 0; }
+  .mt-stat-l { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-tertiary); font-weight: 600; }
+  .mt-stat-v { font-size: 26px; font-weight: 600; letter-spacing: -0.03em; color: var(--text-primary); margin-top: 6px; line-height: 1.1; }
+  .mt-stat-s { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-tertiary); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mt-stat-wide { position: relative; overflow: hidden; }
+  .mt-stat-wide .mt-stat-v { font-size: 28px; }
+  .mt-spark { position: absolute; right: 0; bottom: 0; width: 60%; height: 60%; }
+  .mt-day { display: flex; align-items: baseline; gap: 8px; padding: 8px 16px; background: #050505; border-bottom: 1px solid var(--border-default); font-size: 11.5px; color: var(--text-ghost); font-family: var(--font-mono); }
+  .mt-day b { font-family: var(--font-ui); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); font-size: 11px; }
+  .mt-day-r { margin-left: auto; }
+  .mt-row { display: grid; grid-template-columns: 34px 1fr 24px 72px 60px; align-items: center; gap: 10px; padding: 9px 16px 9px 12px; border-bottom: 1px dashed rgba(255,255,255,0.07); cursor: pointer; position: relative; }
+  .mt-row:hover { background: rgba(255,255,255,0.03); }
+  .mt-row.is-partial { background: rgba(217,126,53,0.05); }
+  .mt-row::before { content: ""; position: absolute; left: 24px; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.08); }
+  .mt-status { position: relative; z-index: 1; width: 22px; height: 22px; border-radius: 999px; border: 1px solid var(--border-strong, #333); background: #000; display: inline-flex; align-items: center; justify-content: center; color: var(--text-tertiary); margin-left: 2px; }
+  .mt-status svg { width: 11px; height: 11px; }
+  .mt-status-warn { color: var(--status-warning); border-color: rgba(217,126,53,0.5); }
+  .mt-main { min-width: 0; }
+  .mt-title { color: var(--text-primary); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mt-meta { display: flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-tertiary); margin-top: 3px; white-space: nowrap; overflow: hidden; }
+  .mt-meta svg { width: 10px; height: 10px; }
+  .mt-agent { width: 18px; height: 18px; border-radius: 999px; background: #3a2416; color: #d9a074; display: inline-flex; align-items: center; justify-content: center; }
+  .mt-agent svg { width: 11px; height: 11px; }
+  .mt-model, .mt-dur { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); text-align: right; }
+  .mt-dur { color: var(--text-secondary); }
+  .mt-crumbs { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border-default); font-family: var(--font-mono); font-size: 11.5px; color: var(--text-tertiary); }
+  .mt-back { display: inline-flex; align-items: center; gap: 4px; color: var(--text-primary); font-family: var(--font-ui); font-weight: 600; font-size: 12.5px; }
+  .mt-crumbs-r { margin-left: auto; display: inline-flex; gap: 4px; }
+  .mt-crumbs-r i { display: inline-flex; padding: 4px 6px; border: 1px solid var(--border-default); border-radius: 6px; }
+  .mt-detail { flex: 1; min-height: 0; overflow: hidden; padding: 18px 22px 0; position: relative; }
+  .mt-detail::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 36px; background: linear-gradient(transparent, #000); }
+  .md-title { margin: 0 0 10px; font-size: 20px; font-weight: 600; letter-spacing: -0.02em; color: var(--text-primary); line-height: 1.2; }
+  .md-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+  .md-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid var(--border-default); border-radius: 999px; color: var(--text-secondary); }
+  .md-chip svg { width: 11px; height: 11px; }
+  .md-chip-status { color: var(--status-success); border-color: rgba(80,200,120,0.35); }
+  .md-chip-status.is-partial { color: var(--status-warning); border-color: rgba(217,126,53,0.5); }
+  .md-stats { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--border-default); border-radius: 8px; overflow: hidden; margin-bottom: 14px; }
+  .md-stats > div { padding: 10px 12px; border-right: 1px solid var(--border-default); }
+  .md-stats > div:last-child { border-right: 0; }
+  .md-stat-v { font-family: var(--font-mono); font-size: 15px; color: var(--text-primary); margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .md-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .md-tabs span { padding: 4px 10px; border: 1px solid var(--border-default); border-radius: 999px; font-size: 12px; color: var(--text-tertiary); }
+  .md-tabs span.is-on { color: var(--text-primary); background: var(--bg-raised); }
+  .md-tabs em { font-style: normal; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-ghost); margin-left: 5px; }
+  .md-feed { position: relative; }
+  .md-feed::before { content: ""; position: absolute; left: 11px; top: 8px; bottom: 0; width: 1px; background: rgba(255,255,255,0.08); }
+  .md-entry { display: flex; gap: 14px; margin-bottom: 16px; position: relative; }
+  .md-avatar { width: 22px; height: 22px; border-radius: 999px; border: 1px solid var(--border-strong, #333); background: #000; display: inline-flex; align-items: center; justify-content: center; color: var(--text-secondary); flex-shrink: 0; }
+  .md-avatar svg { width: 11px; height: 11px; }
+  .md-avatar-agent { background: #3a2416; color: #d9a074; border-color: transparent; }
+  .md-avatar-dot { width: 22px; height: 22px; border: 0; background: transparent; }
+  .md-avatar-dot::after { content: ""; width: 7px; height: 7px; border-radius: 999px; background: #333; }
+  .md-entry-head { font-size: 12.5px; color: var(--text-primary); font-weight: 500; margin-bottom: 6px; }
+  .md-entry-head span { font-family: var(--font-mono); font-weight: 400; font-size: 11px; color: var(--text-ghost); }
+  .md-add { color: var(--status-success); font-weight: 500; } .md-del { color: var(--status-error); font-weight: 500; }
+  .md-pre { margin: 0; padding: 12px 14px; border-radius: 10px; background: #0a0a0a; border: 1px solid var(--border-default); font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6; color: var(--text-secondary); white-space: pre-wrap; }
+  .md-show { font-size: 12px; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 4px; }
+  .md-show svg { width: 11px; height: 11px; transform: rotate(-90deg); }
+  .md-resp { margin: 0; color: var(--text-secondary); line-height: 1.6; font-size: 12.5px; }
+  .mt-detail-foot { padding: 10px 12px; border-top: 1px solid var(--border-default); }
+  .mt-detail-foot .mt-search-text { border: 1px solid var(--border-default); border-radius: 999px; padding: 7px 14px; color: var(--text-ghost); }
+
+  /* ---- Team chat ---- */
+  .mock-team { height: 600px; position: relative; }
+  .team-visual .sv-header { display: none; }
+  .tc-state { height: 100%; display: flex; flex-direction: column; }
+  .team-panel.tc-state { align-items: center; justify-content: center; }
+  .tc-topbar { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; }
+  .tc-tab { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .tc-tab.is-on { background: #161616; }
+  .tc-iconbtn { width: 24px; height: 24px; border-radius: 999px; border: 1px solid var(--border-default); display: inline-flex; align-items: center; justify-content: center; color: var(--text-secondary); }
+  .tc-iconbtn svg { width: 11px; height: 11px; }
+  .tc-search { margin: 2px 12px 10px; padding: 9px 12px; border: 1px solid var(--border-default); border-radius: 10px; color: var(--text-ghost); display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+  .tc-sec { display: flex; align-items: center; gap: 8px; padding: 10px 16px 6px; font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-tertiary); font-weight: 600; }
+  .tc-sec-plus { margin-left: auto; color: var(--text-ghost); display: inline-flex; }
+  .tc-hash { color: var(--text-tertiary); font-weight: 600; width: 14px; display: inline-flex; justify-content: center; }
+  .tc-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 16px; font-size: 13px; color: var(--text-secondary); }
+  .tc-row:hover { background: rgba(255,255,255,0.04); }
+  .tc-chan { padding-left: 22px; }
+  .tc-row-main { display: flex; flex-direction: column; min-width: 0; }
+  .tc-row-name { color: var(--text-primary); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tc-row-sub { color: var(--text-tertiary); font-size: 11.5px; }
+  .tc-avatar { width: 30px; height: 30px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #fff; flex-shrink: 0; background: linear-gradient(135deg, hsl(var(--hue) 50% 40%), hsl(calc(var(--hue) + 40) 50% 28%)); position: relative; }
+  .tc-avatar::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 8px; height: 8px; border-radius: 999px; background: #3a3a3a; border: 2px solid #000; }
+  .tc-avatar-sm { width: 16px; height: 16px; font-size: 7px; }
+  .tc-avatar-sm::after { display: none; }
+  .tc-avatar-group { background: #1a1a1a; color: var(--text-secondary); }
+  .tc-avatar-group::after { display: none; }
+  .tc-avatar-group svg { width: 14px; height: 14px; }
+  .tc-badge { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: #fff; color: #000; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+  .tc-divider { height: 1px; background: var(--border-default); margin: 6px 16px; }
+  .tc-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-default); }
+  .tc-head-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+  .tc-head-r { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; color: var(--text-tertiary); font-size: 12px; }
+  .tc-head-r span { display: inline-flex; align-items: center; gap: 4px; }
+  .tc-head-r i { width: 1px; height: 14px; background: var(--border-default); }
+  .tc-tabs { display: flex; align-items: center; gap: 4px; padding: 0 12px; border-bottom: 1px solid var(--border-default); }
+  .tc-subtab { display: inline-flex; align-items: center; gap: 6px; padding: 10px 8px; font-size: 13px; color: var(--text-tertiary); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tc-subtab.is-on { color: var(--text-primary); border-bottom-color: #fff; }
+  .tc-spaces { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--border-default); border-radius: 999px; font-size: 12.5px; color: var(--text-secondary); }
+  .tc-spaces.is-on { background: var(--bg-raised); color: var(--text-primary); }
+  .tc-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .tc-msgs { flex: 1; min-height: 0; overflow: hidden; padding: 10px 14px 0; display: flex; flex-direction: column; justify-content: flex-end; gap: 10px; }
+  /* Older rows scroll off the top, as in a real transcript — never shrink. */
+  .tc-msgs > * { flex-shrink: 0; }
+  .tc-msg { display: flex; gap: 10px; align-items: flex-start; }
+  .tc-msg-head { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .tc-msg-head span { font-weight: 400; font-size: 11px; color: var(--text-ghost); margin-left: 6px; }
+  .tc-msg-body { color: var(--text-secondary); font-size: 13px; }
+  .tc-date { display: flex; align-items: center; gap: 10px; font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-ghost); }
+  .tc-date::before, .tc-date::after { content: ""; flex: 1; height: 1px; background: var(--border-default); }
+  .tc-call { display: flex; gap: 10px; align-items: flex-start; }
+  .tc-call-icon { width: 30px; height: 30px; border-radius: 999px; background: var(--bg-raised); display: inline-flex; align-items: center; justify-content: center; color: var(--text-tertiary); flex-shrink: 0; }
+  .tc-call-line { font-size: 12.5px; color: var(--text-secondary); }
+  .tc-call-line b { color: var(--text-primary); font-weight: 600; }
+  .tc-call-line span { color: var(--text-ghost); }
+  .tc-call-sub { font-size: 11.5px; color: var(--text-ghost); margin-top: 2px; }
+  .tc-card { margin: 0 0 4px 40px; border: 1px solid var(--border-default); border-radius: 10px; background: #070707; overflow: hidden; font-size: 12px; }
+  .tc-card-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border-default); color: var(--text-tertiary); font-size: 11px; }
+  .tc-card-body { padding: 8px 12px 6px; color: var(--text-secondary); }
+  .tc-card-body b { color: var(--text-primary); font-weight: 600; }
+  .tc-card-body ul { margin: 4px 0 0; padding-left: 16px; }
+  .tc-card-body li { margin: 2px 0; }
+  .tc-composer { padding: 10px 12px 12px; }
+  .tc-input { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border: 1px solid var(--border-strong, #333); border-radius: 12px; color: var(--text-ghost); font-size: 13px; background: #050505; }
+  .tc-toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 4px 0; color: var(--text-tertiary); font-size: 12px; }
+  .tc-tool { font-size: 14px; }
+  .tc-toolbar-r { margin-left: auto; display: inline-flex; gap: 12px; align-items: center; font-family: var(--font-mono); }
+  .tc-toolbar-r b, .tc-toolbar-r i, .tc-toolbar-r s { font-style: italic; }
+  .tc-newdraft { display: flex; align-items: center; gap: 8px; padding: 12px 16px; color: var(--text-ghost); border-bottom: 1px solid var(--border-default); font-size: 12.5px; }
+  .tc-draft { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .tc-draft-r { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-tertiary); }
+  .tc-hint { padding: 14px 16px; font-size: 11.5px; color: var(--text-ghost); }
+  .tc-file { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); color: var(--text-tertiary); }
+  .tc-canvas { position: relative; overflow: hidden; background: #000 radial-gradient(rgba(255,255,255,0.09) 0.8px, transparent 0.9px) 0 0 / 14px 14px; }
+  .tc-canvas-top { position: absolute; top: 10px; left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: center; z-index: 2; }
+  .tc-canvas-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--border-default); border-radius: 8px; background: #000; font-size: 12px; color: var(--text-primary); }
+  .tc-live { width: 6px; height: 6px; border-radius: 999px; background: var(--status-success); }
+  .tc-canvas-people { display: inline-flex; gap: -4px; }
+  .tc-edges { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .tc-note { position: absolute; width: 150px; border: 1px solid var(--border-default); border-radius: 8px; background: #0a0a0a; font-size: 10.5px; z-index: 1; }
+  .tc-note-h { display: flex; align-items: center; gap: 5px; padding: 5px 8px; border-bottom: 1px solid var(--border-default); color: var(--text-primary); font-weight: 600; }
+  .tc-note-h svg { width: 10px; height: 10px; }
+  .tc-note-b { padding: 7px 8px; color: var(--text-secondary); line-height: 1.5; }
+  .tc-circle { position: absolute; width: 74px; height: 74px; border-radius: 999px; border: 1px solid var(--border-strong, #333); display: inline-flex; align-items: center; justify-content: center; font-size: 10.5px; color: var(--text-primary); }
+  .tc-tri { position: absolute; width: 0; height: 0; border-left: 40px solid transparent; border-right: 40px solid transparent; border-bottom: 64px solid #0e0e0e; }
+  .tc-rect { position: absolute; width: 120px; height: 62px; border: 1px solid var(--border-strong, #333); background: #0a0a0a; }
+  .tc-canvas-tools { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 2px; padding: 4px; border: 1px solid var(--border-default); border-radius: 10px; background: #000; z-index: 2; }
+  .tc-canvas-tools i { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px; border-radius: 6px; font-style: normal; font-size: 12px; color: var(--text-secondary); }
+  .tc-canvas-tools i svg { width: 12px; height: 12px; }
+  .tc-canvas-tools b { width: 1px; height: 16px; background: var(--border-default); margin: 0 4px; }
+
+  @media (max-width: 820px) {
+    .mock-chat, .mock-timeline { height: 520px; }
+    .mt-stats { grid-template-columns: repeat(2, 1fr); }
+    .mt-stat-wide { grid-column: span 2; }
+    .mt-row { grid-template-columns: 34px 1fr 24px 60px; }
+    .mt-model { display: none; }
+    .logos-track { gap: 56px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .logos-track { animation: none; } }
+
+  /* ---- Hero screenshot ---- */
+  .product-shot {
+    border: 1px solid var(--border-default); border-radius: 12px; overflow: hidden;
+    background: #050505;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 40px 80px -30px rgba(0,0,0,0.8);
+  }
+  .product-shot img { display: block; width: 100%; height: auto; }
+
+  /* ---- Top scroll fade (progressive blur) ---- */
+  .scroll-fade {
+    position: fixed; top: 0; left: 0; right: 0;
+    height: 104px;
+    z-index: 40;               /* under the nav pill (50), over everything else */
+    pointer-events: none;
+    isolation: isolate;
+    contain: layout paint;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+  }
+  body.scrolled .scroll-fade { opacity: 1; }
+  .scroll-fade > i { position: absolute; inset: 0; display: block; }
+  /* Colour wash under the blur: blurred text is still legible, so the band
+     dims as well as softens. Solid behind the nav, clear below it. */
+  .scroll-fade > b { position: absolute; inset: 0; display: block; background: linear-gradient(to top, transparent 0%, rgba(0,0,0,0.9) 65%, #000 100%); }
 </style>
 </head>
 <body>
+<!-- Progressive blur at the top of the viewport: the app's transcript
+     `GradualBlur`, ported. Content scrolling under the floating nav dissolves
+     instead of being curtained off. Layers are generated in the script at the
+     end of the page (same band math as src/components/gradual-blur.tsx). -->
+<div class="scroll-fade" data-scroll-fade aria-hidden="true"></div>
 
 <!-- ====================== NAV ====================== -->
 <nav class="nav" id="nav">
@@ -2080,8 +2559,8 @@
       <span class="eyebrow-tag">Alpha</span>
       <a href="#agents">Claude Code · Codex · OpenCode · Cursor · any ACP agent <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg></a>
     </div>
-    <h1 class="hero-title">Every coding agent.<br/>One workspace. Your whole team.</h1>
-    <p class="hero-sub">Atlas is a native macOS workspace for running coding agents. Install any of them, run them across every project at once, capture what they did on an organisation-wide timeline, and talk it through with your team &mdash; without leaving the window.</p>
+    <h1 class="hero-title">Atlas is source control for agents.</h1>
+    <p class="hero-sub">Source control for agents. Use multiple coding agents, track their changes and query them in one place.</p>
     <div class="hero-cta">
       <div class="dl dl-lg" data-dl>
         <a class="dl-main" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.1/Atlas_0.3.1_aarch64.dmg">
@@ -2101,234 +2580,530 @@
         Star on GitHub
       </a>
     </div>
-    <div class="hero-meta">
-      <span class="atlas-dot atlas-dot-success"></span>
-      <span>v0.3.1 · alpha</span>
-      <span class="hero-meta-sep">·</span>
-      <span>macOS 13+ · Apple Silicon &amp; Intel</span>
-      <span class="hero-meta-sep">·</span>
-      <span>local-first · anonymous telemetry you can turn off</span>
-    </div>
   </div>
 </header>
+
+<!-- ====================== LOGO CLOUD ====================== -->
+<section class="logos" aria-label="Trusted by engineers">
+  <div class="wrap">
+    <div class="logos-label">Trusted by engineers at</div>
+    <div class="logos-rail">
+      <div class="logos-track">
+        <span class="logo-mark lm-netflix"><img src="logos/netflix-icon.svg" alt="Netflix" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-google"><img src="logos/google.svg" alt="Google" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-kilocode"><img src="logos/kilocode-dark.svg" alt="Kilo Code" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-cloudflare"><img src="logos/cloudflare.svg" alt="Cloudflare" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-shopify"><img src="logos/shopify.svg" alt="Shopify" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-cisco"><img src="logos/cisco_dark.svg" alt="Cisco" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-stripe"><img src="logos/stripe.svg" alt="Stripe" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-aws"><img src="logos/aws_dark.svg" alt="Amazon Web Services" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-openai"><img src="logos/openai_dark.svg" alt="OpenAI" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-netflix" aria-hidden="true"><img src="logos/netflix-icon.svg" alt="" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-google" aria-hidden="true"><img src="logos/google.svg" alt="" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-kilocode" aria-hidden="true"><img src="logos/kilocode-dark.svg" alt="" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-cloudflare" aria-hidden="true"><img src="logos/cloudflare.svg" alt="" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-shopify" aria-hidden="true"><img src="logos/shopify.svg" alt="" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-cisco" aria-hidden="true"><img src="logos/cisco_dark.svg" alt="" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-stripe" aria-hidden="true"><img src="logos/stripe.svg" alt="" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-aws" aria-hidden="true"><img src="logos/aws_dark.svg" alt="" loading="lazy" decoding="async" /></span>
+        <span class="logo-mark lm-openai" aria-hidden="true"><img src="logos/openai_dark.svg" alt="" loading="lazy" decoding="async" /></span>
+      </div>
+      <!-- Progressive blur: three stacked bands per edge, each blurrier and
+           narrower than the last, so the marks dissolve rather than clip. -->
+      <div class="logos-fade logos-fade-l"><i></i><i></i><i></i></div>
+      <div class="logos-fade logos-fade-r"><i></i><i></i><i></i></div>
+    </div>
+  </div>
+</section>
 
 <!-- ====================== PRODUCT MOCK ====================== -->
 <section class="product-section" id="product">
   <div class="product-frame-outer">
-    <div class="product-window">
-      <!-- Mac titlebar -->
-      <div class="pw-titlebar">
-        <div class="pw-dots">
-          <span class="pw-dot" style="background:#ff5f57"></span>
-          <span class="pw-dot" style="background:#febc2e"></span>
-          <span class="pw-dot" style="background:#28c840"></span>
-        </div>
-        <div class="pw-project">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
-          atlas-core
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
-        </div>
-        <div class="pw-spacer"></div>
-        <div class="pw-titleicon" title="Inbox">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z"/></svg>
-        </div>
-        <div class="pw-titleicon" title="Toggle right pane">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m10 15-3-3 3-3"/></svg>
-        </div>
-      </div>
+    <div class="product-shot">
+      <img src="app.png" alt="Atlas — a session on the timeline, with the agent chat, terminal and team chat open in one window" width="3024" height="1890" loading="eager" decoding="async" />
+    </div>
+  </div>
+</section>
 
-      <!-- Tab bar -->
-      <div class="pw-tabs">
-        <div class="pw-tab is-active">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          Chat
+<!-- ====================== AGENTS ====================== -->
+<section class="agents-section" id="agents">
+  <div class="wrap">
+    <div class="agents-strip">
+      <div>
+        <span class="sec-eyebrow">01 · Agents</span>
+        <h2 class="sec-title" style="max-width:18ch">Install any coding agent.<br/>Run them everywhere.</h2>
+        <p class="sec-sub" style="margin-bottom:32px">Run any agent. Claude Code, Codex, OpenCode, Atlas's own agent, or anything from the registry &mdash; side by side, against the same codebase. Agents keep their own authentication and model choices. Switch mid-task without starting over. Try the picker.</p>
+        <a href="https://docs.tryatlas.cc/" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">
+          Read the docs
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
+        </a>
+      </div>
+      <div class="mock mock-chat" data-mock-chat>
+        <div class="mc-top">
+          <span class="mc-iconbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          <span class="mc-title">Idempotent webhook handlers for checkout <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+          <span class="mc-top-right"><span class="mc-iconbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span><span class="mc-iconbtn"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></span></span>
         </div>
-        <div class="pw-tab">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 17 6-6-6-6m8 14h8"/></svg>
-          Terminal
+        <div class="mc-body">
+          <div class="mc-user">Make the Stripe webhook handlers idempotent. Keys in Redis, 24h TTL, and don't touch the ledger writes.</div>
+          <div class="mc-assist">
+            <p><strong>Done.</strong> Every handler now runs behind an idempotency guard keyed on the event id. A replayed event returns the cached 200 instead of re-running the side effects.</p>
+            <p><strong>Ledger writes</strong> are untouched, as asked. The guard sits one layer above them in <code>webhooks/guard.ts</code>, so a retry never reaches the ledger at all.</p>
+            <p><strong>Verified.</strong> 38 handler tests pass, plus 6 new ones that replay each event twice and assert a single ledger row.</p>
+          </div>
+          <div class="mc-files">
+            <div class="mc-files-head"><span>6 files read</span><span class="mc-save"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4z"/></svg>Save</span></div>
+            <div class="mc-file"><b>R</b>src/billing/webhooks/stripe.ts</div>
+            <div class="mc-file"><b>R</b>src/billing/webhooks/guard.ts</div>
+            <div class="mc-file"><b>R</b>src/billing/ledger.ts</div>
+          </div>
         </div>
-        <div class="pw-tab">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-7l-2-2H5a2 2 0 0 0-2 2z"/></svg>
-          Spaces
+        <div class="mc-composer">
+          <div class="mc-input"><span class="mc-placeholder" data-mc-placeholder>Ask Claude Code…</span><span class="mc-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></span></div>
+          <div class="mc-pills">
+            <span class="mc-pill mc-pill-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+            <button type="button" class="mc-pill" data-agent-pill><span class="mc-glyph" data-agent-glyph><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 8h14v9H5z" opacity=".9"/><path d="M8 5h8v3H8zM7 17h10v2H7zM9 10h2v2H9zM13 10h2v2h-2z" /><path d="M3 10h2v5H3zM19 10h2v5h-2z"/></svg></span><span data-agent-name>Claude Code</span></button>
+            <button type="button" class="mc-pill" data-mode-pill><span class="mc-dot" data-mode-dot style="background:var(--status-error)"></span><span data-mode-name>Bypass permissions</span></button>
+            <button type="button" class="mc-pill" data-model-pill><span class="mc-glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg></span><span data-model-name>Fable</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+            <span class="mc-pill mc-pill-right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Options <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+          </div>
+          <div class="mc-menu" data-agent-menu hidden>
+            <button type="button" class="mc-item" data-agent="atlas" data-model="gemini-3.1-pro"><span class="mc-glyph"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4h3L6 20H3zM13 4h3l-4 16H9zM19 4h3l-4 16h-3z"/></svg></span>Atlas Agent</button>
+            <button type="button" class="mc-item" data-agent="claude" data-model="Fable"><span class="mc-glyph"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 8h14v9H5z" opacity=".9"/><path d="M8 5h8v3H8zM7 17h10v2H7zM9 10h2v2H9zM13 10h2v2h-2z" /><path d="M3 10h2v5H3zM19 10h2v5h-2z"/></svg></span>Claude Code</button>
+            <button type="button" class="mc-item" data-agent="codex" data-model="gpt-5-codex"><span class="mc-glyph"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="9" opacity=".95"/><circle cx="12" cy="12" r="4" fill="#000"/><circle cx="12" cy="12" r="1.6"/></svg></span>Codex</button>
+            <button type="button" class="mc-item" data-agent="opencode" data-model="kimi-k2"><span class="mc-glyph"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 3h16v18H4z"/><path d="M8 7h8v10H8z" fill="#000"/><path d="M10 9h4v6h-4z"/></svg></span>OpenCode</button>
+            <div class="mc-item-label">Available to install</div>
+            <button type="button" class="mc-item" data-agent="cursor" data-model="composer-2" data-install><span class="mc-glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg></span>Cursor<span class="mc-item-right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3"/></svg></span></button>
+            <button type="button" class="mc-item" data-agent="pi" data-model="claude-sonnet-4.7" data-install><span class="mc-glyph"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 3h16v18H4z"/><path d="M7 8h10v2h-2v7h-2v-7h-2v7H9v-7H7z" fill="#000"/></svg></span>pi ACP<span class="mc-item-right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3"/></svg></span></button>
+            <div class="mc-item-more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Add more agents</div>
+          </div>
         </div>
-        <div class="pw-tab">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="M4 9h16M9 4v16"/></svg>
-          Log
-        </div>
-        <div class="pw-tab">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
-          Browser
-        </div>
-        <div class="pw-tabs-spacer"></div>
-        <div class="pw-tabs-right">
-          <span class="pw-chip">
-            <span class="atlas-dot atlas-dot-success"></span>
-            main
+        <template data-agent-glyphs>
+          <span data-for="atlas"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4h3L6 20H3zM13 4h3l-4 16H9zM19 4h3l-4 16h-3z"/></svg></span><span data-for="claude"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 8h14v9H5z" opacity=".9"/><path d="M8 5h8v3H8zM7 17h10v2H7zM9 10h2v2H9zM13 10h2v2h-2z" /><path d="M3 10h2v5H3zM19 10h2v5h-2z"/></svg></span><span data-for="codex"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="9" opacity=".95"/><circle cx="12" cy="12" r="4" fill="#000"/><circle cx="12" cy="12" r="1.6"/></svg></span><span data-for="opencode"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 3h16v18H4z"/><path d="M8 7h8v10H8z" fill="#000"/><path d="M10 9h4v6h-4z"/></svg></span><span data-for="cursor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg></span><span data-for="pi"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 3h16v18H4z"/><path d="M7 8h10v2h-2v7h-2v-7h-2v7H9v-7H7z" fill="#000"/></svg></span>
+        </template>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== SHOWCASE: PARALLEL AGENTS ====================== -->
+<section class="showcase-row" id="parallel">
+  <div class="wrap">
+    <div class="showcase-grid">
+      <div class="showcase-copy">
+        <span class="sec-eyebrow">Parallel agents</span>
+        <h2>Run a team of agents at once.</h2>
+        <p>Every thread gets its own session worker, so you can fan work out across agents and projects simultaneously &mdash; one writing tests, one refactoring, one researching &mdash; and watch each one stream its tool calls live.</p>
+        <ul class="showcase-points">
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>True concurrency.</strong> Rust-owned session state means threads run independently &mdash; not a queue pretending to be parallel.</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>Mix your agents.</strong> Claude Code, Codex, and ACP agents side by side &mdash; each on the task it's best at.</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>Intervene anytime.</strong> Jump into any running thread, steer it, or approve a permission &mdash; the rest keep going.</span>
+          </li>
+        </ul>
+      </div>
+      <div class="showcase-visual">
+        <div class="sv-header">
+          <span class="sv-tab-name">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+            3 agents running
           </span>
-          <span class="pw-chip">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
-            60.41M
-          </span>
-          <span class="pw-chip">$153.39</span>
+          <span style="margin-left:auto">across 2 workspaces</span>
         </div>
-      </div>
-
-      <!-- Body -->
-      <div class="pw-body">
-        <!-- Sidebar -->
-        <aside class="pw-sidebar">
-          <div class="pw-sb-header">
-            <span>Threads</span>
-            <span style="display:inline-flex;gap:6px;align-items:center;color:var(--text-ghost)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
-            </span>
-          </div>
-          <div class="pw-sb-search">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-            <span>Search</span>
-          </div>
-          <div class="pw-sb-thread is-active">
-            <div class="pw-sb-thread-title">Analyze cross-package types for new SDK release</div>
-            <div class="pw-sb-thread-meta"><span>now</span><span>14 msg</span></div>
-          </div>
-          <div class="pw-sb-thread">
-            <div class="pw-sb-thread-title">Re-index codebase and write PR description</div>
-            <div class="pw-sb-thread-meta"><span>2h</span><span>534 msg</span></div>
-          </div>
-          <div class="pw-sb-thread">
-            <div class="pw-sb-thread-title">Audit auth flow for token refresh edge cases</div>
-            <div class="pw-sb-thread-meta"><span>1d</span><span>47 msg</span></div>
-          </div>
-          <div class="pw-sb-thread">
-            <div class="pw-sb-thread-title">Bench compression on new tool-output set</div>
-            <div class="pw-sb-thread-meta"><span>3d</span><span>89 msg</span></div>
-          </div>
-        </aside>
-
-        <!-- Main: chat content -->
-        <div class="pw-main">
-          <div class="pw-main-scroll">
-            <h4>Plan: ship Go SDK at TypeScript parity</h4>
-            <ul>
-              <li><code>installation.mdx</code> &mdash; add Go install section and env-var note</li>
-              <li><code>quickstart.mdx</code> &mdash; Go tab across all 5 example blocks</li>
-              <li><code>api-reference.mdx</code> &mdash; <code>Client</code> constructor + <code>ChatCompletionsCreate</code></li>
-              <li><code>errors.mdx</code> &mdash; <code>errors.Is</code> / <code>AsCompressError</code> across 4 blocks</li>
-              <li><code>shared-context.mdx</code> &mdash; <code>Put</code> / <code>Get(full)</code> / <code>Stats</code> / lifecycle</li>
-            </ul>
-            <h4>Test plan</h4>
-            <ul>
-              <li><code>cd sdk/golang && go test ./...</code> (unit, no proxy)</li>
-              <li><code>headroom proxy --port 8788 --no-rate-limit</code> then full e2e</li>
-              <li><code>GEMINI_API_KEY=... go run ./examples/e2e</code> (real round-trip)</li>
-            </ul>
-          </div>
-          <div class="pw-composer">
-            <div class="pw-composer-input">Message Atlas… (@ to mention, / for commands)</div>
-            <div class="pw-composer-bottom">
-              <span class="pw-composer-chip">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 17 6-6-6-6m8 14h8"/></svg>
-                Claude Code
-              </span>
-              <span class="pw-composer-chip is-mode">
-                <span class="atlas-dot atlas-dot-success"></span>
-                Default
-              </span>
-              <span class="pw-composer-chip">@</span>
-              <div class="pw-composer-spacer"></div>
-              <span class="pw-composer-send">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></svg>
-              </span>
+        <div class="par-pane">
+          <div class="par-card is-active">
+            <div class="par-head">
+              <span class="par-badge"><svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z"/></svg></span>
+              <span class="par-agent">Claude Code · tests</span>
+              <span class="par-status is-run"><span class="par-spin"></span>running</span>
             </div>
+            <div class="par-tool">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+              vitest run auth.test.ts
+            </div>
+            <div class="par-line">Added 6 cases for token refresh<span class="par-cursor"></span></div>
+            <div class="par-meta"><span>atlas-core</span><span>14.2k tok</span></div>
           </div>
-        </div>
-
-        <!-- Right inspector -->
-        <aside class="pw-inspector">
-          <div class="pw-tabs-sub">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16M4 6h16M4 18h10"/></svg>Changes</span>
-            <span class="is-active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 5-5"/></svg>Analysis</span>
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5"/></svg>Explore</span>
-            <span><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.36-3.88-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.79 0c2.2-1.5 3.18-1.18 3.18-1.18.62 1.58.23 2.75.11 3.04.73.81 1.18 1.84 1.18 3.1 0 4.43-2.7 5.4-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56C20.21 21.38 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg>GitHub</span>
+          <div class="par-card">
+            <div class="par-head">
+              <span class="par-badge"><svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"/></svg></span>
+              <span class="par-agent">Codex · refactor</span>
+              <span class="par-status is-run"><span class="par-spin"></span>running</span>
+            </div>
+            <div class="par-tool">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+              edit session-worker.rs
+            </div>
+            <div class="par-prog"><i style="width:62%"></i></div>
+            <div class="par-meta"><span>atlas-core</span><span>8.9k tok</span></div>
           </div>
-
-          <div class="pw-insp-section">
-            <div class="pw-insp-head">
-              <span class="pw-insp-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
-                Blast radius
-              </span>
-              <span class="pw-insp-count">14 files</span>
+          <div class="par-card">
+            <div class="par-head">
+              <span class="par-badge"><svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z"/></svg></span>
+              <span class="par-agent">Claude Code · research</span>
+              <span class="par-status is-run"><span class="par-spin"></span>running</span>
             </div>
-            <div style="display:flex;gap:4px;margin-bottom:8px">
-              <span class="atlas-badge atlas-badge-warning" style="font-size:9.5px">DOCS</span>
-              <span class="atlas-badge atlas-badge-info" style="font-size:9.5px">SDK</span>
-              <span class="atlas-badge atlas-badge-success" style="font-size:9.5px">TESTS</span>
+            <div class="par-tool">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+              web.search "stripe webhooks"
             </div>
-            <div style="color:var(--text-tertiary);font-size:11px">42 symbols touched · 8 public API</div>
+            <div class="par-line">Comparing idempotency strategies…</div>
+            <div class="par-meta"><span>billing-svc</span><span>21.7k tok</span></div>
           </div>
-
-          <div class="pw-insp-section">
-            <div class="pw-insp-head">
-              <span class="pw-insp-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M4.93 4.93l2.83 2.83M2 12h4M4.93 19.07l2.83-2.83M12 22v-4M19.07 19.07l-2.83-2.83M22 12h-4M19.07 4.93l-2.83 2.83"/></svg>
-                Complexity heatmap
-              </span>
-              <span class="pw-insp-count">symbols / file</span>
+          <div class="par-card">
+            <div class="par-head">
+              <span class="par-badge"><svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z"/></svg></span>
+              <span class="par-agent">Claude Code · docs</span>
+              <span class="par-status is-done">done</span>
             </div>
-            <div class="heatmap-row">
-              <span style="flex:1;font-size:10.5px;color:var(--text-tertiary);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">tests/memory/traffic_learner.py</span>
-              <span class="heatmap-num">181</span>
+            <div class="par-tool">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m5 12 5 5L20 7"/></svg>
+              committed 3 files
             </div>
-            <div class="heatmap-row">
-              <span style="flex:1;font-size:10.5px;color:var(--text-tertiary);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">sdk/typescript/core/types.ts</span>
-              <span class="heatmap-num">180</span>
-            </div>
-            <div class="heatmap-row">
-              <span style="flex:1;font-size:10.5px;color:var(--text-tertiary);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">tests/proxy/handlers_batch.py</span>
-              <span class="heatmap-num">104</span>
-            </div>
-            <div class="heatmap-row">
-              <span style="flex:1;font-size:10.5px;color:var(--text-tertiary);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">crates/atlas-py/src/lib.rs</span>
-              <span class="heatmap-num">95</span>
-            </div>
-            <div class="heatmap-row">
-              <span style="flex:1;font-size:10.5px;color:var(--text-tertiary);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">tests/memory_handler_ops.py</span>
-              <span class="heatmap-num">91</span>
-            </div>
-            <div class="heatmap-row">
-              <span style="flex:1;font-size:10.5px;color:var(--text-tertiary);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">tests/proxy_anthropic_stability.py</span>
-              <span class="heatmap-num">86</span>
-            </div>
+            <div class="par-meta"><span>docs-site</span><span>5.1k tok</span></div>
           </div>
-        </aside>
-      </div>
-
-      <!-- Statusbar -->
-      <div class="pw-statusbar">
-        <div class="left">
-          <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v12a3 3 0 0 0 3 3h6"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/></svg> sdk/golang</span>
-        </div>
-        <div class="spacer"></div>
-        <div class="right">
-          <span>60.41M tokens</span>
-          <span>·</span>
-          <span>310 calls</span>
-          <span>·</span>
-          <span>$153.3935</span>
-          <span>·</span>
-          <span>claude-opus-4-7</span>
         </div>
       </div>
     </div>
   </div>
 </section>
 
+<!-- ====================== SHOWCASE: MULTI-WORKSPACE ====================== -->
+<section class="showcase-row" id="workspaces">
+  <div class="wrap">
+    <div class="showcase-grid is-reversed">
+      <div class="showcase-visual">
+        <div class="sv-header">
+          <span class="sv-tab-name">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
+            workspaces
+          </span>
+          <span style="margin-left:auto">5 projects · 2 running</span>
+        </div>
+        <div class="ws-pane">
+          <div class="ws-sec">Pinned</div>
+          <div class="ws-card is-active">
+            <span class="ws-gitdot is-dirty"></span>
+            <span class="ws-main">
+              <span class="ws-name">atlas-core</span>
+              <span class="ws-sub">main · Wire ACP driver into chat panel</span>
+            </span>
+            <span class="ws-stat">
+              <span class="ws-run"><svg class="ws-spark" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"/></svg>2</span>
+              <span class="ws-add">+128</span><span class="ws-del">−44</span>
+            </span>
+          </div>
+          <div class="ws-card">
+            <span class="ws-gitdot is-dirty"></span>
+            <span class="ws-main">
+              <span class="ws-name">web-app</span>
+              <span class="ws-sub">feat/checkout · Add Stripe payment intent</span>
+            </span>
+            <span class="ws-stat"><span class="ws-add">+12</span><span class="ws-del">−3</span></span>
+          </div>
+
+          <div class="ws-sec">payments · group</div>
+          <div class="ws-card">
+            <span class="ws-gitdot is-clean"></span>
+            <span class="ws-main">
+              <span class="ws-name">infra</span>
+              <span class="ws-sub">main · chore: bump terraform providers</span>
+            </span>
+            <span class="ws-stat"><span class="ws-run"><svg class="ws-spark" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"/></svg>1</span></span>
+          </div>
+          <div class="ws-card">
+            <span class="ws-gitdot is-dirty"></span>
+            <span class="ws-main">
+              <span class="ws-name">billing-svc</span>
+              <span class="ws-sub">fix/webhooks · Retry on idempotency clash</span>
+            </span>
+            <span class="ws-stat"><span class="ws-del">−9</span></span>
+          </div>
+
+          <div class="ws-sec">Recent</div>
+          <div class="ws-card">
+            <span class="ws-gitdot is-clean"></span>
+            <span class="ws-main">
+              <span class="ws-name">docs-site</span>
+              <span class="ws-sub">main · Publish 0.1.15 release notes</span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="showcase-copy">
+        <span class="sec-eyebrow">Workspaces</span>
+        <h2>Every project. One window.</h2>
+        <p>An Arc-style switcher holds all your projects in a single window. Hit <code style="font-family:var(--font-mono);font-size:13px;color:var(--text-primary);background:var(--bg-raised);padding:1px 5px;border-radius:4px">⌘.</code> to flip between them &mdash; each carries its own editor tabs, terminals, git state, and agent threads, restored exactly as you left it.</p>
+        <ul class="showcase-points">
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>Instant switch.</strong> State swaps from an in-RAM snapshot &mdash; no remount, no cold reload of the editor or terminal.</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>Group &amp; pin.</strong> Organise projects into custom groups, pin the ones you live in, and see live git <code style="font-family:var(--font-mono);font-size:12px;color:var(--text-primary);background:var(--bg-raised);padding:1px 5px;border-radius:4px">+/−</code> at a glance.</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>Running, everywhere.</strong> A badge marks workspaces with agents still working &mdash; even the ones you're not looking at.</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== SHOWCASE: SESSION CAPTURE + TIMELINE ====================== -->
+<section class="showcase-row" id="capture">
+  <div class="wrap">
+    <div class="showcase-grid">
+      <div class="showcase-copy">
+        <span class="sec-eyebrow">02 · Session capture</span>
+        <h2>Source control<br/>for coding agents.</h2>
+        <p>The record of what an agent did disappears the moment the terminal scrolls. Atlas keeps it. Every session lands on the timeline. Every commit an agent makes becomes a checkpoint, linked back to the session that produced it. Open a session to read the prompt, the tool calls and the response, or ask it questions. Click a row.</p>
+        <ul class="showcase-points">
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>Local-first capture.</strong> Sessions live in <code style="font-family:var(--font-mono);font-size:12px;color:var(--text-primary);background:var(--bg-raised);padding:1px 5px;border-radius:4px">.atlas/sessions.db</code> next to the repo &mdash; yours to grep, export, or delete.</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>Checkpoints link commits to sessions.</strong> Open any commit and see the agent run that produced it, reasoning included.</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>Organisation timeline.</strong> One board across every member and project &mdash; the shape of a week's agent work at a glance.</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>Redacted at the source.</strong> Keys, tokens and secrets are scrubbed on the way into the store, never on the way out.</span>
+          </li>
+        </ul>
+      </div>
+      <div class="showcase-visual">
+        <div class="mock mock-timeline" data-mock-timeline>
+          <div class="mt-view" data-mt-view="list">
+            <div class="mt-search">
+              <span class="mt-glyph"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4h3L6 20H3zM13 4h3l-4 16H9zM19 4h3l-4 16h-3z"/></svg></span>
+              <span class="mt-search-text">Search sessions, projects, models…</span>
+              <span class="mt-tools"><span class="mt-seg"><i class="is-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4M9 12h6M9 16h6"/></svg></i><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-7l-2-2H5a2 2 0 0 0-2 2z"/></svg></i><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></i></span><span class="mt-seg"><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-12 2-12 6"/></svg></i><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg></i></span><span class="mt-seg"><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></i></span></span>
+            </div>
+            <div class="mt-stats">
+              <div class="mt-stat"><div class="mt-stat-l">Tracked</div><div class="mt-stat-v">115h</div><div class="mt-stat-s">agent time · 80 sessions</div></div>
+              <div class="mt-stat"><div class="mt-stat-l">Tokens</div><div class="mt-stat-v">391.0K</div><div class="mt-stat-s">in + out · 80.62M cached</div></div>
+              <div class="mt-stat"><div class="mt-stat-l">Checkpoints</div><div class="mt-stat-v">167</div><div class="mt-stat-s">from 25 sessions</div></div>
+              <div class="mt-stat"><div class="mt-stat-l">Live</div><div class="mt-stat-v">1</div><div class="mt-stat-s">recording now</div></div>
+              <div class="mt-stat mt-stat-wide">
+                <div class="mt-stat-v">17h 50m</div><div class="mt-stat-s">31 Aug – 6 Sep</div>
+                <svg class="mt-spark" viewBox="0 0 200 60" preserveAspectRatio="none"><path d="M0 52 C 30 52, 60 50, 90 49 S 140 46, 160 30 S 180 4, 200 3" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="1.5"/></svg>
+              </div>
+            </div>
+            <div class="mt-day"><b>Today</b><span>6 Sep</span><span class="mt-day-r">3 sessions · 6h 12m · 375.1K tok</span></div>
+            <div class="mt-row" data-session="1" role="button" tabindex="0">
+              <span class="mt-status mt-status-ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg></span>
+              <div class="mt-main"><div class="mt-title">Make the Stripe webhook handlers idempotent — keys in Redis, 24h TTL, ledger untouched</div><div class="mt-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-12 2-12 6"/></svg> main · checkout-service · 741.0K / 1.00M ctx · 7 checkpoints</div></div>
+              <span class="mt-agent"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 8h14v9H5z" opacity=".9"/><path d="M8 5h8v3H8zM7 17h10v2H7zM9 10h2v2H9zM13 10h2v2h-2z" /><path d="M3 10h2v5H3zM19 10h2v5h-2z"/></svg></span>
+              <span class="mt-model">Fable 5</span>
+              <span class="mt-dur">1h 44m</span>
+            </div>
+            <div class="mt-row" data-session="2" role="button" tabindex="0">
+              <span class="mt-status mt-status-dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3"/></svg></span>
+              <div class="mt-main"><div class="mt-title">Shared memory — checkout runbook</div><div class="mt-meta">· checkout-service · 375.1K tok</div></div>
+              <span class="mt-agent"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 8h14v9H5z" opacity=".9"/><path d="M8 5h8v3H8zM7 17h10v2H7zM9 10h2v2H9zM13 10h2v2h-2z" /><path d="M3 10h2v5H3zM19 10h2v5h-2z"/></svg></span>
+              <span class="mt-model">Fable 5</span>
+              <span class="mt-dur">3h 01m</span>
+            </div>
+            <div class="mt-row is-partial" data-session="3" role="button" tabindex="0">
+              <span class="mt-status mt-status-warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></svg></span>
+              <div class="mt-main"><div class="mt-title">Port the notification service to the new queue and keep the retry semantics</div><div class="mt-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-12 2-12 6"/></svg> feat/queue · notify-svc · 638.4K / 1.00M ctx · 39 checkpoints</div></div>
+              <span class="mt-agent"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 8h14v9H5z" opacity=".9"/><path d="M8 5h8v3H8zM7 17h10v2H7zM9 10h2v2H9zM13 10h2v2h-2z" /><path d="M3 10h2v5H3zM19 10h2v5h-2z"/></svg></span>
+              <span class="mt-model">Opus</span>
+              <span class="mt-dur">11h 37m</span>
+            </div>
+            <div class="mt-day"><b>Monday 31 Aug</b><span>31 Aug</span><span class="mt-day-r">2 sessions · 1h 28m</span></div>
+            <div class="mt-row" data-session="4" role="button" tabindex="0">
+              <span class="mt-status mt-status-ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg></span>
+              <div class="mt-main"><div class="mt-title">Disable the composer when the org has no AI access grant, and say why</div><div class="mt-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-12 2-12 6"/></svg> main · checkout-service · 57.3K / 1.00M ctx · 1 checkpoint</div></div>
+              <span class="mt-agent"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 8h14v9H5z" opacity=".9"/><path d="M8 5h8v3H8zM7 17h10v2H7zM9 10h2v2H9zM13 10h2v2h-2z" /><path d="M3 10h2v5H3zM19 10h2v5h-2z"/></svg></span>
+              <span class="mt-model">default</span>
+              <span class="mt-dur">2m</span>
+            </div>
+            <div class="mt-row" data-session="5" role="button" tabindex="0">
+              <span class="mt-status mt-status-ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg></span>
+              <div class="mt-main"><div class="mt-title">Fix the three regressions from the 0.3.1 merge</div><div class="mt-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-12 2-12 6"/></svg> main · checkout-service · 253.9K / 1.00M ctx · 29 checkpoints</div></div>
+              <span class="mt-agent"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 8h14v9H5z" opacity=".9"/><path d="M8 5h8v3H8zM7 17h10v2H7zM9 10h2v2H9zM13 10h2v2h-2z" /><path d="M3 10h2v5H3zM19 10h2v5h-2z"/></svg></span>
+              <span class="mt-model">default</span>
+              <span class="mt-dur">1h 27m</span>
+            </div>
+            <div class="mt-day"><b>Sunday 30 Aug</b><span>30 Aug</span><span class="mt-day-r">1 session · 1h 08m</span></div>
+            <div class="mt-row" data-session="6" role="button" tabindex="0">
+              <span class="mt-status mt-status-ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg></span>
+              <div class="mt-main"><div class="mt-title">The TUI login breaks when the embedded terminal loses raw mode</div><div class="mt-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-12 2-12 6"/></svg> main · infra · 502.6K / 1.00M ctx · 2 checkpoints</div></div>
+              <span class="mt-agent"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 8h14v9H5z" opacity=".9"/><path d="M8 5h8v3H8zM7 17h10v2H7zM9 10h2v2H9zM13 10h2v2h-2z" /><path d="M3 10h2v5H3zM19 10h2v5h-2z"/></svg></span>
+              <span class="mt-model">default</span>
+              <span class="mt-dur">1h 08m</span>
+            </div>
+          </div>
+          <div class="mt-view" data-mt-view="detail" hidden>
+            <div class="mt-crumbs"><button type="button" class="mt-back" data-mt-back><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>Timeline</button><span>/</span><span data-md-project>checkout-service</span><span>/</span><span>sessions</span><span>/</span><span data-md-id>a3f9c2e</span><span class="mt-crumbs-r"><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-12 2-12 6"/></svg></i><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></i></span></div>
+            <div class="mt-detail">
+              <h4 class="md-title" data-md-title>Make the Stripe webhook handlers idempotent</h4>
+              <div class="md-chips"><span class="md-chip"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 8h14v9H5z" opacity=".9"/><path d="M8 5h8v3H8zM7 17h10v2H7zM9 10h2v2H9zM13 10h2v2h-2z" /><path d="M3 10h2v5H3zM19 10h2v5h-2z"/></svg>claude code</span><span class="md-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-12 2-12 6"/></svg><span data-md-branch>main</span></span><span class="md-chip-plain"><span data-md-age>2h ago</span> · <span data-md-dur>1h 44m</span></span><span class="md-chip md-chip-status" data-md-status><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>complete</span></div>
+              <div class="md-stats">
+                <div><div class="mt-stat-l">Active</div><div class="md-stat-v" data-md-active>1h 44m</div><div class="mt-stat-s">21:02 → 22:46 · 1h 44m span</div></div>
+                <div><div class="mt-stat-l">Tokens</div><div class="md-stat-v" data-md-tokens>741.0K / 1.00M</div><div class="mt-stat-s">context</div></div>
+                <div><div class="mt-stat-l">Turns</div><div class="md-stat-v" data-md-turns>42</div><div class="mt-stat-s">12 prompts</div></div>
+                <div><div class="mt-stat-l">Tool calls</div><div class="md-stat-v" data-md-calls>318</div><div class="mt-stat-s"><span data-md-cp>7</span> checkpoints</div></div>
+              </div>
+              <div class="md-tabs"><span class="is-on">Activity <em data-md-acts>412</em></span><span>Tool calls <em data-md-calls2>318</em></span></div>
+              <div class="md-feed">
+                <div class="md-entry">
+                  <span class="md-avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span>
+                  <div class="md-entry-body"><div class="md-entry-head">Prompt <span>· 21:02:14</span></div><pre class="md-pre" data-md-prompt>Make the Stripe webhook handlers idempotent.
+- keys in Redis, 24h TTL
+- don't touch the ledger writes
+- replay each event twice in tests and assert one ledger row</pre></div>
+                </div>
+                <div class="md-entry md-entry-tools">
+                  <span class="md-avatar md-avatar-dot"></span>
+                  <div class="md-entry-body"><div class="md-entry-head">Tool calls <span>· 21:02:27 · 65 calls · 1 modified <b class="md-add">+31</b> <b class="md-del">−1</b></span></div><div class="md-show">Show tool calls <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></div></div>
+                </div>
+                <div class="md-entry">
+                  <span class="md-avatar md-avatar-agent"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 8h14v9H5z" opacity=".9"/><path d="M8 5h8v3H8zM7 17h10v2H7zM9 10h2v2H9zM13 10h2v2h-2z" /><path d="M3 10h2v5H3zM19 10h2v5h-2z"/></svg></span>
+                  <div class="md-entry-body"><div class="md-entry-head">Response <span>· 21:07:33</span></div><p class="md-resp" data-md-resp>Every handler now runs behind an idempotency guard keyed on the event id. A replayed event returns the cached 200 instead of re-running the side effects. Ledger writes are untouched.</p></div>
+                </div>
+              </div>
+            </div>
+            <div class="mt-detail-foot"><span class="mt-search-text"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Search this session…</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== SHOWCASE: TEAMS ====================== -->
+<section class="showcase-row" id="team">
+  <div class="wrap">
+    <div class="showcase-grid is-reversed">
+      <div class="showcase-visual team-visual">
+        <div class="mock mock-team" data-mock-team>
+          <!-- State 1: chats home -->
+          <div class="tc-state" data-tc-state="home" hidden>
+            <div class="tc-topbar"><span class="tc-tab is-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2 20a7 7 0 0 1 14 0M16 4a3.5 3.5 0 0 1 0 7M22 20a7 7 0 0 0-5-6.7"/></svg>Chats</span><span class="tc-iconbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></div>
+            <div class="tc-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Jump to a channel or person…</div>
+            <div class="tc-sec"><span class="tc-hash">#</span>Channels<span class="tc-sec-plus"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></div>
+            <button type="button" class="tc-row tc-chan" data-open="general"><span class="tc-hash">#</span>general</button>
+            <button type="button" class="tc-row tc-chan" data-open="checkout"><span class="tc-hash">#</span>checkout</button>
+            <button type="button" class="tc-row tc-chan" data-open="infra"><span class="tc-hash">#</span>infra</button>
+            <button type="button" class="tc-row tc-chan" data-open="design"><span class="tc-hash">#</span>design</button>
+            <button type="button" class="tc-row tc-chan" data-open="incidents"><span class="tc-hash">#</span>incidents</button>
+            <div class="tc-sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2 20a7 7 0 0 1 14 0M16 4a3.5 3.5 0 0 1 0 7M22 20a7 7 0 0 0-5-6.7"/></svg>Direct messages<span class="tc-sec-plus"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></div>
+            <button type="button" class="tc-row tc-person" data-open="group"><span class="tc-avatar tc-avatar-group"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2 20a7 7 0 0 1 14 0M16 4a3.5 3.5 0 0 1 0 7M22 20a7 7 0 0 0-5-6.7"/></svg></span><span class="tc-row-main"><span class="tc-row-name">Priya Nair, Tomás Herrera +1</span><span class="tc-row-sub">4 members</span></span><span class="tc-badge">2</span></button>
+            <button type="button" class="tc-row tc-person" data-open="group"><span class="tc-avatar tc-avatar-group"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2 20a7 7 0 0 1 14 0M16 4a3.5 3.5 0 0 1 0 7M22 20a7 7 0 0 0-5-6.7"/></svg></span><span class="tc-row-main"><span class="tc-row-name">Mei Lin &amp; Jonah Adeyemi</span><span class="tc-row-sub">3 members</span></span></button>
+            <div class="tc-divider"></div>
+            <button type="button" class="tc-row tc-person" data-open="dm-pn"><span class="tc-avatar" style="--hue:350">PN</span><span class="tc-row-main"><span class="tc-row-name">Priya Nair</span><span class="tc-row-sub">priya@northwind.dev</span></span><span class="tc-badge">1</span></button>
+            <button type="button" class="tc-row tc-person" data-open="dm-th"><span class="tc-avatar" style="--hue:28">TH</span><span class="tc-row-main"><span class="tc-row-name">Tomás Herrera</span><span class="tc-row-sub">tomas@northwind.dev</span></span></button>
+            <button type="button" class="tc-row tc-person" data-open="dm-ml"><span class="tc-avatar" style="--hue:150">ML</span><span class="tc-row-main"><span class="tc-row-name">Mei Lin</span><span class="tc-row-sub">mei.lin@northwind.dev</span></span></button>
+            <button type="button" class="tc-row tc-person" data-open="dm-ja"><span class="tc-avatar" style="--hue:212">JA</span><span class="tc-row-main"><span class="tc-row-name">Jonah Adeyemi</span><span class="tc-row-sub">jonah@northwind.dev</span></span></button>
+          </div>
+          <!-- State 2: a conversation -->
+          <div class="tc-state" data-tc-state="conv">
+            <div class="tc-topbar"><span class="tc-tab is-on"><span class="tc-hash">#</span><span data-tc-title>general</span></span><span class="tc-iconbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></div>
+            <div class="tc-head">
+              <button type="button" class="tc-iconbtn" data-tc-back><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg></button>
+              <span class="tc-hash">#</span><span class="tc-head-name" data-tc-title2>general</span>
+              <span class="tc-head-r"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 3h6l-1 6 3 3H7l3-3zM12 12v9"/></svg> 2</span><i></i><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg></span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3z"/></svg></span></span>
+            </div>
+            <div class="tc-tabs">
+              <button type="button" class="tc-subtab is-on" data-tc-tab="messages"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>Messages</button>
+              <button type="button" class="tc-subtab" data-tc-tab="drafts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4M9 12h6M9 16h6"/></svg>Drafts</button>
+              <button type="button" class="tc-subtab" data-tc-tab="files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-7l-2-2H5a2 2 0 0 0-2 2z"/></svg>Files</button>
+              <button type="button" class="tc-spaces" data-tc-tab="spaces"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg>Spaces</button>
+            </div>
+            <div class="tc-pane" data-tc-pane="messages">
+              <div class="tc-msgs">
+                <div class="tc-card">
+                  <div class="tc-card-head"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 8h14v9H5z" opacity=".9"/><path d="M8 5h8v3H8zM7 17h10v2H7zM9 10h2v2H9zM13 10h2v2h-2z" /><path d="M3 10h2v5H3zM19 10h2v5h-2z"/></svg>Shared from Claude Code · checkout-service</div>
+                  <div class="tc-card-body"><b>What shipped</b><ul><li><b>Idempotency guard</b> (<code>webhooks/guard.ts</code>) — Redis keys, 24h TTL</li><li><b>Replay tests</b> — every event twice, one ledger row</li><li><b>Verified</b> — 44 tests green, lint clean</li></ul></div>
+                </div>
+                <div class="tc-msg"><span class="tc-avatar" style="--hue:150">ML</span><div><div class="tc-msg-head">Mei Lin <span>18:27</span></div><div class="tc-msg-body">Preview for checkout is up. Link's in #checkout.</div></div></div>
+                <div class="tc-date"><span>4 September</span></div>
+                <div class="tc-msg"><span class="tc-avatar" style="--hue:28">TH</span><div><div class="tc-msg-head">Tomás Herrera <span>20:20</span></div><div class="tc-msg-body">Reviewing the webhook PR now.</div></div></div>
+                <div class="tc-call"><span class="tc-call-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg></span><div><div class="tc-call-line"><b>Priya Nair</b> ended a call <span>· 2 min</span> <span>21:52</span></div><div class="tc-call-sub">No transcript arrived for this call.</div></div></div>
+                <div class="tc-date"><span>Today</span></div>
+                <div class="tc-msg"><span class="tc-avatar" style="--hue:350">PN</span><div><div class="tc-msg-head">Priya Nair <span>19:05</span></div><div class="tc-msg-body">Merged. Idempotency keys are in.</div></div></div>
+                <div class="tc-msg"><span class="tc-avatar" style="--hue:212">JA</span><div><div class="tc-msg-head">Jonah Adeyemi <span>21:16</span></div><div class="tc-msg-body">Nice. Kicking off the load test.</div></div></div>
+              </div>
+              <div class="tc-composer">
+                <div class="tc-input"><span data-tc-placeholder>Message #general</span><span class="mc-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></span></div>
+                <div class="tc-toolbar"><span class="tc-iconbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span><span class="tc-tool">☺</span><span class="tc-tool">@</span><span class="tc-toolbar-r"><b>B</b><i>I</i><s>S</s><span>&lt;/&gt;</span><span>🔗</span><span>≡</span><span>1.</span><span>❝</span></span></div>
+              </div>
+            </div>
+            <div class="tc-pane" data-tc-pane="drafts" hidden>
+              <div class="tc-newdraft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4M9 12h6M9 16h6"/></svg>Name a new draft…<span class="tc-sec-plus"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></div>
+              <div class="tc-draft"><div><div class="tc-row-name">Launch checklist</div><div class="tc-row-sub">Updated 1d ago</div></div><span class="tc-draft-r"><span class="tc-avatar tc-avatar-sm" style="--hue:150">ML</span>Mei · 30 Aug</span></div>
+              <div class="tc-draft"><div><div class="tc-row-name">Webhook migration prompt</div><div class="tc-row-sub">Updated 3d ago · 2 editing</div></div><span class="tc-draft-r"><span class="tc-avatar tc-avatar-sm" style="--hue:28">TH</span>Tomás · 3 Sep</span></div>
+              <p class="tc-hint">Drafts are edited together, live. Send one straight to an agent when it's ready.</p>
+            </div>
+            <div class="tc-pane" data-tc-pane="files" hidden>
+              <div class="tc-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4M9 12h6M9 16h6"/></svg><span class="tc-row-main"><span class="tc-row-name">load-test-results.csv</span><span class="tc-row-sub">Jonah · today · 18 KB</span></span></div>
+              <div class="tc-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4M9 12h6M9 16h6"/></svg><span class="tc-row-main"><span class="tc-row-name">webhook-sequence.png</span><span class="tc-row-sub">Priya · 4 Sep · 240 KB</span></span></div>
+              <div class="tc-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4M9 12h6M9 16h6"/></svg><span class="tc-row-main"><span class="tc-row-name">checkout-runbook.md</span><span class="tc-row-sub">Mei · 30 Aug · 6 KB</span></span></div>
+            </div>
+            <div class="tc-pane tc-canvas" data-tc-pane="spaces" hidden>
+              <div class="tc-canvas-top"><span class="tc-canvas-pill"><i class="tc-live"></i>Canvas <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span><span class="tc-canvas-people"><span class="tc-avatar tc-avatar-sm" style="--hue:350">PN</span><span class="tc-avatar tc-avatar-sm" style="--hue:150">ML</span></span></div>
+              <svg class="tc-edges" viewBox="0 0 400 260" preserveAspectRatio="none"><path d="M120 92 L120 60 L 210 60 L210 78" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1"/><path d="M190 150 L 250 150 L 250 120 L 300 120" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1"/><path d="M120 150 L 60 150 L 60 200" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1"/></svg>
+              <div class="tc-note" style="left:44%;top:22%"><div class="tc-note-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4M9 12h6M9 16h6"/></svg>Retry policy</div><div class="tc-note-b">Exponential, jitter, cap at 5 tries.<br/>Dead-letter after that.</div></div>
+              <div class="tc-note" style="left:12%;top:38%"><div class="tc-note-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4M9 12h6M9 16h6"/></svg>Idempotency</div><div class="tc-note-b">Key = event id<br/>TTL 24h in Redis</div></div>
+              <div class="tc-circle" style="left:72%;top:36%">Ledger</div>
+              <div class="tc-tri" style="left:8%;top:70%"></div>
+              <div class="tc-rect" style="left:36%;top:66%"></div>
+              <div class="tc-canvas-tools"><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4M9 12h6M9 16h6"/></svg></i><i>T</i><i>#</i><i>▢</i><i>○</i><i>◇</i><i>△</i><i>▤</i><b></b><i>↶</i><i>↷</i><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></i></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="showcase-copy">
+        <span class="sec-eyebrow">03 · Teams</span>
+        <h2>Onboard your team.<br/>Start chatting.</h2>
+        <p>Create an organisation. Invite people with a link. The same window grows channels, direct messages and calls with recordings and transcripts. Draft prompts together in real time. Sketch on a canvas per conversation. Hand any message straight to an agent. Everything is scoped to the organisation, so switching orgs switches the whole workspace. Open a channel, switch tabs, try the canvas.</p>
+        <ul class="showcase-points">
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>Organisations with roles.</strong> Admins, product owners, developers, members &mdash; invite by link, manage from the switcher.</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>Chat that knows the code.</strong> Mention a branch, drop a diff, or send a thread to an agent from the message itself.</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>Calls, drafts, canvases.</strong> Voice and video with transcripts, live co-edited prompt drafts, and a shared canvas &mdash; the same ones the web app uses.</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+            <span><strong>Local stays local.</strong> Sync is per organisation and opt-in. An unsynced org is still a full workspace.</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+
 <!-- ====================== PILLARS ====================== -->
 <section class="scaffold" id="features">
   <div class="wrap">
     <div class="sec-head">
-      <span class="sec-eyebrow">The workspace</span>
+      <span class="sec-eyebrow">04 · The workspace</span>
       <h2 class="sec-title">Everything in one window.<br/>No more tab-switching.</h2>
       <p class="sec-sub">Chat with agents, run terminals, read code, browse docs, and capture plans &mdash; without leaving the room. Atlas keeps the loop tight.</p>
     </div>
@@ -2354,7 +3129,7 @@
         <div class="pillar-body">
           <div class="pillar-kicker">Chat</div>
           <h3 class="pillar-title">Coding agents, native.</h3>
-          <p class="pillar-desc">Claude Code, Codex, and your custom agents &mdash; all first-class. Stream responses, watch tool calls, and intervene mid-flight.</p>
+          <p class="pillar-desc">Claude Code, Codex, OpenCode &mdash; any ACP agent. Stream responses, watch tool calls, and intervene mid-flight.</p>
         </div>
       </div>
 
@@ -2447,21 +3222,12 @@
 <section class="scaffold" style="padding-top:0;border-top:0">
   <div class="wrap">
     <div class="sec-head">
-      <span class="sec-eyebrow">Built for serious work</span>
+      <span class="sec-eyebrow">Terminal · browser · diffs · logs</span>
       <h2 class="sec-title">Engineered for the long session.</h2>
       <p class="sec-sub">Atlas is a desktop application. Compact, AMOLED, fast. Every detail is tuned for ten-hour days at the keyboard.</p>
     </div>
 
     <div class="features">
-      <div class="feature">
-        <div class="feature-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
-        </div>
-        <h3 class="feature-title">Blast radius analysis</h3>
-        <p class="feature-desc">See exactly which files, symbols, and tests an edit will touch &mdash; before the agent commits a single line.</p>
-        <div class="feature-tag">/analysis · realtime</div>
-      </div>
-
       <div class="feature">
         <div class="feature-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 17 6-6-6-6m8 14h8"/></svg>
@@ -2470,25 +3236,6 @@
         <p class="feature-desc">Split panes, tabs, search across history. Agents share the same shell &mdash; no context smuggling.</p>
         <div class="feature-tag">zsh · bash · fish</div>
       </div>
-
-      <div class="feature">
-        <div class="feature-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 5-5"/></svg>
-        </div>
-        <h3 class="feature-title">Complexity heatmap</h3>
-        <p class="feature-desc">Rank every file by symbol density. Find the hot spots, refactor with intent, and watch the heat fade.</p>
-        <div class="feature-tag">tree-sitter</div>
-      </div>
-
-      <div class="feature">
-        <div class="feature-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 4h16v16H4z"/><path d="M4 9h16M9 4v16"/></svg>
-        </div>
-        <h3 class="feature-title">Activity log</h3>
-        <p class="feature-desc">Every agent action, every tool call, every commit &mdash; timestamped, searchable, replayable.</p>
-        <div class="feature-tag">JSONL · grep-friendly</div>
-      </div>
-
       <div class="feature">
         <div class="feature-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
@@ -2497,7 +3244,30 @@
         <p class="feature-desc">Read docs, copy snippets, save to Knowledge &mdash; without losing your place. Atlas indexes what you save.</p>
         <div class="feature-tag">WebKit · indexed</div>
       </div>
-
+      <div class="feature">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/><path d="M7 9h2M7 13h2M15 11h2"/></svg>
+        </div>
+        <h3 class="feature-title">Side-by-side diff</h3>
+        <p class="feature-desc">Every agent edit as a real diff &mdash; changed-files tree, minimap, hunk staging, conflict resolution. The view you'd use to review a PR.</p>
+        <div class="feature-tag">unified · side-by-side</div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 4h16v16H4z"/><path d="M4 9h16M9 4v16"/></svg>
+        </div>
+        <h3 class="feature-title">Activity log</h3>
+        <p class="feature-desc">Every agent action, every tool call, every commit &mdash; timestamped, searchable, replayable.</p>
+        <div class="feature-tag">JSONL · grep-friendly</div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+        </div>
+        <h3 class="feature-title">Blast radius analysis</h3>
+        <p class="feature-desc">See exactly which files, symbols, and tests an edit will touch &mdash; before the agent commits a single line.</p>
+        <div class="feature-tag">/analysis · realtime</div>
+      </div>
       <div class="feature">
         <div class="feature-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
@@ -3222,250 +3992,8 @@
   </div>
 </section>
 
-<!-- ====================== AGENTS ====================== -->
-<section class="agents-section" id="agents">
-  <div class="wrap">
-    <div class="agents-strip">
-      <div>
-        <span class="sec-eyebrow">Any agent · ACP-native</span>
-        <h2 class="sec-title" style="max-width:18ch">One workspace.<br/>Every coding agent.</h2>
-        <p class="sec-sub" style="margin-bottom:32px">Atlas speaks the Agent Client Protocol (ACP). Today it ships with Claude Code and Codex, both via ACP; OpenCode and Kilo Code follow on the same shell. Swap mid-thread. Bring your own keys. No lock-in.</p>
-        <a href="https://github.com/zed-industries/agent-client-protocol" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">
-          Read the ACP docs
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
-        </a>
-      </div>
-      <div class="agents-list">
-        <div class="agent-row is-active">
-          <div class="agent-mark">CC</div>
-          <div class="agent-info">
-            <div class="agent-name">Claude Code</div>
-            <div class="agent-meta">claude-opus-4-7 · shipping today</div>
-          </div>
-          <div class="agent-status">
-            <span class="atlas-dot atlas-dot-success"></span>
-            Available
-          </div>
-        </div>
-        <div class="agent-row">
-          <div class="agent-mark">CX</div>
-          <div class="agent-info">
-            <div class="agent-name">Codex</div>
-            <div class="agent-meta">via ACP · shipping today</div>
-          </div>
-          <div class="agent-status">
-            <span class="atlas-dot atlas-dot-success"></span>
-            Available
-          </div>
-        </div>
-        <div class="agent-row">
-          <div class="agent-mark">OC</div>
-          <div class="agent-info">
-            <div class="agent-name">OpenCode</div>
-            <div class="agent-meta">via ACP · open-source agent</div>
-          </div>
-          <div class="agent-status">
-            <span class="atlas-dot atlas-dot-warning"></span>
-            Coming
-          </div>
-        </div>
-        <div class="agent-row">
-          <div class="agent-mark">KC</div>
-          <div class="agent-info">
-            <div class="agent-name">Kilo Code</div>
-            <div class="agent-meta">via ACP · open-source agent</div>
-          </div>
-          <div class="agent-status">
-            <span class="atlas-dot atlas-dot-warning"></span>
-            Coming
-          </div>
-        </div>
-        <div class="agent-row">
-          <div class="agent-mark">+</div>
-          <div class="agent-info">
-            <div class="agent-name">Your agent</div>
-            <div class="agent-meta">implements ACP · drop a binary, register it</div>
-          </div>
-          <div class="agent-status">Configure</div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
 
-<!-- ====================== SHOWCASE: MULTI-WORKSPACE ====================== -->
-<section class="showcase-row" id="workspaces">
-  <div class="wrap">
-    <div class="showcase-grid is-reversed">
-      <div class="showcase-visual">
-        <div class="sv-header">
-          <span class="sv-tab-name">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
-            workspaces
-          </span>
-          <span style="margin-left:auto">5 projects · 2 running</span>
-        </div>
-        <div class="ws-pane">
-          <div class="ws-sec">Pinned</div>
-          <div class="ws-card is-active">
-            <span class="ws-gitdot is-dirty"></span>
-            <span class="ws-main">
-              <span class="ws-name">atlas-core</span>
-              <span class="ws-sub">main · Wire ACP driver into chat panel</span>
-            </span>
-            <span class="ws-stat">
-              <span class="ws-run"><svg class="ws-spark" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"/></svg>2</span>
-              <span class="ws-add">+128</span><span class="ws-del">−44</span>
-            </span>
-          </div>
-          <div class="ws-card">
-            <span class="ws-gitdot is-dirty"></span>
-            <span class="ws-main">
-              <span class="ws-name">web-app</span>
-              <span class="ws-sub">feat/checkout · Add Stripe payment intent</span>
-            </span>
-            <span class="ws-stat"><span class="ws-add">+12</span><span class="ws-del">−3</span></span>
-          </div>
 
-          <div class="ws-sec">payments · group</div>
-          <div class="ws-card">
-            <span class="ws-gitdot is-clean"></span>
-            <span class="ws-main">
-              <span class="ws-name">infra</span>
-              <span class="ws-sub">main · chore: bump terraform providers</span>
-            </span>
-            <span class="ws-stat"><span class="ws-run"><svg class="ws-spark" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"/></svg>1</span></span>
-          </div>
-          <div class="ws-card">
-            <span class="ws-gitdot is-dirty"></span>
-            <span class="ws-main">
-              <span class="ws-name">billing-svc</span>
-              <span class="ws-sub">fix/webhooks · Retry on idempotency clash</span>
-            </span>
-            <span class="ws-stat"><span class="ws-del">−9</span></span>
-          </div>
-
-          <div class="ws-sec">Recent</div>
-          <div class="ws-card">
-            <span class="ws-gitdot is-clean"></span>
-            <span class="ws-main">
-              <span class="ws-name">docs-site</span>
-              <span class="ws-sub">main · Publish 0.1.15 release notes</span>
-            </span>
-          </div>
-        </div>
-      </div>
-      <div class="showcase-copy">
-        <span class="sec-eyebrow">Workspaces</span>
-        <h2>Every project. One window.</h2>
-        <p>An Arc-style switcher holds all your projects in a single window. Hit <code style="font-family:var(--font-mono);font-size:13px;color:var(--text-primary);background:var(--bg-raised);padding:1px 5px;border-radius:4px">⌘.</code> to flip between them &mdash; each carries its own editor tabs, terminals, git state, and agent threads, restored exactly as you left it.</p>
-        <ul class="showcase-points">
-          <li>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
-            <span><strong>Instant switch.</strong> State swaps from an in-RAM snapshot &mdash; no remount, no cold reload of the editor or terminal.</span>
-          </li>
-          <li>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
-            <span><strong>Group &amp; pin.</strong> Organise projects into custom groups, pin the ones you live in, and see live git <code style="font-family:var(--font-mono);font-size:12px;color:var(--text-primary);background:var(--bg-raised);padding:1px 5px;border-radius:4px">+/−</code> at a glance.</span>
-          </li>
-          <li>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
-            <span><strong>Running, everywhere.</strong> A badge marks workspaces with agents still working &mdash; even the ones you're not looking at.</span>
-          </li>
-        </ul>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ====================== SHOWCASE: PARALLEL AGENTS ====================== -->
-<section class="showcase-row" id="parallel">
-  <div class="wrap">
-    <div class="showcase-grid">
-      <div class="showcase-copy">
-        <span class="sec-eyebrow">Parallel agents</span>
-        <h2>Run a team of agents at once.</h2>
-        <p>Every thread gets its own session worker, so you can fan work out across agents and projects simultaneously &mdash; one writing tests, one refactoring, one researching &mdash; and watch each one stream its tool calls live.</p>
-        <ul class="showcase-points">
-          <li>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
-            <span><strong>True concurrency.</strong> Rust-owned session state means threads run independently &mdash; not a queue pretending to be parallel.</span>
-          </li>
-          <li>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
-            <span><strong>Mix your agents.</strong> Claude Code, Codex, and ACP agents side by side &mdash; each on the task it's best at.</span>
-          </li>
-          <li>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
-            <span><strong>Intervene anytime.</strong> Jump into any running thread, steer it, or approve a permission &mdash; the rest keep going.</span>
-          </li>
-        </ul>
-      </div>
-      <div class="showcase-visual">
-        <div class="sv-header">
-          <span class="sv-tab-name">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
-            3 agents running
-          </span>
-          <span style="margin-left:auto">across 2 workspaces</span>
-        </div>
-        <div class="par-pane">
-          <div class="par-card is-active">
-            <div class="par-head">
-              <span class="par-badge"><svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z"/></svg></span>
-              <span class="par-agent">Claude Code · tests</span>
-              <span class="par-status is-run"><span class="par-spin"></span>running</span>
-            </div>
-            <div class="par-tool">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-              vitest run auth.test.ts
-            </div>
-            <div class="par-line">Added 6 cases for token refresh<span class="par-cursor"></span></div>
-            <div class="par-meta"><span>atlas-core</span><span>14.2k tok</span></div>
-          </div>
-          <div class="par-card">
-            <div class="par-head">
-              <span class="par-badge"><svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"/></svg></span>
-              <span class="par-agent">Codex · refactor</span>
-              <span class="par-status is-run"><span class="par-spin"></span>running</span>
-            </div>
-            <div class="par-tool">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
-              edit session-worker.rs
-            </div>
-            <div class="par-prog"><i style="width:62%"></i></div>
-            <div class="par-meta"><span>atlas-core</span><span>8.9k tok</span></div>
-          </div>
-          <div class="par-card">
-            <div class="par-head">
-              <span class="par-badge"><svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z"/></svg></span>
-              <span class="par-agent">Claude Code · research</span>
-              <span class="par-status is-run"><span class="par-spin"></span>running</span>
-            </div>
-            <div class="par-tool">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-              web.search "stripe webhooks"
-            </div>
-            <div class="par-line">Comparing idempotency strategies…</div>
-            <div class="par-meta"><span>billing-svc</span><span>21.7k tok</span></div>
-          </div>
-          <div class="par-card">
-            <div class="par-head">
-              <span class="par-badge"><svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z"/></svg></span>
-              <span class="par-agent">Claude Code · docs</span>
-              <span class="par-status is-done">done</span>
-            </div>
-            <div class="par-tool">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m5 12 5 5L20 7"/></svg>
-              committed 3 files
-            </div>
-            <div class="par-meta"><span>docs-site</span><span>5.1k tok</span></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
 
 <!-- ====================== SHOWCASE: MEMORY INSPECTOR ====================== -->
 <section class="showcase-row" id="memory">
@@ -3615,23 +4143,14 @@
     <div class="roadmap-grid">
       <div class="roadmap-head">
         <span class="sec-eyebrow">On the roadmap</span>
-        <h2 class="sec-title">Built for one. Designed for teams.</h2>
-        <p class="sec-sub">A real problem: companies and teams don't have shared knowledge bases that humans and agents can both consume. Atlas is heading there. The single-player tools shipping today are the substrate for the multiplayer ones below.</p>
-        <div class="roadmap-quote">"The knowledge base and logging system is designed for teams. The next thing we ship is the network around it."</div>
+        <h2 class="sec-title">Teams shipped. Here's what's next.</h2>
+        <p class="sec-sub">Organisations, accounts, team chat and the session timeline are live. What is still missing is a knowledge base that humans and agents both consume across a team &mdash; the multiplayer half of what ships today.</p>
+        <div class="roadmap-quote">"The capture, the chat and the timeline are the substrate. The next thing we ship is shared knowledge on top of them."</div>
       </div>
 
       <div class="roadmap-list">
         <div class="roadmap-item">
           <div class="roadmap-num">01</div>
-          <div class="roadmap-body">
-            <h3 class="roadmap-title">Atlas accounts &amp; team workspaces</h3>
-            <p class="roadmap-desc">Sign in to sync across machines. Invite teammates. Local-first stays local; only what you publish reaches the network.</p>
-          </div>
-          <span class="roadmap-badge is-planning">Planning</span>
-        </div>
-
-        <div class="roadmap-item">
-          <div class="roadmap-num">02</div>
           <div class="roadmap-body">
             <h3 class="roadmap-title">Shared knowledge bases</h3>
             <p class="roadmap-desc">The same markdown files, mirrored across the team. Humans read them in Atlas; agents consume them as system prompt. One source of truth, both audiences.</p>
@@ -3640,7 +4159,7 @@
         </div>
 
         <div class="roadmap-item">
-          <div class="roadmap-num">03</div>
+          <div class="roadmap-num">02</div>
           <div class="roadmap-body">
             <h3 class="roadmap-title">Thread sync across teams</h3>
             <p class="roadmap-desc">Save any agent thread to the team knowledge base. Teammates pick up exactly where the agent left off, with full reasoning history attached.</p>
@@ -3649,7 +4168,7 @@
         </div>
 
         <div class="roadmap-item">
-          <div class="roadmap-num">04</div>
+          <div class="roadmap-num">03</div>
           <div class="roadmap-body">
             <h3 class="roadmap-title">Version control for agent knowledge</h3>
             <p class="roadmap-desc">Incremental versioning for <code style="font-family:var(--font-mono);font-size:12px;color:var(--text-primary);background:var(--bg-raised);padding:1px 5px;border-radius:4px">CLAUDE.md</code>, <code style="font-family:var(--font-mono);font-size:12px;color:var(--text-primary);background:var(--bg-raised);padding:1px 5px;border-radius:4px">AGENTS.md</code>, and every knowledge note. Diff agent context the same way you diff code. Roll back when an instruction regresses behaviour.</p>
@@ -3658,7 +4177,7 @@
         </div>
 
         <div class="roadmap-item">
-          <div class="roadmap-num">05</div>
+          <div class="roadmap-num">04</div>
           <div class="roadmap-body">
             <h3 class="roadmap-title">Cloud integrations</h3>
             <p class="roadmap-desc">Import knowledge from Jira and Confluence. Map tickets to threads, sync designs to notes. Stop copy-pasting context into prompts.</p>
@@ -3667,7 +4186,7 @@
         </div>
 
         <div class="roadmap-item">
-          <div class="roadmap-num">06</div>
+          <div class="roadmap-num">05</div>
           <div class="roadmap-body">
             <h3 class="roadmap-title">Prompt polling &amp; tickets in one surface</h3>
             <p class="roadmap-desc">Open a ticket, post the prompt, gather team votes on the agent's plan, then approve the run. Plan and execution, no Notion ↔ Linear ↔ Slack pinball.</p>
@@ -3676,7 +4195,7 @@
         </div>
 
         <div class="roadmap-item">
-          <div class="roadmap-num">07</div>
+          <div class="roadmap-num">06</div>
           <div class="roadmap-body">
             <h3 class="roadmap-title">Team-level agent reference systems</h3>
             <p class="roadmap-desc">Aggregate knowledge and system traces across the team into shared reference indices. Every agent inherits the team's best context automatically.</p>
@@ -3771,11 +4290,252 @@
   // Sticky nav border on scroll
   const nav = document.getElementById('nav');
   const onScroll = () => {
-    if (window.scrollY > 8) nav.classList.add('scrolled');
-    else nav.classList.remove('scrolled');
+    const scrolled = window.scrollY > 8;
+    nav.classList.toggle('scrolled', scrolled);
+    document.body.classList.toggle('scrolled', scrolled);
   };
+  // Progressive blur layers — the transcript's GradualBlur, verbatim: N bands,
+  // each a stronger backdrop-filter masked to a strip, neighbours overlapping
+  // by one step so the seams vanish. Bezier ramp, exponential bias.
+  (function () {
+    const host = document.querySelector('[data-scroll-fade]');
+    if (!host) return;
+    const layers = 5, strength = 2.1, step = 100 / layers;
+    const curve = (p) => p * p * (3 - 2 * p);
+    const r = (v) => Math.round(v * 10) / 10;
+    for (let i = 1; i <= layers; i++) {
+      const progress = curve(i / layers);
+      const blur = Math.pow(2, progress * 4) * 0.0625 * strength;
+      const p1 = r(step * i - step), p2 = r(step * i), p3 = r(step * i + step), p4 = r(step * i + step * 2);
+      let stops = `transparent ${p1}%, black ${p2}%`;
+      if (p3 <= 100) stops += `, black ${p3}%`;
+      if (p4 <= 100) stops += `, transparent ${p4}%`;
+      const el = document.createElement('i');
+      const mask = `linear-gradient(to top, ${stops})`;
+      el.style.maskImage = mask; el.style.webkitMaskImage = mask;
+      el.style.backdropFilter = `blur(${blur.toFixed(3)}rem)`; el.style.webkitBackdropFilter = `blur(${blur.toFixed(3)}rem)`;
+      host.appendChild(el);
+    }
+    host.appendChild(document.createElement('b'));
+  })();
+
   window.addEventListener('scroll', onScroll, { passive: true });
   onScroll();
+</script>
+
+
+
+<script>
+  // ---- Interactive mocks -------------------------------------------------
+  // Real DOM, real clicks, fake data. Each one is a tiny state machine; the
+  // point is that the element behaves like the app, not that it looks like a
+  // screenshot of it.
+  (function () {
+    // Agent chat: agent picker, permission-mode cycle, model follows agent.
+    const chat = document.querySelector('[data-mock-chat]');
+    if (chat) {
+      const pill = chat.querySelector('[data-agent-pill]');
+      const menu = chat.querySelector('[data-agent-menu]');
+      const glyphs = chat.querySelector('[data-agent-glyphs]').content;
+      const names = { atlas: 'Atlas Agent', claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', cursor: 'Cursor', pi: 'pi ACP' };
+      const modes = [
+        ['Default', 'var(--text-tertiary)'], ['Accept edits', 'var(--status-success)'],
+        ['Plan mode', 'var(--accent-primary)'], ['Bypass permissions', 'var(--status-error)'], ['Auto', 'var(--status-warning)'],
+      ];
+      let mode = 3;
+      const select = (item) => {
+        const id = item.dataset.agent;
+        chat.querySelector('[data-agent-glyph]').innerHTML = glyphs.querySelector(`[data-for="${id}"]`).innerHTML;
+        chat.querySelector('[data-agent-name]').textContent = names[id];
+        chat.querySelector('[data-model-name]').textContent = item.dataset.model;
+        chat.querySelector('[data-mc-placeholder]').textContent = `Ask ${names[id]}…`;
+        menu.querySelectorAll('.mc-item').forEach((i) => i.classList.toggle('is-on', i === item));
+      };
+      pill.addEventListener('click', (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; });
+      menu.addEventListener('click', (e) => {
+        const item = e.target.closest('.mc-item');
+        if (!item) return;
+        e.stopPropagation();
+        if (item.hasAttribute('data-install')) {
+          // One-click install from the registry: the row becomes a normal
+          // agent, then gets picked.
+          const right = item.querySelector('.mc-item-right');
+          right.textContent = 'Installing…';
+          setTimeout(() => { right.remove(); item.removeAttribute('data-install'); select(item); menu.hidden = true; }, 900);
+          return;
+        }
+        select(item); menu.hidden = true;
+      });
+      document.addEventListener('click', () => { menu.hidden = true; });
+      chat.querySelector('[data-mode-pill]').addEventListener('click', () => {
+        mode = (mode + 1) % modes.length;
+        chat.querySelector('[data-mode-name]').textContent = modes[mode][0];
+        chat.querySelector('[data-mode-dot]').style.background = modes[mode][1];
+      });
+      select(menu.querySelector('[data-agent="claude"]'));
+    }
+
+    // Timeline: rows open a session; back returns to the list.
+    const tl = document.querySelector('[data-mock-timeline]');
+    if (tl) {
+      const S = {
+        1: { title: 'Make the Stripe webhook handlers idempotent', project: 'checkout-service', id: 'a3f9c2e', branch: 'main', age: '2h ago', dur: '1h 44m', active: '1h 44m', tokens: '741.0K / 1.00M', turns: '42', calls: '318', cp: '7', acts: '412', status: 'complete', partial: false,
+             prompt: 'Make the Stripe webhook handlers idempotent.\n- keys in Redis, 24h TTL\n- don\'t touch the ledger writes\n- replay each event twice in tests and assert one ledger row',
+             resp: 'Every handler now runs behind an idempotency guard keyed on the event id. A replayed event returns the cached 200 instead of re-running the side effects. Ledger writes are untouched.' },
+        2: { title: 'Shared memory — checkout runbook', project: 'checkout-service', id: '9b2e77c', branch: 'main', age: '5h ago', dur: '3h 01m', active: '3h 01m', tokens: '375.1K', turns: '18', calls: '96', cp: '0', acts: '131', status: 'complete', partial: false,
+             prompt: 'Read the incident notes from last week and write the checkout runbook into shared memory. Keep it under a page.',
+             resp: 'Runbook written to shared memory as `checkout-runbook`. Six sections: paging, rollback, webhook replay, ledger reconciliation, feature flags, and who to call. Every agent in this organisation can read it now.' },
+        3: { title: 'Port the notification service to the new queue', project: 'notify-svc', id: 'c71d0a4', branch: 'feat/queue', age: '22h ago', dur: '11h 37m', active: '11h 37m', tokens: '638.4K / 1.00M', turns: '654', calls: '2435', cp: '39', acts: '3128', status: 'partial', partial: true,
+             prompt: 'Port notify-svc from the old worker pool to the new queue.\n- keep the retry semantics exactly\n- one checkpoint per subsystem\n- stop and ask before touching the templates',
+             resp: 'Twelve of fourteen subsystems are on the new queue with matching retry semantics. Two remain: the digest scheduler and the template renderer, which I stopped on as asked. 39 checkpoints, each one a commit.' },
+        4: { title: 'Disable the composer when the org has no AI access grant', project: 'checkout-service', id: '4e8ab19', branch: 'main', age: '6d ago', dur: '2m', active: '2m', tokens: '57.3K / 1.00M', turns: '3', calls: '11', cp: '1', acts: '19', status: 'complete', partial: false,
+             prompt: 'When the organisation has no AI access grant, disable the composer input and the send button, and say why in the placeholder.',
+             resp: 'Composer and send are disabled behind the entitlement check, with the placeholder explaining the grant is missing. One commit.' },
+        5: { title: 'Fix the three regressions from the 0.3.1 merge', project: 'checkout-service', id: '77c0f3d', branch: 'main', age: '6d ago', dur: '1h 27m', active: '1h 27m', tokens: '253.9K / 1.00M', turns: '61', calls: '402', cp: '29', acts: '540', status: 'complete', partial: false,
+             prompt: 'Three regressions since the merge: the org switcher loses its scroll position, the diff viewer double-renders, and the terminal drops raw mode on focus. Fix all three, one checkpoint each.',
+             resp: 'All three fixed and checkpointed separately. The terminal one was a focus handler re-entering cooked mode; the other two were stale memo keys.' },
+        6: { title: 'The TUI login breaks when the embedded terminal loses raw mode', project: 'infra', id: 'e02b6f8', branch: 'main', age: '7d ago', dur: '1h 08m', active: '1h 08m', tokens: '502.6K / 1.00M', turns: '27', calls: '188', cp: '2', acts: '246', status: 'complete', partial: false,
+             prompt: 'Arrow keys work in the TUI login but Enter does nothing. Find out why the embedded terminal differs from the standalone one.',
+             resp: 'The composer sent a line feed where the TUI expected a carriage return, and raw mode was read from the wrong side of the pty. Both fixed; Enter works in both terminals.' },
+      };
+      const set = (k, v) => { const el = tl.querySelector(`[data-md-${k}]`); if (el) el.textContent = v; };
+      const show = (view) => tl.querySelectorAll('[data-mt-view]').forEach((v) => { v.hidden = v.dataset.mtView !== view; });
+      tl.addEventListener('click', (e) => {
+        if (e.target.closest('[data-mt-back]')) { show('list'); return; }
+        const row = e.target.closest('[data-session]');
+        if (!row) return;
+        const d = S[row.dataset.session];
+        ['title','project','id','branch','age','dur','active','tokens','turns','calls','cp','acts','prompt','resp'].forEach((k) => set(k, d[k]));
+        set('calls2', d.calls);
+        const st = tl.querySelector('[data-md-status]');
+        st.classList.toggle('is-partial', d.partial);
+        st.lastChild.textContent = d.status;
+        show('detail');
+      });
+      tl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.closest('[data-session]')) e.target.click(); });
+    }
+
+    // Team chat: connect → home → conversation, with sub-tabs.
+    const team = document.querySelector('[data-mock-team]');
+    if (team) {
+      const state = (name) => team.querySelectorAll('[data-tc-state]').forEach((s) => { s.hidden = s.dataset.tcState !== name; });
+      const tab = (name) => {
+        team.querySelectorAll('[data-tc-tab]').forEach((t) => t.classList.toggle('is-on', t.dataset.tcTab === name));
+        team.querySelectorAll('[data-tc-pane]').forEach((p) => { p.hidden = p.dataset.tcPane !== name; });
+      };
+      team.addEventListener('click', (e) => {
+        const open = e.target.closest('[data-open]');
+        if (open) {
+          const id = open.dataset.open;
+          const isChan = open.classList.contains('tc-chan');
+          const title = isChan ? id : open.querySelector('.tc-row-name').textContent;
+          team.querySelector('[data-tc-title]').textContent = title;
+          team.querySelector('[data-tc-title2]').textContent = title;
+          team.querySelector('[data-tc-placeholder]').textContent = isChan ? `Message #${id}` : `Message ${title}`;
+          team.querySelectorAll('.tc-hash').forEach((h) => { if (h.closest('[data-tc-state="conv"]')) h.style.display = isChan ? '' : 'none'; });
+          tab('messages'); state('conv'); return;
+        }
+        if (e.target.closest('[data-tc-back]')) { state('home'); return; }
+        const t = e.target.closest('[data-tc-tab]');
+        if (t) tab(t.dataset.tcTab);
+      });
+    }
+  })();
+</script>
+
+<script>
+  // Ordered-dither noise fields, ported from the app's `DitherBackdrop`
+  // (src/features/comms/components/comms-not-connected.tsx). Canvas, not
+  // DOM: the field is tens of thousands of cells. Stepped at ~12fps because
+  // ordered dither reads as retro precisely because it snaps; tweened it is
+  // just noise. Parks while the tab is hidden, while the element is off
+  // screen, and entirely under prefers-reduced-motion (one still frame).
+  (function () {
+    const BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const FRAME_MS = 80;
+
+    function noiseAt(x, y, phase) {
+      const a = Math.sin(x * 0.012 + Math.sin(y * 0.009 + phase) * 2.1);
+      const b = Math.sin(y * 0.011 - Math.cos(x * 0.007 - phase) * 1.7);
+      const c = Math.sin((x + y) * 0.004 + 1.3 + phase * 2);
+      return (a + b + c) / 3; // -1..1
+    }
+
+    // mode "dots": the app's 1.5px dots on a 4px grid.
+    // mode "glyphs": the same field, but each cell prints a character whose
+    // weight tracks the intensity — the ASCII variant for the hero.
+    function field(canvas, mode) {
+      const GLYPHS = ' .·:-=+*#';
+      const CELL = mode === 'glyphs' ? 12 : 4;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      let raf = 0, last = 0, visible = true, onScreen = true;
+
+      const draw = (t) => {
+        const parent = canvas.parentElement;
+        if (!parent) return;
+        const w = parent.clientWidth, h = parent.clientHeight;
+        if (!w || !h) return;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const bw = Math.ceil(w * dpr), bh = Math.ceil(h * dpr);
+        if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        const wx = t * 0.012, wy = t * 0.003, phase = t * 0.0004;
+        const cx = w / 2, cy = h / 2, maxR = Math.hypot(cx, cy);
+        if (mode === 'glyphs') {
+          ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+          ctx.textBaseline = 'top';
+          ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        } else {
+          ctx.fillStyle = 'rgba(255,255,255,0.16)';
+        }
+        for (let gy = 0; gy < h / CELL; gy++) {
+          for (let gx = 0; gx < w / CELL; gx++) {
+            const x = gx * CELL, y = gy * CELL;
+            let v = (noiseAt(x + wx, y + wy, phase) + 1) / 2;
+            const r = Math.hypot(x - cx, y - cy) / maxR;
+            // Radial hollow: calm black under the copy. The hero's centre
+            // holds a headline, so it is hollowed wider than the panel.
+            const hollow = mode === 'glyphs' ? [0.34, 0.5] : [0.22, 0.55];
+            v *= Math.min(1, Math.max(0, (r - hollow[0]) / hollow[1]));
+            if (mode === 'glyphs') {
+              const i = Math.min(GLYPHS.length - 1, Math.floor(v * v * GLYPHS.length));
+              if (i > 0 && v * 16 > BAYER[gy % 4][gx % 4] * 0.6) ctx.fillText(GLYPHS[i], x, y);
+            } else if (v * 16 > BAYER[gy % 4][gx % 4]) {
+              ctx.fillRect(x, y, 1.5, 1.5);
+            }
+          }
+        }
+      };
+
+      const tick = (now) => {
+        raf = requestAnimationFrame(tick);
+        if (now - last < FRAME_MS) return;
+        last = now;
+        draw(now);
+      };
+      const start = () => { if (!raf && visible && onScreen && !reduced) raf = requestAnimationFrame(tick); };
+      const stop = () => { if (raf) cancelAnimationFrame(raf); raf = 0; };
+
+      draw(0);
+      if (reduced) return;
+      document.addEventListener('visibilitychange', () => {
+        visible = document.visibilityState === 'visible';
+        visible ? start() : stop();
+      });
+      new IntersectionObserver((entries) => {
+        onScreen = entries.some((e) => e.isIntersecting);
+        onScreen ? start() : stop();
+      }, { rootMargin: '80px' }).observe(canvas);
+      new ResizeObserver(() => draw(last)).observe(canvas.parentElement);
+      start();
+    }
+
+    document.querySelectorAll('[data-ascii-field]').forEach((c) => field(c, 'glyphs'));
+    document.querySelectorAll('[data-dither-field]').forEach((c) => field(c, 'dots'));
+  })();
 </script>
 
 <!-- Intercom messenger — chwv2xso -->
