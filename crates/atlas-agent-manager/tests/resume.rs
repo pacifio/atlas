@@ -59,6 +59,11 @@ struct FakeConnection {
     capabilities: Capabilities,
     /// Load/resume fail when set — an agent that no longer knows the session.
     forgets_sessions: bool,
+    /// Whether `session/load` actually replays the conversation into the
+    /// thread. The protocol requires it before the load answers; an agent that
+    /// advertises `loadSession` and sends nothing is the case the mode is now
+    /// derived from rather than assumed (ATL-230 finding 3).
+    replays_history: bool,
     calls: Arc<Mutex<Vec<String>>>,
 }
 
@@ -111,6 +116,12 @@ impl AgentConnection for FakeConnection {
             return async { Err(anyhow!("no conversation found with that id")) }.boxed();
         }
         let thread = self.thread(session_id);
+        if self.replays_history {
+            thread.lock().unwrap().push_user_content_block(
+                None,
+                acp::ContentBlock::Text(acp::TextContent::new("what we said before".to_string())),
+            );
+        }
         async move { Ok(thread) }.boxed()
     }
 
@@ -198,6 +209,7 @@ struct FakeServer {
     id: AgentId,
     capabilities: Capabilities,
     forgets_sessions: bool,
+    replays_history: bool,
     calls: Arc<Mutex<Vec<String>>>,
     spawns: Arc<AtomicUsize>,
 }
@@ -217,6 +229,7 @@ impl AgentServer for FakeServer {
             id: self.id.clone(),
             capabilities: self.capabilities,
             forgets_sessions: self.forgets_sessions,
+            replays_history: self.replays_history,
             calls: self.calls.clone(),
         });
         async move { Ok(connection as Arc<dyn AgentConnection>) }.boxed()
@@ -271,15 +284,21 @@ struct Harness {
 
 impl Harness {
     fn new(capabilities: Capabilities) -> Self {
-        Self::with(capabilities, false)
+        Self::with(capabilities, false, true)
     }
 
     /// An agent that has forgotten whatever session it is asked for.
     fn forgetful(capabilities: Capabilities) -> Self {
-        Self::with(capabilities, true)
+        Self::with(capabilities, true, true)
     }
 
-    fn with(capabilities: Capabilities, forgets_sessions: bool) -> Self {
+    /// An agent that advertises `loadSession`, answers the load, and replays
+    /// nothing — a spec violation real agents have shipped.
+    fn silent(capabilities: Capabilities) -> Self {
+        Self::with(capabilities, false, false)
+    }
+
+    fn with(capabilities: Capabilities, forgets_sessions: bool, replays_history: bool) -> Self {
         let id = AgentId::new("some-agent");
         let calls = Arc::new(Mutex::new(Vec::new()));
         let spawns = Arc::new(AtomicUsize::new(0));
@@ -287,6 +306,7 @@ impl Harness {
             id: id.clone(),
             capabilities,
             forgets_sessions,
+            replays_history,
             calls: calls.clone(),
             spawns: spawns.clone(),
         });
@@ -339,6 +359,22 @@ async fn an_agent_that_can_load_replays_the_conversation() {
 
     assert_eq!(harness.resume().await.unwrap(), ResumeMode::Replayed);
     assert_eq!(harness.calls(), vec!["load_session"]);
+}
+
+/// The mode is an observation, not a restatement of the capability. An agent
+/// that advertises `loadSession` and then replays nothing leaves the user
+/// looking at a blank conversation, and calling that `Replayed` is why no
+/// notice was shown for it (ATL-230 finding 3).
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_that_advertises_load_and_replays_nothing_is_reported_without_history() {
+    let harness = Harness::silent(Capabilities::load());
+
+    assert_eq!(harness.resume().await.unwrap(), ResumeMode::WithoutHistory);
+    assert_eq!(
+        harness.calls(),
+        vec!["load_session"],
+        "the load is still attempted, and still answered"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
