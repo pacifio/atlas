@@ -452,9 +452,12 @@ impl AgentHost {
     /// Atlas. Dropping a connection closes the child's stdin, which is how the
     /// transport asks it to leave; the caller gives that a bounded moment.
     pub fn shutdown(&self) {
-        for (agent, _) in self.manager.connections() {
-            self.manager.drop_connection(&agent);
-        }
+        // The manager sweeps its own maps rather than being driven through
+        // `connections()`, which yields only entries that reached `Connected`.
+        // An agent still connecting is invisible to that list and is exactly
+        // the one that spawns a child moments after the app decided to leave
+        // (ATL-227, ATL-228).
+        self.manager.shutdown();
         lock(&self.sessions).clear();
     }
 
@@ -992,8 +995,24 @@ impl AgentHost {
         self.projector.set_turn_seq(&session_id, turn_seq);
 
         let this = self.clone();
+        let session_key = key.session_id.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(e) = this.manager.send(&session_id, content).await {
+                // A send that was superseded reports back late, and its failure
+                // belongs to a turn that is already over. Announcing it anyway
+                // stamps the error with whatever turn is current — so the
+                // cancelled turn's error lands on the live one, and the chat
+                // shows a failure for a turn that is still streaming. Same
+                // omission as the thread's own turn guard one layer down
+                // (ATL-229).
+                if !this.is_current_turn(&session_key, turn_seq) {
+                    tracing::debug!(
+                        session = %session_id,
+                        turn_seq,
+                        "dropping a superseded turn's failure: {e:#}"
+                    );
+                    return;
+                }
                 let message = format!("{e:#}");
                 let class = classify_message(&message);
                 this.projector.note_turn_failed(
@@ -1004,6 +1023,16 @@ impl AgentHost {
             }
         });
         Ok(())
+    }
+
+    /// Whether `turn_seq` is still the turn this session is running.
+    ///
+    /// A session that has since been dropped counts as not current: there is
+    /// nothing left to announce a failure on.
+    fn is_current_turn(&self, session_id: &str, turn_seq: u64) -> bool {
+        lock(&self.sessions)
+            .get(session_id)
+            .is_some_and(|record| record.turn_seq == turn_seq)
     }
 
     pub fn cancel(&self, key: &SessionKey) -> Result<()> {

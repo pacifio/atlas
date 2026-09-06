@@ -50,8 +50,31 @@ impl std::fmt::Debug for AgentConnectedState {
 
 type ConnectFuture = Shared<BoxFuture<'static, Result<AgentConnectedState, LoadError>>>;
 
+/// The half of a connect attempt that can stop it.
+///
+/// The attempt runs on a task of its own so that cancelling it does not depend
+/// on who happens to be awaiting the shared future. Dropping the manager's own
+/// handle would not reach the work: a caller parked in `connection()` holds a
+/// clone of the same `Shared` and keeps polling it, so the download finishes,
+/// the process spawns and the handshake completes for an agent the user
+/// already killed (ATL-228). Aborting the task drops the connect future
+/// itself, and with it the child it had spawned.
+#[derive(Clone, Debug)]
+pub struct ConnectHandle(tokio::task::AbortHandle);
+
+impl ConnectHandle {
+    /// Stop the attempt. A no-op once it has finished.
+    pub fn abort(&self) {
+        self.0.abort();
+    }
+}
+
 pub enum AgentConnectionEntry {
-    Connecting { connect_task: ConnectFuture },
+    Connecting {
+        connect_task: ConnectFuture,
+        /// Kept beside the future so every eviction path can reach it.
+        cancel: ConnectHandle,
+    },
     Connected(AgentConnectedState),
     Error { error: LoadError },
 }
@@ -70,7 +93,7 @@ impl AgentConnectionEntry {
     /// keeps one agent to one process.
     pub fn wait_for_connection(&self) -> ConnectFuture {
         match self {
-            Self::Connecting { connect_task } => connect_task.clone(),
+            Self::Connecting { connect_task, .. } => connect_task.clone(),
             Self::Connected(state) => {
                 let state = state.clone();
                 async move { Ok(state) }.boxed().shared()
@@ -133,7 +156,11 @@ pub struct AgentManager {
     native: Arc<dyn AgentServer>,
     options: ConnectOptions,
     entries: Mutex<HashMap<Agent, Entry>>,
-    sessions: Mutex<HashMap<acp::SessionId, SessionHandle>>,
+    /// Keyed by the agent as well as the id, because the id is the agent's to
+    /// choose and the protocol scopes it to one client/agent pair. Keyed by the
+    /// id alone, two agents that both mint `ses-1` are one entry, and the
+    /// second registration silently evicts the first (ATL-230 finding 1).
+    sessions: Mutex<HashMap<(Agent, acp::SessionId), SessionHandle>>,
     events: tokio::sync::broadcast::Sender<AgentManagerEvent>,
 }
 
@@ -235,13 +262,7 @@ impl AgentManager {
     /// *is* the restart, and tearing it down would leave the caller waiting on a
     /// future nobody is driving.
     pub fn restart_connection(self: &Arc<Self>, key: Agent, server: Arc<dyn AgentServer>) -> Entry {
-        if let Some(entry) = self.entry(&key) {
-            if matches!(&*lock(&entry), AgentConnectionEntry::Connecting { .. }) {
-                return entry;
-            }
-        }
-        self.lock_entries().remove(&key);
-        self.request_connection(key, server)
+        self.open_entry(key, server, Reuse::Replace)
     }
 
     /// Connect to `key`, resolving which server backs it.
@@ -251,6 +272,9 @@ impl AgentManager {
     /// halves meet. An agent nobody installed produces an `Error` entry that is
     /// never stored — installing it and asking again starts a real attempt.
     pub fn connect_to(self: &Arc<Self>, key: Agent) -> Entry {
+        // A fast path, not a guard. Two callers arriving together both fall
+        // through to `request_connection`, which makes the decision under one
+        // lock; resolving a server twice costs an `Arc` and starts nothing.
         if let Some(entry) = self.entry(&key) {
             return entry;
         }
@@ -267,11 +291,53 @@ impl AgentManager {
     /// next request has to start a fresh process rather than hand back a
     /// connection to one that is gone.
     pub fn drop_connection(&self, key: &Agent) {
-        if self.lock_entries().remove(key).is_none() {
+        let removed = self.lock_entries().remove(key);
+        let Some(entry) = removed else {
             return;
-        }
-        self.lock_sessions().retain(|_, handle| &handle.agent != key);
+        };
+        cancel_connect(&entry);
+        self.forget_sessions_for(key);
         self.emit(AgentManagerEvent::ConnectionsChanged);
+    }
+
+    /// Drop every connection and forget every session.
+    ///
+    /// The app calls this on its way out, where `process::exit` skips `Drop`
+    /// and anything not released here is a child process that outlives Atlas.
+    /// It sweeps the maps rather than iterating [`Self::connections`], because
+    /// that yields only entries that reached `Connected` — an attempt still in
+    /// flight is invisible to it, and is exactly the case that spawns a child
+    /// moments after the app decided to leave.
+    pub fn shutdown(&self) {
+        let entries: Vec<Entry> = self.lock_entries().drain().map(|(_, entry)| entry).collect();
+        for entry in &entries {
+            cancel_connect(entry);
+        }
+        let had_sessions = {
+            let mut sessions = self.lock_sessions();
+            let had = !sessions.is_empty();
+            sessions.clear();
+            had
+        };
+        if !entries.is_empty() || had_sessions {
+            self.emit(AgentManagerEvent::ConnectionsChanged);
+        }
+    }
+
+    /// Forget every session open on `key`.
+    ///
+    /// Called from every path that evicts a connection, not just the explicit
+    /// one. A session pins the connection `Arc` — `SessionHandle` holds the
+    /// thread, and the thread holds the connection — so a session left behind
+    /// after an eviction keeps the agent's process alive with nothing able to
+    /// reach it — including [`Self::shutdown`] before it swept the sessions map
+    /// too, which is how these outlived the app (ATL-227).
+    ///
+    /// Local only: the sessions are not closed on the agent first. A version
+    /// bump and an uninstall both end with that process being dropped, and a
+    /// `session/close` RPC to a peer that is about to be killed buys nothing.
+    fn forget_sessions_for(&self, key: &Agent) {
+        self.lock_sessions().retain(|(agent, _), _| agent != key);
     }
 
     /// Restart `key`, resolving its server the way [`Self::connect_to`] does.
@@ -284,15 +350,54 @@ impl AgentManager {
 
     /// Ported from `request_connection` (`:143-266`).
     pub fn request_connection(self: &Arc<Self>, key: Agent, server: Arc<dyn AgentServer>) -> Entry {
-        if let Some(entry) = self.entry(&key) {
-            return entry;
-        }
+        self.open_entry(key, server, Reuse::Existing)
+    }
 
-        let connect_task = self.start_connection(&key, server);
-        let entry: Entry = Arc::new(Mutex::new(AgentConnectionEntry::Connecting {
-            connect_task: connect_task.clone(),
-        }));
-        self.lock_entries().insert(key.clone(), entry.clone());
+    /// The one place an entry is created.
+    ///
+    /// The check and the insert are a single decision — "is anyone already
+    /// connecting to this agent, and if not, start" — so they happen under one
+    /// `entries` guard. Zed's original could split them because its store is
+    /// `Rc`-based and confined to the GPUI main thread, where the whole body is
+    /// one uninterruptible borrow. The port kept the shape and moved it onto a
+    /// multi-threaded runtime, which is what let two callers each start a
+    /// process 11–30% of the time (ATL-226).
+    ///
+    /// `start_connection` is safe to call under the guard: both `AgentServer`
+    /// implementations build a boxed future and perform no I/O synchronously,
+    /// and neither can reach back into the manager. The `emit` and `watch_*`
+    /// calls stay outside it — they spawn tasks that take the same lock.
+    fn open_entry(self: &Arc<Self>, key: Agent, server: Arc<dyn AgentServer>, reuse: Reuse) -> Entry {
+        let (entry, connect_task, replaced) = {
+            let mut entries = self.lock_entries();
+            match entries.get(&key) {
+                Some(existing) if reuse == Reuse::Existing => return existing.clone(),
+                // A restart while a connect is already in flight is a no-op:
+                // that attempt *is* the restart, and tearing it down would
+                // leave its callers waiting on a future nobody is driving.
+                Some(existing)
+                    if matches!(&*lock(existing), AgentConnectionEntry::Connecting { .. }) =>
+                {
+                    return existing.clone()
+                }
+                _ => {}
+            }
+            let replaced = entries.remove(&key);
+            let (connect_task, cancel) = self.start_connection(&key, server);
+            let entry: Entry = Arc::new(Mutex::new(AgentConnectionEntry::Connecting {
+                connect_task: connect_task.clone(),
+                cancel,
+            }));
+            entries.insert(key.clone(), entry.clone());
+            (entry, connect_task, replaced)
+        };
+
+        if let Some(replaced) = replaced {
+            // The replaced connection is unreachable from the map now, so
+            // anything still pinning it would keep its process alive for good.
+            cancel_connect(&replaced);
+            self.forget_sessions_for(&key);
+        }
         self.emit(AgentManagerEvent::ConnectionsChanged);
 
         self.watch_connect_result(key.clone(), &entry, connect_task);
@@ -326,29 +431,55 @@ impl AgentManager {
     }
 
     /// Ported from `start_connection` (`:284-312`).
-    fn start_connection(&self, key: &Agent, server: Arc<dyn AgentServer>) -> ConnectFuture {
+    ///
+    /// The attempt is spawned rather than left for the first poller, so that
+    /// the returned [`ConnectHandle`] can actually stop it. See that type for
+    /// why dropping the future is not enough.
+    fn start_connection(
+        &self,
+        key: &Agent,
+        server: Arc<dyn AgentServer>,
+    ) -> (ConnectFuture, ConnectHandle) {
         let delegate = match key {
-            Agent::Native => AgentServerDelegate::native(),
-            Agent::Custom { id } => match self.catalog.agent_server(id) {
-                Some(resolver) => AgentServerDelegate::new(resolver),
-                // Uninstalled between `server_for` and here.
-                None => AgentServerDelegate::native(),
-            },
+            Agent::Native => Some(AgentServerDelegate::native()),
+            Agent::Custom { id } => self.catalog.agent_server(id).map(AgentServerDelegate::new),
         };
         let options = self.options.clone();
-        let connect = server.connect(delegate, options);
+        let connect = match delegate {
+            Some(delegate) => server.connect(delegate, options),
+            // Uninstalled between `server_for` and here. Falling through to the
+            // native delegate used to report "no command resolver for agent
+            // `x`" — a description of Atlas's own plumbing rather than of what
+            // happened to the user (ATL-230 finding 2).
+            None => {
+                let error = LoadError::Unsupported {
+                    message: format!("`{}` is not installed", agent_label(key)).into(),
+                };
+                async move { Err(anyhow::Error::from(error)) }.boxed()
+            }
+        };
 
-        async move {
-            match connect.await {
-                Ok(connection) => Ok(AgentConnectedState { connection }),
-                Err(err) => Err(match err.downcast::<LoadError>() {
+        let task = tokio::spawn(connect);
+        let cancel = ConnectHandle(task.abort_handle());
+        let future = async move {
+            match task.await {
+                Ok(Ok(connection)) => Ok(AgentConnectedState { connection }),
+                Ok(Err(err)) => Err(match err.downcast::<LoadError>() {
                     Ok(load_error) => load_error,
                     Err(err) => LoadError::Other(err.to_string().into()),
                 }),
+                Err(join) if join.is_cancelled() => Err(LoadError::Other(
+                    "the agent was stopped while it was connecting".into(),
+                )),
+                // A panic inside a connect is the agent server's bug, not a
+                // reason to poison every waiter with a second panic.
+                Err(join) => Err(LoadError::Other(join.to_string().into())),
             }
         }
         .boxed()
-        .shared()
+        .shared();
+
+        (future, cancel)
     }
 
     fn watch_connect_result(self: &Arc<Self>, key: Agent, entry: &Entry, task: ConnectFuture) {
@@ -429,7 +560,13 @@ impl AgentManager {
                 if !this.is_current(&key, &entry) {
                     return;
                 }
-                this.lock_entries().remove(&key);
+                let removed = this.lock_entries().remove(&key);
+                if let Some(removed) = removed {
+                    // Including an attempt still in flight: it is resolving the
+                    // command of the binary that just went stale.
+                    cancel_connect(&removed);
+                }
+                this.forget_sessions_for(&key);
                 this.emit(AgentManagerEvent::NewVersionAvailable {
                     agent: key.clone(),
                     version,
@@ -477,18 +614,31 @@ impl AgentManager {
     /// connection.
     fn handle_agent_servers_updated(&self) {
         let installed = self.catalog.external_agents();
-        let removed = {
+        let removed: Vec<(Agent, Entry)> = {
             let mut entries = self.lock_entries();
-            let before = entries.len();
-            entries.retain(|key, _| match key {
-                Agent::Native => true,
-                Agent::Custom { id } => installed.contains(id),
+            let mut removed = Vec::new();
+            entries.retain(|key, entry| {
+                let installed = match key {
+                    Agent::Native => true,
+                    Agent::Custom { id } => installed.contains(id),
+                };
+                if !installed {
+                    removed.push((key.clone(), entry.clone()));
+                }
+                installed
             });
-            before != entries.len()
+            removed
         };
-        if removed {
-            self.emit(AgentManagerEvent::ConnectionsChanged);
+        if removed.is_empty() {
+            return;
         }
+        for (key, entry) in &removed {
+            // An uninstall that lands mid-install used to download the archive,
+            // extract it and complete the handshake anyway (ATL-228).
+            cancel_connect(entry);
+            self.forget_sessions_for(key);
+        }
+        self.emit(AgentManagerEvent::ConnectionsChanged);
     }
 
     fn is_current(&self, key: &Agent, entry: &Entry) -> bool {
@@ -584,6 +734,27 @@ impl AgentManager {
                 .clone()
                 .load_session(session_id, work_dirs, title)
                 .await?;
+            // `Replayed` restates the advertised capability rather than
+            // observing the replay, and ATL-230 finding 3 is right that this is
+            // weaker than the doc comment on `ResumeMode` claims.
+            //
+            // Deriving it from `thread.entries().is_empty()` here was tried and
+            // reverted: for every EXTERNAL agent the replay frames are
+            // *enqueued* rather than applied by the time this returns.
+            // `handle_session_notification` goes through the connection's
+            // ordered dispatch queue (`atlas-agent-servers/src/handlers.rs`,
+            // `spawn_dispatch_queue`) drained on its own task, while the
+            // `session/load` response resolves on the RPC path with no barrier
+            // between them — so an empty thread here means "not drained yet"
+            // as often as it means "the agent replayed nothing", and the check
+            // told users their history was gone on conversations that had it.
+            //
+            // The signal belongs to the connection, which is the only layer
+            // that knows a frame arrived: count the `session/update`s received
+            // between the load request and its response, or flush the dispatch
+            // queue before `open_or_create_session` returns. Until then the
+            // frontend's own empty-thread fallback
+            // (`src/features/chat/lib/resume-session.ts`) is what covers this.
             (thread, ResumeMode::Replayed)
         } else if connection.supports_resume_session() {
             let thread = connection
@@ -626,12 +797,51 @@ impl AgentManager {
         Ok(true)
     }
 
+    /// The session an id names.
+    ///
+    /// The id alone is not a key — see [`Self::sessions`] — so this answers
+    /// only when exactly one agent has a session by that name. Two agents that
+    /// minted the same id is a case Atlas cannot resolve from an id alone, and
+    /// picking one would route a user's message into another agent's
+    /// conversation. Saying "no such session" is wrong in a way the user can
+    /// see and recover from; the other is wrong invisibly.
     pub fn session(&self, session_id: &acp::SessionId) -> Option<SessionHandle> {
-        self.lock_sessions().get(session_id).cloned()
+        let sessions = self.lock_sessions();
+        let mut matching = sessions
+            .iter()
+            .filter(|((_, id), _)| id == session_id)
+            .map(|(_, handle)| handle);
+        let found = matching.next()?;
+        if matching.next().is_some() {
+            tracing::error!(
+                session = %session_id,
+                "two connected agents are using this session id; refusing to guess which one is meant"
+            );
+            return None;
+        }
+        Some(found.clone())
+    }
+
+    /// Every open session id.
+    ///
+    /// Ids can repeat across agents: they come from the agent verbatim, and the
+    /// protocol scopes them to one client/agent pair rather than to the app.
+    /// Whether any agent has a session by this id.
+    ///
+    /// The question [`Self::session`] cannot answer on its own, because it
+    /// refuses an ambiguous id — and "two agents have it" is a different thing
+    /// from "nobody does".
+    fn knows_session(&self, session_id: &acp::SessionId) -> bool {
+        self.lock_sessions()
+            .keys()
+            .any(|(_, id)| id == session_id)
     }
 
     pub fn sessions(&self) -> Vec<acp::SessionId> {
-        self.lock_sessions().keys().cloned().collect()
+        self.lock_sessions()
+            .keys()
+            .map(|(_, session_id)| session_id.clone())
+            .collect()
     }
 
     /// Run one turn.
@@ -656,13 +866,17 @@ impl AgentManager {
         let client_ids = connection.client_user_message_ids();
         let client_id = client_ids.as_ref().map(|caps| caps.new_id());
 
-        {
+        // The turn's identity is kept, not dropped. `begin_turn` supersedes any
+        // turn still running, so a send that overlaps another leaves the older
+        // one to return later — and closing the thread's turn unconditionally
+        // meant the *cancelled* turn closed the *live* one (ATL-229).
+        let turn = {
             let mut thread = lock_thread(&handle.thread);
             for block in &content {
                 thread.push_user_content_block(client_id.clone(), block.clone());
             }
-            thread.begin_turn();
-        }
+            thread.begin_turn()
+        };
 
         let request = acp::PromptRequest::new(session_id.clone(), content);
         let result = match (&client_ids, client_id) {
@@ -670,13 +884,16 @@ impl AgentManager {
             _ => connection.prompt(request).await,
         };
 
+        // Either way the caller learns what happened to its own turn; what the
+        // thread does about it depends on whether that turn is still the one
+        // running.
         match result {
             Ok(response) => {
-                lock_thread(&handle.thread).end_turn(response.stop_reason);
+                lock_thread(&handle.thread).end_turn_unless_superseded(turn, response.stop_reason);
                 Ok(response.stop_reason)
             }
             Err(err) => {
-                lock_thread(&handle.thread).set_error();
+                lock_thread(&handle.thread).set_error_unless_superseded(turn);
                 Err(err)
             }
         }
@@ -690,10 +907,24 @@ impl AgentManager {
     }
 
     /// Close a session, dropping the manager's handle on its thread.
+    ///
+    /// An id that names nothing is `Ok`: a tab can close twice, and a session
+    /// already forgotten by an eviction has nothing left to close. An id that
+    /// names *two* sessions is an error rather than a silent success — see
+    /// [`Self::session`] — because the caller asked for something to happen and
+    /// nothing did.
     pub async fn close_session(&self, session_id: &acp::SessionId) -> Result<()> {
-        let Some(handle) = self.lock_sessions().remove(session_id) else {
+        if !self.knows_session(session_id) {
             return Ok(());
+        }
+        let Some(handle) = self.session(session_id) else {
+            return Err(anyhow!(
+                "two connected agents are using session {session_id}; \
+                 close it through the agent that owns it"
+            ));
         };
+        self.lock_sessions()
+            .remove(&(handle.agent.clone(), session_id.clone()));
         let connection = lock_thread(&handle.thread).connection().clone();
         if connection.supports_close_session() {
             connection.close_session(session_id.clone()).await?;
@@ -712,7 +943,7 @@ impl AgentManager {
     fn register_session(&self, agent: Agent, thread: &AcpThreadHandle) {
         let session_id = lock_thread(thread).session_id().clone();
         self.lock_sessions().insert(
-            session_id,
+            (agent.clone(), session_id),
             SessionHandle {
                 agent,
                 thread: thread.clone(),
@@ -720,8 +951,33 @@ impl AgentManager {
         );
     }
 
-    fn lock_sessions(&self) -> std::sync::MutexGuard<'_, HashMap<acp::SessionId, SessionHandle>> {
+    fn lock_sessions(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<(Agent, acp::SessionId), SessionHandle>> {
         self.sessions.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// Whether an entry already in the table settles the request, or is being
+/// replaced by it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reuse {
+    Existing,
+    Replace,
+}
+
+/// Stop an evicted entry's connect attempt, if it had one still running.
+fn cancel_connect(entry: &Entry) {
+    if let AgentConnectionEntry::Connecting { cancel, .. } = &*lock(entry) {
+        cancel.abort();
+    }
+}
+
+/// How an agent names itself in an error a user reads.
+fn agent_label(key: &Agent) -> String {
+    match key {
+        Agent::Native => "the built-in agent".to_string(),
+        Agent::Custom { id } => id.to_string(),
     }
 }
 
