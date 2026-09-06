@@ -45,7 +45,30 @@ pub struct ConnectionInfo {
     pub org_id: Option<String>,
 }
 
+/// One connection attempt's identity: the organisation it dials and the
+/// generation it was spawned under.
+///
+/// Every side effect an attempt has on shared state — installing its socket,
+/// writing connection state, bumping the epoch, persisting, adopting a REST
+/// page — is checked against the CURRENT generation first, under the lock the
+/// write takes. An attempt that a retarget has already replaced is therefore
+/// inert rather than clobbering its successor. Before this, a stale attempt
+/// returning from its token mint would install its socket over the new org's,
+/// silence the new org's events behind its own quiet window, and write the old
+/// org's conversations under the new org's row on disk — which is what made an
+/// organisation switch fail at random.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Session {
+    pub org_id: String,
+    pub generation: u64,
+}
+
 struct Inner {
+    // Lock order, where two are ever held together: `state` → `pending`,
+    // `state` → `connection`, `target` → `connection`. NEVER hold `store`
+    // together with `state`: `set_target` used to nest store→state while
+    // `persist_snapshot` nested state→store — an ABBA deadlock waiting for the
+    // right interleaving of a switch and a socket event.
     state: Mutex<ChatState>,
     pending: Mutex<PendingMap>,
     store: Mutex<CommsStore>,
@@ -56,9 +79,13 @@ struct Inner {
     connection: Mutex<ConnectionInfo>,
     epoch: AtomicU64,
     /// Generation counter: a task whose generation is stale exits quietly
-    /// rather than fighting the one that replaced it.
+    /// rather than fighting the one that replaced it. Bumped under the
+    /// `target` lock, so [`CommsManager::session`] reads a consistent pair.
     generation: AtomicU64,
-    outbound: Mutex<Option<mpsc::UnboundedSender<ClientFrame>>>,
+    /// The live socket's sender, TAGGED with the generation that installed it.
+    /// A stale attempt can neither install over the live one nor clear it on
+    /// its way out — it only ever touches a slot carrying its own tag.
+    outbound: Mutex<Option<(u64, mpsc::UnboundedSender<ClientFrame>)>>,
     /// Conversations the UI has open. Only these are refreshed on a cold sync;
     /// the rest page from REST when they are opened.
     windows: Mutex<HashSet<String>>,
@@ -85,8 +112,12 @@ struct Inner {
     /// filename/type/size that everyone else receives has to come from here,
     /// or the author's own copy renders as a message with no attachment.
     uploaded: Mutex<HashMap<String, crate::wire::Attachment>>,
-    /// True while a bulk transition is running: granular emission is off.
-    quiet: AtomicBool,
+    /// The generation whose bulk transition is running (granular emission
+    /// off), or `0` for none. Scoped to a generation rather than a bare flag
+    /// so a replaced attempt entering its quiet window cannot silence the
+    /// live one. `0` is a safe sentinel: the first `set_target` bumps the
+    /// generation to 1 before any supervisor exists.
+    quiet: AtomicU64,
     /// Whether anything actually changed while `quiet` was set. A reconnect
     /// whose replay carried zero frames used to end in the same full
     /// `Resync` → renderer-rehydrate as a five-thousand-frame one; this is
@@ -125,7 +156,7 @@ impl CommsManager {
                 typing_sent: Mutex::new(HashMap::new()),
                 cancelled_uploads: Mutex::new(HashSet::new()),
                 uploaded: Mutex::new(HashMap::new()),
-                quiet: AtomicBool::new(false),
+                quiet: AtomicU64::new(0),
                 quiet_dirty: AtomicBool::new(false),
             }),
         }
@@ -143,6 +174,73 @@ impl CommsManager {
         f(&self.inner.state.lock().unwrap())
     }
 
+    /// Connection info and chat state read under ONE critical section, so a
+    /// snapshot cannot pair one org's connection with another org's lists
+    /// (the window between a retarget's two writes).
+    pub fn with_snapshot<T>(&self, f: impl FnOnce(&ConnectionInfo, &ChatState) -> T) -> T {
+        let state = self.inner.state.lock().unwrap();
+        let conn = self.inner.connection.lock().unwrap();
+        f(&conn, &state)
+    }
+
+    /// The current attempt's identity, or `None` with no target.
+    ///
+    /// Read under the `target` lock, which is also where `set_target` bumps
+    /// the generation — so the pair is always the one a single `set_target`
+    /// produced. Commands that await REST and then adopt into state capture
+    /// this first and hand it to the adopt, which refuses if it has gone stale.
+    pub fn session(&self) -> Option<Session> {
+        let target = self.inner.target.lock().unwrap();
+        target.as_ref().map(|t| Session {
+            org_id: t.org_id.clone(),
+            generation: self.inner.generation.load(Ordering::SeqCst),
+        })
+    }
+
+    /// Is this generation still the one that owns the shared state?
+    fn live(&self, generation: u64) -> bool {
+        self.inner.generation.load(Ordering::SeqCst) == generation
+    }
+
+    /// Install an attempt's socket sender — only if the attempt is still
+    /// live, decided under the same lock the install takes.
+    fn install_outbound(&self, generation: u64, tx: mpsc::UnboundedSender<ClientFrame>) -> bool {
+        let mut out = self.inner.outbound.lock().unwrap();
+        if !self.live(generation) {
+            return false;
+        }
+        *out = Some((generation, tx));
+        true
+    }
+
+    /// Clear the socket sender, but only the one this generation installed.
+    fn release_outbound(&self, generation: u64) {
+        let mut out = self.inner.outbound.lock().unwrap();
+        if out.as_ref().is_some_and(|(tag, _)| *tag == generation) {
+            *out = None;
+        }
+    }
+
+    /// Open a bulk-transition window owned by `generation`. Harmless from a
+    /// stale attempt: `emit_delta` compares against the CURRENT generation.
+    fn begin_quiet(&self, generation: u64) {
+        self.inner.quiet.store(generation, Ordering::SeqCst);
+        self.inner.quiet_dirty.store(false, Ordering::SeqCst);
+    }
+
+    /// Close the window — only if it is still ours.
+    fn end_quiet(&self, generation: u64) {
+        let _ =
+            self.inner
+                .quiet
+                .compare_exchange(generation, 0, Ordering::SeqCst, Ordering::SeqCst);
+    }
+
+    fn is_quiet(&self) -> bool {
+        let owner = self.inner.quiet.load(Ordering::SeqCst);
+        owner != 0 && owner == self.inner.generation.load(Ordering::SeqCst)
+    }
+
     /// Point the socket at an Organisation, or at none.
     ///
     /// Idempotent and reconciling: the same target is a no-op, a different one
@@ -150,39 +248,50 @@ impl CommsManager {
     /// active organisation — launch restore, sign-in, sign-out, an org switch —
     /// funnels through here, which is why there is no separate "open" call.
     pub fn set_target(&self, target: Option<OrgTarget>) {
-        let unchanged = { *self.inner.target.lock().unwrap() == target };
-        if unchanged {
-            // The supervisor stops for good on `unavailable` (an auth or
-            // membership refusal — retrying cannot help), and its comment
-            // promises "the next auth snapshot" revives it. A snapshot naming
-            // the SAME org must therefore respawn rather than no-op, or a
-            // supervisor that died during boot stays dead for the whole
-            // session while everything claims to be configured correctly.
-            let respawn = target.is_some()
-                && self.connection().state == ConnectionState::Unavailable;
-            if !respawn {
-                tracing::debug!(target: "atlas_comms", "set_target no-op: {target:?}");
-                return;
+        // Compare, bump and write under ONE lock: `session()` reads the pair
+        // under the same lock, and no bump can land between "this target is
+        // unchanged" and the write below.
+        let generation = {
+            let mut current = self.inner.target.lock().unwrap();
+            if *current == target {
+                // A supervisor stops for good on `unavailable` (a refusal that
+                // retrying cannot fix), and — because `disconnect()` forgets
+                // the target — `disconnected` alongside a target means nothing
+                // is running either. Both must respawn rather than no-op: a
+                // snapshot naming the SAME org used to keep a dead supervisor
+                // dead for the whole session while everything claimed to be
+                // configured correctly.
+                let state = self.connection().state;
+                let respawn = target.is_some()
+                    && matches!(
+                        state,
+                        ConnectionState::Unavailable | ConnectionState::Disconnected
+                    );
+                if !respawn {
+                    tracing::debug!(target: "atlas_comms", "set_target no-op: {target:?}");
+                    return;
+                }
+                tracing::info!(
+                    target: "atlas_comms",
+                    "set_target unchanged ({target:?}) but {state:?} — respawning"
+                );
+            } else {
+                tracing::info!(target: "atlas_comms", "set_target {:?} -> {:?}", *current, target);
             }
-            let target = target.expect("checked above");
-            tracing::info!(
-                target: "atlas_comms",
-                "set_target unchanged ({}) but unavailable — respawning",
-                target.org_id
-            );
-            self.inner.generation.fetch_add(1, Ordering::SeqCst);
-            self.spawn_supervisor(target);
-            return;
-        }
-        {
-            let current = self.inner.target.lock().unwrap();
-            tracing::info!(target: "atlas_comms", "set_target {:?} -> {:?}", *current, target);
-        }
-        // Bump the generation first: any task still running for the previous
-        // target sees a stale generation and stops touching shared state.
-        self.inner.generation.fetch_add(1, Ordering::SeqCst);
-        *self.inner.target.lock().unwrap() = target.clone();
+            // Bump the generation first: any task still running for the
+            // previous target sees a stale generation and stops touching
+            // shared state.
+            let generation = self.inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            *current = target.clone();
+            generation
+        };
+
+        // Whatever the previous generation left behind goes now. A stale
+        // attempt that has not noticed yet cannot put it back: every one of
+        // these is re-checked against the generation before it is written.
         *self.inner.outbound.lock().unwrap() = None;
+        self.inner.quiet.store(0, Ordering::SeqCst);
+        self.inner.quiet_dirty.store(false, Ordering::SeqCst);
 
         // Clear state that belonged to the outgoing org — leaving it would show
         // one organisation's conversations under another's name.
@@ -200,8 +309,17 @@ impl CommsManager {
                 self.set_connection(ConnectionState::Disconnected, None, None);
             }
             Some(target) => {
-                // Paint from disk before the socket says anything.
-                if let Ok(snapshot) = self.inner.store.lock().unwrap().snapshot(&target.org_id) {
+                // Paint from disk before the socket says anything. The store
+                // guard is released BEFORE `state` is taken — the lock order
+                // on `Inner`.
+                let painted = self
+                    .inner
+                    .store
+                    .lock()
+                    .unwrap()
+                    .snapshot(&target.org_id)
+                    .ok();
+                if let Some(snapshot) = painted {
                     let mut state = self.inner.state.lock().unwrap();
                     state.conversations = snapshot.conversations;
                     state.discoverable = snapshot.discoverable;
@@ -211,7 +329,10 @@ impl CommsManager {
                         .map(|r| (r.conv_id.clone(), r))
                         .collect();
                 }
-                self.spawn_supervisor(target);
+                self.spawn_supervisor(Session {
+                    org_id: target.org_id,
+                    generation,
+                });
             }
         }
     }
@@ -231,41 +352,41 @@ impl CommsManager {
         self.emit(CommsEvent::Resync);
     }
 
-    /// Close the socket without forgetting which org we were on. Used by the
-    /// org-switch teardown, which reopens via the auth broadcast a moment later.
+    /// Close the socket AND forget the target. Used by the org-switch
+    /// teardown, which reopens via the auth broadcast a moment later — and
+    /// that reopen must always be a *change*. Keeping the target here meant a
+    /// switch that resolved to the same org (an unsynced org falling back to
+    /// the first server org, a B→C→B round trip) hit `set_target`'s no-op and
+    /// left chat dead for the session.
     pub fn disconnect(&self) {
-        self.inner.generation.fetch_add(1, Ordering::SeqCst);
-        *self.inner.outbound.lock().unwrap() = None;
-        self.set_connection(ConnectionState::Disconnected, None, None);
+        self.set_target(None);
     }
 
     /// Flush everything that must survive a quit.
     pub fn shutdown(&self) {
-        self.persist_snapshot();
+        if let Some(session) = self.session() {
+            self.persist_snapshot(&session);
+        }
         self.inner.generation.fetch_add(1, Ordering::SeqCst);
         *self.inner.outbound.lock().unwrap() = None;
     }
 
     // -- connection lifecycle ------------------------------------------------
 
-    fn spawn_supervisor(&self, target: OrgTarget) {
+    fn spawn_supervisor(&self, session: Session) {
         let me = self.clone();
-        let generation = self.inner.generation.load(Ordering::SeqCst);
         tokio::spawn(async move {
             let mut attempt: u32 = 0;
             loop {
-                if me.inner.generation.load(Ordering::SeqCst) != generation {
+                // Every write of connection state is generation-checked, so a
+                // `false` here is "we have been replaced": stop.
+                if !me.set_connection_live(&session, ConnectionState::Connecting, None) {
                     return;
                 }
-                me.set_connection(
-                    ConnectionState::Connecting,
-                    None,
-                    Some(target.org_id.clone()),
-                );
 
-                let reason = me.attempt_once(&target, generation).await;
+                let reason = me.attempt_once(&session).await;
 
-                if me.inner.generation.load(Ordering::SeqCst) != generation {
+                if !me.live(session.generation) {
                     return;
                 }
 
@@ -273,18 +394,18 @@ impl CommsManager {
                     // Retrying cannot help. Stop, and wait for the next auth
                     // snapshot or a manual reconnect to change something.
                     ExitReason::Forbidden => {
-                        me.set_connection(
+                        me.set_connection_live(
+                            &session,
                             ConnectionState::Unavailable,
                             Some(ConnReason::NotAMember),
-                            Some(target.org_id.clone()),
                         );
                         return;
                     }
                     ExitReason::Evicted => {
-                        me.set_connection(
+                        me.set_connection_live(
+                            &session,
                             ConnectionState::Unavailable,
                             Some(ConnReason::Evicted),
-                            Some(target.org_id.clone()),
                         );
                         return;
                     }
@@ -296,10 +417,10 @@ impl CommsManager {
                             attempt = 1;
                             continue;
                         }
-                        me.set_connection(
+                        me.set_connection_live(
+                            &session,
                             ConnectionState::Unavailable,
                             Some(ConnReason::Auth),
-                            Some(target.org_id.clone()),
                         );
                         return;
                     }
@@ -308,18 +429,25 @@ impl CommsManager {
 
                 let delay = backoff_ms(attempt);
                 attempt = attempt.saturating_add(1);
-                me.set_connection(
+                if !me.set_connection_live(
+                    &session,
                     ConnectionState::Backoff,
                     Some(ConnReason::Offline),
-                    Some(target.org_id.clone()),
-                );
+                ) {
+                    return;
+                }
                 tokio::time::sleep(Duration::from_millis(delay)).await;
             }
         });
     }
 
     /// One dial, and everything that happens on it.
-    async fn attempt_once(&self, target: &OrgTarget, generation: u64) -> ExitReason {
+    ///
+    /// Every step that touches shared state re-checks the generation: the
+    /// mint is a network round trip, and a retarget during it must leave this
+    /// attempt with nothing to do.
+    async fn attempt_once(&self, session: &Session) -> ExitReason {
+        let generation = session.generation;
         let token = match self.inner.tokens.mint().await {
             Ok(t) => t,
             Err(e) => {
@@ -327,53 +455,77 @@ impl CommsManager {
                 return ExitReason::Unauthorized;
             }
         };
+        if !self.live(generation) {
+            return ExitReason::Closed;
+        }
 
         let watermark = self
             .inner
             .store
             .lock()
             .unwrap()
-            .watermark(&target.org_id)
+            .watermark(&session.org_id)
             .unwrap_or(0);
 
         let (out_tx, out_rx) = mpsc::unbounded_channel::<ClientFrame>();
         let (ev_tx, mut ev_rx) = mpsc::unbounded_channel::<ConnEvent>();
-        *self.inner.outbound.lock().unwrap() = Some(out_tx.clone());
+        // Install BEFORE dialling, and only if still live: a stale attempt
+        // must not open a socket to an organisation nobody is on any more.
+        if !self.install_outbound(generation, out_tx.clone()) {
+            return ExitReason::Closed;
+        }
 
-        let url = socket_url(&target.org_id);
+        let url = socket_url(&session.org_id);
         tokio::spawn(conn::run(url, token, watermark, out_rx, ev_tx));
 
         // The replay between `hello` and `resumed` is applied quietly.
-        self.inner.quiet.store(true, Ordering::SeqCst);
-        self.inner.quiet_dirty.store(false, Ordering::SeqCst);
+        self.begin_quiet(generation);
 
         let exit = loop {
-            let Some(event) = ev_rx.recv().await else {
+            // An idle socket delivers nothing, so a replaced attempt would
+            // otherwise sit here holding the old org's socket open until the
+            // server spoke. The tick bounds that to a second: dropping
+            // `out_tx` on the way out is what closes the socket politely.
+            let event = tokio::select! {
+                event = ev_rx.recv() => event,
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                    if self.live(generation) {
+                        continue;
+                    }
+                    None
+                }
+            };
+            let Some(event) = event else {
                 break ExitReason::Closed;
             };
-            if self.inner.generation.load(Ordering::SeqCst) != generation {
+            if !self.live(generation) {
                 break ExitReason::Closed;
             }
             match event {
                 ConnEvent::Frame(frame) => {
-                    self.handle_frame(target, frame, &out_tx).await;
+                    self.handle_frame(session, frame, &out_tx).await;
                 }
                 ConnEvent::Closed(reason) => break reason,
             }
         };
 
-        self.inner.quiet.store(false, Ordering::SeqCst);
-        *self.inner.outbound.lock().unwrap() = None;
-        self.persist_snapshot();
+        self.end_quiet(generation);
+        self.release_outbound(generation);
+        self.persist_snapshot(session);
         exit
     }
 
     async fn handle_frame(
         &self,
-        target: &OrgTarget,
+        session: &Session,
         frame: ServerFrame,
         out_tx: &mpsc::UnboundedSender<ClientFrame>,
     ) {
+        // A frame from a socket a retarget has already replaced belongs to
+        // nobody: applying it would put one org's history under another's.
+        if !self.live(session.generation) {
+            return;
+        }
         let now = now_ms();
         let journaled = crate::wire::is_journaled(&frame);
         let seq = crate::wire::frame_seq(&frame);
@@ -381,6 +533,9 @@ impl CommsManager {
         let deltas = {
             let mut state = self.inner.state.lock().unwrap();
             let mut pending = self.inner.pending.lock().unwrap();
+            if !self.live(session.generation) {
+                return;
+            }
             apply_frame(&mut state, frame, &mut pending, now)
         };
 
@@ -388,31 +543,21 @@ impl CommsManager {
         // ephemeral one would skip real history on the next resume.
         if journaled {
             if let Some(seq) = seq {
-                let _ = self
-                    .inner
-                    .store
-                    .lock()
-                    .unwrap()
-                    .set_watermark(&target.org_id, seq);
+                self.set_watermark_live(session, seq);
             }
         }
 
         for delta in deltas {
             match delta {
                 StateDelta::TooOld { snapshot_from } => {
-                    self.cold_sync(target, snapshot_from, out_tx).await;
+                    self.cold_sync(session, snapshot_from, out_tx).await;
                 }
                 StateDelta::Resumed { through } => {
                     // The terminator. Without it a client cannot tell "nothing
                     // happened while I was away" from "the replay has not
                     // started yet", so it is worth saying out loud.
                     tracing::info!(target: "atlas_comms", "resumed through {through}");
-                    let _ = self
-                        .inner
-                        .store
-                        .lock()
-                        .unwrap()
-                        .set_watermark(&target.org_id, through);
+                    self.set_watermark_live(session, through);
                     // The replay is over. If it (or the hello before it)
                     // changed anything, one repaint and then granular events —
                     // but the COMMON reconnect replays nothing, and answering
@@ -422,16 +567,15 @@ impl CommsManager {
                     // the hello (they are snapshot-only on the wire), so the
                     // clean path forwards exactly those two, which are small.
                     let dirty = self.inner.quiet_dirty.swap(false, Ordering::SeqCst);
-                    self.inner.quiet.store(false, Ordering::SeqCst);
+                    self.end_quiet(session.generation);
+                    if !self.live(session.generation) {
+                        return;
+                    }
                     self.resend_unacked(out_tx);
-                    self.bump_epoch();
-                    self.set_connection(
-                        ConnectionState::Open,
-                        None,
-                        Some(target.org_id.clone()),
-                    );
+                    self.bump_epoch(session.generation);
+                    self.set_connection_live(session, ConnectionState::Open, None);
                     if dirty {
-                        self.emit(CommsEvent::Resync);
+                        self.emit_for(session, CommsEvent::Resync);
                     } else {
                         let (reads, online) = {
                             let state = self.inner.state.lock().unwrap();
@@ -440,10 +584,10 @@ impl CommsManager {
                                 state.online.clone(),
                             )
                         };
-                        self.emit(CommsEvent::ReadsChanged { reads });
-                        self.emit(CommsEvent::Presence { online });
+                        self.emit_for(session, CommsEvent::ReadsChanged { reads });
+                        self.emit_for(session, CommsEvent::Presence { online });
                     }
-                    self.persist_snapshot();
+                    self.persist_snapshot(session);
                 }
                 StateDelta::Hello => {
                     // Applied quietly; `resumed` is what announces it to the UI.
@@ -455,31 +599,53 @@ impl CommsManager {
                         target: "atlas_comms",
                         "hello: {convs} conversations, {disc} discoverable"
                     );
-                    self.persist_snapshot();
+                    self.persist_snapshot(session);
                 }
-                other => self.emit_delta(other),
+                other => self.emit_delta(session, other),
             }
         }
     }
 
+    /// Advance the watermark for the attempt's org — only while it is live. A
+    /// stale attempt on a B→C→B round trip could otherwise move (or rewind)
+    /// a row the live attempt is resuming from.
+    fn set_watermark_live(&self, session: &Session, seq: i64) {
+        let store = self.inner.store.lock().unwrap();
+        if !self.live(session.generation) {
+            return;
+        }
+        let _ = store.set_watermark(&session.org_id, seq);
+    }
+
     /// The journal no longer reaches our watermark, so nothing was replayed and
     /// nothing will be. Rebuild from REST rather than pretending.
+    ///
+    /// Four round trips per open window, and a retarget can land in any of
+    /// them — hence the re-check after EVERY await: the state this fills is
+    /// shared, and the org it fetched for may no longer be the one on screen.
     async fn cold_sync(
         &self,
-        target: &OrgTarget,
+        session: &Session,
         snapshot_from: i64,
         out_tx: &mpsc::UnboundedSender<ClientFrame>,
     ) {
+        let generation = session.generation;
+        let org_id = &session.org_id;
         tracing::info!(target: "atlas_comms", "cold sync from {snapshot_from}");
-        self.inner.quiet.store(true, Ordering::SeqCst);
-        self.inner.quiet_dirty.store(false, Ordering::SeqCst);
+        self.begin_quiet(generation);
 
         // `hello` already restated the lists, but refetching closes the race
         // and is cheap.
-        if let Ok(list) = self.inner.rest.conversations(&target.org_id).await {
+        if let Ok(list) = self.inner.rest.conversations(org_id).await {
             let mut state = self.inner.state.lock().unwrap();
+            if !self.live(generation) {
+                return;
+            }
             state.conversations = list.conversations;
             state.discoverable = list.discoverable;
+        }
+        if !self.live(generation) {
+            return;
         }
 
         // Only conversations the UI actually has open are refilled; the rest
@@ -489,34 +655,46 @@ impl CommsManager {
         self.inner.hydrated.lock().unwrap().clear();
         let windows: Vec<String> = self.inner.windows.lock().unwrap().iter().cloned().collect();
         for conv_id in windows {
-            if let Ok(page) = self.inner.rest.messages(&target.org_id, &conv_id, None, 50).await {
-                let mut state = self.inner.state.lock().unwrap();
+            if let Ok(page) = self.inner.rest.messages(org_id, &conv_id, None, 50).await {
                 let rows = page
                     .messages
                     .into_iter()
                     .map(LocalMessage::settled)
                     .collect::<Vec<_>>();
-                state.messages.insert(conv_id.clone(), rows);
-                drop(state);
-                self.mark_hydrated(&conv_id);
-                let mut state = self.inner.state.lock().unwrap();
-                for row in page.reactions {
-                    state
-                        .reactions
-                        .entry(row.message_id.clone())
-                        .or_default()
-                        .push(row);
+                {
+                    let mut state = self.inner.state.lock().unwrap();
+                    if !self.live(generation) {
+                        return;
+                    }
+                    state.messages.insert(conv_id.clone(), rows);
+                    for row in page.reactions {
+                        state
+                            .reactions
+                            .entry(row.message_id.clone())
+                            .or_default()
+                            .push(row);
+                    }
                 }
+                self.mark_hydrated(session, &conv_id);
             }
-            if let Ok(pins) = self.inner.rest.pins(&target.org_id, &conv_id).await {
+            if !self.live(generation) {
+                return;
+            }
+            if let Ok(pins) = self.inner.rest.pins(org_id, &conv_id).await {
                 let ids = pins.pins.iter().map(|p| p.message_id.clone()).collect();
-                self.inner.state.lock().unwrap().pins.insert(conv_id.clone(), ids);
+                self.adopt_pins(session, &conv_id, ids);
+            }
+            if !self.live(generation) {
+                return;
             }
             // Call history is REST-only here: the replay we just failed to get
             // was the sole other source, and the watermark is about to jump
             // past it for good.
-            if let Ok(list) = self.inner.rest.calls(&target.org_id, &conv_id).await {
-                self.adopt_calls(list.calls);
+            if let Ok(list) = self.inner.rest.calls(org_id, &conv_id).await {
+                self.adopt_calls(session, list.calls);
+            }
+            if !self.live(generation) {
+                return;
             }
         }
 
@@ -528,18 +706,19 @@ impl CommsManager {
         // Adopt the server's watermark exactly, rewind included, and persist it
         // now rather than on the usual debounce: a crash between here and the
         // next flush would ask for the same impossible resume again.
-        let _ = self
-            .inner
-            .store
-            .lock()
-            .unwrap()
-            .reset_watermark(&target.org_id, snapshot_from);
+        {
+            let store = self.inner.store.lock().unwrap();
+            if !self.live(generation) {
+                return;
+            }
+            let _ = store.reset_watermark(org_id, snapshot_from);
+        }
 
-        self.inner.quiet.store(false, Ordering::SeqCst);
-        self.bump_epoch();
-        self.set_connection(ConnectionState::Open, None, Some(target.org_id.clone()));
-        self.emit(CommsEvent::Resync);
-        self.persist_snapshot();
+        self.end_quiet(generation);
+        self.bump_epoch(generation);
+        self.set_connection_live(session, ConnectionState::Open, None);
+        self.emit_for(session, CommsEvent::Resync);
+        self.persist_snapshot(session);
     }
 
     fn resend_unacked(&self, out_tx: &mpsc::UnboundedSender<ClientFrame>) {
@@ -563,13 +742,21 @@ impl CommsManager {
     /// The optimistic row is created here, in Rust, because the `ack` carries
     /// only ids — the body has to be remembered somewhere, and splitting that
     /// memory across the bridge would mean two places that can disagree.
+    ///
+    /// Refused outright with no organisation connected. The alternative —
+    /// queueing a pending row nobody will ever ack, under a target that does
+    /// not exist — is a message that clears the composer and then silently
+    /// vanishes, which is what a send in the middle of an org switch used to do.
     pub fn send(
         &self,
         conv_id: &str,
         body: String,
         reply_to_id: Option<String>,
         attachments: Vec<String>,
-    ) -> String {
+    ) -> Result<String> {
+        if self.session().is_none() {
+            return Err(CommsError::Protocol("no organisation is connected".into()));
+        }
         let client_msg_id = uuid::Uuid::new_v4().to_string();
         let now = now_ms();
         let me = self
@@ -645,7 +832,7 @@ impl CommsManager {
             code_refs: Vec::new(),
         });
 
-        client_msg_id
+        Ok(client_msg_id)
     }
 
     // Edit, delete, react and pin are all OPTIMISTIC: the local state mutates
@@ -873,8 +1060,10 @@ impl CommsManager {
 
     fn write(&self, frame: ClientFrame) {
         let out = self.inner.outbound.lock().unwrap();
+        // Whatever is installed is the live generation's by construction —
+        // see `install_outbound` / `release_outbound`.
         match out.as_ref() {
-            Some(tx) => {
+            Some((_, tx)) => {
                 let _ = tx.send(frame);
             }
             // No socket. A `send` is safe to drop here because it is held in
@@ -1172,12 +1361,19 @@ impl CommsManager {
 
     // -- windows -------------------------------------------------------------
 
-    pub fn open_window(&self, conv_id: &str) {
-        self.inner
-            .windows
-            .lock()
-            .unwrap()
-            .insert(conv_id.to_string());
+    // Every adopt below takes the `Session` the caller captured BEFORE its
+    // REST round trips and refuses if that generation has been replaced —
+    // checked under the lock it writes, so a retarget cannot slip between
+    // the check and the write. A command that fetched org A's page and adopts
+    // it after the socket moved to org B would otherwise file A's messages
+    // under B, in memory and (via `persist_snapshot`) on disk.
+
+    pub fn open_window(&self, session: &Session, conv_id: &str) {
+        let mut windows = self.inner.windows.lock().unwrap();
+        if !self.live(session.generation) {
+            return;
+        }
+        windows.insert(conv_id.to_string());
     }
 
     pub fn close_window(&self, conv_id: &str) {
@@ -1189,18 +1385,20 @@ impl CommsManager {
         self.inner.hydrated.lock().unwrap().contains(conv_id)
     }
 
-    pub fn mark_hydrated(&self, conv_id: &str) {
-        self.inner
-            .hydrated
-            .lock()
-            .unwrap()
-            .insert(conv_id.to_string());
+    pub fn mark_hydrated(&self, session: &Session, conv_id: &str) {
+        let mut hydrated = self.inner.hydrated.lock().unwrap();
+        if !self.live(session.generation) {
+            return;
+        }
+        hydrated.insert(conv_id.to_string());
     }
 
     pub fn rest(&self) -> &RestClient {
         &self.inner.rest
     }
 
+    /// The org the socket currently targets. Not a guard: a command that
+    /// awaits after reading this must use [`Self::session`] instead.
     pub fn org_id(&self) -> Option<String> {
         self.inner
             .target
@@ -1211,9 +1409,19 @@ impl CommsManager {
     }
 
     /// Adopt a REST page into state, so an opened conversation paints and later
-    /// live frames merge into the same list.
-    pub fn adopt_page(&self, conv_id: &str, messages: Vec<Message>, prepend: bool) {
+    /// live frames merge into the same list. `false` when the session is
+    /// stale and nothing was adopted.
+    pub fn adopt_page(
+        &self,
+        session: &Session,
+        conv_id: &str,
+        messages: Vec<Message>,
+        prepend: bool,
+    ) -> bool {
         let mut state = self.inner.state.lock().unwrap();
+        if !self.live(session.generation) {
+            return false;
+        }
         let list = state.messages.entry(conv_id.to_string()).or_default();
         for message in messages {
             if list.iter().any(|m| m.message.id == message.id) {
@@ -1223,10 +1431,14 @@ impl CommsManager {
         }
         list.sort_by_key(|m| m.message.seq);
         let _ = prepend;
+        true
     }
 
-    pub fn adopt_reactions(&self, rows: Vec<crate::wire::ReactionRow>) {
+    pub fn adopt_reactions(&self, session: &Session, rows: Vec<crate::wire::ReactionRow>) {
         let mut state = self.inner.state.lock().unwrap();
+        if !self.live(session.generation) {
+            return;
+        }
         for row in rows {
             let bucket = state.reactions.entry(row.message_id.clone()).or_default();
             if !bucket
@@ -1238,13 +1450,12 @@ impl CommsManager {
         }
     }
 
-    pub fn adopt_pins(&self, conv_id: &str, ids: Vec<String>) {
-        self.inner
-            .state
-            .lock()
-            .unwrap()
-            .pins
-            .insert(conv_id.to_string(), ids);
+    pub fn adopt_pins(&self, session: &Session, conv_id: &str, ids: Vec<String>) {
+        let mut state = self.inner.state.lock().unwrap();
+        if !self.live(session.generation) {
+            return;
+        }
+        state.pins.insert(conv_id.to_string(), ids);
     }
 
     /// Adopt REST call history (ATL-208), the way the web client does: merge
@@ -1262,17 +1473,22 @@ impl CommsManager {
         mode: &str,
         public: bool,
     ) -> Result<crate::wire::Call> {
-        let org = self
-            .org_id()
+        let session = self
+            .session()
             .ok_or_else(|| CommsError::Token("no organisation is connected".into()))?;
-        let call = self.inner.rest.start_call(&org, conv_id, mode, public).await?;
-        self.inner
-            .state
-            .lock()
-            .unwrap()
-            .calls
-            .insert(call.id.clone(), call.clone());
-        self.emit(CommsEvent::CallChanged { call: call.clone() });
+        let call = self
+            .inner
+            .rest
+            .start_call(&session.org_id, conv_id, mode, public)
+            .await?;
+        {
+            let mut state = self.inner.state.lock().unwrap();
+            if !self.live(session.generation) {
+                return Err(CommsError::Protocol("organisation changed".into()));
+            }
+            state.calls.insert(call.id.clone(), call.clone());
+        }
+        self.emit_for(&session, CommsEvent::CallChanged { call: call.clone() });
         Ok(call)
     }
 
@@ -1284,10 +1500,13 @@ impl CommsManager {
         self.inner.rest.download_transcript(&org, call_id).await
     }
 
-    pub fn adopt_calls(&self, calls: Vec<crate::wire::Call>) {
+    pub fn adopt_calls(&self, session: &Session, calls: Vec<crate::wire::Call>) {
         let mut fresh = Vec::new();
         {
             let mut state = self.inner.state.lock().unwrap();
+            if !self.live(session.generation) {
+                return;
+            }
             for call in calls {
                 if !state.calls.contains_key(&call.id) {
                     state.calls.insert(call.id.clone(), call.clone());
@@ -1296,15 +1515,16 @@ impl CommsManager {
             }
         }
         for call in fresh {
-            self.emit(CommsEvent::CallChanged { call });
+            self.emit_for(session, CommsEvent::CallChanged { call });
         }
     }
 
     // -- emission ------------------------------------------------------------
 
-    fn emit_delta(&self, delta: StateDelta) {
-        // Bulk transitions apply silently and announce themselves once.
-        if self.inner.quiet.load(Ordering::SeqCst) {
+    fn emit_delta(&self, session: &Session, delta: StateDelta) {
+        // Bulk transitions apply silently and announce themselves once. The
+        // window is the LIVE generation's: a stale attempt's window is ignored.
+        if self.is_quiet() {
             // `Hello` fires on EVERY connect and is a restatement, not a
             // change: journaled history arrives as replay frames (which do
             // mark dirty), and the ephemeral snapshot it carries (reads,
@@ -1415,10 +1635,12 @@ impl CommsManager {
         };
         drop(state);
         if let Some(event) = event {
-            self.emit(event);
+            self.emit_for(session, event);
         }
     }
 
+    /// Emit under the CURRENT target. For the user's own verbs (send, edit,
+    /// react, pin, uploads), which by definition act on the org on screen.
     fn emit(&self, ev: CommsEvent) {
         let Some(org) = self.org_id() else { return };
         let _ = self.inner.events.send(CommsEnvelope {
@@ -1428,11 +1650,35 @@ impl CommsManager {
         });
     }
 
-    fn bump_epoch(&self) {
-        let next = self.inner.epoch.fetch_add(1, Ordering::SeqCst) + 1;
-        self.inner.connection.lock().unwrap().epoch = next;
+    /// Emit on behalf of an attempt: stamped with THAT attempt's org, and
+    /// dropped if the attempt has been replaced. Stamping with the current
+    /// target instead (as `emit` does) relabelled a stale attempt's events
+    /// with the new org, which defeated the renderer's only stale-org guard.
+    fn emit_for(&self, session: &Session, ev: CommsEvent) {
+        if !self.live(session.generation) {
+            return;
+        }
+        let _ = self.inner.events.send(CommsEnvelope {
+            org: session.org_id.clone(),
+            epoch: self.inner.epoch.load(Ordering::SeqCst),
+            ev,
+        });
     }
 
+    /// Advance the epoch for a live attempt. `None` — and no change — when
+    /// the attempt is stale, checked under the connection lock.
+    fn bump_epoch(&self, generation: u64) -> Option<u64> {
+        let mut conn = self.inner.connection.lock().unwrap();
+        if !self.live(generation) {
+            return None;
+        }
+        let next = self.inner.epoch.fetch_add(1, Ordering::SeqCst) + 1;
+        conn.epoch = next;
+        Some(next)
+    }
+
+    /// Connection state written by the manager itself, outside any attempt:
+    /// `set_target(None)` and `announce()`.
     fn set_connection(
         &self,
         state: ConnectionState,
@@ -1460,14 +1706,57 @@ impl CommsManager {
         }
     }
 
-    fn persist_snapshot(&self) {
-        let Some(org) = self.org_id() else { return };
-        let state = self.inner.state.lock().unwrap();
-        let reads: Vec<_> = state.reads.values().cloned().collect();
+    /// Connection state written on behalf of an attempt. A stale attempt
+    /// writes nothing and emits nothing — decided UNDER the connection lock,
+    /// so a retarget racing this call cannot slip a stale write in after a
+    /// passed check. Returns whether the write happened.
+    fn set_connection_live(
+        &self,
+        session: &Session,
+        state: ConnectionState,
+        reason: Option<ConnReason>,
+    ) -> bool {
+        {
+            let mut conn = self.inner.connection.lock().unwrap();
+            if !self.live(session.generation) {
+                return false;
+            }
+            conn.state = state;
+            conn.reason = reason;
+            conn.org_id = Some(session.org_id.clone());
+        }
+        self.emit_for(
+            session,
+            CommsEvent::Connection {
+                state,
+                reason,
+                retry_at_ms: None,
+            },
+        );
+        true
+    }
+
+    /// Persist the attempt's org's lists — keyed by the ATTEMPT's org, and
+    /// only while it is live. The check is made under the `state` lock, the
+    /// same lock `set_target` clears state under, so a stale attempt can
+    /// never write a just-emptied (or another org's) list under its row.
+    fn persist_snapshot(&self, session: &Session) {
+        let (conversations, discoverable, reads) = {
+            let state = self.inner.state.lock().unwrap();
+            if !self.live(session.generation) {
+                return;
+            }
+            (
+                state.conversations.clone(),
+                state.discoverable.clone(),
+                state.reads.values().cloned().collect::<Vec<_>>(),
+            )
+        };
+        // `state` is released before `store` is taken — the lock order.
         let _ = self.inner.store.lock().unwrap().save_snapshot(
-            &org,
-            &state.conversations,
-            &state.discoverable,
+            &session.org_id,
+            &conversations,
+            &discoverable,
             &reads,
         );
     }
@@ -1625,9 +1914,13 @@ mod tests {
             }
         }
         let mut rx = mgr.subscribe();
-        mgr.emit_delta(StateDelta::ReadsChanged {
-            conv_id: "c2".into(),
-        });
+        let session = mgr.session().expect("targeted");
+        mgr.emit_delta(
+            &session,
+            StateDelta::ReadsChanged {
+                conv_id: "c2".into(),
+            },
+        );
         match rx.try_recv().expect("one event").ev {
             CommsEvent::ReadChanged { read } => assert_eq!(read.conv_id, "c2"),
             other => panic!("expected the single-row event, got {other:?}"),
@@ -1644,23 +1937,320 @@ mod tests {
         mgr.set_target(Some(OrgTarget {
             org_id: "org_a".into(),
         }));
-        mgr.inner.quiet.store(true, Ordering::SeqCst);
-        mgr.inner.quiet_dirty.store(false, Ordering::SeqCst);
+        let session = mgr.session().expect("targeted");
+        mgr.begin_quiet(session.generation);
 
-        mgr.emit_delta(StateDelta::Hello);
+        mgr.emit_delta(&session, StateDelta::Hello);
         assert!(
             !mgr.inner.quiet_dirty.load(Ordering::SeqCst),
             "a restatement must not look like history"
         );
 
-        mgr.emit_delta(StateDelta::MessageAppended {
-            conv_id: "c1".into(),
-            id: "m1".into(),
-        });
+        mgr.emit_delta(
+            &session,
+            StateDelta::MessageAppended {
+                conv_id: "c1".into(),
+                id: "m1".into(),
+            },
+        );
         assert!(
             mgr.inner.quiet_dirty.load(Ordering::SeqCst),
             "a real replay frame must mark the window dirty"
         );
+    }
+
+    fn target(org: &str) -> Option<OrgTarget> {
+        Some(OrgTarget {
+            org_id: org.into(),
+        })
+    }
+
+    fn fresh() -> CommsManager {
+        let store = CommsStore::open_in_memory().expect("store");
+        CommsManager::new(store, std::sync::Arc::new(NoToken))
+    }
+
+    /// Let the spawned supervisor run to its (NoToken-forced) verdict.
+    async fn settle() {
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    /// The org-switch dead end. `org-switch.ts` calls `comms_disconnect`
+    /// and then `auth_set_active_org`; when the latter resolves to the org
+    /// the socket was already on, `set_target` used to see "unchanged" and
+    /// no-op — no supervisor, no socket, chat dead for the session.
+    #[tokio::test]
+    async fn disconnect_forgets_the_target_so_the_same_org_reconnects() {
+        let mgr = fresh();
+        mgr.set_target(target("org_a"));
+        let before = mgr.session().expect("targeted");
+
+        mgr.disconnect();
+        assert!(mgr.session().is_none(), "disconnect must forget the target");
+        assert_eq!(mgr.connection().state, ConnectionState::Disconnected);
+
+        mgr.set_target(target("org_a"));
+        let after = mgr.session().expect("re-targeted");
+        assert!(
+            after.generation > before.generation,
+            "the same org after a disconnect is a NEW attempt"
+        );
+        settle().await;
+        // NoToken makes every supervisor settle on `unavailable`: proof one ran.
+        let info = mgr.connection();
+        assert_eq!(info.state, ConnectionState::Unavailable);
+        assert_eq!(info.org_id.as_deref(), Some("org_a"));
+    }
+
+    /// Belt and braces for the same dead end: even with the target held, a
+    /// supervisor that is not running (`disconnected` OR `unavailable`) must
+    /// be respawned by a snapshot naming the same org.
+    #[tokio::test]
+    async fn an_unchanged_target_with_nothing_running_respawns() {
+        let mgr = fresh();
+        mgr.set_target(target("org_a"));
+        let before = mgr.session().expect("targeted");
+        settle().await;
+        assert_eq!(mgr.connection().state, ConnectionState::Unavailable);
+
+        mgr.set_target(target("org_a"));
+        let after = mgr.session().expect("targeted");
+        assert!(after.generation > before.generation, "unavailable → respawn");
+
+        mgr.set_connection(ConnectionState::Disconnected, None, Some("org_a".into()));
+        mgr.set_target(target("org_a"));
+        let again = mgr.session().expect("targeted");
+        assert!(again.generation > after.generation, "disconnected → respawn");
+    }
+
+    /// A stale attempt returning from its token mint used to install its
+    /// socket over the live one's, then clear the live one's on exit.
+    #[tokio::test]
+    async fn a_stale_generation_cannot_install_or_release_the_live_outbound() {
+        let mgr = fresh();
+        mgr.set_target(target("org_a"));
+        let stale = mgr.session().expect("targeted");
+        mgr.set_target(target("org_b"));
+        let live = mgr.session().expect("targeted");
+
+        let (stale_tx, mut stale_rx) = mpsc::unbounded_channel::<ClientFrame>();
+        assert!(
+            !mgr.install_outbound(stale.generation, stale_tx),
+            "a replaced attempt must not install a socket"
+        );
+        mgr.write(ClientFrame::Read {
+            conv_id: "c1".into(),
+            seq: 1,
+        });
+        assert!(
+            stale_rx.try_recv().is_err(),
+            "nothing may reach a stale socket"
+        );
+
+        let (live_tx, mut live_rx) = mpsc::unbounded_channel::<ClientFrame>();
+        assert!(mgr.install_outbound(live.generation, live_tx));
+        // The stale attempt exiting must not take the live socket with it.
+        mgr.release_outbound(stale.generation);
+        mgr.write(ClientFrame::Read {
+            conv_id: "c1".into(),
+            seq: 2,
+        });
+        assert!(live_rx.try_recv().is_ok(), "the live socket survives a stale release");
+        mgr.release_outbound(live.generation);
+        assert!(mgr.inner.outbound.lock().unwrap().is_none());
+    }
+
+    /// A stale attempt's `Forbidden` used to write `unavailable` over the new
+    /// org's connection, and its envelopes were stamped with the NEW org.
+    #[tokio::test]
+    async fn a_stale_generation_cannot_write_connection_state_or_epoch() {
+        let mgr = fresh();
+        mgr.set_target(target("org_a"));
+        let stale = mgr.session().expect("targeted");
+        mgr.set_target(target("org_b"));
+        let live = mgr.session().expect("targeted");
+        settle().await;
+        let epoch = mgr.connection().epoch;
+        let mut rx = mgr.subscribe();
+
+        assert!(!mgr.set_connection_live(&stale, ConnectionState::Open, None));
+        assert_eq!(mgr.connection().org_id.as_deref(), Some("org_b"));
+        assert_eq!(mgr.bump_epoch(stale.generation), None);
+        assert_eq!(mgr.connection().epoch, epoch);
+        mgr.emit_for(&stale, CommsEvent::Resync);
+        assert!(rx.try_recv().is_err(), "a stale attempt emits nothing");
+
+        assert!(mgr.set_connection_live(&live, ConnectionState::Open, None));
+        let env = rx.try_recv().expect("the live attempt's event");
+        assert_eq!(env.org, "org_b", "stamped with the attempt's own org");
+        assert_eq!(mgr.bump_epoch(live.generation), Some(epoch + 1));
+    }
+
+    /// The on-disk contamination: a stale attempt persisting after a switch
+    /// wrote the (just-emptied, or the OTHER org's) lists under a row that
+    /// the next switch painted from.
+    #[tokio::test]
+    async fn a_stale_generation_never_persists() {
+        let mgr = fresh();
+        mgr.set_target(target("org_a"));
+        let a = mgr.session().expect("targeted");
+        let conv = |id: &str| crate::wire::Conversation {
+            id: id.into(),
+            kind: crate::wire::ConversationKind::Channel,
+            name: Some(id.into()),
+            visibility: crate::wire::Visibility::PublicOrg,
+            workspace_ref_ids: vec![],
+            created_by: "u1".into(),
+            created_at: 1,
+            archived_at: None,
+            seq: 1,
+            member_ids: None,
+            last_activity_seq: 1,
+        };
+        mgr.test_mutate_state(|s| s.conversations = vec![conv("a1")]);
+        mgr.persist_snapshot(&a);
+        assert_eq!(
+            mgr.inner
+                .store
+                .lock()
+                .unwrap()
+                .snapshot("org_a")
+                .unwrap()
+                .conversations
+                .len(),
+            1
+        );
+
+        mgr.set_target(target("org_b"));
+        mgr.test_mutate_state(|s| s.conversations = vec![conv("b1"), conv("b2")]);
+        // The stale attempt exits and persists — under ITS org, and only if
+        // live, which it is not: A's row keeps A's list.
+        mgr.persist_snapshot(&a);
+        let store = mgr.inner.store.lock().unwrap();
+        assert_eq!(store.snapshot("org_a").unwrap().conversations.len(), 1);
+        assert!(store.snapshot("org_b").unwrap().conversations.is_empty());
+    }
+
+    /// The quiet window is the LIVE generation's: a replaced attempt entering
+    /// its own must not silence the new org's events.
+    #[tokio::test]
+    async fn quiet_is_scoped_to_its_generation() {
+        let mgr = fresh();
+        mgr.set_target(target("org_a"));
+        let stale = mgr.session().expect("targeted");
+        mgr.set_target(target("org_b"));
+        let live = mgr.session().expect("targeted");
+        mgr.test_mutate_state(|s| s.online = vec!["u1".into()]);
+        let mut rx = mgr.subscribe();
+
+        mgr.begin_quiet(stale.generation);
+        mgr.emit_delta(&live, StateDelta::Presence);
+        assert!(rx.try_recv().is_ok(), "a stale quiet window is no window");
+
+        mgr.begin_quiet(live.generation);
+        mgr.end_quiet(stale.generation);
+        mgr.emit_delta(&live, StateDelta::Presence);
+        assert!(rx.try_recv().is_err(), "the live window is still open");
+
+        mgr.end_quiet(live.generation);
+        mgr.emit_delta(&live, StateDelta::Presence);
+        assert!(rx.try_recv().is_ok());
+    }
+
+    /// `comms_open_conversation` awaits four REST calls; the adopt at the end
+    /// must refuse when the socket moved meanwhile.
+    #[tokio::test]
+    async fn adopting_from_a_stale_session_is_dropped() {
+        let mgr = fresh();
+        mgr.set_target(target("org_a"));
+        let stale = mgr.session().expect("targeted");
+        mgr.set_target(target("org_b"));
+        let mut rx = mgr.subscribe();
+
+        let message = Message {
+            id: "m1".into(),
+            conv_id: "c1".into(),
+            seq: 1,
+            author_id: "u1".into(),
+            body: "from A".into(),
+            reply_to_id: None,
+            edited_at: None,
+            created_at: 1,
+            attachments: vec![],
+            code_refs: vec![],
+            draft_id: None,
+        };
+        assert!(!mgr.adopt_page(&stale, "c1", vec![message], false));
+        assert!(mgr.with_state(|s| s.messages("c1").is_empty()));
+        mgr.mark_hydrated(&stale, "c1");
+        assert!(!mgr.is_hydrated("c1"));
+        mgr.open_window(&stale, "c1");
+        assert!(!mgr.inner.windows.lock().unwrap().contains("c1"));
+        mgr.adopt_calls(
+            &stale,
+            vec![crate::wire::Call {
+                id: "call_1".into(),
+                conv_id: Some("c1".into()),
+                mode: crate::wire::CallMode::Audio,
+                started_by: "u1".into(),
+                started_at: 1,
+                ended_at: None,
+                seq: 1,
+                transcript_state: crate::wire::CallTranscriptState::None,
+                join_slug: None,
+                recording_state: crate::wire::CallRecordingState::Off,
+            }],
+        );
+        assert!(mgr.with_state(|s| s.calls.is_empty()));
+        assert!(rx.try_recv().is_err());
+    }
+
+    /// Mid-switch there is no target; a send then must fail loudly rather
+    /// than queue a row nobody will ack under an org that does not exist.
+    #[tokio::test]
+    async fn send_without_a_target_is_an_error_with_no_side_effects() {
+        let mgr = fresh();
+        let mut rx = mgr.subscribe();
+        assert!(mgr.send("c1", "hello".into(), None, vec![]).is_err());
+        assert!(mgr.inner.pending.lock().unwrap().is_empty());
+        assert!(mgr.with_state(|s| s.messages.is_empty()));
+        assert!(rx.try_recv().is_err());
+    }
+
+    /// The lock-order rule on `Inner`: a switch and a persist from another
+    /// task must never deadlock.
+    #[tokio::test]
+    async fn set_target_and_persist_do_not_deadlock() {
+        let mgr = fresh();
+        mgr.set_target(target("org_a"));
+        let persister = {
+            let mgr = mgr.clone();
+            tokio::spawn(async move {
+                for _ in 0..200 {
+                    if let Some(s) = mgr.session() {
+                        mgr.persist_snapshot(&s);
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+        };
+        let switcher = {
+            let mgr = mgr.clone();
+            tokio::spawn(async move {
+                for i in 0..200 {
+                    mgr.set_target(target(if i % 2 == 0 { "org_b" } else { "org_a" }));
+                    tokio::task::yield_now().await;
+                }
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(5), async {
+            persister.await.unwrap();
+            switcher.await.unwrap();
+        })
+        .await
+        .expect("no deadlock between set_target and persist_snapshot");
     }
 
     /// REST call history merges ADDITIVELY: a row the socket already
@@ -1696,8 +2286,9 @@ mod tests {
             .insert("call_1".into(), call("call_1", Some(99)));
 
         let mut rx = mgr.subscribe();
+        let session = mgr.session().expect("targeted");
         // …and the REST page, fetched before that frame, still says live.
-        mgr.adopt_calls(vec![call("call_1", None), call("call_2", Some(50))]);
+        mgr.adopt_calls(&session, vec![call("call_1", None), call("call_2", Some(50))]);
 
         // The frame's answer stands; the new row was learned.
         mgr.with_state(|state| {
@@ -1726,7 +2317,8 @@ mod tests {
         }));
 
         assert!(!mgr.is_hydrated("c1"));
-        mgr.mark_hydrated("c1");
+        let session = mgr.session().expect("targeted");
+        mgr.mark_hydrated(&session, "c1");
         assert!(mgr.is_hydrated("c1"));
 
         // Detaching drops every per-org fact, hydration included.

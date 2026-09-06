@@ -124,13 +124,25 @@ export function hasInFlightToolCalls(
   return false;
 }
 export type MessageRole = "user" | "assistant" | "system" | "tool";
-export type ClaudePermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+/** Claude Code's permission modes as the ACP adapter spells them. `auto`
+ *  ("Claude handles permission decisions") exists only on models that support
+ *  it — the adapter advertises it per session, and it is what the plan-approval
+ *  prompt's elevated option becomes on those models (in place of bypass). It
+ *  has to be a known mode here or the composer pill goes stale the moment a
+ *  plan is approved with it. */
+export type ClaudePermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "plan"
+  | "bypassPermissions"
+  | "auto";
 
 export const CLAUDE_PERMISSION_MODES: ClaudePermissionMode[] = [
   "default",
   "acceptEdits",
   "plan",
   "bypassPermissions",
+  "auto",
 ];
 
 export const CLAUDE_PERMISSION_MODE_LABEL: Record<ClaudePermissionMode, string> = {
@@ -138,6 +150,7 @@ export const CLAUDE_PERMISSION_MODE_LABEL: Record<ClaudePermissionMode, string> 
   acceptEdits: "Accept Edits",
   plan: "Plan Mode",
   bypassPermissions: "Bypass Permissions",
+  auto: "Auto",
 };
 
 /** One file a turn read or modified, with edit line counts (0 for reads). */

@@ -15,6 +15,7 @@
 // what is half-typed in each composer. None of that is chat state.
 
 import { create } from "zustand";
+import { toast } from "sonner";
 import { createSelectors } from "@/lib/create-selectors";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { ORG_SCOPED_TYPES } from "@/lib/constants";
@@ -71,6 +72,30 @@ const DISCONNECTED: ConnectionInfo = {
   epoch: 0,
   orgId: null,
 };
+
+/**
+ * Which org the renderer EXPECTS the socket to be on, once a switch has
+ * declared one. `null` inside means "no org — a local-only organisation";
+ * the whole thing is `null` until the first switch, when Rust is the only
+ * authority (boot reconciliation may legitimately move the target under us).
+ *
+ * This is the renderer's own defence against the interleavings a switch
+ * produces: a straggler envelope from the OUTGOING org, a `hydrate()` that
+ * resolved against Rust before it was retargeted. Both used to be *adopted*
+ * wholesale — the org-mismatch branch below was symmetric — which re-pointed
+ * the store backwards and flapped it between orgs.
+ */
+let expectation: { orgId: string | null } | null = null;
+
+/** Monotonic id of the latest `hydrate()`; an older call's snapshot is
+ *  discarded when it resolves late, instead of overwriting newer state. */
+let hydrateSeq = 0;
+
+/** Test seam: the module-level switch state above, reset between cases. */
+export function resetCommsSwitchStateForTests(): void {
+  expectation = null;
+  hydrateSeq = 0;
+}
 
 interface CommsState {
   panelOpen: boolean;
@@ -139,6 +164,13 @@ interface CommsState {
     setMembers: (members: OrgMemberProfile[]) => void;
     /** Drop everything server-owned, for an org switch. */
     reset: () => void;
+    /** An org switch is starting: reset, and from now on only envelopes and
+     *  snapshots for `remoteId` (`null` = a local-only org, no socket) are
+     *  applied. Call BEFORE `comms_disconnect`. */
+    beginSwitch: (remoteId: string | null) => void;
+    /** Rust has been retargeted (`auth_set_active_org` resolved): pull the
+     *  new org's snapshot now rather than waiting for the socket to open. */
+    endSwitch: () => void;
 
     /** Navigate the ACTIVE tab to a conversation (creates a tab if none). */
     openConversation: (convId: string) => void;
@@ -225,7 +257,11 @@ export const useCommsStore = createSelectors(
 
       setMembers: (members) => set({ members }),
 
-      reset: () =>
+      reset: () => {
+        // Retry timers armed for the outgoing org's conversations used to
+        // survive this and fire `comms_open_conversation` for a foreign conv
+        // id against the new org's socket, up to seven more times.
+        cancelAllConvRetries();
         set({
           ...serverOwned(),
           // Org-scoped, but deliberately NOT in serverOwned(): a same-org
@@ -235,20 +271,46 @@ export const useCommsStore = createSelectors(
           tabs: [{ id: "tab_home", convId: null }],
           activeTabId: "tab_home",
           composers: {},
-        }),
+        });
+      },
+
+      beginSwitch: (remoteId) => {
+        expectation = { orgId: remoteId };
+        get().actions.reset();
+      },
+
+      endSwitch: () => {
+        void get().actions.hydrate();
+      },
 
       hydrate: async () => {
+        const seq = ++hydrateSeq;
         try {
           const snapshot = await comms.snapshot();
-          set({
-            connection: snapshot.connection,
+          // Superseded while in flight: a newer hydrate owns the state now.
+          if (seq !== hydrateSeq) return;
+          // Not the org we are switching to — Rust has not been retargeted
+          // yet, or this snapshot is the OUTGOING org's. Applying it is how
+          // the panel used to show the previous org under the new org's name.
+          if (expectation && snapshot.connection.orgId !== expectation.orgId) return;
+          set((s) => ({
+            // A snapshot is a point-in-time read and can be older than the
+            // connection event that already said `open`: never let it walk an
+            // open socket back to `connecting`, which stranded the panel on a
+            // skeleton with no edge left to fire `retryUnloadedConversations`.
+            connection:
+              s.connection.state === "open" &&
+              snapshot.connection.state !== "open" &&
+              s.connection.orgId === snapshot.connection.orgId
+                ? s.connection
+                : snapshot.connection,
             me: snapshot.me ?? "",
             conversations: snapshot.conversations,
             calls: Object.fromEntries((snapshot.calls ?? []).map((c) => [c.id, c])),
             discoverable: snapshot.discoverable,
             reads: snapshot.reads,
             online: snapshot.online,
-          });
+          }));
           // Re-read every open tab: a resync means the transcripts we hold may
           // have gaps we cannot see from here.
           const tabs = get().tabs;
@@ -286,15 +348,21 @@ export const useCommsStore = createSelectors(
 
       applyEnvelope: (envelope) => {
         const state = get();
-        // An org mismatch is not a stale envelope to drop — Rust is the
-        // authority on where the socket points, and a mismatch means the
-        // target MOVED under us (boot reconciliation correcting a clobbered
-        // active org, or a switch settling). Every slice we hold belongs to
-        // the old org, so adopt the new one wholesale: reset and re-hydrate.
-        // (Genuinely stale events cannot reach here: retargeting bumps the
-        // generation in Rust, which silences the old supervisor first.)
+        // Once a switch has declared the org, anything else is a straggler
+        // from the org we left (or a socket Rust has not moved yet): DROP it.
+        // Adopting it — the branch below — re-pointed the store backwards and
+        // flapped it between orgs for as long as both kept talking.
+        if (envelope.org && expectation && envelope.org !== expectation.orgId) {
+          dropStraggler(envelope.org);
+          return;
+        }
+        // Before any switch, Rust is the only authority on where the socket
+        // points, and a mismatch means the target MOVED under us (boot
+        // reconciliation correcting a clobbered active org). Every slice we
+        // hold belongs to the old org, so adopt the new one wholesale: reset
+        // and re-hydrate.
         const currentOrg = state.connection.orgId;
-        if (envelope.org && currentOrg && envelope.org !== currentOrg) {
+        if (envelope.org && !expectation && currentOrg && envelope.org !== currentOrg) {
           closeOrgScopedTabs();
           set({
             ...serverOwned(),
@@ -639,9 +707,33 @@ export const useCommsStore = createSelectors(
           .map((a) => a.fileId as string);
         // Empty body is legal with an attachment, and only then.
         if (!body && ready.length === 0) return;
+        // No target at all (mid-switch, or a local-only org) or a terminal
+        // refusal: Rust cannot even queue this. `connecting`/`backoff` are
+        // fine — the send is held in Rust's pending map and replayed on
+        // reconnect. Keep the text; a message that cannot leave must not
+        // vanish from the composer.
+        const { state } = get().connection;
+        if (state === "disconnected" || state === "unavailable") {
+          toast.error("Chat isn't connected — try again in a moment.");
+          return;
+        }
         set((s) => ({ composers: { ...s.composers, [convId]: emptyComposer() } }));
         void comms.send(convId, body, composer.replyTo, ready).catch((e) => {
           console.warn("comms: send failed:", convId, e);
+          // Give the draft back exactly as it was, so a refused send costs
+          // a retry rather than a retype.
+          set((s) => ({
+            composers: {
+              ...s.composers,
+              [convId]: {
+                ...(s.composers[convId] ?? emptyComposer()),
+                draft: composer.draft,
+                replyTo: composer.replyTo,
+                attachments: composer.attachments,
+              },
+            },
+          }));
+          toast.error(sendFailureMessage(e));
         });
       },
 
@@ -873,6 +965,42 @@ function cancelConvRetry(convId: string): void {
     clearTimeout(t);
     convTimers.delete(convId);
   }
+}
+
+/** Every armed retry, for a reset that crosses organisations. */
+function cancelAllConvRetries(): void {
+  for (const t of convTimers.values()) clearTimeout(t);
+  convTimers.clear();
+  convAttempts.clear();
+}
+
+/** Test seam. */
+export function pendingConvRetriesForTests(): number {
+  return convTimers.size;
+}
+
+/** Log a dropped straggler once per org rather than once per frame — a
+ *  backfill from the outgoing org can be hundreds of envelopes. */
+const droppedOrgs = new Set<string>();
+function dropStraggler(org: string): void {
+  if (droppedOrgs.has(org)) return;
+  droppedOrgs.add(org);
+  console.warn("comms: dropping envelopes from a previous organisation:", org);
+}
+
+function sendFailureMessage(e: unknown): string {
+  if (typeof e === "string") {
+    // Rust's refusals arrive as a JSON `{code, message}` string; the message
+    // is the human half.
+    try {
+      const parsed = JSON.parse(e) as { message?: string };
+      if (parsed?.message) return parsed.message;
+    } catch {
+      /* not JSON — the string is the message */
+    }
+    return e;
+  }
+  return "Couldn't send that message.";
 }
 
 function loadConversation(

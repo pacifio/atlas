@@ -247,6 +247,13 @@ pub struct AuthCore {
     /// competing codes, and is what makes a second click *resume* rather than
     /// restart — the recovery path for someone who got lost mid-flow.
     pending: Mutex<Option<PendingGrant>>,
+    /// Serialises every read-modify-write of the credential file. The store
+    /// is disk-backed with no in-memory copy, so `set_active_org` (a switch)
+    /// and the tail of `refresh_identity` (a revalidate finishing) are both
+    /// load→save sequences on the same file; unguarded, a switch landing
+    /// between the refresh's re-read and its save was silently undone. Held
+    /// only across synchronous sections — never across an await.
+    file: Mutex<()>,
     /// First retry delay for [`Self::revalidate`]. A field only so tests can
     /// exercise the loop without sleeping through a real schedule; production
     /// always uses [`backoff::BASE`].
@@ -260,8 +267,16 @@ impl AuthCore {
             dir: dir.into(),
             http,
             pending: Mutex::new(None),
+            file: Mutex::new(()),
             backoff_base: backoff::BASE,
         }
+    }
+
+    /// The credential-file lock. Poisoning is irrelevant here — the guarded
+    /// sections hold no state of their own — so a poisoned lock is recovered
+    /// rather than propagated into every later sign-in.
+    fn file_guard(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.file.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Shrink the retry schedule so a test can drive the loop through several
@@ -284,21 +299,25 @@ impl AuthCore {
     }
 
     pub fn clear_session(&self) -> Result<(), String> {
+        let _guard = self.file_guard();
         store::clear(&self.dir)
     }
 
-    /// Write a freshly granted credential, deliberately with **no identity**.
+    /// Write a freshly granted credential, deliberately with **no identity**
+    /// and no pinned organisation.
     ///
     /// A new grant can be a different person, so carrying the old snapshot over
     /// would show one user another user's name until the profile call returned.
     /// [`Self::refresh_identity`] fills it in a moment later.
     fn persist(&self, session_token: &str) -> Result<(), String> {
+        let _guard = self.file_guard();
         store::save(
             &self.dir,
             &StoredSession {
                 session_token: session_token.to_string(),
                 saved_at: chrono::Utc::now().to_rfc3339(),
                 identity: None,
+                pinned_org: None,
             },
         )
     }
@@ -316,14 +335,23 @@ impl AuthCore {
         }
         match self.stored() {
             Some(session) => {
+                let pinned = session.pinned_org;
                 let identity = session.identity;
+                let resolved = identity.as_ref().and_then(StoredIdentity::active_org);
                 AuthSnapshot::SignedIn {
                     orgs: identity.as_ref().and_then(|i| {
                         i.orgs
                             .as_ref()
                             .map(|orgs| orgs.iter().cloned().map(Into::into).collect())
                     }),
-                    active_org_id: identity.as_ref().and_then(StoredIdentity::active_org),
+                    // Billing/display keep their documented fallback; the
+                    // socket gets the desktop's explicit choice, "none"
+                    // included, and only falls back while nothing is pinned.
+                    comms_org_id: match pinned {
+                        Some(pin) => pin.org_id,
+                        None => resolved.clone(),
+                    },
+                    active_org_id: resolved,
                     user: identity.map(Into::into),
                 }
             }
@@ -352,14 +380,23 @@ impl AuthCore {
     /// the first org). An id that is not in the org list is stored anyway and
     /// tolerated on the read side, same as the web's value — membership lists
     /// can lag.
+    ///
+    /// The choice is also PINNED at the session level (`None` included), which
+    /// is what the chat socket follows and what a later identity refresh
+    /// preserves. Pinning does not need the identity to exist yet — a switch
+    /// during the boot window used to fail with "no identity yet" and leave
+    /// the socket on whichever org the server listed first.
     pub fn set_active_org(&self, org_id: Option<String>) -> Result<(), String> {
+        let _guard = self.file_guard();
         let Some(mut session) = self.stored() else {
             return Err("not signed in".to_string());
         };
-        let Some(identity) = session.identity.as_mut() else {
-            return Err("no identity yet — try again in a moment".to_string());
-        };
-        identity.active_org_id = org_id;
+        session.pinned_org = Some(store::PinnedOrg {
+            org_id: org_id.clone(),
+        });
+        if let Some(identity) = session.identity.as_mut() {
+            identity.active_org_id = org_id;
+        }
         store::save(&self.dir, &session)
     }
 
@@ -518,9 +555,37 @@ impl AuthCore {
         // write below — a resurrected credential file would sign the user
         // straight back in on the next launch. A photo fetched into that gap
         // goes with it, since nothing will ever point at it again.
+        //
+        // The re-read and the save are ONE critical section under the file
+        // lock: a `set_active_org` landing between the two used to be
+        // overwritten by the save, which then re-pointed the socket at the
+        // org the user had just left.
+        let _guard = self.file_guard();
         let Some(current) = self.stored() else {
             avatar::discard(avatar.path.as_deref());
             return;
+        };
+
+        // The desktop's own choice survives the refresh. #73 made this field
+        // the organisation every gateway request bills, and `set_active_org`
+        // documents the independence: web and desktop each keep their own
+        // last choice. The server's value is therefore a *seed* for a session
+        // that has never chosen — never an override of one that has.
+        // Clobbering it here was what re-pointed the chat socket (and the
+        // billing header) at `orgs.first()` a few seconds after every launch,
+        // until the next manual org switch wrote it back.
+        //
+        // A pin wins outright, "none" included: with only the identity field
+        // to go on, an explicit "no organisation" (a local-only org) read as
+        // "never chose" and the web's seed came straight back on the next
+        // refresh — a retarget with no user action behind it.
+        let active_org_id = match &current.pinned_org {
+            Some(pin) => pin.org_id.clone(),
+            None => current
+                .identity
+                .as_ref()
+                .and_then(|i| i.active_org_id.clone())
+                .or(session.session.active_organization_id),
         };
 
         let _ = store::save(
@@ -533,24 +598,7 @@ impl AuthCore {
                     avatar_url: avatar.url,
                     avatar_path: avatar.path,
                     orgs,
-                    // The desktop's own choice survives the refresh. #73 made
-                    // this field the organisation every gateway request bills,
-                    // and `set_active_org` documents the independence: web and
-                    // desktop each keep their own last choice. The server's
-                    // value is therefore a *seed* for a session that has never
-                    // chosen — never an override of one that has. Clobbering it
-                    // here was what re-pointed the chat socket (and the billing
-                    // header) at `orgs.first()` a few seconds after every
-                    // launch, until the next manual org switch wrote it back.
-                    //
-                    // Read from `current` (re-fetched after the network work),
-                    // not `previous`: a `set_active_org` that landed during the
-                    // round trips above must not be undone by this write.
-                    active_org_id: current
-                        .identity
-                        .as_ref()
-                        .and_then(|i| i.active_org_id.clone())
-                        .or(session.session.active_organization_id),
+                    active_org_id,
                 }),
                 ..current
             },
@@ -1349,6 +1397,9 @@ impl AuthCore {
     /// (The JWT verifies statelessly against JWKS; revoking the session
     /// token does not invalidate it.)
     pub fn sign_out(&self) -> Option<RevocationTicket> {
+        // Under the file lock as one unit, so a refresh finishing right now
+        // cannot resurrect the credential between the read and the unlink.
+        let _guard = self.file_guard();
         let stored = self.stored();
         // Before the credential, not after: the identity is where the path to
         // the cached photo is recorded, so clearing the file first would leave
@@ -1356,7 +1407,7 @@ impl AuthCore {
         if let Some(identity) = stored.as_ref().and_then(|s| s.identity.as_ref()) {
             avatar::discard(identity.avatar_path.as_deref());
         }
-        let _ = self.clear_session();
+        let _ = store::clear(&self.dir);
         stored.map(|s| RevocationTicket(s.session_token))
     }
 

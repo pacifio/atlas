@@ -102,6 +102,13 @@ export interface SignedIn {
    * whenever `orgs` is empty or not yet known.
    */
   activeOrgId: string | null;
+  /**
+   * The organisation the team-chat socket follows. Unlike `activeOrgId` it
+   * honours an explicit desktop choice of "none" (a local-only org) and never
+   * falls back to list order once a choice has been made. Informational here:
+   * Rust retargets the socket from it directly.
+   */
+  commsOrgId: string | null;
 }
 
 export type AuthSnapshot = SignedOut | Connecting | SignedIn;

@@ -1,5 +1,46 @@
 import { describe, expect, it } from "vitest";
-import { modelSelectOf, parseConfigOptions } from "./acp-config-options";
+import { modeSelectOf, modelSelectOf, parseConfigOptions } from "./acp-config-options";
+
+describe("modeSelectOf", () => {
+  // The official Claude adapter's only live mode signal: `config_option_update`
+  // with `id: "mode"` (no category) — never `current_mode_update`.
+  it("reads the Claude adapter's id-keyed mode select", () => {
+    const got = modeSelectOf([
+      {
+        id: "mode",
+        name: "Mode",
+        type: "select",
+        currentValue: "auto",
+        options: [
+          { value: "default", name: "Manual" },
+          { value: "auto", name: "Auto" },
+        ],
+      },
+    ]);
+    expect(got?.currentMode).toBe("auto");
+    expect(got?.availableModes.map((m) => m.id)).toEqual(["default", "auto"]);
+  });
+
+  it("reads a category-keyed mode select and ignores other knobs", () => {
+    const got = modeSelectOf([
+      {
+        id: "thinking",
+        type: "select",
+        currentValue: "low",
+        options: [{ value: "low", name: "Low" }],
+      },
+      {
+        id: "approval",
+        category: "mode",
+        type: "select",
+        currentValue: "full",
+        options: [{ value: "full", name: "Full" }],
+      },
+    ]);
+    expect(got?.currentMode).toBe("full");
+    expect(modeSelectOf([{ id: "thinking", type: "boolean", currentValue: true }])).toBeNull();
+  });
+});
 
 describe("parseConfigOptions", () => {
   it("reads a boolean knob", () => {

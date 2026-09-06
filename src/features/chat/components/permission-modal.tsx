@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { Kbd } from "@/ui/kbd";
 import { Markdown } from "@/lib/markdown";
 import { extractPlanMarkdown } from "../lib/plans";
+import { exitPlanOffersBypass } from "../lib/exit-plan-modes";
 import { composeAnswers, extractQuestions } from "../lib/questions";
 import { ApprovalCard, type Answer } from "./approval-card";
 import type { PermissionOptionRef, PendingPermission } from "@/types/acp";
@@ -69,7 +70,7 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
     acpSessionId ? (s.pendingPermissions[acpSessionId]?.length ?? 0) : 0,
   );
   const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "cersei");
-  const popPermission = useChatStore.use.actions().popPermission;
+  const { popPermission, applyExitPlanSelection } = useChatStore.use.actions();
 
   const [draft, setDraft] = useState("");
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -89,6 +90,13 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
     const send = (decision: Parameters<typeof agents.respondPermission>[3]) => {
       agents
         .respondPermission(current.agentId, current.acpSessionId, current.requestId, decision)
+        .then(() => {
+          // A plan approval picks a mode the adapter applies silently — see
+          // `exit-plan-modes.ts`. Mirror it, or the pill lies from here on.
+          if (decision.kind === "selected" && extractPlanMarkdown(current.toolCall)) {
+            applyExitPlanSelection(tabId, decision.option_id);
+          }
+        })
         .catch((e) => toast.error(`Permission send failed: ${e}`))
         .finally(() => popPermission(current.acpSessionId, current.requestId));
     };
@@ -119,15 +127,22 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [current, primaryId, popPermission]);
+  }, [current, primaryId, popPermission, applyExitPlanSelection, tabId]);
 
   if (!current) return null;
 
-  const resolve = (optId: string) => {
+  /** Answer with an option; for a plan approval also adopt the mode it
+   *  selects (`override` = the mode Atlas's own "approve and bypass" action
+   *  applies on top of the plain approval). */
+  const resolve = (optId: string, override?: "bypassPermissions") => {
+    const isPlan = !!extractPlanMarkdown(current.toolCall);
     agents
       .respondPermission(current.agentId, current.acpSessionId, current.requestId, {
         kind: "selected",
         option_id: optId,
+      })
+      .then(() => {
+        if (isPlan) applyExitPlanSelection(tabId, optId, override);
       })
       .catch((e) => toast.error(`Permission send failed: ${e}`))
       .finally(() => popPermission(current.acpSessionId, current.requestId));
@@ -198,6 +213,20 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
 
   // Plan review keeps the richer two-panel modal (with number-key support from
   // the keyboard effect above).
+  //
+  // The Claude adapter offers ONE elevated approval, and on a model that
+  // supports auto mode that is "use auto mode" — which still prompts for risky
+  // tools — with no bypass choice at all. Bypass is still in the session's
+  // advertised modes, only the prompt omits it, so Atlas adds the action back:
+  // approve plainly, then push `bypassPermissions`.
+  const bypassOptionId =
+    agentType === "claude-code" &&
+    planMarkdown &&
+    !exitPlanOffersBypass(current.options.map((o) => o.optionId))
+      ? (current.options.find((o) => o.optionId === "exit-plan-default")?.optionId ??
+        current.options.find((o) => isAllow(o.kind))?.optionId ??
+        null)
+      : null;
   if (planMarkdown) {
     return (
       <Dialog.Root open onOpenChange={(open) => !open && cancel()}>
@@ -235,7 +264,27 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
                 </div>
               </section>
               <aside className="flex w-[320px] shrink-0 flex-col border-l border-border-default">
-                <div className="min-h-0 min-w-0 flex-1 overflow-auto px-4 py-3">{optionList}</div>
+                <div className="min-h-0 min-w-0 flex-1 overflow-auto px-4 py-3">
+                  {optionList}
+                  {bypassOptionId && (
+                    <button
+                      type="button"
+                      onClick={() => resolve(bypassOptionId, "bypassPermissions")}
+                      className={cn(
+                        "mt-2 flex w-full items-center gap-2 rounded-md border border-border-default px-2.5 py-2 text-left",
+                        "text-[12px] text-text-primary transition-colors hover:bg-bg-base",
+                      )}
+                    >
+                      <AlertTriangle className="size-3.5 shrink-0 text-[var(--status-error)]" />
+                      <span className="flex-1">
+                        Yes, and bypass permissions
+                        <span className="block text-[11px] text-text-secondary">
+                          Approve the plan and stop asking for the rest of this session.
+                        </span>
+                      </span>
+                    </button>
+                  )}
+                </div>
                 <div className="flex items-center justify-end gap-2 border-t border-border-default px-4 py-2.5">
                   <button
                     type="button"

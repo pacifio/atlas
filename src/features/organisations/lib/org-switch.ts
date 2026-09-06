@@ -4,6 +4,8 @@ import { flushAll } from "@/features/workspaces/lib/flush-registry";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 import { resetGitSummariesForOrgSwitch } from "@/features/workspaces/stores/workspace-git-store";
 import { commsActions } from "@/features/comms/stores/comms-store";
+import { comms } from "@/features/comms/lib/comms-api";
+import { markOrgReconciled } from "./org-reconciliation";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useSpacesStore } from "@/features/spaces/stores/spaces-store";
 import { ORG_SCOPED_TYPES } from "@/lib/constants";
@@ -49,6 +51,9 @@ export async function switchOrg(id: string): Promise<void> {
   if (!target) return;
 
   switchingOrg = true;
+  // From here on the desktop's choice is pushed by THIS path; the boot
+  // reconciliation must not fire a competing, unordered push after it.
+  markOrgReconciled();
 
   // Running agents die with the outgoing org's teardown — never silently.
   // Warn first (before the overlay, so the dialog is readable); "Go back"
@@ -120,12 +125,17 @@ export async function switchOrg(id: string): Promise<void> {
     //    sidebar rows re-validate instead of rendering cached-forever data.
     resetGitSummariesForOrgSwitch();
 
-    //    Close the team-chat socket and drop its projection. There is no
-    //    matching "open" below: step 4's awaited `auth_set_active_org` triggers
-    //    the auth broadcast, and Rust re-points the socket from there — so
-    //    every other path that changes the active org is correct for free.
+    //    Tell the comms store which org is coming BEFORE the socket goes
+    //    down: from this point it drops stragglers from the outgoing org and
+    //    ignores any snapshot that is not the incoming org's. Then close the
+    //    team-chat socket (Rust forgets the target, so the reopen below is
+    //    always a change). There is no matching "open" here: step 4's awaited
+    //    `auth_set_active_org` triggers the auth broadcast, and Rust re-points
+    //    the socket from there — so every other path that changes the active
+    //    org is correct for free.
+    const incomingRemoteId = target.remoteId ?? null;
+    commsActions().beginSwitch(incomingRemoteId);
     await invoke("comms_disconnect").catch(() => {});
-    commsActions().reset();
 
     // 4) Make the org swap authoritative. `setActiveOrganisation` also
     //    re-points analytics attribution (see `syncOrgTelemetry`), so events
@@ -137,16 +147,30 @@ export async function switchOrg(id: string): Promise<void> {
     //    switch keeps billing — and entitlement-checking — the previous org,
     //    which is how an unentitled org appeared to work. Awaited, so the
     //    first message sent in the new org cannot race the write. A
-    //    local-only org (no remoteId) clears the choice: attribution falls
-    //    back the way the auth store documents (web-set value, else first
-    //    server org).
-    try {
-      await invoke("auth_set_active_org", { orgId: target.remoteId ?? null });
-    } catch (err) {
-      // Signed out (nothing to bill) or transient — the switch itself must
-      // not be aborted over attribution; the next sign-in rewrites it.
-      console.warn("auth_set_active_org failed:", err);
+    //    local-only org (no remoteId) pins "none": billing falls back the way
+    //    the auth store documents, and the chat socket stays closed.
+    //
+    //    Retried once, and loud on failure: with the renderer already on the
+    //    new org and Rust still on the old one, every chat envelope would be
+    //    a straggler and the panel would sit empty with no explanation.
+    let pushed = false;
+    for (let attempt = 0; attempt < 2 && !pushed; attempt += 1) {
+      try {
+        await invoke("auth_set_active_org", { orgId: incomingRemoteId });
+        pushed = true;
+      } catch (err) {
+        console.warn("auth_set_active_org failed:", err);
+      }
     }
+    if (!pushed) {
+      toast.error("Couldn't switch team chat to this organisation. Switch away and back to retry.");
+    }
+    //    Rust has (re)targeted synchronously inside that command: pull the
+    //    incoming org's disk-painted snapshot now, and ask Rust to re-announce
+    //    so the connection state lands even if the socket opened before the
+    //    listener drained.
+    commsActions().endSwitch();
+    void comms.ready().catch(() => {});
 
     //    Re-scope the activity console the same way: drop the outgoing org's
     //    buffered entries and load the incoming org's pins. Without this the

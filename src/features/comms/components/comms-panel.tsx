@@ -69,12 +69,21 @@ export function CommsPanel() {
   }, [remoteId, signedIn, loadMembers]);
 
   // Self-heal a missed resync: hydrate on mount and on every reopen of the
-  // socket. Safe to repeat, and `mergeWindow` makes it clobber-proof — the
-  // panel no longer depends on the one boot-time `comms_ready` announcement
-  // having landed while we were listening.
+  // socket. Safe to repeat — `mergeWindow` makes windows clobber-proof and
+  // `hydrate` itself discards a snapshot that is stale or belongs to another
+  // org — so the panel no longer depends on the one boot-time `comms_ready`
+  // announcement having landed while we were listening.
+  //
+  // Only the OPENING edge of the socket re-hydrates. This effect used to run
+  // on both edges, and the closing one fired at the exact moment an org
+  // switch reset the store — before Rust had been retargeted — so it
+  // snapshotted the OUTGOING org and wrote it wholesale over the reset.
   const socketOpen = connection.state === "open";
   useEffect(() => {
     if (connected) void actions.hydrate();
+  }, [connected, actions]);
+  useEffect(() => {
+    if (connected && socketOpen) void actions.hydrate();
   }, [connected, socketOpen, actions]);
 
   useEffect(() => {

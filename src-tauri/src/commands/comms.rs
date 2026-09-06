@@ -170,9 +170,13 @@ pub fn retarget(app: &AppHandle, snapshot: &crate::auth::AuthSnapshot) {
         target: "atlas_comms::bridge",
         "retarget from auth snapshot: {}",
         match snapshot {
-            crate::auth::AuthSnapshot::SignedIn { active_org_id, orgs, .. } => format!(
-                "signed-in active_org={:?} orgs_known={}",
+            crate::auth::AuthSnapshot::SignedIn {
                 active_org_id,
+                comms_org_id,
+                orgs,
+                ..
+            } => format!(
+                "signed-in active_org={active_org_id:?} comms_org={comms_org_id:?} orgs_known={}",
                 orgs.is_some()
             ),
             crate::auth::AuthSnapshot::Connecting { .. } => "connecting".into(),
@@ -180,13 +184,21 @@ pub fn retarget(app: &AppHandle, snapshot: &crate::auth::AuthSnapshot) {
         }
     );
     let target = match snapshot {
-        crate::auth::AuthSnapshot::SignedIn { active_org_id, .. } => active_org_id
-            .as_ref()
-            .map(|org_id| OrgTarget {
-                org_id: org_id.clone(),
-            }),
-        // Signed out, or mid-grant: there is no credential to dial with.
-        _ => None,
+        // `comms_org_id`, NOT `active_org_id`: the latter is the billing /
+        // display value and falls back to the account's first organisation
+        // when the desktop has chosen none. For the socket, "none" means
+        // none — a local-only org has nothing to dial — and the desktop's
+        // explicit choice must never be replaced by list order.
+        crate::auth::AuthSnapshot::SignedIn { comms_org_id, .. } => {
+            comms_org_id.clone().map(|org_id| OrgTarget { org_id })
+        }
+        // Signed out: there is no credential to dial with.
+        crate::auth::AuthSnapshot::SignedOut => None,
+        // A grant in flight says nothing about the organisation. Tearing the
+        // socket down here (as this used to) meant opening the sign-in dialog
+        // while already signed in killed chat; the `SignedIn` broadcast when
+        // the grant settles is the transition that matters.
+        crate::auth::AuthSnapshot::Connecting { .. } => return,
     };
     // A Space socket is only valid for the org it was opened under. On any org
     // change (or sign-out) they all die; the tabs redial on their own when the
@@ -208,6 +220,18 @@ pub(crate) fn manager(app: &AppHandle) -> Result<CommsManager, String> {
 
 pub(crate) fn org(mgr: &CommsManager) -> Result<String, String> {
     mgr.org_id()
+        .ok_or_else(|| "no organisation is connected".to_string())
+}
+
+/// The error a command answers when the socket moved to another organisation
+/// between its REST round trip and its adopt. The renderer treats it like any
+/// other transient: the retry runs against whatever org is current by then.
+const ORG_CHANGED: &str = "organisation changed";
+
+/// For commands that await and then ADOPT into state — `org()` is enough for a
+/// pure REST passthrough, but an adopt needs the generation too.
+pub(crate) fn session(mgr: &CommsManager) -> Result<atlas_comms::Session, String> {
+    mgr.session()
         .ok_or_else(|| "no organisation is connected".to_string())
 }
 
@@ -285,14 +309,10 @@ pub fn comms_status(app: AppHandle) -> Result<ConnectionInfoDto, String> {
 #[tauri::command(async)]
 pub fn comms_snapshot(app: AppHandle) -> Result<CommsSnapshot, String> {
     let mgr = manager(&app)?;
-    let info = mgr.connection();
-    tracing::debug!(
-        target: "atlas_comms::bridge",
-        "snapshot requested: state={:?} conversations={}",
-        info.state,
-        mgr.with_state(|s| s.conversations.len())
-    );
-    Ok(mgr.with_state(|state| CommsSnapshot {
+    // One critical section for connection AND lists: read separately, a
+    // snapshot taken mid-retarget paired one org's connection with another
+    // org's conversations.
+    let snapshot = mgr.with_snapshot(|info, state| CommsSnapshot {
         connection: ConnectionInfoDto {
             state: info.state,
             reason: info.reason,
@@ -305,7 +325,15 @@ pub fn comms_snapshot(app: AppHandle) -> Result<CommsSnapshot, String> {
         reads: state.reads.values().cloned().collect(),
         online: state.online.clone(),
         calls: state.calls.values().cloned().collect(),
-    }))
+    });
+    tracing::debug!(
+        target: "atlas_comms::bridge",
+        "snapshot requested: state={:?} org={:?} conversations={}",
+        snapshot.connection.state,
+        snapshot.connection.org_id,
+        snapshot.conversations.len()
+    );
+    Ok(snapshot)
 }
 
 /// Register a conversation as open and return its tail.
@@ -318,8 +346,12 @@ pub async fn comms_open_conversation(
     conv_id: String,
 ) -> Result<ConversationWindow, String> {
     let mgr = manager(&app)?;
-    let org_id = org(&mgr)?;
-    mgr.open_window(&conv_id);
+    // Captured BEFORE the round trips below and handed to every adopt: if the
+    // socket moves to another organisation while a page is in flight, the
+    // adopt refuses rather than filing org A's transcript under org B.
+    let session = session(&mgr)?;
+    let org_id = session.org_id.clone();
+    mgr.open_window(&session, &conv_id);
 
     // Gate on "have we fetched this conversation's HISTORY", never on "do we
     // hold any messages for it". A resume replay hands back the events that
@@ -349,11 +381,17 @@ pub async fn comms_open_conversation(
             page.messages.len(),
             page.reactions.len()
         );
-        mgr.adopt_page(&conv_id, page.messages, false);
-        mgr.adopt_reactions(page.reactions);
-        mgr.mark_hydrated(&conv_id);
+        if !mgr.adopt_page(&session, &conv_id, page.messages, false) {
+            return Err(ORG_CHANGED.into());
+        }
+        mgr.adopt_reactions(&session, page.reactions);
+        mgr.mark_hydrated(&session, &conv_id);
         if let Ok(pins) = mgr.rest().pins(&org_id, &conv_id).await {
-            mgr.adopt_pins(&conv_id, pins.pins.iter().map(|p| p.message_id.clone()).collect());
+            mgr.adopt_pins(
+                &session,
+                &conv_id,
+                pins.pins.iter().map(|p| p.message_id.clone()).collect(),
+            );
         }
         // Call history rides the same hydration: REST is its only cold source
         // (ATL-208) — a watermark at the live edge replays no `call.*` frames.
@@ -365,7 +403,7 @@ pub async fn comms_open_conversation(
                     "open_conversation {conv_id}: fetched {} calls",
                     list.calls.len()
                 );
-                mgr.adopt_calls(list.calls);
+                mgr.adopt_calls(&session, list.calls);
             }
             Err(e) => {
                 tracing::warn!(target: "atlas_comms::bridge", "open_conversation {conv_id}: calls fetch failed: {e}");
@@ -428,15 +466,22 @@ pub async fn comms_load_older(
     limit: Option<u32>,
 ) -> Result<MessagePageDto, String> {
     let mgr = manager(&app)?;
-    let org_id = org(&mgr)?;
+    let session = session(&mgr)?;
     let page = mgr
         .rest()
-        .messages(&org_id, &conv_id, Some(before_seq), limit.unwrap_or(50).min(200))
+        .messages(
+            &session.org_id,
+            &conv_id,
+            Some(before_seq),
+            limit.unwrap_or(50).min(200),
+        )
         .await
         .map_err(map_err)?;
     let has_more = page.has_more;
-    mgr.adopt_page(&conv_id, page.messages.clone(), true);
-    mgr.adopt_reactions(page.reactions);
+    if !mgr.adopt_page(&session, &conv_id, page.messages.clone(), true) {
+        return Err(ORG_CHANGED.into());
+    }
+    mgr.adopt_reactions(&session, page.reactions);
     Ok(MessagePageDto {
         messages: page
             .messages
@@ -527,7 +572,9 @@ pub fn comms_send(
         return Err("nothing to send".into());
     }
     Ok(SendReceipt {
-        client_msg_id: mgr.send(&conv_id, body, reply_to_id, attachments),
+        client_msg_id: mgr
+            .send(&conv_id, body, reply_to_id, attachments)
+            .map_err(map_err)?,
     })
 }
 
@@ -805,8 +852,11 @@ pub fn comms_reconnect(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Close the socket for an org switch. The reopen comes from the auth
-/// broadcast that `auth_set_active_org` triggers a moment later.
+/// Close the socket for an org switch, forgetting the target. The reopen comes
+/// from the auth broadcast that `auth_set_active_org` triggers a moment later,
+/// and because the target is forgotten here that reopen is always a change —
+/// never the "unchanged, no-op" that used to leave chat dead when the switch
+/// resolved to the org the socket was already on.
 #[tauri::command]
 pub fn comms_disconnect(app: AppHandle) -> Result<(), String> {
     manager(&app)?.disconnect();

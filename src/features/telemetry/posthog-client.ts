@@ -100,6 +100,13 @@ export async function initTelemetry(): Promise<void> {
       disable_session_recording: true,
       opt_out_capturing_by_default: true,
       persistence: "localStorage",
+      // No feature flags, and — per the SDK docs — no remote config either.
+      // Remote config is a <script> from us-assets.i.posthog.com with a fetch
+      // fallback; the production CSP (script-src 'self', connect-src pinned to
+      // the ingest host) refuses both, so in a packaged build every launch
+      // logged two CSP violations for a feature this crash-only client never
+      // used. Dev never showed it: Tauri applies no CSP to the Vite dev URL.
+      advanced_disable_flags: true,
     });
     started = true;
     setEnabled(cfg.enabled);
