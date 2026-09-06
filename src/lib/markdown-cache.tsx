@@ -11,8 +11,9 @@
 // synchronously on the main thread — they're cheap and avoid a paint flash.
 // If the worker can't start, we fall back to the previous gated-idle parse.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { isTypingHot } from "./input-activity";
+import { applyHtml, escapeHtml } from "./dom-html";
 import MarkdownWorker from "./markdown.worker?worker";
 import "highlight.js/styles/github-dark.css";
 import { cn } from "./utils";
@@ -422,6 +423,59 @@ function pumpTransient(w: Worker): void {
   }
 }
 
+// ── Last-good tail HTML ────────────────────────────────────────────────────
+//
+// The transient lane never caches (per-frame partials would evict the settled
+// blocks the LRU exists to protect). That left one visible seam: the frame a
+// block STOPS being the tail. It re-renders through `CachedMarkdown` with a
+// source nothing has parsed yet, so a large block fell back to its raw-source
+// placeholder — the paragraph the reader was reading turned back into literal
+// markdown for a worker round-trip, then snapped to formatted again.
+//
+// This is not a cache; it is the last few tail renders, consulted ONLY as
+// something to show while the real parse runs. A hit is html for a PREFIX of
+// the requested source, so at worst the reader sees the same block a few words
+// short for one frame instead of a flash of raw asterisks.
+
+interface Stashed {
+  source: string;
+  html: string;
+}
+/** Small: a couple of live streams (split view) plus their immediate history. */
+const STASH_MAX = 4;
+const stash: Stashed[] = [];
+
+/** Record the html a streaming tail is currently showing, keyed by its RAW
+ *  source (not the repaired copy that was parsed — the settled block will ask
+ *  with the raw text). */
+export function noteTailHtml(source: string, html: string): void {
+  if (!source || !html) return;
+  const at = stash.findIndex((s) => s.source === source);
+  if (at >= 0) {
+    stash[at].html = html;
+    return;
+  }
+  stash.push({ source, html });
+  if (stash.length > STASH_MAX) stash.shift();
+}
+
+/** How much of the requested source a stash entry must cover to stand in for
+ *  it. A near-complete tail is the same paragraph a few words short; a quarter
+ *  of one is a different-sized block, and swapping THAT in would trade a text
+ *  flash for a height jump. */
+const FALLBACK_COVERAGE = 0.75;
+
+/** Formatted html to show while `source` parses, or null. */
+export function tailFallback(source: string): string | null {
+  for (let i = stash.length - 1; i >= 0; i--) {
+    const s = stash[i];
+    if (s.source.length > source.length) continue;
+    if (s.source.length < source.length * FALLBACK_COVERAGE) continue;
+    if (source.startsWith(s.source)) return s.html;
+  }
+  return null;
+}
+
 interface CachedMarkdownProps {
   source: string;
   className?: string;
@@ -447,11 +501,11 @@ interface CachedMarkdownProps {
 }
 
 /**
- * Drop-in replacement for `<Markdown>` in the chat thread. Renders the
- * cached HTML via `dangerouslySetInnerHTML`, so scroll-back remounts
- * don't re-parse markdown or re-run highlight.js. Large strings defer
- * the first parse to a `requestIdleCallback` so initial mount paint
- * isn't blocked; subsequent remounts hit the cache and skip the deferral.
+ * Drop-in replacement for `<Markdown>` in the chat thread. Writes the cached
+ * HTML into the DOM directly (see `applyHtml`), so scroll-back remounts don't
+ * re-parse markdown or re-run highlight.js. Large strings defer the first parse
+ * to the worker so initial mount paint isn't blocked; subsequent remounts hit
+ * the cache and skip the deferral.
  */
 export function CachedMarkdown({ source, className, unstyled, priority = 0 }: CachedMarkdownProps) {
   const [html, setHtml] = useState<string | null>(() => {
@@ -499,6 +553,37 @@ export function CachedMarkdown({ source, className, unstyled, priority = 0 }: Ca
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, priority]);
 
+  const cls = cn(
+    unstyled
+      ? "select-text"
+      : "prose-chat text-[var(--text-primary)] leading-relaxed break-words select-text",
+    className,
+  );
+
+  // What to show while the real parse is in flight, in order of preference:
+  //
+  //  1. The html the STREAMING TAIL was showing a moment ago (`tailFallback`).
+  //     This is the settle seam — the block just stopped being the tail, so its
+  //     final source has never been parsed. Showing formatted text that is a
+  //     few words short for one frame is invisible; falling back to raw
+  //     markdown here is the flash that made every long paragraph blink at the
+  //     end of a stream.
+  //  2. The RAW SOURCE, escaped, at the same size as the formatted result.
+  //     Rendering nothing gives an element of ZERO height, so a screen's worth
+  //     of unparsed messages collapses the document — in the windowed
+  //     transcript that was the whole viewport going blank at the moment the
+  //     window grew, until the worker replied. Unformatted beats absent.
+  const shown =
+    html ?? tailFallback(source) ?? `<pre class="atlas-md-pending">${escapeHtml(source)}</pre>`;
+
+  // Children are written imperatively rather than through
+  // `dangerouslySetInnerHTML` so an UPDATE is a diff, not a teardown — see
+  // `applyHtml`. React owns the element; it never owns what is inside it.
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (node) applyHtml(node, shown);
+  }, [shown]);
+
   // One delegated click handler: copy-code buttons + safe external links.
   useEffect(() => {
     const node = ref.current;
@@ -537,7 +622,11 @@ export function CachedMarkdown({ source, className, unstyled, priority = 0 }: Ca
     const node = ref.current;
     if (!node) return;
     node.querySelectorAll("pre").forEach((pre) => {
-      if ((pre as HTMLElement).dataset.enhanced) return;
+      // Both guards on purpose: the flag is the cheap check, the bar itself is
+      // the truth. `applyHtml` patches in place, so a `<pre>` can survive a
+      // re-render with its bar attached but without the flag.
+      if ((pre as HTMLElement).dataset.enhanced || pre.querySelector(":scope > .atlas-code-bar"))
+        return;
       (pre as HTMLElement).dataset.enhanced = "1";
       const code = pre.querySelector("code");
       const lang = Array.from(code?.classList ?? [])
@@ -559,41 +648,7 @@ export function CachedMarkdown({ source, className, unstyled, priority = 0 }: Ca
       bar.appendChild(btn);
       pre.appendChild(bar);
     });
-  }, [html]);
+  }, [shown]);
 
-  const cls = cn(
-    unstyled
-      ? "select-text"
-      : "prose-chat text-[var(--text-primary)] leading-relaxed break-words select-text",
-    className,
-  );
-
-  // Not yet parsed (a large block waiting on the worker) — render the RAW
-  // SOURCE rather than nothing.
-  //
-  // This matters far more than it looks. Rendering `__html: ""` gives an empty
-  // element of ZERO height, so a screen's worth of unparsed messages collapses
-  // the document to nothing; in the windowed transcript that showed up as the
-  // whole viewport going blank at the moment the window grew, and it persisted
-  // until the worker replied — up to the 3s watchdog if the worker was cold.
-  //
-  // The placeholder is the same text at the same size, so the height is about
-  // right and the reader can read it immediately; it swaps to formatted HTML
-  // when the parse lands. Unformatted beats absent, exactly as with rows.
-  if (html === null) {
-    return (
-      <div ref={ref} className={cls}>
-        <pre className="atlas-md-pending">{source}</pre>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      ref={ref}
-      className={cls}
-      // eslint-disable-next-line react/no-danger
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  );
+  return <div ref={ref} className={cls} />;
 }

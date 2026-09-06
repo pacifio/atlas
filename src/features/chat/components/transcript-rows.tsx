@@ -13,7 +13,7 @@
 //  3. Rows never subscribe to the chat store or the detail-panel store. Data
 //     arrives as props; actions are fired imperatively via `getState()`.
 
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import {
   Check,
   X,
@@ -161,6 +161,20 @@ export const ProseRowView = memo(function ProseRowView({
   /** Position in the thread — newest parses first. See `CachedMarkdown`. */
   priority: number;
 }) {
+  // A row that streamed keeps the block-split renderer for the rest of its
+  // life, even once the turn is over.
+  //
+  // Switching back to the whole-message renderer at settle re-parsed the ENTIRE
+  // answer under a source nothing had cached, and swapped the DOM for a
+  // different component while it did — so the finished message flashed back to
+  // raw markdown for a worker round-trip. Staying on the block renderer keeps
+  // the same elements in place and every settled block is already a cache hit,
+  // so the end of a turn changes nothing on screen. Rows loaded from history
+  // never took this path and still render as one cached document.
+  const everStreamed = useRef(false);
+  if (row.streaming) everStreamed.current = true;
+  const streamed = everStreamed.current;
+
   return (
     <Column className="py-2">
       {/* Identity on the left (glyph + which model wrote this), timestamp
@@ -189,15 +203,15 @@ export const ProseRowView = memo(function ProseRowView({
           </span>
         </div>
       )}
-      {/* Settled prose goes through the plain cached renderer: its root IS
+      {/* History goes through the plain cached renderer: its root IS
           `.atlas-prose`, so the block metrics apply to real block elements and
-          a scrolled-back message is a pure cache hit. The streaming tail uses
-          the block-splitting renderer, where only the trailing block re-parses
-          per frame. */}
-      {row.streaming ? (
+          a scrolled-back message is a pure cache hit. Anything that streamed in
+          this session uses the block-splitting renderer, where only the
+          trailing block re-parses per frame. */}
+      {streamed ? (
         <StreamingMarkdown
           source={row.text}
-          streaming
+          streaming={row.streaming}
           unstyled
           priority={priority}
           className="atlas-prose"
