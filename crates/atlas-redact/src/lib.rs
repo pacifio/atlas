@@ -213,11 +213,12 @@ pub(crate) fn redact_link(input: &str) -> Redacted {
 /// Redact a payload whose shape is unknown — the right call for tool arguments
 /// and tool results, which are JSON-shaped most of the time but not always.
 ///
-/// If the trimmed input parses as a JSON object or array it is routed through
-/// [`redact_json`], so ids, paths and field names survive, and comes back
-/// serialised compactly. Anything else — prose, logs, a fragment that does not
-/// parse — goes through the flat [`redact`] pass. The counts are whichever
-/// path produced them; nothing is dropped in the dispatch.
+/// If the trimmed input parses as a JSON object or array, or is JSONL with one
+/// such value per line, it is routed through [`redact_json`], so ids, paths and
+/// field names survive, and comes back serialised compactly. Anything else —
+/// prose, logs, a fragment that does not parse — goes through the flat
+/// [`redact`] pass. The counts are whichever path produced them; nothing is
+/// dropped in the dispatch.
 pub fn redact_auto(input: &str) -> Redacted {
     let trimmed = input.trim();
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
@@ -226,8 +227,45 @@ pub fn redact_auto(input: &str) -> Redacted {
                 return redact_json(trimmed);
             }
         }
+        // JSONL parses as no single value, so the check above declines it and
+        // the flat pass gets a document it was never meant to see. `redact_json`
+        // has always walked this shape; only the dispatch could not name it.
+        if is_jsonl(trimmed) {
+            return redact_json(trimmed);
+        }
     }
     redact(input)
+}
+
+/// Is this input JSONL: two or more lines, each its own JSON object or array?
+///
+/// An ndjson tool result, `jq -c` output, a transcript read a line at a time.
+/// The shape is JSON but it parses as no single value, so [`redact_auto`]'s
+/// whole-input check declined it and the flat pass ran over a document: every
+/// id cleared the entropy threshold and was replaced, the tally counted one
+/// per line instead of one per secret, and a span that ran past a JSON escape
+/// left a line that no longer parses.
+///
+/// Deliberately strict, in that every non-empty line must parse, so a prose
+/// payload that merely opens with a brace still takes the flat path. Lines are
+/// split the way [`redact_json`] splits them, and the first line that does not
+/// parse ends the scan, so the cost on a non-JSONL payload is one line rather
+/// than the whole input.
+fn is_jsonl(trimmed: &str) -> bool {
+    if !trimmed.contains('\n') {
+        return false;
+    }
+    let mut lines = 0usize;
+    for line in trimmed.split('\n') {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(value) if value.is_object() || value.is_array() => lines += 1,
+            _ => return false,
+        }
+    }
+    lines > 1
 }
 
 /// Redact bytes, or decline if they are not text.
