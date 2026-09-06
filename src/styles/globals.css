@@ -985,10 +985,44 @@
   animation: atlas-blink 1s steps(1, end) infinite;
 }
 
+/* …and the same caret drawn from the tail block itself.
+
+   It used to be a real `<span>` appended after the last block. Block elements
+   are not inline siblings, so it landed on a line of ITS OWN below the text —
+   a caret that hung under the paragraph, and one line of extra height that
+   appeared and vanished as blocks settled. Generated content on the tail's last
+   element puts it where a cursor belongs: immediately after the final
+   character. Containers that would swallow it (lists, quotes) hand it to their
+   own last child instead; `pre` opts out because an open fence draws its own. */
+.atlas-stream-tail > :last-child:not(ul):not(ol):not(blockquote):not(pre):not(table)::after,
+.atlas-stream-tail > ul:last-child > li:last-child::after,
+.atlas-stream-tail > ol:last-child > li:last-child::after,
+.atlas-stream-tail > blockquote:last-child > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent-primary);
+  border-radius: 1px;
+  animation: atlas-blink 1s steps(1, end) infinite;
+}
+
+/* Block wrappers for the split streaming render — see `streaming-markdown.tsx`.
+   `display: contents` keeps N containers out of layout entirely. */
+.atlas-md-block {
+  display: contents;
+}
+
 /* Respect the OS "reduce motion" setting — hold the caret steady and
    neutralize our entrance/blink animations (keep their end state). */
 @media (prefers-reduced-motion: reduce) {
-  .atlas-stream-caret {
+  .atlas-stream-caret,
+  .atlas-stream-tail > :last-child::after,
+  .atlas-stream-tail > ul:last-child > li:last-child::after,
+  .atlas-stream-tail > ol:last-child > li:last-child::after,
+  .atlas-stream-tail > blockquote:last-child > :last-child::after {
     animation: none;
   }
   .atlas-pill-in,
@@ -1490,6 +1524,23 @@
   margin: 12px 0 0;
 }
 .atlas-prose > :first-child {
+  margin-top: 0;
+}
+
+/* Streaming render: the message is split into top-level blocks, each wrapped in
+   a `display: contents` container so the block elements stay layout-siblings.
+   The wrapper is invisible to layout but NOT to selectors, so the child
+   combinator above lands on the wrapper (which has no box, so its margin is
+   dropped) instead of on the paragraph.
+
+   Without these two rules the inter-block gap was 0 while a message streamed
+   and 12px the instant it settled — every answer visibly re-flowed as it
+   finished. They restore the same rhythm one level deeper, so streaming and
+   settled prose are pixel-identical. */
+.atlas-prose > .atlas-md-block > * {
+  margin: 12px 0 0;
+}
+.atlas-prose > .atlas-md-block:first-child > :first-child {
   margin-top: 0;
 }
 
