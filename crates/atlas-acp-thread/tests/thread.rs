@@ -530,13 +530,13 @@ async fn a_superseded_turn_cannot_close_the_turn_that_replaced_it() {
     assert_ne!(first, second, "each turn gets its own id");
 
     assert!(
-        !thread.end_turn_if_current(first, acp::StopReason::Cancelled),
+        !thread.end_turn_unless_superseded(first, acp::StopReason::Cancelled),
         "the superseded turn closes nothing"
     );
     assert!(thread.is_generating(), "the live turn is still running");
 
     assert!(
-        thread.end_turn_if_current(second, acp::StopReason::EndTurn),
+        thread.end_turn_unless_superseded(second, acp::StopReason::EndTurn),
         "and the live turn closes its own"
     );
     assert!(!thread.is_generating());
@@ -551,22 +551,42 @@ async fn a_superseded_turns_error_does_not_mark_the_live_turn() {
     let first = thread.begin_turn();
     thread.begin_turn();
 
-    assert!(!thread.set_error_if_current(first));
+    assert!(!thread.set_error_unless_superseded(first));
     assert!(thread.is_generating(), "the live turn survives it");
     assert!(!thread.had_error(), "and is not marked as having failed");
 }
 
-/// A turn that ends twice — a late duplicate response — must not reopen or
-/// re-announce anything either.
+/// The guard is "no other turn is running", not "this turn is running", and
+/// this is why. `cancel()` clears `running_turn` before the agent answers, so
+/// the prompt returns `Cancelled` into a thread with no turn open. A stricter
+/// guard would swallow the only `Stopped` a cancelled turn ever emits — and
+/// `Stopped` is what produces `TurnFinished` on the wire, which is what flushes
+/// analytics, the transcript and the turn's token usage.
 #[tokio::test]
-async fn closing_a_turn_twice_closes_it_once() {
-    let (mut thread, _events, _conn) = new_thread();
+async fn a_cancelled_turn_still_announces_its_own_stop() {
+    let (mut thread, mut events, _conn) = new_thread();
 
     let turn = thread.begin_turn();
-    assert!(thread.end_turn_if_current(turn, acp::StopReason::EndTurn));
+    thread.cancel();
+    assert!(!thread.is_generating(), "cancel already cleared the turn");
+    while events.try_recv().is_ok() {}
+
+    // What the agent sends back once it has acknowledged the cancel.
     assert!(
-        !thread.end_turn_if_current(turn, acp::StopReason::EndTurn),
-        "the turn is already closed"
+        thread.end_turn_unless_superseded(turn, acp::StopReason::Cancelled),
+        "the cancelled turn closes itself"
+    );
+
+    let mut stopped = None;
+    while let Ok(event) = events.try_recv() {
+        if let AcpThreadEvent::Stopped(reason) = event {
+            stopped = Some(reason);
+        }
+    }
+    assert_eq!(
+        stopped,
+        Some(acp::StopReason::Cancelled),
+        "the stop is announced, with the reason the agent gave"
     );
 }
 

@@ -30,8 +30,12 @@ use tokio::sync::watch;
 /// Answers `initialize` and `session/new`, then sits there. Writes its pid
 /// first, so the test can ask the operating system whether it is still alive.
 const FAKE_AGENT: &str = r#"
-import sys, json, os
+import sys, json, os, time
 open(PID_FILE, "w").write(str(os.getpid()))
+go_file = GO_FILE
+if go_file:
+    while not os.path.exists(go_file):
+        time.sleep(0.01)
 for line in sys.stdin:
     line = line.strip()
     if not line:
@@ -79,6 +83,9 @@ fn process_is_alive(pid: i32) -> bool {
 struct PythonResolver {
     python: &'static str,
     pid_file: PathBuf,
+    /// When set, the agent spawns and then waits for this file to exist before
+    /// answering `initialize` — so the connect parks with a real child alive.
+    go_file: Option<PathBuf>,
 }
 
 impl ExternalAgentServer for PythonResolver {
@@ -87,10 +94,18 @@ impl ExternalAgentServer for PythonResolver {
         _extra_args: Vec<String>,
         _extra_env: HashMap<String, String>,
     ) -> BoxFuture<'static, Result<AgentServerCommand>> {
-        let script = FAKE_AGENT.replace(
-            "PID_FILE",
-            &format!("{:?}", self.pid_file.display().to_string()),
-        );
+        let script = FAKE_AGENT
+            .replace(
+                "PID_FILE",
+                &format!("{:?}", self.pid_file.display().to_string()),
+            )
+            .replace(
+                "GO_FILE",
+                &match &self.go_file {
+                    Some(path) => format!("{:?}", path.display().to_string()),
+                    None => "None".to_string(),
+                },
+            );
         let path = PathBuf::from(self.python);
         async move {
             Ok(AgentServerCommand {
@@ -107,6 +122,7 @@ struct SpawningCatalog {
     id: AgentId,
     python: &'static str,
     pid_file: PathBuf,
+    go_file: Option<PathBuf>,
 }
 
 impl atlas_agent_manager::AgentCatalog for SpawningCatalog {
@@ -119,6 +135,7 @@ impl atlas_agent_manager::AgentCatalog for SpawningCatalog {
             Arc::new(PythonResolver {
                 python: self.python,
                 pid_file: self.pid_file.clone(),
+                go_file: self.go_file.clone(),
             }) as Arc<dyn ExternalAgentServer>
         })
     }
@@ -143,17 +160,36 @@ impl atlas_agent_manager::AgentCatalog for SpawningCatalog {
 /// Builds a manager whose one installed agent is a real process, and returns
 /// the file that process writes its pid into.
 fn spawning_manager(tag: &str) -> Option<(Arc<AgentManager>, PathBuf)> {
+    spawning_manager_inner(tag, false).map(|(manager, pid_file, _)| (manager, pid_file))
+}
+
+/// The same, with an agent that parks after spawning until the returned
+/// `go_file` is created.
+fn parked_manager(tag: &str) -> Option<(Arc<AgentManager>, PathBuf, PathBuf)> {
+    spawning_manager_inner(tag, true)
+}
+
+fn spawning_manager_inner(
+    tag: &str,
+    park: bool,
+) -> Option<(Arc<AgentManager>, PathBuf, PathBuf)> {
     let python = python()?;
     let pid_file = std::env::temp_dir().join(format!(
         "atlas-agent-manager-{tag}-{}",
         std::process::id()
     ));
+    let go_file = std::env::temp_dir().join(format!(
+        "atlas-agent-manager-{tag}-go-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_file(&pid_file);
+    let _ = std::fs::remove_file(&go_file);
 
     let catalog = Arc::new(SpawningCatalog {
         id: AgentId::new("fake-agent"),
         python,
         pid_file: pid_file.clone(),
+        go_file: park.then(|| go_file.clone()),
     });
     // The native server is never used here; every path goes through the
     // installed agent.
@@ -161,6 +197,7 @@ fn spawning_manager(tag: &str) -> Option<(Arc<AgentManager>, PathBuf)> {
     Some((
         AgentManager::new(catalog, native, connect_options()),
         pid_file,
+        go_file,
     ))
 }
 
@@ -235,35 +272,43 @@ async fn shutdown_kills_an_agent_that_still_has_a_session_open() {
     died.expect("no ACP child outlives the app, session open or not");
 }
 
-/// Killing an agent mid-connect must not leave a process behind either. Here
-/// the child is spawned inside the connect future, so the window is real.
+/// Killing an agent mid-connect must not leave a process behind. The child is
+/// spawned inside the connect future, so this is the real window: the agent is
+/// running and the handshake has not finished.
+///
+/// The agent parks after writing its pid rather than the test racing to catch
+/// it, so the kill always lands with a live child rather than usually landing
+/// before one exists.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_agent_killed_during_its_connect_leaves_no_process() {
-    let Some((manager, pid_file)) = spawning_manager("mid-connect") else {
+    let Some((manager, pid_file, go_file)) = parked_manager("mid-connect") else {
         eprintln!("skipping: no python3 on this machine");
         return;
     };
     let key = custom("fake-agent");
 
     let entry = manager.connect_to(key.clone());
+    let pid = agent_pid(&pid_file)
+        .await
+        .expect("the agent spawned and reported its pid");
+    assert!(process_is_alive(pid), "the child is up and awaiting `initialize`");
+
     manager.drop_connection(&key);
 
-    // Whichever side won, the outcome is the same: nothing is connected, and
-    // any process that did get as far as starting is gone.
+    // The waiter is released with a failure rather than a connection to a
+    // process the user just killed.
     let task = entry.lock().unwrap().wait_for_connection();
-    let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
+    let outcome = tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .expect("the waiter is released rather than left hanging");
+    assert!(outcome.is_err(), "a killed connect does not report success");
     assert_eq!(
         manager.connection_status(&key),
         AgentConnectionStatus::Disconnected
     );
 
-    if let Ok(raw) = std::fs::read_to_string(&pid_file) {
-        if let Ok(pid) = raw.trim().parse::<i32>() {
-            let died = wait_for(|| (!process_is_alive(pid)).then_some(())).await;
-            let _ = std::fs::remove_file(&pid_file);
-            died.expect("a connect that was killed must not leave a process running");
-            return;
-        }
-    }
+    let died = wait_for(|| (!process_is_alive(pid)).then_some(())).await;
     let _ = std::fs::remove_file(&pid_file);
+    let _ = std::fs::remove_file(&go_file);
+    died.expect("a connect that was killed must not leave a process running");
 }

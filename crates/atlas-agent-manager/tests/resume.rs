@@ -60,9 +60,9 @@ struct FakeConnection {
     /// Load/resume fail when set — an agent that no longer knows the session.
     forgets_sessions: bool,
     /// Whether `session/load` actually replays the conversation into the
-    /// thread. The protocol requires it before the load answers; an agent that
-    /// advertises `loadSession` and sends nothing is the case the mode is now
-    /// derived from rather than assumed (ATL-230 finding 3).
+    /// thread. The protocol requires it before the load answers, so replaying
+    /// is the realistic default here; `Harness::silent` is the agent that does
+    /// not, which ATL-230 finding 3 is about.
     replays_history: bool,
     calls: Arc<Mutex<Vec<String>>>,
 }
@@ -361,15 +361,22 @@ async fn an_agent_that_can_load_replays_the_conversation() {
     assert_eq!(harness.calls(), vec!["load_session"]);
 }
 
-/// The mode is an observation, not a restatement of the capability. An agent
-/// that advertises `loadSession` and then replays nothing leaves the user
-/// looking at a blank conversation, and calling that `Replayed` is why no
-/// notice was shown for it (ATL-230 finding 3).
+/// Pins the known-weak half of `ResumeMode`, so the next reader finds the
+/// reasoning rather than the surprise.
+///
+/// An agent that advertises `loadSession` and replays nothing is still reported
+/// as `Replayed`, because the mode restates the capability instead of observing
+/// the replay (ATL-230 finding 3). Deriving it from the thread's entries was
+/// tried and reverted: for an external agent the replay frames are still queued
+/// on the connection's dispatch task when `load_session` answers, so an empty
+/// thread does not mean an empty replay, and the check told users their history
+/// was gone on conversations that had it. See the comment at the call site in
+/// `resume_stored_session` for what a correct signal would take.
 #[tokio::test(flavor = "multi_thread")]
-async fn an_agent_that_advertises_load_and_replays_nothing_is_reported_without_history() {
+async fn an_agent_that_replays_nothing_is_still_reported_as_replayed() {
     let harness = Harness::silent(Capabilities::load());
 
-    assert_eq!(harness.resume().await.unwrap(), ResumeMode::WithoutHistory);
+    assert_eq!(harness.resume().await.unwrap(), ResumeMode::Replayed);
     assert_eq!(
         harness.calls(),
         vec!["load_session"],

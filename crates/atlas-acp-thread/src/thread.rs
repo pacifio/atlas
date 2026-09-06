@@ -1769,44 +1769,59 @@ impl AcpThread {
         self.emit(AcpThreadEvent::StatusChanged);
     }
 
-    /// Close `turn`, if it is still the turn that is running.
+    /// Close `turn`, unless a later turn has taken over.
     ///
     /// The guarded counterpart to [`Self::end_turn`], for the caller that owns
     /// one specific turn and may be reporting back long after it stopped being
-    /// the current one. `begin_turn` supersedes deliberately, so a turn that
-    /// was interrupted by a follow-up still has a `prompt` in flight; when it
-    /// finally returns, closing the thread's turn unconditionally closed the
-    /// turn that superseded it, and the UI dropped to idle while the live turn
-    /// was still streaming (ATL-229).
+    /// the current one. `begin_turn` supersedes deliberately, so a turn
+    /// interrupted by a follow-up still has a `prompt` in flight; when it
+    /// finally returned, closing the thread's turn unconditionally closed the
+    /// turn that had superseded it, and the session left the generating state
+    /// while the live turn was still streaming (ATL-229).
+    ///
+    /// The guard is "no OTHER turn is running", not "this turn is running", and
+    /// the difference is the whole of the cancel path. `cancel()` clears
+    /// `running_turn` before the agent has answered, so by the time the prompt
+    /// returns `StopReason::Cancelled` there is no running turn at all — and a
+    /// guard that demanded one would swallow the only `Stopped` a cancelled
+    /// turn ever emits. Nothing downstream would then flush: no
+    /// `TurnFinished` on the wire, no analytics, no transcript write, and the
+    /// next turn's usage footer would carry the cancelled turn's tokens.
+    ///
+    /// So: no turn running means announce (this is the cancelled or
+    /// already-closed turn reporting its own end), a different turn running
+    /// means stay quiet.
     ///
     /// Answers whether it closed anything, so a caller can tell "my turn ended"
     /// from "my turn had already been replaced".
-    pub fn end_turn_if_current(&mut self, turn: u32, stop_reason: acp::StopReason) -> bool {
-        if !self.is_running_turn(turn) {
+    pub fn end_turn_unless_superseded(&mut self, turn: u32, stop_reason: acp::StopReason) -> bool {
+        if self.is_superseded(turn) {
             return false;
         }
         self.end_turn(stop_reason);
         true
     }
 
-    /// Mark the thread failed, if `turn` is still the turn that is running.
+    /// Mark the thread failed, unless a later turn has taken over.
     ///
-    /// The guarded counterpart to [`Self::set_error`], for the same reason as
-    /// [`Self::end_turn_if_current`]: a superseded turn's failure is news about
-    /// a turn that is already over, and marking the live one as errored on the
-    /// strength of it is a lie the user acts on.
-    pub fn set_error_if_current(&mut self, turn: u32) -> bool {
-        if !self.is_running_turn(turn) {
+    /// The guarded counterpart to [`Self::set_error`], with the same guard and
+    /// for the same reason as [`Self::end_turn_unless_superseded`]: a
+    /// superseded turn's failure is news about a turn that is already over, and
+    /// marking the live one as errored on the strength of it is a lie the user
+    /// acts on.
+    pub fn set_error_unless_superseded(&mut self, turn: u32) -> bool {
+        if self.is_superseded(turn) {
             return false;
         }
         self.set_error();
         true
     }
 
-    fn is_running_turn(&self, turn: u32) -> bool {
+    /// Whether some turn other than `turn` is the one running.
+    fn is_superseded(&self, turn: u32) -> bool {
         self.running_turn
             .as_ref()
-            .is_some_and(|running| running.id == turn)
+            .is_some_and(|running| running.id != turn)
     }
 
     pub fn emit_load_error(&mut self, error: LoadError) {

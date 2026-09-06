@@ -109,16 +109,27 @@ async fn concurrent_request_connection_calls_join_one_attempt() {
     }
 }
 
-/// A restart racing a plain request must not leave two processes either. The
+/// A restart racing a plain request must not abandon a connect. The
 /// remove-then-insert in `restart_connection` was a third window onto the same
-/// map.
+/// map, and what it produced was an attempt nothing owned: overwritten in the
+/// map, so its watcher discarded the result, while the connect itself ran on to
+/// spawn a process.
+///
+/// A restart may legitimately start a second attempt when the first has already
+/// landed, so counting attempts proves nothing. What has to hold is that every
+/// attempt ends somewhere the manager knows about: either it is cancelled, or
+/// it produced the connection the map is holding. An abandoned one is in
+/// neither column.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_restart_racing_a_request_leaves_one_entry() {
+async fn a_restart_racing_a_request_abandons_no_connect() {
     const ROUNDS: usize = 100;
 
     for round in 0..ROUNDS {
         let catalog = TestCatalog::new(&["claude-code"]);
-        let server = TestServer::new("claude-code");
+        // Parked, so both calls land while the connect is genuinely in flight —
+        // which is the only window the bug lived in.
+        let gate = Gate::shut();
+        let server = TestServer::gated("claude-code", gate.clone());
         let manager = manager(catalog, server.clone());
         let key = custom("claude-code");
 
@@ -130,21 +141,36 @@ async fn a_restart_racing_a_request_leaves_one_entry() {
             let (manager, key, server) = (manager.clone(), key.clone(), server.clone());
             tokio::spawn(async move { manager.request_connection(key, server) })
         };
-        restart.await.unwrap();
-        request.await.unwrap();
+        let first = restart.await.unwrap();
+        let second = request.await.unwrap();
 
-        // A restart may legitimately start a second attempt when the first has
-        // already landed. What it must never do is leave the map holding an
-        // entry nobody can reach, which is what an interleaved remove/insert
-        // produced.
-        assert!(
-            server.attempts() <= 2,
-            "round {round}: {} attempts for two calls",
-            server.attempts()
-        );
+        gate.open();
+        let _ = settle(first).await;
+        let _ = settle(second).await;
+        settle_tasks().await;
+
         assert!(
             manager.entry(&key).is_some(),
             "round {round}: the map lost the entry"
+        );
+        // Parked, the connect can never resolve between the two calls, so
+        // whichever wins the other must join it: a restart that finds an
+        // attempt in flight is a no-op, and a request that finds one joins.
+        // Two attempts here means the map was read and written across an
+        // interleaving.
+        assert_eq!(
+            server.attempts(),
+            1,
+            "round {round}: a restart racing a request started {} connects",
+            server.attempts()
+        );
+        assert_eq!(
+            server.attempts(),
+            server.live_connections() + server.connects_cancelled(),
+            "round {round}: {} attempts, {} live, {} cancelled — one is unaccounted for",
+            server.attempts(),
+            server.live_connections(),
+            server.connects_cancelled()
         );
     }
 }
@@ -507,6 +533,104 @@ async fn a_superseded_turns_failure_does_not_mark_the_live_turn_as_errored() {
         !thread.had_error(),
         "and the live turn is not marked as having failed"
     );
+}
+
+/// The guard has to let a CANCELLED turn through, and this is the case that
+/// almost went out wrong: `cancel()` clears the running turn before the agent
+/// answers, so the prompt returns `Cancelled` into a thread with no turn open.
+/// A guard that demanded "this turn is running" would swallow the only
+/// `Stopped` a cancelled turn ever emits — and `Stopped` is what produces
+/// `TurnFinished` on the wire, which is what flushes analytics, the transcript,
+/// and the turn's token usage into the next turn's footer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_turn_still_closes_itself() {
+    let catalog = TestCatalog::new(&[]);
+    let server = TestServer::new("cersei");
+    let manager = manager(catalog, server.clone());
+
+    let thread = manager
+        .new_session(Agent::Native, vec![PathBuf::from("/tmp")])
+        .await
+        .expect("a session opens");
+    let session_id = thread.lock().unwrap().session_id().clone();
+
+    let answer = server.queue_prompt();
+    let turn = {
+        let (manager, session_id) = (manager.clone(), session_id.clone());
+        tokio::spawn(async move { manager.send(&session_id, text("hello")).await })
+    };
+    wait_for(|| (server.prompts_started() == 1).then_some(()))
+        .await
+        .expect("the turn is in flight");
+
+    // The user presses stop. The thread's turn is cleared here, before the
+    // agent has said anything.
+    manager.cancel(&session_id);
+    assert!(!thread.lock().unwrap().is_generating());
+
+    // Everything announced up to here belongs to the cancel itself.
+    server.drain_events(&session_id);
+
+    // The agent then acknowledges, which is when the turn actually ends.
+    answer.send(Ok(acp::StopReason::Cancelled)).unwrap();
+    let stop = turn
+        .await
+        .expect("the send task ran")
+        .expect("the cancelled turn returns to its caller");
+    assert_eq!(stop, acp::StopReason::Cancelled);
+    assert!(
+        !thread.lock().unwrap().is_generating(),
+        "and the thread is idle, not stuck generating"
+    );
+
+    // The assertion that matters: `Stopped` is what becomes `TurnFinished` on
+    // the wire, and `TurnFinished` is what flushes analytics, the transcript
+    // and this turn's token usage. Losing it leaves the next turn's footer
+    // carrying the cancelled turn's tokens.
+    let stopped: Vec<_> = server
+        .drain_events(&session_id)
+        .into_iter()
+        .filter_map(|event| match event {
+            atlas_acp_thread::AcpThreadEvent::Stopped(reason) => Some(reason),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        stopped,
+        vec![acp::StopReason::Cancelled],
+        "a cancelled turn announces exactly one stop, carrying the agent's reason"
+    );
+}
+
+/// An id two agents share cannot be closed by id alone, and saying so beats
+/// reporting a success that closed nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_an_ambiguous_session_id_is_an_error_not_a_silent_success() {
+    let catalog = TestCatalog::new(&["one", "two"]);
+    let first = TestServer::with_fixed_session_id("one", "ses-1");
+    let second = TestServer::with_fixed_session_id("two", "ses-1");
+    let manager = manager(catalog, first.clone());
+
+    open_session(&manager, custom("one"), first).await;
+    let session_id = open_session(&manager, custom("two"), second).await;
+    assert_eq!(manager.sessions().len(), 2);
+
+    manager
+        .close_session(&session_id)
+        .await
+        .expect_err("an id that names two sessions cannot be closed by id alone");
+    assert_eq!(
+        manager.sessions().len(),
+        2,
+        "and nothing was closed behind the caller's back"
+    );
+
+    // An id that names nothing is still the idempotent case: a tab can close
+    // twice, and an eviction may already have forgotten the session.
+    manager
+        .close_session(&acp::SessionId::new("never-existed"))
+        .await
+        .expect("closing an unknown session is a no-op");
 }
 
 /// The ordinary case still has to work: one turn, opened and closed by itself.

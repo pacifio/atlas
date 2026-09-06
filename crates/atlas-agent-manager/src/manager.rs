@@ -330,7 +330,8 @@ impl AgentManager {
     /// one. A session pins the connection `Arc` — `SessionHandle` holds the
     /// thread, and the thread holds the connection — so a session left behind
     /// after an eviction keeps the agent's process alive with nothing able to
-    /// reach it, including the shutdown sweep (ATL-227).
+    /// reach it — including [`Self::shutdown`] before it swept the sessions map
+    /// too, which is how these outlived the app (ATL-227).
     ///
     /// Local only: the sessions are not closed on the agent first. A version
     /// bump and an uninstall both end with that process being dropped, and a
@@ -733,18 +734,28 @@ impl AgentManager {
                 .clone()
                 .load_session(session_id, work_dirs, title)
                 .await?;
-            // `Replayed` is documented as an observation, so observe it rather
-            // than restating the capability the agent advertised. The protocol
-            // requires the replay to arrive before `session/load` answers, so a
-            // thread with nothing in it means the agent did not keep its word —
-            // and reporting it as replayed leaves the user with a blank
-            // conversation and no explanation, which reads as data loss
-            // (ATL-230 finding 3).
-            if lock_thread(&thread).entries().is_empty() {
-                (thread, ResumeMode::WithoutHistory)
-            } else {
-                (thread, ResumeMode::Replayed)
-            }
+            // `Replayed` restates the advertised capability rather than
+            // observing the replay, and ATL-230 finding 3 is right that this is
+            // weaker than the doc comment on `ResumeMode` claims.
+            //
+            // Deriving it from `thread.entries().is_empty()` here was tried and
+            // reverted: for every EXTERNAL agent the replay frames are
+            // *enqueued* rather than applied by the time this returns.
+            // `handle_session_notification` goes through the connection's
+            // ordered dispatch queue (`atlas-agent-servers/src/handlers.rs`,
+            // `spawn_dispatch_queue`) drained on its own task, while the
+            // `session/load` response resolves on the RPC path with no barrier
+            // between them — so an empty thread here means "not drained yet"
+            // as often as it means "the agent replayed nothing", and the check
+            // told users their history was gone on conversations that had it.
+            //
+            // The signal belongs to the connection, which is the only layer
+            // that knows a frame arrived: count the `session/update`s received
+            // between the load request and its response, or flush the dispatch
+            // queue before `open_or_create_session` returns. Until then the
+            // frontend's own empty-thread fallback
+            // (`src/features/chat/lib/resume-session.ts`) is what covers this.
+            (thread, ResumeMode::Replayed)
         } else if connection.supports_resume_session() {
             let thread = connection
                 .clone()
@@ -815,6 +826,17 @@ impl AgentManager {
     ///
     /// Ids can repeat across agents: they come from the agent verbatim, and the
     /// protocol scopes them to one client/agent pair rather than to the app.
+    /// Whether any agent has a session by this id.
+    ///
+    /// The question [`Self::session`] cannot answer on its own, because it
+    /// refuses an ambiguous id — and "two agents have it" is a different thing
+    /// from "nobody does".
+    fn knows_session(&self, session_id: &acp::SessionId) -> bool {
+        self.lock_sessions()
+            .keys()
+            .any(|(_, id)| id == session_id)
+    }
+
     pub fn sessions(&self) -> Vec<acp::SessionId> {
         self.lock_sessions()
             .keys()
@@ -867,11 +889,11 @@ impl AgentManager {
         // running.
         match result {
             Ok(response) => {
-                lock_thread(&handle.thread).end_turn_if_current(turn, response.stop_reason);
+                lock_thread(&handle.thread).end_turn_unless_superseded(turn, response.stop_reason);
                 Ok(response.stop_reason)
             }
             Err(err) => {
-                lock_thread(&handle.thread).set_error_if_current(turn);
+                lock_thread(&handle.thread).set_error_unless_superseded(turn);
                 Err(err)
             }
         }
@@ -885,9 +907,21 @@ impl AgentManager {
     }
 
     /// Close a session, dropping the manager's handle on its thread.
+    ///
+    /// An id that names nothing is `Ok`: a tab can close twice, and a session
+    /// already forgotten by an eviction has nothing left to close. An id that
+    /// names *two* sessions is an error rather than a silent success — see
+    /// [`Self::session`] — because the caller asked for something to happen and
+    /// nothing did.
     pub async fn close_session(&self, session_id: &acp::SessionId) -> Result<()> {
-        let Some(handle) = self.session(session_id) else {
+        if !self.knows_session(session_id) {
             return Ok(());
+        }
+        let Some(handle) = self.session(session_id) else {
+            return Err(anyhow!(
+                "two connected agents are using session {session_id}; \
+                 close it through the agent that owns it"
+            ));
         };
         self.lock_sessions()
             .remove(&(handle.agent.clone(), session_id.clone()));

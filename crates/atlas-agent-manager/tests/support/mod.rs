@@ -20,7 +20,9 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::{anyhow, Result};
-use atlas_acp_thread::{AcpThread, AcpThreadHandle, AgentConnection, AgentId, LoadError};
+use atlas_acp_thread::{
+    AcpThread, AcpThreadEvent, AcpThreadHandle, AgentConnection, AgentId, EventStream, LoadError,
+};
 use atlas_agent_manager::{
     Agent, AgentCatalog, AgentConnectedState, AgentConnectionEntry, AgentManager,
 };
@@ -232,6 +234,9 @@ pub struct TestServer {
     /// One id for every session this server's connections mint, so a test can
     /// drive the collision case.
     fixed_session_id: Option<String>,
+    /// Every session's event stream, kept so a test can read what the thread
+    /// announced rather than inferring it from the thread's final state.
+    events: Arc<Mutex<HashMap<acp::SessionId, EventStream<AcpThreadEvent>>>>,
 }
 
 impl TestServer {
@@ -254,6 +259,7 @@ impl TestServer {
             prompts_started: Arc::new(AtomicUsize::new(0)),
             prompts: Arc::new(Mutex::new(Default::default())),
             fixed_session_id: None,
+            events: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -270,6 +276,7 @@ impl TestServer {
             prompts_started: Arc::new(AtomicUsize::new(0)),
             prompts: Arc::new(Mutex::new(Default::default())),
             fixed_session_id: Some(session_id.to_string()),
+            events: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -291,6 +298,21 @@ impl TestServer {
 
     pub fn live_connections(&self) -> usize {
         self.live_connections.load(Ordering::SeqCst)
+    }
+
+    /// Everything a session's thread has announced since the last call.
+    ///
+    /// Drains what is buffered; the stream stays put for the next call.
+    pub fn drain_events(&self, session_id: &acp::SessionId) -> Vec<AcpThreadEvent> {
+        let mut streams = self.events.lock().unwrap();
+        let Some(stream) = streams.get_mut(session_id) else {
+            return Vec::new();
+        };
+        let mut drained = Vec::new();
+        while let Ok(event) = stream.try_recv() {
+            drained.push(event);
+        }
+        drained
     }
 
     /// Queue an answer the test delivers by hand. The returned sender closes
@@ -324,6 +346,7 @@ impl AgentServer for TestServer {
         let prompts_started = self.prompts_started.clone();
         let prompts = self.prompts.clone();
         let fixed_session_id = self.fixed_session_id.clone();
+        let events = self.events.clone();
 
         async move {
             // Dropped-before-resolved is the signal ATL-228 turns on, so the
@@ -346,6 +369,7 @@ impl AgentServer for TestServer {
                 prompts_started,
                 prompts,
                 fixed_session_id,
+                events,
             }) as Arc<dyn AgentConnection>)
         }
         .boxed()
@@ -363,6 +387,7 @@ pub struct TestConnection {
     prompts_started: Arc<AtomicUsize>,
     prompts: Arc<Mutex<std::collections::VecDeque<oneshot::Receiver<Result<acp::StopReason>>>>>,
     fixed_session_id: Option<String>,
+    events: Arc<Mutex<HashMap<acp::SessionId, EventStream<AcpThreadEvent>>>>,
 }
 
 impl Drop for TestConnection {
@@ -394,12 +419,20 @@ impl AgentConnection for TestConnection {
             None => acp::SessionId::new(format!("session-{}-{nth}", self.id)),
         };
         async move {
+            // The receiver is kept rather than dropped, so a test can assert on
+            // what the thread announced — `Stopped` in particular, which is the
+            // event the whole `TurnFinished` chain hangs off.
+            let (sink, stream) = atlas_acp_thread::event_channel();
+            self.events
+                .lock()
+                .unwrap()
+                .insert(session_id.clone(), stream);
             let thread = AcpThread::new(
                 session_id,
                 self.clone() as Arc<dyn AgentConnection>,
                 work_dirs,
                 None,
-                atlas_acp_thread::event_channel().0,
+                sink,
             );
             Ok(Arc::new(Mutex::new(thread)) as AcpThreadHandle)
         }
