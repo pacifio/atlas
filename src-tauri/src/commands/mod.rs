@@ -36,6 +36,7 @@ pub mod knowledge;
 pub mod knowledge_export;
 pub mod knowledge_graph_layout;
 pub mod knowledge_links;
+pub mod keybindings;
 pub mod knowledge_meta;
 pub mod log;
 pub mod models_pricing;

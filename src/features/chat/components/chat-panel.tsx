@@ -1,4 +1,5 @@
 import { lazy, Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { matchesAction } from "@/features/keybindings/lib/use-scoped-hotkeys";
 import { useChatStore } from "../stores/chat-store";
 import { useDetailPanelStore } from "../stores/detail-panel-store";
 import { appendNextStepsDirective } from "../lib/next-steps";
@@ -663,7 +664,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   // capture phase so the browser's default focus traversal never steals it.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key !== "Tab" || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!matchesAction(e, "chat.cyclePermissionMode")) return;
       const root = rootRef.current;
       const active = document.activeElement as HTMLElement | null;
       // Only intercept when focus is somewhere inside this chat panel.

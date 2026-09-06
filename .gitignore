@@ -65,3 +65,11 @@ scripts/release-macos.sh
 !vendor/codex/**
 # ...except build output, if anyone ever builds in-tree there.
 vendor/codex/**/target/
+
+# design-sync (claude.ai/design)
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
+.design-sync/ds.css

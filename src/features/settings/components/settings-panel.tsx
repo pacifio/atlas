@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { ScrollArea } from "@/ui/scroll-area";
-import { KbdCombo } from "@/ui/kbd";
 import { cn } from "@/lib/utils";
 import {
   Settings,
@@ -29,6 +28,8 @@ import { AtlasThemesSettings } from "./atlas-themes-settings";
 import { SkillsAndPacks } from "./skills-and-packs";
 import { AgentsMarketplace } from "./agents-marketplace/agents-marketplace";
 import { ModelsManager } from "./models-manager";
+import { KeybindingsSettings } from "./keybindings-settings";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { useModelPricingStore } from "../stores/model-pricing-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { setEnabled as setTelemetryEnabled } from "@/features/telemetry/posthog-client";
@@ -162,13 +163,16 @@ export function SettingsPanel({ initialSection }: { initialSection?: string } = 
         <div className="flex-1 min-w-0 min-h-0">
           <AppearanceSettings />
         </div>
+      ) : activeSection === "keybindings" ? (
+        <div className="flex-1 min-w-0 min-h-0">
+          <KeybindingsSettings />
+        </div>
       ) : (
         <ScrollArea className="flex-1 p-6">
           <div className="max-w-[500px]">
             {activeSection === "general" && <GeneralSettings />}
             {activeSection === "layouts" && <LayoutsSettings />}
             {activeSection === "updates" && <UpdatesSettings />}
-            {activeSection === "keybindings" && <KeybindingsSettings />}
             {activeSection === "about" && <AboutSettings />}
           </div>
         </ScrollArea>
@@ -448,6 +452,11 @@ function AppearanceSettings() {
 
   const scalePct = Math.round(settings.uiScale * 100);
   const setScale = (next: number) => updateSettings({ uiScale: clampScale(next) });
+  const zoomHints = [
+    useActionShortcut("view.zoomIn")?.label,
+    useActionShortcut("view.zoomOut")?.label,
+    useActionShortcut("view.zoomReset")?.label,
+  ].filter(Boolean);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -465,7 +474,7 @@ function AppearanceSettings() {
         {/* Interface zoom — right-aligned control (like Skills' scope control). */}
         <div
           className="ml-auto flex items-center gap-1 pr-0.5"
-          title="Interface zoom (⌘+ / ⌘- / ⌘0)"
+          title={zoomHints.length ? `Interface zoom (${zoomHints.join(" / ")})` : "Interface zoom"}
         >
           <button
             type="button"
@@ -624,105 +633,6 @@ function UpdatesSettings() {
       >
         {control}
       </SettingRow>
-    </div>
-  );
-}
-
-function KeybindingsSettings() {
-  const settings = useProjectStore.use.settings();
-  const groups: Array<{
-    title: string;
-    bindings: Array<{ action: string; keys: string }>;
-  }> = [
-    {
-      title: "General",
-      bindings: [
-        { action: "Command Palette", keys: "⌘K" },
-        { action: "Global Search", keys: "⌘⇧F" },
-        { action: "Settings", keys: "⌘," },
-        { action: "New Window", keys: "⌘⇧N" },
-        { action: "Open Session Capture", keys: "⌘⌥C" },
-        { action: "Zoom in", keys: "⌘+" },
-        { action: "Zoom out", keys: "⌘-" },
-        { action: "Reset zoom", keys: "⌘0" },
-      ],
-    },
-    {
-      title: "Tabs",
-      bindings: [
-        { action: "New Chat tab", keys: "⌘T" },
-        { action: "New Terminal tab", keys: "⌘⇧T" },
-        { action: "Close current tab", keys: "⌘W" },
-        { action: "Previous tab", keys: "⌘⇧[" },
-        { action: "Next tab", keys: "⌘⇧]" },
-        { action: "Switch to tab 1–9", keys: "⌘1…9" },
-      ],
-    },
-    {
-      title: "Split View",
-      bindings: [
-        { action: "Split right (new column)", keys: "⌘\\" },
-        { action: "Focus split left", keys: "⌥;" },
-        { action: "Focus split right", keys: "⌥'" },
-        { action: "Close split", keys: "⌥W" },
-        { action: "New tab in focused split", keys: "⌘⌥N" },
-        { action: "Switch layout (templates)", keys: "⌘⌥L" },
-        { action: "Zen mode (Knowledge │ Chat │ Browser)", keys: "⌥Z" },
-      ],
-    },
-    {
-      title: "Layout",
-      bindings: [
-        { action: "Toggle Left Panel", keys: "⌘B" },
-        { action: "Toggle Right Panel", keys: "⌘⇧B" },
-        { action: "Toggle Tab Bar", keys: "⌘⌥T" },
-        { action: "Toggle Status Bar", keys: "⌘⌥B" },
-        { action: "Toggle Agent Sidebar", keys: "⌘⌥J" },
-        { action: "Toggle Terminal", keys: "⌘J" },
-      ],
-    },
-    {
-      title: "Chat",
-      bindings: [
-        { action: "Find in chat", keys: "⌘F" },
-        { action: "Send message", keys: settings.enterToSend ? "↵" : "⌘↵" },
-        { action: "Cycle permission mode", keys: "⇧⇥" },
-      ],
-    },
-    {
-      title: "Knowledge Base",
-      bindings: [
-        { action: "Toggle KB Sidebar", keys: "⌘;" },
-        { action: "Toggle KB Inspector", keys: "⌘'" },
-        { action: "Save note", keys: "⌘S" },
-      ],
-    },
-  ];
-
-  return (
-    <div className="space-y-6">
-      <SectionTitle title="Keybindings" subtitle="Keyboard shortcuts" />
-      {groups.map((g) => (
-        <div key={g.title} className="space-y-2">
-          <div className="text-[10px] uppercase tracking-wider text-text-tertiary px-1">
-            {g.title}
-          </div>
-          <div className="rounded-lg border border-border-default overflow-hidden">
-            {g.bindings.map((b, i) => (
-              <div
-                key={b.action}
-                className={cn(
-                  "flex items-center justify-between px-3 h-[32px]",
-                  i > 0 && "border-t border-border-subtle",
-                )}
-              >
-                <span className="text-[11px] text-text-secondary">{b.action}</span>
-                <KbdCombo combo={b.keys} />
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
     </div>
   );
 }

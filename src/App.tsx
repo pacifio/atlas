@@ -7,7 +7,11 @@ import { CommandPalette } from "@/components/command-palette";
 import { NewTabPalette } from "@/components/new-tab-palette";
 import { LayoutSwitcher } from "@/features/layout/components/layout-switcher";
 import { SearchOverlay } from "@/components/search-overlay";
-import { useHotkeys } from "@/hooks/use-hotkey";
+import { useActionHotkeys } from "@/hooks/use-hotkey";
+import {
+  useKeybindingsStore,
+  watchKeybindingsOnFocus,
+} from "@/features/keybindings/stores/keybindings-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useTerminalStore } from "@/features/terminal/stores/terminal-store";
 import { useProjectStore, type AppStateWire } from "@/features/project/stores/project-store";
@@ -108,6 +112,13 @@ export function App() {
   // delivered even when Settings is closed.
   useEffect(() => {
     void useModelsStore.getState().actions.init();
+  }, []);
+
+  // Keybinding profiles: load once, then pick up hand edits to
+  // keybindings.json whenever the window regains focus.
+  useEffect(() => {
+    void useKeybindingsStore.getState().actions.load();
+    return watchKeybindingsOnFocus();
   }, []);
 
   // No Claude probe here any more. It used to run at boot to drive a banner
@@ -1304,227 +1315,131 @@ export function App() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
 
-  useHotkeys([
-    {
-      // ⌘⇧N — "new workspace": pick a folder and add it as a workspace in
-      // this window (Atlas is single-window now; this replaces the old
-      // "open a new native window" behaviour).
-      combo: { key: "n", meta: true, shift: true },
-      action: () => {
-        void pickAndAddWorkspace();
-      },
+  // Chords live in the active keybinding profile (Settings → Keybindings);
+  // this is only the action-id → behaviour map. See
+  // `src/features/keybindings/lib/actions.ts` for the registry.
+  useActionHotkeys({
+    // ⌘⇧N — "new workspace": pick a folder and add it as a workspace in
+    // this window (Atlas is single-window now; this replaces the old
+    // "open a new native window" behaviour).
+    "workspace.add": () => {
+      void pickAndAddWorkspace();
     },
-    {
-      // ⌘⇧. — toggle the Arc-like workspace sidebar. (⌘. alone is the macOS
-      // system "Cancel" chord and gets swallowed before reaching the webview.)
-      combo: { key: ".", meta: true, shift: true },
-      action: () => useWorkspaceStore.getState().actions.toggleSidebar(),
+    // ⌘⇧. — toggle the Arc-like workspace sidebar. (⌘. alone is the macOS
+    // system "Cancel" chord and gets swallowed before reaching the webview.)
+    "workspace.toggleSidebar": () => useWorkspaceStore.getState().actions.toggleSidebar(),
+    "nav.commandPalette": () => setCommandPaletteOpen(true),
+    "nav.filePicker": () => setFilePickerOpen(true),
+    "nav.search": () => setSearchOpen(true),
+    "panels.left": toggleLeftPanel,
+    "panels.right": toggleRightPanel,
+    // ⌘⇧C — team chat. Shares the right slot with source control: pressing
+    // this while source control is open swaps the occupant rather than
+    // opening a second panel, and pressing it again closes the slot.
+    "panels.teamChat": toggleRightChatPanel,
+    "panels.terminal": toggleTerminal,
+    "panels.bottom": toggleBottomPanel,
+    "panels.agentSidebar": toggleChatSidebar,
+    // ⌥J — open the Knowledge Base, or jump to it if already open, WITHIN
+    // the focused split column.
+    "panels.knowledge": () => {
+      const st = useLayoutStore.getState();
+      const g = st.focusedGroupId;
+      const existing = st.tabs.find((t) => (t.groupId ?? "main") === g && t.type === "knowledge");
+      if (existing) {
+        setActiveTab(existing.id);
+        return;
+      }
+      addTab({
+        id: `knowledge-${Date.now()}`,
+        type: "knowledge",
+        title: "Knowledge",
+        closable: true,
+        dirty: false,
+        data: {},
+      });
     },
-    {
-      combo: { key: "k", meta: true },
-      action: () => setCommandPaletteOpen(true),
+    "panels.tabBar": toggleTabBar,
+    // ⌘1–8 select by index; ⌘9 always jumps to the LAST tab (browser
+    // convention) — the store treats i<0 as "last".
+    ...Object.fromEntries(
+      Array.from({ length: 9 }, (_, i) => [
+        `tabs.focus${i + 1}`,
+        i === 8 ? () => activateTabByIndex(-1) : () => activateTabByIndex(i),
+      ]),
+    ),
+    "tabs.close": () => {
+      const current = useLayoutStore.getState().activeTabId;
+      if (current) requestCloseTab(current);
     },
-    {
-      combo: { key: "p", meta: true },
-      action: () => setFilePickerOpen(true),
-    },
-    {
-      combo: { key: "f", meta: true, shift: true },
-      action: () => setSearchOpen(true),
-    },
-    {
-      combo: { key: "b", meta: true },
-      action: toggleLeftPanel,
-    },
-    {
-      combo: { key: "b", meta: true, shift: true },
-      action: toggleRightPanel,
-    },
-    {
-      // ⌘⇧C — team chat. Shares the right slot with source control: pressing
-      // this while source control is open swaps the occupant rather than
-      // opening a second panel, and pressing it again closes the slot.
-      combo: { key: "c", meta: true, shift: true },
-      action: toggleRightChatPanel,
-    },
-    {
-      combo: { key: "j", meta: true },
-      action: toggleTerminal,
-    },
-    {
-      combo: { key: "b", meta: true, alt: true },
-      action: toggleBottomPanel,
-    },
-    {
-      combo: { key: "j", meta: true, alt: true },
-      action: toggleChatSidebar,
-    },
-    {
-      // ⌥J — open the Knowledge Base, or jump to it if already open. Placed
-      // after ⌘⌥J (chat sidebar) so the matcher resolves that combo first;
-      // plain ⌥J (no ⌘) only matches here.
-      combo: { key: "j", alt: true },
-      action: () => {
-        // Open/focus Knowledge WITHIN the focused split column.
-        const st = useLayoutStore.getState();
-        const g = st.focusedGroupId;
-        const existing = st.tabs.find((t) => (t.groupId ?? "main") === g && t.type === "knowledge");
-        if (existing) {
-          setActiveTab(existing.id);
-          return;
-        }
-        addTab({
-          id: `knowledge-${Date.now()}`,
-          type: "knowledge",
-          title: "Knowledge",
-          closable: true,
-          dirty: false,
-          data: {},
-        });
-      },
-    },
-    {
-      combo: { key: "t", meta: true, alt: true },
-      action: toggleTabBar,
-    },
-    ...Array.from({ length: 9 }, (_, i) => ({
-      combo: { key: String(i + 1), meta: true },
-      // ⌘9 always jumps to the LAST tab (browser convention), regardless
-      // of how many tabs there are; ⌘1–8 select by index.
-      // ⌘9 = last tab in the focused column (the store treats i<0 as "last").
-      action: i === 8 ? () => activateTabByIndex(-1) : () => activateTabByIndex(i),
-    })),
-    {
-      combo: { key: "w", meta: true },
-      action: () => {
-        const current = useLayoutStore.getState().activeTabId;
-        if (current) requestCloseTab(current);
-      },
-    },
-    {
-      combo: { key: "[", meta: true, shift: true },
-      action: () => cycleTab(-1),
-    },
-    {
-      combo: { key: "]", meta: true, shift: true },
-      action: () => cycleTab(1),
-    },
+    "tabs.prev": () => cycleTab(-1),
+    "tabs.next": () => cycleTab(1),
     // ── Split view ──
-    {
-      // ⌘\ — open a new split column to the right (max 3).
-      combo: { key: "\\", meta: true },
-      action: () => addGroup(),
+    "split.new": () => addGroup(),
+    "split.focusLeft": () => focusAdjacentGroup(-1),
+    "split.focusRight": () => focusAdjacentGroup(1),
+    // Close the focused split column (tabs move to the left neighbour).
+    "split.close": () => closeGroup(useLayoutStore.getState().focusedGroupId),
+    // Zen mode: Knowledge │ Chat │ Browser, side panels hidden. Again restores.
+    "panels.zen": () => {
+      if (currentProject) toggleZenMode();
     },
-    {
-      // ⌥; — focus the split to the left.
-      combo: { key: ";", alt: true },
-      action: () => focusAdjacentGroup(-1),
+    // ⌥/ — cycle the coding agent (Claude Code → Codex → Atlas → …). A
+    // session is paired to one agent: an empty chat flips in place; a started
+    // chat opens a NEW chat bound to the next agent (per the pairing rule).
+    "chat.cycleAgent": () => {
+      const layout = useLayoutStore.getState();
+      const tab = layout.tabs.find((t) => t.id === layout.activeTabId);
+      if (!tab || tab.type !== "chat") return;
+      cycleChatAgent(tab.id);
     },
-    {
-      // ⌥' — focus the split to the right.
-      combo: { key: "'", alt: true },
-      action: () => focusAdjacentGroup(1),
+    // ⌘T — new agent chat. Singleton: focuses the existing chat tab and resets
+    // it to a fresh session rather than opening a second chat tab.
+    "tabs.newChat": () => openNewAgentChat(),
+    // ⌘N — new untitled editor. The synthetic `untitled:<ts>` path
+    // tells the editor to start with an empty buffer and to fall
+    // into the save-as flow on ⌘S (see `editor-panel.tsx`).
+    "tabs.newUntitled": () => {
+      const ts = Date.now();
+      addTab({
+        id: `editor-untitled-${ts}`,
+        type: "editor",
+        title: "Untitled",
+        closable: true,
+        dirty: false,
+        data: { filePath: `untitled:${ts}` },
+      });
     },
-    {
-      // ⌥W — close the focused split column (tabs move to the left neighbour).
-      combo: { key: "w", alt: true },
-      action: () => closeGroup(useLayoutStore.getState().focusedGroupId),
-    },
-    {
-      // ⌥Z — Zen mode: Knowledge │ Chat │ Browser, side panels hidden. Again restores.
-      combo: { key: "z", alt: true },
-      action: () => {
-        if (currentProject) toggleZenMode();
-      },
-    },
-    {
-      // ⌥/ — cycle the coding agent (Claude Code → Codex → Atlas → …). A
-      // session is paired to one agent: an empty chat flips in place; a started
-      // chat opens a NEW chat bound to the next agent (per the pairing rule).
-      combo: { key: "/", alt: true },
-      action: () => {
-        const layout = useLayoutStore.getState();
-        const tab = layout.tabs.find((t) => t.id === layout.activeTabId);
-        if (!tab || tab.type !== "chat") return;
-        cycleChatAgent(tab.id);
-      },
-    },
-    {
-      // ⌘T — new agent chat. Singleton: focuses the existing chat tab and resets
-      // it to a fresh session rather than opening a second chat tab.
-      combo: { key: "t", meta: true },
-      action: () => openNewAgentChat(),
-    },
-    {
-      // ⌘N — new untitled editor. The synthetic `untitled:<ts>` path
-      // tells the editor to start with an empty buffer and to fall
-      // into the save-as flow on ⌘S (see `editor-panel.tsx`).
-      combo: { key: "n", meta: true },
-      action: () => {
-        const ts = Date.now();
-        addTab({
-          id: `editor-untitled-${ts}`,
-          type: "editor",
-          title: "Untitled",
-          closable: true,
-          dirty: false,
-          data: { filePath: `untitled:${ts}` },
-        });
-      },
-    },
-    {
-      // ⌘⌥N — open the new-tab palette (keyboard-first equivalent of
-      // the `+` button's dropdown). Lists every module type and lets
-      // the user open one without touching the mouse.
-      combo: { key: "n", meta: true, alt: true },
-      action: () => setNewTabPaletteOpen(true),
-    },
-    {
-      // ⌘⌥L — open the layout switcher (Windows-task-view-style grid of
-      // predefined layout templates, navigable by arrow keys or mouse).
-      combo: { key: "l", meta: true, alt: true },
-      action: () => setLayoutSwitcherOpen(true),
-    },
-    {
-      combo: { key: "t", meta: true, shift: true },
-      action: () =>
-        addTab({
-          id: `terminal-${Date.now()}`,
-          type: "terminal",
-          title: "Terminal",
-          closable: true,
-          dirty: false,
-          data: {},
-        }),
-    },
-    {
-      combo: { key: ",", meta: true },
-      action: () =>
-        addTab({
-          id: "settings",
-          type: "settings",
-          title: "Settings",
-          closable: true,
-          dirty: false,
-          data: {},
-        }),
-    },
-    {
-      // ⌘⌥C — open Session Capture (the popover behind the titlebar's
-      // project pill). Local `captureOpen` state lives in `ProjectLabel`,
-      // so this reaches it via the same `atlas:open-capture` event the
-      // command palette entry dispatches.
-      combo: { key: "c", meta: true, alt: true },
-      action: () => window.dispatchEvent(new CustomEvent("atlas:open-capture")),
-    },
-    // ── Interface zoom (⌘+ / ⌘- / ⌘0) ──
-    // `⌘+` on a US layout arrives as Shift+`=` (e.key === "+"); `⌘=` works too.
-    // Both step the global UI scale up; `⌘-` down; `⌘0` resets to 100%.
-    { combo: { key: "=", meta: true }, action: zoomIn },
-    { combo: { key: "+", meta: true, shift: true }, action: zoomIn },
-    { combo: { key: "-", meta: true }, action: zoomOut },
-    { combo: { key: "0", meta: true }, action: zoomReset },
-  ]);
+    // Keyboard-first equivalent of the `+` button's dropdown.
+    "nav.newTabPalette": () => setNewTabPaletteOpen(true),
+    "nav.layoutSwitcher": () => setLayoutSwitcherOpen(true),
+    "tabs.newTerminal": () =>
+      addTab({
+        id: `terminal-${Date.now()}`,
+        type: "terminal",
+        title: "Terminal",
+        closable: true,
+        dirty: false,
+        data: {},
+      }),
+    "app.settings": () =>
+      addTab({
+        id: "settings",
+        type: "settings",
+        title: "Settings",
+        closable: true,
+        dirty: false,
+        data: {},
+      }),
+    // Session Capture (the popover behind the titlebar's project pill). Local
+    // `captureOpen` state lives in `ProjectLabel`, so this reaches it via the
+    // same `atlas:open-capture` event the command palette entry dispatches.
+    "app.capture": () => window.dispatchEvent(new CustomEvent("atlas:open-capture")),
+    // ── Interface zoom ──
+    "view.zoomIn": zoomIn,
+    "view.zoomOut": zoomOut,
+    "view.zoomReset": zoomReset,
+  });
 
   return (
     // One provider at the root so every tooltip in the app shares a delay and

@@ -1,4 +1,6 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
+import type { ActionId } from "@/features/keybindings/lib/actions";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
@@ -21,13 +23,13 @@ export function AppContextMenu({ children }: { children: React.ReactNode }) {
               <MenuItem
                 icon={<MessageSquare size={12} />}
                 label="New Chat"
-                shortcut="⌘T"
+                actionId="tabs.newChat"
                 onClick={() => openNewAgentChat()}
               />
               <MenuItem
                 icon={<Terminal size={12} />}
                 label="New Terminal"
-                shortcut="⌘⇧T"
+                actionId="tabs.newTerminal"
                 onClick={() =>
                   addTab({
                     id: `terminal-${Date.now()}`,
@@ -72,7 +74,7 @@ export function AppContextMenu({ children }: { children: React.ReactNode }) {
             <MenuItem
               icon={<Settings size={12} />}
               label="Settings"
-              shortcut="⌘,"
+              actionId="app.settings"
               onClick={() =>
                 addTab({
                   id: "settings",
@@ -95,13 +97,19 @@ function MenuItem({
   icon,
   label,
   shortcut,
+  actionId,
   onClick,
 }: {
   icon: React.ReactNode;
   label: string;
+  /** A literal hint (native shortcuts like ⌘C that Atlas doesn't own). */
   shortcut?: string;
+  /** A registry action — the hint follows the active keybinding profile. */
+  actionId?: ActionId;
   onClick: () => void;
 }) {
+  const bound = useActionShortcut(actionId ?? "app.settings");
+  const hint = actionId ? bound?.label : shortcut;
   return (
     <ContextMenu.Item
       onClick={onClick}
@@ -109,7 +117,7 @@ function MenuItem({
     >
       <span className="text-[#555]">{icon}</span>
       <span className="flex-1">{label}</span>
-      {shortcut && <span className="text-[9px] text-[#444] font-mono">{shortcut}</span>}
+      {hint && <span className="text-[9px] text-[#444] font-mono">{hint}</span>}
     </ContextMenu.Item>
   );
 }

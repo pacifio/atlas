@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { matchesAction } from "@/features/keybindings/lib/use-scoped-hotkeys";
 import { invoke } from "@tauri-apps/api/core";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -93,7 +94,7 @@ export function PdfViewer({ filePath, tabId }: PdfViewerProps) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      if (matchesAction(e, "pdf.save")) {
         e.preventDefault();
         if (!saving) void save();
       }

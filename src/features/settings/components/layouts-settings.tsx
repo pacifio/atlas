@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { LAYOUT_TEMPLATES, type LayoutTemplate } from "@/features/layout/templates";
@@ -7,6 +8,7 @@ import { LayoutThumbnail } from "@/features/layout/components/layout-thumbnail";
 /** Settings → Layouts: the same predefined templates the ⌘⌥L switcher offers,
  *  applied with a click. */
 export function LayoutsSettings() {
+  const switcherHint = useActionShortcut("nav.layoutSwitcher")?.label ?? "⌘⌥L";
   const apply = (t: LayoutTemplate) => {
     useLayoutStore.getState().actions.applyLayoutTemplate(t);
     toast.success(`Applied “${t.name}” layout`);
@@ -19,7 +21,7 @@ export function LayoutsSettings() {
         <p className="text-[11px] text-text-tertiary mt-0.5">
           Rearrange panels and tabs into a ready-made workspace. Press{" "}
           <kbd className="px-1 py-0.5 rounded bg-bg-elevated border border-border-default font-mono text-[9px]">
-            ⌘⌥L
+            {switcherHint}
           </kbd>{" "}
           anytime to switch layouts.
         </p>

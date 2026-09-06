@@ -1,0 +1,112 @@
+{
+  "pkg": "atlas",
+  "globalName": "Atlas",
+  "shape": "package",
+  "srcDir": "src",
+  "tsconfig": "tsconfig.json",
+  "buildCmd": "bunx vite build",
+  "cssEntry": ".design-sync/ds.css",
+  "tokensGlob": "src/styles/tokens.css",
+  "componentSrcMap": {
+    "Kbd": "src/ui/kbd.tsx",
+    "KbdGroup": "src/ui/kbd.tsx",
+    "KbdKeys": "src/ui/kbd.tsx",
+    "KbdCombo": "src/ui/kbd.tsx",
+    "ScrollArea": "src/ui/scroll-area.tsx",
+    "SecretInput": "src/ui/secret-input.tsx",
+    "Tooltip": "src/ui/tooltip.tsx",
+    "TooltipContent": "src/ui/tooltip.tsx",
+    "TooltipProvider": "src/ui/tooltip.tsx",
+    "TooltipTrigger": "src/ui/tooltip.tsx",
+    "AgentMark": "src/components/agent-mark.tsx",
+    "AtlasIcon": "src/components/atlas-icon.tsx",
+    "AtlasLoader": "src/components/atlas-loader.tsx",
+    "GithubIcon": "src/components/github-icon.tsx",
+    "GradualBlur": "src/components/gradual-blur.tsx",
+    "GraphRuler": "src/components/graph-ruler.tsx",
+    "PanelSkeleton": "src/components/panel-skeleton.tsx",
+    "ProviderLogo": "src/components/provider-logo.tsx",
+    "TrendSparkline": "src/components/trend-sparkline.tsx",
+    "AgentMonogram": "src/components/agent-icons.tsx",
+    "ExternalAgentIcon": "src/components/agent-icons.tsx",
+    "ContextMenu": "src/ui/context-menu.tsx",
+    "ContextMenuTrigger": "src/ui/context-menu.tsx",
+    "ContextMenuContent": "src/ui/context-menu.tsx",
+    "ContextMenuItem": "src/ui/context-menu.tsx",
+    "ContextMenuCheckboxItem": "src/ui/context-menu.tsx",
+    "ContextMenuLabel": "src/ui/context-menu.tsx",
+    "ContextMenuSeparator": "src/ui/context-menu.tsx",
+    "ContextMenuShortcut": "src/ui/context-menu.tsx",
+    "ContextMenuSub": "src/ui/context-menu.tsx",
+    "ContextMenuSubTrigger": "src/ui/context-menu.tsx",
+    "ContextMenuSubContent": "src/ui/context-menu.tsx"
+  },
+  "entry": "./.design-sync/entry.tsx",
+  "overrides": {
+    "ContextMenu": {
+      "cardMode": "single",
+      "primaryStory": "FileTreeMenu"
+    },
+    "ContextMenuTrigger": {
+      "cardMode": "single",
+      "primaryStory": "OnAFileRow"
+    },
+    "ContextMenuContent": {
+      "cardMode": "single",
+      "primaryStory": "GroupedMenu"
+    },
+    "ContextMenuItem": {
+      "cardMode": "single",
+      "primaryStory": "States"
+    },
+    "ContextMenuCheckboxItem": {
+      "cardMode": "single",
+      "primaryStory": "InAGroup"
+    },
+    "ContextMenuLabel": {
+      "cardMode": "single",
+      "primaryStory": "AsSectionHeadings"
+    },
+    "ContextMenuSeparator": {
+      "cardMode": "single",
+      "primaryStory": "MultipleGroups"
+    },
+    "ContextMenuShortcut": {
+      "cardMode": "single",
+      "primaryStory": "OnItems"
+    },
+    "ContextMenuSub": {
+      "cardMode": "single",
+      "primaryStory": "OneSubmenu"
+    },
+    "ContextMenuSubTrigger": {
+      "cardMode": "single",
+      "primaryStory": "Default"
+    },
+    "ContextMenuSubContent": {
+      "cardMode": "single",
+      "primaryStory": "GroupedFlyout"
+    },
+    "Tooltip": {
+      "cardMode": "single",
+      "primaryStory": "Above"
+    },
+    "TooltipTrigger": {
+      "cardMode": "single",
+      "primaryStory": "AsChildButton"
+    },
+    "TooltipContent": {
+      "cardMode": "single",
+      "primaryStory": "Top"
+    },
+    "TooltipProvider": {
+      "cardMode": "single",
+      "primaryStory": "AroundAFacepile"
+    }
+  },
+  "guidelinesGlob": [],
+  "extraFonts": [
+    ".design-sync/fonts/jetbrains-mono.css"
+  ],
+  "readmeHeader": ".design-sync/conventions.md"
+}

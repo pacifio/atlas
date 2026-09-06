@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useScopedHotkeys } from "@/features/keybindings/lib/use-scoped-hotkeys";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -238,41 +239,14 @@ export function KnowledgePanel() {
   // Cmd+; / Cmd+' — toggle KB sidebar / inspector. Picked over the old
   // Cmd+{ / Cmd+} bindings because those conflicted with the global
   // Cmd+Shift+[ / Cmd+Shift+] tab-cycle shortcut.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.shiftKey || e.altKey) return;
-      if (e.key === ";") {
-        e.preventDefault();
-        toggleKnowledgeSidebar();
-      } else if (e.key === "'") {
-        e.preventDefault();
-        toggleKnowledgeInspector();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [toggleKnowledgeSidebar, toggleKnowledgeInspector]);
-
-  // Cmd+F — open the KB finder, but only when focus is inside this KB panel
-  // (so it doesn't hijack the shortcut for other tabs / the app).
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === "f") {
-        if (!rootRef.current?.contains(document.activeElement)) return;
-        e.preventDefault();
-        setFinderOpen(true);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
-
-  // Cmd+S
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-        e.preventDefault();
+  // Bubble phase (not capture) on purpose: a focused terminal with 2+ tabs
+  // claims ⌘;/⌘' in the capture phase first, and declines them otherwise.
+  useScopedHotkeys({
+    capture: false,
+    handlers: {
+      "kb.toggleSidebar": () => toggleKnowledgeSidebar(),
+      "kb.toggleInspector": () => toggleKnowledgeInspector(),
+      "kb.save": () => {
         // Force-blur the active element first. The page-header title
         // input commits its draft to `_meta.json` on blur — without
         // this, Cmd+S while typing in the title saves the body but
@@ -287,11 +261,20 @@ export function KnowledgePanel() {
         if (currentProject) {
           void flushAndSave();
         }
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [currentProject, flushAndSave]);
+      },
+    },
+  });
+
+  // Find — only when focus is inside this KB panel (so it doesn't hijack the
+  // shortcut for other tabs / the app).
+  useScopedHotkeys({
+    rootRef,
+    requireFocusWithin: true,
+    capture: false,
+    handlers: {
+      "kb.focusFinder": () => setFinderOpen(true),
+    },
+  });
 
   // Open a non-note file (image, code) in the CodeMirror editor rather than the
   // KB note editor.

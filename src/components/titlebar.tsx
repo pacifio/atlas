@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import * as Popover from "@radix-ui/react-popover";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
@@ -336,6 +337,8 @@ function DevModePill() {
 }
 
 function WorkspaceToggle() {
+  const hint = useActionShortcut("workspace.toggleSidebar")?.label;
+  const suffix = hint ? ` (${hint})` : "";
   const sidebarOpen = useWorkspaceStore.use.sidebarOpen();
   const { toggleSidebar } = useWorkspaceStore.use.actions();
   // Badge counts only the active org's workspaces (matches what the sidebar
@@ -349,7 +352,7 @@ function WorkspaceToggle() {
         "relative flex items-center justify-center w-6 h-6 rounded hover:bg-[#ffffff08] transition-all duration-150",
         sidebarOpen ? "text-[#ccc]" : "text-[#555] hover:text-[#aaa]",
       )}
-      title={sidebarOpen ? "Hide workspaces (⌘⇧.)" : "Show workspaces (⌘⇧.)"}
+      title={sidebarOpen ? `Hide workspaces${suffix}` : `Show workspaces${suffix}`}
       aria-label={sidebarOpen ? "Hide workspaces" : "Show workspaces"}
     >
       <Layers size={14} />

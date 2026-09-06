@@ -1,8 +1,10 @@
 import { useProjectStore } from "../stores/project-store";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { FolderOpen, Clock, X, Folder } from "lucide-react";
 import { AtlasIcon } from "@/components/atlas-icon";
 
 export function WelcomeScreen() {
+  const paletteHint = useActionShortcut("nav.commandPalette")?.label ?? "⌘K";
   const recentProjects = useProjectStore.use.recentProjects();
   const { openProject, removeRecent } = useProjectStore.use.actions();
 
@@ -83,7 +85,7 @@ export function WelcomeScreen() {
           <span className="text-[10px] text-[var(--text-tertiary)]">
             Press{" "}
             <kbd className="px-1 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[9px] font-mono">
-              ⌘K
+              {paletteHint}
             </kbd>{" "}
             for command palette
           </span>

@@ -1139,7 +1139,7 @@ fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
 /// `state.json`, `device.json`, `telemetry.json`, the models-pricing cache,
 /// session chat — stays in the platform data directory. Those are
 /// machine-managed state, not documents, and nobody should be editing them.
-fn config_root() -> Option<PathBuf> {
+pub(crate) fn config_root() -> Option<PathBuf> {
     let xdg = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
     let home = dirs::home_dir().or_else(|| std::env::var_os("HOME").map(PathBuf::from));
     config_root_from(xdg.as_deref(), home.as_deref())

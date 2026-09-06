@@ -1,41 +1,57 @@
 import { useEffect, useRef } from "react";
+import { type Combo, matchesCombo, parseCombo } from "@/features/keybindings/lib/combo";
+import type { ActionId } from "@/features/keybindings/lib/actions";
+import { useKeybindingsStore } from "@/features/keybindings/stores/keybindings-store";
 
-type KeyCombo = {
-  key: string;
-  meta?: boolean;
-  shift?: boolean;
-  alt?: boolean;
-};
-
-function matchKey(e: KeyboardEvent, key: string) {
-  const k = key.toLowerCase();
-  if (e.key.toLowerCase() === k) return true;
-  // Option/Alt on macOS substitutes the typed character (e.g. option+b → "∫"),
-  // so fall back to event.code (e.g. "KeyB").
-  if (k.length === 1 && /[a-z]/.test(k) && e.code === `Key${key.toUpperCase()}`) return true;
-  if (k === "[" && e.code === "BracketLeft") return true;
-  if (k === "]" && e.code === "BracketRight") return true;
-  // Punctuation that Option also rewrites (split-view shortcuts ⌥;/⌥'/⌘\).
-  if (k === ";" && e.code === "Semicolon") return true;
-  if (k === "'" && e.code === "Quote") return true;
-  if (k === "\\" && e.code === "Backslash") return true;
-  if (k === "/" && e.code === "Slash") return true;
-  return false;
-}
-
-export function useHotkeys(bindings: Array<{ combo: KeyCombo; action: () => void }>) {
+/**
+ * Global (window, bubble-phase) hotkey dispatcher. First match wins and the
+ * event is consumed. Matching is exact on all four modifiers and keyed on the
+ * physical key (`e.code`), so ⌥J never matches ⌘⌥J regardless of order and
+ * macOS Option-diacritics are a non-issue — see `keybindings/lib/combo.ts`.
+ *
+ * Stays silent while the keybinding recorder owns the keyboard.
+ */
+export function useHotkeys(bindings: Array<{ combo: Combo | string; action: () => void }>) {
   const bindingsRef = useRef(bindings);
   bindingsRef.current = bindings;
 
   useEffect(() => {
     function handler(e: KeyboardEvent) {
+      if (useKeybindingsStore.getState().recording) return;
       for (const { combo, action } of bindingsRef.current) {
-        const metaMatch = combo.meta ? e.metaKey || e.ctrlKey : true;
-        const shiftMatch = combo.shift ? e.shiftKey : !e.shiftKey;
-        const altMatch = combo.alt ? e.altKey : !e.altKey;
-        const keyMatch = matchKey(e, combo.key);
+        const parsed = typeof combo === "string" ? parseCombo(combo) : combo;
+        if (!parsed) continue;
+        if (matchesCombo(e, parsed)) {
+          e.preventDefault();
+          action();
+          return;
+        }
+      }
+    }
 
-        if (metaMatch && shiftMatch && altMatch && keyMatch) {
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+}
+
+/**
+ * The app-level dispatcher: handlers keyed by action id; the chords come from
+ * the active keybinding profile (registry defaults ⊕ user overrides) and
+ * follow it live. Dispatch order is registry order.
+ */
+export function useActionHotkeys(handlers: Partial<Record<ActionId, () => void>>) {
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
+
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      const state = useKeybindingsStore.getState();
+      if (state.recording) return;
+      for (const binding of state.resolved.list) {
+        if (binding.when !== "global") continue;
+        const action = handlersRef.current[binding.actionId];
+        if (!action) continue;
+        if (matchesCombo(e, binding.combo)) {
           e.preventDefault();
           action();
           return;

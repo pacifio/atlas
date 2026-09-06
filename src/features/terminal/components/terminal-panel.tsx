@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { useScopedHotkeys } from "@/features/keybindings/lib/use-scoped-hotkeys";
 import {
   useTerminalStore,
   collectPanes,
@@ -146,48 +147,40 @@ export function TerminalPanel({ tabId }: TerminalPanelProps) {
   //         otherwise it falls through to the global ⌘W (close the editor tab).
   // Registered in the CAPTURE phase so ⌘W can stopImmediatePropagation() before
   // the global (bubble-phase) ⌘W handler closes the whole tab.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.metaKey || e.ctrlKey || e.altKey) return;
-      const isNav = e.key === ";" || e.key === "'";
-      const isClose = e.key === "w" || e.key === "W";
-      if (!isNav && !isClose) return;
-      // Only act when the terminal is the FOCUSED surface, not merely visible.
-      // Gating on visibility alone let a terminal in the bottom panel (or a
-      // split) steal ⌘;/⌘' from the Knowledge Base's toggle shortcuts whenever
-      // it had 2+ tabs open — the source of the "KB toggle works only sometimes"
-      // flakiness. Requiring focus-within scopes these keys to the terminal.
-      const root = rootRef.current;
-      if (!root || root.offsetParent == null || !root.contains(document.activeElement)) return;
-      const t = useTerminalStore.getState().tabs[tabId];
-      if (!t) return;
-      const panes = collectPanes(t.root);
-      const pane = panes.find((p) => p.id === t.activePaneId) ?? panes[0];
-      if (!pane) return;
-
-      if (isClose) {
+  const activePane = () => {
+    const t = useTerminalStore.getState().tabs[tabId];
+    if (!t) return null;
+    const panes = collectPanes(t.root);
+    return panes.find((p) => p.id === t.activePaneId) ?? panes[0] ?? null;
+  };
+  const cycleTerminal = (delta: number) => {
+    const pane = activePane();
+    // Nothing to cycle — decline so the chord falls through (e.g. to the
+    // Knowledge Base's ⌘;/⌘' toggles).
+    if (!pane || pane.terminals.length < 2) return false;
+    const idx = Math.max(0, pane.terminals.indexOf(pane.activeTerminalId ?? pane.terminals[0]));
+    const next = (idx + delta + pane.terminals.length) % pane.terminals.length;
+    setActiveTerminalInPane(tabId, pane.id, pane.terminals[next]);
+    setActivePane(tabId, pane.id);
+    return true;
+  };
+  useScopedHotkeys({
+    rootRef,
+    requireFocusWithin: true,
+    handlers: {
+      "terminal.closeTab": () => {
+        const pane = activePane();
         // Only intercept when there's a terminal tab to close; otherwise let
         // the global ⌘W close the editor tab as usual.
-        if (pane.terminals.length < 2) return;
-        e.preventDefault();
-        e.stopImmediatePropagation();
+        if (!pane || pane.terminals.length < 2) return false;
         closeTerminalInPane(tabId, pane.id, pane.activeTerminalId ?? pane.terminals[0]);
         setActivePane(tabId, pane.id);
-        return;
-      }
-
-      // Tab navigation.
-      if (pane.terminals.length < 2) return;
-      e.preventDefault();
-      const idx = Math.max(0, pane.terminals.indexOf(pane.activeTerminalId ?? pane.terminals[0]));
-      const delta = e.key === ";" ? -1 : 1;
-      const next = (idx + delta + pane.terminals.length) % pane.terminals.length;
-      setActiveTerminalInPane(tabId, pane.id, pane.terminals[next]);
-      setActivePane(tabId, pane.id);
-    };
-    window.addEventListener("keydown", onKey, { capture: true });
-    return () => window.removeEventListener("keydown", onKey, { capture: true });
-  }, [tabId, setActiveTerminalInPane, setActivePane, closeTerminalInPane]);
+        return true;
+      },
+      "terminal.prevTab": () => cycleTerminal(-1),
+      "terminal.nextTab": () => cycleTerminal(1),
+    },
+  });
 
   if (!tab) return null;
 

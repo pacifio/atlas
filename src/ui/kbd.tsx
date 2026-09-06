@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { splitGlyphCombo } from "@/features/keybindings/lib/combo";
 
 function Kbd({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
@@ -26,22 +27,21 @@ function KbdGroup({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-/** Split a string like "⌘⇧F" or "⌘," into individual key glyphs. */
-function splitKeys(combo: string): string[] {
-  // Modifier glyphs are single chars; non-modifier "keys" may be multi-char names like "Enter".
-  // We just split codepoints — works because all our combos are single-char per slot.
-  return Array.from(combo);
-}
-
-/** Convenience: render a combo string ("⌘⇧F") as a KbdGroup of individual Kbds. */
-function KbdCombo({ combo, className }: { combo: string; className?: string }) {
+/** Render a list of keycaps (["⌘", "⇧", "B"]) — the form `displayKeys` produces. */
+function KbdKeys({ keys, className }: { keys: readonly string[]; className?: string }) {
   return (
     <KbdGroup className={className}>
-      {splitKeys(combo).map((k, i) => (
+      {keys.map((k, i) => (
         <Kbd key={`${k}-${i}`}>{k}</Kbd>
       ))}
     </KbdGroup>
   );
 }
 
-export { Kbd, KbdGroup, KbdCombo };
+/** Convenience: render a glyph string ("⌘⇧F", "⌥Space") as a KbdGroup. Every
+ *  modifier glyph is its own cap; the remainder ("F", "Space") is one cap. */
+function KbdCombo({ combo, className }: { combo: string; className?: string }) {
+  return <KbdKeys keys={splitGlyphCombo(combo)} className={className} />;
+}
+
+export { Kbd, KbdGroup, KbdKeys, KbdCombo };

@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { X, MessageSquare, Search, PanelLeft, Plus, History, Archive } from "lucide-react";
 import { toast } from "sonner";
@@ -164,6 +165,7 @@ export const SessionSidebar = memo(function SessionSidebar({
   variant = "sidebar",
   onOpened,
 }: SessionSidebarProps) {
+  const sidebarHint = useActionShortcut("panels.agentSidebar")?.label;
   const asDropdown = variant === "dropdown";
   const queryClient = useQueryClient();
   const project = useProjectStore.use.currentProject();
@@ -837,7 +839,7 @@ export const SessionSidebar = memo(function SessionSidebar({
         <button
           onClick={toggleChatSidebar}
           className="flex items-center justify-center w-6 h-6 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-          title="Hide sidebar (⌘⌥J)"
+          title={sidebarHint ? `Hide sidebar (${sidebarHint})` : "Hide sidebar"}
         >
           <PanelLeft size={12} />
         </button>

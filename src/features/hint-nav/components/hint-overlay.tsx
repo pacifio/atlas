@@ -4,14 +4,15 @@ import { useHintStore } from "../stores/hint-store";
 import { scanTargets, HINT_OVERLAY_ATTR, type HintTarget } from "../lib/scan-targets";
 import { generateLabels } from "../lib/generate-labels";
 import { activate } from "../lib/activate-target";
+import { matchesAction } from "@/features/keybindings/lib/use-scoped-hotkeys";
 
 /**
- * The ⌘⌥Space trigger. Matched on `e.code === "Space"` (NOT `e.key`): on macOS
- * Option+Space emits a non-breaking space, so key-based matching silently fails.
- * Single constant so it's trivial to rebind if it ever clashes with the OS.
+ * The trigger (⌘⌥Space by default) — rebindable via Settings → Keybindings.
+ * Matching is on `e.code`: on macOS Option+Space emits a non-breaking space,
+ * so key-based matching would silently fail.
  */
 function isTrigger(e: KeyboardEvent): boolean {
-  return e.code === "Space" && e.metaKey && e.altKey && !e.shiftKey && !e.ctrlKey;
+  return matchesAction(e, "hintNav.toggle");
 }
 
 /** Robust single-char extraction that survives macOS Option-diacritics and

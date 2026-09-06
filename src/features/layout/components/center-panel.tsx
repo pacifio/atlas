@@ -9,6 +9,7 @@ import {
   Suspense,
   Fragment,
 } from "react";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { cn } from "@/lib/utils";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -329,6 +330,8 @@ const TabColumn = memo(function TabColumn({
   runningTabIds: Set<string>;
   soloColumn?: boolean;
 }) {
+  const splitNewHint = useActionShortcut("split.new")?.label;
+  const splitCloseHint = useActionShortcut("split.close")?.label;
   const tabBarVisible = useLayoutStore.use.tabBarVisible();
   const {
     setActiveTab,
@@ -488,7 +491,7 @@ const TabColumn = memo(function TabColumn({
             {canSplit && (
               <button
                 onClick={addGroup}
-                title="Split right (⌘\\)"
+                title={splitNewHint ? `Split right (${splitNewHint})` : "Split right"}
                 className="self-center flex items-center justify-center w-6 h-6 text-text-tertiary hover:text-text-secondary hover:bg-bg-hover rounded transition-colors shrink-0 cursor-pointer outline-none"
               >
                 <Columns2 size={13} />
@@ -497,7 +500,7 @@ const TabColumn = memo(function TabColumn({
             {canCloseGroup && (
               <button
                 onClick={() => closeGroup(groupId)}
-                title="Close split (⌥W)"
+                title={splitCloseHint ? `Close split (${splitCloseHint})` : "Close split"}
                 className="self-center flex items-center justify-center w-6 h-6 text-text-tertiary hover:text-text-secondary hover:bg-bg-hover rounded transition-colors shrink-0 cursor-pointer outline-none"
               >
                 <X size={13} />
@@ -521,6 +524,7 @@ const TabContentContainer = memo(function TabContentContainer({
   view: WorkspaceView;
   isActive: boolean;
 }) {
+  const newTabHint = useActionShortcut("nav.newTabPalette")?.label;
   const { setActiveTab } = useLayoutStore.use.actions();
   const ref = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
@@ -559,7 +563,7 @@ const TabContentContainer = memo(function TabContentContainer({
         style={{ flex: "1 1 0%", minHeight: 0, overflow: "hidden" }}
         className="flex items-center justify-center text-[12px] text-text-tertiary"
       >
-        Empty split — open a tab with + or ⌘⌥N
+        Empty split — open a tab with +{newTabHint ? ` or ${newTabHint}` : ""}
       </div>
     );
   }

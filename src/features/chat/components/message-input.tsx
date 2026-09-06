@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { cn } from "@/lib/utils";
 import {
   ArrowUp,
@@ -414,6 +415,7 @@ function ComposerGroupsMenu({
   currentAgent: SwitchableAgent;
   onSwitchAgent: (agent: SwitchableAgent) => void;
 }) {
+  const cycleAgentHint = useActionShortcut("chat.cycleAgent")?.label;
   const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
   const permissionMode = useChatStore((s) => s.sessions[tabId]?.claudePermissionMode ?? "default");
   const currentMode = useChatStore((s) => s.sessions[tabId]?.acpCurrentMode);
@@ -728,7 +730,9 @@ function ComposerGroupsMenu({
       <button
         onClick={() => toggle("agent")}
         className={pillCls(openGroup === "agent")}
-        title="Coding agent — pick here, ⌥/ cycles"
+        title={
+          cycleAgentHint ? `Coding agent — pick here, ${cycleAgentHint} cycles` : "Coding agent"
+        }
       >
         <AgentMark agentType={agentType} className="!h-4 !w-4 !text-[9px] !rounded" />
         <span className={labelCls(openGroup === "agent")}>{agentMeta(currentAgent).label}</span>

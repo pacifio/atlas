@@ -1,4 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, type ElementType } from "react";
+import { ActionKbd } from "@/features/keybindings/components/action-kbd";
+import type { ActionId } from "@/features/keybindings/lib/actions";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   Map,
@@ -18,7 +20,6 @@ import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { cn } from "@/lib/utils";
-import { KbdCombo } from "@/ui/kbd";
 import type { TabType } from "@/lib/constants";
 
 interface ModuleEntry {
@@ -26,7 +27,7 @@ interface ModuleEntry {
   type: TabType;
   label: string;
   icon: ElementType<LucideProps>;
-  shortcut?: string;
+  actionId?: ActionId;
 }
 
 /**
@@ -41,18 +42,30 @@ const MODULES: ModuleEntry[] = [
     type: "chat",
     label: "New Agents Chat",
     icon: AtlasIcon as ElementType<LucideProps>,
-    shortcut: "⌘T",
+    actionId: "tabs.newChat",
   },
   { id: "canvas", type: "canvas", label: "Spaces", icon: Map },
-  { id: "terminal", type: "terminal", label: "New Terminal", icon: Terminal, shortcut: "⌘⇧T" },
+  {
+    id: "terminal",
+    type: "terminal",
+    label: "New Terminal",
+    icon: Terminal,
+    actionId: "tabs.newTerminal",
+  },
   { id: "knowledge", type: "knowledge", label: "Knowledge", icon: Brain },
   { id: "knowledge-graph", type: "knowledge-graph", label: "Knowledge Graph", icon: Network },
   { id: "memory", type: "memory", label: "Memory", icon: BrainCircuit },
   { id: "diff", type: "diff", label: "Git Diff", icon: GitCompare },
   { id: "browser", type: "browser", label: "Browser", icon: Globe },
-  { id: "editor", type: "editor", label: "Untitled Editor", icon: Code, shortcut: "⌘N" },
+  {
+    id: "editor",
+    type: "editor",
+    label: "Untitled Editor",
+    icon: Code,
+    actionId: "tabs.newUntitled",
+  },
   { id: "log", type: "log", label: "Log", icon: ScrollText },
-  { id: "settings", type: "settings", label: "Settings", icon: Settings, shortcut: "⌘," },
+  { id: "settings", type: "settings", label: "Settings", icon: Settings, actionId: "app.settings" },
 ];
 
 export function NewTabPalette({
@@ -210,7 +223,7 @@ export function NewTabPalette({
                 >
                   <Icon size={14} className="shrink-0 text-[var(--text-tertiary)]" />
                   <span className="flex-1 truncate">{item.label}</span>
-                  {item.shortcut && <KbdCombo combo={item.shortcut} />}
+                  {item.actionId && <ActionKbd id={item.actionId} />}
                 </button>
               );
             })}

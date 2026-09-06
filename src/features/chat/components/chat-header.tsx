@@ -17,6 +17,7 @@
 // from the first within a release.
 
 import { forwardRef, memo, useState } from "react";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import * as Popover from "@radix-ui/react-popover";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
@@ -98,6 +99,7 @@ function ChatHeaderImpl({
   onForkSession,
   onNewSession,
 }: ChatHeaderProps) {
+  const findHint = useActionShortcut("chat.find")?.label;
   const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
@@ -168,7 +170,10 @@ function ChatHeaderImpl({
 
         <div className="flex-1" />
 
-        <HeaderCircleButton title="Find in chat (⌘F)" onClick={onOpenSearch}>
+        <HeaderCircleButton
+          title={findHint ? `Find in chat (${findHint})` : "Find in chat"}
+          onClick={onOpenSearch}
+        >
           <Search size={13} />
         </HeaderCircleButton>
 

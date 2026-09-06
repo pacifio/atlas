@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { matchesAction } from "@/features/keybindings/lib/use-scoped-hotkeys";
 import {
   Background,
   BackgroundVariant,
@@ -406,17 +407,15 @@ function SpaceSurface({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
       const w = wrapperRef.current;
       if (!w || w.offsetParent === null) return;
       const ae = document.activeElement as HTMLElement | null;
       if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable))
         return;
-      const key = e.key.toLowerCase();
-      if (key === "z" && !e.shiftKey) {
+      if (matchesAction(e, "canvas.undo")) {
         e.preventDefault();
         doUndo();
-      } else if ((key === "z" && e.shiftKey) || key === "y") {
+      } else if (matchesAction(e, "canvas.redo")) {
         e.preventDefault();
         doRedo();
       }
