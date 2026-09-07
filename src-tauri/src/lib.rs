@@ -645,6 +645,7 @@ pub fn run() {
             commands::agents::agents_set_config_option,
             commands::agents::agents_respond_elicitation,
             commands::agents::agents_fork_session,
+            commands::agents::agents_rewind_last_turn,
             commands::agents::agents_run_auth_method,
             commands::agents::agents_authenticate,
             commands::agents::agents_drop_session,

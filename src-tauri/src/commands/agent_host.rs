@@ -627,6 +627,14 @@ impl AgentHost {
                 .clone()
                 .downcast::<atlas_native_agent::EngineConnection>()
                 .is_some(),
+            // Same shape and the same reason: ACP has no verb for forgetting a
+            // turn, the native engine has `thread/rollback`. Published rather
+            // than left for the frontend to infer from the agent id — under
+            // ADR-0002 no agent gets special treatment, so "can this one
+            // rewind" has to be a discovered fact like every other capability.
+            supports_rewind: connection
+                .downcast::<atlas_native_agent::EngineConnection>()
+                .is_some(),
         }
     }
 
@@ -1146,6 +1154,26 @@ impl AgentHost {
             .await
             .map_err(|e| HostError::classified(e.to_string()))?;
         Ok(Some(forked))
+    }
+
+    /// Drop the last exchange and return the prompt that started it.
+    ///
+    /// The rewind half of a retry. `None` means "not retryable here" — either
+    /// the agent is not the native one (no ACP agent has a rewind verb; the
+    /// capability record in schema 1.5.0 has `fork`, `resume`, `list`,
+    /// `delete` and `close`, and nothing that forgets turns) or the thread has
+    /// no exchange left to drop. Callers re-send the returned text through the
+    /// ordinary send path, so a rewind that lands and a send that fails are
+    /// two outcomes the UI can tell apart.
+    pub async fn rewind_last_turn(&self, key: &SessionKey) -> Result<Option<String>> {
+        let Ok(native) = self.native_connection(&key.session_id) else {
+            return Ok(None);
+        };
+        let session_id = acp::SessionId::new(key.session_id.as_str());
+        native
+            .rewind_last_turn(&session_id)
+            .await
+            .map_err(|e| HostError::classified(e.to_string()))
     }
 
     fn native_connection(&self, session_id: &str) -> Result<Arc<atlas_native_agent::EngineConnection>> {
@@ -1973,6 +2001,7 @@ pub struct PluginCapabilities {
     pub supports_load_session: bool,
     pub supports_session_list: bool,
     pub supports_fork: bool,
+    pub supports_rewind: bool,
 }
 
 /// A registry agent's cached icon, as a data URL.

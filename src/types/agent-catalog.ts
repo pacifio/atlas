@@ -52,6 +52,9 @@ export interface AgentCatalogEntry {
   /** Whether the agent advertised `sessionCapabilities.fork` (P3.4). Same
    *  pre-spawn caveat as `authKinds`. */
   supportsFork?: boolean;
+  /** Whether the agent can rewind a turn out of its own history. Gates the
+   *  retry affordance; see `retry-gate.ts`. Same pre-spawn caveat. */
+  supportsRewind?: boolean;
   /** Display alias UI state carries ("claude-code" for "claude-code-ts"). */
   agentType: string;
   name: string;

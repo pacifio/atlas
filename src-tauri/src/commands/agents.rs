@@ -901,6 +901,24 @@ pub async fn agents_fork_session(
     host.fork_session(&key).await.map_err(|e| e.to_string())
 }
 
+/// Rewind the last exchange, returning the prompt that started it.
+///
+/// Half of "retry the last message": the caller re-sends the returned text
+/// with `agents_send`. Split in two on purpose — the rewind is destructive and
+/// the send can fail on its own, and a UI that cannot tell those apart either
+/// loses the user's prompt or replays it into a thread that never shrank.
+///
+/// `null` for every ACP agent, exactly like `agents_fork_session`: rewinding
+/// is not in ACP's session capabilities, so the affordance is hidden there
+/// rather than faked with an append-and-resend that quietly diverges.
+#[tauri::command]
+pub async fn agents_rewind_last_turn(
+    key: SessionKey,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<Option<String>, String> {
+    host.rewind_last_turn(&key).await.map_err(|e| e.to_string())
+}
+
 /// Set any agent-advertised config option.
 ///
 /// Generic by design: ACP lets an agent advertise arbitrary options, and Atlas
