@@ -14,13 +14,16 @@
 //     what they need through `getState()` at click time. Nothing here holds a
 //     subscription, so nothing here re-renders on a streaming frame.
 //
-//  3. **The transcript is not virtualized** (`transcript.tsx:1`), so this
-//     mounts once per user message for the life of the thread. That is why
-//     the reveal is pure CSS `group-hover` against the row wrapper's existing
-//     `group` class: a JS hover state would fire a `setState` for every bubble
-//     the pointer crosses during a fast flick, which is precisely the work
-//     the transcript is built to avoid. The trade is two buttons' worth of
-//     idle DOM per user row, which costs nothing at scroll time.
+//  3. **The transcript is not virtualized** (`transcript.tsx:1`). It renders a
+//     growing WINDOW — `rows.slice(safeStart)` — so this is mounted for every
+//     user message currently inside it, and the window only ever grows as the
+//     reader scrolls back. Rows are keyed by `row.id`, so growth prepends
+//     without remounting what is already there. That is why the reveal is
+//     pure CSS `group-hover` against the row wrapper's existing `group`
+//     class: a JS hover state would fire a `setState` for every bubble the
+//     pointer crosses during a fast flick, which is precisely the work the
+//     transcript is built to avoid. The trade is two buttons' worth of idle
+//     DOM per windowed user row, which costs nothing at scroll time.
 //
 // `focus-within` on the container is not decoration: with an opacity-only
 // reveal, keyboard users would otherwise tab into controls they cannot see.
@@ -72,8 +75,10 @@ export function UserRowActions({
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // A row can unmount while the "copied" tick is still pending (window growth
-  // and history loads both remount rows freely).
+  // A row can unmount while the "copied" tick is still pending — a history
+  // load replaces the projection wholesale, and closing the tab takes the
+  // transcript with it. (Window growth does not: `key={row.id}` keeps existing
+  // instances alive when rows are prepended.)
   useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
 
   const onCopy = useCallback(() => {

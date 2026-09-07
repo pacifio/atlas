@@ -29,9 +29,14 @@ import { isBusyAgentStatus, type ChatSession } from "@/types/agent";
  *
  * That still leaves HOW the caller knows. Comparing against the native agent's
  * id would work today and is exactly the special-casing ADR-0002 rules out, so
- * `agentSupportsRewind` is a fact discovered from the live connection and
- * published on the catalog entry (`supportsRewind`, computed next to
- * `supports_fork` in `agent_host.rs`), and this function only reads it.
+ * `agentSupportsRewind` comes from the connection answering for itself —
+ * `AgentConnection::supports_rewind`, published onto the catalog entry as
+ * `supportsRewind` — and this function only reads it. Note the honest limit:
+ * the native connection answers `true` from its own impl rather than from
+ * anything an agent advertised at `initialize`, because there is no ACP
+ * capability to advertise. The seam is what matters here — an agent that gains
+ * a rewind implements the trait and is offered the affordance, and no code
+ * outside its own crate names it.
  *
  * @param agentSupportsRewind `agentCatalogEntry(agentType)?.supportsRewind`.
  *   False before the agent's first handshake, which is correct: unknown is not

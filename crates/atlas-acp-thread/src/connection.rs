@@ -220,6 +220,15 @@ pub trait AgentConnection: Send + Sync {
         false
     }
 
+    /// Whether this agent can drop its own last turn — see [`AgentSessionRewind`].
+    ///
+    /// Session-independent, like [`Self::supports_logout`], because the
+    /// catalogue publishes it per agent before any session exists. It must
+    /// agree with [`Self::rewind`]: this answers "would that return `Some`".
+    fn supports_rewind(&self) -> bool {
+        false
+    }
+
     /// Load an existing session by ID.
     fn load_session(
         self: Arc<Self>,
@@ -311,6 +320,10 @@ pub trait AgentConnection: Send + Sync {
         None
     }
 
+    fn rewind(&self, _session_id: &acp::SessionId) -> Option<Arc<dyn AgentSessionRewind>> {
+        None
+    }
+
     fn set_title(&self, _session_id: &acp::SessionId) -> Option<Arc<dyn AgentSessionSetTitle>> {
         None
     }
@@ -377,6 +390,22 @@ pub trait AgentSessionClientUserMessageIds: Send + Sync {
 
 pub trait AgentSessionRetry: Send + Sync {
     fn run(&self) -> BoxFuture<'static, Result<acp::PromptResponse>>;
+}
+
+/// Dropping a session's last turn and recovering the prompt that started it.
+///
+/// Distinct from [`AgentSessionTruncate`], which cuts at a NAMED user message
+/// and so needs the [`ClientUserMessageId`] machinery nothing populates yet,
+/// and from [`AgentSessionRetry`], which rewinds and re-runs as one opaque
+/// step. Splitting the rewind from the re-send is what lets a caller tell a
+/// rewind that landed from a send that failed — and the prompt has to come
+/// back out, because after the rewind the thread no longer holds it.
+///
+/// `Ok(None)` means the agent declined and NOTHING changed. Anything that may
+/// have left the durable history and the thread disagreeing must be an `Err`:
+/// a caller told "nothing happened" cannot repair a rewind that half-happened.
+pub trait AgentSessionRewind: Send + Sync {
+    fn run(&self) -> BoxFuture<'static, Result<Option<String>>>;
 }
 
 pub trait AgentSessionSetTitle: Send + Sync {

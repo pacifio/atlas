@@ -2117,12 +2117,16 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       }
       if (remaining !== 0) return;
       const dropped = session.messages.splice(cut);
-      // Splicing the log is not the whole rewind. `addMessage` also increments
-      // `userMessageCount` and hangs the turn's plan on the session, and the
-      // sidebar reads BOTH without rescanning messages — so a rewind that only
-      // spliced left the count permanently high (visibly so under retry, which
-      // rewinds and re-adds on every press) and left the discarded turn's plan
-      // card on screen. Same invariants `replaceMessages` restores wholesale.
+      // Splicing the log is not the whole rewind: two caches derived from it
+      // live on the session and neither is recomputed from `messages`.
+      //   * `userMessageCount`, incremented by `addMessage` (:899) and read by
+      //     the sidebar. A rewind that only spliced left it permanently high —
+      //     visibly so under retry, which rewinds and re-adds on every press.
+      //   * `livePlan`, set by the `plan_updated` delta (:2046) and read by
+      //     the docked plan pill. Left alone it kept showing the plan of the
+      //     turn that was just discarded.
+      // `replaceMessages` (:1310) recomputes the count and preview on a
+      // history load; the plan comes back via `hydrateSessionSnapshot` (:1341).
       const droppedUsers = dropped.reduce((n, m) => (m.role === "user" ? n + 1 : n), 0);
       session.userMessageCount = Math.max(0, (session.userMessageCount ?? 0) - droppedUsers);
       if (session.messages.length === 0) session.firstUserContent = undefined;

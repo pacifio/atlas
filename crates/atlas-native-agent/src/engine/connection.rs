@@ -42,7 +42,7 @@ use anyhow::anyhow;
 use anyhow::Result;
 use atlas_acp_thread::{
     AcpThread, AcpThreadHandle, AgentConnection, AgentId, AgentModelId, AgentModelInfo,
-    AgentModelList, AgentModelSelector, AgentSessionModes, AuthorizationKind,
+    AgentModelList, AgentModelSelector, AgentSessionModes, AgentSessionRewind, AuthorizationKind,
 };
 use crate::AgentSessionEffort;
 use atlas_agent_servers::ThreadEventSink;
@@ -435,81 +435,6 @@ impl EngineConnection {
             })
             .await?;
         Ok(response.thread.id)
-    }
-
-    /// Drop the last exchange and hand back the prompt that started it.
-    ///
-    /// This is the rewind half of "retry": `thread/rollback` drops the turn
-    /// from the engine's durable history, the thread's entries are trimmed to
-    /// match so the transcript shows what the model now remembers, and the
-    /// caller re-sends the returned text through the ordinary send path.
-    ///
-    /// Deliberately NOT a re-implementation of `prompt`'s turn machinery.
-    /// Rewinding and re-sending are separable failures — a rewind that lands
-    /// and a send that does not must leave the user holding their prompt, not
-    /// a silently shortened thread — and splitting them here is what lets the
-    /// host report the two apart.
-    ///
-    /// Unlike `/undo` this is not itself a turn, so there is no `/undo` user
-    /// entry to skip: the exchange being dropped starts at the LAST user
-    /// entry, not the second-to-last.
-    ///
-    /// Returns `None` when there is no exchange to rewind. Only the flattened
-    /// text survives — attachments and resource links are not reconstructed,
-    /// because the thread stores what was sent, not the composer state that
-    /// produced it.
-    pub async fn rewind_last_turn(&self, session_id: &acp::SessionId) -> Result<Option<String>> {
-        // Ask before trimming. The engine refusing (nothing to drop) has to
-        // leave the transcript exactly as it was, so nothing local moves until
-        // the durable history has already moved.
-        let rolled: Result<v2::ThreadRollbackResponse> = self
-            .call(|request_id| ClientRequest::ThreadRollback {
-                request_id,
-                params: v2::ThreadRollbackParams {
-                    thread_id: session_id.to_string(),
-                    num_turns: 1,
-                },
-            })
-            .await;
-        if rolled.is_err() {
-            return Ok(None);
-        }
-
-        // Past this point the durable history has ALREADY shrunk. Reporting
-        // `None` — "nothing to rewind" — from here would tell the user nothing
-        // happened while the engine and the transcript silently disagree about
-        // the conversation. An error is the only honest answer.
-        let Some(thread) = self.sessions.thread(session_id) else {
-            return Err(anyhow!(
-                "rewound the engine's history but the session's thread is gone; \
-                 reopen the conversation to resynchronise"
-            ));
-        };
-        let mut locked = thread
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let last_user = locked
-            .entries()
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(ix, entry)| match entry {
-                atlas_acp_thread::AgentThreadEntry::UserMessage(msg) => {
-                    Some((ix, msg.content.to_text().to_string()))
-                }
-                _ => None,
-            });
-        let Some((from, text)) = last_user else {
-            return Err(anyhow!(
-                "rewound the engine's history but the transcript holds no prompt to \
-                 replay; reopen the conversation to resynchronise"
-            ));
-        };
-        // `EntriesRemoved` is what the delta projector turns into
-        // `HistoryRewound`, which is what trims the store's mirror and
-        // resolves any permission request stranded by the removal.
-        locked.remove_entries_from(from);
-        Ok(Some(text))
     }
 
     /// Discover the cwd's skills and re-publish the command list with them.
@@ -1560,6 +1485,18 @@ impl AgentConnection for EngineConnection {
         .boxed()
     }
 
+    fn supports_rewind(&self) -> bool {
+        true
+    }
+
+    fn rewind(&self, session_id: &acp::SessionId) -> Option<Arc<dyn AgentSessionRewind>> {
+        self.sessions.thread(session_id)?;
+        Some(Arc::new(EngineSessionRewind {
+            connection: self.clone_rewind_handle(),
+            session_id: session_id.clone(),
+        }))
+    }
+
     fn session_modes(&self, session_id: &acp::SessionId) -> Option<Arc<dyn AgentSessionModes>> {
         self.sessions.thread(session_id)?;
         Some(Arc::new(EngineSessionModes {
@@ -1943,7 +1880,132 @@ struct ConnectionHandle {
     turns: Arc<TurnWaiters>,
 }
 
+/// What a rewind needs, and no more: the request channel to reach the engine
+/// and the session table to reach the thread. Same reason the other session
+/// controls hold parts rather than the connection — see `ConnectionHandle`.
+#[derive(Clone)]
+struct RewindHandle {
+    requests: InProcessAppServerRequestHandle,
+    request_ids: Arc<RequestIds>,
+    sessions: Arc<EngineSessions>,
+}
+
+struct EngineSessionRewind {
+    connection: RewindHandle,
+    session_id: acp::SessionId,
+}
+
+impl AgentSessionRewind for EngineSessionRewind {
+    fn run(&self) -> BoxFuture<'static, Result<Option<String>>> {
+        let handle = self.connection.clone();
+        let session_id = self.session_id.clone();
+        async move { handle.rewind_last_turn(&session_id).await }.boxed()
+    }
+}
+
+impl RewindHandle {
+    /// Drop the last turn and hand back the prompt that started it.
+    ///
+    /// This is the rewind half of "retry": `thread/rollback` drops the turn
+    /// from the engine's durable history, the thread's entries are trimmed to
+    /// match so the transcript shows what the model now remembers, and the
+    /// caller re-sends the returned text through the ordinary send path.
+    ///
+    /// Deliberately NOT a re-implementation of `prompt`'s turn machinery.
+    /// Rewinding and re-sending are separable failures — a rewind that lands
+    /// and a send that does not must leave the user holding their prompt, not
+    /// a silently shortened thread — and splitting them here is what lets the
+    /// host report the two apart.
+    ///
+    /// Unlike `/undo` this is not itself a turn, so there is no `/undo` user
+    /// entry to skip: the turn being dropped starts at the LAST user entry,
+    /// not the second-to-last.
+    ///
+    /// `None` means the engine declined — almost always an empty thread. It is
+    /// NOT a promise that nothing moved: the request layer folds a refusal and
+    /// a dead channel into one error, and a channel that dies after the
+    /// rollback ran lands here too. Everything past a rollback known to have
+    /// succeeded is an `Err`, so the only ambiguity left is this one.
+    ///
+    /// Only the FLATTENED text survives. `ContentBlock::to_text` returns a
+    /// resource link as a bare URI and joins mixed blocks without the newlines
+    /// the original input carried (`thread.rs:99` vs `sink.rs:351`), so a turn
+    /// whose prompt mixed prose and `@`-mentions does not round-trip verbatim.
+    /// Attachments are not reconstructed at all — the thread stores what was
+    /// sent, not the composer state that produced it.
+    async fn rewind_last_turn(&self, session_id: &acp::SessionId) -> Result<Option<String>> {
+        // Ask before trimming. The engine refusing (nothing to drop) has to
+        // leave the transcript exactly as it was, so nothing local moves until
+        // the durable history has already moved.
+        let rolled = self
+            .requests
+            .request_typed::<v2::ThreadRollbackResponse>(ClientRequest::ThreadRollback {
+                request_id: self.request_ids.next(),
+                params: v2::ThreadRollbackParams {
+                    thread_id: session_id.to_string(),
+                    num_turns: 1,
+                },
+            })
+            .await;
+        if let Err(e) = rolled {
+            // A refusal and a broken channel are the same value here — the
+            // request layer does not distinguish "the engine said no" from "the
+            // engine never answered", and a transport error can also arrive
+            // AFTER the rollback ran. So this is honestly `None` only in the
+            // first case, and the caller is told as much rather than being
+            // promised the history is untouched. Erring instead would put a
+            // scary message in front of the far commoner empty-thread case.
+            tracing::debug!("thread/rollback declined or failed: {e}");
+            return Ok(None);
+        }
+
+        // Past this point the durable history has ALREADY shrunk. Reporting
+        // `None` — "nothing to rewind" — from here would tell the user nothing
+        // happened while the engine and the transcript silently disagree about
+        // the conversation. An error is the only honest answer.
+        let Some(thread) = self.sessions.thread(session_id) else {
+            return Err(anyhow!(
+                "rewound the engine's history but the session's thread is gone; \
+                 reopen the conversation to resynchronise"
+            ));
+        };
+        let mut locked = thread
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let last_user = locked
+            .entries()
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(ix, entry)| match entry {
+                atlas_acp_thread::AgentThreadEntry::UserMessage(msg) => {
+                    Some((ix, msg.content.to_text().to_string()))
+                }
+                _ => None,
+            });
+        let Some((from, text)) = last_user else {
+            return Err(anyhow!(
+                "rewound the engine's history but the transcript holds no prompt to \
+                 replay; reopen the conversation to resynchronise"
+            ));
+        };
+        // `EntriesRemoved` is what the delta projector turns into
+        // `HistoryRewound`, which is what trims the store's mirror and
+        // resolves any permission request stranded by the removal.
+        locked.remove_entries_from(from);
+        Ok(Some(text))
+    }
+}
+
 impl EngineConnection {
+    fn clone_rewind_handle(&self) -> RewindHandle {
+        RewindHandle {
+            requests: self.requests.clone(),
+            request_ids: self.request_ids.clone(),
+            sessions: self.sessions.clone(),
+        }
+    }
+
     fn clone_handle(&self) -> ConnectionHandle {
         ConnectionHandle {
             requests: self.requests.clone(),

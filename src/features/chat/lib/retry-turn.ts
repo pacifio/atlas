@@ -25,6 +25,18 @@ import { catalogEntry } from "@/features/agents/lib/agent-meta";
 import { logEvent } from "@/features/log/lib/log";
 
 /**
+ * Tabs with a rewind already in flight.
+ *
+ * The status gate cannot cover this. `updateSessionStatus(tabId, "running")`
+ * only happens AFTER the rewind returns, so between the first click and that
+ * point the session still reads idle and `sessionCanRetry` still says yes — a
+ * double-click therefore issued two rollbacks and destroyed two turns, not
+ * one. Claimed synchronously, before the first await, because anything async
+ * reopens the same window it is trying to close.
+ */
+const inFlight = new Set<string>();
+
+/**
  * Wait until the store reflects the rewind, so the re-sent message is not
  * spliced off by the `history_rewound` delta that is still in flight.
  *
@@ -66,49 +78,93 @@ export async function retryLastTurn(tabId: string): Promise<void> {
     return;
   }
 
-  const key: SessionKey = {
-    agent_id: session.acpAgentId,
-    session_id: session.acpSessionId,
-  };
-  const before = session.messages.length;
+  if (inFlight.has(tabId)) return;
+  inFlight.add(tabId);
+  try {
+    await runRetry(tabId, {
+      agent_id: session.acpAgentId,
+      session_id: session.acpSessionId,
+    });
+  } finally {
+    inFlight.delete(tabId);
+  }
+}
+
+async function runRetry(tabId: string, key: SessionKey): Promise<void> {
+  const before = useChatStore.getState().sessions[tabId]?.messages.length ?? 0;
 
   let prompt: string | null;
   try {
     prompt = await agents.rewindLastTurn(key);
   } catch (err) {
-    toast.error(`Could not rewind: ${err instanceof Error ? err.message : String(err)}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    toast.error(`Could not rewind: ${msg}`);
+    logEvent({
+      source: "agent",
+      kind: "stream-error",
+      summary: `retry rewind failed: ${msg.slice(0, 120)}`,
+      payload: { tabId, acpSessionId: key.session_id, retry: true },
+    });
     return;
   }
-  // `null` covers two cases the engine does not distinguish: it refused
-  // because there was nothing left to drop, and it did not answer at all. The
-  // wording says only what is certain — asserting "nothing to retry" at a dead
-  // engine would send the user looking in the wrong place. Either way nothing
-  // was removed, so there is nothing to restore.
+  // `null` is "the engine declined", which is almost always an empty thread —
+  // but the request layer folds a refusal, a dead channel, and a channel that
+  // died AFTER the rollback ran into one error, so this is not a promise that
+  // nothing moved. The wording claims only what is certain; asserting "nothing
+  // to retry" at a dead engine would send the user looking in the wrong place.
+  // Nothing is enqueued here because in the overwhelmingly common case there
+  // is no prompt to hand back.
   if (prompt === null) {
     toast.error("Could not rewind — nothing to retry, or the agent did not respond");
     return;
   }
 
-  await awaitRewind(tabId, before);
+  // From here the rewind HAS landed and the prompt exists only in this
+  // closure — every bail-out below has to hand it back rather than drop it.
+  // `enqueueMessage` is that hand-back: the composer shows a queued chip the
+  // user can edit or send, and the drain effect only fires on a status or
+  // binding transition, so nothing re-sends behind their back.
+  const preserve = (why: string) => {
+    useChatStore.getState().actions.enqueueMessage(tabId, prompt as string);
+    toast.error(`${why} — your prompt is waiting in the composer`);
+    logEvent({
+      source: "agent",
+      kind: "stream-error",
+      summary: `retry not re-sent: ${why}`,
+      payload: { tabId, acpSessionId: key.session_id, retry: true },
+    });
+  };
+
+  // A false answer means the truncation never became observable. Sending
+  // anyway is the worst of both: a late `history_rewound` splices off the
+  // message just added, and a delta that never comes leaves the rewound turn
+  // on screen with a duplicate under it.
+  if (!(await awaitRewind(tabId, before))) {
+    preserve("The rewind did not reach the transcript");
+    return;
+  }
 
   // Two awaits have passed since `key` was captured. A tab that switched agent
   // or rebound in between is a DIFFERENT session, and sending the old key's
   // prompt into it would put one conversation's text in another's transcript.
-  // The rewind already landed; saying so is better than compounding it.
   const now = useChatStore.getState().sessions[tabId];
   if (now?.acpSessionId !== key.session_id || now?.acpAgentId !== key.agent_id) {
-    toast.error("Rewound, but the session changed — your prompt was not re-sent");
+    preserve("The session changed before the retry could be sent");
     return;
   }
 
   // The stored prompt is the WIRE text — mentions expanded, injected context
-  // and the next-steps directive included. Re-sending it verbatim reproduces
-  // the original turn rather than a lossily-recomposed version of it, and the
-  // transcript strips both suffixes for display the same way it does for a
-  // freshly composed send (`derivedUser` in `turn-rows.ts`).
+  // and the next-steps directive included — so it is closer to the original
+  // than a recomposition from the visible bubble would be, and the transcript
+  // strips both suffixes for display the same way it does for a freshly
+  // composed send (`derivedUser` in `turn-rows.ts`).
   //
-  // Attachments do not survive: the thread records what was sent, not the
-  // composer state that produced it.
+  // It is NOT byte-identical. The thread flattens content blocks, so a
+  // resource link comes back as a bare URI and mixed blocks lose the newlines
+  // the original input carried (`thread.rs:99` vs `sink.rs:351`); no
+  // `resourceLinks` are re-sent, and attachments are not reconstructed at all.
+  // A prompt that was pure prose round-trips exactly; one that mixed prose and
+  // `@`-mentions comes back flattened.
   const actions = useChatStore.getState().actions;
   actions.addMessage(tabId, "user", prompt);
   actions.updateSessionStatus(tabId, "running");
@@ -132,8 +188,13 @@ export async function retryLastTurn(tabId: string): Promise<void> {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    actions.addMessage(tabId, "assistant", `agent send error: ${msg}`);
-    actions.updateSessionStatus(tabId, "error");
+    // Recheck: `agents.send` is another await, and writing an error bubble
+    // through `tabId` after the tab rebound would blame the wrong session.
+    const still = useChatStore.getState().sessions[tabId];
+    if (still?.acpSessionId === key.session_id && still?.acpAgentId === key.agent_id) {
+      actions.addMessage(tabId, "assistant", `agent send error: ${msg}`);
+      actions.updateSessionStatus(tabId, "error");
+    }
     logEvent({
       source: "agent",
       kind: "stream-error",

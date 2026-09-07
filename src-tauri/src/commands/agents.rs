@@ -908,9 +908,11 @@ pub async fn agents_fork_session(
 /// the send can fail on its own, and a UI that cannot tell those apart either
 /// loses the user's prompt or replays it into a thread that never shrank.
 ///
-/// `null` for every ACP agent, exactly like `agents_fork_session`: rewinding
-/// is not in ACP's session capabilities, so the affordance is hidden there
-/// rather than faked with an append-and-resend that quietly diverges.
+/// `null` when the connection advertises no rewind — which is every ACP agent
+/// today, because rewinding is not in ACP's session capabilities. The
+/// affordance is hidden there rather than faked with an append-and-resend that
+/// quietly diverges. Asked through `AgentConnection::rewind`, so an agent that
+/// gains the verb needs no change here.
 #[tauri::command]
 pub async fn agents_rewind_last_turn(
     key: SessionKey,

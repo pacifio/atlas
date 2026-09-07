@@ -627,14 +627,12 @@ impl AgentHost {
                 .clone()
                 .downcast::<atlas_native_agent::EngineConnection>()
                 .is_some(),
-            // Same shape and the same reason: ACP has no verb for forgetting a
-            // turn, the native engine has `thread/rollback`. Published rather
-            // than left for the frontend to infer from the agent id — under
-            // ADR-0002 no agent gets special treatment, so "can this one
-            // rewind" has to be a discovered fact like every other capability.
-            supports_rewind: connection
-                .downcast::<atlas_native_agent::EngineConnection>()
-                .is_some(),
+            // Asked of the connection, not inferred from its concrete type.
+            // `supports_fork` above still downcasts, and that is exactly the
+            // identity check ADR-0002 rules out — a second one would entrench
+            // it. Any connection that answers true here is offered the
+            // affordance, native or not.
+            supports_rewind: connection.supports_rewind(),
         }
     }
 
@@ -1166,12 +1164,15 @@ impl AgentHost {
     /// ordinary send path, so a rewind that lands and a send that fails are
     /// two outcomes the UI can tell apart.
     pub async fn rewind_last_turn(&self, key: &SessionKey) -> Result<Option<String>> {
-        let Ok(native) = self.native_connection(&key.session_id) else {
+        let session_id = acp::SessionId::new(key.session_id.as_str());
+        let connection = lock_thread(&self.thread(&key.session_id)?).connection().clone();
+        // Through the seam, not a downcast: an agent that grows a rewind gets
+        // this for free, and nothing here names a concrete connection type.
+        let Some(rewind) = connection.rewind(&session_id) else {
             return Ok(None);
         };
-        let session_id = acp::SessionId::new(key.session_id.as_str());
-        native
-            .rewind_last_turn(&session_id)
+        rewind
+            .run()
             .await
             .map_err(|e| HostError::classified(e.to_string()))
     }
