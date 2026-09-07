@@ -240,11 +240,6 @@ function pump(): void {
     inFlight += 1;
     item.dispatch();
   }
-  // Queue drained → the streaming tail may take the worker (see the transient
-  // lane's yield rule below).
-  if (inFlight === 0 && queue.length === 0) {
-    kickTransient();
-  }
 }
 
 /** Raise a queued item's priority — the same source can be requested again by a
@@ -335,98 +330,10 @@ function parseLarge(source: string, priority: number): Promise<string> {
   return pending.get(source)!;
 }
 
-// ── Transient (streaming-tail) lane ────────────────────────────────────────
-//
-// The live tail's source is a new unique string every throttle tick, so it
-// must never touch the LRU (per-frame partials would evict the settled blocks
-// the cache protects) or the priority queue (hundreds of dead parses drained
-// two at a time — the original pathology StreamingMarkdown documents). This
-// lane is the worker path built for exactly that shape: ONE in-flight parse,
-// and a single "next" slot where a newer source REPLACES the queued one —
-// superseded tails are never parsed at all.
-
-let transientBusy = false;
-let transientNext: { source: string; resolve: (html: string | null) => void } | null = null;
-
-/** Whether the transient lane can run off-thread right now. When false the
- *  caller should parse synchronously itself (the pre-worker behavior). */
-export function transientWorkerAvailable(): boolean {
-  return ensureWorker() !== null;
-}
-
-/**
- * Parse a streaming-tail source off the main thread, latest-wins. Resolves
- * `null` when the request was superseded by a newer tail or timed out — the
- * caller skips that tick (a newer parse is already on the way, and settling
- * re-renders through `CachedMarkdown` regardless). Never caches.
- */
-export function parseTransientOffThread(source: string): Promise<string | null> {
-  const w = ensureWorker();
-  if (!w) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    if (transientNext) transientNext.resolve(null); // superseded before dispatch
-    transientNext = { source, resolve };
-    pumpTransient(w);
-  });
-}
-
-/** Run the transient job if the worker is idle and the settled-block queue is
- *  empty. Split out so `pump()` can kick it when the queue drains. */
-function kickTransient(): void {
-  if (!transientNext) return;
-  const w = ensureWorker();
-  if (w) pumpTransient(w);
-}
-
-function pumpTransient(w: Worker): void {
-  if (transientBusy || !transientNext) return;
-  // YIELD to settled-block parses. The worker is one serial thread: scroll
-  // just revealed those blocks and the reader is looking at raw-text
-  // placeholders, while the tail is mid-word growth that can happily skip a
-  // tick (latest-wins keeps only the newest source anyway). Without this
-  // rule the 120ms tail cadence kept the worker ~always busy during a
-  // stream, and scroll-back blocks stayed unformatted for seconds.
-  if (inFlight > 0 || queue.length > 0) return;
-  const job = transientNext;
-  transientNext = null;
-  transientBusy = true;
-  const id = ++seq;
-  let settled = false;
-  const finish = (html: string) => {
-    if (settled) return;
-    settled = true;
-    waiters.delete(id);
-    transientBusy = false;
-    job.resolve(html);
-    const next = ensureWorker();
-    if (next) pumpTransient(next);
-  };
-  waiters.set(id, { source: job.source, finish });
-  // Same watchdog contract as parseLarge, but the fallback is "skip this
-  // tick" rather than a main-thread parse — the next throttle tick retries,
-  // and a stream that ended settles through CachedMarkdown anyway.
-  window.setTimeout(() => {
-    if (!settled) {
-      if (!workerEverAnswered) workerBroken = true;
-      settled = true;
-      waiters.delete(id);
-      transientBusy = false;
-      job.resolve(null);
-      const next = ensureWorker();
-      if (next) pumpTransient(next);
-    }
-  }, 3000);
-  try {
-    w.postMessage({ id, source: job.source });
-  } catch {
-    finish(""); // resolve with empty → caller skips the tick
-  }
-}
-
 // ── Last-good tail HTML ────────────────────────────────────────────────────
 //
-// The transient lane never caches (per-frame partials would evict the settled
-// blocks the LRU exists to protect). That left one visible seam: the frame a
+// The streaming tail never caches (per-frame partials would evict the settled
+// blocks the LRU exists to protect). That leaves one visible seam: the frame a
 // block STOPS being the tail. It re-renders through `CachedMarkdown` with a
 // source nothing has parsed yet, so a large block fell back to its raw-source
 // placeholder — the paragraph the reader was reading turned back into literal

@@ -1,11 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
-import {
-  CachedMarkdown,
-  noteTailHtml,
-  parseTransientOffThread,
-  transientWorkerAvailable,
-} from "@/lib/markdown-cache";
-import { parseMarkdown } from "@/lib/markdown-render";
+import { CachedMarkdown, noteTailHtml } from "@/lib/markdown-cache";
+import { parseMarkdownStreaming } from "@/lib/markdown-render";
 import {
   splitBlocks,
   mayStartNewBlock,
@@ -25,8 +20,12 @@ import { cn } from "@/lib/utils";
  * translation of Zed's per-line layout cache / Open WebUI's per-block tokens:
  * markdown formats LIVE as it streams, with bounded re-work.
  *
- * Three rules keep the live edge from flickering, and all three matter:
+ * Four rules keep the live edge honest, and all four matter:
  *
+ *  0. **The tail parses synchronously, every frame, with nothing in the way.**
+ *     No throttle, no queue, no worker, no state the renderer can get stuck
+ *     in. Everything else here exists to make that affordable — the tail is
+ *     one block, and it is parsed without syntax highlighting.
  *  1. **The tail is repaired before it is parsed** (`closeIncompleteMarkdown`).
  *     A stream cuts markdown mid-token, so `**bol` is literal asterisks for a
  *     few frames and then the words snap to bold. Closing the dangling marker
@@ -45,19 +44,30 @@ import { cn } from "@/lib/utils";
  * margin-collapse / vertical rhythm identical to a single-container render.
  */
 
-/** Below this length the live tail parses inline on every frame (sub-ms, and
- *  the per-frame cadence is what makes text format as it streams). Above it,
- *  parses are throttled — a long block's growth is mostly invisible mid-word
- *  anyway. Mirrors `SYNC_LIMIT` in markdown-cache. */
-const INLINE_PARSE_LIMIT = 2000;
-/** Parse cadence for a large live tail. */
-const TRANSIENT_THROTTLE_MS = 120;
-/** A per-frame inline parse that costs more than this has outgrown the inline
- *  path regardless of length (a table, a dense list), so the block is demoted
- *  to the throttled off-thread lane for the rest of its life. Length alone was
- *  the wrong proxy: 1.5 KB of table markup is an order of magnitude more work
- *  than 1.5 KB of prose. */
-const INLINE_BUDGET_MS = 6;
+/**
+ * Hard ceiling on the live tail.
+ *
+ * Above it the tail renders as plain text until it settles — the same
+ * degradation an unclosed code fence already gets. A ceiling, NOT a throttle: a
+ * single top-level block this large is pathological, and text that keeps
+ * arriving unformatted is strictly better than formatted text that stops
+ * arriving.
+ *
+ * The design this replaces demoted an expensive tail to a 120 ms off-thread
+ * lane and latched that demotion for the life of the block. That is what froze
+ * answers mid-sentence: one slow parse — the FIRST one, before the pipeline is
+ * warm — and the block never rendered live again, so the reader watched four
+ * words and a blinking caret until the turn ended and the settled render
+ * dumped the whole answer at once. A renderer must not have a state it cannot
+ * leave, and the live tail must not depend on anything asynchronous.
+ *
+ * 6 KB is set from measurement: the stream pipeline costs roughly 2 ms per KB
+ * (a typical tail block — one paragraph — is well under 1 ms), so this keeps
+ * the per-frame parse inside a frame's budget with room to spare, while
+ * sitting far above any ordinary paragraph, list or table.
+ */
+const STREAM_PLAIN_LIMIT = 6000;
+
 /** Longest the incremental split may run without a real re-parse. A backstop,
  *  not the mechanism — `mayStartNewBlock` catches boundaries as they arrive. */
 const RESPLIT_MAX_MS = 500;
@@ -66,17 +76,24 @@ const RESPLIT_MAX_MS = 500;
  * Renderer for the STREAMING TAIL only — deliberately bypasses `CachedMarkdown`.
  *
  * The tail's source is a new unique string every applied frame, which made the
- * cached path pathological twice over: small tails wrote a partial into the LRU
- * per frame (evicting the settled blocks the cache exists to protect — the
- * scroll-back re-parse the cache was built to prevent), and large tails queued a
- * NEW worker parse per frame with no cancellation of superseded sources — a
- * ten-second paragraph enqueued hundreds of dead parses drained two at a time,
- * while the visible tail lagged the stale queue. A string that will never be
- * requested again must never touch the cache or the queue.
+ * cached path pathological: every frame wrote a partial into the LRU, evicting
+ * the settled blocks the cache exists to protect. A string that will never be
+ * requested again must never touch the cache.
+ *
+ * So it parses here, synchronously, on every frame — and that is the whole
+ * design. It is affordable because of what it is NOT parsing: the tail is ONE
+ * top-level block (settled blocks are cached and never re-touched), and the
+ * stream pipeline skips syntax highlighting, which is the expensive half. What
+ * remains is a few hundred bytes of remark on most frames.
+ *
+ * Nothing here is throttled, queued, or deferred to a worker. Every one of
+ * those is a way for the live edge to fall behind the text, and the live edge
+ * falling behind the text is the only bug the reader ever notices.
  *
  * The block re-renders as `CachedMarkdown` the moment it settles, which parses
- * and caches the final text once — and shows this renderer's last html
- * (`noteTailHtml`) in the meantime, so the swap is invisible.
+ * and caches the final text once, with highlighting — and shows this
+ * renderer's last html (`noteTailHtml`) in the meantime, so the swap is
+ * invisible.
  */
 const TransientMarkdown = memo(function TransientMarkdown({
   source,
@@ -90,68 +107,7 @@ const TransientMarkdown = memo(function TransientMarkdown({
   // Parse the REPAIRED copy; everything downstream still keys off the raw
   // source, which is what the settled block will be rendered from.
   const repaired = useMemo(() => closeIncompleteMarkdown(source), [source]);
-
-  const overBudget = useRef(false);
-  const small = repaired.length <= INLINE_PARSE_LIMIT && !overBudget.current;
-  const inline = useMemo(() => {
-    if (!small) return null;
-    const started = performance.now();
-    const html = parseMarkdown(repaired);
-    if (performance.now() - started > INLINE_BUDGET_MS) overBudget.current = true;
-    return html;
-  }, [small, repaired]);
-
-  // Large tail: throttled trailing-edge parse of the LATEST source. The parse
-  // itself runs on the markdown worker via the transient lane (single slot,
-  // latest-wins, no cache/queue) — synchronously it was O(tail length) of
-  // unified/rehype work on the main thread every 120ms, growing multi-frame
-  // late in a long block, exactly while rAF delta flushes were running. The
-  // sync parse remains only as the no-worker fallback.
-  const [big, setBig] = useState("");
-  const latest = useRef(repaired);
-  latest.current = repaired;
-  const timer = useRef<number | null>(null);
-  const lastRun = useRef(0);
-  const alive = useRef(true);
-  useEffect(() => {
-    // Set on every run, not once at mount: React re-runs effects on the same
-    // instance (StrictMode's mount/unmount/mount in development), and a latch
-    // that only ever went false left the throttled path permanently mute —
-    // large blocks stopped updating mid-answer and only caught up on settle.
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-  useEffect(() => {
-    if (small || timer.current !== null) return;
-    const due = Math.max(0, TRANSIENT_THROTTLE_MS - (performance.now() - lastRun.current));
-    timer.current = window.setTimeout(() => {
-      timer.current = null;
-      lastRun.current = performance.now();
-      if (transientWorkerAvailable()) {
-        void parseTransientOffThread(latest.current).then((html) => {
-          // null/"" = superseded or timed out — skip the tick; a newer parse
-          // is on the way (and settling re-renders through CachedMarkdown).
-          if (alive.current && html) setBig(html);
-        });
-      } else {
-        setBig(parseMarkdown(latest.current));
-      }
-    }, due);
-  }, [small, repaired]);
-  useEffect(
-    () => () => {
-      if (timer.current !== null) window.clearTimeout(timer.current);
-    },
-    [],
-  );
-
-  // Crossing the small→large boundary leaves `big` one throttle tick behind;
-  // hold the last rendered html rather than flashing blank for that tick.
-  const lastHtml = useRef("");
-  const html = inline ?? (big || lastHtml.current);
-  lastHtml.current = html;
+  const html = useMemo(() => parseMarkdownStreaming(repaired), [repaired]);
 
   const ref = useRef<HTMLDivElement>(null);
   // Patch, don't replace — see `applyHtml`. This is what keeps a selection
@@ -200,6 +156,37 @@ const TransientMarkdown = memo(function TransientMarkdown({
   );
 });
 
+/**
+ * The tail as plain text — an unclosed fence, or a block past the ceiling.
+ *
+ * `mono` for a fence, because that IS code and it snaps to a highlighted block
+ * the moment the fence closes. Prose font otherwise: an oversized block is a
+ * wall of prose, and setting it in monospace would make the switch at settle a
+ * far bigger visual jump than the markdown markers it briefly shows.
+ */
+function PlainTail({
+  source,
+  className,
+  mono,
+}: {
+  source: string;
+  className?: string;
+  mono: boolean;
+}) {
+  return (
+    <pre
+      className={cn(
+        "whitespace-pre-wrap break-words select-text text-[var(--text-primary)]",
+        mono ? "font-mono text-[13px] leading-relaxed" : "atlas-md-pending",
+        className,
+      )}
+    >
+      {source}
+      <span className="atlas-stream-caret" aria-hidden />
+    </pre>
+  );
+}
+
 /** One top-level block. `trailing` = the last, still-streaming block. */
 const MarkdownBlock = memo(function MarkdownBlock({
   source,
@@ -214,20 +201,12 @@ const MarkdownBlock = memo(function MarkdownBlock({
   unstyled?: boolean;
   priority?: number;
 }) {
-  // A still-open code fence renders as plain text (no per-frame re-highlight of a
-  // growing block); it snaps to highlighted once the closing fence streams in.
-  if (trailing && isIncompleteCodeFence(source)) {
-    return (
-      <pre
-        className={cn(
-          "whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed text-[var(--text-primary)] select-text",
-          className,
-        )}
-      >
-        {source}
-        <span className="atlas-stream-caret" aria-hidden />
-      </pre>
-    );
+  // A still-open code fence renders as plain text (no per-frame re-highlight of
+  // a growing block); it snaps to highlighted once the closing fence streams
+  // in. Same for a tail past the ceiling — see `STREAM_PLAIN_LIMIT`.
+  const openFence = trailing && isIncompleteCodeFence(source);
+  if (trailing && (openFence || source.length > STREAM_PLAIN_LIMIT)) {
+    return <PlainTail source={source} className={className} mono={openFence} />;
   }
   // The live tail bypasses the cache/worker entirely — see TransientMarkdown.
   // `atlas-stream-tail` is what draws the caret, inline at the end of the last

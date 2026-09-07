@@ -309,6 +309,33 @@ function getProcessor(): Processor {
   return processor;
 }
 
+/**
+ * Second processor for the STREAMING TAIL: identical to the one above minus
+ * `rehype-highlight`.
+ *
+ * The tail re-parses on every animation frame, so its cost is the one that
+ * decides whether an answer streams smoothly. Highlighting dominates that cost
+ * and buys nothing while the text is arriving — a fence is still open (rendered
+ * as plain text by the caller) or it just closed and the SETTLED render, which
+ * runs once and is cached, highlights it properly a frame later. Zed and
+ * Streamdown draw the same line: format live, colourise on settle.
+ */
+let streamProcessor: Processor | null = null;
+function getStreamProcessor(): Processor {
+  if (!streamProcessor) {
+    streamProcessor = unified()
+      .use(remarkParse)
+      .use(remarkGfm)
+      .use(remarkRehype, { allowDangerousHtml: false })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .use(rehypeMentionChips as any)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .use(rehypeSanitize, SANITIZE_SCHEMA as any)
+      .use(rehypeStringify) as unknown as Processor;
+  }
+  return streamProcessor;
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -324,6 +351,16 @@ function escapeHtml(s: string): string {
 export function parseMarkdown(src: string): string {
   try {
     return String(getProcessor().processSync(src));
+  } catch {
+    return `<p>${escapeHtml(src)}</p>`;
+  }
+}
+
+/** `parseMarkdown` for the live streaming tail — same output, no syntax
+ *  highlighting. See `getStreamProcessor`. */
+export function parseMarkdownStreaming(src: string): string {
+  try {
+    return String(getStreamProcessor().processSync(src));
   } catch {
     return `<p>${escapeHtml(src)}</p>`;
   }

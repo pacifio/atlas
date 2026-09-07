@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, afterEach } from "vitest";
-import { render, cleanup, waitFor } from "@testing-library/react";
+import { render, cleanup, waitFor, act } from "@testing-library/react";
 import { StreamingMarkdown } from "./streaming-markdown";
 import { noteTailHtml, tailFallback } from "@/lib/markdown-cache";
 
@@ -8,6 +8,13 @@ afterEach(cleanup);
 
 /** The block split is rAF-coalesced, so the tail only reaches the DOM a frame
  *  after the source changes. Poll for the text rather than racing the clock. */
+async function frame(): Promise<void> {
+  await act(async () => {
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+}
+
 async function tailReads(container: HTMLElement, text: string): Promise<void> {
   await waitFor(() =>
     expect(container.querySelector(".atlas-stream-tail")?.textContent).toBe(text),
@@ -46,6 +53,31 @@ describe("StreamingMarkdown", () => {
     // Same element, new text: the patch changed a text node, it did not throw
     // the paragraph away and build another.
     expect(container.querySelector(".atlas-stream-tail p")).toBe(p);
+  });
+
+  it("never stops rendering the tail, however expensive a frame was", async () => {
+    // The regression this guards: an early parse that ran long used to demote
+    // the block to a throttled off-thread lane FOR GOOD, so the reader watched
+    // four words and a blinking caret until the whole answer landed at once.
+    // Render a deliberately heavy tail first, then keep streaming a cheap one.
+    const heavy = "| a | b |\n| --- | --- |\n" + "| one | two |\n".repeat(60);
+    const { container, rerender } = render(<StreamingMarkdown source={heavy} streaming />);
+    await frame();
+    for (const text of ["Here", "Here are", "Here are five", "Here are five jokes"]) {
+      rerender(<StreamingMarkdown source={text} streaming />);
+      await frame();
+      expect(container.querySelector(".atlas-stream-tail")?.textContent).toBe(text);
+    }
+  });
+
+  it("keeps an oversized tail streaming as plain text instead of stalling", async () => {
+    const huge = "word ".repeat(2000); // > STREAM_PLAIN_LIMIT
+    const { container, rerender } = render(<StreamingMarkdown source={huge} streaming />);
+    await frame();
+    expect(container.textContent).toContain("word");
+    rerender(<StreamingMarkdown source={huge + "END"} streaming />);
+    await frame();
+    expect(container.textContent).toContain("END");
   });
 
   it("drops the tail marker once the turn settles", async () => {
