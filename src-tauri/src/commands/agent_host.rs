@@ -627,6 +627,12 @@ impl AgentHost {
                 .clone()
                 .downcast::<atlas_native_agent::EngineConnection>()
                 .is_some(),
+            // Asked of the connection, not inferred from its concrete type.
+            // `supports_fork` above still downcasts, and that is exactly the
+            // identity check ADR-0002 rules out — a second one would entrench
+            // it. Any connection that answers true here is offered the
+            // affordance, native or not.
+            supports_rewind: connection.supports_rewind(),
         }
     }
 
@@ -1159,6 +1165,29 @@ impl AgentHost {
             .await
             .map_err(|e| HostError::classified(e.to_string()))?;
         Ok(Some(forked))
+    }
+
+    /// Drop the last exchange and return the prompt that started it.
+    ///
+    /// The rewind half of a retry. `None` means "not retryable here" — either
+    /// the agent is not the native one (no ACP agent has a rewind verb; the
+    /// capability record in schema 1.5.0 has `fork`, `resume`, `list`,
+    /// `delete` and `close`, and nothing that forgets turns) or the thread has
+    /// no exchange left to drop. Callers re-send the returned text through the
+    /// ordinary send path, so a rewind that lands and a send that fails are
+    /// two outcomes the UI can tell apart.
+    pub async fn rewind_last_turn(&self, key: &SessionKey) -> Result<Option<String>> {
+        let session_id = acp::SessionId::new(key.session_id.as_str());
+        let connection = lock_thread(&self.thread(&key.session_id)?).connection().clone();
+        // Through the seam, not a downcast: an agent that grows a rewind gets
+        // this for free, and nothing here names a concrete connection type.
+        let Some(rewind) = connection.rewind(&session_id) else {
+            return Ok(None);
+        };
+        rewind
+            .run()
+            .await
+            .map_err(|e| HostError::classified(e.to_string()))
     }
 
     fn native_connection(&self, session_id: &str) -> Result<Arc<atlas_native_agent::EngineConnection>> {
@@ -1986,6 +2015,7 @@ pub struct PluginCapabilities {
     pub supports_load_session: bool,
     pub supports_session_list: bool,
     pub supports_fork: bool,
+    pub supports_rewind: bool,
 }
 
 /// A registry agent's cached icon, as a data URL.

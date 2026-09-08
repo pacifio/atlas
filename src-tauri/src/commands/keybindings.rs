@@ -291,7 +291,7 @@ mod tests {
                 .map(|(k, v)| {
                     (
                         k.to_string(),
-                        v.map(|c| c.iter().map(|s| s.to_string()).collect()),
+                        v.map(|c| c.iter().map(ToString::to_string).collect()),
                     )
                 })
                 .collect(),

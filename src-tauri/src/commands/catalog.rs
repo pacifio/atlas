@@ -108,6 +108,10 @@ pub struct AgentCatalogEntry {
     pub supports_session_list: bool,
     /// Always false: `session/fork` has no equivalent on the ported seam.
     pub supports_fork: bool,
+    /// Whether this agent can rewind a turn out of its own history — the
+    /// engine's `thread/rollback`. ACP has no equivalent, so this gates the
+    /// retry affordance the way `supports_fork` gates branching.
+    pub supports_rewind: bool,
     pub icon_data_url: Option<String>,
     pub help_url: Option<String>,
     pub repository: Option<String>,
@@ -211,6 +215,7 @@ fn build(host: &AgentHost) -> AgentCatalog {
                 supports_load_session: capabilities.supports_load_session,
                 supports_session_list: capabilities.supports_session_list,
                 supports_fork: capabilities.supports_fork,
+                supports_rewind: capabilities.supports_rewind,
                 icon_data_url: market.as_ref().and_then(super::agent_host::icon_data_url),
                 help_url: market.as_ref().and_then(|agent| {
                     agent
@@ -268,6 +273,7 @@ fn build(host: &AgentHost) -> AgentCatalog {
             supports_load_session: false,
             supports_session_list: false,
             supports_fork: false,
+            supports_rewind: false,
             icon_data_url: market.as_ref().and_then(super::agent_host::icon_data_url),
             help_url: market.as_ref().and_then(|a| a.repository().map(str::to_string)),
             repository: market.as_ref().and_then(|a| a.repository().map(str::to_string)),

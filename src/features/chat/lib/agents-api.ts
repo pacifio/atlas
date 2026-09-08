@@ -155,6 +155,12 @@ export const agents = {
   ) => invoke<void>("agents_respond_elicitation", { agentId, requestId, action, content }),
   /** Branch a session from its current state (P3.4). Null when unsupported. */
   forkSession: (key: SessionKey) => invoke<string | null>("agents_fork_session", { key }),
+  /** Rewind the last exchange, resolving to the prompt that started it — or
+   *  `null` when there is nothing to rewind, or the agent is an ACP one (no
+   *  rewind verb exists in ACP's session capabilities). The caller re-sends
+   *  the returned text; keeping the two calls apart is what lets a failed
+   *  resend hand the prompt back instead of losing it. */
+  rewindLastTurn: (key: SessionKey) => invoke<string | null>("agents_rewind_last_turn", { key }),
   /** Set any agent-advertised config option (P2.2). `value` is a bool for
    *  boolean options, or the option-value id for select options. */
   setConfigOption: (key: SessionKey, configId: string, value: boolean | string) =>

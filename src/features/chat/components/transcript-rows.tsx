@@ -30,6 +30,7 @@ import { CachedMarkdown } from "@/lib/markdown-cache";
 import { StreamingMarkdown } from "./streaming-markdown";
 import { openDetail } from "../stores/detail-panel-store";
 import { openTurnDiff } from "../lib/open-turn-diff";
+import { UserRowActions } from "./user-row-actions";
 import type {
   UserRow,
   ProseRow,
@@ -51,11 +52,16 @@ function Column({ children, className }: { children: React.ReactNode; className?
 
 export const UserRowView = memo(function UserRowView({
   row,
+  tabId,
   priority,
   justSent = false,
+  canRetry = false,
   onToggleExpand,
 }: {
   row: UserRow;
+  /** Passed rather than read from a store: house rule 3, and a primitive prop
+   *  keeps the shallow-compare `memo` above intact. */
+  tabId: string;
   /** Position in the thread — newest parses first. See `CachedMarkdown`. */
   priority: number;
   /** True ONLY for the message the user sent just now (id-scoped in the
@@ -64,6 +70,10 @@ export const UserRowView = memo(function UserRowView({
    *  row mounted during an early scroll — bulk entrance animations during
    *  fast scroll were a blanking contributor. */
   justSent?: boolean;
+  /** True only for the thread's last user message on an agent that can rewind.
+   *  Resolved by the transcript so this stays a boolean — a callback minted in
+   *  the row map would defeat the memo for every row on every frame. */
+  canRetry?: boolean;
   onToggleExpand: (id: string) => void;
 }) {
   return (
@@ -77,7 +87,7 @@ export const UserRowView = memo(function UserRowView({
           `overflow-x: auto` cannot save an ancestor that refuses to shrink, so
           a long paste dragged the whole bubble past the viewport edge. With
           the chain capped, the fence scrolls horizontally INSIDE the bubble. */}
-      <div className="flex min-w-0 max-w-[80%] flex-col items-end">
+      <div className="relative flex min-w-0 max-w-[80%] flex-col items-end">
         {/* The prompt is markdown too. It is written in the same composer that
             accepts fences and lists, and rendering it as flat text collapsed
             every newline — a pasted snippet came back as one run-on paragraph.
@@ -117,6 +127,7 @@ export const UserRowView = memo(function UserRowView({
           </button>
         )}
         <ExpandToggle row={row} onToggleExpand={onToggleExpand} />
+        <UserRowActions tabId={tabId} text={row.text} canRetry={canRetry} />
       </div>
     </Column>
   );

@@ -36,13 +36,18 @@ import {
 } from "react";
 import type { ChatMessage } from "@/types/agent";
 import { type SwitchableAgent } from "@/types/agent";
-import { agentMeta, switchableAgentOf } from "@/features/agents/lib/agent-meta";
+import {
+  agentMeta,
+  catalogEntry as agentCatalogEntry,
+  switchableAgentOf,
+} from "@/features/agents/lib/agent-meta";
 import { AgentIcons, ExternalAgentIcon, AgentMonogram } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { projectRows, RowKind, type Projection, type Row } from "../lib/turn-rows";
 import { useTranscriptScroll } from "../lib/use-transcript-scroll";
 import { useChatStore } from "../stores/chat-store";
 import { saveThreadToKb } from "../lib/turn-actions";
+import { sessionCanRetry } from "../lib/retry-gate";
 import { cn } from "@/lib/utils";
 import { isScrollHot } from "@/lib/scroll-hot";
 import { GradualBlur } from "@/components/gradual-blur";
@@ -223,6 +228,16 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     [agent, agentIconUrl, agentLabel],
   );
 
+  // Whether a retry is possible RIGHT NOW. Selector returns a boolean and is
+  // O(1), so it runs on every store write but re-renders only when the answer
+  // flips — the same bargain as `justSentMessageId` above. Doing this per-row
+  // instead, or selecting the session object, would put a comparison of the
+  // whole session on every streaming frame.
+  // Discovered, not inferred from the agent id (ADR-0002) — the same catalog
+  // flag `supportsFork` uses, computed from the live connection.
+  const supportsRewind = agentCatalogEntry(agent)?.supportsRewind === true;
+  const canRetry = useChatStore((s) => sessionCanRetry(s.sessions[tabId], supportsRewind));
+
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   /** Turns whose tool-call block the reader has opened. */
   const [expandedTurns, setExpandedTurns] = useState<ReadonlySet<string>>(() => new Set());
@@ -291,6 +306,16 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   const stale = startIndex > windowFloor;
   const safeStart = stale ? windowFloor : startIndex;
   const visible = useMemo(() => rows.slice(safeStart), [rows, safeStart]);
+  // Retry belongs to the thread's LAST user message, which is a fact about the
+  // session's history — not about which row happens to be last in the DOM (an
+  // assistant turn projects to several rows, and the window may be truncated
+  // at the top). Recomputed only when the projection changes.
+  const lastUserRowId = useMemo(() => {
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i].kind === RowKind.User) return rows[i].id;
+    }
+    return undefined;
+  }, [rows]);
   const canGrow = safeStart > 0;
 
   // Fold the correction back into state. Rendering from `safeStart` alone
@@ -683,6 +708,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
                 priority={safeStart + i}
                 onToggleExpand={toggleExpand}
                 onSaveKb={onSaveKb}
+                canRetryRowId={canRetry ? lastUserRowId : undefined}
               />
             </div>
           ))}
@@ -746,6 +772,7 @@ function RowView({
   onToggleExpand,
   onExpandTurn,
   onSaveKb,
+  canRetryRowId,
 }: {
   row: Row;
   justSentMessageId?: string;
@@ -756,6 +783,10 @@ function RowView({
   onToggleExpand: (id: string) => void;
   onExpandTurn: (turnId: string) => void;
   onSaveKb: () => void;
+  /** Id of the one row allowed to show a retry button, or `undefined` when no
+   *  retry is possible. An id compare here keeps `UserRowView`'s prop a plain
+   *  boolean. */
+  canRetryRowId?: string;
 }) {
   switch (row.kind) {
     case RowKind.User:
@@ -767,6 +798,8 @@ function RowView({
           // message id. The unprefixed compare never matched — the entrance
           // animation was silently dead until this fix.
           justSent={row.id === `u:${justSentMessageId}`}
+          tabId={tabId}
+          canRetry={row.id === canRetryRowId}
           onToggleExpand={onToggleExpand}
         />
       );

@@ -276,7 +276,9 @@ impl AuthCore {
     /// sections hold no state of their own — so a poisoned lock is recovered
     /// rather than propagated into every later sign-in.
     fn file_guard(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.file.lock().unwrap_or_else(|e| e.into_inner())
+        self.file
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Shrink the retry schedule so a test can drive the loop through several
