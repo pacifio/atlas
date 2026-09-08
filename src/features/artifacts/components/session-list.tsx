@@ -250,8 +250,17 @@ const SessionRow = memo(function SessionRow({
 
       <AgentChip agent={session.agent} />
 
+      {/* `max-w-full` is what makes `truncate` work here. `justify-self-end`
+          takes the cell out of `stretch`, so its width becomes `fit-content` —
+          and `truncate`'s `white-space: nowrap` puts min-content at the width of
+          the whole string, which `fit-content` cannot go below. A model id
+          `prettyModel` doesn't shorten (`google/gemini-3.1-pro-preview`) came out
+          192px wide in the 92px track, and since the cell is anchored to the
+          track's END it grew leftward, across the agent chip. Capping the width
+          at the track lets the ellipsis do its job. A short name still shrinks to
+          fit and sits at the right edge, exactly as before. */}
       {!compact && (
-        <span className="justify-self-end truncate font-mono text-[11px] text-[var(--text-tertiary)]">
+        <span className="max-w-full justify-self-end truncate font-mono text-[11px] text-[var(--text-tertiary)]">
           {prettyModel(session.model) ?? ""}
         </span>
       )}
