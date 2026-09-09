@@ -23,11 +23,15 @@ import {
   GitBranch,
   TerminalSquare,
   Users,
+  HelpCircle,
+  MessageCircle,
   Sparkles,
   BookOpen,
   Ellipsis,
 } from "lucide-react";
 import { toast } from "sonner";
+import { getVersion } from "@tauri-apps/api/app";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useWorkspaceStore, type Workspace, type WorkspaceGroup } from "../stores/workspace-store";
 import { pickAndAddWorkspace } from "../lib/pick-workspace";
 import { useRunningChatKeys } from "../lib/agent-activity";
@@ -61,8 +65,8 @@ const WS_H = 46;
 const WS_CARD = 42;
 const ROW_H = 30;
 const ROW_CARD = 28;
-const CHAT_H = 30;
-const CHAT_CARD = 28;
+const CHAT_H = 46;
+const CHAT_CARD = 42;
 const HEADER_H = 28;
 /** Section header slot: the header plus the gap that separates sections. */
 const SECTION_H = HEADER_H + 10;
@@ -447,13 +451,18 @@ function SectionHeaderRow({
         <span className="text-[11px] font-semibold leading-none text-[var(--text-secondary)] group-hover/s:text-[var(--text-primary)]">
           {label}
         </span>
-        <ChevronDown
-          size={10}
-          className={cn(
-            "text-[var(--text-tertiary)] transition-transform",
-            collapsed && "-rotate-90",
-          )}
-        />
+        {/* Promoted, and NO opacity tween on the action: fading an unpromoted
+            icon makes WebKit re-rasterise it mid-fade, which is the hover
+            wobble (same lesson as the git dot). */}
+        <span className="flex items-center transform-gpu [backface-visibility:hidden]">
+          <ChevronDown
+            size={10}
+            className={cn(
+              "text-[var(--text-tertiary)] transition-transform",
+              collapsed && "-rotate-90",
+            )}
+          />
+        </span>
         {action && (
           <button
             onClick={(e) => {
@@ -461,7 +470,7 @@ function SectionHeaderRow({
               action.onClick();
             }}
             title={action.title}
-            className="ml-auto flex size-5 items-center justify-center rounded text-[var(--text-tertiary)] opacity-0 group-hover/s:opacity-100 hover:bg-[var(--bg-elevated)] hover:text-[var(--status-error,#f44)] transition-opacity outline-none cursor-pointer"
+            className="ml-auto flex size-5 items-center justify-center rounded text-[var(--text-tertiary)] opacity-0 group-hover/s:opacity-100 hover:bg-[var(--bg-elevated)] hover:text-[var(--status-error,#f44)] outline-none cursor-pointer transform-gpu [backface-visibility:hidden]"
           >
             {action.icon}
           </button>
@@ -531,8 +540,7 @@ function ChatRow({
       data-hint
       onClick={onOpen}
       style={{ height: CHAT_CARD, paddingLeft: 8 }}
-      className="group relative flex items-center gap-2.5 pr-2 rounded-md cursor-pointer hover:bg-[var(--bg-hover)] transform-gpu [backface-visibility:hidden]"
-      // The project lives in the tooltip now rather than a badge on every row.
+      className="group relative flex items-start gap-2.5 pr-2 pt-1.5 rounded-md cursor-pointer hover:bg-[var(--bg-hover)] transform-gpu [backface-visibility:hidden]"
       title={`${chat.projectName} — ${chat.projectPath}`}
     >
       {running ? (
@@ -542,17 +550,27 @@ function ChatRow({
       ) : (
         <AgentIcon className="size-[13px] shrink-0 opacity-80" />
       )}
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-[12px] leading-none",
-          running
-            ? "text-[var(--text-primary)]"
-            : "text-[var(--text-secondary)] group-hover:text-[var(--text-primary)]",
-        )}
-      >
-        {stripInjectedContext(chat.title) || chat.projectName}
-      </span>
-      <span className="shrink-0 text-[10px] leading-none tabular-nums text-[var(--text-tertiary)]">
+      {/* Two lines, like a project row: the chat list spans every project in
+          the org, so a title alone cannot say which one a chat belongs to —
+          and the titles are the user's own words, which rarely name it. The
+          project goes on the second line, where the branch sits one section
+          up. `pr-9` keeps both lines clear of the timestamp. */}
+      <div className="min-w-0 flex-1 pr-9">
+        <span
+          className={cn(
+            "block truncate text-[12px] leading-tight",
+            running
+              ? "text-[var(--text-primary)]"
+              : "text-[var(--text-secondary)] group-hover:text-[var(--text-primary)]",
+          )}
+        >
+          {stripInjectedContext(chat.title) || chat.projectName}
+        </span>
+        <span className="mt-0.5 block truncate text-[10px] leading-tight text-[var(--text-tertiary)]">
+          {chat.projectName}
+        </span>
+      </div>
+      <span className="absolute right-2 top-2 shrink-0 text-[10px] leading-none tabular-nums text-[var(--text-tertiary)]">
         {relTime(chat.updatedAt)}
       </span>
     </div>
@@ -867,176 +885,225 @@ export function WorkspaceSidebar() {
       <OrgSwitcher />
 
       {/* Virtualized list. */}
-      {/* ONE scroller for everything below the org row. The navigation used to
-          be pinned above it, which cost ~200px of permanently-frozen height —
-          on a short window the project list was reduced to a slot a few rows
-          tall while six fixed rows sat above it. Only the titlebar band and
-          the org row are fixed now; the nav scrolls away with the lists.
+      {/* The rail's interface card — the same recipe as team chat's
+          `CommsSurface`: a near-black rounded surface floating on the panel's
+          gradient, inset on the sides and bottom, its edge carried by a
+          hairline ring with a soft shadow behind it. No blur and no transform,
+          so it is safe inside a vibrant panel.
 
-          It sits INSIDE `parentRef` rather than in a wrapper: the virtualizer
-          measures its scroll element, and anything between it and the rows
-          would have to be subtracted from every offset by hand. As a plain
-          block before the virtualized region, it simply displaces it. */}
-      <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto hide-scrollbar px-2 pb-3">
-        {/* Navigation, in three bands. Organisation-wide destinations
-         *  first (Timeline, Chat, Members); then the project-scoped tools under
-         *  their own collapsible "Modules" heading — the same disclosure the
-         *  list below uses, so the rail reads as one outline — ending, as
-         *  Linear's does, in "More", the ⌘⌥N module palette. Logs and Skills left
-         *  the rail: Console and Settings in the org row already reach them. */}
-        <nav ref={navRef} className="pt-1 pb-1 space-y-px">
-          <CaptureControl />
-          <NavItem
-            icon={<MessagesSquare size={14} />}
-            label="Chat"
-            active={rightMode === "chat"}
-            disabled={!orgSynced}
-            title={orgSynced ? undefined : "Sync this organisation to use team chat"}
-            onClick={() => toggleRightPanelMode("chat")}
-          />
-          <NavItem
-            icon={<Users size={14} />}
-            label="Members"
-            disabled={!orgSynced}
-            title={orgSynced ? undefined : "Sync this organisation to manage members"}
-            onClick={() => setMembersOpen(true)}
-          />
+          The card is the SCROLL BOUNDARY too, which is what makes it read as
+          one object: rows disappear under its rounded top edge rather than
+          sliding past a straight seam. */}
+      <div
+        className="relative mx-1.5 mb-1.5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] bg-[var(--comms-surface)]"
+        style={{
+          // Same reasoning as CommsSurface: on a near-black panel the shadow
+          // has almost nothing to darken, so the ring carries the edge.
+          boxShadow: "0 0 0 1px rgba(255,255,255,0.08), 0 10px 28px rgba(0,0,0,0.6)",
+        }}
+      >
+        {/* ONE scroller for everything below the org row. The navigation used to
+            be pinned above it, which cost ~200px of permanently-frozen height —
+            on a short window the project list was reduced to a slot a few rows
+            tall while six fixed rows sat above it. Only the titlebar band and
+            the org row are fixed now; the nav scrolls away with the lists.
 
-          <SectionHeaderRow
-            label="Modules"
-            collapsed={!!collapsed["sec:tools"]}
-            onToggle={() => toggle("sec:tools")}
-          />
-          {!collapsed["sec:tools"] && (
-            <>
-              <NavItem
-                icon={<Sparkles size={14} />}
-                label="Agents"
-                disabled={!hasProject}
-                title={hasProject ? undefined : "Open a project to start an agent"}
-                // Zero-arg wrapper, NOT a bare reference: openNewAgentChat's
-                // optional parameter would otherwise receive the click event.
-                onClick={() => openNewAgentChat()}
-              />
-              <NavItem
-                icon={<BookOpen size={14} />}
-                label="Knowledge"
-                disabled={!hasProject}
-                title={hasProject ? undefined : "Open a project to open its knowledge base"}
-                onClick={openKnowledge}
-              />
-              <NavItem
-                icon={<TerminalSquare size={14} />}
-                label="Terminal"
-                onClick={() =>
-                  // Mirrors `tabs.newTerminal` in App.tsx: a fresh tab each time.
-                  addTab({
-                    id: `terminal-${Date.now()}`,
-                    type: "terminal",
-                    title: "Terminal",
-                    closable: true,
-                    dirty: false,
-                    data: {},
-                  })
-                }
-              />
-              <NavItem
-                icon={<GitBranch size={14} />}
-                label="Source control"
-                active={rightMode === "source-control"}
-                disabled={!hasProject}
-                title={hasProject ? undefined : "Open a project to see its source control"}
-                onClick={() => toggleRightPanelMode("source-control")}
-              />
-              <NavItem
-                icon={<Ellipsis size={14} />}
-                label="More"
-                title={newTabHint ? `Open a module (${newTabHint})` : "Open a module"}
-                onClick={() => window.dispatchEvent(new CustomEvent("atlas:new-tab-palette"))}
-              />
-            </>
-          )}
-        </nav>
+            It sits INSIDE `parentRef` rather than in a wrapper: the virtualizer
+            measures its scroll element, and anything between it and the rows
+            would have to be subtracted from every offset by hand. As a plain
+            block before the virtualized region, it simply displaces it. */}
+        {/* Fades, not a scrollbar: rows enter and leave at the card's rounded
+            edges, and a hard cut there reads as clipping. Anchored to the CARD
+            (its `relative`), so the bottom one sits above the footer row rather
+            than under it. `pointer-events-none` so neither eats a click, and
+            plain gradients — no blur, no transform — so they cost a paint and
+            nothing else. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-6 rounded-t-[10px]"
+          style={{
+            background:
+              "linear-gradient(to bottom, var(--comms-surface) 20%, color-mix(in srgb, var(--comms-surface) 55%, transparent) 60%, transparent)",
+          }}
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-[30px] z-[2] h-6"
+          style={{
+            background:
+              "linear-gradient(to top, var(--comms-surface) 20%, color-mix(in srgb, var(--comms-surface) 55%, transparent) 60%, transparent)",
+          }}
+        />
+        <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto hide-scrollbar px-2 py-1.5">
+          {/* Navigation, in three bands. Organisation-wide destinations
+           *  first (Timeline, Chat, Members); then the project-scoped tools under
+           *  their own collapsible "Modules" heading — the same disclosure the
+           *  list below uses, so the rail reads as one outline — ending, as
+           *  Linear's does, in "More", the ⌘⌥N module palette. Logs and Skills left
+           *  the rail: Console and Settings in the org row already reach them. */}
+          <nav ref={navRef} className="pt-1 pb-1 space-y-px">
+            <CaptureControl />
+            <NavItem
+              icon={<MessagesSquare size={14} />}
+              label="Chat"
+              active={rightMode === "chat"}
+              disabled={!orgSynced}
+              title={orgSynced ? undefined : "Sync this organisation to use team chat"}
+              onClick={() => toggleRightPanelMode("chat")}
+            />
+            <NavItem
+              icon={<Users size={14} />}
+              label="Members"
+              disabled={!orgSynced}
+              title={orgSynced ? undefined : "Sync this organisation to manage members"}
+              onClick={() => setMembersOpen(true)}
+            />
 
-        {rows.length === 0 ? (
-          <div className="px-2 py-3 text-[11px] text-[var(--text-tertiary)]">No projects yet.</div>
-        ) : (
-          <div
-            style={{
-              height: virtualizer.getTotalSize() - scrollMargin,
-              position: "relative",
-            }}
-          >
-            {items.map((v) => {
-              const row = rows[v.index];
-              if (!row) return null;
-              return (
-                <div
-                  key={row.key}
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: "100%",
-                    // `scrollMargin` is baked into `v.start` (it is measured
-                    // from the SCROLLER's top, past the nav); subtract it to get
-                    // the offset within this wrapper.
-                    transform: `translateY(${v.start - scrollMargin}px)`,
-                  }}
-                >
-                  {row.kind === "section" ? (
-                    <SectionHeaderRow
-                      label={row.label}
-                      collapsed={!!collapsed[row.id]}
-                      onToggle={() => toggle(row.id)}
-                      action={
-                        row.id === "sec:recent"
-                          ? {
-                              icon: <Trash2 size={11} />,
-                              title: "Clear recent projects",
-                              onClick: () => clearRecents(),
-                            }
-                          : row.id === "sec:chats"
+            <SectionHeaderRow
+              label="Modules"
+              collapsed={!!collapsed["sec:tools"]}
+              onToggle={() => toggle("sec:tools")}
+            />
+            {!collapsed["sec:tools"] && (
+              <>
+                <NavItem
+                  icon={<Sparkles size={14} />}
+                  label="Agents"
+                  disabled={!hasProject}
+                  title={hasProject ? undefined : "Open a project to start an agent"}
+                  // Zero-arg wrapper, NOT a bare reference: openNewAgentChat's
+                  // optional parameter would otherwise receive the click event.
+                  onClick={() => openNewAgentChat()}
+                />
+                <NavItem
+                  icon={<BookOpen size={14} />}
+                  label="Knowledge"
+                  disabled={!hasProject}
+                  title={hasProject ? undefined : "Open a project to open its knowledge base"}
+                  onClick={openKnowledge}
+                />
+                <NavItem
+                  icon={<TerminalSquare size={14} />}
+                  label="Terminal"
+                  onClick={() =>
+                    // Mirrors `tabs.newTerminal` in App.tsx: a fresh tab each time.
+                    addTab({
+                      id: `terminal-${Date.now()}`,
+                      type: "terminal",
+                      title: "Terminal",
+                      closable: true,
+                      dirty: false,
+                      data: {},
+                    })
+                  }
+                />
+                <NavItem
+                  icon={<GitBranch size={14} />}
+                  label="Source control"
+                  active={rightMode === "source-control"}
+                  disabled={!hasProject}
+                  title={hasProject ? undefined : "Open a project to see its source control"}
+                  onClick={() => toggleRightPanelMode("source-control")}
+                />
+                <NavItem
+                  icon={<Ellipsis size={14} />}
+                  label="More"
+                  title={newTabHint ? `Open a module (${newTabHint})` : "Open a module"}
+                  onClick={() => window.dispatchEvent(new CustomEvent("atlas:new-tab-palette"))}
+                />
+              </>
+            )}
+          </nav>
+
+          {rows.length === 0 ? (
+            <div className="px-2 py-3 text-[11px] text-[var(--text-tertiary)]">
+              No projects yet.
+            </div>
+          ) : (
+            <div
+              style={{
+                height: virtualizer.getTotalSize() - scrollMargin,
+                position: "relative",
+              }}
+            >
+              {items.map((v) => {
+                const row = rows[v.index];
+                if (!row) return null;
+                return (
+                  <div
+                    key={row.key}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      // `scrollMargin` is baked into `v.start` (it is measured
+                      // from the SCROLLER's top, past the nav); subtract it to get
+                      // the offset within this wrapper.
+                      transform: `translateY(${v.start - scrollMargin}px)`,
+                    }}
+                  >
+                    {row.kind === "section" ? (
+                      <SectionHeaderRow
+                        label={row.label}
+                        collapsed={!!collapsed[row.id]}
+                        onToggle={() => toggle(row.id)}
+                        action={
+                          row.id === "sec:recent"
                             ? {
                                 icon: <Trash2 size={11} />,
-                                title: "Clear chats",
-                                onClick: () => orgRecentChats.forEach((c) => removeChat(c.tabId)),
+                                title: "Clear recent projects",
+                                onClick: () => clearRecents(),
                               }
-                            : undefined
-                      }
-                    />
-                  ) : row.kind === "group" ? (
-                    <GroupHeaderRow
-                      group={row.group}
-                      collapsed={!!collapsed[row.group.id]}
-                      onToggle={() => toggle(row.group.id)}
-                    />
-                  ) : row.kind === "ws" ? (
-                    <WorkspaceRow
-                      ws={row.ws}
-                      active={row.ws.id === displayActiveId}
-                      summary={summaries[row.ws.path]}
-                      groups={groups}
-                      indented={row.indented}
-                    />
-                  ) : row.kind === "recent" ? (
-                    <RecentProjectRow
-                      name={row.name}
-                      path={row.path}
-                      onOpen={() => void addWorkspace(row.path)}
-                    />
-                  ) : (
-                    <ChatRow
-                      chat={row.chat}
-                      running={isChatRunning(row.chat)}
-                      onOpen={() => void openChat(row.chat)}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+                            : row.id === "sec:chats"
+                              ? {
+                                  icon: <Trash2 size={11} />,
+                                  title: "Clear chats",
+                                  onClick: () => orgRecentChats.forEach((c) => removeChat(c.tabId)),
+                                }
+                              : undefined
+                        }
+                      />
+                    ) : row.kind === "group" ? (
+                      <GroupHeaderRow
+                        group={row.group}
+                        collapsed={!!collapsed[row.group.id]}
+                        onToggle={() => toggle(row.group.id)}
+                      />
+                    ) : row.kind === "ws" ? (
+                      <WorkspaceRow
+                        ws={row.ws}
+                        active={row.ws.id === displayActiveId}
+                        summary={summaries[row.ws.path]}
+                        groups={groups}
+                        indented={row.indented}
+                      />
+                    ) : row.kind === "recent" ? (
+                      <RecentProjectRow
+                        name={row.name}
+                        path={row.path}
+                        onOpen={() => void addWorkspace(row.path)}
+                      />
+                    ) : (
+                      <ChatRow
+                        chat={row.chat}
+                        running={isChatRunning(row.chat)}
+                        onOpen={() => void openChat(row.chat)}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Card footer: help on the left, version on the right. Outside the
+            scroller so it stays put, inside the card so it belongs to it. */}
+        <div className="relative z-[2] flex h-[30px] shrink-0 items-center justify-between px-2">
+          <HelpMenu />
+          <AppVersion />
+        </div>
       </div>
       <MembersModal org={activeOrg} open={membersOpen} onOpenChange={setMembersOpen} />
     </aside>
@@ -1088,6 +1155,69 @@ function NavItem({
       </span>
       <span className="truncate">{label}</span>
     </button>
+  );
+}
+
+/** Help / community. A dropdown rather than a link so the menu has somewhere
+ *  to grow — Discord is the first entry, not the only one it will hold. */
+function HelpMenu() {
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          type="button"
+          title="Help & community"
+          aria-label="Help and community"
+          className="flex size-[22px] items-center justify-center rounded-full border border-white/[0.08] text-[var(--text-tertiary)] outline-none transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+        >
+          <HelpCircle size={12} />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="start"
+          side="top"
+          sideOffset={6}
+          style={{ zIndex: 9999, boxShadow: "0 16px 48px rgba(0,0,0,0.95)" }}
+          className="w-[200px] overflow-hidden rounded-xl border border-white/[0.07] bg-[var(--bg-elevated)]/95 p-1 backdrop-blur-2xl select-none"
+        >
+          <DropdownMenu.Item
+            onSelect={() => void openUrl("https://discord.gg/atlas")}
+            className="flex h-[26px] items-center gap-2 rounded-md px-1.5 text-[11px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+          >
+            <MessageCircle size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+            <span className="flex-1 text-left">Discord community</span>
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
+/** The running build's version. Read from Tauri rather than `package.json`:
+ *  the bundle carries its own version, and a stale import would claim the
+ *  wrong one after an update. Renders nothing until it resolves. */
+function AppVersion() {
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    void getVersion()
+      .then((v) => {
+        if (live) setVersion(v);
+      })
+      .catch(() => {
+        // Not worth surfacing: a missing version number costs the reader
+        // nothing, and this runs on every rail mount.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (!version) return null;
+  return (
+    <span className="select-none pr-1 font-mono text-[10px] tabular-nums text-[var(--text-tertiary)]">
+      v{version}
+    </span>
   );
 }
 

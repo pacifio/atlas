@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
@@ -14,6 +14,7 @@ import {
   Users,
   ChartPie,
   Settings,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -35,22 +36,72 @@ function initials(name: string): string {
   return (words[0][0] + words[1][0]).toUpperCase();
 }
 
-function OrgAvatar({ org, size = 20 }: { org: Organisation; size?: number }) {
+function OrgAvatar({
+  org,
+  size = 20,
+  plain,
+}: {
+  org: Organisation;
+  size?: number;
+  /** Flat tinted square instead of the keycap. The keycap is a raised control
+   *  — right for the ONE avatar that labels the rail, wrong repeated down a
+   *  menu, where a dozen raised chips fight the row highlight for depth. */
+  plain?: boolean;
+}) {
+  // A custom logo keeps its own square; the initials wear the hint-nav keycap
+  // (`hint-overlay.tsx`) — a dark frosted pill with a hairline border, a top
+  // highlight and a bottom shade.
+  //
+  // No `backdropFilter` here, unlike the overlay's: this sits on the rail's own
+  // gradient, and a blur layer per avatar in a menu of them buys nothing.
+  if (org.logo) {
+    return (
+      <span
+        className="flex shrink-0 items-center justify-center overflow-hidden rounded-[6px]"
+        style={{ width: size, height: size }}
+      >
+        <img src={org.logo} alt="" className="h-full w-full object-cover" />
+      </span>
+    );
+  }
+  if (plain) {
+    return (
+      <span
+        className="flex shrink-0 items-center justify-center rounded-[5px] font-semibold text-[var(--text-primary)]"
+        style={{
+          width: size,
+          height: size,
+          fontSize: Math.max(8, Math.round(size * 0.42)),
+          background: org.color ?? "var(--bg-hover)",
+        }}
+      >
+        {initials(org.name)}
+      </span>
+    );
+  }
   return (
     <span
-      className="flex items-center justify-center rounded-[5px] shrink-0 font-semibold text-[var(--text-primary)]"
+      // `minWidth` + inline padding rather than a fixed square: two uppercase
+      // glyphs at a legible size do not fit inside `size` with any breathing
+      // room, and the previous fixed square + `tracking-wide` had them touching
+      // both edges. A keycap is allowed to be wider than it is tall.
+      className="flex shrink-0 items-center justify-center rounded-[6px] px-[3px] font-sans font-semibold uppercase leading-none"
       style={{
-        width: size,
+        minWidth: size,
         height: size,
-        fontSize: size * 0.42,
-        background: org.color ?? "var(--bg-hover)",
+        fontSize: Math.max(8, Math.round(size * 0.44)),
+        color: "rgba(255,255,255,0.95)",
+        // An org colour, when set, tints the keycap rather than replacing it —
+        // the depth survives either way.
+        background: org.color
+          ? `linear-gradient(180deg, ${org.color} 0%, rgba(8,8,10,0.55) 165%)`
+          : "linear-gradient(180deg, rgba(18,18,21,0.86) 0%, rgba(8,8,10,0.9) 100%)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        boxShadow:
+          "inset 0 1px 0 rgba(255,255,255,0.12), inset 0 -1px 0 rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.6)",
       }}
     >
-      {org.logo ? (
-        <img src={org.logo} alt="" className="h-full w-full rounded-[5px] object-cover" />
-      ) : (
-        initials(org.name)
-      )}
+      {initials(org.name)}
     </span>
   );
 }
@@ -108,6 +159,16 @@ export function OrgSwitcher() {
   const [open, setOpen] = useState(false);
   // True while a manual list-refresh is in flight (spins the refresh icon).
   const [refreshing, setRefreshing] = useState(false);
+  const [query, setQuery] = useState("");
+  // Name AND slug: two orgs can share a display name, and the slug is what
+  // tells them apart on the server.
+  const filteredOrgs = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return organisations;
+    return organisations.filter(
+      (o) => o.name.toLowerCase().includes(q) || o.slug.toLowerCase().includes(q),
+    );
+  }, [organisations, query]);
   // True while "Turn on sync" is creating the org server-side (spins the row).
   const [syncing, setSyncing] = useState(false);
   // Create-organisation modal (name + globally-unique handle).
@@ -169,6 +230,7 @@ export function OrgSwitcher() {
           setOpen(o);
           if (!o) {
             setEditingId(null);
+            setQuery("");
           }
         }}
       >
@@ -207,19 +269,37 @@ export function OrgSwitcher() {
         </div>
 
         <DropdownMenu.Portal>
+          {/* The house menu surface (chat's session picker, the pin rail):
+              border + translucent fill + backdrop blur + the grow-from-the-
+              trigger animation, ALL on this one element. Splitting them across
+              a wrapper isolates the layer and kills the blur. */}
           <DropdownMenu.Content
             align="start"
-            sideOffset={4}
-            className="z-[var(--z-max)] w-[280px] max-h-[460px] rounded-lg border border-[var(--border-default)] bg-[#000] shadow-xl text-[var(--text-secondary)] flex flex-col overflow-hidden"
+            sideOffset={6}
+            style={{
+              zIndex: 9999,
+              // No inset top highlight: on a card this size it draws a bright
+              // line across the whole head of the menu, which reads as a second
+              // border above the first.
+              boxShadow: "0 16px 48px rgba(0,0,0,0.95)",
+            }}
+            className="flex max-h-[min(480px,70vh)] w-[268px] flex-col overflow-hidden rounded-xl border border-white/[0.07] bg-[var(--bg-elevated)]/95 backdrop-blur-2xl atlas-panel-in-tl select-none text-[var(--text-secondary)]"
           >
-            {/* Header — "ORGANISATIONS" + circular refresh, then a divider. */}
-            <div className="px-3 pt-2.5 pb-1.5 flex items-center gap-1.5 shrink-0">
-              <span className="flex-1 truncate text-[10px] uppercase tracking-wider text-[var(--text-tertiary)]">
-                Organisations
-              </span>
+            {/* Head: a filter field with the refresh beside it, no rule under
+                it — the same row the chat session picker opens with. The list
+                below is short enough that a label would only cost a row. */}
+            <div className="flex h-[30px] shrink-0 items-center gap-1.5 px-2.5">
+              <Search size={11} className="shrink-0 text-[var(--text-tertiary)]" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.stopPropagation()}
+                placeholder="Search organisations…"
+                aria-label="Search organisations"
+                className="min-w-0 flex-1 bg-transparent text-[11px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
+              />
               {/* Manual re-sync — only meaningful with a credential to pull
-                  with. Circular outline button, matching the sidebar's "+".
-                  Silent on failure: Rust keeps the last-known list. */}
+                  with. Silent on failure: Rust keeps the last-known list. */}
               {signedIn && (
                 <button
                   title="Refresh organisations"
@@ -237,15 +317,20 @@ export function OrgSwitcher() {
                       setRefreshing(false);
                     }
                   }}
-                  className="flex items-center justify-center h-5 w-5 rounded-full border border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors shrink-0 cursor-pointer disabled:opacity-50"
+                  className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors cursor-pointer disabled:opacity-50"
                 >
                   <RefreshCw size={10} className={refreshing ? "animate-spin" : ""} />
                 </button>
               )}
             </div>
-            <DropdownMenu.Separator className="mb-1 h-px bg-[var(--border-default)]" />
-            <div className="overflow-y-auto pb-1 hide-scrollbar">
-              {organisations.map((org) => {
+
+            <div className="hide-scrollbar min-h-0 flex-1 overflow-y-auto pb-1">
+              {filteredOrgs.length === 0 && (
+                <div className="px-2.5 py-3 text-center text-[11px] text-[var(--text-ghost)]">
+                  No organisations match.
+                </div>
+              )}
+              {filteredOrgs.map((org) => {
                 const isActive = org.id === active.id;
                 // Inline-rename row: a plain input (NOT a menu item) so typing
                 // doesn't trigger Radix typeahead / select / close.
@@ -253,10 +338,10 @@ export function OrgSwitcher() {
                   return (
                     <div
                       key={org.id}
-                      className="w-full flex items-center gap-2 px-3 h-[28px]"
+                      className="mx-1 flex h-[26px] w-[calc(100%-8px)] items-center gap-2 rounded-md px-1.5"
                       onKeyDown={(e) => e.stopPropagation()}
                     >
-                      <OrgAvatar org={org} size={18} />
+                      <OrgAvatar org={org} size={16} plain />
                       <input
                         autoFocus
                         value={editName}
@@ -282,13 +367,17 @@ export function OrgSwitcher() {
                       if (!isActive) void switchOrg(org.id);
                     }}
                     className={cn(
-                      "group/org w-full flex items-center gap-2 px-3 h-[28px] text-[12px] outline-none",
+                      // Inset rows (a margin, a radius) rather than full-bleed
+                      // stripes: the highlight then reads as a chip inside the
+                      // card, which is what the chat menus do.
+                      "group/org mx-1 flex h-[26px] w-[calc(100%-8px)] items-center gap-2 rounded-md px-1.5 text-[11.5px] outline-none transition-colors",
+                      isActive && "bg-[var(--bg-active)] text-[var(--text-primary)]",
                       access.ok
-                        ? "hover:bg-[var(--bg-active)] hover:text-[var(--text-primary)] cursor-pointer"
-                        : "opacity-40 cursor-not-allowed",
+                        ? "cursor-pointer hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                        : "cursor-not-allowed opacity-40",
                     )}
                   >
-                    <OrgAvatar org={org} size={18} />
+                    <OrgAvatar org={org} size={16} plain />
                     <span className="flex-1 text-left truncate">{org.name}</span>
                     {/* A locked org offers no row actions — you can't manage an
                         org this account has no access to. */}
@@ -301,7 +390,7 @@ export function OrgSwitcher() {
                           e.stopPropagation();
                           beginRename(org.id, org.name);
                         }}
-                        className="opacity-0 group-hover/org:opacity-100 p-0.5 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-active)] transition-opacity shrink-0 cursor-pointer"
+                        className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--text-tertiary)] opacity-0 hover:bg-[var(--bg-elevated-2)] hover:text-[var(--text-primary)] group-hover/org:opacity-100 cursor-pointer transform-gpu [backface-visibility:hidden]"
                       >
                         <Pencil size={11} />
                       </button>
@@ -317,7 +406,7 @@ export function OrgSwitcher() {
                           setConfirmDelete(org);
                           setOpen(false);
                         }}
-                        className="opacity-0 group-hover/org:opacity-100 p-0.5 rounded text-[var(--text-tertiary)] hover:text-error hover:bg-[var(--bg-active)] transition-opacity shrink-0 cursor-pointer"
+                        className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--text-tertiary)] opacity-0 hover:bg-[var(--bg-elevated-2)] hover:text-error group-hover/org:opacity-100 cursor-pointer transform-gpu [backface-visibility:hidden]"
                       >
                         <Trash2 size={11} />
                       </button>
@@ -326,7 +415,7 @@ export function OrgSwitcher() {
                       <Lock size={11} className="text-[var(--text-tertiary)] shrink-0" />
                     ) : (
                       isActive && (
-                        <Check size={13} className="text-[var(--text-secondary)] shrink-0" />
+                        <Check size={13} className="shrink-0 text-[var(--text-primary)]" />
                       )
                     )}
                   </DropdownMenu.Item>
@@ -334,7 +423,7 @@ export function OrgSwitcher() {
               })}
             </div>
 
-            <DropdownMenu.Separator className="my-1 h-px bg-[var(--border-default)]" />
+            <DropdownMenu.Separator className="h-px shrink-0 bg-white/5" />
 
             {/* Create organisation — opens the name + handle modal (the handle
                 is globally unique, so it needs a real form, not an inline input). */}
@@ -343,9 +432,9 @@ export function OrgSwitcher() {
                 setOpen(false);
                 setCreateOpen(true);
               }}
-              className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] outline-none hover:bg-[var(--bg-active)] hover:text-[var(--text-primary)] cursor-pointer shrink-0"
+              className="mx-1 mt-1 flex h-[26px] w-[calc(100%-8px)] shrink-0 items-center gap-2 rounded-md px-1.5 text-[11px] outline-none transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
             >
-              <Plus size={13} className="text-[var(--text-tertiary)] shrink-0" />
+              <Plus size={12} className="shrink-0 text-[var(--text-tertiary)]" />
               <span className="flex-1 text-left">Create organisation…</span>
             </DropdownMenu.Item>
 
@@ -357,22 +446,22 @@ export function OrgSwitcher() {
                   setOpen(false);
                   setMembersOpen(true);
                 }}
-                className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] outline-none hover:bg-[var(--bg-active)] hover:text-[var(--text-primary)] cursor-pointer shrink-0"
+                className="mx-1 mb-1 flex h-[26px] w-[calc(100%-8px)] shrink-0 items-center gap-2 rounded-md px-1.5 text-[11px] outline-none transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
               >
-                <Users size={13} className="text-[var(--text-tertiary)] shrink-0" />
+                <Users size={12} className="shrink-0 text-[var(--text-tertiary)]" />
                 <span className="flex-1 text-left">Invite &amp; Manage members</span>
               </DropdownMenu.Item>
             ) : (
               <div
                 title={isSyncedOrg ? "Sign in to manage members" : "Turn on sync to manage members"}
-                className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] text-[var(--text-secondary)] opacity-40 cursor-not-allowed select-none shrink-0"
+                className="mx-1 mb-1 flex h-[26px] w-[calc(100%-8px)] shrink-0 cursor-not-allowed items-center gap-2 rounded-md px-1.5 text-[11px] text-[var(--text-secondary)] opacity-40 select-none"
               >
-                <Users size={13} className="shrink-0" />
+                <Users size={12} className="shrink-0" />
                 <span className="flex-1 text-left">Invite &amp; Manage members</span>
               </div>
             )}
 
-            <DropdownMenu.Separator className="my-1 h-px bg-[var(--border-default)]" />
+            <DropdownMenu.Separator className="h-px shrink-0 bg-white/5" />
 
             {/* Sync toggle for the ACTIVE org — in the footer (not under the org
              *  list) so it's unambiguous which org it applies to. Signed out,
@@ -380,17 +469,17 @@ export function OrgSwitcher() {
             {syncing ? (
               <div
                 title="Syncing…"
-                className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] text-[var(--text-secondary)] select-none"
+                className="mx-1 my-1 flex h-[26px] w-[calc(100%-8px)] items-center gap-2 rounded-md px-1.5 text-[11px] text-[var(--text-secondary)] select-none"
               >
-                <Loader2 size={13} className="shrink-0 animate-spin text-[var(--text-tertiary)]" />
+                <Loader2 size={12} className="shrink-0 animate-spin text-[var(--text-tertiary)]" />
                 <span className="flex-1 text-left truncate">Syncing {active.name}…</span>
               </div>
             ) : active.syncEnabled && active.remoteId ? (
               <div
                 title="This organisation is synced with your Atlas account"
-                className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] text-[var(--text-secondary)] select-none"
+                className="mx-1 my-1 flex h-[26px] w-[calc(100%-8px)] items-center gap-2 rounded-md px-1.5 text-[11px] text-[var(--text-secondary)] select-none"
               >
-                <Cloud size={13} className="shrink-0 text-[var(--text-tertiary)]" />
+                <Cloud size={12} className="shrink-0 text-[var(--text-tertiary)]" />
                 <span className="flex-1 text-left truncate">{active.name} is synced</span>
                 <Check size={12} className="shrink-0 text-[var(--text-secondary)]" />
               </div>
@@ -413,9 +502,9 @@ export function OrgSwitcher() {
                     ? "Create this organisation in your Atlas account"
                     : "Sign in to sync this organisation"
                 }
-                className="w-full flex items-center gap-2 px-3 h-[28px] text-[11px] outline-none text-[var(--text-secondary)] hover:bg-[var(--bg-active)] hover:text-[var(--text-primary)] cursor-pointer"
+                className="mx-1 my-1 flex h-[26px] w-[calc(100%-8px)] items-center gap-2 rounded-md px-1.5 text-[11px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
               >
-                <Cloud size={13} className="shrink-0" />
+                <Cloud size={12} className="shrink-0" />
                 <span className="flex-1 text-left truncate">Turn on sync for {active.name}…</span>
               </DropdownMenu.Item>
             )}
