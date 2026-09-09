@@ -25,6 +25,10 @@ import {
   Users,
   HelpCircle,
   MessageCircle,
+  MessageCircleQuestion,
+  Keyboard,
+  Settings,
+  Globe,
   Sparkles,
   BookOpen,
   Ellipsis,
@@ -32,6 +36,9 @@ import {
 import { toast } from "sonner";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { GithubIcon } from "@/components/github-icon";
+import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
+import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import { useWorkspaceStore, type Workspace, type WorkspaceGroup } from "../stores/workspace-store";
 import { pickAndAddWorkspace } from "../lib/pick-workspace";
 import { useRunningChatKeys } from "../lib/agent-activity";
@@ -137,11 +144,18 @@ const WorkspaceRow = memo(function WorkspaceRow({
       onClick={editing ? undefined : () => void switchTo(ws.id)}
       style={{ height: WS_CARD, paddingLeft: indented ? 22 : 8 }}
       className={cn(
-        // `transform-gpu` keeps the row on a stable composited layer so the
-        // `transition-colors` hover never promotes/demotes it mid-transition —
-        // which was re-rasterizing the git dot at a fractional pixel and making
-        // it visibly "jump" on hover.
-        "group relative flex items-center gap-2.5 pr-1.5 rounded-md cursor-pointer transition-colors transform-gpu [backface-visibility:hidden]",
+        // No `transition-colors`, and therefore no `transform-gpu` either.
+        //
+        // The dot used to jump on hover, and the fix was to pin the row to its
+        // own composited layer — but the CAUSE was the transition: Tailwind's
+        // `transition-colors` animates `fill` and `stroke` too, so hovering
+        // re-rasterised the SVG every frame, at fractional pixels. Dropping it
+        // fixes the jump at the source AND lets the promotion go: with overscan
+        // there were thirty-plus layers inside the scroller, which is precisely
+        // what WKWebView handles worst (the transcript learned the same lesson).
+        // The hover fill lands instantly now, which at this row height reads as
+        // crisp rather than abrupt.
+        "group relative flex items-center gap-2.5 pr-1.5 rounded-md cursor-pointer",
         active ? "bg-[var(--bg-active)]" : "hover:bg-[var(--bg-hover)]",
       )}
       title={ws.path}
@@ -188,7 +202,9 @@ const WorkspaceRow = memo(function WorkspaceRow({
       {/* Right slot: the +N/−M at rest, the row actions on hover. Both live in
           one full-height, GPU-promoted box and swap with NO transition: an
           opacity tween on an unpromoted child re-rasterises it mid-fade and the
-          icons visibly wobble (the same lesson as the git dot above). */}
+          icons visibly wobble. This promotion is ONE small box per row and only
+          matters while hovering — unlike promoting the whole row, which the
+          root above deliberately no longer does. */}
       <span className="absolute inset-y-0 right-1.5 flex items-center transform-gpu [backface-visibility:hidden]">
         <span className="group-hover:opacity-0">
           <NumStatPill summary={summary} />
@@ -303,14 +319,15 @@ const WorkspaceRow = memo(function WorkspaceRow({
   );
 });
 
-function GroupHeaderRow({
+const GroupHeaderRow = memo(function GroupHeaderRow({
   group,
   collapsed,
   onToggle,
 }: {
   group: WorkspaceGroup;
   collapsed: boolean;
-  onToggle: () => void;
+  /** Takes the group id — one stable callback for every group row. */
+  onToggle: (id: string) => void;
 }) {
   const { pinGroup, unpinGroup, removeGroup, renameGroup, beginRenameGroup, endRenameGroup } =
     useWorkspaceStore.use.actions();
@@ -331,8 +348,8 @@ function GroupHeaderRow({
     <div
       data-hint
       style={{ height: HEADER_H }}
-      className="group/h flex items-center gap-2 pl-2 pr-1.5 rounded-md cursor-pointer hover:bg-[var(--bg-hover)] transform-gpu [backface-visibility:hidden]"
-      onClick={editing ? undefined : onToggle}
+      className="group/h flex items-center gap-2 pl-2 pr-1.5 rounded-md cursor-pointer hover:bg-[var(--bg-hover)]"
+      onClick={editing ? undefined : () => onToggle(group.id)}
     >
       {/* Icon and label are sized together: a 12px folder under an 11px label,
           the same pairing the rows below use. A 12px label over an 11px icon
@@ -423,19 +440,32 @@ function GroupHeaderRow({
       </span>
     </div>
   );
-}
+});
 
-function SectionHeaderRow({
+/** Clear-all affordances, by section. Derived from the id INSIDE the row so
+ *  the caller passes a boolean and a stable callback rather than minting an
+ *  `{icon, title, onClick}` object per render — an object prop defeats `memo`
+ *  on every row, every frame. */
+const CLEAR_TITLE: Record<string, string> = {
+  "sec:recent": "Clear recent projects",
+  "sec:chats": "Clear chats",
+};
+
+const SectionHeaderRow = memo(function SectionHeaderRow({
+  id,
   label,
   collapsed,
   onToggle,
-  action,
+  clearable,
+  onClear,
 }: {
+  /** Collapse key. Handlers take it, so they can be shared by every row. */
+  id: string;
   label: string;
   collapsed: boolean;
-  onToggle: () => void;
-  /** Optional hover-revealed action on the right (e.g. clear-all). */
-  action?: { icon: React.ReactNode; title: string; onClick: () => void };
+  onToggle: (id: string) => void;
+  clearable?: boolean;
+  onClear?: (id: string) => void;
 }) {
   return (
     // Sentence case, bold, in the secondary weight, with a small disclosure
@@ -444,7 +474,7 @@ function SectionHeaderRow({
     <div style={{ height: SECTION_H, paddingTop: SECTION_H - HEADER_H }}>
       <div
         data-hint
-        onClick={onToggle}
+        onClick={() => onToggle(id)}
         style={{ height: HEADER_H }}
         className="group/s flex w-full items-center gap-1 rounded-md px-2 outline-none cursor-pointer hover:bg-[var(--bg-hover)]"
       >
@@ -463,36 +493,37 @@ function SectionHeaderRow({
             )}
           />
         </span>
-        {action && (
+        {clearable && onClear && (
           <button
             onClick={(e) => {
               e.stopPropagation();
-              action.onClick();
+              onClear(id);
             }}
-            title={action.title}
+            title={CLEAR_TITLE[id] ?? "Clear"}
             className="ml-auto flex size-5 items-center justify-center rounded text-[var(--text-tertiary)] opacity-0 group-hover/s:opacity-100 hover:bg-[var(--bg-elevated)] hover:text-[var(--status-error,#f44)] outline-none cursor-pointer transform-gpu [backface-visibility:hidden]"
           >
-            {action.icon}
+            <Trash2 size={11} />
           </button>
         )}
       </div>
     </div>
   );
-}
+});
 
-function RecentProjectRow({
+const RecentProjectRow = memo(function RecentProjectRow({
   name,
   path,
   onOpen,
 }: {
   name: string;
   path: string;
-  onOpen: () => void;
+  /** Takes the path so the parent can hand every row ONE stable callback. */
+  onOpen: (path: string) => void;
 }) {
   return (
     <div
       data-hint
-      onClick={onOpen}
+      onClick={() => onOpen(path)}
       style={{ height: ROW_CARD, paddingLeft: 8 }}
       className="group flex items-center gap-2.5 pr-1.5 rounded-md cursor-pointer hover:bg-[var(--bg-hover)]"
       title={path}
@@ -503,7 +534,7 @@ function RecentProjectRow({
       </span>
     </div>
   );
-}
+});
 
 /** Compact relative time: "now" / "5m" / "3h" / "2d". */
 function relTime(ms: number): string {
@@ -514,14 +545,15 @@ function relTime(ms: number): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
-function ChatRow({
+const ChatRow = memo(function ChatRow({
   chat,
   running,
   onOpen,
 }: {
   chat: RecentChat;
   running: boolean;
-  onOpen: () => void;
+  /** Takes the chat so the parent can hand every row ONE stable callback. */
+  onOpen: (chat: RecentChat) => void;
 }) {
   // Cersei (the Atlas native agent) gets its own brand mark — falling through
   // to the Claude icon mislabeled Atlas chats in this panel.
@@ -538,9 +570,9 @@ function ChatRow({
   return (
     <div
       data-hint
-      onClick={onOpen}
+      onClick={() => onOpen(chat)}
       style={{ height: CHAT_CARD, paddingLeft: 8 }}
-      className="group relative flex items-start gap-2.5 pr-2 pt-1.5 rounded-md cursor-pointer hover:bg-[var(--bg-hover)] transform-gpu [backface-visibility:hidden]"
+      className="group relative flex items-start gap-2.5 pr-2 pt-1.5 rounded-md cursor-pointer hover:bg-[var(--bg-hover)]"
       title={`${chat.projectName} — ${chat.projectPath}`}
     >
       {running ? (
@@ -575,7 +607,7 @@ function ChatRow({
       </span>
     </div>
   );
-}
+});
 
 type Row =
   | { kind: "section"; id: string; label: string; key: string }
@@ -645,7 +677,9 @@ export function WorkspaceSidebar() {
   const fullscreen = useFullscreen();
 
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const toggle = (id: string) => setCollapsed((c) => ({ ...c, [id]: !c[id] }));
+  // Stable identities, all of them: every row below is memoised, and a fresh
+  // closure per render would defeat that on every row of every render.
+  const toggle = useCallback((id: string) => setCollapsed((c) => ({ ...c, [id]: !c[id] })), []);
 
   // Pinned + Projects (STATIC registry order — clicking never reorders).
   const pinned = useMemo(() => workspaces.filter((w) => w.pinned), [workspaces]);
@@ -767,60 +801,33 @@ export function WorkspaceSidebar() {
     else setCollapsed(Object.fromEntries(allCollapsibleIds.map((id) => [id, true])));
   };
 
-  // ── Git summaries: cached at module scope (`workspace-git-store`) so opening
-  // / closing the switcher renders instantly from cache and NEVER recalculates.
-  // First sight fetches; a global git-changed listener silently refreshes in the
-  // background. We only `ensure` the currently-VISIBLE rows (never the whole
-  // 100s-long list).
+  // ── Git summaries ────────────────────────────────────────────────────
+  // Cached at module scope (`workspace-git-store`) so opening / closing the
+  // switcher renders instantly from cache and NEVER recalculates. First sight
+  // fetches; a global git-changed listener silently refreshes in the
+  // background. WHICH paths get fetched is the list's business (it knows what
+  // is on screen), so the map is all this level needs.
   const summaries = useWorkspaceGitStore.use.summaries();
-  const { ensure: ensureSummary } = useWorkspaceGitStore.use.actions();
 
-  const parentRef = useRef<HTMLDivElement>(null);
-  // The virtualized rows no longer start at the scroller's top — the nav sits
-  // above them inside the same scroll element. `scrollMargin` is how far down
-  // they begin; without it the virtualizer maps `scrollTop` straight onto row
-  // offsets and materialises the wrong window (rows blank out early at the top
-  // and arrive late at the bottom). Re-measured whenever the nav changes
-  // height, which it does every time the Modules group collapses.
-  const navRef = useRef<HTMLElement>(null);
-  const [scrollMargin, setScrollMargin] = useState(0);
-  useEffect(() => {
-    const el = navRef.current;
-    if (!el) return;
-    const measure = () => setScrollMargin(el.offsetTop + el.offsetHeight);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  const virtualizer = useVirtualizer({
-    count: rows.length,
-    scrollMargin,
-    getScrollElement: () => parentRef.current,
-    estimateSize: (i) => {
-      const k = rows[i]?.kind;
-      if (k === "ws") return WS_H;
-      if (k === "chat") return CHAT_H;
-      if (k === "recent") return ROW_H;
-      if (k === "section") return SECTION_H;
-      return HEADER_H + 2; // group headers
+  const openRecent = useCallback((path: string) => void addWorkspace(path), [addWorkspace]);
+
+  const clearSection = useCallback(
+    (id: string) => {
+      if (id === "sec:recent") {
+        clearRecents();
+        return;
+      }
+      if (id === "sec:chats") {
+        // Read the list at click time rather than closing over it — the
+        // callback has to stay stable, and the store is the truth anyway.
+        const paths = new Set(useWorkspaceStore.getState().workspaces.map((w) => w.path));
+        for (const c of useRecentChatsStore.getState().items) {
+          if (paths.has(c.projectPath)) removeChat(c.tabId);
+        }
+      }
     },
-    overscan: 8,
-    getItemKey: (i) => rows[i]?.key ?? i,
-  });
-
-  // Fetch git summaries for the visible workspace rows.
-  const items = virtualizer.getVirtualItems();
-  const visiblePaths = items
-    .map((v) => {
-      const r = rows[v.index];
-      return r?.kind === "ws" ? r.ws.path : null;
-    })
-    .filter(Boolean)
-    .join("|");
-  useEffect(() => {
-    for (const p of visiblePaths.split("|")) if (p) ensureSummary(p);
-  }, [visiblePaths, ensureSummary]);
+    [clearRecents, removeChat],
+  );
 
   const openChat = useCallback(
     async (chat: RecentChat) => {
@@ -902,16 +909,12 @@ export function WorkspaceSidebar() {
           boxShadow: "0 0 0 1px rgba(255,255,255,0.08), 0 10px 28px rgba(0,0,0,0.6)",
         }}
       >
-        {/* ONE scroller for everything below the org row. The navigation used to
-            be pinned above it, which cost ~200px of permanently-frozen height —
-            on a short window the project list was reduced to a slot a few rows
-            tall while six fixed rows sat above it. Only the titlebar band and
-            the org row are fixed now; the nav scrolls away with the lists.
-
-            It sits INSIDE `parentRef` rather than in a wrapper: the virtualizer
-            measures its scroll element, and anything between it and the rows
-            would have to be subtracted from every offset by hand. As a plain
-            block before the virtualized region, it simply displaces it. */}
+        {/* ONE scroller for everything below the org row (see `RailScroll`).
+            The navigation used to be pinned above it, which cost ~200px of
+            permanently-frozen height — on a short window the project list was
+            reduced to a slot a few rows tall while six fixed rows sat above it.
+            Only the titlebar band and the org row are fixed now; the nav is
+            handed to the list as children and scrolls away with it. */}
         {/* Fades, not a scrollbar: rows enter and leave at the card's rounded
             edges, and a hard cut there reads as clipping. Anchored to the CARD
             (its `relative`), so the bottom one sits above the footer row rather
@@ -934,14 +937,25 @@ export function WorkspaceSidebar() {
               "linear-gradient(to top, var(--comms-surface) 20%, color-mix(in srgb, var(--comms-surface) 55%, transparent) 60%, transparent)",
           }}
         />
-        <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto hide-scrollbar px-2 py-1.5">
+        <RailScroll
+          rows={rows}
+          collapsed={collapsed}
+          summaries={summaries}
+          groups={groups}
+          activeId={displayActiveId}
+          runningKeys={runningChatKeys}
+          onToggle={toggle}
+          onOpenRecent={openRecent}
+          onOpenChat={openChat}
+          onClearSection={clearSection}
+        >
           {/* Navigation, in three bands. Organisation-wide destinations
            *  first (Timeline, Chat, Members); then the project-scoped tools under
            *  their own collapsible "Modules" heading — the same disclosure the
            *  list below uses, so the rail reads as one outline — ending, as
            *  Linear's does, in "More", the ⌘⌥N module palette. Logs and Skills left
            *  the rail: Console and Settings in the org row already reach them. */}
-          <nav ref={navRef} className="pt-1 pb-1 space-y-px">
+          <nav className="pt-1 pb-1 space-y-px">
             <CaptureControl />
             <NavItem
               icon={<MessagesSquare size={14} />}
@@ -960,9 +974,10 @@ export function WorkspaceSidebar() {
             />
 
             <SectionHeaderRow
+              id="sec:tools"
               label="Modules"
               collapsed={!!collapsed["sec:tools"]}
-              onToggle={() => toggle("sec:tools")}
+              onToggle={toggle}
             />
             {!collapsed["sec:tools"] && (
               <>
@@ -1014,89 +1029,7 @@ export function WorkspaceSidebar() {
               </>
             )}
           </nav>
-
-          {rows.length === 0 ? (
-            <div className="px-2 py-3 text-[11px] text-[var(--text-tertiary)]">
-              No projects yet.
-            </div>
-          ) : (
-            <div
-              style={{
-                height: virtualizer.getTotalSize() - scrollMargin,
-                position: "relative",
-              }}
-            >
-              {items.map((v) => {
-                const row = rows[v.index];
-                if (!row) return null;
-                return (
-                  <div
-                    key={row.key}
-                    style={{
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      width: "100%",
-                      // `scrollMargin` is baked into `v.start` (it is measured
-                      // from the SCROLLER's top, past the nav); subtract it to get
-                      // the offset within this wrapper.
-                      transform: `translateY(${v.start - scrollMargin}px)`,
-                    }}
-                  >
-                    {row.kind === "section" ? (
-                      <SectionHeaderRow
-                        label={row.label}
-                        collapsed={!!collapsed[row.id]}
-                        onToggle={() => toggle(row.id)}
-                        action={
-                          row.id === "sec:recent"
-                            ? {
-                                icon: <Trash2 size={11} />,
-                                title: "Clear recent projects",
-                                onClick: () => clearRecents(),
-                              }
-                            : row.id === "sec:chats"
-                              ? {
-                                  icon: <Trash2 size={11} />,
-                                  title: "Clear chats",
-                                  onClick: () => orgRecentChats.forEach((c) => removeChat(c.tabId)),
-                                }
-                              : undefined
-                        }
-                      />
-                    ) : row.kind === "group" ? (
-                      <GroupHeaderRow
-                        group={row.group}
-                        collapsed={!!collapsed[row.group.id]}
-                        onToggle={() => toggle(row.group.id)}
-                      />
-                    ) : row.kind === "ws" ? (
-                      <WorkspaceRow
-                        ws={row.ws}
-                        active={row.ws.id === displayActiveId}
-                        summary={summaries[row.ws.path]}
-                        groups={groups}
-                        indented={row.indented}
-                      />
-                    ) : row.kind === "recent" ? (
-                      <RecentProjectRow
-                        name={row.name}
-                        path={row.path}
-                        onOpen={() => void addWorkspace(row.path)}
-                      />
-                    ) : (
-                      <ChatRow
-                        chat={row.chat}
-                        running={isChatRunning(row.chat)}
-                        onOpen={() => void openChat(row.chat)}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        </RailScroll>
 
         {/* Card footer: help on the left, version on the right. Outside the
             scroller so it stays put, inside the card so it belongs to it. */}
@@ -1158,8 +1091,302 @@ function NavItem({
   );
 }
 
-/** Help / community. A dropdown rather than a link so the menu has somewhere
- *  to grow — Discord is the first entry, not the only one it will hold. */
+// ── The scrolling list ─────────────────────────────────────────────────────
+//
+// Split out of `WorkspaceSidebar` for one reason: a virtualizer re-renders its
+// OWNER on every scroll event. With the hook at the top of the rail, a fling
+// re-ran fifteen store selectors, the org row, the whole navigation and every
+// visible row wrapper per frame, all to produce identical output. Down here the
+// only thing a frame can touch is the list.
+
+/** Above this many rows the list virtualizes; below it, plain DOM.
+ *
+ *  Virtualization is not free — it trades a render per scroll frame for DOM it
+ *  does not create. Under a hundred-odd rows that is a bad trade: WebKit
+ *  scrolls a composited layer with no main-thread work at all, so plain rows
+ *  scroll at zero cost while the virtualized ones cost a React render per
+ *  frame. The rail is normally well under this (one org's projects, at most
+ *  fifteen chats, the unopened recents), so the fast path is the usual one. */
+const VIRTUALIZE_ABOVE = 120;
+
+interface RailRowCtx {
+  collapsed: Record<string, boolean>;
+  summaries: Record<string, GitSummary>;
+  groups: WorkspaceGroup[];
+  activeId: string | null;
+  runningKeys: Set<string>;
+  onToggle: (id: string) => void;
+  onOpenRecent: (path: string) => void;
+  onOpenChat: (chat: RecentChat) => void;
+  onClearSection: (id: string) => void;
+}
+
+/** One row, with every prop reduced to a primitive or a stable identity — so
+ *  the memo on each row component actually bails. Collapsing a section, for
+ *  instance, changes the `collapsed` MAP, but only one row's boolean. */
+function renderRailRow(row: Row, ctx: RailRowCtx) {
+  switch (row.kind) {
+    case "section":
+      return (
+        <SectionHeaderRow
+          id={row.id}
+          label={row.label}
+          collapsed={!!ctx.collapsed[row.id]}
+          onToggle={ctx.onToggle}
+          clearable={row.id === "sec:recent" || row.id === "sec:chats"}
+          onClear={ctx.onClearSection}
+        />
+      );
+    case "group":
+      return (
+        <GroupHeaderRow
+          group={row.group}
+          collapsed={!!ctx.collapsed[row.group.id]}
+          onToggle={ctx.onToggle}
+        />
+      );
+    case "ws":
+      return (
+        <WorkspaceRow
+          ws={row.ws}
+          active={row.ws.id === ctx.activeId}
+          summary={ctx.summaries[row.ws.path]}
+          groups={ctx.groups}
+          indented={row.indented}
+        />
+      );
+    case "recent":
+      return <RecentProjectRow name={row.name} path={row.path} onOpen={ctx.onOpenRecent} />;
+    case "chat":
+      return (
+        <ChatRow
+          chat={row.chat}
+          running={
+            ctx.runningKeys.has(row.chat.tabId) ||
+            (!!row.chat.acpSessionId && ctx.runningKeys.has(row.chat.acpSessionId))
+          }
+          onOpen={ctx.onOpenChat}
+        />
+      );
+  }
+}
+
+/**
+ * Fetch the git summaries for a set of paths, a few per frame.
+ *
+ * `ensure` is idempotent (the store keeps fetched/in-flight sets), so the cost
+ * of a repeat call is a Set lookup — but the FIRST pass over a fresh list
+ * spawns one `git` per path, and firing a hundred at once on mount is a stall
+ * the rail does not need to cause. Eight per frame drains a full list in a
+ * handful of frames and never blocks one.
+ *
+ * Keyed by a joined string so the effect re-runs when the SET changes, not when
+ * an array identity does.
+ */
+function useEnsureSummaries(pathsKey: string) {
+  const { ensure } = useWorkspaceGitStore.use.actions();
+  useEffect(() => {
+    if (!pathsKey) return;
+    const paths = pathsKey.split("\n");
+    let i = 0;
+    let raf = 0;
+    const step = () => {
+      for (let n = 0; n < 8 && i < paths.length; n++, i++) ensure(paths[i]);
+      raf = i < paths.length ? requestAnimationFrame(step) : 0;
+    };
+    step();
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [pathsKey, ensure]);
+}
+
+/** Shared scroller chrome. The nav (`children`) rides INSIDE it, so it scrolls
+ *  away with the lists rather than freezing a fifth of the rail. */
+const SCROLLER_CLASS = "flex-1 min-h-0 overflow-y-auto hide-scrollbar px-2 py-1.5";
+
+const RailScroll = memo(function RailScroll({
+  rows,
+  children,
+  ...ctx
+}: { rows: Row[]; children: React.ReactNode } & RailRowCtx) {
+  // Component-level branch, not a conditional hook: each body owns its own
+  // hooks, and crossing the threshold remounts the scroller (a scroll position
+  // lost on a list that just grew past 120 rows is not worth a design for).
+  return rows.length > VIRTUALIZE_ABOVE ? (
+    <VirtualRail rows={rows} {...ctx}>
+      {children}
+    </VirtualRail>
+  ) : (
+    <PlainRail rows={rows} {...ctx}>
+      {children}
+    </PlainRail>
+  );
+});
+
+/** The fast path: no virtualizer, so NOTHING runs on a scroll frame. */
+function PlainRail({
+  rows,
+  children,
+  ...ctx
+}: { rows: Row[]; children: React.ReactNode } & RailRowCtx) {
+  const pathsKey = useMemo(
+    () =>
+      rows
+        .filter((r): r is Extract<Row, { kind: "ws" }> => r.kind === "ws")
+        .map((r) => r.ws.path)
+        .join("\n"),
+    [rows],
+  );
+  useEnsureSummaries(pathsKey);
+  return (
+    <div className={SCROLLER_CLASS}>
+      {children}
+      {rows.length === 0 ? (
+        <EmptyRail />
+      ) : (
+        rows.map((row) => <div key={row.key}>{renderRailRow(row, ctx)}</div>)
+      )}
+    </div>
+  );
+}
+
+/** The long-list path. Re-renders per scroll frame by design — which is why it
+ *  is this small, and why nothing above it is in the frame. */
+function VirtualRail({
+  rows,
+  children,
+  ...ctx
+}: { rows: Row[]; children: React.ReactNode } & RailRowCtx) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLDivElement>(null);
+  // The rows do not start at the scroller's top — the nav sits above them
+  // inside the same scroll element. Without `scrollMargin` the virtualizer maps
+  // `scrollTop` straight onto row offsets and materialises the wrong window
+  // (rows blank out early at the top, arrive late at the bottom). Measured off
+  // the two rects rather than `offsetTop`, which answers relative to the
+  // nearest POSITIONED ancestor — the card, not the scroller.
+  const [scrollMargin, setScrollMargin] = useState(0);
+  useEffect(() => {
+    const nav = navRef.current;
+    const scroller = parentRef.current;
+    if (!nav || !scroller) return;
+    const measure = () =>
+      setScrollMargin(
+        nav.getBoundingClientRect().bottom -
+          scroller.getBoundingClientRect().top +
+          scroller.scrollTop,
+      );
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(nav);
+    return () => ro.disconnect();
+  }, []);
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    scrollMargin,
+    getScrollElement: () => parentRef.current,
+    estimateSize: (i) => {
+      const k = rows[i]?.kind;
+      if (k === "ws") return WS_H;
+      if (k === "chat") return CHAT_H;
+      if (k === "recent") return ROW_H;
+      if (k === "section") return SECTION_H;
+      return HEADER_H + 2; // group headers
+    },
+    overscan: 8,
+    getItemKey: (i) => rows[i]?.key ?? i,
+  });
+
+  const items = virtualizer.getVirtualItems();
+  // The visible RANGE, not the visible paths: building and diffing a path
+  // string per frame is exactly the work this component exists to avoid. Two
+  // numbers as deps means the walk runs when the window moves, not when it is
+  // merely redrawn at a new offset.
+  const first = items.length ? items[0].index : 0;
+  const last = items.length ? items[items.length - 1].index : -1;
+  const pathsKey = useMemo(() => {
+    const out: string[] = [];
+    for (let i = first; i <= last; i++) {
+      const r = rows[i];
+      if (r?.kind === "ws") out.push(r.ws.path);
+    }
+    return out.join("\n");
+  }, [rows, first, last]);
+  useEnsureSummaries(pathsKey);
+
+  return (
+    <div ref={parentRef} className={SCROLLER_CLASS}>
+      <div ref={navRef}>{children}</div>
+      {rows.length === 0 ? (
+        <EmptyRail />
+      ) : (
+        <div style={{ height: virtualizer.getTotalSize() - scrollMargin, position: "relative" }}>
+          {items.map((v) => {
+            const row = rows[v.index];
+            if (!row) return null;
+            return (
+              <div
+                key={row.key}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  // `scrollMargin` is baked into `v.start` (measured from the
+                  // SCROLLER's top, past the nav); subtract it for the offset
+                  // within this wrapper.
+                  transform: `translateY(${v.start - scrollMargin}px)`,
+                }}
+              >
+                {renderRailRow(row, ctx)}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmptyRail() {
+  return <div className="px-2 py-3 text-[11px] text-[var(--text-tertiary)]">No projects yet.</div>;
+}
+
+/** Where the help menu points. Grouped as they render: docs and support, then
+ *  the public channels, then the app's own surfaces. */
+const DOCS_URL = "https://docs.tryatlas.cc/docs/getting-started";
+const GITHUB_URL = "https://github.com/pacifio/atlas";
+const DISCORD_URL = "https://discord.gg/GmnFggaPfP";
+const X_URL = "https://x.com/tryatlas_cc";
+const SITE_URL = "https://tryatlas.cc/";
+
+function HelpItem({
+  icon,
+  label,
+  onSelect,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onSelect: () => void;
+}) {
+  return (
+    <DropdownMenu.Item
+      onSelect={onSelect}
+      className="flex h-[26px] items-center gap-2 rounded-md px-1.5 text-[11px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+    >
+      <span className="flex size-3.5 shrink-0 items-center justify-center text-[var(--text-tertiary)]">
+        {icon}
+      </span>
+      <span className="flex-1 text-left">{label}</span>
+    </DropdownMenu.Item>
+  );
+}
+
+/** Help, community and the app's own destinations. A dropdown rather than a
+ *  row of links: the rail's footer has room for one control, and this is the
+ *  drawer everything that is neither a project nor a module lives in. */
 function HelpMenu() {
   return (
     <DropdownMenu.Root>
@@ -1179,18 +1406,65 @@ function HelpMenu() {
           side="top"
           sideOffset={6}
           style={{ zIndex: 9999, boxShadow: "0 16px 48px rgba(0,0,0,0.95)" }}
-          className="w-[200px] overflow-hidden rounded-xl border border-white/[0.07] bg-[var(--bg-elevated)]/95 p-1 backdrop-blur-2xl select-none"
+          className="w-[212px] overflow-hidden rounded-xl border border-white/[0.07] bg-[var(--bg-elevated)]/95 p-1 backdrop-blur-2xl select-none"
         >
-          <DropdownMenu.Item
-            onSelect={() => void openUrl("https://discord.gg/atlas")}
-            className="flex h-[26px] items-center gap-2 rounded-md px-1.5 text-[11px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
-          >
-            <MessageCircle size={12} className="shrink-0 text-[var(--text-tertiary)]" />
-            <span className="flex-1 text-left">Discord community</span>
-          </DropdownMenu.Item>
+          <HelpItem
+            icon={<BookOpen size={12} />}
+            label="Docs"
+            onSelect={() => void openUrl(DOCS_URL)}
+          />
+          <HelpItem
+            icon={<MessageCircleQuestion size={12} />}
+            label="Send feedback"
+            // The panel is non-modal and anchored bottom-right; `toggle` is what
+            // the status-bar button uses, and the source tags the report.
+            onSelect={() => useFeedbackStore.getState().actions.toggle("status-bar")}
+          />
+          <HelpItem
+            icon={<Keyboard size={12} />}
+            label="Keyboard shortcuts"
+            onSelect={() => openSettingsSection("keybindings")}
+          />
+
+          <DropdownMenu.Separator className="my-1 h-px bg-white/5" />
+
+          <HelpItem
+            icon={<GithubIcon className="size-3" />}
+            label="GitHub repo"
+            onSelect={() => void openUrl(GITHUB_URL)}
+          />
+          <HelpItem
+            icon={<MessageCircle size={12} />}
+            label="Discord community"
+            onSelect={() => void openUrl(DISCORD_URL)}
+          />
+          <HelpItem icon={<XIcon />} label="Follow on X" onSelect={() => void openUrl(X_URL)} />
+
+          <DropdownMenu.Separator className="my-1 h-px bg-white/5" />
+
+          <HelpItem
+            icon={<Settings size={12} />}
+            label="Settings"
+            onSelect={() => openSettingsSection("general")}
+          />
+          <HelpItem
+            icon={<Globe size={12} />}
+            label="Our website"
+            onSelect={() => void openUrl(SITE_URL)}
+          />
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
+  );
+}
+
+/** X's mark. Not in lucide (it ships the pre-rebrand bird), and `currentColor`
+ *  on a `fill` so it tracks the row's hover step like every other icon here. */
+function XIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-3" fill="currentColor" aria-hidden>
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+    </svg>
   );
 }
 
