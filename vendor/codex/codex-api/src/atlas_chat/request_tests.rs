@@ -234,6 +234,51 @@ fn parallel_tool_calls_become_one_assistant_turn_carrying_both() {
 }
 
 #[test]
+fn a_calls_extra_content_goes_back_on_the_wire_byte_for_byte() {
+    // Gemini 3's thought signature: recorded on the call by the stream
+    // parser, and returned on the replayed `tool_calls` entry — the request
+    // that used to come back `400` without it. Sent only where it was
+    // received, so a Claude turn's replay is unchanged.
+    let signed = ResponseItem::FunctionCall {
+        id: None,
+        name: "shell".to_string(),
+        namespace: None,
+        arguments: r#"{"cmd":"ls"}"#.to_string(),
+        encrypted_function_args: None,
+        call_id: "call_g".to_string(),
+        internal_chat_message_metadata_passthrough: Some(
+            codex_protocol::models::InternalChatMessageMetadataPassthrough {
+                atlas_tool_call_extra_content: Some(
+                    json!({"google":{"thought_signature":"sig-1"}}),
+                ),
+                ..Default::default()
+            },
+        ),
+    };
+    let items = vec![
+        message("user", "list it"),
+        signed,
+        output("call_g", "a b c"),
+        call("call_h", "shell", r#"{"cmd":"pwd"}"#),
+        output("call_h", "/"),
+    ];
+    let body = body_of(&build("gemini-3.6-flash", &items, &[]));
+    let messages = body["messages"].as_array().cloned().unwrap_or_default();
+    let signed_call = &messages[2]["tool_calls"][0];
+    assert_eq!(signed_call["id"], "call_g");
+    assert_eq!(
+        signed_call["extra_content"],
+        json!({"google":{"thought_signature":"sig-1"}}),
+    );
+    let unsigned_call = &messages[4]["tool_calls"][0];
+    assert_eq!(unsigned_call["id"], "call_h");
+    assert!(
+        unsigned_call.get("extra_content").is_none(),
+        "a call that received no metadata sends none: {unsigned_call}",
+    );
+}
+
+#[test]
 fn unparseable_tool_arguments_do_not_take_the_whole_request_down_with_them() {
     // The gateway's Anthropic translation answers invalid JSON arguments with a
     // 400 rather than emptying the call, so one malformed replayed call would

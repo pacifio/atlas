@@ -456,18 +456,87 @@ fn an_unparseable_frame_poisons_the_turn_rather_than_vanishing() {
 }
 
 #[test]
-fn an_explicit_null_where_a_default_is_declared_is_a_lost_frame_too() {
-    // `#[serde(default)]` covers a *missing* key, not a present-but-null one:
-    // `{"choices":null}` fails the chunk parse. The failure mode must be the
-    // same as any other unreadable frame — recorded, surfaced at close —
-    // because it is silent by construction otherwise.
+fn an_explicit_null_where_an_array_is_expected_is_an_empty_array() {
+    // `#[serde(default)]` covers a *missing* key, not a present-but-null one,
+    // and a provider that writes `"choices":null` used to lose the whole
+    // frame — and with it the turn. A `null` array carries no content, so
+    // reading it as empty loses nothing; the turn completes.
     let events = tokio_test::block_on(play(&[
         r#"{"id":"c1","choices":null}"#,
         FINISH_STOP,
         "[DONE]",
     ]));
-    assert!(completion(&events).is_none());
-    assert!(error_of(&events).is_some());
+    assert!(error_of(&events).is_none(), "{events:?}");
+    assert!(completion(&events).is_some());
+}
+
+#[test]
+fn a_workers_ai_glm_stream_with_null_tool_calls_is_read_whole() {
+    // Workers AI's OpenAI shim (which serves the GLM rows) writes
+    // `"tool_calls":null` on its role and reasoning chunks. Before the
+    // null-tolerant read, the first frame failed at that key and every GLM
+    // turn ended in "a frame this client could not read".
+    let events = tokio_test::block_on(play(&[
+        r#"{"id":"chatcmpl-glm","object":"chat.completion.chunk","created":1,"model":"@cf/zai-org/glm-5.3-flash","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":"The user greets me.","tool_calls":null},"finish_reason":null}]}"#,
+        r#"{"id":"chatcmpl-glm","object":"chat.completion.chunk","created":1,"model":"@cf/zai-org/glm-5.3-flash","choices":[{"index":0,"delta":{"content":"Hello!","tool_calls":null},"finish_reason":null}]}"#,
+        r#"{"id":"chatcmpl-glm","choices":[{"index":0,"delta":{"tool_calls":null},"finish_reason":"stop"}]}"#,
+        r#"{"id":"chatcmpl-glm","choices":null,"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#,
+        "[DONE]",
+    ]));
+    assert!(error_of(&events).is_none(), "{events:?}");
+    assert_eq!(assistant_text(&events).as_deref(), Some("Hello!"));
+    let Some((usage, end_turn)) = completion(&events) else {
+        panic!("the turn completes");
+    };
+    assert_eq!(end_turn, Some(true));
+    assert_eq!(usage.map(|u| u.total_tokens), Some(15));
+}
+
+#[test]
+fn a_tool_calls_extra_content_rides_with_the_call_into_the_transcript() {
+    // Gemini 3 attaches its thought signature to the tool call as
+    // `extra_content`, and refuses the next turn without it. It may arrive on
+    // a later, otherwise-empty fragment, so every fragment is checked and the
+    // first non-null one wins. It is stored on the call itself so the rollout
+    // keeps it and the request builder can hand it back.
+    let events = tokio_test::block_on(play(&[
+        r#"{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_g","type":"function","function":{"name":"shell","arguments":"{\"cmd\":\"ls\"}"},"extra_content":null}]},"finish_reason":null}]}"#,
+        r#"{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"extra_content":{"google":{"thought_signature":"sig-1"}}}]},"finish_reason":null}]}"#,
+        r#"{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"extra_content":{"google":{"thought_signature":"sig-2-ignored"}}}]},"finish_reason":"tool_calls"}]}"#,
+        "[DONE]",
+    ]));
+    let passthrough = events.iter().find_map(|event| match event {
+        Ok(ResponseEvent::OutputItemDone(ResponseItem::FunctionCall {
+            internal_chat_message_metadata_passthrough,
+            ..
+        })) => Some(internal_chat_message_metadata_passthrough.clone()),
+        _ => None,
+    });
+    let Some(Some(passthrough)) = passthrough else {
+        panic!("the call carries its metadata: {events:?}");
+    };
+    assert_eq!(
+        passthrough.atlas_tool_call_extra_content,
+        Some(serde_json::json!({"google":{"thought_signature":"sig-1"}})),
+    );
+}
+
+#[test]
+fn a_call_without_extra_content_carries_no_metadata_at_all() {
+    // Claude and GLM send none; the call must look exactly as it did before,
+    // so nothing downstream sees a new field it did not ask for.
+    let events = tokio_test::block_on(play(&[
+        r#"{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"name":"shell","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}"#,
+        "[DONE]",
+    ]));
+    let passthrough = events.iter().find_map(|event| match event {
+        Ok(ResponseEvent::OutputItemDone(ResponseItem::FunctionCall {
+            internal_chat_message_metadata_passthrough,
+            ..
+        })) => Some(internal_chat_message_metadata_passthrough.clone()),
+        _ => None,
+    });
+    assert_eq!(passthrough, Some(None));
 }
 
 #[test]
