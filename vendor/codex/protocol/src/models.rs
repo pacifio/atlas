@@ -826,6 +826,15 @@ pub struct InternalChatMessageMetadataPassthrough {
     #[schemars(skip)]
     #[ts(skip)]
     pub executed_tool_calls: Option<Vec<ExecutedToolCall>>,
+    /// Atlas: provider metadata a tool call has to carry back verbatim on the
+    /// next turn. Gemini 3 puts its thought signature in the tool call's
+    /// `extra_content` object and refuses the replay without it (a `400`);
+    /// every other provider leaves this absent. Persisted with the call so the
+    /// rollout keeps it, and kept out of the app-server schema on purpose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(skip)]
+    #[ts(skip)]
+    pub atlas_tool_call_extra_content: Option<serde_json::Value>,
 }
 
 impl InternalChatMessageMetadataPassthrough {

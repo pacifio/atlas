@@ -165,6 +165,11 @@ pub struct ToolCallOut {
     #[serde(rename = "type")]
     pub kind: String,
     pub function: FunctionCallOut,
+    /// Whatever the provider attached to this call on the way out, returned
+    /// byte-for-byte. Gemini 3's thought signature lives here, and the replay
+    /// is a `400` without it. Absent for every provider that sent none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_content: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -349,6 +354,7 @@ fn push_item(messages: &mut Vec<ChatMessage>, item: &ResponseItem, keep_images: 
             name,
             arguments,
             call_id,
+            internal_chat_message_metadata_passthrough,
             ..
         } => messages.push(ChatMessage::Assistant {
             content: None,
@@ -364,12 +370,14 @@ fn push_item(messages: &mut Vec<ChatMessage>, item: &ResponseItem, keep_images: 
                     // always means "no arguments".
                     arguments: valid_json_arguments(arguments),
                 },
+                extra_content: extra_content_of(internal_chat_message_metadata_passthrough),
             }],
         }),
         ResponseItem::CustomToolCall {
             name,
             input,
             call_id,
+            internal_chat_message_metadata_passthrough,
             ..
         } => messages.push(ChatMessage::Assistant {
             content: None,
@@ -382,6 +390,7 @@ fn push_item(messages: &mut Vec<ChatMessage>, item: &ResponseItem, keep_images: 
                     // the way back in. See `flatten_freeform`.
                     arguments: json!({ "input": input }).to_string(),
                 },
+                extra_content: extra_content_of(internal_chat_message_metadata_passthrough),
             }],
         }),
         ResponseItem::FunctionCallOutput { call_id, output, .. } => {
@@ -410,6 +419,16 @@ fn push_item(messages: &mut Vec<ChatMessage>, item: &ResponseItem, keep_images: 
             warn!(item = ?std::mem::discriminant(other), "item dropped: no Chat Completions shape");
         }
     }
+}
+
+/// The provider metadata a replayed tool call has to carry, if the stream
+/// parser recorded any on it.
+fn extra_content_of(
+    passthrough: &Option<codex_protocol::models::InternalChatMessageMetadataPassthrough>,
+) -> Option<Value> {
+    passthrough
+        .as_ref()
+        .and_then(|metadata| metadata.atlas_tool_call_extra_content.clone())
 }
 
 /// Replaces image parts with a placeholder, keeping the turn's text intact.
