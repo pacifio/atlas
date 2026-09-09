@@ -1446,7 +1446,13 @@ function WelcomeState() {
           composer. Behind everything: the content stacks on `relative`. */}
       <DitherField
         mode="glyphs"
-        className="[mask-image:radial-gradient(ellipse_70%_60%_at_50%_45%,#000_30%,transparent_100%)]"
+        // +40%: the radial mask below mattes the field against the panel, so
+        // at the landing's own alpha it reads far fainter here than it does
+        // there. The mask also holds full weight further out now — it used to
+        // start dissolving at 30% of the ellipse, which dimmed the field
+        // exactly where the hollow had just made it dense.
+        ink={1.4}
+        className="[mask-image:radial-gradient(ellipse_70%_60%_at_50%_45%,#000_55%,transparent_100%)]"
       />
       <div className="relative w-full max-w-[440px] flex flex-col items-center text-center">
         {/* Hero: Atlas mark over a soft accent glow (radial gradient, no

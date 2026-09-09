@@ -21,12 +21,19 @@ import { cn } from "@/lib/utils";
 export function DitherField({
   mode = "glyphs",
   hollow,
+  ink = 1,
   className,
 }: {
   mode?: "dots" | "glyphs";
   /** `[start, span]` of the radial hollow as fractions of the half-diagonal:
    *  nothing prints inside `start`, full density from `start + span` out. */
   hollow?: [number, number];
+  /** Multiplier on the ink alpha. `1` is the landing page's own value, which
+   *  is the reference — a surface that mattes the field behind a mask (the
+   *  chat welcome does) loses contrast the landing never had, and turns this
+   *  up to buy it back. Alpha only: density is the Bayer threshold's business,
+   *  and raising THAT changes the pattern rather than its weight. */
+  ink?: number;
   className?: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -89,12 +96,14 @@ export function DitherField({
       const cx = w / 2;
       const cy = h / 2;
       const maxR = Math.hypot(cx, cy);
+      // Landing parity: 0.3 for glyphs, 0.16 for dots (`landing/index.html`).
+      const alpha = Math.min(1, (mode === "glyphs" ? 0.3 : 0.16) * ink);
       if (mode === "glyphs") {
         ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
         ctx.textBaseline = "top";
-        ctx.fillStyle = "rgba(255,255,255,0.3)";
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
       } else {
-        ctx.fillStyle = "rgba(255,255,255,0.16)";
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
       }
       for (let gy = 0; gy < h / CELL; gy++) {
         for (let gx = 0; gx < w / CELL; gx++) {
@@ -154,7 +163,7 @@ export function DitherField({
       io.disconnect();
       ro.disconnect();
     };
-  }, [mode, hollowStart, hollowSpan]);
+  }, [mode, hollowStart, hollowSpan, ink]);
 
   return (
     <canvas
