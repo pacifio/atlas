@@ -4,6 +4,9 @@
 //! It belongs with the transport because it exists entirely for the benefit of
 //! the child process an [`AcpConnection`](crate::AcpConnection) spawns.
 
+use std::ffi::{OsStr, OsString};
+use std::path::PathBuf;
+
 /// Startup-time host environment fix-ups for the ACP agent process.
 ///
 /// Two concrete problems this addresses:
@@ -62,6 +65,12 @@ fn enrich_path() {
 /// init, etc.) can't hang app startup — on timeout we fall back to the
 /// hardcoded extras already applied in `apply_cheap_path_extras`.
 fn merge_login_shell_path() {
+    // A login-shell probe is a Unix idea: Windows has no `$SHELL` (and no
+    // `kill` for the timeout path below), and a GUI process there already
+    // inherits the user's full PATH.
+    if !cfg!(unix) {
+        return;
+    }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
     // `probe_shell` runs `-lic` — login AND interactive, so both
@@ -109,12 +118,16 @@ fn apply_cheap_path_extras() {
         // (interactive-only) — deterministic backstop for the shell probe.
         extras.push(format!("{home}/.opencode/bin"));
     }
-    extras.push("/opt/homebrew/bin".into());
-    extras.push("/opt/homebrew/sbin".into());
-    extras.push("/usr/local/bin".into());
-    extras.push("/usr/local/sbin".into());
-    extras.push("/usr/bin".into());
-    extras.push("/bin".into());
+    // The system-wide guesses are Unix directories; on Windows they would only
+    // pad PATH with entries that exist nowhere.
+    if cfg!(unix) {
+        extras.push("/opt/homebrew/bin".into());
+        extras.push("/opt/homebrew/sbin".into());
+        extras.push("/usr/local/bin".into());
+        extras.push("/usr/local/sbin".into());
+        extras.push("/usr/bin".into());
+        extras.push("/bin".into());
+    }
     prepend_to_path(&extras);
 }
 
@@ -153,22 +166,8 @@ fn nvm_path_walk() {
 }
 
 fn prepend_to_path(extras: &[String]) {
-    let base = std::env::var("PATH").unwrap_or_default();
-    let mut path_parts: Vec<String> = if base.is_empty() {
-        Vec::new()
-    } else {
-        base.split(':').map(String::from).collect()
-    };
-
-    // Prepend extras (in reverse so the first listed wins after all inserts),
-    // skipping anything already on PATH.
-    for extra in extras.iter().rev() {
-        if !path_parts.iter().any(|p| p == extra) {
-            path_parts.insert(0, extra.clone());
-        }
-    }
-
-    let new_path = path_parts.join(":");
+    let base = std::env::var_os("PATH").unwrap_or_default();
+    let new_path = prepend_entries(&base, extras);
     // SAFETY: every caller runs at boot on the main thread, inside
     // `sanitize_host_env`, before any threads spawn child processes — the
     // post-boot mutators were removed (managed-node registration now injects
@@ -178,6 +177,37 @@ fn prepend_to_path(extras: &[String]) {
     }
 }
 
+/// `extras` ahead of `base`, each at most once, in the platform's own PATH
+/// syntax.
+///
+/// `split_paths`/`join_paths` rather than `':'`: Windows separates entries with
+/// `;` and every entry carries a drive-letter colon, so splitting on `':'`
+/// shredded `C:\Windows\system32;C:\Windows` into `C`, `\Windows\system32;C`,
+/// `\Windows`, the dedupe never matched anything, and the `':'` rejoin glued the
+/// extras onto the first inherited entry — which then no longer resolved.
+fn prepend_entries(base: &OsStr, extras: &[String]) -> OsString {
+    // An unset or empty PATH splits into one empty entry, which would rejoin
+    // as a trailing separator; treat it as no entries.
+    let mut parts: Vec<PathBuf> = if base.is_empty() {
+        Vec::new()
+    } else {
+        std::env::split_paths(base).collect()
+    };
+
+    // Prepend extras (in reverse so the first listed wins after all inserts),
+    // skipping anything already on PATH.
+    for extra in extras.iter().rev() {
+        let extra = PathBuf::from(extra);
+        if !parts.contains(&extra) {
+            parts.insert(0, extra);
+        }
+    }
+
+    // `join_paths` refuses an entry that itself contains the separator. None
+    // of ours do; if the inherited PATH somehow does, keep it as it was rather
+    // than lose it.
+    std::env::join_paths(parts).unwrap_or_else(|_| base.to_os_string())
+}
 
 /// Run `$SHELL -lic <script>` with an OWNED timeout: on expiry the probe child
 /// is killed (so its reader thread exits promptly) instead of being abandoned
@@ -219,5 +249,83 @@ fn probe_shell(
                 .status();
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+    use std::path::PathBuf;
+
+    use super::prepend_entries;
+
+    /// A PATH as the platform actually hands it over — drive letters and `;`
+    /// on Windows, `:`-separated absolute paths elsewhere.
+    fn inherited() -> Vec<PathBuf> {
+        if cfg!(windows) {
+            vec![r"C:\Windows\system32".into(), r"C:\Windows".into()]
+        } else {
+            vec!["/usr/bin".into(), "/bin".into()]
+        }
+    }
+
+    fn extra() -> String {
+        if cfg!(windows) {
+            r"C:\Users\me\.bun\bin".to_string()
+        } else {
+            "/home/me/.bun/bin".to_string()
+        }
+    }
+
+    fn entries(path: &OsStr) -> Vec<PathBuf> {
+        std::env::split_paths(path).collect()
+    }
+
+    #[test]
+    fn extras_go_in_front_and_every_inherited_entry_survives() {
+        let base = std::env::join_paths(inherited()).unwrap();
+
+        let merged = prepend_entries(&base, &[extra()]);
+
+        let mut expected = vec![PathBuf::from(extra())];
+        expected.extend(inherited());
+        assert_eq!(
+            entries(&merged),
+            expected,
+            "the merge must use the platform separator: splitting a Windows PATH on ':' \
+             shreds every drive-letter entry, and the rejoin glues the extras onto the first"
+        );
+    }
+
+    #[test]
+    fn an_extra_already_on_path_is_not_added_again() {
+        let base = std::env::join_paths(inherited()).unwrap();
+        let already = inherited()[1].to_string_lossy().into_owned();
+
+        let merged = prepend_entries(&base, &[already]);
+
+        assert_eq!(entries(&merged), inherited());
+    }
+
+    #[test]
+    fn the_first_listed_extra_wins() {
+        let base = std::env::join_paths(inherited()).unwrap();
+        let first = extra();
+        let second = inherited()[0].to_string_lossy().into_owned();
+
+        let merged = prepend_entries(&base, &[first.clone(), second]);
+
+        // `second` is already inherited, so it is not duplicated — and `first`
+        // still lands ahead of everything.
+        let mut expected = vec![PathBuf::from(first)];
+        expected.extend(inherited());
+        assert_eq!(entries(&merged), expected);
+    }
+
+    #[test]
+    fn an_empty_path_becomes_just_the_extras() {
+        let merged = prepend_entries(OsStr::new(""), &[extra()]);
+
+        assert_eq!(entries(&merged), vec![PathBuf::from(extra())]);
     }
 }
