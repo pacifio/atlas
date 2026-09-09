@@ -436,6 +436,14 @@ export function App() {
 
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [newTabPaletteOpen, setNewTabPaletteOpen] = useState(false);
+  // The workspace rail's "Open module" row opens the same palette ⌘⌥N does.
+  // The palette's state lives here, so the rail asks for it by event rather
+  // than the state being lifted into a store for one caller.
+  useEffect(() => {
+    const open = () => setNewTabPaletteOpen(true);
+    window.addEventListener("atlas:new-tab-palette", open);
+    return () => window.removeEventListener("atlas:new-tab-palette", open);
+  }, []);
   const [layoutSwitcherOpen, setLayoutSwitcherOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [filePickerOpen, setFilePickerOpen] = useState(false);

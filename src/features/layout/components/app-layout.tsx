@@ -86,7 +86,7 @@ export function AppLayout() {
           Only present when pinned + open; unpinned falls through to the overlay
           below. */}
       {docked && (
-        <div className="h-screen w-[244px] shrink-0 border-r border-[var(--border-default)] bg-[#0C0C0C]">
+        <div className="atlas-workspace-rail h-screen w-[244px] shrink-0 border-r border-white/[0.06]">
           <WorkspaceSidebar />
         </div>
       )}
@@ -212,10 +212,12 @@ export function AppLayout() {
           parked off the left edge, transparent. */}
           <div
             className={cn(
-              "absolute left-0 top-0 h-screen w-[244px] z-[60] border-r border-[var(--border-default)] backdrop-blur-2xl shadow-[var(--shadow-overlay)] transition-[transform,opacity] ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none [backface-visibility:hidden]",
+              "absolute left-0 top-0 h-screen w-[244px] z-[60] border-r border-white/[0.07] backdrop-blur-2xl transition-[transform,opacity] ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none [backface-visibility:hidden]",
               // Closing (slide-out) is 50% slower than opening (300 → 450ms).
               sidebarOpen ? "duration-300" : "duration-[450ms]",
-              `${isLinux ? "bg-[var(--bg-elevated)]/95" : "bg-[var(--bg-elevated)]/60"}`,
+              // The gradient rail. Linux gets the opaque variant — no
+              // compositor blur to sit on there.
+              isLinux ? "atlas-workspace-rail" : "atlas-workspace-rail--glass",
             )}
             style={{
               transform: sidebarOpen ? "translateX(0)" : "translateX(-244px)",

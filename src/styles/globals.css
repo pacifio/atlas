@@ -1672,6 +1672,40 @@
      Strictly worse than the blanking it was meant to fix. */
 }
 
+/* The workspace rail. One monochrome gradient — brighter at the top, falling
+   to the app's base by the fold — so the rail reads as a distinct surface
+   beside the editor without a coloured tint or a hard edge; a 1px inner
+   highlight along the top edge is the only "light source". Two variants: the
+   docked rail is opaque over the base; the floating one is translucent and
+   sits on the overlay wrapper's own backdrop blur (blur + fill must share one
+   element or WKWebView has nothing to sample). */
+.atlas-workspace-rail {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.038) 0%,
+      rgba(255, 255, 255, 0.016) 34%,
+      rgba(255, 255, 255, 0.006) 70%,
+      rgba(255, 255, 255, 0) 100%
+    ),
+    #0b0b0b;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.034);
+}
+.atlas-workspace-rail--glass {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.041) 0%,
+      rgba(255, 255, 255, 0.018) 34%,
+      rgba(255, 255, 255, 0.006) 70%,
+      rgba(255, 255, 255, 0) 100%
+    ),
+    rgba(14, 14, 14, 0.66);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.038),
+    var(--shadow-overlay);
+}
+
 /* Set by use-transcript-scroll on the content element for the life of a
    fling. Hover during a scroll is pure waste — each row that passes under a
    resting pointer invalidates its whole subtree (`group-hover` compiles to

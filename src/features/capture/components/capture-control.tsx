@@ -26,25 +26,29 @@ export function CaptureControl() {
   const { addTab } = useLayoutStore.use.actions();
 
   return (
-    <div className="shrink-0 px-1.5 pb-1">
-      <button
-        type="button"
-        onClick={() =>
-          addTab({
-            id: "artifacts",
-            type: "artifacts",
-            title: "Timeline",
-            closable: true,
-            dirty: false,
-            data: {},
-          })
-        }
-        className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1 text-left text-[12px] text-[var(--text-secondary)] outline-none transition-colors duration-150 hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] focus-visible:ring-1 focus-visible:ring-[var(--border-focus)] active:bg-[var(--bg-active)]"
-        title="Sessions recorded across this Organisation"
-      >
-        <AtlasIcon size={13} className="shrink-0 rounded-[3px]" />
-        <span className="truncate">Timeline</span>
-      </button>
-    </div>
+    // Styled as one row of the rail's fixed navigation (see `NavItem` in
+    // workspace-sidebar.tsx) — same height, gaps and weights, so the five
+    // rows read as one list.
+    <button
+      type="button"
+      onClick={() =>
+        addTab({
+          id: "artifacts",
+          type: "artifacts",
+          title: "Timeline",
+          closable: true,
+          dirty: false,
+          data: {},
+        })
+      }
+      className="group/nav flex h-7 w-full cursor-pointer items-center gap-2.5 rounded-md px-2 text-left text-[12px] leading-none text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] focus-visible:ring-1 focus-visible:ring-[var(--border-focus)]"
+      title="Sessions recorded across this Organisation"
+    >
+      <AtlasIcon
+        size={14}
+        className="shrink-0 rounded-[3px] opacity-70 group-hover/nav:opacity-100"
+      />
+      <span className="truncate">Timeline</span>
+    </button>
   );
 }

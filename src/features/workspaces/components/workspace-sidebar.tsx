@@ -8,8 +8,6 @@ import {
   Folder,
   FolderOpen,
   X,
-  ScrollText,
-  Zap,
   Pin,
   PinOff,
   ChevronRight,
@@ -21,13 +19,19 @@ import {
   Trash2,
   Pencil,
   Copy,
+  MessagesSquare,
+  GitBranch,
+  TerminalSquare,
+  Users,
+  Sparkles,
+  BookOpen,
+  Ellipsis,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspaceStore, type Workspace, type WorkspaceGroup } from "../stores/workspace-store";
-import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import { pickAndAddWorkspace } from "../lib/pick-workspace";
 import { useRunningChatKeys } from "../lib/agent-activity";
-import { openAgentSession } from "@/features/chat/lib/open-agent-session";
+import { openAgentSession, openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { AgentIcons } from "@/components/agent-icons";
@@ -36,22 +40,32 @@ import { useProjectStore } from "@/features/project/stores/project-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useActiveOrgWorkspaces, useActiveOrgGroups } from "../lib/org-scope";
 import { OrgSwitcher } from "@/features/organisations/components/org-switcher";
+import { MembersModal } from "@/features/organisations/components/members-modal";
 import { CaptureControl } from "@/features/capture/components/capture-control";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { useFullscreen } from "@/hooks/use-fullscreen";
 import { cn } from "@/lib/utils";
-import { BranchLine, GitDot, NumStatPill } from "./git-summary";
+import { GitDot, NumStatPill } from "./git-summary";
 
 // Slot heights (include the inter-row gap so the virtualizer spaces rows out);
 // the visible card is a few px shorter than its slot.
-const WS_H = 50;
-const WS_CARD = 44;
-const ROW_H = 27;
-const ROW_CARD = 26;
-const CHAT_H = 60;
-const CHAT_CARD = 54;
-const HEADER_H = 26;
+//
+// Rows are quiet, not dense. Chats and recents are one 28px line; a project
+// keeps two (name, then branch or "no source control") because the second
+// line is what tells `api` from `api-v2` — folding the branch onto the name
+// line made the two collide on any long name. Section headers carry the
+// breathing room (a gap above), not the rows.
+const WS_H = 46;
+const WS_CARD = 42;
+const ROW_H = 30;
+const ROW_CARD = 28;
+const CHAT_H = 30;
+const CHAT_CARD = 28;
+const HEADER_H = 28;
+/** Section header slot: the header plus the gap that separates sections. */
+const SECTION_H = HEADER_H + 10;
 
 // Memoised: every git-summary resolution replaces the summaries map and
 // re-rendered EVERY visible row (each carrying a Radix dropdown tree). Props
@@ -117,19 +131,21 @@ const WorkspaceRow = memo(function WorkspaceRow({
     <div
       data-hint
       onClick={editing ? undefined : () => void switchTo(ws.id)}
-      style={{ height: WS_CARD, paddingLeft: indented ? 16 : 6 }}
+      style={{ height: WS_CARD, paddingLeft: indented ? 22 : 8 }}
       className={cn(
         // `transform-gpu` keeps the row on a stable composited layer so the
         // `transition-colors` hover never promotes/demotes it mid-transition —
         // which was re-rasterizing the git dot at a fractional pixel and making
         // it visibly "jump" on hover.
-        "group relative flex items-center gap-2 pr-2 rounded-md cursor-pointer transition-colors transform-gpu [backface-visibility:hidden]",
+        "group relative flex items-center gap-2.5 pr-1.5 rounded-md cursor-pointer transition-colors transform-gpu [backface-visibility:hidden]",
         active ? "bg-[var(--bg-active)]" : "hover:bg-[var(--bg-hover)]",
       )}
       title={ws.path}
     >
-      <GitDot summary={summary} />
-      <div className="flex-1 min-w-0">
+      <GitDot summary={summary} className="size-1.5" />
+      {/* `pr-14` clears the right slot (pill at rest, actions on hover) on both
+          lines, so neither can run under it. */}
+      <div className="flex-1 min-w-0 pr-14">
         {editing ? (
           <input
             ref={nameInputRef}
@@ -142,7 +158,7 @@ const WorkspaceRow = memo(function WorkspaceRow({
               if (e.key === "Enter") commitRename();
               if (e.key === "Escape") endRenameWorkspace();
             }}
-            className="block w-full pr-16 bg-transparent outline-none text-[12px] leading-tight font-medium text-[var(--text-primary)]"
+            className="block w-full bg-transparent outline-none text-[12px] leading-tight text-[var(--text-primary)]"
           />
         ) : (
           <span
@@ -151,127 +167,134 @@ const WorkspaceRow = memo(function WorkspaceRow({
               beginRenameWorkspace(ws.id);
             }}
             className={cn(
-              "block truncate text-[12px] leading-tight pr-16",
-              active ? "text-[var(--text-primary)] font-medium" : "text-[var(--text-secondary)]",
+              "block truncate text-[12px] leading-tight",
+              active
+                ? "text-[var(--text-primary)] font-medium"
+                : "text-[var(--text-secondary)] group-hover:text-[var(--text-primary)]",
             )}
           >
             {ws.name}
           </span>
         )}
-        <BranchLine summary={summary} className="mt-1 pr-12" />
+        <span className="mt-0.5 block truncate text-[10px] leading-tight text-[var(--text-tertiary)]">
+          {summary?.isRepo ? summary.branch || "—" : "no source control"}
+        </span>
       </div>
 
-      {/* +/- git stat pill — absolute TOP-RIGHT. */}
-      <div className="absolute top-1.5 right-2 pointer-events-none">
-        <NumStatPill summary={summary} />
-      </div>
-
-      {/* Pin + more — absolute BOTTOM-RIGHT, on hover (pin stays if pinned). */}
-      <div className="absolute bottom-1 right-1.5 flex items-center gap-0.5">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            if (ws.pinned) unpin(ws.id);
-            else pin(ws.id);
-          }}
-          className={cn(
-            "p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] transition-opacity cursor-pointer",
-            ws.pinned ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-          )}
-          title={ws.pinned ? "Unpin" : "Pin"}
-        >
-          {ws.pinned ? <PinOff size={11} /> : <Pin size={11} />}
-        </button>
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <button
-              onClick={(e) => e.stopPropagation()}
-              className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity outline-none cursor-pointer"
-              title="More"
-            >
-              <MoreHorizontal size={12} />
-            </button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content
-              align="end"
-              sideOffset={4}
-              onClick={(e) => e.stopPropagation()}
-              // On close Radix restores focus to the trigger button. When the
-              // close is caused by selecting "Rename", that focus-return lands
-              // AFTER the rename input has mounted+autofocused, blurring it
-              // instantly → commitRename → edit mode exits. Suppressing the
-              // close auto-focus lets the input keep focus.
-              onCloseAutoFocus={(e) => e.preventDefault()}
-              className="z-[var(--z-max)] min-w-[148px] rounded-md border border-[var(--border-default)] bg-black py-0.5 shadow-[var(--shadow-overlay)] text-[11px] text-[var(--text-secondary)]"
-            >
-              <DropdownMenu.Item
-                onSelect={() => beginRenameWorkspace(ws.id)}
-                className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
+      {/* Right slot: the +N/−M at rest, the row actions on hover. Both live in
+          one full-height, GPU-promoted box and swap with NO transition: an
+          opacity tween on an unpromoted child re-rasterises it mid-fade and the
+          icons visibly wobble (the same lesson as the git dot above). */}
+      <span className="absolute inset-y-0 right-1.5 flex items-center transform-gpu [backface-visibility:hidden]">
+        <span className="group-hover:opacity-0">
+          <NumStatPill summary={summary} />
+        </span>
+        <span className="absolute inset-y-0 right-0 flex items-center gap-0.5">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (ws.pinned) unpin(ws.id);
+              else pin(ws.id);
+            }}
+            className={cn(
+              "flex size-5 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] cursor-pointer",
+              ws.pinned ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+            )}
+            title={ws.pinned ? "Unpin" : "Pin"}
+          >
+            {ws.pinned ? <PinOff size={11} /> : <Pin size={11} />}
+          </button>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                onClick={(e) => e.stopPropagation()}
+                className="flex size-5 items-center justify-center rounded text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] outline-none cursor-pointer"
+                title="More"
               >
-                <Pencil size={11} /> Rename
-              </DropdownMenu.Item>
-              <DropdownMenu.Item
-                onSelect={() => {
-                  void navigator.clipboard
-                    .writeText(ws.path)
-                    .then(() => toast.success("Path copied"))
-                    .catch(() => toast.error("Couldn't copy path"));
-                }}
-                className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
+                <MoreHorizontal size={12} />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                sideOffset={4}
+                onClick={(e) => e.stopPropagation()}
+                // On close Radix restores focus to the trigger button. When the
+                // close is caused by selecting "Rename", that focus-return lands
+                // AFTER the rename input has mounted+autofocused, blurring it
+                // instantly → commitRename → edit mode exits. Suppressing the
+                // close auto-focus lets the input keep focus.
+                onCloseAutoFocus={(e) => e.preventDefault()}
+                className="z-[var(--z-max)] min-w-[148px] rounded-md border border-[var(--border-default)] bg-black py-0.5 shadow-[var(--shadow-overlay)] text-[11px] text-[var(--text-secondary)]"
               >
-                <Copy size={11} /> Copy path
-              </DropdownMenu.Item>
-              <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border-default)]" />
-              <DropdownMenu.Sub>
-                <DropdownMenu.SubTrigger className="flex items-center justify-between px-2.5 h-6 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default">
-                  Move to group <ChevronRight size={11} />
-                </DropdownMenu.SubTrigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.SubContent className="z-[var(--z-max)] min-w-[140px] rounded-md border border-[var(--border-default)] bg-black py-0.5 shadow-[var(--shadow-overlay)] text-[11px] text-[var(--text-secondary)]">
-                    {groups.map((g) => (
-                      <DropdownMenu.Item
-                        key={g.id}
-                        onSelect={() => setGroup(ws.id, g.id)}
-                        className="px-2.5 h-6 flex items-center outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
-                      >
-                        {g.name}
-                      </DropdownMenu.Item>
-                    ))}
-                    <DropdownMenu.Item
-                      onSelect={() => {
-                        const gid = addGroup("New Group");
-                        setGroup(ws.id, gid);
-                      }}
-                      className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
-                    >
-                      <FolderPlus size={11} /> New group
-                    </DropdownMenu.Item>
-                    {ws.groupId && (
-                      <>
-                        <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border-default)]" />
+                <DropdownMenu.Item
+                  onSelect={() => beginRenameWorkspace(ws.id)}
+                  className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
+                >
+                  <Pencil size={11} /> Rename
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  onSelect={() => {
+                    void navigator.clipboard
+                      .writeText(ws.path)
+                      .then(() => toast.success("Path copied"))
+                      .catch(() => toast.error("Couldn't copy path"));
+                  }}
+                  className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
+                >
+                  <Copy size={11} /> Copy path
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border-default)]" />
+                <DropdownMenu.Sub>
+                  <DropdownMenu.SubTrigger className="flex items-center justify-between px-2.5 h-6 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default">
+                    Move to group <ChevronRight size={11} />
+                  </DropdownMenu.SubTrigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.SubContent className="z-[var(--z-max)] min-w-[140px] rounded-md border border-[var(--border-default)] bg-black py-0.5 shadow-[var(--shadow-overlay)] text-[11px] text-[var(--text-secondary)]">
+                      {groups.map((g) => (
                         <DropdownMenu.Item
-                          onSelect={() => setGroup(ws.id, null)}
+                          key={g.id}
+                          onSelect={() => setGroup(ws.id, g.id)}
                           className="px-2.5 h-6 flex items-center outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
                         >
-                          Remove from group
+                          {g.name}
                         </DropdownMenu.Item>
-                      </>
-                    )}
-                  </DropdownMenu.SubContent>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Sub>
-              <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border-default)]" />
-              <DropdownMenu.Item
-                onSelect={() => void closeWorkspace(ws.id)}
-                className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--status-error,#f44)] cursor-default"
-              >
-                <X size={11} /> Remove from list
-              </DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
-      </div>
+                      ))}
+                      <DropdownMenu.Item
+                        onSelect={() => {
+                          const gid = addGroup("New Group");
+                          setGroup(ws.id, gid);
+                        }}
+                        className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
+                      >
+                        <FolderPlus size={11} /> New group
+                      </DropdownMenu.Item>
+                      {ws.groupId && (
+                        <>
+                          <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border-default)]" />
+                          <DropdownMenu.Item
+                            onSelect={() => setGroup(ws.id, null)}
+                            className="px-2.5 h-6 flex items-center outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-default"
+                          >
+                            Remove from group
+                          </DropdownMenu.Item>
+                        </>
+                      )}
+                    </DropdownMenu.SubContent>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Sub>
+                <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border-default)]" />
+                <DropdownMenu.Item
+                  onSelect={() => void closeWorkspace(ws.id)}
+                  className="px-2.5 h-6 flex items-center gap-1.5 outline-none hover:bg-[var(--bg-hover)] hover:text-[var(--status-error,#f44)] cursor-default"
+                >
+                  <X size={11} /> Remove from list
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+        </span>
+      </span>
     </div>
   );
 });
@@ -304,15 +327,17 @@ function GroupHeaderRow({
     <div
       data-hint
       style={{ height: HEADER_H }}
-      className="group/h flex items-center gap-1 pl-1 pr-1.5 rounded-md cursor-pointer hover:bg-[var(--bg-hover)] transform-gpu [backface-visibility:hidden]"
+      className="group/h flex items-center gap-2 pl-2 pr-1.5 rounded-md cursor-pointer hover:bg-[var(--bg-hover)] transform-gpu [backface-visibility:hidden]"
       onClick={editing ? undefined : onToggle}
     >
+      {/* Icon and label are sized together: a 12px folder under an 11px label,
+          the same pairing the rows below use. A 12px label over an 11px icon
+          read as a heading that had lost its glyph. */}
       {collapsed ? (
-        <ChevronRight size={12} className="text-[var(--text-tertiary)]" />
+        <Folder size={12} className="text-[var(--text-tertiary)] shrink-0" />
       ) : (
-        <ChevronDown size={12} className="text-[var(--text-tertiary)]" />
+        <FolderOpen size={12} className="text-[var(--text-tertiary)] shrink-0" />
       )}
-      <Folder size={11} className="text-[var(--text-tertiary)] shrink-0" />
       {editing ? (
         <input
           autoFocus
@@ -326,7 +351,7 @@ function GroupHeaderRow({
             if (e.key === "Enter") commit();
             if (e.key === "Escape") endRenameGroup();
           }}
-          className="flex-1 min-w-0 bg-transparent outline-none text-[10px] font-semibold uppercase tracking-wide text-[var(--text-secondary)]"
+          className="min-w-0 flex-1 bg-transparent outline-none text-[11px] leading-none text-[var(--text-primary)]"
         />
       ) : (
         <span
@@ -334,49 +359,64 @@ function GroupHeaderRow({
             e.stopPropagation();
             beginRenameGroup(group.id);
           }}
-          className="flex-1 min-w-0 truncate text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]"
+          className="min-w-0 flex-1 truncate text-[11px] leading-none text-[var(--text-secondary)] group-hover/h:text-[var(--text-primary)]"
         >
           {group.name}
         </span>
       )}
-      {!editing && (
+
+      {/* Actions + disclosure in ONE promoted box with NO opacity transition:
+          tweening opacity on an unpromoted icon makes WebKit re-rasterise it
+          mid-fade, which is the hover wobble (same lesson as the git dot). */}
+      <span className="ml-auto flex shrink-0 items-center gap-0.5 transform-gpu [backface-visibility:hidden]">
+        {!editing && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              beginRenameGroup(group.id);
+            }}
+            className="flex size-5 items-center justify-center rounded text-[var(--text-tertiary)] opacity-0 hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] group-hover/h:opacity-100 cursor-pointer"
+            title="Rename group"
+          >
+            <Pencil size={10} />
+          </button>
+        )}
         <button
           onClick={(e) => {
             e.stopPropagation();
-            beginRenameGroup(group.id);
+            if (group.pinned) unpinGroup(group.id);
+            else pinGroup(group.id);
           }}
-          className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover/h:opacity-100 transition-opacity cursor-pointer"
-          title="Rename group"
+          className={cn(
+            "flex size-5 items-center justify-center rounded hover:bg-[var(--bg-elevated)] cursor-pointer",
+            group.pinned
+              ? "opacity-100 text-[var(--accent-primary)]"
+              : "opacity-0 group-hover/h:opacity-100 text-[var(--text-tertiary)]",
+          )}
+          title={group.pinned ? "Unpin group" : "Pin group"}
         >
-          <Pencil size={10} />
+          {group.pinned ? <PinOff size={10} /> : <Pin size={10} />}
         </button>
-      )}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          if (group.pinned) unpinGroup(group.id);
-          else pinGroup(group.id);
-        }}
-        className={cn(
-          "p-0.5 rounded hover:bg-[var(--bg-elevated)] transition-opacity cursor-pointer",
-          group.pinned
-            ? "opacity-100 text-[var(--accent-primary)]"
-            : "opacity-0 group-hover/h:opacity-100 text-[var(--text-tertiary)]",
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            removeGroup(group.id);
+          }}
+          className="flex size-5 items-center justify-center rounded text-[var(--text-tertiary)] opacity-0 hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] group-hover/h:opacity-100 cursor-pointer"
+          title="Delete group"
+        >
+          <X size={10} />
+        </button>
+        {!editing && (
+          <ChevronDown
+            size={10}
+            className={cn(
+              "shrink-0 text-[var(--text-tertiary)] transition-transform",
+              collapsed && "-rotate-90",
+            )}
+          />
         )}
-        title={group.pinned ? "Unpin group" : "Pin group"}
-      >
-        {group.pinned ? <PinOff size={10} /> : <Pin size={10} />}
-      </button>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          removeGroup(group.id);
-        }}
-        className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-tertiary)] opacity-0 group-hover/h:opacity-100 transition-opacity cursor-pointer"
-        title="Delete group"
-      >
-        <X size={10} />
-      </button>
+      </span>
     </div>
   );
 }
@@ -394,32 +434,39 @@ function SectionHeaderRow({
   action?: { icon: React.ReactNode; title: string; onClick: () => void };
 }) {
   return (
-    <div
-      data-hint
-      onClick={onToggle}
-      style={{ height: HEADER_H }}
-      className="group/s w-full flex items-center gap-1 px-1.5 rounded-md hover:bg-[var(--bg-hover)] outline-none cursor-pointer"
-    >
-      {collapsed ? (
-        <ChevronRight size={12} className="text-[var(--text-tertiary)]" />
-      ) : (
-        <ChevronDown size={12} className="text-[var(--text-tertiary)]" />
-      )}
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
-        {label}
-      </span>
-      {action && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            action.onClick();
-          }}
-          title={action.title}
-          className="ml-auto p-0.5 rounded text-[var(--text-tertiary)] opacity-0 group-hover/s:opacity-100 hover:bg-[var(--bg-elevated)] hover:text-[var(--status-error,#f44)] transition-opacity outline-none cursor-pointer"
-        >
-          {action.icon}
-        </button>
-      )}
+    // Sentence case, bold, in the secondary weight, with a small disclosure
+    // AFTER the label. The slot is taller than the row: the extra is the gap
+    // between sections.
+    <div style={{ height: SECTION_H, paddingTop: SECTION_H - HEADER_H }}>
+      <div
+        data-hint
+        onClick={onToggle}
+        style={{ height: HEADER_H }}
+        className="group/s flex w-full items-center gap-1 rounded-md px-2 outline-none cursor-pointer hover:bg-[var(--bg-hover)]"
+      >
+        <span className="text-[11px] font-semibold leading-none text-[var(--text-secondary)] group-hover/s:text-[var(--text-primary)]">
+          {label}
+        </span>
+        <ChevronDown
+          size={10}
+          className={cn(
+            "text-[var(--text-tertiary)] transition-transform",
+            collapsed && "-rotate-90",
+          )}
+        />
+        {action && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              action.onClick();
+            }}
+            title={action.title}
+            className="ml-auto flex size-5 items-center justify-center rounded text-[var(--text-tertiary)] opacity-0 group-hover/s:opacity-100 hover:bg-[var(--bg-elevated)] hover:text-[var(--status-error,#f44)] transition-opacity outline-none cursor-pointer"
+          >
+            {action.icon}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -437,12 +484,12 @@ function RecentProjectRow({
     <div
       data-hint
       onClick={onOpen}
-      style={{ height: ROW_CARD, paddingLeft: 10 }}
+      style={{ height: ROW_CARD, paddingLeft: 8 }}
       className="group flex items-center gap-2.5 pr-1.5 rounded-md cursor-pointer hover:bg-[var(--bg-hover)]"
       title={path}
     >
-      <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--text-secondary)]" />
-      <span className="flex-1 min-w-0 truncate text-[12px] text-[var(--text-secondary)]">
+      <Folder size={13} className="shrink-0 text-[var(--text-tertiary)]" />
+      <span className="flex-1 min-w-0 truncate text-[12px] leading-none text-[var(--text-secondary)] group-hover:text-[var(--text-primary)]">
         {name}
       </span>
     </div>
@@ -483,32 +530,30 @@ function ChatRow({
     <div
       data-hint
       onClick={onOpen}
-      style={{ height: CHAT_CARD, paddingLeft: 6 }}
-      className="group relative flex items-start gap-2 pr-1.5 py-1.5 border-b border-[var(--border-subtle)] cursor-pointer hover:bg-[var(--bg-hover)] transform-gpu [backface-visibility:hidden]"
-      title={chat.projectPath}
+      style={{ height: CHAT_CARD, paddingLeft: 8 }}
+      className="group relative flex items-center gap-2.5 pr-2 rounded-md cursor-pointer hover:bg-[var(--bg-hover)] transform-gpu [backface-visibility:hidden]"
+      // The project lives in the tooltip now rather than a badge on every row.
+      title={`${chat.projectName} — ${chat.projectPath}`}
     >
       {running ? (
-        <AtlasLoader size={11} className="mt-0.5 shrink-0 text-[var(--accent-primary)]" />
+        <AtlasLoader size={12} className="shrink-0 text-[var(--accent-primary)]" />
       ) : chat.agentType === "cersei" ? (
-        <AtlasIcon size={14} className="mt-0.5 shrink-0" />
+        <AtlasIcon size={13} className="shrink-0" />
       ) : (
-        <AgentIcon className="mt-0.5 size-3.5 shrink-0" />
+        <AgentIcon className="size-[13px] shrink-0 opacity-80" />
       )}
-      <div
+      <span
         className={cn(
-          "min-w-0 flex-1 text-[12px] leading-[1.3] line-clamp-2 break-words",
-          running ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]",
+          "min-w-0 flex-1 truncate text-[12px] leading-none",
+          running
+            ? "text-[var(--text-primary)]"
+            : "text-[var(--text-secondary)] group-hover:text-[var(--text-primary)]",
         )}
       >
         {stripInjectedContext(chat.title) || chat.projectName}
-      </div>
-      {/* Timestamp — bottom-left, aligned with the title start (past the icon). */}
-      <span className="absolute bottom-1 left-7 text-[9px] font-mono text-[var(--text-tertiary)] tabular-nums">
-        {relTime(chat.updatedAt)}
       </span>
-      {/* Project badge — bottom-right. */}
-      <span className="absolute bottom-1 right-1.5 max-w-[60%] truncate rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] px-1.5 py-px text-[9px] font-mono text-[var(--text-tertiary)]">
-        {chat.projectName}
+      <span className="shrink-0 text-[10px] leading-none tabular-nums text-[var(--text-tertiary)]">
+        {relTime(chat.updatedAt)}
       </span>
     </div>
   );
@@ -534,7 +579,41 @@ export function WorkspaceSidebar() {
   const displayActiveId = optimisticActiveId ?? activeWorkspaceId;
   const sidebarPinned = useWorkspaceStore.use.sidebarPinned();
   const { addWorkspace, toggleSidebarPinned } = useWorkspaceStore.use.actions();
-  const { addTab } = useLayoutStore.use.actions();
+  const { addTab, toggleRightPanelMode } = useLayoutStore.use.actions();
+  // Which occupant the right slot shows, or null when closed — drives the
+  // active state of the Chat / Source control items.
+  const rightMode = useLayoutStore((s) => (s.rightPanel.visible ? s.rightPanel.mode : null));
+  // Source control needs a project (app-layout hides the slot without one), so
+  // the item says so instead of toggling a panel that never appears.
+  const hasProject = useProjectStore((s) => !!s.currentProject);
+  // Team chat and the member roster are SERVER features: every route names a
+  // server org id, so a local-only organisation has nothing to talk to. Same
+  // test comms-panel.tsx applies before it connects.
+  const organisations = useOrgStore.use.organisations();
+  const activeOrganisationId = useOrgStore.use.activeOrganisationId();
+  const activeOrg = organisations.find((o) => o.id === activeOrganisationId) ?? null;
+  const orgSynced = !!(activeOrg?.syncEnabled && activeOrg?.remoteId);
+  const [membersOpen, setMembersOpen] = useState(false);
+  const newTabHint = useActionShortcut("nav.newTabPalette")?.label;
+  // Mirrors `panels.knowledge` in App.tsx: one Knowledge tab per split column,
+  // focused if it already exists.
+  const openKnowledge = useCallback(() => {
+    const st = useLayoutStore.getState();
+    const g = st.focusedGroupId;
+    const existing = st.tabs.find((t) => (t.groupId ?? "main") === g && t.type === "knowledge");
+    if (existing) {
+      st.actions.setActiveTab(existing.id);
+      return;
+    }
+    st.actions.addTab({
+      id: `knowledge-${Date.now()}`,
+      type: "knowledge",
+      title: "Knowledge",
+      closable: true,
+      dirty: false,
+      data: {},
+    });
+  }, []);
   const recentProjects = useProjectStore.use.recentProjects();
   const { clearRecents } = useProjectStore.use.actions();
   const recentChats = useRecentChatsStore.use.items();
@@ -679,15 +758,34 @@ export function WorkspaceSidebar() {
   const { ensure: ensureSummary } = useWorkspaceGitStore.use.actions();
 
   const parentRef = useRef<HTMLDivElement>(null);
+  // The virtualized rows no longer start at the scroller's top — the nav sits
+  // above them inside the same scroll element. `scrollMargin` is how far down
+  // they begin; without it the virtualizer maps `scrollTop` straight onto row
+  // offsets and materialises the wrong window (rows blank out early at the top
+  // and arrive late at the bottom). Re-measured whenever the nav changes
+  // height, which it does every time the Modules group collapses.
+  const navRef = useRef<HTMLElement>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el) return;
+    const measure = () => setScrollMargin(el.offsetTop + el.offsetHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const virtualizer = useVirtualizer({
     count: rows.length,
+    scrollMargin,
     getScrollElement: () => parentRef.current,
     estimateSize: (i) => {
       const k = rows[i]?.kind;
       if (k === "ws") return WS_H;
       if (k === "chat") return CHAT_H;
       if (k === "recent") return ROW_H;
-      return HEADER_H + 2; // section / group headers
+      if (k === "section") return SECTION_H;
+      return HEADER_H + 2; // group headers
     },
     overscan: 8,
     getItemKey: (i) => rows[i]?.key ?? i,
@@ -731,94 +829,144 @@ export function WorkspaceSidebar() {
     [addWorkspace],
   );
 
-  const openTabSingleton = (type: "mission-control" | "log" | "settings", title: string) =>
-    addTab({
-      id: type === "mission-control" ? "mission-control" : type,
-      type,
-      title,
-      closable: true,
-      dirty: false,
-      data: {},
-    });
-
   return (
     <aside
-      // Transparent — the frosted glass (bg + `backdrop-blur-2xl`) lives on the
-      // animated OVERLAY wrapper in app-layout.tsx, not here. Putting the blur
-      // on this child would break it: the wrapper's opacity/transform isolates
-      // its own layer, leaving a descendant's backdrop-filter nothing to sample.
+      // Transparent — the surface (gradient + blur) lives on the wrapper in
+      // app-layout.tsx, not here. Putting the blur on this child would break
+      // it: the wrapper's opacity/transform isolates its own layer, leaving a
+      // descendant's backdrop-filter nothing to sample.
       className="flex flex-col h-screen w-[244px] shrink-0 bg-transparent"
       data-tauri-drag-region
     >
-      {/* Top bar: aligned to the titlebar height (h-[30px] + border-b) so the
-       *  line under the traffic lights matches the rest of the title bar.
-       *  Buttons sit right to dodge the traffic lights — but in fullscreen the
-       *  lights are gone, so reclaim the left edge. */}
+      {/* Titlebar band: the traffic lights live here, so the rail's own
+       *  controls keep right (left in fullscreen, where the lights are gone).
+       *  No rule under it — the org row below is the visual top of the rail. */}
       <div
         className={cn(
-          "h-[30px] shrink-0 flex items-center gap-1 px-2 border-b border-[var(--border-default)]",
+          "h-[30px] shrink-0 flex items-center gap-0.5 px-2",
           fullscreen ? "justify-start" : "justify-end",
         )}
         data-tauri-drag-region
       >
-        <button
+        <RailIconButton
           onClick={toggleSidebarPinned}
-          className={cn(
-            "p-1 rounded-full outline-none transition-colors hover:bg-[var(--bg-hover)] cursor-pointer",
-            sidebarPinned
-              ? "text-[var(--accent-primary)]"
-              : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]",
-          )}
+          active={sidebarPinned}
           title={
             sidebarPinned ? "Unpin sidebar (float as overlay)" : "Pin sidebar (dock into layout)"
           }
         >
-          {sidebarPinned ? <PinOff size={13} /> : <Pin size={13} />}
-        </button>
-        <button
-          onClick={toggleAll}
-          className="p-1 rounded-full text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)] outline-none cursor-pointer"
-          title={allCollapsed ? "Expand all" : "Collapse all"}
-        >
-          {allCollapsed ? <ChevronsUpDown size={13} /> : <ChevronsDownUp size={13} />}
-        </button>
+          {sidebarPinned ? <PinOff size={12} /> : <Pin size={12} />}
+        </RailIconButton>
+        <RailIconButton onClick={toggleAll} title={allCollapsed ? "Expand all" : "Collapse all"}>
+          {allCollapsed ? <ChevronsUpDown size={12} /> : <ChevronsDownUp size={12} />}
+        </RailIconButton>
         <AddProjectMenu />
       </div>
 
-      {/* Organisation switcher — the top-level tenant picker. Sits below the
-       *  titlebar drag zone so it clears the traffic lights. */}
+      {/* Organisation switcher — the top-level tenant picker. */}
       <OrgSwitcher />
 
-      {/* Sessions captured in the current Workspace. Sits above the other
-       *  header actions because it is Workspace-scoped, unlike Console/Logs —
-       *  and carries the recording dot, so whether work is being recorded is
-       *  answerable without opening anything. */}
-      <CaptureControl />
-
-      {/* Header actions. Console and Settings moved up into the org row as
-       *  icon buttons; what stays here is the workspace-scoped set. */}
-      <div className="px-1.5 pb-1 shrink-0 space-y-0.5">
-        <HeaderButton
-          icon={<ScrollText size={13} />}
-          label="See Logs"
-          onClick={() => openTabSingleton("log", "Log")}
-        />
-        <HeaderButton
-          icon={<Zap size={13} />}
-          label="Skills"
-          onClick={() => openSettingsSection("skills")}
-        />
-      </div>
-
-      {/* Separates the fixed header actions from the scrolling project list. */}
-      <div className="mx-1.5 mb-1 shrink-0 border-t border-[var(--border-default)]" />
-
       {/* Virtualized list. */}
-      <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto hide-scrollbar px-1.5 pb-2">
+      {/* ONE scroller for everything below the org row. The navigation used to
+          be pinned above it, which cost ~200px of permanently-frozen height —
+          on a short window the project list was reduced to a slot a few rows
+          tall while six fixed rows sat above it. Only the titlebar band and
+          the org row are fixed now; the nav scrolls away with the lists.
+
+          It sits INSIDE `parentRef` rather than in a wrapper: the virtualizer
+          measures its scroll element, and anything between it and the rows
+          would have to be subtracted from every offset by hand. As a plain
+          block before the virtualized region, it simply displaces it. */}
+      <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto hide-scrollbar px-2 pb-3">
+        {/* Navigation, in three bands. Organisation-wide destinations
+         *  first (Timeline, Chat, Members); then the project-scoped tools under
+         *  their own collapsible "Modules" heading — the same disclosure the
+         *  list below uses, so the rail reads as one outline — ending, as
+         *  Linear's does, in "More", the ⌘⌥N module palette. Logs and Skills left
+         *  the rail: Console and Settings in the org row already reach them. */}
+        <nav ref={navRef} className="pt-1 pb-1 space-y-px">
+          <CaptureControl />
+          <NavItem
+            icon={<MessagesSquare size={14} />}
+            label="Chat"
+            active={rightMode === "chat"}
+            disabled={!orgSynced}
+            title={orgSynced ? undefined : "Sync this organisation to use team chat"}
+            onClick={() => toggleRightPanelMode("chat")}
+          />
+          <NavItem
+            icon={<Users size={14} />}
+            label="Members"
+            disabled={!orgSynced}
+            title={orgSynced ? undefined : "Sync this organisation to manage members"}
+            onClick={() => setMembersOpen(true)}
+          />
+
+          <SectionHeaderRow
+            label="Modules"
+            collapsed={!!collapsed["sec:tools"]}
+            onToggle={() => toggle("sec:tools")}
+          />
+          {!collapsed["sec:tools"] && (
+            <>
+              <NavItem
+                icon={<Sparkles size={14} />}
+                label="Agents"
+                disabled={!hasProject}
+                title={hasProject ? undefined : "Open a project to start an agent"}
+                // Zero-arg wrapper, NOT a bare reference: openNewAgentChat's
+                // optional parameter would otherwise receive the click event.
+                onClick={() => openNewAgentChat()}
+              />
+              <NavItem
+                icon={<BookOpen size={14} />}
+                label="Knowledge"
+                disabled={!hasProject}
+                title={hasProject ? undefined : "Open a project to open its knowledge base"}
+                onClick={openKnowledge}
+              />
+              <NavItem
+                icon={<TerminalSquare size={14} />}
+                label="Terminal"
+                onClick={() =>
+                  // Mirrors `tabs.newTerminal` in App.tsx: a fresh tab each time.
+                  addTab({
+                    id: `terminal-${Date.now()}`,
+                    type: "terminal",
+                    title: "Terminal",
+                    closable: true,
+                    dirty: false,
+                    data: {},
+                  })
+                }
+              />
+              <NavItem
+                icon={<GitBranch size={14} />}
+                label="Source control"
+                active={rightMode === "source-control"}
+                disabled={!hasProject}
+                title={hasProject ? undefined : "Open a project to see its source control"}
+                onClick={() => toggleRightPanelMode("source-control")}
+              />
+              <NavItem
+                icon={<Ellipsis size={14} />}
+                label="More"
+                title={newTabHint ? `Open a module (${newTabHint})` : "Open a module"}
+                onClick={() => window.dispatchEvent(new CustomEvent("atlas:new-tab-palette"))}
+              />
+            </>
+          )}
+        </nav>
+
         {rows.length === 0 ? (
           <div className="px-2 py-3 text-[11px] text-[var(--text-tertiary)]">No projects yet.</div>
         ) : (
-          <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+          <div
+            style={{
+              height: virtualizer.getTotalSize() - scrollMargin,
+              position: "relative",
+            }}
+          >
             {items.map((v) => {
               const row = rows[v.index];
               if (!row) return null;
@@ -830,7 +978,10 @@ export function WorkspaceSidebar() {
                     top: 0,
                     left: 0,
                     width: "100%",
-                    transform: `translateY(${v.start}px)`,
+                    // `scrollMargin` is baked into `v.start` (it is measured
+                    // from the SCROLLER's top, past the nav); subtract it to get
+                    // the offset within this wrapper.
+                    transform: `translateY(${v.start - scrollMargin}px)`,
                   }}
                 >
                   {row.kind === "section" ? (
@@ -887,26 +1038,84 @@ export function WorkspaceSidebar() {
           </div>
         )}
       </div>
+      <MembersModal org={activeOrg} open={membersOpen} onOpenChange={setMembersOpen} />
     </aside>
   );
 }
 
-function HeaderButton({
+/** One row of the fixed navigation: 28px, icon in the quiet weight, label in
+ *  the body weight, both stepping up together on hover. `active` is the
+ *  resting fill of the row whose panel is open. */
+function NavItem({
   icon,
   label,
   onClick,
+  active,
+  disabled,
+  title,
 }: {
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
+  active?: boolean;
+  disabled?: boolean;
+  title?: string;
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+      disabled={disabled}
+      title={title}
+      aria-pressed={active}
+      className={cn(
+        "group/nav flex h-7 w-full items-center gap-2.5 rounded-md px-2 text-left text-[12px] leading-none outline-none transition-colors cursor-pointer",
+        "disabled:cursor-default disabled:opacity-40",
+        active
+          ? "bg-[var(--bg-active)] text-[var(--text-primary)]"
+          : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
+      )}
     >
-      <span className="text-[var(--text-tertiary)]">{icon}</span>
-      {label}
+      <span
+        className={cn(
+          "flex shrink-0 items-center justify-center",
+          active
+            ? "text-[var(--text-primary)]"
+            : "text-[var(--text-tertiary)] group-hover/nav:text-[var(--text-secondary)]",
+        )}
+      >
+        {icon}
+      </span>
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+/** The rail's small ghost icon buttons (titlebar band). */
+function RailIconButton({
+  children,
+  onClick,
+  title,
+  active,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  title: string;
+  active?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={cn(
+        "flex size-6 items-center justify-center rounded-md outline-none transition-colors cursor-pointer hover:bg-[var(--bg-hover)]",
+        active
+          ? "text-[var(--accent-primary)]"
+          : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)]",
+      )}
+    >
+      {children}
     </button>
   );
 }
@@ -931,7 +1140,7 @@ function AddProjectMenu() {
     >
       <DropdownMenu.Trigger asChild>
         <button
-          className="flex items-center justify-center h-6 w-6 rounded-full border border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors cursor-pointer"
+          className="flex size-6 items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors cursor-pointer"
           title="Add project"
         >
           <Plus size={14} />

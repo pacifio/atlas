@@ -1769,19 +1769,12 @@ export function MessageInput({
   const mode: Mode = running ? (hasText ? "queue" : "stop") : "send";
   const buttonEnabled = disabled ? false : mode === "stop" ? true : hasText;
 
-  // A fixed, generic placeholder ("Ask Claude Code / Codex what to do…") — the
-  // composer no longer mirrors the setup phase here (the setup pill above the
-  // input already communicates install/auth state). Only the queue hint
-  // overrides it.
-  // The no-grant wording names the way OUT, not just the wall — and it lives in
-  // the placeholder rather than only in the bar above because the bar can be
-  // dismissed, and a composer that is dead with no visible reason is worse than
-  // one that explains itself.
-  const effectivePlaceholder = blockedByGrant
-    ? "No AI access — ask your admin, or switch agent below"
-    : running
-      ? "Type to queue the next message…"
-      : placeholder;
+  // One fixed placeholder, always. The composer used to swap in a queue hint
+  // while a turn ran and a no-grant explanation when AI access was missing;
+  // both restated what the surface above the input already says (the queued
+  // chip, the grant bar), and the swapping read as the composer changing its
+  // mind. The setup pill and grant bar own that messaging.
+  const effectivePlaceholder = placeholder;
 
   return (
     <div className="px-4 pb-4 pt-2 bg-transparent">

@@ -1424,7 +1424,7 @@ const ChatComposer = memo(function ChatComposer({
           onStop={onStop}
           running={running}
           stopping={stopping}
-          placeholder="Ask Atlas what to do…"
+          placeholder="Ask Atlas what to do ..."
         />
       </div>
     </>

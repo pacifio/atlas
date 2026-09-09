@@ -3,7 +3,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   Check,
-  ChevronsUpDown,
+  ChevronDown,
   Plus,
   Cloud,
   Lock,
@@ -159,7 +159,10 @@ export function OrgSwitcher() {
     // Fixed 29px row + border-b so the divider aligns exactly with the file-tree
     // "ATLAS" header and the editor tab bar (both h-[29px] border-b under the
     // titlebar).
-    <div className="h-[29px] shrink-0 flex items-center px-1.5 border-b border-[var(--border-default)]">
+    // The visual top of the rail: avatar, name, chevron on the left; two ghost
+    // icon actions on the right. No rule beneath it — the gradient surface
+    // and the spacing do the separating.
+    <div className="h-[32px] shrink-0 flex items-center px-2">
       <DropdownMenu.Root
         open={open}
         onOpenChange={(o) => {
@@ -171,12 +174,12 @@ export function OrgSwitcher() {
       >
         <DropdownMenu.Trigger asChild>
           <button
-            className="flex items-center gap-2 px-2 py-0.5 rounded-md outline-none text-[12px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-active)] transition-colors cursor-pointer min-w-0"
+            className="flex h-7 items-center gap-2 px-1.5 rounded-md outline-none text-[12px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer min-w-0"
             title="Switch organisation"
           >
-            <OrgAvatar org={active} size={16} />
+            <OrgAvatar org={active} size={18} />
             <span className="text-left truncate">{active.name}</span>
-            <ChevronsUpDown size={12} className="text-[var(--text-tertiary)] shrink-0" />
+            <ChevronDown size={11} className="text-[var(--text-tertiary)] shrink-0" />
           </button>
         </DropdownMenu.Trigger>
 
@@ -189,7 +192,7 @@ export function OrgSwitcher() {
             onClick={() => openTabSingleton("mission-control", "Console")}
             title="Console"
             aria-label="Console"
-            className="flex items-center justify-center h-[22px] w-[22px] rounded-full border border-[var(--border-default)] text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors cursor-pointer"
+            className="flex size-6 items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors cursor-pointer"
           >
             <ChartPie size={13} />
           </button>
@@ -197,7 +200,7 @@ export function OrgSwitcher() {
             onClick={() => openTabSingleton("settings", "Settings")}
             title="Settings"
             aria-label="Settings"
-            className="flex items-center justify-center h-[22px] w-[22px] rounded-full border border-[var(--border-default)] text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors cursor-pointer"
+            className="flex size-6 items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors cursor-pointer"
           >
             <Settings size={13} />
           </button>
