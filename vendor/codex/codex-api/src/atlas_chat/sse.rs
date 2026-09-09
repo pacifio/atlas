@@ -38,12 +38,14 @@ use std::time::Duration;
 
 use codex_client::ByteStream;
 use codex_client::StreamResponse;
+use codex_protocol::models::InternalChatMessageMetadataPassthrough;
 use codex_protocol::models::ReasoningItemContent;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::TokenUsage;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use serde::Deserialize;
+use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tokio::time::timeout;
@@ -104,11 +106,27 @@ pub fn spawn_chat_stream(
     }
 }
 
+/// An array that may arrive as `null`, read as empty.
+///
+/// `#[serde(default)]` covers a *missing* key only; a present `null` is a
+/// type error, and the whole frame is lost with it. Workers AI's OpenAI shim
+/// (which is what serves GLM) writes `"tool_calls":null` on its role and
+/// reasoning chunks, so without this the GLM rows cannot get past their first
+/// frame. A `null` array carries no content, so nothing is lost by reading it
+/// as empty — unlike a genuinely unparseable frame, which stays an error.
+fn null_as_empty<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct ChatChunk {
     #[serde(default)]
     id: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     choices: Vec<ChatChoice>,
     #[serde(default)]
     usage: Option<ChatUsage>,
@@ -130,7 +148,7 @@ struct ChatDelta {
     /// ignores it still sees only the answer.
     #[serde(default)]
     reasoning_content: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     tool_calls: Vec<ChatToolCallDelta>,
 }
 
@@ -145,6 +163,12 @@ struct ChatToolCallDelta {
     id: Option<String>,
     #[serde(default)]
     function: Option<ChatFunctionDelta>,
+    /// Provider metadata the next turn has to echo back on this call. Gemini
+    /// 3 carries its thought signature here (`extra_content.google.
+    /// thought_signature`) and answers `400` to a replay without it. Kept as
+    /// an opaque value: the client's job is to return it, not to read it.
+    #[serde(default)]
+    extra_content: Option<Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -210,6 +234,18 @@ struct PartialToolCall {
     id: Option<String>,
     name: Option<String>,
     arguments: String,
+    /// The first non-null `extra_content` seen for this index. Vertex says the
+    /// signature may arrive on a later, otherwise-empty part, so every
+    /// fragment is checked and the first one wins.
+    extra_content: Option<Value>,
+}
+
+/// The metadata a call has to carry back, in the slot the rollout keeps.
+fn passthrough_for(extra_content: Option<Value>) -> Option<InternalChatMessageMetadataPassthrough> {
+    extra_content.map(|extra_content| InternalChatMessageMetadataPassthrough {
+        atlas_tool_call_extra_content: Some(extra_content),
+        ..Default::default()
+    })
 }
 
 /// Which item the deltas arriving right now belong to.
@@ -384,6 +420,9 @@ async fn process_chat_sse(
                 if let Some(id) = call.id {
                     entry.id = Some(id);
                 }
+                if entry.extra_content.is_none() {
+                    entry.extra_content = call.extra_content.filter(|value| !value.is_null());
+                }
                 if let Some(function) = call.function {
                     if let Some(name) = function.name {
                         entry.name = Some(name);
@@ -493,13 +532,22 @@ async fn emit_turn(
     // arguments here, so an `OutputItemAdded` first would open an item with
     // nothing to put in it.
     for (index, call) in std::mem::take(&mut state.tool_calls) {
-        let Some(name) = call.name else {
+        let PartialToolCall {
+            id,
+            name,
+            arguments,
+            extra_content,
+        } = call;
+        let Some(name) = name else {
             debug!(index, "tool call fragment never named a function; dropped");
             continue;
         };
         // A provider that never sends an id leaves the engine unable to match
         // the result back, so a synthesised one beats no call at all.
-        let call_id = call.id.unwrap_or_else(|| format!("call_{index}"));
+        let call_id = id.unwrap_or_else(|| format!("call_{index}"));
+        // Carried on whichever shape the call takes: the provider attached it
+        // to *this* call, and the replay has to hand it back on the same one.
+        let passthrough = passthrough_for(extra_content);
         let item = if dialect.freeform_tools.contains(&name) {
             ResponseItem::CustomToolCall {
                 id: None,
@@ -507,18 +555,18 @@ async fn emit_turn(
                 call_id,
                 name,
                 namespace: None,
-                input: unwrap_freeform_input(&call.arguments),
-                internal_chat_message_metadata_passthrough: None,
+                input: unwrap_freeform_input(&arguments),
+                internal_chat_message_metadata_passthrough: passthrough,
             }
         } else {
             ResponseItem::FunctionCall {
                 id: None,
                 name,
                 namespace: None,
-                arguments: call.arguments,
+                arguments,
                 encrypted_function_args: None,
                 call_id,
-                internal_chat_message_metadata_passthrough: None,
+                internal_chat_message_metadata_passthrough: passthrough,
             }
         };
         if tx_event

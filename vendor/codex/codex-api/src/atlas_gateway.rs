@@ -84,6 +84,53 @@ struct GatewayError {
     cap: Option<u64>,
     #[serde(default)]
     reset: Option<String>,
+    // `502` only. The provider's own error body, capped at 2 KB by the
+    // gateway: a JSON value when it parsed, the raw text otherwise. Without
+    // it a 502 reads as "The upstream provider failed (400)." and nothing
+    // else — the one line that says *why* is in here.
+    #[serde(default)]
+    upstream: Option<serde_json::Value>,
+}
+
+/// The one sentence of the provider's error worth showing the user.
+///
+/// Vertex writes `{"error":{"message":…}}` (sometimes as a bare one-element
+/// array), OpenAI-shaped shims write the same, and a body the gateway could
+/// not parse arrives as a string. Anything else is rendered compactly, and
+/// everything is capped so a 2 KB HTML error page cannot become the message.
+fn upstream_detail(upstream: &serde_json::Value) -> Option<String> {
+    const CAP: usize = 400;
+    let first = match upstream {
+        serde_json::Value::Array(items) => items.first()?,
+        other => other,
+    };
+    let text = match first {
+        serde_json::Value::String(text) => text.trim().to_string(),
+        serde_json::Value::Object(_) => first
+            .pointer("/error/message")
+            .or_else(|| first.get("message"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| first.to_string()),
+        serde_json::Value::Null => return None,
+        other => other.to_string(),
+    };
+    if text.is_empty() {
+        return None;
+    }
+    Some(match text.char_indices().nth(CAP) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text,
+    })
+}
+
+/// The HTTP status the *provider* answered, read off the gateway's own
+/// sentence for a 502 — `The upstream provider failed (400).` — which is the
+/// only place the gateway records it.
+fn upstream_status(message: &str) -> Option<u16> {
+    let (_, tail) = message.rsplit_once('(')?;
+    let digits = tail.trim_end_matches(&['.', ')'][..]);
+    digits.parse().ok().filter(|status| (100..600).contains(status))
 }
 
 /// `Retry-After`, in seconds.
@@ -182,8 +229,21 @@ pub fn classify(status: StatusCode, body: &str, retry_after_header: Option<&str>
             },
         },
 
-        // Upstream failed, or the gateway refused its own call. May not recur.
-        (502, _) => Disposition::RetryCautiously { message },
+        // Upstream failed, or the gateway refused its own call. May not recur —
+        // unless the provider answered a 4xx, which is its verdict on *this*
+        // request and will be the same verdict five re-sends later. That case
+        // is terminal, and either way the provider's own line is appended:
+        // "The upstream provider failed (400)." diagnoses nothing on its own.
+        (502, _) => {
+            let message = match err.upstream.as_ref().and_then(upstream_detail) {
+                Some(detail) => format!("{message} {detail}"),
+                None => message,
+            };
+            match upstream_status(&err.message) {
+                Some(400..=499) => Disposition::Terminal { message },
+                _ => Disposition::RetryCautiously { message },
+            }
+        }
 
         // Everything else the gateway defines is terminal: 400 (bad request),
         // 403 (no grant / wrong org / model not allowed), 404, 405, 413, 501.
@@ -406,6 +466,67 @@ mod tests {
         let d = classify_code(502, "provider_error");
         assert!(matches!(d, Disposition::RetryCautiously { .. }));
         assert!(d.is_retryable());
+    }
+
+    #[test]
+    fn a_providers_own_verdict_is_appended_to_the_502_message() {
+        // "The upstream provider failed (400)." diagnoses nothing on its own;
+        // the gateway puts the provider's body under `error.upstream` and
+        // that is where the reason lives.
+        let body = r#"{"error":{"code":"provider_error","message":"The upstream provider failed (500).","upstream":{"error":{"message":"Internal error encountered.","status":"INTERNAL"}}}}"#;
+        let d = classify(StatusCode::BAD_GATEWAY, body, None);
+        assert!(matches!(d, Disposition::RetryCautiously { .. }), "{d:?}");
+        assert_eq!(
+            d.message(),
+            "The upstream provider failed (500). Internal error encountered."
+        );
+    }
+
+    #[test]
+    fn a_provider_4xx_behind_a_502_is_terminal_not_five_retries() {
+        // A provider's 400 is its verdict on this request and does not change
+        // on re-send; retrying it five times costs six seconds and five
+        // reservations for the same answer. Vertex's bare-array shape and the
+        // raw-text fallback are both read.
+        let vertex = r#"{"error":{"code":"provider_error","message":"The upstream provider failed (400).","upstream":[{"error":{"code":400,"message":"Function call is missing a thought_signature.","status":"INVALID_ARGUMENT"}}]}}"#;
+        let d = classify(StatusCode::BAD_GATEWAY, vertex, None);
+        assert!(!d.is_retryable(), "{d:?}");
+        assert!(matches!(d, Disposition::Terminal { .. }));
+        assert!(
+            d.message().contains("missing a thought_signature"),
+            "{}",
+            d.message()
+        );
+
+        let text = r#"{"error":{"code":"provider_error","message":"The upstream provider failed (422).","upstream":"<html>unprocessable</html>"}}"#;
+        let d = classify(StatusCode::BAD_GATEWAY, text, None);
+        assert!(!d.is_retryable(), "{d:?}");
+        assert!(d.message().ends_with("<html>unprocessable</html>"));
+    }
+
+    #[test]
+    fn a_502_without_an_upstream_status_stays_a_cautious_retry() {
+        // The gateway's own refusal of its call, or a message shape this
+        // parser does not know: no verdict to read, so the documented default.
+        for body in [
+            r#"{"error":{"code":"provider_error","message":"upstream hung up"}}"#,
+            r#"{"error":{"code":"provider_error","message":"The upstream provider failed (503).","upstream":null}}"#,
+            r#"{"error":{"code":"provider_error","message":"The upstream provider failed (503).","upstream":{"error":{"message":""}}}}"#,
+        ] {
+            let d = classify(StatusCode::BAD_GATEWAY, body, None);
+            assert!(d.is_retryable(), "{body}: {d:?}");
+        }
+    }
+
+    #[test]
+    fn upstream_detail_is_capped() {
+        let long = "x".repeat(10_000);
+        let detail = upstream_detail(&serde_json::json!({"error":{"message":long}}));
+        let Some(detail) = detail else {
+            panic!("a message is a detail");
+        };
+        assert!(detail.chars().count() <= 401, "{}", detail.chars().count());
+        assert!(detail.ends_with('…'));
     }
 
     #[test]

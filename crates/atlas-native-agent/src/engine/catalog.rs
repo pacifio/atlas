@@ -61,8 +61,9 @@
 //! assumption that every row is a Vertex publisher path (§4.3a of
 //! `docs/reference/atlas-ai-api.md`) no longer holds, so do not derive
 //! anything here from it. It replies with a `reasoning_content` field
-//! alongside `content`; the engine reads no such field, so the thinking is
-//! dropped and the answer arrives intact.
+//! alongside `content`, which the chat stream parser reads as a reasoning
+//! item, and writes `"tool_calls":null` on those chunks, which the parser
+//! reads as an empty array rather than a lost frame.
 
 use std::path::Path;
 use std::path::PathBuf;
