@@ -1,6 +1,14 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Channel, invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Loader2,
   CheckCircle2,
@@ -18,15 +26,15 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { safeUnlistenPromise } from "@/lib/safe-unlisten";
 import { openFileOrReveal } from "@/lib/open-file";
+import { markScrollHot } from "@/lib/scroll-hot";
 import { useProjectStore } from "@/features/project/stores/project-store";
-import { resolveTerminalFont } from "../utils/resolve-font";
-import { resolveTerminalOutput, type AnsiSegment } from "../lib/ansi-to-segments";
 import { linkifySegments, normalizeUrl } from "../lib/linkify-paths";
-import { createTerminalKeymap } from "../lib/terminal-keymap";
-import { createPathLinkProvider } from "../lib/path-link-provider";
-import { BlockStreamParser, type TerminalBlock } from "../lib/block-parser";
+import type { ResolvedLine } from "../lib/line-emulator";
+import { perfBegin } from "../lib/term-perf";
+import { formatDuration } from "../lib/format-duration";
+import type { TerminalBlock } from "../lib/block-parser";
+import { terminalSessions } from "../lib/terminal-session";
 import { CommandInput, type CommandInputHandle } from "./command-input";
 import { TerminalStopControl } from "./terminal-stop-control";
 import { useTerminalStore } from "../stores/terminal-store";
@@ -47,16 +55,15 @@ interface RawGitStatus {
   files: unknown[];
 }
 
-// Interactive root-shell invocations (no trailing command). These start a root
-// shell that WON'T load Atlas's zsh integration (sudo strips the env), so we
-// relaunch them through our integration ZDOTDIR — otherwise command blocks /
-// prompt markers break as root ("sudo -s behaves weirdly").
-const SUDO_SHELL_RE = /^sudo\s+(?:-s|-i|su(?:\s+-l?|\s+-)?)\s*$/;
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
-  return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+/** Non-overlapping occurrences of `q` in `lower` (both already lower-cased). */
+function countMatches(lower: string, q: string): number {
+  let n = 0;
+  let i = lower.indexOf(q);
+  while (i >= 0) {
+    n++;
+    i = lower.indexOf(q, i + q.length);
+  }
+  return n;
 }
 
 /** Wrap case-insensitive matches of `query` in `text` with a <mark>. Matches
@@ -90,360 +97,140 @@ function renderHL(text: string, query: string): ReactNode {
 }
 
 interface BlockTerminalProps {
+  /** This terminal owns keyboard focus (active in its pane, pane active). */
   isActive: boolean;
+  /** This terminal is on screen: its tab is the active tab of its column and
+   *  it is the active terminal of its pane. Drives the session's render gate. */
+  visible: boolean;
   onFocus: () => void;
   /** The terminal tab id (layout/terminal store), used to bind pending focus
    *  requests to the correct terminal tab. */
   tabId: string;
-  /** The layout terminal id (terminal-store), used to report busy state to the
-   *  tab strip. Distinct from the internal PTY session id. */
+  /** The layout terminal id (terminal-store) — the session registry's key. */
   terminalKey: string;
 }
 
-// ANSI palette for the interactive xterm surface — matches ansi-to-segments so
-// blocks and the live surface look the same.
-const XTERM_THEME = {
-  background: "#000000",
-  foreground: "#cccccc",
-  cursor: "#b3b3b3",
-  // Translucent so it's clearly visible on the AMOLED-black surface without
-  // hiding the selected glyphs (opaque #303030 read as nearly invisible).
-  selectionBackground: "rgba(97,175,239,0.35)",
-  selectionInactiveBackground: "rgba(255,255,255,0.16)",
-  black: "#1a1a1a",
-  red: "#e06c75",
-  green: "#98c379",
-  yellow: "#e5c07b",
-  blue: "#61afef",
-  magenta: "#c678dd",
-  cyan: "#56b6c2",
-  white: "#cccccc",
-  brightBlack: "#5c6370",
-  brightRed: "#e06c75",
-  brightGreen: "#98c379",
-  brightYellow: "#e5c07b",
-  brightBlue: "#61afef",
-  brightMagenta: "#c678dd",
-  brightCyan: "#56b6c2",
-  brightWhite: "#ffffff",
-};
-
 /**
- * Block terminal. The PTY (zsh shell integration) streams raw bytes to BOTH:
- *   - an embedded xterm (the interactive surface) — shown only when an app
- *     enters the alt-screen (vim/htop/less); and
- *   - `BlockStreamParser`, which segments normal command output into React
- *     "blocks" rendered with ANSI→styled spans.
- * The React command input sends lines to the shell; when an alt-screen app is
- * running, keystrokes go to xterm instead.
+ * Block terminal — the VIEW over a `TerminalSession`.
+ *
+ * The session (PTY, parser, xterm) lives in `terminal-session.ts` and outlives
+ * this component; mounting attaches a view, unmounting detaches it. Nothing
+ * here closes a shell — the registry does that when the terminal leaves the
+ * store. The PTY (zsh shell integration) streams into the parser, which
+ * segments normal command output into React "blocks" and forwards only what
+ * an alt-screen app needs to the embedded xterm (shown when one is running).
  */
-export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTerminalProps) {
-  const [blocks, setBlocks] = useState<TerminalBlock[]>([]);
-  const [altScreen, setAltScreen] = useState(false);
-  // The running program put the tty in raw mode — see `TtyModeProbe` (Rust).
-  const [rawMode, setRawMode] = useState(false);
-  const [appCursorKeys, setAppCursorKeys] = useState(false);
-  const [cwd, setCwd] = useState<string>("");
-  const [surfaceReady, setSurfaceReady] = useState(false);
+export const BlockTerminal = memo(function BlockTerminal({
+  isActive,
+  visible,
+  onFocus,
+  tabId,
+  terminalKey,
+}: BlockTerminalProps) {
+  const session = useMemo(
+    () =>
+      terminalSessions.acquire(terminalKey, {
+        tabId,
+        cwd: useProjectStore.getState().currentProject?.path ?? "~",
+      }),
+    [terminalKey, tabId],
+  );
+  const snap = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
+  const { blocks, altScreen, rawMode, appCursorKeys, cwd, surfaceReady, exited } = snap;
+
   const [git, setGit] = useState<TermGit | null>(null);
   const [search, setSearch] = useState({ open: false, query: "" });
   const [matchCount, setMatchCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const matchIdxRef = useRef(-1);
-
-  const parserRef = useRef<BlockStreamParser | null>(null);
-  const decoderRef = useRef(new TextDecoder());
-  const ptyRef = useRef<string | null>(null);
   const focusPendingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const commandInputRef = useRef<CommandInputHandle>(null);
-  // zsh integration ZDOTDIR (for relaunching root shells with integration).
-  const zshDirRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    void invoke<string | null>("terminal_zsh_dir")
-      .then((d) => {
-        zshDirRef.current = d;
-      })
-      .catch(() => {});
-  }, []);
-
-  const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null);
-  const fitRef = useRef<import("@xterm/addon-fit").FitAddon | null>(null);
   const xtermHostRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const pendingFocus = useTerminalStore((s) => s.pendingFocus);
   const { clearPendingTerminalFocus } = useTerminalStore.use.actions();
 
-  useEffect(() => {
-    let disposed = false;
-    let modeUnlisten: Promise<UnlistenFn> | null = null;
-    const initialCwd = useProjectStore.getState().currentProject?.path ?? "~";
-
-    const parser = new BlockStreamParser(initialCwd, () => {
-      if (disposed) return;
-      setBlocks([...parser.blocks]);
-      setAltScreen(parser.altScreen);
-      setAppCursorKeys(parser.appCursorKeys);
-      setCwd(parser.currentCwd);
-    });
-    setCwd(initialCwd);
-    parserRef.current = parser;
-
-    void (async () => {
-      // Interactive surface (xterm) — processes the full stream so it's ready
-      // the instant an app enters the alt-screen.
-      const { Terminal } = await import("@xterm/xterm");
-      const { FitAddon } = await import("@xterm/addon-fit");
-      await import("@xterm/xterm/css/xterm.css");
-      if (disposed || !xtermHostRef.current) return;
-      const fontFamily = await resolveTerminalFont(13);
-      if (disposed || !xtermHostRef.current) return;
-
-      const term = new Terminal({
-        fontFamily,
-        fontSize: 13,
-        lineHeight: 1.4,
-        // xterm is only ever VISIBLE for alt-screen apps (vim/htop/less), and
-        // the alt screen has no scrollback — the block list owns history. The
-        // old 5000-line buffer was pure memory + parse cost for a surface
-        // that never scrolls.
-        scrollback: 0,
-        cursorBlink: true,
-        allowProposedApi: true,
-        theme: XTERM_THEME,
-      });
-      const fit = new FitAddon();
-      term.loadAddon(fit);
-      try {
-        const { Unicode11Addon } = await import("@xterm/addon-unicode11");
-        term.loadAddon(new Unicode11Addon());
-        term.unicode.activeVersion = "11";
-      } catch {
-        /* non-fatal */
-      }
-      term.open(xtermHostRef.current);
-      try {
-        const { WebglAddon } = await import("@xterm/addon-webgl");
-        const w = new WebglAddon();
-        w.onContextLoss(() => w.dispose());
-        term.loadAddon(w);
-      } catch {
-        /* DOM renderer */
-      }
-      xtermRef.current = term;
-      fitRef.current = fit;
-      setSurfaceReady(true);
-
-      let cols = 80;
-      let rows = 24;
-      try {
-        fit.fit();
-        cols = term.cols;
-        rows = term.rows;
-      } catch {
-        /* keep defaults */
-      }
-
-      // Per-session binary channel. Payloads are raw bytes (ArrayBuffer) —
-      // no JSON number[] round-trip, no global event fan-out. Each chunk is
-      // ACKED IMMEDIATELY on receipt (before any rendering), Tabby-style:
-      // the ack re-opens the Rust credit window, so what it bounds is the
-      // webview's queue depth, not render latency.
-      const outputChannel = new Channel<ArrayBuffer | number[]>();
-      let sessionId: string | null = null;
-      let earlyChunks: (ArrayBuffer | number[])[] = [];
-      // A command the opener queued for this terminal (an agent's login,
-      // today), held until the shell can actually receive it — see `sendQueued`.
-      let queued: string | null = null;
-      const sendQueued = () => {
-        if (queued === null || sessionId === null) return;
-        const line = queued;
-        queued = null;
-        void invoke("terminal_write", {
-          id: sessionId,
-          data: Array.from(new TextEncoder().encode(`${line}\n`)),
-        }).catch(() => {});
-      };
-      const handleChunk = (payload: ArrayBuffer | number[]) => {
-        const bytes =
-          payload instanceof ArrayBuffer ? new Uint8Array(payload) : new Uint8Array(payload);
-        term.write(bytes); // interactive surface
-        parser.push(decoderRef.current.decode(bytes, { stream: true })); // blocks
-        // Send only once the shell has drawn a prompt. Written any earlier it
-        // races the user's profile — anything in there that reads stdin or
-        // calls `stty` eats the line, and before ZLE takes the tty out of
-        // canonical mode a long line is truncated at MAX_CANON.
-        if (parser.hasDrawnPrompt) sendQueued();
-      };
-      outputChannel.onmessage = (payload) => {
-        if (disposed) return;
-        if (sessionId === null) {
-          // The channel can deliver before `terminal_create` resolves with the
-          // session id — hold those chunks (acked once we can address the ack).
-          earlyChunks.push(payload);
-          return;
-        }
-        void invoke("terminal_ack", { id: sessionId }).catch(() => {});
-        handleChunk(payload);
-      };
-
-      const id = await invoke<string>("terminal_create", {
-        cols,
-        rows,
-        cwd: initialCwd,
-        onOutput: outputChannel,
-      });
-      if (disposed) {
-        void invoke("terminal_close", { id }).catch(() => {});
-        return;
-      }
-      ptyRef.current = id;
-      sessionId = id;
-
-      // Rust reports tty raw-mode transitions for this session (one ioctl per
-      // output chunk, nothing at idle). Raw mode is only ACTED on while a
-      // command runs — at the prompt zsh's line editor holds the tty raw too,
-      // so raw-on-its-own says nothing about an app wanting the keyboard.
-      modeUnlisten = listen<{ id: string; raw: boolean }>("terminal-mode", (evt) => {
-        if (!disposed && evt.payload.id === id) setRawMode(evt.payload.raw);
-      });
-      for (const chunk of earlyChunks) {
-        void invoke("terminal_ack", { id }).catch(() => {});
-        handleChunk(chunk);
-      }
-      earlyChunks = [];
-
-      // A command the opener queued for this terminal — an agent's login,
-      // today. Written into the shell rather than exec'd, so it runs with a
-      // real tty and a login that asks a question can be answered: the whole
-      // point of sending it here instead of spawning it headlessly. Taken
-      // once, so a remount does not re-run it.
-      queued = useTerminalStore.getState().actions.takePendingCommand(terminalKey) ?? null;
-      if (queued !== null) {
-        // A shell with no OSC 133 integration (anything but zsh here) never
-        // reports a prompt, so the wait needs a floor as well as a signal.
-        // Late is recoverable — the user retypes; never is not.
-        window.setTimeout(sendQueued, 1500);
-      }
-
-      // Interactive-surface parity with the classic terminal: word/line
-      // navigation + ⌘C/⌘V/⌘A copy-paste, and ⌘-click file paths.
-      const keymap = createTerminalKeymap(term);
-      term.attachCustomKeyEventHandler((e) => {
-        if (e.type !== "keydown") return true;
-        const nav = keymap(e);
-        if (nav === "handled") return false;
-        if (typeof nav === "string") {
-          void invoke("terminal_write", {
-            id,
-            data: Array.from(new TextEncoder().encode(nav)),
-          }).catch(() => {});
-          return false;
-        }
-        const mod = e.metaKey || (e.ctrlKey && e.shiftKey);
-        const key = e.key.toLowerCase();
-        if (mod && key === "c") {
-          if (term.hasSelection()) {
-            e.preventDefault();
-            void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
-          }
-          return false;
-        }
-        if (mod && key === "v") {
-          e.preventDefault();
-          void navigator.clipboard
-            .readText()
-            .then((t) => t && term.paste(t))
-            .catch(() => {});
-          return false;
-        }
-        if (e.metaKey && key === "a") {
-          e.preventDefault();
-          term.selectAll();
-          return false;
-        }
-        return true;
-      });
-      term.registerLinkProvider(createPathLinkProvider(term, id));
-
-      // Keystrokes from the interactive surface → PTY.
-      term.onData((d) => {
-        const tid = ptyRef.current;
-        if (tid && !disposed) {
-          void invoke("terminal_write", {
-            id: tid,
-            data: Array.from(new TextEncoder().encode(d)),
-          }).catch(() => {});
-        }
-      });
-    })();
-
-    return () => {
-      disposed = true;
-      safeUnlistenPromise(modeUnlisten);
-      xtermRef.current?.dispose();
-      if (ptyRef.current) void invoke("terminal_close", { id: ptyRef.current }).catch(() => {});
-    };
-  }, []);
-
-  // Keep the PTY sized to the surface (drives wrapping for both views).
-  useEffect(() => {
+  // Attach the session's surface to this view's host; detach on unmount. The
+  // surface element is the session's, so a remount re-parents it and nothing
+  // xterm drew is lost.
+  useLayoutEffect(() => {
     const host = xtermHostRef.current;
     if (!host) return;
-    const ro = new ResizeObserver(() => {
-      const t = xtermRef.current;
-      const f = fitRef.current;
-      const id = ptyRef.current;
-      if (!t || !f) return;
-      try {
-        f.fit();
-      } catch {
-        return;
-      }
-      if (id)
-        void invoke("terminal_resize", {
-          id,
-          cols: t.cols,
-          rows: t.rows,
-        }).catch(() => {});
-    });
-    ro.observe(host);
+    return session.attach(host);
+  }, [session]);
+
+  // The render gate: hidden views cost the session nothing.
+  useEffect(() => {
+    session.setVisible(visible);
+    return () => session.setVisible(false);
+  }, [session, visible]);
+
+  // Close the dev flush measurement once React has committed the new blocks.
+  useEffect(() => {
+    session.committed();
+  }, [session, blocks]);
+
+  // Keep the PTY sized to the view. The session coalesces, deduplicates and
+  // defers while the box is not real (hidden tab → 0×0).
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => session.requestFit());
+    ro.observe(el);
+    session.requestFit();
     return () => ro.disconnect();
-  }, []);
+  }, [session]);
 
   // Pin to the bottom as output streams — but ONLY while the user is at the
   // bottom. The old unconditional pin yanked the viewport back down on every
   // 16 ms flush, making it impossible to scroll up during a long command.
   const pinnedRef = useRef(true);
   const onBlocksScroll = useCallback(() => {
+    markScrollHot();
     const el = scrollRef.current;
     if (el) {
       pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
     }
   }, []);
+  // Re-pin when the CONTENT grows, from a ResizeObserver — never from the
+  // render path. The old effect read `scrollHeight` and wrote `scrollTop` on
+  // every flush, which forced a synchronous layout of every mounted block
+  // inside the commit. RO callbacks run after layout in the frame, so the read
+  // is free, and they fire only when something actually changed height.
+  // (`overflow-anchor` would be the declarative answer; WebKit lacks it.)
+  const contentRef = useRef<HTMLDivElement>(null);
+  const altScreenRef = useRef(altScreen);
+  altScreenRef.current = altScreen;
   useEffect(() => {
     const el = scrollRef.current;
-    if (el && !altScreen && pinnedRef.current) el.scrollTop = el.scrollHeight;
-  }, [blocks, altScreen]);
+    const content = contentRef.current;
+    if (!el || !content) return;
+    const ro = new ResizeObserver(() => {
+      if (pinnedRef.current && !altScreenRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, []);
 
   const focusTerminalSurface = useCallback(() => {
-    if (!isActive) return;
+    if (!isActive || !visible) return;
     onFocus();
     if (altScreen) {
       if (!surfaceReady) return;
-      xtermRef.current?.focus();
+      session.focusXterm();
     } else {
       commandInputRef.current?.focus();
     }
-  }, [altScreen, isActive, onFocus, surfaceReady]);
+  }, [altScreen, isActive, visible, onFocus, session, surfaceReady]);
   // Focus the right surface: xterm while an alt-screen app runs, else the input.
   useEffect(() => {
-    if (!isActive) return;
+    if (!isActive || !visible) return;
     focusTerminalSurface();
-  }, [isActive, altScreen, surfaceReady, focusTerminalSurface]);
+  }, [isActive, visible, altScreen, surfaceReady, focusTerminalSurface]);
 
-  // External focus request (⌘J / focus-terminal shortcut).
+  // External focus request (⌘J / focus-terminal shortcut / a notification).
   useEffect(() => {
     if (!pendingFocus || pendingFocus.tabId !== tabId || !isActive) return;
     focusPendingRef.current = true;
@@ -451,36 +238,26 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
 
   useEffect(() => {
     if (!focusPendingRef.current) return;
-    if (!isActive || !surfaceReady) return;
+    if (!isActive || !visible) return;
+    if (altScreen && !surfaceReady) return;
     focusTerminalSurface();
     focusPendingRef.current = false;
     clearPendingTerminalFocus();
-  }, [altScreen, clearPendingTerminalFocus, focusTerminalSurface, isActive, surfaceReady]);
+  }, [altScreen, clearPendingTerminalFocus, focusTerminalSurface, isActive, visible, surfaceReady]);
 
-  // A command is running when the live (last) block is still open. Surface it
-  // as a spinner in the footer and report it to the tab strip via the store.
+  // A command is running when the live (last) block is still open. The
+  // session reports it to the tab strip; this is for the footer spinner.
   const busy = useMemo(() => {
     const last = blocks[blocks.length - 1];
     return !!last && last.running && last.command !== "";
   }, [blocks]);
 
-  useEffect(() => {
-    useTerminalStore.getState().actions.setTerminalBusy(terminalKey, busy);
-  }, [busy, terminalKey]);
-
-  // Clear the busy flag when this terminal unmounts (tab/pane close).
-  useEffect(() => {
-    return () => {
-      useTerminalStore.getState().actions.setTerminalBusy(terminalKey, false);
-    };
-  }, [terminalKey]);
-
   // Resolve git status for the live cwd (reuses the project git command).
   // Re-run when the directory changes or a command finishes (which may have
   // mutated the tree). Debounced so a burst of output doesn't thrash git.
   useEffect(() => {
-    if (!cwd || cwd === "~") {
-      setGit(null);
+    if (!visible || !cwd || cwd === "~") {
+      if (!cwd || cwd === "~") setGit(null);
       return;
     }
     let cancelled = false;
@@ -507,99 +284,51 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [cwd, busy]);
+  }, [cwd, busy, visible]);
 
-  const runCommand = useCallback((cmd: string) => {
-    const id = ptyRef.current;
-    if (!id) return;
-    // `clear` clears the React block list (the blocks are ours, not the shell's).
-    // Send a bare newline so the shell redraws a fresh prompt.
-    const trimmed = cmd.trim();
-    if (trimmed === "clear") {
-      parserRef.current?.clearBlocks();
-      setBlocks([]);
-      void invoke("terminal_write", { id, data: [0x0a] }).catch(() => {});
-      return;
-    }
-    // Relaunch an interactive root shell with Atlas's zsh integration so blocks
-    // / prompt markers keep working as root. $HOME is expanded by the root zsh.
-    if (SUDO_SHELL_RE.test(trimmed) && zshDirRef.current) {
-      const rewrite = `sudo zsh -c 'ZDOTDIR="${zshDirRef.current}" ATLAS_USER_ZDOTDIR="$HOME" exec zsh -i'`;
-      void invoke("terminal_write", {
-        id,
-        data: Array.from(new TextEncoder().encode(rewrite + "\n")),
-      }).catch(() => {});
-      return;
-    }
-    void invoke("terminal_write", {
-      id,
-      data: Array.from(new TextEncoder().encode(cmd + "\n")),
-    }).catch(() => {});
-  }, []);
+  const runCommand = useCallback((cmd: string) => session.runCommand(cmd), [session]);
+  const interrupt = useCallback(() => session.interrupt(), [session]);
+  const forceStop = useCallback(() => session.killForeground(), [session]);
+  const restoreBlockSurface = useCallback(() => session.restoreBlockSurface(), [session]);
+  const writeRaw = useCallback((data: number[]) => session.writeRaw(data), [session]);
+  const writePassword = useCallback((pw: string) => session.writePassword(pw), [session]);
 
-  const interrupt = useCallback(() => {
-    const id = ptyRef.current;
-    if (id) void invoke("terminal_write", { id, data: [0x03] }).catch(() => {});
-  }, []);
-
-  const forceStop = useCallback(async () => {
-    const id = ptyRef.current;
-    if (!id) return false;
-    return invoke<boolean>("terminal_kill_foreground", { id });
-  }, []);
-
-  const restoreBlockSurface = useCallback(() => {
-    if (!parserRef.current?.altScreen) return;
-    // A SIGKILL gives the app no chance to emit its alternate-screen leave
-    // sequence. Apply it locally so the shell prompt is visible again.
-    const leaveAltScreen = "\x1b[?1049l";
-    xtermRef.current?.write(leaveAltScreen);
-    parserRef.current.push(leaveAltScreen);
-  }, []);
-
-  // Forward raw bytes to the PTY — used by the composer to feed nav keys to a
-  // running interactive prompt (arrows / Tab / Esc).
-  const writeRaw = useCallback((data: number[]) => {
-    const id = ptyRef.current;
-    if (id) void invoke("terminal_write", { id, data }).catch(() => {});
-  }, []);
-
-  // Send a secret typed into a block's inline password field straight to the
-  // PTY (never shown in the command input or stored in history).
-  const writePassword = useCallback((pw: string) => {
-    const id = ptyRef.current;
-    if (!id) return;
-    void invoke("terminal_write", {
-      id,
-      data: Array.from(new TextEncoder().encode(pw + "\n")),
-    }).catch(() => {});
-  }, []);
-
-  // ⌘F / Ctrl+F opens search over the block history.
+  // ⌘F arrives through the keybinding layer (`terminal.find`, scoped to the
+  // focused terminal panel) as a bumped `searchRequest` on the session — never
+  // a window listener per terminal, which had every mounted terminal, hidden
+  // ones included, answering the same chord.
+  const lastSearchReq = useRef(snap.searchRequest);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!isActive || altScreen) return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        setSearch((s) => ({ ...s, open: true }));
-        requestAnimationFrame(() => searchInputRef.current?.focus());
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isActive, altScreen]);
+    if (snap.searchRequest === lastSearchReq.current) return;
+    lastSearchReq.current = snap.searchRequest;
+    if (!visible || altScreen) return;
+    setSearch((s) => ({ ...s, open: true }));
+    requestAnimationFrame(() => searchInputRef.current?.focus());
+  }, [snap.searchRequest, visible, altScreen]);
 
-  // Recount matches whenever the query or content changes. Skip entirely when
-  // there is no query — this used to run a full-subtree querySelectorAll on
-  // every 16 ms streaming flush even with search closed.
+  // Match count from the DATA, not the DOM: a `querySelectorAll` over every
+  // mounted block per flush scaled with the whole history while search was
+  // open. This walks the resolved lines instead (the same text the DOM shows,
+  // capped like the DOM is) and only when there is a query.
   useEffect(() => {
     matchIdxRef.current = -1;
     if (!search.query) {
       setMatchCount(0);
       return;
     }
-    const els = scrollRef.current?.querySelectorAll("[data-term-match]");
-    setMatchCount(els ? els.length : 0);
+    const q = search.query.toLowerCase();
+    let count = 0;
+    for (const b of blocks) {
+      count += countMatches(b.command.toLowerCase(), q);
+      const cap = b.running ? LIVE_RENDER_LINES : FINISHED_RENDER_LINES;
+      const lines = b.lines.length > cap ? b.lines.slice(-cap) : b.lines;
+      for (const line of lines) {
+        let text = "";
+        for (const seg of line.segments) text += seg.text;
+        count += countMatches(text.toLowerCase(), q);
+      }
+    }
+    setMatchCount(count);
   }, [search.query, blocks]);
 
   const navMatch = useCallback((dir: 1 | -1) => {
@@ -619,6 +348,7 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
 
   return (
     <div
+      ref={rootRef}
       data-block-terminal
       // `@container` so the input-row badges respond to the PANE's width, not
       // the window's — split panes make viewport media queries meaningless.
@@ -686,16 +416,18 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
         className="min-h-0 flex-1 overflow-y-auto hide-scrollbar px-3 py-2"
         style={{ visibility: altScreen ? "hidden" : "visible" }}
       >
-        {blocks.map((b) => (
-          <BlockCard
-            key={b.id}
-            block={b}
-            rev={b.rev}
-            onRerun={runCommand}
-            onPassword={writePassword}
-            query={search.query}
-          />
-        ))}
+        <div ref={contentRef}>
+          {blocks.map((b) => (
+            <BlockCard
+              key={b.id}
+              block={b}
+              rev={b.rev}
+              onRerun={runCommand}
+              onPassword={writePassword}
+              query={search.query}
+            />
+          ))}
+        </div>
       </div>
 
       {/* Atlas-owned footer stays visible below both block and alternate-screen
@@ -707,7 +439,11 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
         ) : (
           <ChevronRight size={13} className="shrink-0 text-[var(--accent-primary)]" />
         )}
-        {altScreen ? (
+        {exited ? (
+          <span className="min-w-0 flex-1 truncate text-[11px] text-[var(--text-tertiary)]">
+            Shell exited — close this terminal or open a new one
+          </span>
+        ) : altScreen ? (
           <span className="min-w-0 flex-1 truncate text-[11px] text-[var(--text-tertiary)]">
             Interactive process
           </span>
@@ -740,7 +476,7 @@ export function BlockTerminal({ isActive, onFocus, tabId, terminalKey }: BlockTe
       </div>
     </div>
   );
-}
+});
 
 /** Masked password entry rendered INLINE at the bottom of the running block
  *  whose output is a password prompt (sudo/ssh). Sent straight to the PTY. */
@@ -812,17 +548,16 @@ function StatusBadge({ cwd, git }: { cwd: string; git: TermGit | null }) {
   );
 }
 
-// Render only the tail of very large output — segmenting + DOM-rendering a
-// multi-MB block would freeze the UI. The full (store-capped) text is still
-// available via Copy. Finished blocks show a deeper tail (they resolve once);
-// a RUNNING block resolves on every flush, so its live view is a shorter tail
-// — the full depth appears the moment the command finishes.
-const RENDER_CAP = 192 * 1024;
-const LIVE_TAIL_CAP = 64 * 1024;
+// Lines rendered per block. The emulator already bounds a block at MAX_LINES;
+// this is the DOM budget. A RUNNING block shows a shorter tail because its hot
+// rows are rebuilt every flush — the full depth appears the moment it finishes.
+const LIVE_RENDER_LINES = 400;
+const FINISHED_RENDER_LINES = 3000;
 
 /** Memoized: block objects mutate in place while running, so `rev` (bumped by
- *  the parser on every mutation) is what invalidates a card. Finished blocks
- *  never re-render during streaming — the per-flush cost is one live card. */
+ *  the parser once per flush) is what invalidates a card. Finished blocks never
+ *  re-render during streaming — the per-flush cost is one live card, and inside
+ *  it only the hot lines (see `OutputLine`). */
 const BlockCard = memo(function BlockCard({
   block,
   rev,
@@ -836,20 +571,11 @@ const BlockCard = memo(function BlockCard({
   onPassword: (pw: string) => void;
   query: string;
 }) {
-  const cap = block.running ? LIVE_TAIL_CAP : RENDER_CAP;
-  const clipped = block.output.length > cap;
-  let display = clipped ? block.output.slice(-cap) : block.output;
-  if (clipped) {
-    // Start at a line boundary — a byte-blind cut can land mid-escape-sequence
-    // or mid-line, which mis-styles everything up to the next SGR reset.
-    const nl = display.indexOf("\n");
-    if (nl >= 0 && nl < display.length - 1) display = display.slice(nl + 1);
-  }
-  // `resolveTerminalOutput` applies CR / cursor / erase line discipline so a
-  // spinner or progress bar that redraws the same line (`\r…`) collapses to one
-  // updating line instead of concatenating every frame.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const segments = useMemo(() => resolveTerminalOutput(display), [display, rev]);
+  void rev; // memo key only
+  const cap = block.running ? LIVE_RENDER_LINES : FINISHED_RENDER_LINES;
+  const lines = block.lines;
+  const visible = lines.length > cap ? lines.slice(-cap) : lines;
+  const hidden = block.droppedLines + (lines.length - visible.length);
   const cwdName = block.cwd ? block.cwd.split("/").filter(Boolean).pop() : "";
   const [collapsed, setCollapsed] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -857,6 +583,12 @@ const BlockCard = memo(function BlockCard({
 
   const duration =
     !block.running && block.endedAt ? formatDuration(block.endedAt - block.startedAt) : null;
+
+  // An EMPTY headerless block is the preamble waiting for the shell's first
+  // prompt marker (zsh sourcing a profile takes a few seconds). Rendering its
+  // card then paints a bordered box with nothing in it — a stray grey line at
+  // the top of a fresh terminal. Nothing to show, so show nothing.
+  if (!hasHeader && visible.length === 0 && !block.awaitingPassword) return null;
 
   const copyOutput = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -867,7 +599,18 @@ const BlockCard = memo(function BlockCard({
   };
 
   return (
-    <div className="group mb-2 overflow-hidden rounded-md border border-[var(--border-default)] bg-[var(--bg-raised)]">
+    <div
+      className="group mb-2 overflow-hidden rounded-md border border-[var(--border-default)] bg-[var(--bg-raised)]"
+      // A finished block skips layout and paint while off screen — without a
+      // virtualizer and without promoting a layer (Safari 18+; older WebKit
+      // ignores it). Never on the live card: its height changes every flush
+      // and the intrinsic-size placeholder would fight the auto-scroll.
+      style={
+        block.running
+          ? undefined
+          : { contentVisibility: "auto", containIntrinsicSize: "auto 200px" }
+      }
+    >
       {hasHeader && (
         <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-2.5 h-[28px] text-[12px]">
           {block.running ? (
@@ -934,13 +677,13 @@ const BlockCard = memo(function BlockCard({
           </div>
         </div>
       )}
-      {!collapsed && (clipped || block.truncated) && (
+      {!collapsed && (hidden > 0 || block.truncated) && (
         <div className="px-3 pt-2 text-[10px] italic text-[var(--text-tertiary)]">
-          earlier output hidden — showing the latest {Math.round(cap / 1024)} KB (Copy gets more)
+          earlier output hidden — showing the latest {visible.length} lines (Copy gets more)
         </div>
       )}
-      {!collapsed && segments.length > 0 && (
-        <BlockOutput segments={segments} cwd={block.cwd} query={query} />
+      {!collapsed && visible.length > 0 && (
+        <LineList lines={visible} cwd={block.cwd} query={query} />
       )}
       {block.awaitingPassword && block.running && <BlockPasswordInput onSubmit={onPassword} />}
     </div>
@@ -970,12 +713,16 @@ function BlockAction({
   );
 }
 
-const BlockOutput = memo(function BlockOutput({
-  segments,
+/** The block's output as one element per resolved line. Committed lines keep
+ *  their object identity across flushes, so `OutputLine`'s memo bails for all
+ *  but the handful of hot rows at the tail — linkification and span creation
+ *  happen once per line for its lifetime. */
+const LineList = memo(function LineList({
+  lines,
   cwd,
   query,
 }: {
-  segments: AnsiSegment[];
+  lines: readonly ResolvedLine[];
   cwd: string;
   query: string;
 }) {
@@ -997,12 +744,44 @@ const BlockOutput = memo(function BlockOutput({
       .catch(() => {});
   }, []);
 
-  // Line-level linkification (a URL styled across several SGR runs — e.g.
-  // Vite's `http://localhost:` + `8080/` — is one clickable target).
-  const runs = useMemo(() => linkifySegments(segments), [segments]);
-
   return (
-    <pre className="whitespace-pre-wrap break-words px-3 py-2 font-mono text-[12px] leading-[1.45] text-[var(--text-secondary)]">
+    // Block-level children: WebKit still inserts a newline between them on
+    // copy, so selecting across lines pastes as it reads.
+    <div className="whitespace-pre-wrap break-words px-3 py-2 font-mono text-[12px] leading-[1.45] text-[var(--text-secondary)]">
+      {lines.map((line) => (
+        <OutputLine
+          key={line.id}
+          line={line}
+          query={query}
+          onOpenPath={openPath}
+          onOpenLink={openLink}
+        />
+      ))}
+    </div>
+  );
+});
+
+const OutputLine = memo(function OutputLine({
+  line,
+  query,
+  onOpenPath,
+  onOpenLink,
+}: {
+  line: ResolvedLine;
+  query: string;
+  onOpenPath: (raw: string) => void;
+  onOpenLink: (raw: string) => void;
+}) {
+  // Line-level linkification (a URL styled across several SGR runs — e.g.
+  // Vite's `http://localhost:` + `8080/` — is one clickable target). Keyed on
+  // the segments' identity: a committed line never recomputes.
+  const end = perfBegin("linkify");
+  const runs = useMemo(() => linkifySegments(line.segments), [line.segments]);
+  end();
+  // An empty line still needs height.
+  if (runs.length === 0) return <div>{"\u200b"}</div>;
+  return (
+    <div>
       {runs.map((r, i) =>
         r.kind === "url" ? (
           <span
@@ -1011,7 +790,7 @@ const BlockOutput = memo(function BlockOutput({
             title="⌘-click to open in browser"
             className="cursor-pointer hover:text-[var(--accent-primary)] hover:underline"
             onClick={(e) => {
-              if (e.metaKey || e.ctrlKey) openLink(r.target ?? r.text);
+              if (e.metaKey || e.ctrlKey) onOpenLink(r.target ?? r.text);
             }}
           >
             {renderHL(r.text, query)}
@@ -1023,7 +802,7 @@ const BlockOutput = memo(function BlockOutput({
             title="⌘-click to open"
             className="cursor-pointer hover:text-[var(--accent-primary)] hover:underline"
             onClick={(e) => {
-              if (e.metaKey || e.ctrlKey) openPath(r.target ?? r.text);
+              if (e.metaKey || e.ctrlKey) onOpenPath(r.target ?? r.text);
             }}
           >
             {renderHL(r.text, query)}
@@ -1034,6 +813,6 @@ const BlockOutput = memo(function BlockOutput({
           </span>
         ),
       )}
-    </pre>
+    </div>
   );
 });

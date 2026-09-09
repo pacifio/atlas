@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
 import { createSelectors } from "@/lib/create-selectors";
+import { useTerminalStore, type TerminalTabState } from "@/features/terminal/stores/terminal-store";
 import { invoke } from "@tauri-apps/api/core";
 import { ORG_SCOPED_TYPES, TAB_TYPES, type TabType } from "@/lib/constants";
 import type { LayoutTemplate } from "../templates";
@@ -334,6 +335,41 @@ function captureView(s: LayoutState): WorkspaceView {
     focusedGroupId: s.focusedGroupId,
     tabHistory: [...s.tabHistory],
     tabHistoryIndex: s.tabHistoryIndex,
+  };
+}
+
+/**
+ * The per-project layout file (`save_editor_state`). Split columns + their
+ * tabs, and — since v3 — the pane trees of the terminal tabs, so a split
+ * terminal layout comes back the way it was left. Rust stores the JSON
+ * opaquely; the shape is ours.
+ *
+ * Returns null in zen mode: that is a transient overlay, and persisting its
+ * layout over the real workspace would reopen the app in zen.
+ */
+function buildEditorState(state: LayoutState) {
+  if (state.zen) return null;
+  // Persist every closable tab (welcome-chat is the recreated baseline).
+  // Org-scoped tabs are excluded: this file is keyed by project path, and the
+  // same project is often open in several orgs.
+  const tabs = state.tabs
+    .filter((t) => t.closable && !ORG_SCOPED_TYPES.has(t.type))
+    .map((t) => ({
+      id: t.id,
+      type: t.type,
+      title: t.title,
+      data: t.data,
+      groupId: groupOf(t),
+    }));
+  const terminalTabIds = tabs.filter((t) => t.type === "terminal").map((t) => t.id);
+  return {
+    version: 3,
+    tabs,
+    groupOrder: state.groupOrder,
+    activeByGroup: state.activeByGroup,
+    focusedGroupId: state.focusedGroupId,
+    activeTabId: state.activeTabId, // legacy readers
+    terminalTrees: useTerminalStore.getState().actions.exportTrees(terminalTabIds),
   };
 }
 
@@ -781,58 +817,16 @@ export const useLayoutStore = createSelectors(
           // project so the AKB arrangement comes back on reopen. The Rust
           // save/load commands store the JSON opaquely, so the shape is ours.
           saveEditorState: (projectPath) => {
-            const state = useLayoutStore.getState();
-            // Zen mode is a transient overlay — don't persist its 3-column layout
-            // over the real workspace (the pre-zen snapshot stays saved, so
-            // quitting in zen reopens the underlying layout).
-            if (state.zen) return;
-            // Persist every closable tab (welcome-chat is the recreated baseline).
-            // Org-scoped tabs are excluded: this file is keyed by project
-            // path, and the same project is often open in several orgs.
-            const tabs = state.tabs
-              .filter((t) => t.closable && !ORG_SCOPED_TYPES.has(t.type))
-              .map((t) => ({
-                id: t.id,
-                type: t.type,
-                title: t.title,
-                data: t.data,
-                groupId: groupOf(t),
-              }));
-            const data = {
-              version: 2,
-              tabs,
-              groupOrder: state.groupOrder,
-              activeByGroup: state.activeByGroup,
-              focusedGroupId: state.focusedGroupId,
-              activeTabId: state.activeTabId, // legacy readers
-            };
+            const data = buildEditorState(useLayoutStore.getState());
+            if (!data) return;
             invoke("save_editor_state", {
               projectPath,
               stateJson: JSON.stringify(data),
             }).catch(() => {});
           },
           flushEditorState: async (projectPath) => {
-            const state = useLayoutStore.getState();
-            if (state.zen) return;
-            // Org-scoped tabs are excluded: this file is keyed by project
-            // path, and the same project is often open in several orgs.
-            const tabs = state.tabs
-              .filter((t) => t.closable && !ORG_SCOPED_TYPES.has(t.type))
-              .map((t) => ({
-                id: t.id,
-                type: t.type,
-                title: t.title,
-                data: t.data,
-                groupId: groupOf(t),
-              }));
-            const data = {
-              version: 2,
-              tabs,
-              groupOrder: state.groupOrder,
-              activeByGroup: state.activeByGroup,
-              focusedGroupId: state.focusedGroupId,
-              activeTabId: state.activeTabId,
-            };
+            const data = buildEditorState(useLayoutStore.getState());
+            if (!data) return;
             await invoke("save_editor_state", {
               projectPath,
               stateJson: JSON.stringify(data),
@@ -868,8 +862,19 @@ export const useLayoutStore = createSelectors(
                 activeByGroup?: Record<string, string | null>;
                 focusedGroupId?: string;
                 activeTabId?: string;
+                terminalTrees?: Record<string, TerminalTabState>;
               };
               if (data.tabs && data.tabs.length > 0) {
+                // Pane trees first, so `TerminalPanel`'s `initTab` (a no-op
+                // when the tree exists) finds the restored one. Only for tabs
+                // that are actually coming back.
+                if (data.terminalTrees) {
+                  const restoredIds = new Set(data.tabs.map((t) => t.id));
+                  const trees = Object.fromEntries(
+                    Object.entries(data.terminalTrees).filter(([id]) => restoredIds.has(id)),
+                  );
+                  useTerminalStore.getState().actions.importTrees(trees);
+                }
                 set((s) => {
                   // Restore the column structure (≤3). Falls back to the existing
                   // single "main" column for the legacy (v1) format.

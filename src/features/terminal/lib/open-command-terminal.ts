@@ -87,7 +87,12 @@ export function openCommandTerminal(command: string, title: string): CommandTerm
 
   // A terminal of its own, even in a tab that already has one: the existing
   // shell may be mid-command, and typing into it would interleave.
-  const terminalId = useTerminalStore.getState().actions.addTerminalForCommand(tab.id);
+  // The mirror's owner; the panel records it again on mount if this is
+  // unknown here. (No workspace-store import: that module registers Tauri
+  // listeners at load, which this pure-ish helper's tests cannot host.)
+  const terminalId = useTerminalStore
+    .getState()
+    .actions.addTerminalForCommand(tab.id, after.currentViewWsId ?? undefined);
   useTerminalStore.getState().actions.setPendingCommand(terminalId, command);
   useTerminalStore.getState().actions.requestTerminalFocus(tab.id);
   return { tabId: tab.id, terminalId, createdTab: !before.has(tab.id) };

@@ -314,6 +314,75 @@ function GeneralSettings() {
           onChange={(next) => updateSettings({ enterToSend: next })}
         />
       </SettingRow>
+      <SectionTitle
+        title="Terminal notifications"
+        subtitle="Be told when a command finishes or wants input, wherever you are in Atlas"
+      />
+      <SettingRow
+        label="Terminal notifications"
+        description="A command that fails, runs longer than the threshold, or asks for input raises an item in the notification center, a toast when its terminal is off screen, and a macOS notification when Atlas is in the background. Nothing fires while you are looking at that terminal."
+      >
+        <Toggle
+          checked={settings.terminalNotifications}
+          onChange={(next) => updateSettings({ terminalNotifications: next })}
+        />
+      </SettingRow>
+      <SettingRow
+        label="Notify on success after"
+        description="A command that succeeds faster than this stays quiet. Failures always notify (below)."
+      >
+        <select
+          value={String(settings.terminalNotifyMinDurationMs)}
+          disabled={!settings.terminalNotifications}
+          onChange={(e) => updateSettings({ terminalNotifyMinDurationMs: Number(e.target.value) })}
+          className="h-7 rounded-md border border-[var(--border-default)] bg-[var(--bg-elevated)] px-2 text-[11px] text-[var(--text-primary)] outline-none disabled:opacity-40"
+        >
+          <option value="5000">5 seconds</option>
+          <option value="10000">10 seconds</option>
+          <option value="30000">30 seconds</option>
+          <option value="60000">1 minute</option>
+          <option value="300000">5 minutes</option>
+        </select>
+      </SettingRow>
+      <SettingRow
+        label="Notify on failure"
+        description="A non-zero exit code notifies regardless of how long the command ran. Ctrl-C is not a failure."
+      >
+        <Toggle
+          checked={settings.terminalNotifyOnFailure}
+          disabled={!settings.terminalNotifications}
+          onChange={(next) => updateSettings({ terminalNotifyOnFailure: next })}
+        />
+      </SettingRow>
+      <SettingRow
+        label="Notify when input is needed"
+        description="A password prompt, a terminal bell, or a program's own notification (OSC 9 / 777) while the terminal is not on screen."
+      >
+        <Toggle
+          checked={settings.terminalNotifyOnAttention}
+          disabled={!settings.terminalNotifications}
+          onChange={(next) => updateSettings({ terminalNotifyOnAttention: next })}
+        />
+      </SettingRow>
+      <SettingRow
+        label="macOS notifications"
+        description="Also raise a system notification when the Atlas window is not focused."
+      >
+        <Toggle
+          checked={settings.terminalNotifyNative}
+          disabled={!settings.terminalNotifications}
+          onChange={(next) => updateSettings({ terminalNotifyNative: next })}
+        />
+      </SettingRow>
+      <SettingRow label="Sound" description="Play a short chime with terminal notifications.">
+        <Toggle
+          checked={settings.terminalNotifySound}
+          disabled={!settings.terminalNotifications}
+          onChange={(next) => updateSettings({ terminalNotifySound: next })}
+        />
+      </SettingRow>
+
+      <SectionTitle title="Behaviour" subtitle="Files, logs and the editor" />
       <SettingRow
         label="Auto-add .atlas to .gitignore"
         description="When you open a git-tracked project, Atlas adds `.atlas/` to the project's .gitignore (creating one if needed). Atlas keeps its caches and state in `.atlas/` — keeping it out of version control is almost always what you want. No-op on non-git projects."

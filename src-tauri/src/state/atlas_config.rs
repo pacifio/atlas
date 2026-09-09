@@ -161,6 +161,27 @@ pub struct AppSettings {
     /// inserts a newline. Cmd/Ctrl+Enter always sends regardless.
     #[serde(default = "default_true")]
     pub enter_to_send: bool,
+    /// Terminal notifications master switch. A command that fails, runs
+    /// longer than `terminal_notify_min_duration_ms`, or asks for input raises
+    /// an in-app notification, a toast when its terminal is off screen and a
+    /// native notification when Atlas is not the front app.
+    #[serde(default = "default_true")]
+    pub terminal_notifications: bool,
+    /// A successful command shorter than this never notifies (milliseconds).
+    #[serde(default = "default_terminal_notify_min_duration_ms")]
+    pub terminal_notify_min_duration_ms: u32,
+    /// Notify on a non-zero exit code regardless of duration.
+    #[serde(default = "default_true")]
+    pub terminal_notify_on_failure: bool,
+    /// Notify when a command wants input (password prompt, bell, OSC 9/777).
+    #[serde(default = "default_true")]
+    pub terminal_notify_on_attention: bool,
+    /// Also raise a macOS notification when the window is not focused.
+    #[serde(default = "default_true")]
+    pub terminal_notify_native: bool,
+    /// Play a short chime with the notification.
+    #[serde(default)]
+    pub terminal_notify_sound: bool,
 }
 
 fn default_true() -> bool {
@@ -183,6 +204,10 @@ pub fn default_ui_scale() -> f32 {
     1.0
 }
 
+pub fn default_terminal_notify_min_duration_ms() -> u32 {
+    10_000
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -200,6 +225,12 @@ impl Default for AppSettings {
             auto_update: true,
             updater_ignored_version: None,
             enter_to_send: true,
+            terminal_notifications: true,
+            terminal_notify_min_duration_ms: default_terminal_notify_min_duration_ms(),
+            terminal_notify_on_failure: true,
+            terminal_notify_on_attention: true,
+            terminal_notify_native: true,
+            terminal_notify_sound: false,
         }
     }
 }
@@ -316,6 +347,36 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
          # inserts a newline; false = only Cmd/Ctrl+Enter sends. Cmd/Ctrl+Enter\n\
          # sends either way. (default: true)",
     ),
+    (
+        "terminalNotifications",
+        "# Terminal notifications: a command that fails, runs longer than\n\
+         # terminalNotifyMinDurationMs, or asks for input raises an in-app\n\
+         # notification, a toast when its terminal is off screen and a macOS\n\
+         # notification when Atlas is in the background. (default: true)",
+    ),
+    (
+        "terminalNotifyMinDurationMs",
+        "# A successful command shorter than this many milliseconds never\n\
+         # notifies. Must be between 0 and 3600000. (default: 10000)",
+    ),
+    (
+        "terminalNotifyOnFailure",
+        "# Notify on a non-zero exit code regardless of duration. (default: true)",
+    ),
+    (
+        "terminalNotifyOnAttention",
+        "# Notify when a command wants input — a password prompt, a bell, or an\n\
+         # OSC 9 / OSC 777 notification from the program. (default: true)",
+    ),
+    (
+        "terminalNotifyNative",
+        "# Also raise a macOS notification when the Atlas window is not focused.\n\
+         # (default: true)",
+    ),
+    (
+        "terminalNotifySound",
+        "# Play a short chime with terminal notifications. (default: false)",
+    ),
 ];
 
 /// Every key Atlas recognizes under `[settings]`, in file order.
@@ -338,6 +399,9 @@ pub struct ValidationIssue {
     pub message: String,
 }
 
+/// One hour — a longer "minimum duration" means "never notify on success".
+const MAX_TERMINAL_NOTIFY_MS: u32 = 3_600_000;
+
 pub fn validate(settings: &AppSettings) -> Result<(), ValidationIssue> {
     if !settings.ui_scale.is_finite()
         || settings.ui_scale < MIN_UI_SCALE
@@ -348,6 +412,15 @@ pub fn validate(settings: &AppSettings) -> Result<(), ValidationIssue> {
             message: format!(
                 "must be a finite number between {MIN_UI_SCALE} and {MAX_UI_SCALE}, got {}",
                 settings.ui_scale
+            ),
+        });
+    }
+    if settings.terminal_notify_min_duration_ms > MAX_TERMINAL_NOTIFY_MS {
+        return Err(ValidationIssue {
+            key: "terminalNotifyMinDurationMs",
+            message: format!(
+                "must be between 0 and {MAX_TERMINAL_NOTIFY_MS}, got {}",
+                settings.terminal_notify_min_duration_ms
             ),
         });
     }
@@ -569,6 +642,12 @@ pub struct SettingsPatch {
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub updater_ignored_version: Option<Option<String>>,
     pub enter_to_send: Option<bool>,
+    pub terminal_notifications: Option<bool>,
+    pub terminal_notify_min_duration_ms: Option<u32>,
+    pub terminal_notify_on_failure: Option<bool>,
+    pub terminal_notify_on_attention: Option<bool>,
+    pub terminal_notify_native: Option<bool>,
+    pub terminal_notify_sound: Option<bool>,
 }
 
 impl SettingsPatch {
@@ -615,6 +694,24 @@ impl SettingsPatch {
         if let Some(v) = self.enter_to_send {
             settings.enter_to_send = v;
         }
+        if let Some(v) = self.terminal_notifications {
+            settings.terminal_notifications = v;
+        }
+        if let Some(v) = self.terminal_notify_min_duration_ms {
+            settings.terminal_notify_min_duration_ms = v;
+        }
+        if let Some(v) = self.terminal_notify_on_failure {
+            settings.terminal_notify_on_failure = v;
+        }
+        if let Some(v) = self.terminal_notify_on_attention {
+            settings.terminal_notify_on_attention = v;
+        }
+        if let Some(v) = self.terminal_notify_native {
+            settings.terminal_notify_native = v;
+        }
+        if let Some(v) = self.terminal_notify_sound {
+            settings.terminal_notify_sound = v;
+        }
     }
 
     /// Mutate only the touched keys of `doc["settings"]` — everything else
@@ -641,6 +738,14 @@ impl SettingsPatch {
         set_bool!(git_blame_inline, "gitBlameInline");
         set_bool!(auto_update, "autoUpdate");
         set_bool!(enter_to_send, "enterToSend");
+        set_bool!(terminal_notifications, "terminalNotifications");
+        set_bool!(terminal_notify_on_failure, "terminalNotifyOnFailure");
+        set_bool!(terminal_notify_on_attention, "terminalNotifyOnAttention");
+        set_bool!(terminal_notify_native, "terminalNotifyNative");
+        set_bool!(terminal_notify_sound, "terminalNotifySound");
+        if let Some(v) = self.terminal_notify_min_duration_ms {
+            table["terminalNotifyMinDurationMs"] = toml_edit::value(i64::from(v));
+        }
 
         if let Some(v) = self.ui_scale {
             table["uiScale"] = toml_edit::value(f64::from(v));

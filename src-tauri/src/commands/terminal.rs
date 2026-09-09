@@ -2,6 +2,7 @@ use atlas_terminal::TerminalManager;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, Mutex, Notify};
@@ -10,14 +11,22 @@ use tokio::sync::{mpsc, Mutex, Notify};
 /// crossing, small enough that one message never stalls the JS main thread
 /// (Tabby caps at 100 KB; Ghostty's per-lock parse unit is 64 KiB).
 const MAX_CHUNK: usize = 128 * 1024;
-/// Max unacknowledged chunks in flight to the webview — the JS side acks each
-/// chunk on receipt (before rendering), so this bounds the webview's message
-/// queue depth the way Tabby's 500 KB credit window does. With the window
-/// closed, the batcher stops draining, the bounded reader queue fills, and the
-/// PTY reader thread parks — backpressure reaches the child process.
-const MAX_IN_FLIGHT: usize = 4;
+/// Max unacknowledged chunks in flight to the webview. The JS side queues
+/// chunks and acks them in one batch AFTER consuming them in a frame-budgeted
+/// drain, so this window is real end-to-end backpressure: with it closed the
+/// batcher stops, the bounded reader queue fills, the PTY reader thread parks,
+/// and the child's write() blocks. Eight chunks (1 MiB) is enough that a
+/// frame's budget is never starved waiting on the round trip.
+const MAX_IN_FLIGHT: usize = 8;
 /// Reader-thread → batcher queue depth, in 64 KiB reads (≤512 KiB buffered).
 const READ_QUEUE_CHUNKS: usize = 8;
+/// A read at least this large is forwarded as-is rather than copied into the
+/// coalescing buffer — coalescing only pays for small reads.
+const DIRECT_SEND_BYTES: usize = MAX_CHUNK / 2;
+/// Floor between tty line-discipline probes when the output carries no escape
+/// byte (an app flipping raw mode almost always redraws with escapes; `read -s`
+/// and `stty -echo` prompts are the exceptions this timer catches).
+const PROBE_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Per-session credit window shared between the emit task and `terminal_ack`.
 pub struct AckWindow {
@@ -75,9 +84,13 @@ pub async fn terminal_create(
     tokio::spawn(async move {
         let mut buf: Vec<u8> = Vec::with_capacity(16 * 1024);
         let mut last_raw: Option<bool> = None;
+        let mut last_probe = Instant::now() - PROBE_INTERVAL;
         'main: loop {
             if buf.is_empty() {
                 match rx.recv().await {
+                    // A big read moves straight into the buffer (no copy);
+                    // small ones are appended and coalesced below.
+                    Some(output) if output.data.len() >= DIRECT_SEND_BYTES => buf = output.data,
                     Some(output) => buf.extend_from_slice(&output.data),
                     None => break,
                 }
@@ -103,6 +116,8 @@ pub async fn terminal_create(
             } else {
                 std::mem::take(&mut buf)
             };
+            // Decide whether to probe BEFORE the chunk moves into the send.
+            let has_escape = chunk.contains(&0x1b);
             window.in_flight.fetch_add(1, Ordering::AcqRel);
             if on_output.send(InvokeResponseBody::Raw(chunk)).is_err() {
                 break 'main;
@@ -112,8 +127,15 @@ pub async fn terminal_create(
             // just arrived, and report only transitions. An app flipping the
             // terminal into raw mode always redraws immediately afterwards, so
             // output is a reliable carrier for the change — and hanging the
-            // check here costs one ioctl per emitted chunk and NOTHING while
-            // the terminal sits idle, unlike a polling timer per session.
+            // check here costs NOTHING while the terminal sits idle, unlike a
+            // polling timer per session. Gated so a plain 50 MB `cat` does not
+            // pay an ioctl (under the master mutex) per chunk: probe when the
+            // chunk carries an escape byte, or every PROBE_INTERVAL otherwise.
+            let due = has_escape || last_probe.elapsed() >= PROBE_INTERVAL;
+            if !due {
+                continue;
+            }
+            last_probe = Instant::now();
             if let Some(raw) = probe.as_ref().and_then(atlas_terminal::TtyModeProbe::is_raw) {
                 if last_raw != Some(raw) {
                     last_raw = Some(raw);
@@ -135,16 +157,18 @@ pub async fn terminal_create(
     Ok(id)
 }
 
-/// Ack one output chunk — called by the frontend on receipt (before rendering),
-/// re-opening the credit window. Sync + parking_lot: this runs per chunk.
+/// Ack consumed output chunks, re-opening the credit window. `count` defaults
+/// to one; the frontend's drain passes how many it consumed in the frame, so
+/// this is one IPC per frame rather than one per chunk. Sync + parking_lot.
 #[tauri::command]
-pub fn terminal_ack(state: State<'_, TerminalState>, id: String) {
+pub fn terminal_ack(state: State<'_, TerminalState>, id: String, count: Option<usize>) {
+    let n = count.unwrap_or(1).max(1);
     let window = state.acks.lock().get(&id).cloned();
     if let Some(w) = window {
         let _ = w
             .in_flight
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
-                Some(v.saturating_sub(1))
+                Some(v.saturating_sub(n))
             });
         w.notify.notify_one();
     }
@@ -165,6 +189,20 @@ pub async fn terminal_write(
 ) -> Result<(), String> {
     let manager = state.manager.lock().await;
     manager.write(&id, &data).map_err(|e| e.to_string())
+}
+
+/// Write text to the PTY. The keystroke path: a JSON string is ~4× smaller on
+/// the wire than the `number[]` `terminal_write` takes, and the frontend skips
+/// its `Array.from(TextEncoder.encode(...))`. Control bytes still go through
+/// `terminal_write`.
+#[tauri::command]
+pub async fn terminal_write_text(
+    state: State<'_, TerminalState>,
+    id: String,
+    text: String,
+) -> Result<(), String> {
+    let manager = state.manager.lock().await;
+    manager.write(&id, text.as_bytes()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

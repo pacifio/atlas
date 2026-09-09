@@ -66,6 +66,43 @@ export interface AppSettings {
    *  Cmd/Ctrl+Enter sends, bare Enter always inserts a newline (the old
    *  default). Cmd/Ctrl+Enter always sends regardless of this setting. */
   enterToSend: boolean;
+  /** Terminal notifications master switch: a command finishing (failed, or
+   *  longer than `terminalNotifyMinDurationMs`) or wanting input raises an
+   *  in-app notification, a toast when the terminal is off screen, and a
+   *  native notification when Atlas is not the front app. */
+  terminalNotifications: boolean;
+  /** A successful command shorter than this never notifies. */
+  terminalNotifyMinDurationMs: number;
+  /** Notify on a non-zero exit code regardless of duration. */
+  terminalNotifyOnFailure: boolean;
+  /** Notify when a command wants input (password prompt, bell, OSC 9/777). */
+  terminalNotifyOnAttention: boolean;
+  /** Also raise a macOS notification when the window is not focused. */
+  terminalNotifyNative: boolean;
+  /** Play a short chime with the notification. */
+  terminalNotifySound: boolean;
+}
+
+/** The terminal notifier's view of settings — flat keys on the wire (the
+ *  Rust side writes top-level `[settings]` keys only), grouped here. */
+export interface TerminalNotificationPrefs {
+  enabled: boolean;
+  minDurationMs: number;
+  onFailure: boolean;
+  onAttention: boolean;
+  native: boolean;
+  sound: boolean;
+}
+
+export function terminalNotificationPrefs(s: AppSettings): TerminalNotificationPrefs {
+  return {
+    enabled: s.terminalNotifications,
+    minDurationMs: s.terminalNotifyMinDurationMs,
+    onFailure: s.terminalNotifyOnFailure,
+    onAttention: s.terminalNotifyOnAttention,
+    native: s.terminalNotifyNative,
+    sound: s.terminalNotifySound,
+  };
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -83,4 +120,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoUpdate: true,
   updaterIgnoredVersion: null,
   enterToSend: true,
+  terminalNotifications: true,
+  terminalNotifyMinDurationMs: 10_000,
+  terminalNotifyOnFailure: true,
+  terminalNotifyOnAttention: true,
+  terminalNotifyNative: true,
+  terminalNotifySound: false,
 };

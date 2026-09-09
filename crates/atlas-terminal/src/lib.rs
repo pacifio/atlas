@@ -16,7 +16,15 @@ pub struct TerminalSession {
     /// PID of the spawned login shell. Used by `cwd` to resolve relative file
     /// paths clicked in the terminal against the shell's live directory.
     pid: Option<u32>,
+    /// Last size pushed to the PTY, so a resize storm (N terminals × 60 fps
+    /// during a drag) costs one ioctl per CHANGE, not per call.
+    size: Mutex<(u16, u16)>,
     _reader_handle: std::thread::JoinHandle<()>,
+}
+
+/// Whether `next` differs from `last` — the resize dedup predicate.
+pub(crate) fn needs_resize(last: (u16, u16), next: (u16, u16)) -> bool {
+    last != next
 }
 
 pub struct TerminalManager {
@@ -108,16 +116,20 @@ impl TerminalManager {
         let session_id = id.clone();
 
         let reader_handle = std::thread::spawn(move || {
-            // 64 KiB read buffer (was 4 KiB) — fewer syscalls / channel sends
-            // on high-throughput output (builds, `cat` of large files).
-            let mut buf = vec![0u8; 65536];
+            // 64 KiB reads — fewer syscalls / channel sends on high-throughput
+            // output (builds, `cat` of large files). The buffer is allocated
+            // per read and MOVED into the message: the previous reuse-then-
+            // `to_vec()` shape copied every byte once here before the batcher
+            // copied it again. One allocation per read is the cheaper trade.
             loop {
+                let mut buf = vec![0u8; 65536];
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
+                        buf.truncate(n);
                         let output = TerminalOutput {
                             id: session_id.clone(),
-                            data: buf[..n].to_vec(),
+                            data: buf,
                         };
                         if sender.blocking_send(output).is_err() {
                             break;
@@ -140,6 +152,7 @@ impl TerminalManager {
                 master,
                 writer: Arc::new(Mutex::new(writer)),
                 pid,
+                size: Mutex::new((cols, rows)),
                 _reader_handle: reader_handle,
             },
         );
@@ -159,10 +172,25 @@ impl TerminalManager {
     }
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> anyhow::Result<()> {
+        // A 2×1 is what a fit against a hidden 0×0 box produces; it is never a
+        // size anyone wants their shell wrapped to.
+        if cols < 2 || rows < 1 {
+            anyhow::bail!("invalid terminal size {cols}x{rows}");
+        }
         let session = self
             .sessions
             .get(id)
             .ok_or_else(|| anyhow::anyhow!("Terminal session not found: {id}"))?;
+        {
+            let mut last = session
+                .size
+                .lock()
+                .map_err(|_| anyhow::anyhow!("terminal size mutex poisoned"))?;
+            if !needs_resize(*last, (cols, rows)) {
+                return Ok(());
+            }
+            *last = (cols, rows);
+        }
         let master = session
             .master
             .lock()
@@ -404,4 +432,16 @@ fn ensure_zsh_integration_dir() -> Option<std::path::PathBuf> {
         std::fs::write(dir.join(name), body).ok()?;
     }
     Some(dir)
+}
+
+#[cfg(test)]
+mod resize_tests {
+    use super::needs_resize;
+
+    #[test]
+    fn resize_dedups() {
+        assert!(!needs_resize((120, 40), (120, 40)));
+        assert!(needs_resize((120, 40), (121, 40)));
+        assert!(needs_resize((120, 40), (120, 39)));
+    }
 }

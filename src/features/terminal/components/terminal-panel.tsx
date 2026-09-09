@@ -1,158 +1,83 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useCallback, useRef, Fragment } from "react";
+import { Group, Panel, Separator } from "react-resizable-panels";
 import { useScopedHotkeys } from "@/features/keybindings/lib/use-scoped-hotkeys";
 import {
   useTerminalStore,
   collectPanes,
   type TreeNode,
   type PaneNode,
+  type SplitNode,
 } from "../stores/terminal-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { BlockTerminal } from "./block-terminal";
-import { Plus, Columns2, Rows2, X, Terminal as TerminalIcon, Loader2 } from "lucide-react";
+import { terminalSessions } from "../lib/terminal-session";
+import { useIsFocusedTerminal } from "../lib/focus";
+import { pickPaneInDirection, type Direction, type RectLike } from "../lib/pane-navigation";
+import {
+  Plus,
+  Columns2,
+  Rows2,
+  X,
+  Terminal as TerminalIcon,
+  Loader2,
+  Maximize2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// Sessions close when their terminal leaves the store — every close path in
+// one place. Bound once for the app's lifetime.
+terminalSessions.bindToStore();
 
 interface TerminalPanelProps {
   tabId: string;
+  /** The workspace this tab belongs to — recorded so a notification can route
+   *  back to it after its workspace has gone to the background. */
+  workspaceId?: string;
 }
 
-interface PaneRect {
-  top: number;
-  left: number;
-  width: number;
-  height: number;
-}
-
-export function TerminalPanel({ tabId }: TerminalPanelProps) {
+/**
+ * A terminal tab: a tree of resizable panes, each holding one or more
+ * terminals (tabs within the pane).
+ *
+ * Terminals render INSIDE their pane container. The previous design measured
+ * every container with `getBoundingClientRect` and floated the terminals over
+ * the chrome in a flat, absolutely-positioned layer — so that restructuring
+ * the tree could never remount a terminal and kill its shell. That invariant
+ * is now the session registry's (`terminal-session.ts`): a remount re-parents
+ * the session's surface and re-renders cached blocks, and costs nothing else.
+ * So the geometry can be what the DOM says it is, and the ResizeObservers,
+ * double-rAF retries and stale-rect guards are gone with it.
+ */
+export function TerminalPanel({ tabId, workspaceId }: TerminalPanelProps) {
   const tab = useTerminalStore((s) => s.tabs[tabId]);
-  const { initTab, setActiveTerminalInPane, setActivePane, closeTerminalInPane } =
-    useTerminalStore.use.actions();
-  const rootRef = useRef<HTMLDivElement>(null);
-  const [paneRects, setPaneRects] = useState<Record<string, PaneRect>>({});
+  const {
+    initTab,
+    setActiveTerminalInPane,
+    setActivePane,
+    closeTerminalInPane,
+    splitPane,
+    closePane,
+    toggleZoom,
+  } = useTerminalStore.use.actions();
+  // Is this tab the one showing in its column? Mounted already implies the
+  // active workspace (background workspaces unmount terminal panels); this is
+  // what tells a hidden tab's terminals to stop rendering.
+  const panelVisible = useLayoutStore((s) => {
+    const t = s.tabs.find((x) => x.id === tabId);
+    return !!t && s.activeByGroup[t.groupId ?? "main"] === tabId;
+  });
 
   useEffect(() => {
-    if (!tab) initTab(tabId);
-  }, [tabId, tab, initTab]);
+    initTab(tabId, workspaceId);
+  }, [tabId, tab, initTab, workspaceId]);
 
-  const measureRetryRef = useRef(0);
-  const measurePanes = useCallback(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    // Bail while the panel is hidden/collapsed (tab inactive, mid-transition).
-    // Measuring now yields a stale top:0 / height:0 that paints the terminal
-    // over its own 28px pane header and the tab bar. We simply don't update —
-    // the last *valid* rects stay in place; the ResizeObserver re-measures
-    // once real geometry exists.
-    if (root.offsetParent === null) return;
-    const rootRect = root.getBoundingClientRect();
-    if (rootRect.height === 0 || rootRect.width === 0) return;
-
-    const containers = root.querySelectorAll<HTMLElement>("[data-pane-container]");
-    const rects: Record<string, PaneRect> = {};
-    let allValid = containers.length > 0;
-    containers.forEach((el) => {
-      const r = el.getBoundingClientRect();
-      if (r.height === 0 || r.width === 0 || el.offsetParent === null) {
-        allValid = false;
-        return;
-      }
-      rects[el.dataset.paneContainer!] = {
-        top: r.top - rootRect.top,
-        left: r.left - rootRect.left,
-        width: r.width,
-        height: r.height,
-      };
-    });
-
-    if (!allValid) {
-      // Layout still settling — retry a few frames before giving up (avoids
-      // committing a half-measured frame, and avoids an infinite loop).
-      if (measureRetryRef.current < 10) {
-        measureRetryRef.current += 1;
-        requestAnimationFrame(measurePanes);
-      }
-      return;
-    }
-    measureRetryRef.current = 0;
-    setPaneRects(rects);
-  }, []);
-
-  // Measure after tree changes and on window resize
-  useEffect(() => {
-    if (!rootRef.current || !tab) return;
-    // Double RAF to ensure layout is settled
-    requestAnimationFrame(() => requestAnimationFrame(measurePanes));
-  }, [tab?.root, measurePanes]);
-
-  useEffect(() => {
-    // Double RAF so we measure AFTER layout settles. A single RAF can fire
-    // while the panel is still transitioning (e.g. tab switch flipping the
-    // container from display:none to visible), capturing a stale top of 0 —
-    // which makes the absolutely-positioned terminal overlay cover its own
-    // 28px pane header and bleed up under the tab bar.
-    const onResize = () => requestAnimationFrame(() => requestAnimationFrame(measurePanes));
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [measurePanes]);
-
-  // Measure when the root OR any pane container resizes. Observing the
-  // containers (not just the root) is what catches geometry changes that don't
-  // change the root's box — e.g. the center tab-bar toggling (⌘⌥T), a split
-  // column being added/removed, zen mode, or the 28px pane header settling
-  // after mount. Re-attached whenever the terminal's pane tree changes (the
-  // container elements are recreated). Double RAF for the settle reason above.
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    const ro = new ResizeObserver(() =>
-      requestAnimationFrame(() => requestAnimationFrame(measurePanes)),
-    );
-    ro.observe(root);
-    root.querySelectorAll<HTMLElement>("[data-pane-container]").forEach((el) => ro.observe(el));
-    return () => ro.disconnect();
-  }, [measurePanes, tab?.root]);
-
-  // Re-measure when a surrounding panel toggles (⌘⌥B status bar = height,
-  // ⌘B / ⌘⇧B left/right panels = width). The ResizeObserver above can miss the
-  // reflow (the box change races the conditional mount/unmount), so the
-  // absolutely-positioned terminals — and their command input — would otherwise
-  // keep the old rect. Re-measuring on the visibility flags fixes it directly.
-  const leftVisible = useLayoutStore((s) => s.leftPanel.visible);
-  const rightVisible = useLayoutStore((s) => s.rightPanel.visible);
-  const bottomVisible = useLayoutStore((s) => s.bottomPanel.visible);
-  const chatSidebarVisible = useLayoutStore((s) => s.chatSidebar.visible);
-  // The center's own chrome also changes the terminal's box: the tab bar
-  // toggling (⌘⌥T), split columns being added/removed (groupOrder), and zen
-  // mode. None resize the surrounding panels, so watch them explicitly.
-  const tabBarVisible = useLayoutStore((s) => s.tabBarVisible);
-  const groupCount = useLayoutStore((s) => s.groupOrder.length);
-  const zen = useLayoutStore((s) => s.zen);
-  useEffect(() => {
-    requestAnimationFrame(() => requestAnimationFrame(measurePanes));
-  }, [
-    leftVisible,
-    rightVisible,
-    bottomVisible,
-    chatSidebarVisible,
-    tabBarVisible,
-    groupCount,
-    zen,
-    measurePanes,
-  ]);
-
-  // Terminal-tab keyboard shortcuts, gated to the VISIBLE terminal panel
-  // (offsetParent !== null) so background tabs never steal them:
-  //   ⌘;  → previous terminal tab     ⌘'  → next terminal tab  (within the
-  //         active pane, wrapping)
-  //   ⌘W  → close the active terminal tab WHEN the pane has more than one;
-  //         otherwise it falls through to the global ⌘W (close the editor tab).
-  // Registered in the CAPTURE phase so ⌘W can stopImmediatePropagation() before
-  // the global (bubble-phase) ⌘W handler closes the whole tab.
-  const activePane = () => {
+  const activePane = useCallback((): PaneNode | null => {
     const t = useTerminalStore.getState().tabs[tabId];
     if (!t) return null;
     const panes = collectPanes(t.root);
     return panes.find((p) => p.id === t.activePaneId) ?? panes[0] ?? null;
-  };
+  }, [tabId]);
+
   const cycleTerminal = (delta: number) => {
     const pane = activePane();
     // Nothing to cycle — decline so the chord falls through (e.g. to the
@@ -164,6 +89,43 @@ export function TerminalPanel({ tabId }: TerminalPanelProps) {
     setActivePane(tabId, pane.id);
     return true;
   };
+
+  const cyclePane = (delta: number) => {
+    const t = useTerminalStore.getState().tabs[tabId];
+    if (!t) return false;
+    const panes = collectPanes(t.root);
+    if (panes.length < 2) return false;
+    const idx = Math.max(
+      0,
+      panes.findIndex((p) => p.id === t.activePaneId),
+    );
+    setActivePane(tabId, panes[(idx + delta + panes.length) % panes.length].id);
+    return true;
+  };
+
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const focusDirection = (dir: Direction) => {
+    const pane = activePane();
+    const root = rootRef.current;
+    if (!pane || !root) return false;
+    // Real DOM now, so real rectangles — read at keypress time, never cached.
+    const rects: Record<string, RectLike> = {};
+    root.querySelectorAll<HTMLElement>("[data-pane-container]").forEach((el: HTMLElement) => {
+      const r = el.getBoundingClientRect();
+      rects[el.dataset.paneContainer!] = {
+        left: r.left,
+        top: r.top,
+        width: r.width,
+        height: r.height,
+      };
+    });
+    const next = pickPaneInDirection(rects, pane.id, dir);
+    if (!next) return false;
+    setActivePane(tabId, next);
+    return true;
+  };
+
   useScopedHotkeys({
     rootRef,
     requireFocusWithin: true,
@@ -179,52 +141,61 @@ export function TerminalPanel({ tabId }: TerminalPanelProps) {
       },
       "terminal.prevTab": () => cycleTerminal(-1),
       "terminal.nextTab": () => cycleTerminal(1),
+      "terminal.splitRight": () => {
+        const pane = activePane();
+        if (!pane) return false;
+        splitPane(tabId, pane.id, "horizontal");
+        return true;
+      },
+      "terminal.splitDown": () => {
+        const pane = activePane();
+        if (!pane) return false;
+        splitPane(tabId, pane.id, "vertical");
+        return true;
+      },
+      "terminal.closePane": () => {
+        const t = useTerminalStore.getState().tabs[tabId];
+        const pane = activePane();
+        // A single pane is the tab itself; let the chord fall through.
+        if (!t || !pane || t.root.type === "pane") return false;
+        closePane(tabId, pane.id);
+        return true;
+      },
+      "terminal.focusPaneLeft": () => focusDirection("left"),
+      "terminal.focusPaneRight": () => focusDirection("right"),
+      "terminal.focusPaneUp": () => focusDirection("up"),
+      "terminal.focusPaneDown": () => focusDirection("down"),
+      "terminal.focusNextPane": () => cyclePane(1),
+      "terminal.focusPrevPane": () => cyclePane(-1),
+      "terminal.zoomPane": () => {
+        const t = useTerminalStore.getState().tabs[tabId];
+        const pane = activePane();
+        if (!t || !pane || t.root.type === "pane") return false;
+        toggleZoom(tabId, pane.id);
+        return true;
+      },
+      "terminal.find": () => {
+        const pane = activePane();
+        const id = pane?.activeTerminalId;
+        if (!id) return false;
+        terminalSessions.get(id)?.requestSearch();
+        return true;
+      },
     },
   });
 
   if (!tab) return null;
 
-  const allPanes = collectPanes(tab.root);
+  const zoomed = tab.zoomedPaneId
+    ? collectPanes(tab.root).find((p) => p.id === tab.zoomedPaneId)
+    : null;
 
   return (
     <div ref={rootRef} className="h-full bg-[#000] relative">
-      {/* Layout layer — toolbars + empty container divs */}
-      <div className="h-full absolute inset-0">
-        <LayoutRenderer node={tab.root} tabId={tabId} activePaneId={tab.activePaneId} />
-      </div>
-
-      {/* Terminal layer — flat list, absolutely positioned, NEVER unmounts on tree changes */}
-      {allPanes.map((pane) =>
-        pane.terminals.map((ptyId) => {
-          const rect = paneRects[pane.id];
-          const isActiveInPane = ptyId === pane.activeTerminalId;
-          const isPaneActive = pane.id === tab.activePaneId;
-
-          return (
-            <div
-              key={ptyId}
-              style={{
-                position: "absolute",
-                top: rect?.top ?? 0,
-                left: rect?.left ?? 0,
-                width: rect?.width ?? 0,
-                height: rect?.height ?? 0,
-                visibility: rect && isActiveInPane ? "visible" : "hidden",
-                pointerEvents: isActiveInPane ? "auto" : "none",
-              }}
-            >
-              <BlockTerminal
-                isActive={isActiveInPane && isPaneActive}
-                terminalKey={ptyId}
-                tabId={tabId}
-                onFocus={() => {
-                  setActiveTerminalInPane(tabId, pane.id, ptyId);
-                  setActivePane(tabId, pane.id);
-                }}
-              />
-            </div>
-          );
-        }),
+      {zoomed ? (
+        <PaneView pane={zoomed} tabId={tabId} panelVisible={panelVisible} zoomed />
+      ) : (
+        <LayoutRenderer node={tab.root} tabId={tabId} panelVisible={panelVisible} />
       )}
     </div>
   );
@@ -233,45 +204,73 @@ export function TerminalPanel({ tabId }: TerminalPanelProps) {
 function LayoutRenderer({
   node,
   tabId,
-  activePaneId,
+  panelVisible,
 }: {
   node: TreeNode;
   tabId: string;
-  activePaneId: string | null;
+  panelVisible: boolean;
 }) {
   if (node.type === "pane") {
-    return <PaneChrome pane={node} tabId={tabId} isActivePane={node.id === activePaneId} />;
+    return <PaneView pane={node} tabId={tabId} panelVisible={panelVisible} />;
   }
+  return <SplitView node={node} tabId={tabId} panelVisible={panelVisible} />;
+}
 
+/** A split: a nested resizable group. Proportions live on the node and are
+ *  written back only on a user drag, never on the library's own constraint
+ *  recomputes (that would loop). */
+function SplitView({
+  node,
+  tabId,
+  panelVisible,
+}: {
+  node: SplitNode;
+  tabId: string;
+  panelVisible: boolean;
+}) {
+  const { setSplitSizes } = useTerminalStore.use.actions();
+  const horizontal = node.direction === "horizontal";
   return (
-    <div className={cn("h-full flex", node.direction === "horizontal" ? "flex-row" : "flex-col")}>
+    <Group
+      id={`term-split-${node.id}`}
+      orientation={horizontal ? "horizontal" : "vertical"}
+      defaultLayout={node.sizes}
+      onLayoutChanged={(layout, meta) => {
+        if (meta?.isUserInteraction) setSplitSizes(tabId, node.id, layout);
+      }}
+      className="h-full"
+    >
       {node.children.map((child, i) => (
-        <div
-          key={child.id}
-          className={cn(
-            "min-w-0 min-h-0",
-            i > 0 &&
-              (node.direction === "horizontal"
-                ? "border-l border-border-default"
-                : "border-t border-border-default"),
+        <Fragment key={child.id}>
+          {i > 0 && (
+            <Separator
+              className={cn(
+                "bg-border-default hover:bg-accent data-[separator=active]:bg-accent transition-colors",
+                horizontal ? "w-px cursor-col-resize" : "h-px cursor-row-resize",
+              )}
+            />
           )}
-          style={{ flex: 1 }}
-        >
-          <LayoutRenderer node={child} tabId={tabId} activePaneId={activePaneId} />
-        </div>
+          {/* Percentages: v4 reads bare numbers as pixels, unit-less strings
+              as percentages. */}
+          <Panel id={child.id} minSize="15" className="min-w-0 min-h-0">
+            <LayoutRenderer node={child} tabId={tabId} panelVisible={panelVisible} />
+          </Panel>
+        </Fragment>
       ))}
-    </div>
+    </Group>
   );
 }
 
-function PaneChrome({
+function PaneView({
   pane,
   tabId,
-  isActivePane,
+  panelVisible,
+  zoomed,
 }: {
   pane: PaneNode;
   tabId: string;
-  isActivePane: boolean;
+  panelVisible: boolean;
+  zoomed?: boolean;
 }) {
   const {
     addTerminalToPane,
@@ -280,15 +279,24 @@ function PaneChrome({
     closePane,
     setActiveTerminalInPane,
     setActivePane,
+    toggleZoom,
   } = useTerminalStore.use.actions();
-  const tab = useTerminalStore((s) => s.tabs[tabId]);
+  // Only this pane's slice — a sibling's tab switch must not re-render us.
+  const isActivePane = useTerminalStore((s) => s.tabs[tabId]?.activePaneId === pane.id);
+  const hasSplits = useTerminalStore((s) => s.tabs[tabId]?.root.type === "split");
   const busy = useTerminalStore((s) => s.busy);
-  const hasSplits = tab?.root.type === "split";
+  const groupFocused = useLayoutStore((s) => {
+    const t = s.tabs.find((x) => x.id === tabId);
+    return !!t && s.focusedGroupId === (t.groupId ?? "main");
+  });
   const activePty = pane.activeTerminalId;
 
   return (
     <div
-      className={cn("h-full flex flex-col", isActivePane && "ring-1 ring-[#ffffff08] ring-inset")}
+      className={cn(
+        "h-full flex flex-col",
+        isActivePane && groupFocused && "ring-1 ring-[#ffffff08] ring-inset",
+      )}
     >
       <div className="flex items-center h-[32px] shrink-0 border-b border-border-default bg-bg-primary px-1 gap-0.5">
         <div className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto hide-scrollbar">
@@ -327,6 +335,11 @@ function PaneChrome({
           ))}
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
+          {zoomed && (
+            <span className="mr-1 rounded bg-white/[0.06] px-1.5 py-px text-[9px] text-text-tertiary">
+              zoomed
+            </span>
+          )}
           <button
             onClick={() => {
               addTerminalToPane(tabId, pane.id);
@@ -353,6 +366,18 @@ function PaneChrome({
           </button>
           {hasSplits && (
             <button
+              onClick={() => toggleZoom(tabId, pane.id)}
+              className={cn(
+                "flex items-center justify-center w-5 h-5 rounded hover:bg-bg-hover transition-colors cursor-pointer",
+                zoomed ? "text-text-primary" : "text-text-tertiary hover:text-text-secondary",
+              )}
+              title={zoomed ? "Unzoom pane" : "Zoom pane"}
+            >
+              <Maximize2 size={11} />
+            </button>
+          )}
+          {hasSplits && (
+            <button
               onClick={() => closePane(tabId, pane.id)}
               className="flex items-center justify-center w-5 h-5 rounded text-text-tertiary hover:text-white hover:bg-bg-hover transition-colors cursor-pointer"
               title="Close pane"
@@ -362,8 +387,57 @@ function PaneChrome({
           )}
         </div>
       </div>
-      {/* Empty container — terminals overlay this via absolute positioning */}
-      <div className="flex-1 min-h-0" data-pane-container={pane.id} />
+      {/* The pane's terminals, in the DOM where they belong. Inactive ones stay
+          laid out (`visibility:hidden`, not `display:none`) so their fit is
+          real and switching is instant. */}
+      <div className="flex-1 min-h-0 relative" data-pane-container={pane.id}>
+        {pane.terminals.map((ptyId) => (
+          <TerminalSlot
+            key={ptyId}
+            ptyId={ptyId}
+            pane={pane}
+            tabId={tabId}
+            panelVisible={panelVisible}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TerminalSlot({
+  ptyId,
+  pane,
+  tabId,
+  panelVisible,
+}: {
+  ptyId: string;
+  pane: PaneNode;
+  tabId: string;
+  panelVisible: boolean;
+}) {
+  const { setActiveTerminalInPane, setActivePane } = useTerminalStore.use.actions();
+  const isActiveInPane = ptyId === pane.activeTerminalId;
+  const focused = useIsFocusedTerminal(ptyId);
+  const onFocus = useCallback(() => {
+    setActiveTerminalInPane(tabId, pane.id, ptyId);
+    setActivePane(tabId, pane.id);
+  }, [setActiveTerminalInPane, setActivePane, tabId, pane.id, ptyId]);
+  return (
+    <div
+      className="absolute inset-0"
+      style={{
+        visibility: isActiveInPane ? "visible" : "hidden",
+        pointerEvents: isActiveInPane ? "auto" : "none",
+      }}
+    >
+      <BlockTerminal
+        isActive={focused}
+        visible={panelVisible && isActiveInPane}
+        terminalKey={ptyId}
+        tabId={tabId}
+        onFocus={onFocus}
+      />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { emit } from "@tauri-apps/api/event";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { useTerminalStore } from "@/features/terminal/stores/terminal-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { agents } from "./agents-api";
 import { isBusyAgentStatus } from "@/types/agent";
@@ -25,6 +26,11 @@ export function requestCloseTab(tabId: string): void {
   if (!tab || !tab.closable) return;
   if (tab.type !== "chat") {
     layout.actions.closeTab(tabId);
+    // A terminal tab's pane tree (and any command still queued for one of its
+    // terminals) used to outlive the tab for ever. Dropping it here is also
+    // what closes the shells: the session registry sweeps sessions whose
+    // terminal id has left the store.
+    if (tab.type === "terminal") useTerminalStore.getState().actions.removeTabs([tabId]);
     return;
   }
 

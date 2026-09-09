@@ -1,6 +1,7 @@
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
+import { useTerminalStore } from "@/features/terminal/stores/terminal-store";
 
 /**
  * Tab ↔ workspace resolution. Tab ids are unique across workspaces, so a tab
@@ -15,7 +16,7 @@ import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store"
  * still belonged to the outgoing one, so a bind landing mid-switch created the
  * session with the WRONG cwd and filed its history row under the wrong project.
  */
-function workspaceIdForTab(tabId: string): string | null {
+export function workspaceIdForTab(tabId: string): string | null {
   const layout = useLayoutStore.getState();
   const ws = useWorkspaceStore.getState();
   if (layout.tabs.some((t) => t.id === tabId)) {
@@ -24,6 +25,10 @@ function workspaceIdForTab(tabId: string): string | null {
   for (const [wsId, view] of Object.entries(layout.viewsByWs)) {
     if (view.tabs.some((t) => t.id === tabId)) return wsId;
   }
+  // A terminal tab records its owner when it is initialised — the only
+  // answer for one whose workspace view has not been committed yet.
+  const owner = useTerminalStore.getState().owners[tabId];
+  if (owner) return owner;
   const path = useChatStore.getState().sessions[tabId]?.workingDirectory;
   if (path) {
     // Paths are unique per ORG, not globally (the same folder can be a

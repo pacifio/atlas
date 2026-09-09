@@ -110,6 +110,30 @@ adaptiveSuggestions = "agent"
 # inserts a newline; false = only Cmd/Ctrl+Enter sends. Cmd/Ctrl+Enter
 # sends either way. (default: true)
 enterToSend = true
+
+# Terminal notifications: a command that fails, runs longer than
+# terminalNotifyMinDurationMs, or asks for input raises an in-app
+# notification, a toast when its terminal is off screen and a macOS
+# notification when Atlas is in the background. (default: true)
+terminalNotifications = true
+
+# A successful command shorter than this many milliseconds never
+# notifies. Must be between 0 and 3600000. (default: 10000)
+terminalNotifyMinDurationMs = 10000
+
+# Notify on a non-zero exit code regardless of duration. (default: true)
+terminalNotifyOnFailure = true
+
+# Notify when a command wants input — a password prompt, a bell, or an
+# OSC 9 / OSC 777 notification from the program. (default: true)
+terminalNotifyOnAttention = true
+
+# Also raise a macOS notification when the Atlas window is not focused.
+# (default: true)
+terminalNotifyNative = true
+
+# Play a short chime with terminal notifications. (default: false)
+terminalNotifySound = false
 ```
 
 Note `updaterIgnoredVersion`: a key that serializes to nothing still gets its
@@ -138,6 +162,12 @@ wrote; `toml_edit` just preserves whatever comments are already there.
 | `autoUpdate` | boolean | `true` | — |
 | `updaterIgnoredVersion` | string, or absent | absent | — |
 | `enterToSend` | boolean | `true` | — |
+| `terminalNotifications` | boolean | `true` | — |
+| `terminalNotifyMinDurationMs` | integer | `10000` | 0 ≤ n ≤ 3600000 |
+| `terminalNotifyOnFailure` | boolean | `true` | — |
+| `terminalNotifyOnAttention` | boolean | `true` | — |
+| `terminalNotifyNative` | boolean | `true` | — |
+| `terminalNotifySound` | boolean | `false` | — |
 
 Any other key under `[settings]` is left on disk untouched and reported as an
 `unknownKeys` entry in `get_atlas_config_info` — never treated as an error,

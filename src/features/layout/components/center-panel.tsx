@@ -313,6 +313,7 @@ const WorkspaceColumns = memo(function WorkspaceColumns({
               isActive={isActive}
               runningTabIds={runningTabIds}
               soloColumn={solo}
+              workspaceId={workspaceId}
             />
           </Panel>
         </Fragment>
@@ -327,12 +328,14 @@ const TabColumn = memo(function TabColumn({
   isActive,
   runningTabIds,
   soloColumn,
+  workspaceId,
 }: {
   groupId: string;
   view: WorkspaceView;
   isActive: boolean;
   runningTabIds: Set<string>;
   soloColumn?: boolean;
+  workspaceId: string;
 }) {
   const splitNewHint = useActionShortcut("split.new")?.label;
   const splitCloseHint = useActionShortcut("split.close")?.label;
@@ -514,7 +517,12 @@ const TabColumn = memo(function TabColumn({
         </div>
       )}
 
-      <TabContentContainer groupId={groupId} view={view} isActive={isActive} />
+      <TabContentContainer
+        groupId={groupId}
+        view={view}
+        isActive={isActive}
+        workspaceId={workspaceId}
+      />
     </div>
   );
 });
@@ -523,10 +531,13 @@ const TabContentContainer = memo(function TabContentContainer({
   groupId,
   view,
   isActive,
+  workspaceId,
 }: {
   groupId: string;
   view: WorkspaceView;
   isActive: boolean;
+  /** Handed to terminal tabs so they can record their owner. */
+  workspaceId: string;
 }) {
   const newTabHint = useActionShortcut("nav.newTabPalette")?.label;
   const { setActiveTab } = useLayoutStore.use.actions();
@@ -621,7 +632,7 @@ const TabContentContainer = memo(function TabContentContainer({
               ) : tab.type === "settings" ? (
                 <SettingsPanel initialSection={tab.data.section as string | undefined} />
               ) : (
-                <TerminalPanel tabId={tab.id} />
+                <TerminalPanel tabId={tab.id} workspaceId={workspaceId} />
               )}
             </div>
           );

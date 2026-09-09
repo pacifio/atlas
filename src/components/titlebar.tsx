@@ -4,7 +4,15 @@ import * as Popover from "@radix-ui/react-popover";
 import { useProjectStore } from "@/features/project/stores/project-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
-import { useNotificationsStore } from "@/features/notifications/stores/notifications-store";
+import {
+  useNotificationsStore,
+  hasUnread,
+  isErrorKind,
+} from "@/features/notifications/stores/notifications-store";
+import {
+  useTerminalAttention,
+  anyTerminalNeedsAttention,
+} from "@/features/terminal/lib/terminal-notifier";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import {
   PanelLeft,
@@ -490,29 +498,32 @@ function UpdateButton() {
 
 function NotificationButton() {
   const { toggle } = useNotificationsStore.use.actions();
+  const activeOrgId = useOrgStore.use.activeOrganisationId();
   // Select PRIMITIVES (booleans) — returning a filtered array from the selector
   // would create a new reference every render and trigger an infinite loop.
-  const hasUnread = useNotificationsStore((s) => s.items.some((i) => !i.read));
-  const hasError = useNotificationsStore((s) =>
-    s.items.some((i) => !i.read && (i.kind === "agent-failed" || i.kind === "chat-error")),
-  );
+  // Scoped to the active organisation: another org's unread items are its own.
+  const unread = useNotificationsStore((s) => hasUnread(s.items, activeOrgId));
+  const hasError = useNotificationsStore((s) => hasUnread(s.items, activeOrgId, isErrorKind));
   // LIVE attention state: any session (any workspace) blocked on a permission
-  // decision. Derived from the chat store rather than unread flags so it shows
-  // even after the panel was opened, and clears itself the moment the prompt
-  // is answered.
-  const needsAttention = useChatStore((s) =>
+  // decision, or any terminal waiting on input. Derived from live stores
+  // rather than unread flags so it shows even after the panel was opened, and
+  // clears itself the moment the prompt is answered.
+  const chatAttention = useChatStore((s) =>
     Object.values(s.pendingPermissions).some((reqs) => reqs.length > 0),
   );
+  const terminalAttention = useTerminalAttention(anyTerminalNeedsAttention);
+  const needsAttention = chatAttention || terminalAttention;
+  const hasUnreadAny = unread;
 
   return (
     <button
-      onClick={toggle}
+      onClick={() => toggle(activeOrgId)}
       className="relative flex items-center justify-center w-6 h-6 rounded text-[#555] hover:text-[#aaa] hover:bg-[#ffffff08] transition-all duration-150 outline-none focus:outline-none"
       title="Notifications"
       aria-label="Notifications"
     >
       <Bell size={14} />
-      {(hasUnread || needsAttention) && (
+      {(hasUnreadAny || needsAttention) && (
         <span
           className={cn(
             "absolute -top-[1px] -right-[1px] w-[7px] h-[7px] rounded-full ring-1 ring-[var(--bg-base)] pointer-events-none",
@@ -523,7 +534,7 @@ function NotificationButton() {
                 ? "bg-[var(--status-success)] animate-pulse"
                 : "bg-white",
           )}
-          aria-label={needsAttention ? "An agent needs your attention" : "Unread notifications"}
+          aria-label={needsAttention ? "Something needs your attention" : "Unread notifications"}
         />
       )}
     </button>
