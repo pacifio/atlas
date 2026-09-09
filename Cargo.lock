@@ -684,7 +684,7 @@ dependencies = [
 
 [[package]]
 name = "atlas"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "agent-client-protocol",
  "ammonia",
