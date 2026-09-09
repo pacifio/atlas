@@ -1672,6 +1672,18 @@
      Strictly worse than the blanking it was meant to fix. */
 }
 
+/* Set by use-transcript-scroll on the content element for the life of a
+   fling. Hover during a scroll is pure waste — each row that passes under a
+   resting pointer invalidates its whole subtree (`group-hover` compiles to
+   `:where(.group):hover *`) and starts an opacity transition WebKit backs
+   with a compositing layer, several times a second, in the frames the tile
+   deadline can least afford. With the content inert the scroller is the hit
+   target, so wheel and momentum keep flowing; nothing below can be hovered
+   or clicked until the gesture goes quiet (~200ms). */
+[data-scroll-hot] {
+  pointer-events: none;
+}
+
 /* Marker rows: one line, muted, never wraps. */
 .atlas-marker {
   height: 26px;

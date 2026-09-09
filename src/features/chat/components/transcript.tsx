@@ -48,6 +48,7 @@ import { useTranscriptScroll } from "../lib/use-transcript-scroll";
 import { useChatStore } from "../stores/chat-store";
 import { saveThreadToKb } from "../lib/turn-actions";
 import { sessionCanRetry } from "../lib/retry-gate";
+import { pinScope } from "../stores/chat-pins-store";
 import { cn } from "@/lib/utils";
 import { isScrollHot } from "@/lib/scroll-hot";
 import { GradualBlur } from "@/components/gradual-blur";
@@ -206,6 +207,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const cacheKey = `${tabId}:${acpSessionId}`;
+  const pinScopeKey = pinScope(tabId, acpSessionId);
   const agent = switchable(agentType);
   // Only the just-sent user message plays the bubble entrance (id-scoped —
   // see UserRowView). Primitive selector: changes once per user send.
@@ -638,21 +640,54 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     setNewCount(0);
   }, []);
 
+  // A jump has two ways of arriving before it can be honoured, and both used
+  // to be silently dropped:
+  //
+  //  * The target row is ALREADY in the window. `setStartIndex` with an
+  //    unchanged value schedules no render, so the anchor layout effect never
+  //    ran and nothing moved. `jumpTick` exists purely to force that render.
+  //  * The caller has just changed the message list (the pin jump clears the
+  //    role filter first) and dispatched in the same tick, so the projection
+  //    we hold is the OLD one and the index is not in it yet. The index is
+  //    parked in `pendingJumpRef` and retried when the projection changes.
+  const pendingJumpRef = useRef<number | null>(null);
+  const [, setJumpTick] = useState(0);
+  const projectionRef = useRef(projection);
+  projectionRef.current = projection;
+
+  const tryJump = useCallback(() => {
+    const messageIndex = pendingJumpRef.current;
+    if (messageIndex === null) return;
+    const proj = projectionRef.current;
+    const turn = proj.turns.find((t) => t.messageIndex === messageIndex);
+    const rowId = turn ? proj.rows[turn.rowStart]?.id : undefined;
+    if (!rowId) return;
+    const target = rowsRef.current.findIndex((r) => r.id === rowId);
+    if (target < 0) return;
+    pendingJumpRef.current = null;
+    // Widen the window first if the target is above it, then anchor once the
+    // row exists. Same settle-over-renders shape the timeline uses for
+    // jump-to-Checkpoint.
+    setStartIndex((i) => (target < i ? Math.max(0, target - 10) : i));
+    pendingAnchorRef.current = rowId;
+    setJumpTick((n) => n + 1);
+  }, []);
+
   const scrollToMessage = useCallback(
     (messageIndex: number) => {
-      const turn = projection.turns.find((t) => t.messageIndex === messageIndex);
-      const rowId = turn ? projection.rows[turn.rowStart]?.id : undefined;
-      if (!rowId) return;
-      const target = rowsRef.current.findIndex((r) => r.id === rowId);
-      if (target < 0) return;
-      // Widen the window first if the target is above it, then anchor once the
-      // row exists. Same settle-over-renders shape the timeline uses for
-      // jump-to-Checkpoint.
-      setStartIndex((i) => (target < i ? Math.max(0, target - 10) : i));
-      pendingAnchorRef.current = rowId;
+      pendingJumpRef.current = messageIndex;
+      tryJump();
     },
-    [projection],
+    [tryJump],
   );
+
+  useEffect(() => {
+    if (pendingJumpRef.current !== null) tryJump();
+  }, [projection, tryJump]);
+  // A jump that never resolved must not fire into the next session's thread.
+  useEffect(() => {
+    pendingJumpRef.current = null;
+  }, [cacheKey]);
 
   useImperativeHandle(ref, () => ({ scrollToBottom, scrollToMessage }), [
     scrollToBottom,
@@ -709,6 +744,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
                 onToggleExpand={toggleExpand}
                 onSaveKb={onSaveKb}
                 canRetryRowId={canRetry ? lastUserRowId : undefined}
+                pinScopeKey={pinScopeKey}
               />
             </div>
           ))}
@@ -773,6 +809,7 @@ function RowView({
   onExpandTurn,
   onSaveKb,
   canRetryRowId,
+  pinScopeKey,
 }: {
   row: Row;
   justSentMessageId?: string;
@@ -787,6 +824,9 @@ function RowView({
    *  retry is possible. An id compare here keeps `UserRowView`'s prop a plain
    *  boolean. */
   canRetryRowId?: string;
+  /** Pin scope for this thread — resolved once here rather than per row, so a
+   *  row never reads the chat store. */
+  pinScopeKey: string;
 }) {
   switch (row.kind) {
     case RowKind.User:
@@ -800,6 +840,7 @@ function RowView({
           justSent={row.id === `u:${justSentMessageId}`}
           tabId={tabId}
           canRetry={row.id === canRetryRowId}
+          pinScopeKey={pinScopeKey}
           onToggleExpand={onToggleExpand}
         />
       );

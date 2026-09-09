@@ -35,6 +35,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SessionSidebar } from "./session-sidebar";
+import { ChatPinnedMenu } from "./chat-pinned-menu";
+import type { ChatPin } from "../stores/chat-pins-store";
 
 export type RoleFilter = "all" | "user" | "assistant";
 
@@ -70,6 +72,10 @@ interface ChatHeaderProps {
   roleFilter: RoleFilter;
   onRoleFilterChange: (f: RoleFilter) => void;
   onOpenSearch: () => void;
+  /** Pin scope for this thread (see `chat-pins-store`). The pin count control
+   *  renders itself away when the thread has no pins. */
+  pinScopeKey: string;
+  onJumpToPin: (pin: ChatPin) => void;
   bashPanelOpen: boolean;
   onToggleBash: () => void;
   plansPanelOpen: boolean;
@@ -92,6 +98,8 @@ function ChatHeaderImpl({
   roleFilter,
   onRoleFilterChange,
   onOpenSearch,
+  pinScopeKey,
+  onJumpToPin,
   bashPanelOpen,
   onToggleBash,
   plansPanelOpen,
@@ -169,6 +177,20 @@ function ChatHeaderImpl({
         </Popover.Root>
 
         <div className="flex-1" />
+
+        {/* Left of Find, so the two "go back to something" controls sit
+            together at the right end of the bar. Pill-shaped rather than a
+            circle because it carries a count. */}
+        <ChatPinnedMenu
+          pinScopeKey={pinScopeKey}
+          onJump={onJumpToPin}
+          className={cn(
+            "flex shrink-0 items-center gap-1 rounded-full px-2.5",
+            CONTROL_H,
+            OUTLINE,
+            "cursor-pointer outline-none",
+          )}
+        />
 
         <HeaderCircleButton
           title={findHint ? `Find in chat (${findHint})` : "Find in chat"}

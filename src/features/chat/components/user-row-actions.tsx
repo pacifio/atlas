@@ -1,4 +1,4 @@
-// Copy / retry, under a user message.
+// Rewind / pin / resend / copy, under a user message.
 //
 // Three constraints shaped this, and each one rules out the obvious approach:
 //
@@ -27,21 +27,45 @@
 //
 // `focus-within` on the container is not decoration: with an opacity-only
 // reveal, keyboard users would otherwise tab into controls they cannot see.
+//
+// # Why the copy button jittered, and the scroll cost that came with it
+//
+// The buttons carried Tailwind's `transition-colors`, which animates `fill`
+// and `stroke` as well as `color` — so hovering an icon repainted its SVG
+// every frame of the transition, the "icon jitter" the global rule at
+// `globals.css` ("only background-color") exists to prevent. The buttons now
+// inherit that rule and transition nothing else. Labels are also constant
+// (`title` used to flip to "Copied", and macOS re-anchors the native tooltip
+// when it changes under the pointer); the copied state rides on the icon.
+//
+// The reveal is opacity ONLY and SHORT. Never a transform: the bar sits at
+// `top-full` of a wrapper whose height is the bubble's, so a `translate-y`
+// puts it inside the bubble. And no enter delay or long fade: a running
+// opacity transition is a compositing layer in WebKit, and a longer one means
+// more rows holding a layer at once as they pass under the pointer mid-fling.
+// The transcript also suspends hover entirely while scrolling
+// (`use-transcript-scroll.ts`), so the transition only ever runs on a still
+// thread.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Copy, RotateCcw } from "lucide-react";
+import { Check, Copy, Forward, Pin, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
 import { retryLastTurn } from "../lib/retry-turn";
+import { useChatPinsStore } from "../stores/chat-pins-store";
 
 function ActionButton({
   label,
   onClick,
+  active,
   children,
 }: {
+  /** Constant for the lifetime of the button — see the jitter note. */
   label: string;
   onClick: () => void;
+  /** Sticky "on" state (the pin). Hover styling still applies on top. */
+  active?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -49,8 +73,13 @@ function ActionButton({
       type="button"
       onClick={onClick}
       aria-label={label}
+      aria-pressed={active}
       title={label}
-      className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-tertiary)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--text-secondary)] cursor-pointer"
+      className={cn(
+        "flex h-5 w-5 items-center justify-center rounded-md cursor-pointer",
+        "hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]",
+        active ? "text-[var(--accent-primary)]" : "text-[var(--text-tertiary)]",
+      )}
     >
       {children}
     </button>
@@ -61,6 +90,9 @@ export function UserRowActions({
   tabId,
   text,
   canRetry,
+  messageId,
+  timestamp,
+  pinScopeKey,
 }: {
   tabId: string;
   /** The cleaned prompt — `row.text`, already stripped of injected context and
@@ -71,8 +103,24 @@ export function UserRowActions({
    *  agent can actually rewind. Resolved by the transcript so this stays a
    *  plain boolean prop — see `sessionCanRetry` in `retry-gate.ts`. */
   canRetry: boolean;
+  /** `ChatMessage.id` — what a pin addresses. The row id is `u:<messageId>`;
+   *  the pin stores the raw id so the header can resolve it to a message
+   *  index for `atlas:chat-jump`. */
+  messageId: string;
+  /** The message's own timestamp — the durable half of a pin's key, since ids
+   *  are re-minted on every history load (`resolvePinIndex`). */
+  timestamp: string;
+  /** Pin scope for this thread, resolved by the transcript — see `pinScope`.
+   *  Rows must not read the chat store themselves (house rule 3). */
+  pinScopeKey: string;
 }) {
   const [copied, setCopied] = useState(false);
+  // The one subscription a row is allowed. It is not the chat store: the pins
+  // store is written only when someone clicks a pin, so this never fires on a
+  // streaming frame, and the selector returns a boolean.
+  const pinned = useChatPinsStore((s) =>
+    (s.pins[pinScopeKey] ?? []).some((p) => p.messageId === messageId),
+  );
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // A row can unmount while the "copied" tick is still pending — a history
@@ -99,6 +147,25 @@ export function UserRowActions({
 
   const onRetry = useCallback(() => void retryLastTurn(tabId), [tabId]);
 
+  // Resend is NOT retry. Retry rewinds the turn off the agent and re-runs it
+  // (destructive, native-agent-only); resend leaves the thread alone and asks
+  // the same question again as a new turn, which every agent can do. It goes
+  // through the panel's `atlas:chat-send` seam rather than calling the agent
+  // directly so it inherits the composer's whole send path — binding waits,
+  // the queued-send chip while a turn is live, logging.
+  const onResend = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("atlas:chat-send", { detail: { text, tabId } }));
+  }, [text, tabId]);
+
+  const onPin = useCallback(() => {
+    useChatPinsStore.getState().actions.toggle(pinScopeKey, {
+      messageId,
+      timestamp,
+      text,
+      at: new Date().toISOString(),
+    });
+  }, [pinScopeKey, messageId, timestamp, text]);
+
   return (
     <div
       className={cn(
@@ -106,7 +173,7 @@ export function UserRowActions({
         // show-more toggle also sit below it, and anchoring to the bubble
         // would drop the bar on top of them.
         "absolute right-0 top-full z-[2] mt-px flex items-center gap-0.5",
-        "opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100",
+        "opacity-0 transition-opacity duration-100 group-hover:opacity-100 focus-within:opacity-100",
       )}
     >
       {canRetry && (
@@ -114,7 +181,13 @@ export function UserRowActions({
           <RotateCcw size={12} />
         </ActionButton>
       )}
-      <ActionButton label={copied ? "Copied" : "Copy message"} onClick={onCopy}>
+      <ActionButton label="Pin message" onClick={onPin} active={pinned}>
+        <Pin size={12} fill={pinned ? "currentColor" : "none"} />
+      </ActionButton>
+      <ActionButton label="Send this prompt again" onClick={onResend}>
+        <Forward size={12} />
+      </ActionButton>
+      <ActionButton label="Copy message" onClick={onCopy}>
         {copied ? <Check size={12} /> : <Copy size={12} />}
       </ActionButton>
     </div>

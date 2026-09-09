@@ -1,6 +1,7 @@
 import { lazy, Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { matchesAction } from "@/features/keybindings/lib/use-scoped-hotkeys";
 import { useChatStore } from "../stores/chat-store";
+import { pinScope, resolvePinIndex, type ChatPin } from "../stores/chat-pins-store";
 import { useDetailPanelStore } from "../stores/detail-panel-store";
 import { appendNextStepsDirective } from "../lib/next-steps";
 import { stripInjectedContext } from "../lib/atlas-context";
@@ -310,6 +311,9 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   );
 
   const acpSessionId = session?.acpSessionId ?? "";
+  // One scope for the whole panel — the header's pin dropdown and the
+  // transcript's per-row pin buttons must address the same bucket.
+  const pinScopeKey = pinScope(tabId, session?.acpSessionId);
 
   // A fresh chat starts on the native agent and starts immediately: the
   // default needs no probe, so there is no window in which the tab has to sit
@@ -820,6 +824,32 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
   // defeat their memo() exactly like they would the composer's.
   const onPermissionSend = useCallback((t: string) => handleSendRef.current?.(t, []), []);
   const onOpenSearchStable = useCallback(() => setSearchPaletteOpen(true), []);
+  // Same shape as the bash panel's jump: the transcript projects
+  // `filteredMessages`, so the filter must be cleared first and the index
+  // resolved against the FULL list — the transcript picks the jump up once the
+  // unfiltered projection lands (see `scrollToMessage`).
+  const onJumpToPinStable = useCallback(
+    (pin: ChatPin) => {
+      const messages = useChatStore.getState().sessions[tabId]?.messages ?? [];
+      const index = resolvePinIndex(messages, pin);
+      if (index < 0) {
+        // Enough to tell "the thread is empty" from "the id was re-minted and
+        // the text drifted" from the console alone, without logging content.
+        console.warn("chat pins: pin did not resolve", {
+          tabId,
+          messages: messages.length,
+          idPresent: messages.some((m) => m.id === pin.messageId),
+          userMessages: messages.filter((m) => m.role === "user").length,
+          textLen: pin.text.length,
+        });
+        toast.error("That message is no longer in this thread");
+        return;
+      }
+      setRoleFilter("all");
+      window.dispatchEvent(new CustomEvent("atlas:chat-jump", { detail: { index } }));
+    },
+    [tabId],
+  );
   const onToggleBashStable = useCallback(() => {
     setBashPanelOpen((v) => !v);
     setPlansPanelOpen(false);
@@ -1154,6 +1184,8 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
                 roleFilter={roleFilter}
                 onRoleFilterChange={setRoleFilter}
                 onOpenSearch={onOpenSearchStable}
+                pinScopeKey={pinScopeKey}
+                onJumpToPin={onJumpToPinStable}
                 bashPanelOpen={bashPanelOpen}
                 onToggleBash={onToggleBashStable}
                 plansPanelOpen={plansPanelOpen}

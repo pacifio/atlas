@@ -63,6 +63,14 @@ export interface UserRow extends RowBase {
   timestamp: string;
 }
 
+/** The `ChatMessage.id` behind a user row. Row ids are minted as
+ *  `u:<messageId>` in the projection below; anything that has to address the
+ *  MESSAGE (pins, jumps) goes through this rather than slicing the prefix at
+ *  the call site. */
+export function userRowMessageId(rowId: string): string {
+  return rowId.startsWith("u:") ? rowId.slice(2) : rowId;
+}
+
 export interface ProseRow extends RowBase {
   kind: typeof RowKind.Prose;
   text: string;
@@ -421,6 +429,13 @@ function derivedUser(m: ChatMessage): UserDerived {
   };
   userDerivedCache.set(m, v);
   return v;
+}
+
+/** The text a user bubble SHOWS for `m` — injected memory/context blocks and
+ *  the next-steps directive stripped. This is what a pin records, so it is the
+ *  one comparison that survives ids being re-minted (`resolvePinIndex`). */
+export function userMessageText(m: ChatMessage): string {
+  return derivedUser(m).text;
 }
 
 function derivedProse(m: ChatMessage): string {

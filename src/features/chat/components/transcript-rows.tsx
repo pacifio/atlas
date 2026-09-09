@@ -41,6 +41,7 @@ import type {
   TurnFooterRow,
   MarkerState,
 } from "../lib/turn-rows";
+import { userRowMessageId } from "../lib/turn-rows";
 import { M } from "../lib/row-metrics";
 
 /** Shared by every row: the centred content column. */
@@ -56,6 +57,7 @@ export const UserRowView = memo(function UserRowView({
   priority,
   justSent = false,
   canRetry = false,
+  pinScopeKey,
   onToggleExpand,
 }: {
   row: UserRow;
@@ -74,6 +76,8 @@ export const UserRowView = memo(function UserRowView({
    *  Resolved by the transcript so this stays a boolean — a callback minted in
    *  the row map would defeat the memo for every row on every frame. */
   canRetry?: boolean;
+  /** Pin scope for this thread — resolved once by the transcript. */
+  pinScopeKey: string;
   onToggleExpand: (id: string) => void;
 }) {
   return (
@@ -127,7 +131,14 @@ export const UserRowView = memo(function UserRowView({
           </button>
         )}
         <ExpandToggle row={row} onToggleExpand={onToggleExpand} />
-        <UserRowActions tabId={tabId} text={row.text} canRetry={canRetry} />
+        <UserRowActions
+          tabId={tabId}
+          text={row.text}
+          canRetry={canRetry}
+          messageId={userRowMessageId(row.id)}
+          timestamp={row.timestamp}
+          pinScopeKey={pinScopeKey}
+        />
       </div>
     </Column>
   );
