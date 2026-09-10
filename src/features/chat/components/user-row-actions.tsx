@@ -1,14 +1,22 @@
 // Rewind / pin / resend / copy, under a user message.
 //
+// The "Show more" toggle is NOT here — it lives in flow above this bar
+// (`ExpandToggle` in `transcript-rows.tsx`) because it is the only signal that
+// a bubble is truncated at all, and a hover-only truncation marker means a
+// clamped prompt reads as a complete one.
+//
 // Three constraints shaped this, and each one rules out the obvious approach:
 //
 //  1. **House rule 1 — nothing grows on hover.** The bar cannot be in flow: a
 //     row that gets taller on hover reflows every row below it, mid-scroll.
-//     So it is absolutely positioned into the `pb-5` gap the user column
-//     already reserves between one exchange and the next, and reserves no
-//     space of its own. `.atlas-row` sets `contain: layout style` and
-//     deliberately NOT `paint` (`globals.css:1660`), so the bar is free to
-//     overhang that gap by a pixel or two without being clipped.
+//     So it is absolutely positioned into the `pb-7` gap the user column
+//     reserves between one exchange and the next, and reserves no space of
+//     its own. `.atlas-row` sets `contain: layout style` and deliberately NOT
+//     `paint` (`globals.css`), so the bar's own bottom padding is free to
+//     overhang that gap without being clipped — 28px of `pb-7` holds the
+//     8px top pad and the 20px icons, which is everything that draws. That
+//     gap is reserved whether or not the bar is showing, so revealing it can
+//     never move anything.
 //
 //  2. **House rule 3 — rows never subscribe to a store.** The actions read
 //     what they need through `getState()` at click time. Nothing here holds a
@@ -18,17 +26,36 @@
 //     growing WINDOW — `rows.slice(safeStart)` — so this is mounted for every
 //     user message currently inside it, and the window only ever grows as the
 //     reader scrolls back. Rows are keyed by `row.id`, so growth prepends
-//     without remounting what is already there. That is why the reveal is
-//     pure CSS `group-hover` against the row wrapper's existing `group`
-//     class: a JS hover state would fire a `setState` for every bubble the
-//     pointer crosses during a fast flick, which is precisely the work the
-//     transcript is built to avoid. The trade is two buttons' worth of idle
-//     DOM per windowed user row, which costs nothing at scroll time.
+//     without remounting what is already there. The DOM cost is a few buttons
+//     per windowed user row, which is nothing at scroll time.
 //
-// `focus-within` on the container is not decoration: with an opacity-only
-// reveal, keyboard users would otherwise tab into controls they cannot see.
+// # The reveal snaps. It does not animate.
 //
-// # Why the copy button jittered, and the scroll cost that came with it
+// The bar is hidden until its row is hovered, via `group-hover` against the
+// row wrapper's `group` class — a CSS hover, never a JS one. A JS hover state
+// would fire a `setState` for every bubble the pointer crosses during a fast
+// flick, which is precisely the work the transcript is built to avoid.
+//
+// What it must NOT do is transition. It used to fade in over 100ms, and a
+// running opacity transition is a compositing layer in WebKit: rows passing
+// under a resting pointer mid-fling each took one, several times a second, in
+// the frames the tile deadline can least afford. `visibility` toggling
+// instantly has nothing to interpolate and never promotes anything. Do not
+// reintroduce `transition-opacity`, a fade, or an enter delay here.
+//
+// `visibility` rather than `opacity-0` for a second reason: an `opacity-0`
+// element is still hit-testable, so the old bar could be clicked while
+// invisible. And `focus-within` is not decoration — without it keyboard users
+// would tab into controls they cannot see.
+//
+// The hover itself is still not free: `group-hover:` compiles to
+// `:is(:where(.group):hover *)`, so each row the pointer crosses invalidates
+// style for its whole subtree. That is what the transcript's fling
+// hover-suspension is for (`use-transcript-scroll.ts`, `data-scroll-hot`) —
+// it makes the content inert for the duration of a gesture so none of this
+// fires while scrolling. Keep the two together; neither is sufficient alone.
+//
+// # Why the copy button jittered
 //
 // The buttons carried Tailwind's `transition-colors`, which animates `fill`
 // and `stroke` as well as `color` — so hovering an icon repainted its SVG
@@ -37,15 +64,6 @@
 // inherit that rule and transition nothing else. Labels are also constant
 // (`title` used to flip to "Copied", and macOS re-anchors the native tooltip
 // when it changes under the pointer); the copied state rides on the icon.
-//
-// The reveal is opacity ONLY and SHORT. Never a transform: the bar sits at
-// `top-full` of a wrapper whose height is the bubble's, so a `translate-y`
-// puts it inside the bubble. And no enter delay or long fade: a running
-// opacity transition is a compositing layer in WebKit, and a longer one means
-// more rows holding a layer at once as they pass under the pointer mid-fling.
-// The transcript also suspends hover entirely while scrolling
-// (`use-transcript-scroll.ts`), so the transition only ever runs on a still
-// thread.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Copy, Forward, Pin, RotateCcw } from "lucide-react";
@@ -93,6 +111,7 @@ export function UserRowActions({
   messageId,
   timestamp,
   pinScopeKey,
+  toggleAbove,
 }: {
   tabId: string;
   /** The cleaned prompt — `row.text`, already stripped of injected context and
@@ -113,6 +132,11 @@ export function UserRowActions({
   /** Pin scope for this thread, resolved by the transcript — see `pinScope`.
    *  Rows must not read the chat store themselves (house rule 3). */
   pinScopeKey: string;
+  /** Is the "Show more" toggle rendered between the bubble and this bar? Then
+   *  the gap is already there and this must not add a second one — see the
+   *  padding below. Resolved by the row via `clampable`, so the toggle and
+   *  this answer can never disagree. */
+  toggleAbove: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   // The one subscription a row is allowed. It is not the chat store: the pins
@@ -169,11 +193,29 @@ export function UserRowActions({
   return (
     <div
       className={cn(
-        // `top-full`, not "under the bubble": the attachment chip and the
-        // show-more toggle also sit below it, and anchoring to the bubble
-        // would drop the bar on top of them.
-        "absolute right-0 top-full z-[2] mt-px flex items-center gap-0.5",
-        "opacity-0 transition-opacity duration-100 group-hover:opacity-100 focus-within:opacity-100",
+        // `top-full`, not "under the bubble": the attachment chip sits below
+        // the bubble too, and anchoring to the bubble would drop the bar on
+        // top of it.
+        "absolute right-0 top-full z-[2] flex items-center gap-0.5",
+        // The gap above the icons, as padding rather than a margin so the
+        // bar's box still starts exactly at `top-full`. Only the top half
+        // draws anything; the bottom 8px is empty and free to overhang the
+        // row's `pb-7`.
+        //
+        // A bubble with a "Show more" toggle already has that gap: the toggle
+        // is in flow between the bubble and this bar, so `top-full` is below
+        // IT, and a top pad here would stack on top of the toggle's own
+        // height — the icons visibly sat further from a clamped bubble than
+        // from a short one. Longhands in both branches, never `py-2` plus a
+        // `pt-0` override: shorthand-vs-longhand precedence is decided by
+        // stylesheet order, which is not something to bet spacing on.
+        toggleAbove ? "pt-0 pb-2" : "pt-2 pb-2",
+        // Hidden until the row is hovered, and it SNAPS — no transition, no
+        // fade, nothing to interpolate. `visibility` rather than `opacity`
+        // because an `opacity-0` bar is still hit-testable: it could be
+        // clicked while invisible. `focus-within` is not decoration either —
+        // without it, keyboard users would tab into controls they cannot see.
+        "invisible group-hover:visible focus-within:visible",
       )}
     >
       {canRetry && (

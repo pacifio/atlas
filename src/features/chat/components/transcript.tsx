@@ -46,6 +46,7 @@ import { AtlasIcon } from "@/components/atlas-icon";
 import { useIsTabVisible } from "@/features/layout/lib/use-tab-visible";
 import { projectRows, RowKind, type Projection, type Row } from "../lib/turn-rows";
 import { useTranscriptScroll } from "../lib/use-transcript-scroll";
+import { useThawed } from "../lib/use-thawed";
 import { useChatStore } from "../stores/chat-store";
 import { saveThreadToKb } from "../lib/turn-actions";
 import { sessionCanRetry } from "../lib/retry-gate";
@@ -213,9 +214,42 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   // Is this tab the one showing in its column? Boolean selector: flips only
   // for the two tabs involved in a switch. Gates the idle window fill below.
   const tabVisible = useIsTabVisible(tabId);
+
+  // ── Frozen while hidden ──────────────────────────────────────────────
+  //
+  // A hidden chat tab stays MOUNTED AND LAID OUT (`visibility:hidden` — see
+  // the chat wrapper in `center-panel.tsx`), which is what makes switching
+  // back to a long thread instant. The cost is that everything below here
+  // would otherwise keep running for a thread nobody can see: a streaming
+  // background chat re-projects its rows, re-parses its live tail, appends
+  // DOM, fires the ResizeObserver and writes `scrollTop` — several times a
+  // second, on the same main thread the VISIBLE transcript is scrolling.
+  // That is frame budget spent on nothing, and it lands in exactly the frames
+  // a fling cannot spare.
+  //
+  // So a hidden transcript is FROZEN: it keeps rendering the last row set it
+  // had while visible and ignores every message that arrives meanwhile. The
+  // panel around it stays live (its own store subscription drives the title,
+  // the status pill, notifications, queued sends) — only the row list stops.
+  //
+  // `useThawed` is the second half, and it is about WHEN the catch-up lands:
+  // one frame after the tab shows, never on the switch frame itself.
+  /** Showing AND caught up — the only state in which this transcript moves. */
+  const live = useThawed(tabVisible);
+
   // Only the just-sent user message plays the bubble entrance (id-scoped —
   // see UserRowView). Primitive selector: changes once per user send.
   const justSentMessageId = useChatStore((s) => s.sessions[tabId]?.justSentMessageId);
+  // A send that landed while this tab was hidden has no entrance to play. The
+  // row mounts on the catch-up render, one frame after the switch, and a
+  // filled opacity animation there is both a lie (the message is not new to
+  // the thread, only to the DOM) and a fresh compositing layer in the frame
+  // right after the most expensive one. Recording the id as consumed while
+  // hidden is enough — the entrance is a one-shot either way.
+  const consumedJustSent = useRef<string | undefined>(justSentMessageId);
+  if (!live) consumedJustSent.current = justSentMessageId;
+  const entranceMessageId =
+    justSentMessageId === consumedJustSent.current ? undefined : justSentMessageId;
   const { label: agentLabel, iconDataUrl: agentIconUrl } = agentMeta(agent);
   // MEMOIZED, and it must stay that way: this element is handed to every
   // row, and rows are memo()'d with default shallow compare. The previous
@@ -267,8 +301,18 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   // Previous projection, threaded back in for structural sharing: rows that
   // didn't change come back as the SAME objects, so the memo'd row views hold
   // per streaming frame instead of re-rendering the whole mounted window.
+  //
+  // It doubles as the freeze store. Returning it unchanged while `!live` is
+  // the entire mechanism: `rows`, `visible`, `working` and `tailLen` all
+  // derive from here, so holding one object still holds the window, the
+  // live-edge follow, the session-switch anchor and the row elements
+  // themselves. The projection pass never runs for a hidden thread, and the
+  // one it eventually runs on catch-up shares structure with this same
+  // object — so the rows that did not change while hidden come back
+  // identical and never re-render.
   const prevProjectionRef = useRef<Projection | null>(null);
   const projection = useMemo(() => {
+    if (!live && prevProjectionRef.current) return prevProjectionRef.current;
     const next = projectRows(
       messages,
       { expanded, expandedTurns, streaming: isStreaming },
@@ -276,7 +320,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     );
     prevProjectionRef.current = next;
     return next;
-  }, [messages, expanded, expandedTurns, isStreaming]);
+  }, [messages, expanded, expandedTurns, isStreaming, live]);
   const rows: Row[] = projection.rows;
 
   // ── Is the live turn still silent? ───────────────────────────────────
@@ -420,6 +464,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     onGrow,
     onBeforeGrow: captureGrowAnchor,
     onContentResize,
+    visible: live,
   });
 
   // ── Fill the window during IDLE, not during scroll ───────────────────
@@ -450,7 +495,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     // see — and a never-visited tab that stays at its initial window is what
     // keeps that wrapper cheap. The effect re-runs when the tab shows, so the
     // fill resumes in idle slices and never lands on the switch frame.
-    if (!tabVisible) return;
+    if (!live) return;
 
     const w = window as Window & {
       requestIdleCallback?: (cb: () => void, o?: { timeout?: number }) => number;
@@ -495,7 +540,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     };
     // Re-runs on each `startIndex` change, which is what drives the loop
     // forward one chunk per idle slice until the window covers everything.
-  }, [startIndex, rows.length, growPending, captureGrowAnchor, tabVisible]);
+  }, [startIndex, rows.length, growPending, captureGrowAnchor, live]);
   // Re-anchor after growing upward: put the recorded row back under the same
   // pixel. Layout effect, so the correction lands in the same frame and is
   // never seen.
@@ -516,6 +561,13 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   const pendingAnchorRef = useRef<string | null>(null);
   const settledFor = useRef<string | null>(null);
   useLayoutEffect(() => {
+    // Frozen rows belong to the PREVIOUS session here. A hidden tab can change
+    // `cacheKey` under us (a rebind mints a new acpSessionId, "New chat"
+    // resets in place), and settling against the stale row set would both
+    // anchor to a row that is about to disappear and mark this session as
+    // already settled — so the real content would land unanchored. Wait for
+    // the catch-up; `live` is in the deps, so this runs the moment it does.
+    if (!live) return;
     if (settledFor.current === cacheKey) return;
     if (rows.length === 0) return;
     settledFor.current = cacheKey;
@@ -543,7 +595,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     const start = Math.max(0, Math.min(lastUser, rows.length - WINDOW_INITIAL));
     setStartIndex(start);
     pendingAnchorRef.current = lastUser >= 0 ? rows[lastUser].id : null;
-  }, [cacheKey, rows]);
+  }, [cacheKey, rows, live]);
 
   useLayoutEffect(() => {
     const id = pendingAnchorRef.current;
@@ -720,6 +772,64 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   // ── Turn-footer actions ──────────────────────────────────────────────
   const onSaveKb = useCallback(() => void saveThreadToKb(tabId), [tabId]);
 
+  // ── The rows, as one memoized element ────────────────────────────────
+  //
+  // The row VIEWS are memo'd, but building the list was not: every Transcript
+  // render allocated a wrapper element per mounted row — thousands, for a long
+  // thread — for React to walk and discard. This component re-renders on every
+  // streaming frame of its own session, and (until the freeze above) did so
+  // for hidden tabs too. Memoizing the array means React sees the identical
+  // element and skips the subtree outright, so a frozen transcript costs
+  // nothing per chunk beyond the parent's own render, and a live one only pays
+  // for what actually changed.
+  //
+  // Every dep is either stable by construction (the callbacks, `pinScopeKey`)
+  // or changes at most once per turn. `visible` is the projection's own slice,
+  // so it holds while the projection does.
+  const canRetryRowId = canRetry ? lastUserRowId : undefined;
+  const rowViews = useMemo(
+    () =>
+      visible.map((row, i) => (
+        // `group` is the hover scope for the user row's action bar
+        // (`user-row-actions.tsx`), which is hidden until the row is hovered.
+        // It is the only `group-hover:` selector in the thread, and it is not
+        // free — see the fling hover-suspension in `use-transcript-scroll.ts`,
+        // which exists specifically to stop it firing for every row that
+        // passes under a resting pointer mid-scroll. Don't add a second one.
+        <div key={row.id} className="atlas-row group" data-row-id={row.id}>
+          <RowView
+            row={row}
+            tabId={tabId}
+            agentLabel={agentLabel}
+            agentIcon={agentIcon}
+            justSentMessageId={entranceMessageId}
+            onExpandTurn={toggleTurn}
+            // Absolute position in the thread, so the newest messages — the
+            // ones on screen after a history load — are parsed first. Index
+            // within `visible` would shift as the window grows.
+            priority={safeStart + i}
+            onToggleExpand={toggleExpand}
+            onSaveKb={onSaveKb}
+            canRetryRowId={canRetryRowId}
+            pinScopeKey={pinScopeKey}
+          />
+        </div>
+      )),
+    [
+      visible,
+      safeStart,
+      tabId,
+      agentLabel,
+      agentIcon,
+      entranceMessageId,
+      canRetryRowId,
+      pinScopeKey,
+      toggleTurn,
+      toggleExpand,
+      onSaveKb,
+    ],
+  );
+
   return (
     <div className="relative min-h-0 flex-1">
       <div
@@ -742,26 +852,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
               No messages yet.
             </div>
           )}
-          {visible.map((row, i) => (
-            <div key={row.id} className="atlas-row group" data-row-id={row.id}>
-              <RowView
-                row={row}
-                tabId={tabId}
-                agentLabel={agentLabel}
-                agentIcon={agentIcon}
-                justSentMessageId={justSentMessageId}
-                onExpandTurn={toggleTurn}
-                // Absolute position in the thread, so the newest messages —
-                // the ones on screen after a history load — are parsed first.
-                // Index within `visible` would shift as the window grows.
-                priority={safeStart + i}
-                onToggleExpand={toggleExpand}
-                onSaveKb={onSaveKb}
-                canRetryRowId={canRetry ? lastUserRowId : undefined}
-                pinScopeKey={pinScopeKey}
-              />
-            </div>
-          ))}
+          {rowViews}
           {working && <WorkingIndicator label={workingLabel} />}
         </div>
       </div>

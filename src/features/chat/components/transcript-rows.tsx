@@ -84,7 +84,13 @@ export const UserRowView = memo(function UserRowView({
     // Generous space BELOW the prompt: the gap is what separates one exchange
     // from the next, and a tight one made the agent's reply read as a
     // continuation of the user's own message.
-    <Column className="flex justify-end pt-6 pb-5">
+    // `pb-7` (28px) is not slack, it is the action bar's room: the bar is
+    // absolutely positioned at `top-full`, so its 8px top pad and 20px icons
+    // have to fit under the bubble or a hovered row overhangs into the agent's
+    // reply. Reserved statically for EVERY user row — hovered or not, with an
+    // expand toggle or without — so revealing the bar can never move anything
+    // (house rule 1).
+    <Column className="flex justify-end pt-6 pb-7">
       {/* `min-w-0` on both flex levels, `max-w-full` on the bubble: a pasted
           code block is `white-space: pre` (unwrappable), and a flex item's
           automatic minimum size floors at that intrinsic width — the pre's own
@@ -138,13 +144,22 @@ export const UserRowView = memo(function UserRowView({
           messageId={userRowMessageId(row.id)}
           timestamp={row.timestamp}
           pinScopeKey={pinScopeKey}
+          toggleAbove={clampable(row)}
         />
       </div>
     </Column>
   );
 });
 
-/** Rendered only when the bubble is long enough to actually be clamped. */
+/**
+ * "Show more" / "Show less", rendered only when the bubble is long enough that
+ * the height clamp actually bites.
+ *
+ * In flow and always visible, unlike the action bar beneath it. That is
+ * deliberate: this one is not an action on the message, it is the only way to
+ * know the bubble is truncated at all. Hiding it until hover would mean a
+ * clamped prompt looks like a complete one.
+ */
 function ExpandToggle({
   row,
   onToggleExpand,
@@ -152,12 +167,7 @@ function ExpandToggle({
   row: UserRow;
   onToggleExpand: (id: string) => void;
 }) {
-  // Cheap approximation rather than measuring: a short, newline-free prompt is
-  // never clamped, so the common case costs a length check. Being slightly
-  // conservative here only means the affordance appears on a prompt that did not
-  // strictly need it.
-  const maybeLong = row.text.length > 220 || row.text.split("\n").length > M.userMaxLines;
-  if (!maybeLong) return null;
+  if (!clampable(row)) return null;
   return (
     <button
       type="button"
@@ -167,6 +177,24 @@ function ExpandToggle({
       {row.expanded ? "Show less" : "Show more"}
     </button>
   );
+}
+
+/**
+ * Is this bubble long enough that the height clamp bites — i.e. does it get a
+ * "Show more" toggle?
+ *
+ * A cheap approximation rather than a measurement: a short, newline-free
+ * prompt is never clamped, so the common case costs a length check and no
+ * layout read. Being slightly conservative only means the affordance appears
+ * on a prompt that did not strictly need it.
+ *
+ * Shared, not duplicated: `UserRowActions` needs the same answer to decide its
+ * own top padding (the toggle sits between the bubble and the action bar, so
+ * the bar must not add a second gap on top of it). The two drifting apart
+ * would show up as uneven spacing on exactly the rows that have a toggle.
+ */
+function clampable(row: UserRow): boolean {
+  return row.text.length > 220 || row.text.split("\n").length > M.userMaxLines;
 }
 
 // ── Prose ──────────────────────────────────────────────────────────────────
@@ -185,10 +213,13 @@ export const ProseRowView = memo(function ProseRowView({
 }) {
   return (
     <Column className="py-2">
-      {/* Identity on the left (glyph + which model wrote this), timestamp
-          pushed right. The agent's NAME is dropped: the glyph already says it,
-          and it was the least useful token in a line that has to compete with
-          the prose underneath it. */}
+      {/* One left-aligned group: glyph, time, model. The timestamp used to be
+          pushed to the far right with `ml-auto`, which left a long empty span
+          across a 760px column and read as two unrelated headers rather than
+          one line of provenance. Kept in reading order — who, when, what —
+          against the left edge the prose below it also starts from. The
+          agent's NAME is dropped: the glyph already says it, and it was the
+          least useful token in a line competing with the prose underneath. */}
       {row.showHeader && (
         <div className="flex h-[22px] items-center gap-2">
           <span
@@ -198,17 +229,17 @@ export const ProseRowView = memo(function ProseRowView({
           >
             {agentIcon}
           </span>
-          {row.model && (
-            <span className="min-w-0 truncate font-mono text-[10px] text-[var(--text-tertiary)]">
-              {row.model}
-            </span>
-          )}
-          <span className="ml-auto shrink-0 font-mono text-[10px] text-[var(--text-tertiary)]">
+          <span className="shrink-0 font-mono text-[10px] text-[var(--text-tertiary)]">
             {new Date(row.timestamp).toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
             })}
           </span>
+          {row.model && (
+            <span className="min-w-0 truncate font-mono text-[10px] text-[var(--text-tertiary)]">
+              {row.model}
+            </span>
+          )}
         </div>
       )}
       {/* Settled prose goes through the plain cached renderer: its root IS

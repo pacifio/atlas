@@ -67,6 +67,7 @@ export function useTranscriptScroll({
   onGrow,
   onBeforeGrow,
   onContentResize,
+  visible = true,
 }: {
   scrollRef: RefObject<HTMLElement | null>;
   /** The scrolled content, watched for size changes. */
@@ -79,6 +80,14 @@ export function useTranscriptScroll({
   /** Content changed size — the caller may want to re-hold a scroll anchor.
    *  Runs BEFORE the re-sample so the sample sees the corrected position. */
   onContentResize?: () => void;
+  /** Is this transcript the one showing in its column? A hidden chat tab stays
+   *  MOUNTED AND LAID OUT (`visibility:hidden`, see the chat wrapper in
+   *  `center-panel.tsx`), so unlike a `display:none` scroller it reports real
+   *  geometry — the zero-height guard in `sample` cannot catch it. Sampling it
+   *  is pure waste at best (nobody can see the fade or the pill) and wrong at
+   *  worst: a grow fired from here mounts rows and reflows a panel nobody is
+   *  looking at, on the same main thread the VISIBLE transcript is scrolling. */
+  visible?: boolean;
 }): TranscriptScroll {
   const [more, setMore] = useState(false);
 
@@ -96,6 +105,8 @@ export function useTranscriptScroll({
   // which is pure churn in the one path that must stay cheap.
   const growable = useRef(canGrow);
   growable.current = canGrow;
+  const showing = useRef(visible);
+  showing.current = visible;
   const grow = useRef(onGrow);
   grow.current = onGrow;
   const beforeGrow = useRef(onBeforeGrow);
@@ -116,14 +127,15 @@ export function useTranscriptScroll({
 
   // Hover is suspended for the duration of a fling.
   //
-  // Every `group-hover:` reveal in the thread compiles to
+  // The user row's action bar reveals on `group-hover`, which compiles to
   // `:is(:where(.group):hover *)`, so each row that passes under a resting
   // pointer invalidates style for its ENTIRE subtree — hundreds of nodes for a
-  // long markdown bubble — and starts an opacity transition WebKit answers
-  // with a fresh compositing layer. Several rows a second, mid-fling, is
-  // exactly the work the tile deadline cannot absorb. `pointer-events: none`
-  // on the content makes the scroller itself the hit target, so wheel and
-  // momentum events keep flowing while nothing underneath can be hovered.
+  // long markdown bubble. Several rows a second, mid-fling, is exactly the
+  // work the tile deadline cannot absorb. It also stops a fling that ends with
+  // the pointer over a bubble from landing a click on a control the reader
+  // never meant to reach. `pointer-events: none` on the content makes the
+  // scroller itself the hit target, so wheel and momentum events keep flowing
+  // while nothing underneath can be hovered.
   //
   // One attribute write per fling, not per frame: the property inherits, so
   // toggling it recalculates inherited style once down the subtree — a cost
@@ -155,6 +167,19 @@ export function useTranscriptScroll({
     frame.current = null;
     const el = scrollRef.current;
     if (!el) return;
+
+    // Hidden tab: change nothing, and above all do not GROW. This is the
+    // `visibility:hidden` sibling of the zero-height guard below — that one
+    // catches a `display:none` scroller by its 0×0 geometry, this one catches
+    // a hidden-but-laid-out chat, whose geometry is real and therefore
+    // believable. `atEndRef` keeps whatever the reader left it at, so a tab
+    // hidden while scrolled up comes back scrolled up. Leave the cached
+    // numbers dirty: the first sample after the tab shows re-measures.
+    if (!showing.current) {
+      dirty.current = true;
+      return;
+    }
+
     if (dirty.current) measure();
 
     // A HIDDEN scroller knows nothing. A chat tab stays mounted while another
@@ -232,6 +257,19 @@ export function useTranscriptScroll({
     observer.observe(el);
     return () => observer.disconnect();
   }, [contentRef, scrollRef, sample]);
+
+  // Coming back into view, re-sample once. Everything that happened while
+  // hidden left the geometry dirty on purpose (the guard in `sample`), and a
+  // window resized while this tab was in the background is a real change that
+  // no scroll or resize event will announce again. In a frame, not inline: the
+  // measure forces layout, and the frame the tab becomes visible is the one
+  // frame that must stay free of it.
+  useEffect(() => {
+    if (!visible) return;
+    dirty.current = true;
+    if (frame.current !== null) return;
+    frame.current = requestAnimationFrame(sample);
+  }, [visible, sample]);
 
   useEffect(
     () => () => {

@@ -163,3 +163,90 @@ describe("useTranscriptScroll hidden-panel guard", () => {
     expect(onGrow).toHaveBeenCalledTimes(1);
   });
 });
+
+// The `visibility:hidden` sibling of the guard above. A hidden chat tab keeps
+// its layout, so its geometry is REAL and passes every sanity check the 0×0
+// guard makes — the only thing that knows it should be ignored is the caller.
+describe("useTranscriptScroll visible gate", () => {
+  it("changes nothing while hidden, and re-measures on the way back", () => {
+    const scroller = document.createElement("div");
+    const content = document.createElement("div");
+    setGeometry(scroller, VISIBLE);
+    const onGrow = vi.fn();
+
+    const { result, rerender } = renderHook(
+      ({ visible }: { visible: boolean }) =>
+        useTranscriptScroll({
+          scrollRef: { current: scroller },
+          contentRef: { current: content },
+          canGrow: true,
+          onGrow,
+          visible,
+        }),
+      { initialProps: { visible: true } },
+    );
+
+    act(() => {
+      fireResize();
+      flushFrames();
+    });
+    expect(result.current.atEndRef.current).toBe(false);
+    expect(result.current.more).toBe(true);
+
+    // Hidden, and something behind the scenes scrolls it to the bottom — a
+    // live-edge follow that slipped through, say. The reader's position is
+    // what must survive, so nothing here may be believed.
+    rerender({ visible: false });
+    setGeometry(scroller, { ...VISIBLE, scrollTop: 4400 });
+    act(() => {
+      fireResize();
+      flushFrames();
+    });
+    expect(result.current.atEndRef.current).toBe(false);
+    expect(result.current.more).toBe(true);
+
+    // Back in view: the geometry left dirty while hidden is re-read without
+    // anyone having to scroll.
+    rerender({ visible: true });
+    act(() => {
+      flushFrames();
+    });
+    expect(result.current.atEndRef.current).toBe(true);
+    expect(result.current.more).toBe(false);
+  });
+
+  it("never grows a hidden window, however close to the top it sits", () => {
+    const scroller = document.createElement("div");
+    const content = document.createElement("div");
+    // Well inside GROW_MARGIN: visible, this grows on the first sample.
+    setGeometry(scroller, { scrollHeight: 5000, clientHeight: 600, scrollTop: 100 });
+    const onGrow = vi.fn();
+    const onBeforeGrow = vi.fn();
+
+    const { rerender } = renderHook(
+      ({ visible }: { visible: boolean }) =>
+        useTranscriptScroll({
+          scrollRef: { current: scroller },
+          contentRef: { current: content },
+          canGrow: true,
+          onGrow,
+          onBeforeGrow,
+          visible,
+        }),
+      { initialProps: { visible: false } },
+    );
+
+    act(() => {
+      fireResize();
+      flushFrames();
+    });
+    expect(onGrow).not.toHaveBeenCalled();
+    expect(onBeforeGrow).not.toHaveBeenCalled();
+
+    rerender({ visible: true });
+    act(() => {
+      flushFrames();
+    });
+    expect(onGrow).toHaveBeenCalledTimes(1);
+  });
+});
