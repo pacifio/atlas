@@ -1,16 +1,19 @@
-import { useState } from "react";
-import { useReactFlow } from "@xyflow/react";
+import { useEffect, useState } from "react";
+import { useReactFlow, useViewport } from "@xyflow/react";
 import * as Popover from "@radix-ui/react-popover";
 import {
   ChevronDown,
   Crosshair,
   Download,
   ExternalLink,
+  Eye,
   FileImage,
   FileText,
   FileType2,
   Loader2,
+  Minus,
   PanelLeft,
+  Plus,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
@@ -165,6 +168,7 @@ export function SpaceHeaderPill({
       </Popover.Root>
 
       <div className="mx-0.5 h-4 w-px bg-white/10" />
+      <ZoomReadout />
       <button
         type="button"
         onClick={() => rf.fitView({ duration: 350, padding: 0.2 })}
@@ -172,6 +176,53 @@ export function SpaceHeaderPill({
         className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary"
       >
         <Crosshair size={12} />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The zoom level, as a number — the one piece of viewport chrome the web
+ * lacks. `useViewport` is reactive, so it ticks through a pinch; the
+ * percentage is a button that snaps back to 100%, flanked by ± steps.
+ */
+function ZoomReadout() {
+  const rf = useReactFlow();
+  const { zoom } = useViewport();
+  const pct = Math.round(zoom * 100);
+  const step =
+    "flex h-6 w-5 cursor-pointer items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary";
+  return (
+    <div className="flex items-center">
+      <button
+        type="button"
+        title="Zoom out"
+        onClick={() => void rf.zoomOut({ duration: 150 })}
+        className={step}
+      >
+        <Minus size={11} />
+      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={() => void rf.zoomTo(1, { duration: 200 })}
+            className="flex h-6 min-w-[38px] cursor-pointer items-center justify-center rounded-md px-1 text-[10.5px] tabular-nums text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+          >
+            {pct}%
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" sideOffset={4}>
+          Reset zoom to 100%
+        </TooltipContent>
+      </Tooltip>
+      <button
+        type="button"
+        title="Zoom in"
+        onClick={() => void rf.zoomIn({ duration: 150 })}
+        className={step}
+      >
+        <Plus size={11} />
       </button>
     </div>
   );
@@ -199,10 +250,15 @@ const FORMATS: Array<{
 export function SpaceActionPill({
   convId,
   actors,
+  following,
+  onFollow,
   onBeforeExport,
 }: {
   convId: string;
   actors: ReadonlyMap<string, SpaceActor>;
+  /** Whose camera we ride; null when our own. */
+  following: string | null;
+  onFollow: (id: string | null) => void;
   onBeforeExport: () => void;
 }) {
   const rf = useReactFlow();
@@ -241,6 +297,18 @@ export function SpaceActionPill({
   };
 
   const peers = [...actors.values()];
+  // Who is riding OUR camera — the `following` field on their awareness.
+  const followers = me ? peers.filter((a) => a.following === me) : [];
+  const followed = following === null ? null : (actors.get(following) ?? null);
+  const nameOf = (a: SpaceActor) => memberOf(a.id)?.name ?? a.name;
+
+  // A one-shot toast the moment a follow begins — the pill is the persistent
+  // signal, this is the acknowledgement.
+  useEffect(() => {
+    if (followed)
+      toast(`Following ${nameOf(followed)} — pan or press Esc to stop`, { duration: 2200 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [following]);
 
   return (
     <div
@@ -252,21 +320,33 @@ export function SpaceActionPill({
       {/* Presence */}
       <div className="flex items-center pr-0.5">
         <div className="flex items-center -space-x-1.5">
-          {peers.slice(0, 4).map((a) => (
-            <Tooltip key={a.id}>
-              <TooltipTrigger asChild>
-                <span
-                  className="inline-flex rounded-full ring-2"
-                  style={{ ["--tw-ring-color" as string]: a.colour }}
-                >
-                  <CommsAvatar member={memberOf(a.id)} size={18} className="rounded-full" />
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}>
-                {memberOf(a.id)?.name ?? a.name} · here
-              </TooltipContent>
-            </Tooltip>
-          ))}
+          {peers.slice(0, 4).map((a) => {
+            const riding = following === a.id;
+            return (
+              <Tooltip key={a.id}>
+                <TooltipTrigger asChild>
+                  {/* The avatar IS the follow toggle (the web's roster): one
+                      press rides their camera, another hands it back. */}
+                  <button
+                    type="button"
+                    aria-pressed={riding}
+                    onClick={() => onFollow(riding ? null : a.id)}
+                    className={cn(
+                      "inline-flex cursor-pointer rounded-full ring-2 transition-transform hover:z-10 hover:scale-110",
+                      riding &&
+                        "z-10 scale-110 shadow-[0_0_0_2px_var(--bg-secondary),0_0_0_4px_var(--accent-primary)]",
+                    )}
+                    style={{ ["--tw-ring-color" as string]: a.colour }}
+                  >
+                    <CommsAvatar member={memberOf(a.id)} size={18} className="rounded-full" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={4}>
+                  {riding ? `Stop following ${nameOf(a)}` : `Follow ${nameOf(a)}`}
+                </TooltipContent>
+              </Tooltip>
+            );
+          })}
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">
@@ -284,6 +364,21 @@ export function SpaceActionPill({
         </div>
         {peers.length > 4 && (
           <span className="pl-1.5 text-[9.5px] text-text-tertiary">+{peers.length - 4}</span>
+        )}
+        {followers.length > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="ml-1.5 flex h-[18px] items-center gap-1 rounded-full bg-[var(--accent-primary)]/15 px-1.5 text-[9.5px] font-medium text-[var(--accent-primary)]">
+                <Eye size={10} />
+                {followers.length}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" sideOffset={4}>
+              {followers.length === 1
+                ? `${nameOf(followers[0])} is following you`
+                : `${followers.length} people are following you`}
+            </TooltipContent>
+          </Tooltip>
         )}
       </div>
 

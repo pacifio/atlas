@@ -55,6 +55,11 @@ export function useSpaceSession(convId: string) {
   const [revision, setRevision] = useState(0);
   const [actors, setActors] = useState<ReadonlyMap<string, SpaceActor>>(new Map());
   const [banner, setBanner] = useState<string | null>(null);
+  /** Whose camera we ride, if anyone's. The web's model: a peer's viewport
+   *  is data to render, applied to the local canvas by exactly one thing —
+   *  a deliberate follow. Rides the awareness frame so the followee knows. */
+  const [following, setFollowing] = useState<string | null>(null);
+  const followingRef = useRef<string | null>(null);
 
   // One doc per open page. Replaced only by openPage(); reconnects keep it.
   const docRef = useRef<Y.Doc | null>(null);
@@ -93,6 +98,16 @@ export function useSpaceSession(convId: string) {
       }
     },
     [sendAwarenessNow],
+  );
+
+  const follow = useCallback(
+    (id: string | null) => {
+      if (followingRef.current === id) return;
+      followingRef.current = id;
+      setFollowing(id);
+      publishAwareness({ following: id });
+    },
+    [publishAwareness],
   );
 
   // ---- outbound doc updates ----------------------------------------------
@@ -198,6 +213,9 @@ export function useSpaceSession(convId: string) {
       setReady(false);
       setActors(new Map());
       actorsRef.current = new Map();
+      followingRef.current = null;
+      setFollowing(null);
+      mineRef.current = { ...mineRef.current, following: null };
       attachDoc(new Y.Doc());
       requestPage(id);
       void spacesApi.sendControl(convId, { t: "page.active", page_id: id }).catch(() => {});
@@ -215,6 +233,9 @@ export function useSpaceSession(convId: string) {
           // Presence is the socket; a dead socket is an empty room.
           setActors(new Map());
           actorsRef.current = new Map();
+          followingRef.current = null;
+          setFollowing(null);
+          mineRef.current = { ...mineRef.current, following: null };
         }
         return;
       }
@@ -325,6 +346,14 @@ export function useSpaceSession(convId: string) {
         if (after !== before) {
           actorsRef.current = after;
           setActors(after);
+          // The subject left: control comes back, and the room is told.
+          const f = followingRef.current;
+          if (f !== null && !after.has(f)) {
+            followingRef.current = null;
+            setFollowing(null);
+            mineRef.current = { ...mineRef.current, following: null };
+            if (readOnlyRef.current !== "actor_ceiling") publishAwareness({});
+          }
           // Answer an arrival with a state of one's own — a still mouse
           // would otherwise be invisible indefinitely.
           if (hasNewcomer(before, after) && readOnlyRef.current !== "actor_ceiling") {
@@ -385,6 +414,8 @@ export function useSpaceSession(convId: string) {
       actors,
       readOnly,
       banner,
+      following,
+      follow,
       dismissBanner: () => setBanner(null),
       meta,
       doc: docRef,
@@ -399,7 +430,20 @@ export function useSpaceSession(convId: string) {
         send({ t: "page.move", page_id: id, parent_id: parentId, index }),
       deletePage: (id: string) => send({ t: "page.delete", page_id: id }),
     }),
-    [pageId, ready, revision, actors, readOnly, banner, meta, openPage, publishAwareness, send],
+    [
+      pageId,
+      ready,
+      revision,
+      actors,
+      readOnly,
+      banner,
+      following,
+      follow,
+      meta,
+      openPage,
+      publishAwareness,
+      send,
+    ],
   );
 }
 

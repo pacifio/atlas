@@ -2,6 +2,8 @@ import { useEffect, useMemo } from "react";
 import { Hash, Loader2, Lock, MessageCircle, MessagesSquare, Plus, Users, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CommsConversation } from "./comms-conversation";
+import { MediaLightbox } from "./media-lightbox";
+import { primeCommsMarkdown } from "./message-body";
 import { CommsHome } from "./comms-home";
 import { CommsNotConnected } from "./comms-not-connected";
 import { CommsSkeleton } from "./comms-skeleton";
@@ -60,6 +62,14 @@ export function CommsPanel() {
   const signedIn = useAuthStore.use.snapshot().status === "signed-in";
   const rosterByOrg = useMembersStore.use.byOrg();
   const { load: loadMembers } = useMembersStore.use.actions();
+  // Fetch the markdown chunk as soon as the panel exists, so the first message
+  // body never waits on it. Not done in `App.tsx` alongside the other priming:
+  // that path is about the boot budget, and this panel is lazy precisely so it
+  // costs nothing until someone opens chat.
+  useEffect(() => {
+    primeCommsMarkdown();
+  }, []);
+
   // `signedIn` is a GUARD AND A DEP, the members-modal pattern: on a cold
   // boot `remoteId` is ready (persisted app state) long before the credential
   // is, so a fetch fired at mount rejects — and with no auth dep, nothing
@@ -227,6 +237,7 @@ export function CommsPanel() {
           )}
         </div>
       </CommsSurface>
+      <MediaLightbox />
     </div>
   );
 }

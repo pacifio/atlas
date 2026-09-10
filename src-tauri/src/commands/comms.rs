@@ -40,9 +40,22 @@ impl TokenSource for AppTokenSource {
                 return Err(CommsError::Token("auth is not ready".into()));
             };
             let core = state.core();
-            core.mint_access_token()
-                .await
-                .map_err(|e| CommsError::Token(format!("{e:?}")))
+            core.mint_access_token().await.map_err(|e| match e {
+                // INDETERMINATE — a transport failure, DNS, a timeout, a 5xx:
+                // we learned NOTHING about the credential. It has to reach the
+                // manager as a transport failure, because the reconnect
+                // supervisor retires a session permanently on an auth refusal
+                // and merely backs off on a transport one. Flattening the two
+                // here is what made a Wi-Fi switch kill chat for the rest of
+                // the session: the mint during the changeover failed for want
+                // of a network, was read as "the server said no", and the
+                // supervisor stopped trying.
+                crate::auth::AuthFailure::Indeterminate { ref reason, .. } => {
+                    CommsError::Transport(reason.clone())
+                }
+                // NoCredential / Rejected (401) / Denied (403) are verdicts.
+                other => CommsError::Token(format!("{other:?}")),
+            })
         })
     }
 }

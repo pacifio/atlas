@@ -211,6 +211,76 @@
   padding: 0;
 }
 
+/* Team-chat composer — the same problem as the chat host above, and the same
+   solution. `@layer base` dresses every `.cm-editor` as a CODE editor (13px
+   JetBrains Mono), which is why a mention pill in the comms composer rendered
+   in monospace. A chat message is prose, so the editor has to be undressed
+   again.
+
+   These rules are UNLAYERED, so they beat the `@layer base` block regardless
+   of specificity, and they are also the belt-and-braces copy of the runtime
+   theme: CodeMirror injects its `EditorView.theme` as a <style> at mount, and
+   in the bundled app that injection has failed before (the Tauri CSP nonce
+   disabling `style-src 'unsafe-inline'` — see index.html). Structure must not
+   depend on an injection that can fail, so `composer-input.tsx` carries NO
+   theme at all and this block is the single authority. */
+.atlas-comms-cm-host {
+  width: 100%;
+}
+.atlas-comms-cm-host .cm-editor {
+  border: none;
+  background: transparent;
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+  /* Both live on the editor root so content and gutters would measure the same
+     row height, per the CodeMirror block below. */
+  font-size: 12.5px;
+  line-height: 18px;
+}
+.atlas-comms-cm-host .cm-scroller {
+  font-family: inherit;
+  line-height: inherit;
+  /* The cap the old `<textarea>` autosize enforced by measuring. CodeMirror
+     grows to fit and scrolls past it, so there is no measurement to get wrong. */
+  max-height: 160px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.atlas-comms-cm-host .cm-scroller::-webkit-scrollbar {
+  display: none;
+}
+.atlas-comms-cm-host .cm-content {
+  font-family: inherit;
+  /* 8 + 18 + 8 = 34, so a single line is exactly centred in the field; the
+     38px right inset clears the send button. Literal px because Atlas's
+     UI-scale shrinks the root font size and a rem-derived padding stops
+     matching the px line box. */
+  padding: 8px 38px 8px 10px;
+  min-height: 18px;
+  caret-color: var(--text-primary);
+}
+.atlas-comms-cm-host .cm-gutters {
+  display: none;
+}
+.atlas-comms-cm-host .cm-line {
+  padding: 0;
+}
+.atlas-comms-cm-host .cm-placeholder {
+  color: var(--text-ghost);
+}
+.atlas-comms-cm-host .cm-cursor,
+.atlas-comms-cm-host .cm-dropCursor {
+  border-left-color: var(--text-primary);
+  border-left-width: 1px;
+}
+/* `!important` because the base-layer rule is important too, and for IMPORTANT
+   declarations the layer order inverts: layered would otherwise beat this. */
+.atlas-comms-cm-host .cm-selectionBackground,
+.atlas-comms-cm-host .cm-focused .cm-selectionBackground,
+.atlas-comms-cm-host .cm-content ::selection {
+  background-color: color-mix(in srgb, var(--accent-primary) 28%, transparent) !important;
+}
+
 .atlas-mention-chip {
   display: inline-flex;
   align-items: center;

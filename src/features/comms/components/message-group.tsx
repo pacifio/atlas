@@ -23,7 +23,8 @@ import { toast } from "sonner";
 import { comms } from "../lib/comms-api";
 import { CommsAvatar } from "./comms-avatar";
 import { MessageBody } from "./message-body";
-import { MediaLightbox } from "./media-lightbox";
+import { openConversationMedia } from "../stores/lightbox-store";
+import { toPlainText } from "../lib/to-plain-text";
 import {
   attachmentPath,
   cachedAttachmentPath,
@@ -94,7 +95,7 @@ export const MessageGroup = memo(function MessageGroup({
   showAuthor,
 }: MessageGroupProps) {
   return (
-    <div className="px-2 py-0.5">
+    <div className="px-2 py-1.5">
       {messages.map((m, i) => (
         <MessageRow
           key={m.id}
@@ -175,7 +176,7 @@ const MessageRow = memo(function MessageRow({
   return (
     <div
       data-msg-id={m.id}
-      className="group/msg relative flex gap-2 rounded px-1 hover:bg-bg-hover [contain:layout_style]"
+      className="group/msg relative flex gap-2 rounded px-1 py-px hover:bg-bg-hover [contain:layout_style]"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -191,11 +192,12 @@ const MessageRow = memo(function MessageRow({
         )}
       </div>
 
-      <div className="min-w-0 flex-1 pb-0.5">
+      <div className="min-w-0 flex-1 pb-1">
         {m.reply_to_id && (
           <ReplyLine
             parent={parent}
             author={parent ? (members.get(parent.author_id) ?? null) : null}
+            members={members}
             onJump={() => onJump(m.reply_to_id as string)}
           />
         )}
@@ -271,7 +273,7 @@ function MessageContent({
       {message.attachments.length > 0 && (
         <div className={cn("flex flex-col gap-1.5", hasBody && "mt-1.5")}>
           {message.attachments.map((a) => (
-            <AttachmentView key={a.id} attachment={a} />
+            <AttachmentView key={a.id} attachment={a} convId={message.conv_id} />
           ))}
         </div>
       )}
@@ -294,10 +296,12 @@ function MessageContent({
 function ReplyLine({
   parent,
   author,
+  members,
   onJump,
 }: {
   parent: CommsMessage | undefined;
   author: OrgMemberProfile | null;
+  members: Map<string, OrgMemberProfile>;
   onJump: () => void;
 }) {
   // A parent can be missing (paged out) or deleted. A deleted parent renders
@@ -325,7 +329,15 @@ function ReplyLine({
         {author?.name ?? "Unknown"}
       </span>
       <span className="min-w-0 truncate opacity-80">
-        {deleted ? <span className="italic">original message deleted</span> : (parent?.body ?? "…")}
+        {deleted ? (
+          <span className="italic">original message deleted</span>
+        ) : parent ? (
+          // Flattened: a one-line stub must not quote raw `**markers**` or an
+          // internal `<@u_…>` id back at the reader.
+          toPlainText(parent.body, members)
+        ) : (
+          "…"
+        )}
       </span>
     </button>
   );
@@ -388,7 +400,7 @@ function ReactionRow({
  * box — the previous `h-[120px]` placeholder had no relationship to the final
  * height, so every image jumped.
  */
-function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
+function AttachmentView({ attachment, convId }: { attachment: ChatAttachment; convId: string }) {
   const isImage = attachment.content_type.startsWith("image/");
   const isVideo = attachment.content_type.startsWith("video/");
   const isAudio = attachment.content_type.startsWith("audio/");
@@ -401,7 +413,6 @@ function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
   );
   const [ratio, setRatio] = useState<number | undefined>(() => cachedRatio(attachment.id));
   const [failed, setFailed] = useState(false);
-  const [zoomed, setZoomed] = useState(false);
   // Per-attachment download slice: exists only while the save is in flight.
   const progress = useCommsStore((s) => s.downloads[attachment.id]);
   const downloading = progress !== undefined;
@@ -461,7 +472,7 @@ function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
       <>
         <button
           type="button"
-          onClick={() => setZoomed(true)}
+          onClick={() => openConversationMedia(convId, attachment.id)}
           style={box}
           className="block w-full max-w-[520px] overflow-hidden rounded-lg border border-border-subtle bg-bg-elevated cursor-zoom-in"
         >
@@ -480,12 +491,6 @@ function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
             className="h-full w-full object-cover [-webkit-user-drag:none]"
           />
         </button>
-        <MediaLightbox
-          open={zoomed}
-          onOpenChange={setZoomed}
-          path={path}
-          filename={attachment.filename}
-        />
       </>
     );
   }

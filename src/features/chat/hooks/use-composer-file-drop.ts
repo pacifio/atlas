@@ -19,7 +19,9 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 export function useComposerFileDrop(opts: {
   targetRef: RefObject<HTMLElement | null>;
   enabled?: boolean;
-  onDropFiles: (paths: string[]) => void;
+  /** `at` is the drop point in CSS px (viewport coords), when it could be
+   *  resolved — a canvas uses it to place what was dropped. */
+  onDropFiles: (paths: string[], at?: { x: number; y: number }) => void;
 }) {
   const { targetRef, enabled = true, onDropFiles } = opts;
   const [isDropTarget, setIsDropTarget] = useState(false);
@@ -29,9 +31,10 @@ export function useComposerFileDrop(opts: {
     let unlisten: (() => void) | undefined;
     let disposed = false;
 
-    const isOver = (position: { x: number; y: number }): boolean => {
+    // Returns the CSS-px point that landed inside the target, or null.
+    const hitPoint = (position: { x: number; y: number }): { x: number; y: number } | null => {
       const el = targetRef.current;
-      if (!el) return false;
+      if (!el) return null;
       const dpr = window.devicePixelRatio || 1;
       const pts = [
         { x: position.x, y: position.y },
@@ -39,10 +42,11 @@ export function useComposerFileDrop(opts: {
       ];
       for (const p of pts) {
         const hit = document.elementFromPoint(p.x, p.y);
-        if (hit && el.contains(hit)) return true;
+        if (hit && el.contains(hit)) return p;
       }
-      return false;
+      return null;
     };
+    const isOver = (position: { x: number; y: number }): boolean => hitPoint(position) !== null;
 
     getCurrentWebview()
       .onDragDropEvent((event) => {
@@ -53,9 +57,9 @@ export function useComposerFileDrop(opts: {
         } else if (p.type === "leave") {
           setIsDropTarget(false);
         } else if (p.type === "drop") {
-          const over = isOver(p.position);
+          const at = hitPoint(p.position);
           setIsDropTarget(false);
-          if (over && p.paths.length > 0) onDropFiles(p.paths);
+          if (at && p.paths.length > 0) onDropFiles(p.paths, at);
         }
       })
       .then((fn) => {

@@ -19,6 +19,9 @@ export interface SpaceMeta {
   connection: SpaceConnState;
   /** A human refusal for the "cannot open at all" states. */
   error: string | null;
+  /** Where the user last left the camera, so a remount lands there rather
+   *  than re-fitting. Session-only; never written into the document. */
+  viewport: { x: number; y: number; zoom: number } | null;
 }
 
 const EMPTY: SpaceMeta = {
@@ -28,6 +31,7 @@ const EMPTY: SpaceMeta = {
   stale: false,
   connection: "disconnected",
   error: null,
+  viewport: null,
 };
 
 interface SpacesState {

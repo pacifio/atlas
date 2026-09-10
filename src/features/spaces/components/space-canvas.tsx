@@ -14,6 +14,10 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
+import { useComposerFileDrop } from "@/features/chat/hooks/use-composer-file-drop";
+import { filesFromClipboard, hasFiles, scratchPathForFile } from "@/lib/scratch-file";
 import {
   addEdge as docAddEdge,
   addNode as docAddNode,
@@ -30,6 +34,7 @@ import { selectionColours } from "../lib/space-wire";
 import { spacesApi } from "../lib/spaces-api";
 import type { SpaceDock } from "../lib/dock";
 import type { SpaceSession } from "../lib/use-space-session";
+import { useSpacesStore } from "../stores/spaces-store";
 import { SpaceCanvasContext, type SpaceCanvasCtx } from "./space-canvas-ctx";
 import { SPACE_NODE_TYPES } from "./space-nodes";
 import { SpaceActionPill, SpaceHeaderPill, type SyncState } from "./space-chrome";
@@ -45,6 +50,13 @@ import { SpaceToolbar, type SpaceTool } from "./space-toolbar";
 /** Local handle ids (NodeHandles: t/r/b/l) ↔ contract anchors (n/e/s/w). */
 const HANDLE_TO_ANCHOR: Record<string, SpaceAnchor> = { t: "n", r: "e", b: "s", l: "w" };
 const ANCHOR_TO_HANDLE: Record<SpaceAnchor, string> = { n: "t", e: "r", s: "b", w: "l" };
+
+/** A media node's box, and the cascade step for a multi-file drop — the web's. */
+const MEDIA_SIZE = { width: 320, height: 220 };
+const DROP_STEP = 28;
+/** What the Rust upload accepts (`spaces_media_upload`'s allowlist). */
+const MEDIA_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "mp4", "webm"]);
+const isMediaPath = (p: string) => MEDIA_EXT.has(p.split(".").pop()?.toLowerCase() ?? "");
 
 export interface SpaceCanvasProps {
   convId: string;
@@ -74,7 +86,7 @@ function SpaceSurface({
   onDock,
   forceReadOnly = false,
 }: SpaceCanvasProps) {
-  const { revision, actors, readOnly, ready } = session;
+  const { revision, actors, readOnly, ready, following, follow } = session;
   const editable = readOnly === null && ready && !forceReadOnly;
   const rf = useReactFlow();
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -245,12 +257,52 @@ function SpaceSurface({
   const onPointerLeave = useCallback(() => {
     session.publishAwareness({ cursor: null });
   }, [session]);
+  const followingRef = useRef<string | null>(null);
+  followingRef.current = following;
   const onMove = useCallback(
     (_: unknown, vp: { x: number; y: number; zoom: number }) => {
+      // While riding someone else's camera our viewport is theirs; publishing
+      // it back would echo their every pan to the room a frame late.
+      if (followingRef.current !== null) return;
       session.publishAwareness({ viewport: vp });
     },
     [session],
   );
+  // A hand on the pane takes the camera back. Programmatic moves (our own
+  // setViewport while following) arrive with a null event and are ignored.
+  const onMoveStart = useCallback(
+    (event: MouseEvent | TouchEvent | null) => {
+      if (event && followingRef.current !== null) follow(null);
+    },
+    [follow],
+  );
+  // The camera is session state, not document state: remembered per
+  // conversation so a remount lands where the user left, never synced.
+  const onMoveEnd = useCallback(
+    (_: unknown, vp: { x: number; y: number; zoom: number }) => {
+      useSpacesStore.getState().actions.patch(convId, { viewport: vp });
+    },
+    [convId],
+  );
+  // Read once, at mount: `defaultViewport` is only honoured then.
+  const [initialViewport] = useState(
+    () => useSpacesStore.getState().byConv[convId]?.viewport ?? null,
+  );
+
+  // ---- follow: ride the subject's viewport ---------------------------------
+  const ridden = following === null ? null : (actors.get(following)?.viewport ?? null);
+  useEffect(() => {
+    if (ridden === null) return;
+    void rf.setViewport(ridden, { duration: 120 });
+  }, [rf, ridden]);
+  useEffect(() => {
+    if (following === null) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") follow(null);
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [following, follow]);
 
   // ---- create: drag-to-create overlay (the local canvas's recipe) ---------
   const [preview, setPreview] = useState<{
@@ -355,48 +407,124 @@ function SpaceSurface({
     return () => window.removeEventListener("keydown", h);
   }, [armed, activeTool]);
 
-  // ---- media insert -------------------------------------------------------
+  // ---- media: picker, drop, paste ------------------------------------------
+  /** The centre of the visible canvas, in flow coordinates. */
+  const viewportCentre = useCallback(() => {
+    const rect = wrapperRef.current?.getBoundingClientRect();
+    return rect
+      ? rf.screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+      : { x: 0, y: 0 };
+  }, [rf]);
+
+  /**
+   * Upload each path and add a media node at `at`, cascading for several.
+   * The node is added only AFTER its upload resolves — a progress overlay,
+   * never a placeholder node in the shared doc (the web's rule).
+   */
+  const uploadAndPlace = useCallback(
+    async (paths: string[], at: { x: number; y: number }) => {
+      if (!editable) return;
+      const accepted = paths.filter(isMediaPath);
+      if (accepted.length < paths.length) {
+        toast(
+          paths.length === 1
+            ? "Only PNG, JPEG, GIF, WebP, MP4 and WebM can go on a Space."
+            : "Some files were skipped — only images and video can go on a Space.",
+        );
+      }
+      if (accepted.length === 0) return;
+      setUploading(true);
+      try {
+        let placed = 0;
+        for (const path of accepted) {
+          try {
+            const up = await spacesApi.mediaUpload(convId, path);
+            const doc = session.doc.current;
+            if (!doc) return;
+            docAddNode(doc, {
+              kind: "media",
+              x: at.x - MEDIA_SIZE.width / 2 + placed * DROP_STEP,
+              y: at.y - MEDIA_SIZE.height / 2 + placed * DROP_STEP,
+              width: MEDIA_SIZE.width,
+              height: MEDIA_SIZE.height,
+              mediaKind: up.mediaKind,
+              contentHash: up.contentHash,
+              mime: up.mime,
+            });
+            placed += 1;
+          } catch (e) {
+            console.error("spaces: media upload failed:", e);
+            toast.error(typeof e === "string" ? e : "Could not upload that file.");
+          }
+        }
+      } finally {
+        setUploading(false);
+      }
+    },
+    [convId, editable, session],
+  );
+
   const insertMedia = useCallback(async () => {
     if (!editable || uploading) return;
     const { open } = await import("@tauri-apps/plugin-dialog");
     const sel = await open({
-      multiple: false,
-      filters: [
-        { name: "Media", extensions: ["png", "jpg", "jpeg", "gif", "webp", "mp4", "webm"] },
-      ],
+      multiple: true,
+      filters: [{ name: "Media", extensions: [...MEDIA_EXT] }],
     });
-    if (!sel || Array.isArray(sel)) return;
-    setUploading(true);
-    try {
-      // The node is added only AFTER the upload resolves — a progress overlay,
-      // never a placeholder node in the shared doc.
-      const up = await spacesApi.mediaUpload(convId, sel as string);
-      const doc = session.doc.current;
-      if (!doc) return;
-      const wrap = wrapperRef.current;
-      const rect = wrap?.getBoundingClientRect();
-      const center = rect
-        ? rf.screenToFlowPosition({
-            x: rect.left + rect.width / 2,
-            y: rect.top + rect.height / 2,
+    if (!sel) return;
+    await uploadAndPlace(Array.isArray(sel) ? sel : [sel], viewportCentre());
+  }, [editable, uploading, uploadAndPlace, viewportCentre]);
+
+  // OS drag-drop: Tauri owns the drop, so this is the webview event with a
+  // hit-test against the canvas — the same hook the chat composer uses.
+  const onDropFiles = useCallback(
+    (paths: string[], at?: { x: number; y: number }) => {
+      const flow = at ? rf.screenToFlowPosition(at) : viewportCentre();
+      void uploadAndPlace(paths, flow);
+    },
+    [rf, uploadAndPlace, viewportCentre],
+  );
+  const { isDropTarget } = useComposerFileDrop({
+    targetRef: wrapperRef,
+    enabled: editable,
+    onDropFiles,
+  });
+
+  // Paste: a screenshot (bytes) is spooled to a scratch file; Finder-copied
+  // files come through the native pasteboard. Window-level, like the web,
+  // gated on this canvas being visible and no text field having focus.
+  useEffect(() => {
+    if (!editable) return;
+    const handler = (e: ClipboardEvent) => {
+      const w = wrapperRef.current;
+      if (!w || w.offsetParent === null) return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable))
+        return;
+      const dt = e.clipboardData;
+      const files = filesFromClipboard(dt);
+      if (files.length > 0) {
+        e.preventDefault();
+        void Promise.all(files.map(scratchPathForFile))
+          .then((paths) => uploadAndPlace(paths, viewportCentre()))
+          .catch((err) => {
+            console.warn("spaces: paste failed:", err);
+            toast.error(typeof err === "string" ? err : "Could not paste that file.");
+          });
+        return;
+      }
+      if (hasFiles(dt)) {
+        e.preventDefault();
+        void invoke<string[]>("clipboard_file_paths")
+          .then((paths) => {
+            if (paths.length > 0) return uploadAndPlace(paths, viewportCentre());
           })
-        : { x: 0, y: 0 };
-      docAddNode(doc, {
-        kind: "media",
-        x: center.x - 160,
-        y: center.y - 110,
-        width: 320,
-        height: 220,
-        mediaKind: up.mediaKind,
-        contentHash: up.contentHash,
-        mime: up.mime,
-      });
-    } catch (e) {
-      console.error("spaces: media upload failed:", e);
-    } finally {
-      setUploading(false);
-    }
-  }, [convId, editable, rf, session, uploading]);
+          .catch((err) => console.warn("spaces: clipboard paths failed:", err));
+      }
+    };
+    window.addEventListener("paste", handler);
+    return () => window.removeEventListener("paste", handler);
+  }, [editable, uploadAndPlace, viewportCentre]);
 
   // ---- undo / redo --------------------------------------------------------
   const undoMgr = session.undo.current;
@@ -461,12 +589,15 @@ function SpaceSurface({
           onConnect={onConnect}
           onPaneClick={clearSelection}
           onMove={onMove}
+          onMoveStart={onMoveStart}
+          onMoveEnd={onMoveEnd}
           nodeTypes={SPACE_NODE_TYPES}
           connectionMode={ConnectionMode.Loose}
           connectionRadius={40}
           minZoom={0.2}
           maxZoom={2}
-          fitView
+          defaultViewport={initialViewport ?? undefined}
+          fitView={initialViewport === null}
           nodesConnectable={editable}
           deleteKeyCode={editable ? ["Backspace", "Delete"] : []}
           proOptions={{ hideAttribution: true }}
@@ -508,6 +639,19 @@ function SpaceSurface({
           </div>
         )}
 
+        {/* Drop hint. pointer-events-none so the webview keeps hit-testing
+            the drop against the wrapper; opacity only. */}
+        <div
+          aria-hidden
+          className={`pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-[var(--accent-primary)]/8 transition-opacity duration-150 ${
+            isDropTarget ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          <span className="rounded-full border border-[var(--accent-primary)]/40 bg-bg-elevated px-3 py-1 text-[11px] font-medium text-text-secondary shadow">
+            Drop images or video to add them
+          </span>
+        </div>
+
         <SpaceHeaderPill
           sync={syncState}
           pages={session.meta?.pages ?? []}
@@ -516,7 +660,13 @@ function SpaceSurface({
           pagesOpen={pagesOpen}
           onTogglePages={onTogglePages}
         />
-        <SpaceActionPill convId={convId} actors={actors} onBeforeExport={clearSelection} />
+        <SpaceActionPill
+          convId={convId}
+          actors={actors}
+          following={following}
+          onFollow={follow}
+          onBeforeExport={clearSelection}
+        />
         <SpaceToolbar
           activeTool={activeTool}
           onTool={setActiveTool}

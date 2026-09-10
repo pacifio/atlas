@@ -25,6 +25,7 @@ import {
 import { cn } from "@/lib/utils";
 import { GradualBlur } from "@/components/gradual-blur";
 import { useTranscriptScroll } from "@/features/chat/lib/use-transcript-scroll";
+import { useComposerFileDrop } from "@/features/chat/hooks/use-composer-file-drop";
 import { animatedScrollTo } from "@/features/artifacts/lib/scroll-to";
 import { toast } from "sonner";
 import { CommsAvatar } from "./comms-avatar";
@@ -252,8 +253,22 @@ export const CommsConversation = memo(function CommsConversation({
   );
   const otherMembers = useMemo(() => memberList.filter((m) => m.id !== me), [memberList, me]);
 
+  // The WHOLE conversation column is the drop target, not just the composer
+  // shell: a file dragged in from Finder lands wherever the hand happens to
+  // be. The composer only renders the highlight (`dropActive`).
+  const columnRef = useRef<HTMLDivElement>(null);
+  const onDropFiles = useCallback(
+    (paths: string[]) => actions.attachFiles(conv.id, paths),
+    [actions, conv.id],
+  );
+  const { isDropTarget } = useComposerFileDrop({
+    targetRef: columnRef,
+    enabled: subTab === "messages",
+    onDropFiles,
+  });
+
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
+    <div ref={columnRef} className="flex min-w-0 flex-1 flex-col">
       <ConversationHeader
         conv={conv}
         title={title}
@@ -294,6 +309,22 @@ export const CommsConversation = memo(function CommsConversation({
               tint="color-mix(in srgb, var(--comms-surface) 90%, transparent)"
               style={{ zIndex: 3 }}
             />
+
+            {/* Drop hint over the transcript. Opacity only — no transform
+                inside the vibrant panel — and pointer-events-none so the
+                webview keeps hit-testing the drop against the column. */}
+            <div
+              aria-hidden
+              className={cn(
+                "pointer-events-none absolute inset-0 z-[4] flex items-center justify-center",
+                "bg-[var(--accent-primary)]/8 transition-opacity duration-150",
+                isDropTarget ? "opacity-100" : "opacity-0",
+              )}
+            >
+              <span className="rounded-full border border-[var(--accent-primary)]/40 bg-bg-elevated px-3 py-1 text-[11px] font-medium text-text-secondary shadow">
+                Drop files to attach
+              </span>
+            </div>
 
             <div
               ref={scroller}
@@ -409,6 +440,7 @@ export const CommsConversation = memo(function CommsConversation({
               memberMap={members}
               lookup={lookup}
               placeholder={isChannel ? `Message #${conv.name}` : `Message ${title}`}
+              dropActive={isDropTarget}
             />
           </div>
         </>
@@ -662,7 +694,7 @@ function ConversationIntro({
 
 function DayDivider({ at }: { at: number }) {
   return (
-    <div className="flex items-center gap-2 px-3 py-2">
+    <div className="flex items-center gap-2 px-3 py-3">
       <span className="h-px flex-1 bg-border-subtle" />
       <span className="text-[9.5px] font-medium uppercase tracking-wide text-text-ghost">
         {formatDayDivider(at)}

@@ -227,8 +227,16 @@ export default defineConfig(() => ({
             {
               name: "vendor-markdown",
               priority: 60,
+              // The `node_modules` guard is not decoration: these are substring
+              // tests, and `remark-`/`rehype-` are ordinary words to name a
+              // plugin after. `features/comms/lib/remark-comms-inline.ts`
+              // matched `remark-`, which pulled app source — and everything it
+              // imported, including the comms type module — into this vendor
+              // chunk, so the eagerly-loaded comms panel statically imported
+              // 560 KB of markdown it was carefully arranged to lazy-load.
               test: (id) =>
                 !id.endsWith(".css") &&
+                id.includes("node_modules") &&
                 (id.includes("react-markdown") ||
                   id.includes("remark-") ||
                   id.includes("rehype-") ||

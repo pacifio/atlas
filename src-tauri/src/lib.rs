@@ -408,6 +408,7 @@ pub fn run() {
             commands::window::window_zoom,
             commands::clipboard::clipboard_file_paths,
             commands::clipboard::clipboard_write_text,
+            commands::clipboard::scratch_write_bytes,
             commands::window::set_window_title,
             commands::browser::browser_open_window,
             commands::browser::browser_embed_create,

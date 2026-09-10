@@ -147,3 +147,135 @@ fn macos_file_paths() -> Vec<String> {
         out
     })
 }
+
+/// Largest paste we will spool to disk — the Spaces media ceiling.
+const SCRATCH_MAX_BYTES: usize = 64 * 1024 * 1024;
+/// Scratch files older than this are swept on the next write.
+const SCRATCH_TTL_SECS: u64 = 24 * 60 * 60;
+
+/// Spool raw bytes to `<app_cache_dir>/pasted/<uuid>.<ext>` and return the path.
+///
+/// Every upload path in the app (team-chat attachments, Space media) takes a
+/// file *path* — that is what the OS drag-drop and file picker hand over. A
+/// pasted screenshot is the one source that arrives as bytes: WKWebView's
+/// `paste` event exposes a nameless `File` with no path. Rather than teach two
+/// upload pipelines a second input shape, the renderer parks the bytes here
+/// and feeds the path into the existing one.
+///
+/// The body is raw IPC (`InvokeBody::Raw`) — a multi-megabyte screenshot must
+/// not round-trip through base64 JSON. The filename rides in `x-filename`;
+/// only its basename and extension are trusted, and the extension is what the
+/// downstream content-type guess keys on.
+#[tauri::command]
+pub fn scratch_write_bytes(
+    app: tauri::AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> Result<String, String> {
+    use tauri::Manager;
+
+    let bytes: &[u8] = match request.body() {
+        tauri::ipc::InvokeBody::Raw(b) => b.as_slice(),
+        tauri::ipc::InvokeBody::Json(_) => return Err("expected a raw body".to_string()),
+    };
+    if bytes.is_empty() {
+        return Err("nothing to paste".to_string());
+    }
+    if bytes.len() > SCRATCH_MAX_BYTES {
+        return Err("that file is larger than 64 MB".to_string());
+    }
+
+    let requested = request
+        .headers()
+        .get("x-filename")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(percent_decode)
+        .unwrap_or_else(|| "pasted.png".to_string());
+    // Basename only: a header is untrusted input and must never pick a directory.
+    let base = std::path::Path::new(requested.as_str())
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("pasted.png");
+    let (stem, ext) = match base.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() && !e.is_empty() && e.len() <= 8 => {
+            (s, e.to_ascii_lowercase())
+        }
+        _ => (base, "png".to_string()),
+    };
+    let stem: String = stem
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(48)
+        .collect();
+    let ext: String = ext.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let ext = if ext.is_empty() {
+        "png".to_string()
+    } else {
+        ext
+    };
+
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("pasted");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    sweep_scratch(&dir);
+
+    let path = dir.join(format!("{stem}-{}.{ext}", uuid::Uuid::new_v4().simple()));
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Undo the renderer's `encodeURIComponent` — HTTP header values are ASCII, so
+/// a non-Latin filename has to travel escaped. Malformed escapes pass through.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = |b: u8| (b as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Best-effort removal of stale scratch files. Failures are ignored — a sweep
+/// that cannot run must never block the paste that triggered it.
+fn sweep_scratch(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        if now
+            .duration_since(modified)
+            .map(|age| age.as_secs() > SCRATCH_TTL_SECS)
+            .unwrap_or(false)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}

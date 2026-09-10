@@ -20,14 +20,29 @@ import {
 import { cn } from "@/lib/utils";
 import { Kbd } from "@/ui/kbd";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
+import { filesFromClipboard, hasFiles, scratchPathForFile } from "@/lib/scratch-file";
 import { useCommsStore } from "../stores/comms-store";
-import { useComposerFileDrop } from "@/features/chat/hooks/use-composer-file-drop";
 import { CommsAvatar } from "./comms-avatar";
+import type {
+  ComposerInput as ComposerInputComponent,
+  ComposerInputHandle,
+} from "./composer-input";
 import { EmojiPicker } from "./emoji-picker";
 import { insertLink, insertText, linePrefix, wrap, type Edit } from "../lib/markdown-insert";
 import { utf8Bytes } from "../lib/derive";
+import { toPlainText } from "../lib/to-plain-text";
 import { CHAT_BODY_MAX_BYTES, CHAT_MESSAGE_ATTACHMENT_MAX } from "../types";
 import type { CommsMessage, OrgMemberProfile } from "../types";
+
+// Start the CodeMirror chunk downloading as soon as this module evaluates,
+// but keep it a DYNAMIC import: a static one would put the 360 KB
+// `vendor-codemirror` chunk in the comms panel's own chunk, so opening team
+// chat would block on it. The agent composer does exactly this for the same
+// reason (`chat/components/message-input.tsx`). One promise, shared by every
+// composer instance.
+const composerInputPromise: Promise<typeof import("./composer-input")> = import("./composer-input");
 
 /** One file on its way up, as the composer sees it. */
 export interface PendingAttachment {
@@ -47,6 +62,10 @@ interface ComposerProps {
   memberMap: Map<string, OrgMemberProfile>;
   lookup: (id: string) => CommsMessage | undefined;
   placeholder: string;
+  /** A file drag is over the conversation — the shell lights up. The drop
+   *  target itself is the whole conversation column (see `CommsConversation`),
+   *  not this shell, so the composer only renders the state. */
+  dropActive?: boolean;
 }
 
 const EMPTY_COMPOSER = {
@@ -70,18 +89,27 @@ const EMPTY_COMPOSER = {
  * write a message the server then refuses), and the mention picker inserts the
  * `<@user_id>` token form so a later rename changes rendering, never history.
  */
-export function CommsComposer({ convId, members, memberMap, lookup, placeholder }: ComposerProps) {
+export function CommsComposer({
+  convId,
+  members,
+  memberMap,
+  lookup,
+  placeholder,
+  dropActive = false,
+}: ComposerProps) {
   // The composer subscribes to ITS OWN slice. When this lived in the
   // conversation component, every keystroke — and every upload-progress tick —
   // re-rendered the entire transcript above it.
   const composer = useCommsStore((s) => s.composers[convId]) ?? EMPTY_COMPOSER;
   const { draft, replyTo, editing, attachments } = composer;
   const actions = useCommsStore.use.actions();
+  // Only so a mention of YOU reads differently in the pill, as it does in the
+  // rendered message.
+  const me = useCommsStore.use.me();
   const onChange = (value: string) => actions.setDraft(convId, value);
   const onSend = () => actions.send(convId);
   const onCommitEdit = () => actions.commitEdit(convId);
   const onCancelIntent = () => actions.cancelComposerIntent(convId);
-  const onAttachFiles = (paths: string[]) => actions.attachFiles(convId, paths);
   const onRemoveAttachment = (uploadId: string) => actions.removeAttachment(convId, uploadId);
   const onPickFiles = () => {
     void (async () => {
@@ -95,7 +123,17 @@ export function CommsComposer({ convId, members, memberMap, lookup, placeholder 
       }
     })();
   };
-  const ref = useRef<HTMLTextAreaElement>(null);
+  const input = useRef<ComposerInputHandle>(null);
+  const [Input, setInput] = useState<typeof ComposerInputComponent | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void composerInputPromise.then((m) => {
+      if (!cancelled) setInput(() => m.ComposerInput);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const shellRef = useRef<HTMLDivElement>(null);
   const [mentionQuery, setMentionQuery] = useState<{ start: number; query: string } | null>(null);
   const [highlighted, setHighlighted] = useState(0);
@@ -108,22 +146,40 @@ export function CommsComposer({ convId, members, memberMap, lookup, placeholder 
   // caption is the ordinary case.
   const canSend = (draft.trim().length > 0 || ready.length > 0) && !overLimit && !uploading;
 
-  const { isDropTarget } = useComposerFileDrop({
-    targetRef: shellRef,
-    onDropFiles: onAttachFiles,
-  });
+  const isDropTarget = dropActive;
 
-  // Autosize, capped so a long message never eats the transcript.
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "0px";
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  }, [draft]);
+  // Paste: a screenshot (bytes, no path) is spooled to a scratch file; a
+  // Finder-copied file (a name but no bytes in the web sandbox) is resolved
+  // through the native pasteboard; anything else is text and pastes as usual.
+  /** Returns true when the paste was a file and the text insert must not run. */
+  const handlePaste = (e: ClipboardEvent): boolean => {
+    const dt = e.clipboardData;
+    const files = filesFromClipboard(dt);
+    if (files.length > 0) {
+      e.preventDefault();
+      void Promise.all(files.map(scratchPathForFile))
+        .then((paths) => actions.attachFiles(convId, paths))
+        .catch((err) => {
+          console.warn("comms: paste failed:", err);
+          toast.error(typeof err === "string" ? err : "Could not paste that file.");
+        });
+      return true;
+    }
+    if (hasFiles(dt)) {
+      e.preventDefault();
+      void invoke<string[]>("clipboard_file_paths")
+        .then((paths) => {
+          if (paths.length > 0) actions.attachFiles(convId, paths);
+        })
+        .catch((err) => console.warn("comms: clipboard paths failed:", err));
+      return true;
+    }
+    return false;
+  };
 
   // Focus on conversation switch and when an edit or reply is started.
   useEffect(() => {
-    ref.current?.focus();
+    input.current?.focus();
   }, [convId, replyTo, editing]);
 
   const matches = useMemo(() => {
@@ -148,36 +204,27 @@ export function CommsComposer({ convId, members, memberMap, lookup, placeholder 
     return { start: at, query };
   }, []);
 
-  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = e.target.value;
+  const handleChange = (value: string, caret: number) => {
     onChange(value);
-    setMentionQuery(detectMention(value, e.target.selectionStart ?? value.length));
+    setMentionQuery(detectMention(value, caret));
   };
 
   /** Apply a pure edit and put the caret back where it belongs. */
   const applyEdit = (edit: Edit) => {
     onChange(edit.value);
-    requestAnimationFrame(() => {
-      const el = ref.current;
-      if (!el) return;
-      el.focus();
-      el.setSelectionRange(edit.start, edit.end);
-    });
+    input.current?.applyEdit(edit);
   };
 
-  const selection = () => {
-    const el = ref.current;
-    return {
+  const selection = () =>
+    input.current?.getSelection() ?? {
       value: draft,
-      start: el?.selectionStart ?? draft.length,
-      end: el?.selectionEnd ?? draft.length,
+      start: draft.length,
+      end: draft.length,
     };
-  };
 
   const insertMention = (member: OrgMemberProfile) => {
     if (!mentionQuery) return;
-    const el = ref.current;
-    const caret = el?.selectionStart ?? draft.length;
+    const caret = selection().start;
     // The TOKEN form goes into the body; the name is resolved at render.
     const token = `<@${member.id}> `;
     const next = draft.slice(0, mentionQuery.start) + token + draft.slice(caret);
@@ -193,27 +240,37 @@ export function CommsComposer({ convId, members, memberMap, lookup, placeholder 
     setMentionQuery(null);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  /**
+   * Returns true when the key was consumed. CodeMirror asks before applying
+   * any binding of its own, which is what lets the mention picker keep Enter,
+   * Tab and the arrows.
+   */
+  /**
+   * Returns true when the key was consumed. CodeMirror asks before applying
+   * any binding of its own, which is what lets the mention picker keep Enter,
+   * Tab and the arrows.
+   */
+  const handleKeyDown = (e: KeyboardEvent): boolean => {
     if (mentionQuery && matches.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setHighlighted((h) => (h + 1) % matches.length);
-        return;
+        return true;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
         setHighlighted((h) => (h - 1 + matches.length) % matches.length);
-        return;
+        return true;
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
         insertMention(matches[highlighted]);
-        return;
+        return true;
       }
       if (e.key === "Escape") {
         e.preventDefault();
         setMentionQuery(null);
-        return;
+        return true;
       }
     }
     // The usual shortcuts, so formatting does not have to mean the mouse.
@@ -222,28 +279,30 @@ export function CommsComposer({ convId, members, memberMap, lookup, placeholder 
       if (key === "b") {
         e.preventDefault();
         applyEdit(wrap(selection(), "**"));
-        return;
+        return true;
       }
       if (key === "i") {
         e.preventDefault();
         applyEdit(wrap(selection(), "*"));
-        return;
+        return true;
       }
       if (key === "k") {
         e.preventDefault();
         applyEdit(insertLink(selection()));
-        return;
+        return true;
       }
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
-      return;
+      return true;
     }
     if (e.key === "Escape" && (replyTo || editing)) {
       e.preventDefault();
       onCancelIntent();
+      return true;
     }
+    return false;
   };
 
   const intentTarget = editing ? lookup(editing) : replyTo ? lookup(replyTo) : undefined;
@@ -325,7 +384,11 @@ export function CommsComposer({ convId, members, memberMap, lookup, placeholder 
           <span className="min-w-0 flex-1 truncate text-[11px] text-text-secondary">
             {editing ? null : (memberMap.get(intentTarget?.author_id ?? "")?.name ?? "Unknown")}
             {intentTarget && !editing ? " · " : ""}
-            {intentTarget?.deleted ? "deleted message" : intentTarget?.body}
+            {intentTarget?.deleted
+              ? "deleted message"
+              : intentTarget
+                ? toPlainText(intentTarget.body, memberMap)
+                : null}
           </span>
           <button
             type="button"
@@ -381,15 +444,26 @@ export function CommsComposer({ convId, members, memberMap, lookup, placeholder 
               8 + 18 + 8 = 34, so one line is exactly centred and each extra
               line adds a clean 18px. (The agent composer pins its geometry in
               px for this same reason.) */}
-          <textarea
-            ref={ref}
-            value={draft}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            rows={1}
-            placeholder={placeholder}
-            className="block min-h-[34px] w-full resize-none bg-transparent py-[8px] pl-[10px] pr-[38px] text-[12.5px] leading-[18px] text-text-primary outline-none placeholder:text-text-ghost hide-scrollbar"
-          />
+          <div className="min-h-[34px] w-full">
+            {Input ? (
+              <Input
+                handle={input}
+                value={draft}
+                placeholder={placeholder}
+                members={memberMap}
+                me={me}
+                onChange={handleChange}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+              />
+            ) : (
+              // Same geometry, so the composer does not resize when the real
+              // editor lands. Only ever seen on a cold first open.
+              <div className="px-[10px] py-[8px] text-[12.5px] leading-[18px] text-text-ghost">
+                {draft || placeholder}
+              </div>
+            )}
+          </div>
           {/* Inline send, pinned top-right — the agent composer's placement, so
               it stays put as the textarea grows downward. */}
           <button

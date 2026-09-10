@@ -390,6 +390,16 @@ impl CommsManager {
                     return;
                 }
 
+                // The ladder is for a host that will not talk to us, not for a
+                // long uptime. `Open` is written only by a completed handshake
+                // and only the line below moves it off again, so this reads
+                // "the attempt that just ended had actually come up" — and a
+                // connection that lived starts the next reconnect at one
+                // second rather than at whatever ceiling it had climbed to.
+                if me.connection().state == ConnectionState::Open {
+                    attempt = 0;
+                }
+
                 match reason {
                     // Retrying cannot help. Stop, and wait for the next auth
                     // snapshot or a manual reconnect to change something.
@@ -450,6 +460,14 @@ impl CommsManager {
         let generation = session.generation;
         let token = match self.inner.tokens.mint().await {
             Ok(t) => t,
+            // Never reached the token endpoint. That is a transport failure and
+            // must back off forever, NOT retire the session: a laptop changing
+            // network fails its mint for a few seconds, and reading that as an
+            // auth refusal left chat dead until the app was restarted.
+            Err(CommsError::Transport(e)) => {
+                tracing::warn!(target: "atlas_comms", "could not reach the token endpoint: {e}");
+                return ExitReason::Transport(e);
+            }
             Err(e) => {
                 tracing::warn!(target: "atlas_comms", "could not mint a token: {e}");
                 return ExitReason::Unauthorized;
@@ -1878,6 +1896,47 @@ mod tests {
         {
             Box::pin(async { Err(crate::CommsError::Token("test".into())) })
         }
+    }
+
+    /// A token endpoint we could not REACH, as opposed to one that refused us.
+    struct UnreachableToken;
+    impl TokenSource for UnreachableToken {
+        fn mint(
+            &self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::Result<String>> + Send + '_>>
+        {
+            Box::pin(async { Err(crate::CommsError::Transport("no route to host".into())) })
+        }
+    }
+
+    /// Changing Wi-Fi killed chat for the rest of the session.
+    ///
+    /// The mint is a network round trip, so during the changeover it fails for
+    /// want of a network — and every mint failure used to read as
+    /// `Unauthorized`, which the supervisor retires the session on after one
+    /// immediate retry. The socket never came back and the composer answered
+    /// every send with "Chat isn't connected".
+    ///
+    /// A mint that never reached the server is a TRANSPORT failure: back off
+    /// and keep trying, exactly as a dropped socket does.
+    #[tokio::test]
+    async fn an_unreachable_token_endpoint_backs_off_instead_of_retiring() {
+        let store = CommsStore::open_in_memory().expect("store");
+        let mgr = CommsManager::new(store, std::sync::Arc::new(UnreachableToken));
+        mgr.set_target(target("org_a"));
+        settle().await;
+
+        let info = mgr.connection();
+        assert_eq!(
+            info.state,
+            ConnectionState::Backoff,
+            "an unreachable mint must keep trying, not retire the session"
+        );
+        assert_ne!(
+            info.state,
+            ConnectionState::Unavailable,
+            "only a verdict on the credential may stop the supervisor"
+        );
     }
 
     /// Hydration means "we fetched this conversation's HISTORY", and leaving an

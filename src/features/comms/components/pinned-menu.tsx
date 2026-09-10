@@ -4,6 +4,7 @@ import { Loader2, Pin, Search } from "lucide-react";
 import { timeAgo } from "@/lib/time-ago";
 import { CommsAvatar } from "./comms-avatar";
 import { comms } from "../lib/comms-api";
+import { toPlainText } from "../lib/to-plain-text";
 import type { ChatPin, OrgMemberProfile } from "../types";
 
 /**
@@ -50,16 +51,28 @@ export function PinnedMenu({
     };
   }, [open, convId]);
 
+  // Flattened once per list, NOT once per keystroke — the filter below runs on
+  // every character typed, and searching the raw body meant a query could match
+  // `**` markers and mention ids the reader never sees.
+  const searchable = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const p of rows ?? []) {
+      if (!p.message) continue;
+      out.set(p.message.id, toPlainText(p.message.body, members).toLowerCase());
+    }
+    return out;
+  }, [rows, members]);
+
   const filtered = useMemo(() => {
     if (!rows) return [];
     const q = query.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((p) => {
-      const body = p.message?.body?.toLowerCase() ?? "";
+      const body = p.message ? (searchable.get(p.message.id) ?? "") : "";
       const name = p.message ? (members.get(p.message.author_id)?.name?.toLowerCase() ?? "") : "";
       return body.includes(q) || name.includes(q);
     });
-  }, [rows, query, members]);
+  }, [rows, query, members, searchable]);
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
@@ -133,7 +146,8 @@ export function PinnedMenu({
                       </span>
                     </div>
                     <span className="line-clamp-2 pl-[22px] text-[11px] leading-snug text-text-secondary">
-                      {msg?.body || (msg?.attachments?.length ? "(attachment)" : "…")}
+                      {(msg && toPlainText(msg.body, members)) ||
+                        (msg?.attachments?.length ? "(attachment)" : "…")}
                     </span>
                   </button>
                 );

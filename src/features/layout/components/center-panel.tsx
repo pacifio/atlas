@@ -163,6 +163,9 @@ const PERSISTENT_TYPES: ReadonlySet<TabType> = new Set([
   // Keep settings mounted so its open section + sub-tab + form drafts survive a
   // tab switch (it's a singleton tab; remounting reset all its local useState).
   "settings",
+  // A Space is a live socket + a Y.Doc: remounting re-dials, replays the page
+  // and lands re-fitted. Kept mounted so a tab switch is a tab switch.
+  "spaces",
 ]);
 
 // Of the persistent types, these are the ones that keep BURNING CPU/GPU while
@@ -177,6 +180,7 @@ const IDLE_EXPENSIVE_TYPES: ReadonlySet<TabType> = new Set([
   "browser",
   "knowledge-graph",
   "pdf",
+  "spaces",
 ]);
 
 /**

@@ -4,10 +4,10 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { timeAgo } from "@/lib/time-ago";
 import { AudioPlayer } from "./audio-player";
 import { CommsAvatar } from "./comms-avatar";
-import { MediaLightbox } from "./media-lightbox";
 import { formatBytes, saveAttachment } from "./message-group";
 import { attachmentPath, cachedAttachmentPath } from "../lib/attachment-cache";
 import { useCommsStore } from "../stores/comms-store";
+import { openMediaList, toLightboxItem, type LightboxItem } from "../stores/lightbox-store";
 import type { LucideIcon } from "lucide-react";
 import type { ChatAttachment, CommsMessage, OrgMemberProfile } from "../types";
 
@@ -42,6 +42,11 @@ export function FilesTab({ convId }: { convId: string }) {
       e.attachment.content_type.startsWith("image/") ||
       e.attachment.content_type.startsWith("video/"),
   );
+  // The gallery walks this grid's own order (newest first), not the transcript's.
+  const gallery = useMemo(
+    () => media.map((e) => toLightboxItem(e.attachment)).filter((i): i is LightboxItem => !!i),
+    [media],
+  );
   const audio = entries.filter((e) => e.attachment.content_type.startsWith("audio/"));
   const files = entries.filter((e) => !media.includes(e) && !audio.includes(e));
 
@@ -68,7 +73,12 @@ export function FilesTab({ convId }: { convId: string }) {
           />
           <div className="grid grid-cols-3 gap-1">
             {media.map(({ message, attachment }) => (
-              <MediaThumb key={attachment.id} attachment={attachment} message={message} />
+              <MediaThumb
+                key={attachment.id}
+                attachment={attachment}
+                message={message}
+                gallery={gallery}
+              />
             ))}
           </div>
         </>
@@ -148,15 +158,16 @@ function SectionHead({
 function MediaThumb({
   attachment,
   message,
+  gallery,
 }: {
   attachment: ChatAttachment;
   message: CommsMessage;
+  gallery: LightboxItem[];
 }) {
   const [path, setPath] = useState<string | null>(
     () => cachedAttachmentPath(attachment.id) ?? null,
   );
   const [failed, setFailed] = useState(false);
-  const [zoomed, setZoomed] = useState(false);
   const isVideo = attachment.content_type.startsWith("video/");
 
   useEffect(() => {
@@ -176,7 +187,7 @@ function MediaThumb({
       <button
         type="button"
         title={`${attachment.filename} · ${timeAgo(new Date(message.created_at).toISOString(), { suffix: true })}`}
-        onClick={() => path && setZoomed(true)}
+        onClick={() => path && openMediaList(gallery, attachment.id)}
         className="relative aspect-square overflow-hidden rounded-md border border-border-subtle bg-bg-elevated cursor-zoom-in"
       >
         {path ? (
@@ -196,14 +207,6 @@ function MediaThumb({
           />
         )}
       </button>
-      {path && (
-        <MediaLightbox
-          open={zoomed}
-          onOpenChange={setZoomed}
-          path={path}
-          filename={attachment.filename}
-        />
-      )}
     </>
   );
 }
