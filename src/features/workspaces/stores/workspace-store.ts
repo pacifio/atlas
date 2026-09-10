@@ -237,6 +237,10 @@ function readSidebarPinned(): boolean {
     return false;
   }
 }
+/** Read once at module init so `sidebarOpen` and `sidebarPinned` below cannot
+ *  disagree: pinned means DOCKED, and a docked sidebar that starts closed is
+ *  invisible until the user opens it manually — the pin looked forgotten. */
+const initialSidebarPinned = readSidebarPinned();
 
 export const useWorkspaceStore = createSelectors(
   create<WorkspaceState>()((set, get) => ({
@@ -245,8 +249,10 @@ export const useWorkspaceStore = createSelectors(
     activeWorkspaceId: null,
     mountedWorkspaceIds: [],
     maxMounted: DEFAULT_MAX_MOUNTED,
-    sidebarOpen: false,
-    sidebarPinned: readSidebarPinned(),
+    // Pinned restores OPEN — `toggleSidebarPinned` opens on pin, so the
+    // persisted preference means "docked and showing" across restarts too.
+    sidebarOpen: initialSidebarPinned,
+    sidebarPinned: initialSidebarPinned,
     switching: false,
     optimisticActiveId: null,
     editingGroupId: null,
