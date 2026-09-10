@@ -1,6 +1,5 @@
 import {
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   useCallback,
@@ -16,7 +15,6 @@ import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import { useLayoutStore, type Tab, type WorkspaceView } from "../stores/layout-store";
-import { tabSwitchCommitted } from "../lib/tab-switch-perf";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 // Chat is the default landing surface — always loaded so the first paint
 // shows the agent UI without a Suspense flash.
@@ -606,19 +604,6 @@ const TabContentContainer = memo(function TabContentContainer({
     };
   }, [isActive]);
   const warmChats = isActive && warmReady;
-
-  // Dev-only: close the tab-switch timer started by the layout store, once
-  // the new active tab has committed (see `tab-switch-perf.ts`).
-  const activeId = activeTab?.id;
-  const activeType = activeTab?.type;
-  useLayoutEffect(() => {
-    if (!activeId || !activeType) return;
-    tabSwitchCommitted(
-      activeId,
-      activeType,
-      () => ref.current?.querySelectorAll(".atlas-row").length ?? 0,
-    );
-  }, [activeId, activeType]);
 
   // Empty split column — invite the user to open something.
   if (tabs.length === 0) {
