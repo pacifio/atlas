@@ -43,6 +43,7 @@ import {
 } from "@/features/agents/lib/agent-meta";
 import { AgentIcons, ExternalAgentIcon, AgentMonogram } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
+import { useIsTabVisible } from "@/features/layout/lib/use-tab-visible";
 import { projectRows, RowKind, type Projection, type Row } from "../lib/turn-rows";
 import { useTranscriptScroll } from "../lib/use-transcript-scroll";
 import { useChatStore } from "../stores/chat-store";
@@ -209,6 +210,9 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   const cacheKey = `${tabId}:${acpSessionId}`;
   const pinScopeKey = pinScope(tabId, acpSessionId);
   const agent = switchable(agentType);
+  // Is this tab the one showing in its column? Boolean selector: flips only
+  // for the two tabs involved in a switch. Gates the idle window fill below.
+  const tabVisible = useIsTabVisible(tabId);
   // Only the just-sent user message plays the bubble entrance (id-scoped —
   // see UserRowView). Primitive selector: changes once per user send.
   const justSentMessageId = useChatStore((s) => s.sessions[tabId]?.justSentMessageId);
@@ -440,6 +444,13 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     // Very long threads keep the on-demand path: mounting tens of thousands of
     // rows to save a rare prepend is a bad trade.
     if (rows.length > MAX_IDLE_FILL) return;
+    // Hidden tab: don't fill. A chat stays mounted behind whichever tab is
+    // showing (kept laid out, see the chat wrapper in `center-panel.tsx`), so
+    // every chunk mounted here would cost DOM and layout in a panel nobody can
+    // see — and a never-visited tab that stays at its initial window is what
+    // keeps that wrapper cheap. The effect re-runs when the tab shows, so the
+    // fill resumes in idle slices and never lands on the switch frame.
+    if (!tabVisible) return;
 
     const w = window as Window & {
       requestIdleCallback?: (cb: () => void, o?: { timeout?: number }) => number;
@@ -484,7 +495,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     };
     // Re-runs on each `startIndex` change, which is what drives the loop
     // forward one chunk per idle slice until the window covers everything.
-  }, [startIndex, rows.length, growPending, captureGrowAnchor]);
+  }, [startIndex, rows.length, growPending, captureGrowAnchor, tabVisible]);
   // Re-anchor after growing upward: put the recorded row back under the same
   // pixel. Layout effect, so the correction lands in the same frame and is
   // never seen.
@@ -615,7 +626,10 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
 
   useEffect(() => () => onShowJumpChange?.(false), [onShowJumpChange]);
 
-  // Persist position on unmount so a tab switch returns the reader.
+  // Persist position on unmount so reopening returns the reader. A tab switch
+  // no longer unmounts (the panel stays mounted and laid out behind the active
+  // tab, keeping `scrollTop` in the DOM); this covers closing the tab or the
+  // workspace and coming back.
   useEffect(() => {
     return () => {
       const el = scrollRef.current;

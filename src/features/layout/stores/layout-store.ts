@@ -6,6 +6,7 @@ import { useTerminalStore, type TerminalTabState } from "@/features/terminal/sto
 import { invoke } from "@tauri-apps/api/core";
 import { ORG_SCOPED_TYPES, TAB_TYPES, type TabType } from "@/lib/constants";
 import type { LayoutTemplate } from "../templates";
+import { tabSwitchBegin } from "../lib/tab-switch-perf";
 
 export interface Tab {
   id: string;
@@ -258,7 +259,12 @@ function uniqueTabId(s: LayoutState, base: string): string {
 
 /** Keep `activeTabId` pointing at the focused column's active tab. */
 function syncActiveMirror(s: LayoutState): void {
-  s.activeTabId = s.activeByGroup[s.focusedGroupId] ?? null;
+  const next = s.activeByGroup[s.focusedGroupId] ?? null;
+  // Every way of switching tabs (click, index, cycle, history, close) funnels
+  // through here, so this is the one place to start the dev-only switch
+  // timer — see `tab-switch-perf.ts`.
+  if (next !== null && next !== s.activeTabId) tabSwitchBegin(next);
+  s.activeTabId = next;
 }
 
 function pushTabHistory(s: LayoutState, id: string): void {

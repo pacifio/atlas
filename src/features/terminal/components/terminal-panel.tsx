@@ -9,6 +9,7 @@ import {
   type SplitNode,
 } from "../stores/terminal-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { useIsTabVisible } from "@/features/layout/lib/use-tab-visible";
 import { BlockTerminal } from "./block-terminal";
 import { terminalSessions } from "../lib/terminal-session";
 import { useIsFocusedTerminal } from "../lib/focus";
@@ -62,10 +63,7 @@ export function TerminalPanel({ tabId, workspaceId }: TerminalPanelProps) {
   // Is this tab the one showing in its column? Mounted already implies the
   // active workspace (background workspaces unmount terminal panels); this is
   // what tells a hidden tab's terminals to stop rendering.
-  const panelVisible = useLayoutStore((s) => {
-    const t = s.tabs.find((x) => x.id === tabId);
-    return !!t && s.activeByGroup[t.groupId ?? "main"] === tabId;
-  });
+  const panelVisible = useIsTabVisible(tabId);
 
   useEffect(() => {
     initTab(tabId, workspaceId);

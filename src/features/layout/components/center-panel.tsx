@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useCallback,
@@ -15,6 +16,7 @@ import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import { useLayoutStore, type Tab, type WorkspaceView } from "../stores/layout-store";
+import { tabSwitchCommitted } from "../lib/tab-switch-perf";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
 // Chat is the default landing surface — always loaded so the first paint
 // shows the agent UI without a Suspense flash.
@@ -154,8 +156,8 @@ const PERSISTENT_TYPES: ReadonlySet<TabType> = new Set([
   "browser",
   "knowledge-graph",
   "pdf",
-  // Keep chat + knowledge mounted across tab switches too: chat preserves the
-  // virtualizer's measurement cache + scroll position (remounting re-ran the
+  // Keep chat + knowledge mounted across tab switches too: chat keeps its
+  // mounted transcript window + scroll position (remounting re-ran the
   // "loading transcript" path and rebuilt scroll), and knowledge avoids
   // re-walking its tree/graph on every revisit.
   "chat",
@@ -169,7 +171,7 @@ const PERSISTENT_TYPES: ReadonlySet<TabType> = new Set([
 // hidden — a PTY draining output, a live web embed, a Pixi/WebGL graph ticking,
 // a PDF worker. Those get unmounted for background workspaces (idle heat is the
 // bigger cost than their rebuild). The rest are inert-but-expensive-to-rebuild
-// (chat's virtualizer + transcript load, knowledge's tree walk, settings' form
+// (chat's transcript window + load path, knowledge's tree walk, settings' form
 // drafts) and stay mounted everywhere: hiding them saves nothing per frame and
 // costs a full remount on switch-back.
 const IDLE_EXPENSIVE_TYPES: ReadonlySet<TabType> = new Set([
@@ -570,6 +572,54 @@ const TabContentContainer = memo(function TabContentContainer({
     if (isActive && !activeTab && tabs.length > 0) setActiveTab(tabs[0].id);
   }, [isActive, activeTab, tabs, setActiveTab]);
 
+  // Hidden chat tabs stay LAID OUT (`visibility:hidden`, see the wrapper
+  // below) — but only once this column has been active for an idle slice.
+  // Flipping every mounted chat from `display:none` to laid-out costs one
+  // layout per thread, and doing that on app boot or in the same frame as a
+  // workspace switch (background workspaces are `display:none`) would move
+  // the stall we are removing onto those paths instead.
+  const [warmReady, setWarmReady] = useState(false);
+  useEffect(() => {
+    if (!isActive) {
+      setWarmReady(false);
+      return;
+    }
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, o?: { timeout?: number }) => number;
+      cancelIdleCallback?: (h: number) => void;
+    };
+    let idle: number | null = null;
+    let timer: number | null = null;
+    const warm = () => {
+      idle = null;
+      timer = null;
+      setWarmReady(true);
+    };
+    if (typeof w.requestIdleCallback === "function") {
+      idle = w.requestIdleCallback(warm, { timeout: 2000 });
+    } else {
+      timer = window.setTimeout(warm, 150);
+    }
+    return () => {
+      if (idle !== null) w.cancelIdleCallback?.(idle);
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [isActive]);
+  const warmChats = isActive && warmReady;
+
+  // Dev-only: close the tab-switch timer started by the layout store, once
+  // the new active tab has committed (see `tab-switch-perf.ts`).
+  const activeId = activeTab?.id;
+  const activeType = activeTab?.type;
+  useLayoutEffect(() => {
+    if (!activeId || !activeType) return;
+    tabSwitchCommitted(
+      activeId,
+      activeType,
+      () => ref.current?.querySelectorAll(".atlas-row").length ?? 0,
+    );
+  }, [activeId, activeType]);
+
   // Empty split column — invite the user to open something.
   if (tabs.length === 0) {
     return (
@@ -591,9 +641,21 @@ const TabContentContainer = memo(function TabContentContainer({
   // BACKGROUND workspace we additionally drop the types that keep working while
   // hidden (see IDLE_EXPENSIVE_TYPES) — off-screen terminals/browser embeds/
   // graphs were a major source of idle heat. Chat/knowledge/settings stay
-  // mounted even in background workspaces: they cost nothing per frame when
-  // hidden, and unmounting chat threw away the virtualizer's live state and
-  // re-ran the transcript-load path on every switch back.
+  // mounted even in background workspaces: unmounting chat re-ran the whole
+  // transcript-load path (window fill, markdown settle, anchor) on every
+  // switch back, and settings lost its form drafts.
+  //
+  // HOW a hidden tab is hidden matters. Most types use `display:none`. Chat
+  // does not: its transcript is real DOM for the whole thread (thousands of
+  // laid-out rows for a long session — see `transcript.tsx`, deliberately not
+  // virtualized), and `display:none` throws that layout away. Showing the tab
+  // again then rebuilt the render tree and laid out every row on the switch
+  // frame: a stall proportional to thread length, while an empty chat switched
+  // instantly. So a hidden chat keeps its box: `visibility:hidden` skips paint
+  // but keeps layout (and the scroller's `scrollTop`), and `inert` takes the
+  // subtree out of focus, hit-testing and find. Same contract the terminal
+  // uses for its inactive panes. The active chat wrapper is the same absolute
+  // box, so toggling a sibling's mode never relayouts the visible thread.
   const persistentTabs = tabs.filter(
     (t) => PERSISTENT_TYPES.has(t.type) && (isActive || !IDLE_EXPENSIVE_TYPES.has(t.type)),
   );
@@ -607,6 +669,35 @@ const TabContentContainer = memo(function TabContentContainer({
       <Suspense fallback={<PanelLoading />}>
         {persistentTabs.map((tab) => {
           const isActive = tab.id === activeTab.id;
+          if (tab.type === "chat") {
+            // Until the column has been active for an idle slice, hidden chats
+            // fall back to `display:none` (see `warmReady`).
+            const hidden = !isActive;
+            return (
+              <div
+                key={tab.id}
+                className="absolute inset-0"
+                inert={hidden}
+                style={{
+                  display: hidden && !warmChats ? "none" : undefined,
+                  visibility: hidden ? "hidden" : "visible",
+                  // `visibility` alone is not enough. Anything inside that
+                  // WebKit has promoted to its own compositing layer keeps
+                  // painting for ~100ms after the ancestor is hidden, and this
+                  // wrapper is positioned, so those leftovers land ON TOP of
+                  // the tab you just switched to. Ancestor opacity is applied
+                  // when the layer is composited, so a stale layer cannot
+                  // survive it. Free: opacity is not a layout or paint input.
+                  opacity: hidden ? 0 : 1,
+                  pointerEvents: hidden ? "none" : "auto",
+                  zIndex: hidden ? 0 : 1,
+                  contain: "layout style",
+                }}
+              >
+                <ChatPanel tabId={tab.id} />
+              </div>
+            );
+          }
           return (
             <div key={tab.id} style={{ display: isActive ? "contents" : "none" }}>
               {tab.type === "editor" ? (
@@ -615,8 +706,6 @@ const TabContentContainer = memo(function TabContentContainer({
                   filePath={tab.data.filePath as string | undefined}
                   containerHeight={height}
                 />
-              ) : tab.type === "chat" ? (
-                <ChatPanel tabId={tab.id} />
               ) : tab.type === "knowledge" ? (
                 <KnowledgePanel />
               ) : tab.type === "browser" ? (

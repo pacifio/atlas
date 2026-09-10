@@ -157,6 +157,18 @@ export function useTranscriptScroll({
     if (!el) return;
     if (dirty.current) measure();
 
+    // A HIDDEN scroller knows nothing. A chat tab stays mounted while another
+    // tab shows, and a `display:none` scroller (background workspace) reports
+    // 0×0 with `scrollTop` 0 — which reads as "at the very end AND at the very
+    // top". Believing it latched `atEnd` (a reader scrolled up in a background
+    // streaming tab was snapped to the bottom on return) and fired a grow into
+    // a panel nobody was looking at. Leave the cached geometry dirty so the
+    // first visible sample re-measures, and change nothing.
+    if (metrics.current.clientHeight === 0) {
+      dirty.current = true;
+      return;
+    }
+
     // The only read on a clean pass, and the only one that never forces layout.
     const top = el.scrollTop;
     const { scrollHeight, clientHeight } = metrics.current;

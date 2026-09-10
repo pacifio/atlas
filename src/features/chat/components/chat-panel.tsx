@@ -187,7 +187,13 @@ async function rebindDisconnectedSession(tabId: string): Promise<boolean> {
   }
 }
 
-export function ChatPanel({ tabId }: ChatPanelProps) {
+// `memo`: the panel's only prop is a stable `tabId`, and every mounted chat
+// stays mounted behind whichever tab is showing. Without this, each tab switch
+// re-rendered EVERY mounted chat (the center panel re-renders on the layout
+// store's active-tab write and re-emits these elements), and each of those
+// walked its whole transcript's row list. Streaming re-renders still arrive
+// through this panel's own store subscription.
+export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
   // Subscribe to ONLY this tab's session. Streaming chunks on other tabs
   // shouldn't repaint this panel — immer preserves reference equality for
   // unchanged sub-paths, so `s.sessions[tabId]` only changes when this tab
@@ -1291,7 +1297,7 @@ export function ChatPanel({ tabId }: ChatPanelProps) {
       )}
     </div>
   );
-}
+});
 
 /** Shown when the session's agent process died: one explicit affordance to
  *  respawn + resume. Sending a message does the same thing implicitly. */
@@ -1440,6 +1446,13 @@ const WELCOME_SUGGESTIONS = [
 
 function WelcomeState() {
   return (
+    // No entrance animations here, deliberately. Every `atlas-fade-in` element
+    // is `animation-fill-mode: both`, and a filled accelerated opacity
+    // animation leaves the element on its own compositing layer for good. This
+    // panel stays MOUNTED behind whichever tab is showing (see the chat wrapper
+    // in `center-panel.tsx`), and WebKit took ~100ms to drop those stale layers
+    // when the wrapper turned `visibility:hidden` — so the suggestion cards kept
+    // painting on top of the tab you had just switched to.
     <div className="relative h-full flex items-center justify-center overflow-hidden px-6">
       {/* The landing hero's ASCII cloud field, hollowed under the copy and
           faded out at the edges so it never reaches the header or the
@@ -1455,44 +1468,31 @@ function WelcomeState() {
         className="[mask-image:radial-gradient(ellipse_70%_60%_at_50%_45%,#000_55%,transparent_100%)]"
       />
       <div className="relative w-full max-w-[440px] flex flex-col items-center text-center">
-        {/* Hero: Atlas mark over a soft accent glow (radial gradient, no
-            backdrop-filter — cheap + static in WKWebView). */}
-        <div className="relative mb-5">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-[260px] w-[260px] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-[0.16]"
-            style={{
-              background: "radial-gradient(circle, var(--accent-primary) 0%, transparent 68%)",
-            }}
-          />
-          <AtlasIcon
-            size={60}
-            className="atlas-fade-in rounded-[18px] ring-1 ring-white/10 shadow-[0_12px_50px_-12px_rgba(0,0,0,0.85)]"
-          />
-        </div>
+        {/* Hero: the Atlas mark on black. It used to sit on a 260px accent
+            radial gradient; on AMOLED black that halo read as a smudge behind
+            the mark rather than a light source, and it competed with the
+            dither field's own centre. The ring and the drop shadow are what
+            separate the mark from the panel. */}
+        <AtlasIcon
+          size={60}
+          className="mb-5 rounded-[18px] ring-1 ring-white/10 shadow-[0_12px_50px_-12px_rgba(0,0,0,0.85)]"
+        />
 
-        <h2
-          className="atlas-fade-in bg-gradient-to-b from-white to-white/55 bg-clip-text text-[22px] font-semibold tracking-tight text-transparent"
-          style={{ animationDelay: "40ms" }}
-        >
+        <h2 className="bg-gradient-to-b from-white to-white/55 bg-clip-text text-[22px] font-semibold tracking-tight text-transparent">
           Atlas
         </h2>
-        <p
-          className="atlas-fade-in mt-1.5 text-[13px] text-[var(--text-tertiary)]"
-          style={{ animationDelay: "80ms" }}
-        >
+        <p className="mt-1.5 text-[13px] text-[var(--text-tertiary)]">
           Code with Agents. Tools, plans, and edits all live.
         </p>
 
         <div className="mt-7 grid w-full grid-cols-2 gap-2.5">
-          {WELCOME_SUGGESTIONS.map(({ text, Icon }, i) => (
+          {WELCOME_SUGGESTIONS.map(({ text, Icon }) => (
             <button
               key={text}
               onClick={() =>
                 window.dispatchEvent(new CustomEvent("atlas:chat-prefill", { detail: { text } }))
               }
-              style={{ animationDelay: `${120 + i * 50}ms` }}
-              className="group atlas-fade-in relative flex flex-col gap-2.5 rounded-xl border border-[var(--border-default)] bg-[var(--bg-secondary)] p-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:bg-[var(--bg-elevated)] hover:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.7)] cursor-pointer"
+              className="group relative flex flex-col gap-2.5 rounded-xl border border-[var(--border-default)] bg-[var(--bg-secondary)] p-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:bg-[var(--bg-elevated)] hover:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.7)] cursor-pointer"
             >
               <div className="flex items-center justify-between">
                 <span className="grid h-7 w-7 place-items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-tertiary)] transition-colors group-hover:text-[var(--text-primary)]">
