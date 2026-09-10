@@ -747,7 +747,11 @@ const LineList = memo(function LineList({
   return (
     // Block-level children: WebKit still inserts a newline between them on
     // copy, so selecting across lines pastes as it reads.
-    <div className="whitespace-pre-wrap break-words px-3 py-2 font-mono text-[12px] leading-[1.45] text-[var(--text-secondary)]">
+    // `select-text`: globals.css turns text selection OFF for the whole app
+    // and back on only for inputs, `pre`, `code` and this class. This surface
+    // used to be a `<pre>` and got selection for free; the line emulator
+    // rework made it a `<div>` and selection silently died with the tag.
+    <div className="select-text whitespace-pre-wrap break-words px-3 py-2 font-mono text-[12px] leading-[1.45] text-[var(--text-secondary)]">
       {lines.map((line) => (
         <OutputLine
           key={line.id}
