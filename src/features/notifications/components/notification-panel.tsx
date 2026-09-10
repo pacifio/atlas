@@ -1,9 +1,14 @@
-import { useMemo } from "react";
+import { lazy, Suspense, useMemo } from "react";
 import { Bell, Shield, AlertTriangle, X, Sparkles, BellRing, SquareTerminal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
 import { AtlasIcon } from "@/components/atlas-icon";
-import { ProviderLogo } from "@/components/provider-logo";
+// `@lobehub/icons` (~34 KB runtime + 21 glyphs) only matters once a chat-done
+// row is on screen; this was its one eager importer, which put it in the boot
+// set. The other three consumers already sit behind lazy panels.
+const ProviderLogo = lazy(() =>
+  import("@/components/provider-logo").then((m) => ({ default: m.ProviderLogo })),
+);
 import { jumpToSession } from "@/features/chat/lib/tab-workspace";
 import { jumpToTerminal } from "@/features/terminal/lib/jump-to-terminal";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
@@ -179,7 +184,13 @@ function NotificationIcon({ n }: { n: AppNotification }) {
     return <BellRing size={15} className="text-[var(--status-warning)]" strokeWidth={1.5} />;
   if (n.kind === "terminal-done")
     return <SquareTerminal size={15} className="text-text-secondary" strokeWidth={1.5} />;
-  if (n.kind === "chat-done" && n.provider) return <ProviderLogo id={n.provider} size={16} />;
+  if (n.kind === "chat-done" && n.provider)
+    return (
+      // 22 = size + 6, the box ProviderLogo renders, so the row never shifts.
+      <Suspense fallback={<span className="shrink-0" style={{ width: 22, height: 22 }} />}>
+        <ProviderLogo id={n.provider} size={16} />
+      </Suspense>
+    );
   if (n.source === "agent") return <AtlasIcon size={16} className="rounded-[5px]" />;
   return <Sparkles size={15} className="text-text-secondary" strokeWidth={1.5} />;
 }

@@ -225,6 +225,31 @@ describe("dev-profile opt-levels survive the move into the workspace", () => {
     );
   });
 
+  it("emits no debug info for third-party dependencies", () => {
+    // Members keep `line-tables-only` from `[profile.dev]`; the `"*"` stanza
+    // is deps only, and their DWARF was never read.
+    expect(rootSrc()).toMatch(
+      /^\s*\[profile\.dev\.package\."\*"\]\s*$(?:(?!^\s*\[)[\s\S])*?debug\s*=\s*false/m,
+    );
+  });
+
+  it("keeps the vendored engine members non-incremental", () => {
+    // They change only when the fork is patched; incremental state for them
+    // was write-once, and non-incremental units are what sccache can cache.
+    const vendored = workspaceList("members").filter((m) => m.startsWith("vendor/codex/"));
+    const missing: string[] = [];
+    for (const rel of vendored) {
+      const name = packageName(path.join(REPO_ROOT, rel, "Cargo.toml"));
+      const stanza = new RegExp(
+        `^\\s*\\[profile\\.dev\\.package\\.(?:"${escapeForRegExp(name)}"|${escapeForRegExp(name)})\\]\\s*$` +
+          `(?:(?!^\\s*\\[)[\\s\\S])*?incremental\\s*=\\s*false`,
+        "m",
+      );
+      if (!stanza.test(rootSrc())) missing.push(name);
+    }
+    expect(missing).toEqual([]);
+  });
+
   it("restates opt-level 1 for every member the `*` override no longer reaches", () => {
     const missing: string[] = [];
     for (const rel of expectedMembers()) {

@@ -21,7 +21,7 @@
  * `bun run build` keeps doing the plain `tsc && vite build` for CI and for
  * anyone iterating on the frontend alone.
  */
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFileSync,
@@ -41,22 +41,11 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(root, "dist");
 const NEXT = join(root, "dist-next");
 
-/** Run a command from the repo root, inheriting stdio; exit on failure. */
-function run(cmd, args) {
+/** Environment for child processes: repo-local binaries first. */
+function childEnv() {
   const env = { ...process.env };
   env.PATH = `${join(root, "node_modules", ".bin")}${delimiter}${env.PATH ?? ""}`;
-  const label = [cmd, ...args].join(" ");
-  console.log(`[build-frontend] ${label}`);
-  const result = spawnSync(cmd, args, {
-    stdio: "inherit",
-    cwd: root,
-    env,
-    shell: process.platform === "win32",
-  });
-  if (result.status !== 0) {
-    console.error(`[build-frontend] failed: ${label}`);
-    process.exit(result.status ?? 1);
-  }
+  return env;
 }
 
 /** Every file under `dir`, as paths relative to it (POSIX-ish, sorted). */
@@ -101,13 +90,51 @@ function pruneEmptyDirs(dir) {
   if (existsSync(dir)) walk(dir);
 }
 
-// 1. Typecheck. `tsconfig.json` only — the test config is not part of the
-//    shipped bundle and `bun run typecheck` covers it in the PR gates.
-run("bunx", ["tsc", "--noEmit", "-p", "tsconfig.json"]);
-
-// 2. Build into a staging directory so `dist/` is never emptied.
+// 1+2. Typecheck and bundle CONCURRENTLY. They used to run back to back, and
+//    tsc is single-threaded while vite saturates the cores, so the sum was
+//    pure waiting. `tsconfig.json` only — the test config is not part of the
+//    shipped bundle and `bun run typecheck` covers it in the PR gates. tsc's
+//    output is buffered and printed only on failure so vite's progress stays
+//    readable; either failing fails the build, and the survivor is killed so
+//    `dist-next/` is never half-written by a doomed run.
 rmSync(NEXT, { recursive: true, force: true });
-run("bunx", ["vite", "build", "--outDir", "dist-next", "--emptyOutDir"]);
+const spawnOpts = { cwd: root, env: childEnv(), shell: process.platform === "win32" };
+
+console.log("[build-frontend] tsc --noEmit -p tsconfig.json  (concurrent with vite build)");
+const tsc = spawn("tsc", ["--noEmit", "-p", "tsconfig.json"], {
+  ...spawnOpts,
+  stdio: ["ignore", "pipe", "pipe"],
+});
+let tscOut = "";
+tsc.stdout.on("data", (d) => (tscOut += d));
+tsc.stderr.on("data", (d) => (tscOut += d));
+
+console.log("[build-frontend] vite build --outDir dist-next --emptyOutDir");
+const vite = spawn("vite", ["build", "--outDir", "dist-next", "--emptyOutDir"], {
+  ...spawnOpts,
+  stdio: "inherit",
+});
+
+const exitOf = (child) => new Promise((res) => child.on("exit", (code) => res(code ?? 1)));
+const [tscCode, viteCode] = await Promise.all([
+  exitOf(tsc).then((c) => {
+    if (c !== 0) vite.kill();
+    return c;
+  }),
+  exitOf(vite).then((c) => {
+    if (c !== 0) tsc.kill();
+    return c;
+  }),
+]);
+if (tscCode !== 0) {
+  process.stdout.write(tscOut);
+  console.error("[build-frontend] failed: tsc --noEmit -p tsconfig.json");
+  process.exit(tscCode);
+}
+if (viteCode !== 0) {
+  console.error("[build-frontend] failed: vite build");
+  process.exit(viteCode);
+}
 
 // 3. Content-aware sync into `dist/`.
 mkdirSync(DIST, { recursive: true });

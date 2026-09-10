@@ -12,18 +12,17 @@ import {
   RefreshCw,
   Loader2,
   Users,
-  ChartPie,
-  Settings,
   Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/features/workspaces/stores/workspace-store";
-import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { auth } from "@/features/auth/lib/auth-api";
 import { useOrgStore } from "../stores/org-store";
 import { switchOrg, deleteOrgAndData } from "../lib/org-switch";
+import { AddProjectMenu } from "@/features/workspaces/components/add-project-menu";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { CreateOrgDialog } from "./create-org-dialog";
 import { MembersModal } from "./members-modal";
 import type { Organisation } from "../types";
@@ -149,12 +148,8 @@ export function OrgSwitcher() {
     return { ok: true };
   };
 
-  const { addTab } = useLayoutStore.use.actions();
-  /** Open one of the app-level singleton tabs from this row's quick actions.
-   *  Same ids the sidebar's header buttons used, so an already-open tab is
-   *  focused rather than duplicated. */
-  const openTabSingleton = (type: "mission-control" | "settings", title: string) =>
-    addTab({ id: type, type, title, closable: true, dirty: false, data: {} });
+  /** Label for the search button's tooltip, from the live keymap. */
+  const paletteHint = useActionShortcut("nav.commandPalette")?.label;
 
   const [open, setOpen] = useState(false);
   // True while a manual list-refresh is in flight (spins the refresh icon).
@@ -246,25 +241,20 @@ export function OrgSwitcher() {
         </DropdownMenu.Trigger>
 
         {/* Quick actions — the org row has spare width to its right, so the two
-         *  app-level destinations that aren't workspace-scoped (Console,
-         *  Settings) live here as icons instead of eating two full rows in the
-         *  header list below. */}
+         *  things you reach for constantly (add a project, search everything)
+         *  live here as icons instead of eating two full rows in the header
+         *  list below. Console moved up to the titlebar band with the rest of
+         *  the rail chrome; Settings is reachable from the account menu and
+         *  the command palette, so it no longer spends a slot here. */}
         <div className="ml-auto flex items-center gap-0.5 shrink-0">
+          <AddProjectMenu />
           <button
-            onClick={() => openTabSingleton("mission-control", "Console")}
-            title="Console"
-            aria-label="Console"
+            onClick={() => window.dispatchEvent(new CustomEvent("atlas:command-palette"))}
+            title={paletteHint ? `Search (${paletteHint})` : "Search"}
+            aria-label="Search"
             className="flex size-6 items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors cursor-pointer"
           >
-            <ChartPie size={13} />
-          </button>
-          <button
-            onClick={() => openTabSingleton("settings", "Settings")}
-            title="Settings"
-            aria-label="Settings"
-            className="flex size-6 items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] outline-none transition-colors cursor-pointer"
-          >
-            <Settings size={13} />
+            <Search size={13} />
           </button>
         </div>
 

@@ -455,7 +455,20 @@ rcgen = { version = "0.14.7", default-features = false, features = [
 ] }
 regex = "1.12.3"
 regex-lite = "0.1.8"
-reqwest = { version = "0.12", features = ["cookies"] }
+# `default-features = false`: reqwest's default set is `default-tls` + the
+# three below. `default-tls` is native-tls (Security.framework on macOS), which
+# no consumer wants — every vendored and Atlas crate asks for `rustls-tls` —
+# yet with both on, any `Client::new()` that never called `.use_rustls_tls()`
+# silently took native-tls. Dropping it removes native-tls, hyper-tls and
+# tokio-native-tls from the graph and puts every client on rustls/ring.
+# `cookies` stays: codex-http-client implements `reqwest::cookie::CookieStore`.
+reqwest = { version = "0.12", default-features = false, features = [
+    "charset",
+    "http2",
+    "system-proxy",
+    "cookies",
+    "rustls-tls",
+] }
 # NOTE (Sep-03 audit): rmcp, rig-core and posthog-rs are the three crates
 # holding a second reqwest (0.13) tower in the lock, duplicating hyper/h2/
 # http/tower behind it. The collapse runs FORWARD, not back: all three have
@@ -720,6 +733,12 @@ debug = "line-tables-only"
 # unoptimized debug code.
 [profile.dev.package."*"]
 opt-level = 1
+# No debug info for third-party dependencies. `[profile.dev]` keeps
+# `line-tables-only` for workspace members, which is where file:line in a
+# backtrace is ever read; for the ~1,000 crates below, DWARF was emitted on
+# every clean build and sat in target/debug/deps for nothing. Function names
+# and `panic!` locations do not come from debug info and are unaffected.
+debug = false
 
 # `"*"` above reaches dependencies ONLY — workspace members are excluded from
 # it by cargo. Before the workspace, every `crates/atlas-*` package was a plain
@@ -779,333 +798,450 @@ opt-level = 1
 # because workspace members are excluded from it by cargo. Generated from the
 # member list — a new vendored member belongs here too, and
 # tests/cargo-workspace.test.ts fails if it is missing.
+#
+# `incremental = false` on every one of them: these crates change only when
+# the fork is patched, so incremental state (14.6 GB of target/debug, the
+# bulk of it) was write-once and never re-read. Non-incremental codegen is
+# also faster on a first compile and, unlike incremental units, is cacheable
+# by a rustc wrapper such as sccache. The trade: editing a vendored crate
+# recompiles that crate from scratch. Atlas's own members stay incremental.
 
 [profile.dev.package.app_test_support]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-agent-extension]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-agent-graph-store]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-agent-identity]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-analytics]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-api]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-app-server]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-app-server-client]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-app-server-protocol]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-app-server-protocol-noop-macros]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-app-server-transport]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-apply-patch]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-arg0]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-async-utils]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-aws-auth]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-backend-client]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-backend-openapi-models]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-chatgpt]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-client]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-cloud-config]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-code-mode]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-code-mode-protocol]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-collaboration-mode-templates]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-config]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-connectors]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-connectors-extension]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-context-fragments]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-core]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-core-plugins]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-diagnostics]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-exec-server]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-exec-server-protocol]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-exec-server-test-support]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-execpolicy]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-experimental-api-macros]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-extension-api]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-extension-items]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-external-agent-migration]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-features]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-feedback]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-file-search]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-file-system]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-file-watcher]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-git-attribution]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-git-utils]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-goal-extension]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-guardian]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-guardian-v2]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-history]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-home]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-hooks]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-http-client]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-image-generation-extension]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-install-context]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-keyring-store]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-linux-sandbox]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-login]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-mcp]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-mcp-extension]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-memories-extension]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-memories-read]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-memories-write]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-model-provider]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-model-provider-info]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-models-manager]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-network-proxy]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-otel]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-plugin]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-process-hardening]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-prompts]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-protocol]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-queue-extension]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-response-debug-context]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-rmcp-client]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-rollout]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-rollout-trace]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-sandboxing]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-secrets]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-shell-command]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-shell-escalation]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-skills]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-skills-extension]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-state]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-terminal-detection]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-test-binary-support]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-thread-store]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-tools]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-uds]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-absolute-path]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-audio]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-cache]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-cargo-bin]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-cli]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-home-dir]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-image]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-json-to-toml]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-output-truncation]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-path]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-path-uri]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-plugins]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-pty]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-rustls-provider]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-stream-parser]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-string]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-utils-template]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-web-search-extension]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-websocket-client]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-windows-sandbox]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.codex-workload-identity]
 opt-level = 1
+incremental = false
 
 [profile.dev.package.core_test_support]
 opt-level = 1
+incremental = false

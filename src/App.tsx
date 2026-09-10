@@ -440,6 +440,14 @@ export function App() {
     window.addEventListener("atlas:new-tab-palette", open);
     return () => window.removeEventListener("atlas:new-tab-palette", open);
   }, []);
+  // Same arrangement for ⌘K: the rail's org-row search button asks for the
+  // command palette by event, because the palette's open state lives here and
+  // one caller does not justify lifting it into a store.
+  useEffect(() => {
+    const open = () => setCommandPaletteOpen(true);
+    window.addEventListener("atlas:command-palette", open);
+    return () => window.removeEventListener("atlas:command-palette", open);
+  }, []);
   const [layoutSwitcherOpen, setLayoutSwitcherOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [filePickerOpen, setFilePickerOpen] = useState(false);

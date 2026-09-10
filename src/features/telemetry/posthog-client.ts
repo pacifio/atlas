@@ -8,8 +8,19 @@
  * browser shares the same anonymous `distinct_id` and opt-in state. Nothing is
  * sent until the user has opted in AND a PostHog key resolved server-side.
  */
-import posthog from "posthog-js";
 import { invoke } from "@tauri-apps/api/core";
+
+type PostHogClient = (typeof import("posthog-js"))["default"];
+/**
+ * The SDK, once `initTelemetry` has loaded it. `posthog-js` is ~280 KB
+ * minified and was statically imported here, which put it in the eager boot
+ * set (parsed before first paint) although nothing can use it before the
+ * `telemetry_config` IPC has answered. Loaded with a dynamic import instead;
+ * null until then, and forever on an inert build. Not `dist/module.slim`:
+ * that variant fetches its error-tracking extension remotely, which the
+ * production CSP (`script-src 'self'`) blocks.
+ */
+let posthog: PostHogClient | null = null;
 
 interface TelemetryConfig {
   enabled: boolean;
@@ -90,6 +101,7 @@ export async function initTelemetry(): Promise<void> {
   if (!cfg.key) return; // inert build → never load posthog
 
   try {
+    posthog = (await import("posthog-js")).default;
     posthog.init(cfg.key, {
       api_host: cfg.host,
       bootstrap: { distinctID: cfg.anonId },
@@ -130,7 +142,7 @@ export async function initTelemetry(): Promise<void> {
 export function identify(id: TelemetryIdentity): void {
   if (!id.distinctId) return;
   pendingIdentity = id;
-  if (!started || !enabled) return;
+  if (!started || !enabled || !posthog) return;
   try {
     posthog.identify(id.distinctId, {
       email: id.email,
@@ -158,7 +170,7 @@ export function identify(id: TelemetryIdentity): void {
  * local-only orgs, which is exactly the case sign-in-driven grouping missed.
  */
 export function setOrgGroup(orgId: string | null): void {
-  if (!started) return;
+  if (!started || !posthog) return;
   try {
     if (orgId) {
       posthog.group("organisation", orgId);
@@ -180,7 +192,7 @@ export function setOrgGroup(orgId: string | null): void {
  */
 export function resetIdentity(): void {
   pendingIdentity = null;
-  if (!started) return;
+  if (!started || !posthog) return;
   try {
     posthog.reset();
   } catch {
@@ -191,7 +203,7 @@ export function resetIdentity(): void {
 /** Flip capturing on/off — mirrors the Settings toggle / first-run consent. */
 export function setEnabled(on: boolean): void {
   enabled = on;
-  if (!started) return;
+  if (!started || !posthog) return;
   try {
     if (on) posthog.opt_in_capturing();
     else posthog.opt_out_capturing();
@@ -208,7 +220,7 @@ export function setEnabled(on: boolean): void {
  * has opted in. Swallows all errors so telemetry can never crash the app.
  */
 export function captureClientError(error: unknown, context: Record<string, unknown> = {}): void {
-  if (!started || !enabled) return;
+  if (!started || !enabled || !posthog) return;
   // Drop known-benign, non-actionable noise before it hits PostHog quota.
   if (isIgnoredError(error)) return;
   try {

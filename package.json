@@ -6,11 +6,12 @@
   "types": "dist/types/index.d.ts",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "bun run --parallel typecheck:app build:vite",
+    "build:vite": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "dev:app": "node scripts/with-posthog-env.mjs tauri dev",
-    "build:app": "node scripts/with-posthog-env.mjs tauri build --bundles app",
+    "build:app": "node scripts/with-posthog-env.mjs tauri build --target aarch64-apple-darwin --bundles app",
     "build:app:dmg": "bash scripts/build-dmg.sh arm",
     "build:app:dmg:arm": "bash scripts/build-dmg.sh arm",
     "build:app:dmg:intel": "bash scripts/build-dmg.sh intel",
@@ -20,9 +21,12 @@
     "test": "vitest run",
     "test:rust": "bash scripts/test-rust.sh",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "typecheck": "bun run --parallel typecheck:app typecheck:test",
+    "typecheck:app": "tsc --noEmit -p tsconfig.json",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "clean:app": "bash scripts/clean-atlas-config.sh",
     "clean:rust": "find . crates vendor -maxdepth 2 -type d -name target -prune -exec sh -c 'test -f \"$1/CACHEDIR.TAG\" && du -sh \"$1\" && rm -rf \"$1\"' _ {} \\;",
+    "clean:rust:stale": "find src-tauri crates -mindepth 1 -maxdepth 2 -type d -name target -prune ! -path 'crates/atlas-kb-server/*' -exec sh -c 'test -f \"$1/CACHEDIR.TAG\" && du -sh \"$1\" && rm -rf \"$1\"' _ {} \\;",
     "prepare": "husky"
   },
   "dependencies": {

@@ -20,6 +20,7 @@ use codex_protocol::account::ProviderAccount;
 use codex_protocol::error::CodexErr;
 use codex_protocol::openai_models::ModelsResponse;
 
+#[cfg(feature = "aws")]
 use crate::amazon_bedrock::AmazonBedrockModelProvider;
 use crate::auth::ProviderAuthScope;
 use crate::auth::ResolvedProviderAuth;
@@ -268,11 +269,14 @@ pub fn create_model_provider(
     provider_info: ModelProviderInfo,
     auth_manager: Option<Arc<AuthManager>>,
 ) -> SharedModelProvider {
+    // Atlas fork: Bedrock is behind the `aws` feature (see Cargo.toml). Without
+    // it a Bedrock provider falls through to the generic HTTP provider; the
+    // app-server's Bedrock sign-in path already rejects every region first.
+    #[cfg(feature = "aws")]
     if provider_info.is_amazon_bedrock() {
-        Arc::new(AmazonBedrockModelProvider::new(provider_info, auth_manager))
-    } else {
-        Arc::new(ConfiguredModelProvider::new(provider_info, auth_manager))
+        return Arc::new(AmazonBedrockModelProvider::new(provider_info, auth_manager));
     }
+    Arc::new(ConfiguredModelProvider::new(provider_info, auth_manager))
 }
 
 /// Runtime model provider backed by configured `ModelProviderInfo`.
@@ -512,6 +516,7 @@ mod tests {
     use codex_http_client::OutboundProxyPolicy;
     use codex_login::auth::AgentIdentityAuthPolicy;
     use codex_login::auth::BedrockApiKeyAuth;
+    #[cfg(feature = "aws")]
     use codex_model_provider_info::ModelProviderAwsAuthInfo;
     use codex_model_provider_info::WireApi;
     use codex_model_provider_info::create_oss_provider_with_base_url;
@@ -830,6 +835,7 @@ mod tests {
         assert!(auth_manager.has_external_auth());
     }
 
+    #[cfg(feature = "aws")]
     #[test]
     fn create_model_provider_does_not_use_openai_auth_manager_for_amazon_bedrock_provider() {
         let provider = create_model_provider(
@@ -845,6 +851,7 @@ mod tests {
         assert!(provider.auth_manager().is_none());
     }
 
+    #[cfg(feature = "aws")]
     #[tokio::test]
     async fn create_model_provider_uses_managed_auth_for_amazon_bedrock_provider() {
         let auth = bedrock_api_key_auth();
@@ -946,6 +953,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "aws")]
     #[test]
     fn amazon_bedrock_provider_returns_bedrock_account_state() {
         let provider = create_model_provider(
@@ -964,6 +972,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "aws")]
     #[tokio::test]
     async fn amazon_bedrock_provider_creates_static_models_manager() {
         let provider = create_model_provider(
@@ -1033,6 +1042,7 @@ mod tests {
         assert_eq!(default_model.model, "openai.gpt-5.6-sol");
     }
 
+    #[cfg(feature = "aws")]
     #[tokio::test]
     async fn configured_bedrock_catalog_only_allows_default_service_tier() {
         let configured_model = codex_models_manager::bundled_models_response()

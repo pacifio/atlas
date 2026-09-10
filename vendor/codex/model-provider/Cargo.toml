@@ -1,3 +1,4 @@
+# Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 [package]
 edition.workspace = true
 license.workspace = true
@@ -15,7 +16,7 @@ workspace = true
 [dependencies]
 codex-api = { workspace = true }
 codex-agent-identity = { workspace = true }
-codex-aws-auth = { workspace = true }
+codex-aws-auth = { workspace = true, optional = true }
 codex-http-client = { workspace = true }
 codex-feedback = { workspace = true }
 codex-login = { workspace = true }
@@ -27,6 +28,14 @@ codex-response-debug-context = { workspace = true }
 http = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true, features = ["log"] }
+
+# Atlas fork: Amazon Bedrock is behind a feature. Upstream links the AWS SDK
+# unconditionally (aws-config + four service SDKs + sigv4 + a dozen smithy
+# crates, ~25 crates); Atlas never exposes Bedrock as a provider, so the
+# default build leaves it out. `--features aws` restores upstream behaviour.
+[features]
+default = []
+aws = ["dep:codex-aws-auth"]
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

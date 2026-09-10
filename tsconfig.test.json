@@ -12,13 +12,17 @@
   // resolve. Tests run under vitest, which IS vite, so these types apply.
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": ["node", "vite/client"]
+    "types": ["node", "vite/client"],
+    "tsBuildInfoFile": "./node_modules/.cache/tsc/test.tsbuildinfo"
   },
   "include": [
     "tests",
     "src/**/*.test.ts",
     "src/**/*.test.tsx",
     "vitest.config.ts",
+    // The Vite config is Node code too (`import.meta.dirname`, `process.env`)
+    // and is otherwise typechecked by nothing.
+    "vite.config.ts",
     // Asset-module declarations (vite/client: *.svg …). Tests that import
     // components transitively reach asset imports, and this file is outside
     // the test-glob include set.

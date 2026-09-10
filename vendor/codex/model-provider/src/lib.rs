@@ -1,10 +1,19 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
+#[cfg(feature = "aws")]
 mod amazon_bedrock;
 mod auth;
 mod bearer_auth_provider;
 mod models_endpoint;
 mod provider;
 
+#[cfg(feature = "aws")]
 pub use amazon_bedrock::is_supported_amazon_bedrock_region;
+/// Without the `aws` feature (Atlas fork default) no Bedrock region is
+/// supported; the app-server's Bedrock sign-in path reports it as such.
+#[cfg(not(feature = "aws"))]
+pub fn is_supported_amazon_bedrock_region(_region: &str) -> bool {
+    false
+}
 pub use auth::AgentIdentitySessionFallback;
 pub use auth::ProviderAuthScope;
 pub use auth::ResolvedProviderAuth;

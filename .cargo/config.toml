@@ -27,10 +27,12 @@
 # `cargo build --release -p atlas` recompiles those eight plus the app (16
 # rustc invocations), while
 #
-#   cargo build --release -p atlas --features tauri/custom-protocol
+#   cargo build --release -p atlas --target aarch64-apple-darwin --features tauri/custom-protocol
 #
 # is a complete cache hit against `bun run build:app` — 0 rustc invocations,
-# verified 2026-09-04. `custom-protocol` cannot simply become a default
+# verified 2026-09-04 (without `--target`; `build:app` passes it since
+# 2026-09-10 so it shares target/aarch64-apple-darwin with `build:app:dmg`
+# instead of filling a second 13 GB host-triple tree under target/release). `custom-protocol` cannot simply become a default
 # feature: it makes tauri serve the embedded assets instead of the dev server,
 # which is why the CLI adds it on release builds only. `cargo check`, `cargo
 # test` and `tauri dev` are unaffected by any of this.

@@ -1,4 +1,9 @@
-@import "tailwindcss";
+/* `source("../")` = `src/`, relative to this file. Without it Tailwind v4
+   auto-detects sources from the git root and scanned all ~5,000 tracked files
+   for class names on every build and dev CSS rebuild — including the 50 MB
+   vendored Rust engine, which can never contain one. index.html needs no
+   `@source`: its boot skeleton uses only its own inline `atlas-boot-*` rules. */
+@import "tailwindcss" source("../");
 @import "./tokens.css";
 @import "./diff-syntax.css";
 

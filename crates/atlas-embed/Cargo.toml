@@ -29,7 +29,11 @@ serde_json = "1.0.150"
 # Windows. It only speeds up *training* a Unigram tokenizer (esaxx-rs still
 # has a pure-Rust fallback); loading/running pretrained tokenizers is
 # unaffected, so it's safe to drop.
-tokenizers = { version = "0.23.1", default-features = false, features = ["progressbar", "onig"] }
+# `0.22`, not the newest: candle-core pins `tokenizers = "0.22"` and the two
+# minors do not unify, so `0.23` compiled the crate (and its onig C build)
+# twice. `progressbar` is off — it only reports training progress, and this
+# crate only loads pretrained tokenizers.
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 
 # The workspace lint table is only real for members that opt in —
 # without this stanza it is dead configuration (#60).

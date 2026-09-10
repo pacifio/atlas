@@ -5,11 +5,11 @@ import path from "path";
 
 const host = process.env.TAURI_DEV_HOST;
 
-export default defineConfig(async () => ({
+export default defineConfig(() => ({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(import.meta.dirname, "./src"),
       // Force the DOM-free build of `decode-named-character-reference`. Its
       // package `browser` condition points at `index.dom.js`, which calls
       // `document.createElement` at module scope. That module is a transitive
@@ -21,7 +21,7 @@ export default defineConfig(async () => ({
       // agent streaming + workspace switches. `index.js` is a table-based,
       // DOM-free build with identical output.
       "decode-named-character-reference": path.resolve(
-        __dirname,
+        import.meta.dirname,
         "node_modules/decode-named-character-reference/index.js",
       ),
     },
@@ -124,8 +124,19 @@ export default defineConfig(async () => ({
     // The worker is a separate ESM entry loaded via `?url`; pre-bundling it
     // would rewrite its imports and break worker instantiation.
     exclude: ["pdfjs-dist/build/pdf.worker.min.mjs"],
+    // Serve pre-bundled deps as soon as the scanner finishes instead of
+    // holding every request until the whole crawl ends. Only matters on a
+    // cold `node_modules/.vite` (first run, lockfile or config change).
+    holdUntilCrawlEnd: false,
   },
   build: {
+    // Skip gzipping all ~200 chunks just to print compressed sizes.
+    reportCompressedSize: false,
+    // Every chunk over Vite's 500 KB default is a lazy vendor group by design
+    // (pdf.worker 1.0 MB, mermaid, markdown, tiptap, xterm — see the groups
+    // below). The limit sits just above the largest so a NEW oversize chunk
+    // still warns.
+    chunkSizeWarningLimit: 1100,
     // Vendor splitting so the initial chunk only holds what first paint
     // needs (React + the chat panel). Heavy panel-specific vendors live in
     // their own chunks and load on demand when the user opens a tab that
@@ -144,6 +155,14 @@ export default defineConfig(async () => ({
     // Numbers are spaced by 10 so a rule can be slotted between two others
     // without renumbering the file.
     rolldownOptions: {
+      checks: {
+        // Five stores are imported dynamically by one module and statically by
+        // others (project-store from chat-store, git-store from editor-panel,
+        // …). Those `import()`s are deliberate cycle-breakers for module
+        // evaluation order, not code-splitting requests, so Rolldown's "this
+        // dynamic import won't make a chunk" notice is correct and irrelevant.
+        ineffectiveDynamicImport: false,
+      },
       output: {
         codeSplitting: {
           groups: [
@@ -237,6 +256,14 @@ export default defineConfig(async () => ({
               name: "vendor-tauri",
               priority: 20,
               test: (id) => !id.endsWith(".css") && id.includes("@tauri-apps"),
+            },
+            // posthog-js is loaded with a dynamic import after the telemetry
+            // config IPC (see posthog-client.ts); a named group keeps it a
+            // recognisable lazy chunk instead of an anonymous hash.
+            {
+              name: "vendor-posthog",
+              priority: 20,
+              test: (id) => !id.endsWith(".css") && id.includes("/node_modules/posthog-js/"),
             },
             // Keep the heavy lazy-panel libs OUT of vendor-react. `@xyflow/react`
             // (Canvas) and `@tiptap/react` (Knowledge) are only reached through

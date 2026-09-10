@@ -24,7 +24,12 @@
     // test config) meant `process`, `Buffer` and `__dirname` typechecked clean
     // in `src/`, where none of them exist at runtime. Types reached through
     // `import` are unaffected; only ambient globals are gated here.
-    "types": []
+    "types": [],
+    // Incremental typecheck state. `node_modules/` is gitignored, so nothing
+    // to add there; each config names its own file (see tsconfig.test.json)
+    // so the two programs do not thrash one cache.
+    "incremental": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsc/app.tsbuildinfo"
   },
   // Tests are excluded here and typechecked by `tsconfig.test.json` instead.
   // Keeping them out is what lets this config stay free of `@types/node`: the
