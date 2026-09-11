@@ -33,14 +33,17 @@
 //! header, so a cache carries the org it was fetched for and is a miss for any
 //! other. A user switching orgs must not be offered the previous org's models.
 //!
-//! # Metadata the gateway does not send yet
+//! # Metadata
 //!
-//! Display name, description and context window are requested from the
-//! gateway (`docs/requests/gateway-catalogue-metadata.md`) and read here when
-//! present. Until they land: the name is the slug, there is no description,
-//! and — the one that matters — there is no context window, so the engine's
-//! auto-compaction is off for that row and the gateway's own `413` is the
-//! ceiling. Accepted, and temporary.
+//! Display name, description, context window, sort order, default and input
+//! modalities ride each row as the gateway's presentation block (server
+//! commit `e37ea88`, the answer to `docs/requests/gateway-catalogue-
+//! metadata.md`). Every member is optional on the wire and falls back per
+//! field: the slug is the name, no description, text+image assumed, and —
+//! only for a row the gateway has not annotated — no context window, which
+//! leaves the engine's auto-compaction off for that row. The gateway serves
+//! `context_window` already clamped to its own prompt ceiling, so the number
+//! here is always one the engine may compact against.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
@@ -81,22 +84,38 @@ const CACHE_VERSION: u32 = 1;
 /// One row of `GET /v1/catalogue`, as the gateway sends it.
 ///
 /// Every field but `id` is defaulted so the gateway may add or drop fields
-/// without invalidating a cache or breaking a launch. The three metadata
-/// fields are the ones requested from the gateway team; they are optional
-/// here precisely so they can ship incrementally.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// without invalidating a cache or breaking a launch. The presentation block
+/// (`display_name` through `input_modalities`) is the gateway's `ModelMeta`
+/// join (server `packages/contracts/src/model-meta.ts`); each member is
+/// `null` when unannotated, and a client falls back per field.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GatewayRow {
     pub id: String,
     #[serde(default)]
     pub publisher: Option<String>,
     #[serde(default)]
     pub entitled: bool,
+    /// `Claude Opus 5`, not `claude-opus-5`. Absent: the id is the name.
     #[serde(default)]
     pub display_name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// The prompt ceiling **as the gateway enforces it** — already clamped
+    /// to the gate's own limit server-side, so it is safe to compact against.
     #[serde(default)]
     pub context_window: Option<i64>,
+    /// Picker position. Informational here: the gateway already returns
+    /// `data[]` in this order, and the projection keeps the wire order.
+    #[serde(default)]
+    pub sort_order: Option<i64>,
+    /// The model a new session starts on. Per caller: the gateway only sets
+    /// it on a row this caller is also entitled to.
+    #[serde(default, rename = "default")]
+    pub is_default: bool,
+    /// What the model accepts. Absent: text and image are assumed, which is
+    /// what every gateway model took before this was on the wire.
+    #[serde(default)]
+    pub input_modalities: Option<Vec<String>>,
 }
 
 /// The gateway's whole answer.
@@ -450,7 +469,8 @@ pub struct ProjectedCatalogue {
     pub response: ModelsResponse,
     /// What the composer lists.
     pub picker: Vec<AgentModelInfo>,
-    /// The first entitled row: what a session runs on before any pick.
+    /// What a session runs on before any pick: the entitled row the gateway
+    /// marks `default`, else the first entitled row.
     pub default_model: String,
     /// The identity that matters to the engine — slugs and context windows,
     /// in order. Names and descriptions are not in it: a change to those
@@ -465,6 +485,15 @@ pub struct ProjectedCatalogue {
 pub fn project(cache: &CatalogueCache) -> Option<ProjectedCatalogue> {
     let entitled: Vec<&GatewayRow> = cache.rows.iter().filter(|row| row.entitled).collect();
     let first = entitled.first()?;
+    // The gateway's `default` is per caller — set only on an entitled row —
+    // so an entitled row carrying it is the one to start on. With none
+    // marked (an unannotated table), the first entitled row is the default,
+    // exactly as the gateway documents the fallback.
+    let default = entitled
+        .iter()
+        .find(|row| row.is_default)
+        .copied()
+        .unwrap_or(first);
 
     let rows: Vec<serde_json::Value> = entitled
         .iter()
@@ -475,6 +504,7 @@ pub fn project(cache: &CatalogueCache) -> Option<ProjectedCatalogue> {
                 row.display_name.as_deref().unwrap_or(&row.id),
                 row.description.as_deref(),
                 row.context_window,
+                row.input_modalities.as_deref(),
                 index as i32 + 1,
             )
         })
@@ -509,7 +539,7 @@ pub fn project(cache: &CatalogueCache) -> Option<ProjectedCatalogue> {
     Some(ProjectedCatalogue {
         response,
         picker,
-        default_model: first.id.clone(),
+        default_model: default.id.clone(),
         fingerprint: fingerprint(entitled.iter().map(|row| (row.id.as_str(), row.context_window))),
     })
 }
@@ -585,9 +615,7 @@ mod tests {
             id: id.to_string(),
             publisher: Some("anthropic".to_string()),
             entitled,
-            display_name: None,
-            description: None,
-            context_window: None,
+            ..GatewayRow::default()
         }
     }
 
@@ -631,14 +659,70 @@ mod tests {
     }
 
     #[test]
-    fn the_requested_metadata_is_read_when_the_gateway_sends_it() {
-        let body = r#"{"data":[{"id":"m","entitled":true,"display_name":"Model M","description":"fast","context_window":200000}]}"#;
+    fn the_presentation_block_is_read_as_the_gateway_serves_it() {
+        // The shape in the server's docs (§6b) after commit e37ea88: the
+        // presentation block rides each row in snake_case, `default` included.
+        let body = r#"{"object":"list","data":[{
+            "id":"claude-sonnet-4-6","object":"model","created":1786320000,
+            "owned_by":"google-vertex-ai","publisher":"anthropic","entitled":true,
+            "display_name":"Claude Sonnet 4.6","description":"Strong agentic coding at the mid tier.",
+            "context_window":200000,"sort_order":1,"default":true,"input_modalities":["text","image"]
+        },{
+            "id":"glm-5.3-flash","entitled":true,"display_name":"GLM 5.3 Flash","description":null,
+            "context_window":200000,"sort_order":4,"default":false,"input_modalities":null
+        }],"hasGrant":true}"#;
         let Ok(catalogue) = serde_json::from_str::<GatewayCatalogue>(body) else {
             panic!("parse");
         };
-        assert_eq!(catalogue.rows[0].display_name.as_deref(), Some("Model M"));
-        assert_eq!(catalogue.rows[0].description.as_deref(), Some("fast"));
-        assert_eq!(catalogue.rows[0].context_window, Some(200_000));
+        let sonnet = &catalogue.rows[0];
+        assert_eq!(sonnet.display_name.as_deref(), Some("Claude Sonnet 4.6"));
+        assert_eq!(sonnet.description.as_deref(), Some("Strong agentic coding at the mid tier."));
+        assert_eq!(sonnet.context_window, Some(200_000));
+        assert_eq!(sonnet.sort_order, Some(1));
+        assert!(sonnet.is_default);
+        assert_eq!(sonnet.input_modalities.as_deref(), Some(&["text".to_string(), "image".to_string()][..]));
+        let glm = &catalogue.rows[1];
+        assert_eq!(glm.description, None, "null is absent, not the string null");
+        assert!(!glm.is_default);
+        assert_eq!(glm.input_modalities, None);
+    }
+
+    #[test]
+    fn the_gateways_default_wins_over_first_position() {
+        // `default` is the gateway's say on where a session starts; position
+        // only decides it when no row claims it.
+        let mut opus = row("claude-opus-5", true);
+        opus.is_default = true;
+        let cache = cache_with(vec![row("claude-sonnet-4-6", true), opus], None, 0);
+        let projected = project(&cache).expect("rows");
+        assert_eq!(projected.default_model, "claude-opus-5");
+        let slugs: Vec<&str> = projected.picker.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(slugs, ["claude-sonnet-4-6", "claude-opus-5"], "the wire order is kept");
+
+        // A default the gateway put on a row this caller cannot use — which
+        // it never does, but a cache could carry — must not start a session
+        // on a refusal.
+        let mut locked = row("locked", false);
+        locked.is_default = true;
+        let cache = cache_with(vec![locked, row("open", true)], None, 0);
+        assert_eq!(project(&cache).expect("rows").default_model, "open");
+    }
+
+    #[test]
+    fn input_modalities_come_from_the_gateway_when_stated() {
+        let mut text_only = row("text-only", true);
+        text_only.input_modalities = Some(vec!["text".to_string()]);
+        let cache = cache_with(vec![row("unstated", true), text_only], None, 0);
+        let projected = project(&cache).expect("rows");
+        let modalities = |i: usize| {
+            projected.response.models[i]
+                .input_modalities
+                .iter()
+                .map(|m| format!("{m:?}").to_ascii_lowercase())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(modalities(0), ["text", "image"], "unstated keeps the old assumption");
+        assert_eq!(modalities(1), ["text"], "stated is honoured");
     }
 
     // ── the cache ───────────────────────────────────────────────────────

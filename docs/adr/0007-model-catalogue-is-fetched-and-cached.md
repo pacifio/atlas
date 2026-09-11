@@ -20,7 +20,7 @@ Three facts constrain the replacement:
 
 2. **The cache is the only fallback.** With no cache and no gateway answer, the native connect fails with a message that says so, and the picker is empty. No list authored in Atlas stands in. A signed-out user with a same-org cache still connects; their turns fail as they do today without an account (D14).
 
-3. **Per-model metadata is the gateway's to send.** Atlas reads `display_name`, `description` and `context_window` from a catalogue row when present and requests them from the gateway team (`docs/requests/gateway-catalogue-metadata.md`). Until they ship: the name is the slug, there is no description, and there is no context window, so the engine's auto-compaction is off for that row and the gateway's `413` is the ceiling. Accepted as an interim cost.
+3. **Per-model metadata is the gateway's to send.** Atlas reads the presentation block the gateway serves on each row — `display_name`, `description`, `context_window`, `sort_order`, `default`, `input_modalities` — and falls back per field when a member is `null`: the slug is the name, no description, text and image assumed. The gateway serves `context_window` already clamped to its own prompt ceiling, so the engine's auto-compaction fires at 90 % of a number the gate will actually accept. The gateway's `default` (per caller, only ever on an entitled row) decides where a new session starts; first entitled position decides it only when no row claims it. Modalities the engine's record cannot name (`video`) are dropped on the way in, because one unknown string fails the whole catalogue load. (Requested in `docs/requests/gateway-catalogue-metadata.md`; shipped as server commit `e37ea88` the same day.)
 
 4. **No exclude list.** Every entitled row is offered, including one the gateway advertises but cannot route today (`openai/gpt-5.6-sol`, which fails every completion with a `502`). That is a gateway defect and is fixed there; a list of exceptions here would be a second hardcoded catalogue.
 
@@ -32,7 +32,7 @@ Three facts constrain the replacement:
 
 - `DEFAULT_MODEL`, `CONTEXT_WINDOW`, the model array and every test that named a model are gone. The integration tests stand up a mock gateway that serves a fixture catalogue; the ids they assert on are the fixture's, not the product's.
 - `EngineSettings.model` is `Option<String>`: `Some` on the dev Responses provider, `None` on the gateway. `EngineConnection` carries a `LiveCatalogue` that both the picker and every thread start read.
-- The picker's order and default are whatever order the gateway's price table returns. The metadata request asks for an explicit `sort_order` and `default` so this stops being incidental.
-- Long threads on rows without a context window will hit the gateway's size limit instead of compacting until the gateway sends the number.
+- The picker's order and default are the gateway's `sort_order` and `default`; a model the server has not annotated sorts last and never claims the default.
+- A row the server has not annotated has no context window and does not compact; today every served model is annotated.
 - A fork-side change — a swappable catalogue inside the engine's `StaticModelsManager`, injected through `InProcessClientStartArgs` and preserved across the MCP-refresh rebuild — would remove the reconnect on a changed slug set. About five files in `vendor/codex`, two new fork-only invariants. Not done; recorded here as the upgrade path if the teardown proves annoying in practice.
 - The provider is unchanged and still hardcoded to the gateway. Only the model catalogue moved.

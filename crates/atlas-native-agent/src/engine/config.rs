@@ -435,11 +435,8 @@ mod tests {
         use crate::engine::catalog_cache::{CatalogueCache, GatewayCatalogue, GatewayRow};
         let row = |id: &str, entitled: bool| GatewayRow {
             id: id.to_string(),
-            publisher: None,
             entitled,
-            display_name: None,
-            description: None,
-            context_window: None,
+            ..GatewayRow::default()
         };
         let cache = CatalogueCache::new(
             GatewayCatalogue {

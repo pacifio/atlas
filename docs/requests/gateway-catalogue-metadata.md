@@ -5,6 +5,8 @@
 **Date:** 2026-09-11
 **Priority:** the context window is the one that affects users today; the rest is polish.
 
+> **Status: shipped, same day.** `tryatlas/server` commit `e37ea88` ("serve model metadata on the catalogue", ATL-263/264/265) answers every field below, in the names asked for, plus one refinement the desktop now relies on: `context_window` is served as `min(stated, gate ceiling)` and is therefore always present. `default` is per caller — set only on a row the caller is entitled to. The desktop reads all six fields (`crates/atlas-native-agent/src/engine/catalog_cache.rs`, `GatewayRow`) and honours `default` over first position. One divergence: the gateway's modality set includes `video`, which the engine's record cannot name, so the desktop drops it on the way in (`catalog.rs`, `row`). Kept as the record of what was asked and why.
+
 ## What we are asking for
 
 Five optional fields on every row of `GET /v1/catalogue` (and, if convenient, `GET /v1/models`):

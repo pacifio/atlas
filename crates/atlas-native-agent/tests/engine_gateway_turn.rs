@@ -48,18 +48,26 @@ const FIXTURE_DEFAULT: &str = FIXTURE_MODELS[0];
 const FIXTURE_LOCKED: &str = "openai/gpt-5.6-sol";
 
 fn catalogue_body() -> Value {
+    // The wire shape after the gateway's metadata commit (e37ea88): the
+    // presentation block rides each row, `default` marks the first, and
+    // `display_name` is left null so the slug-as-name fallback is exercised.
     let mut data: Vec<Value> = FIXTURE_MODELS
         .iter()
-        .map(|id| {
+        .enumerate()
+        .map(|(index, id)| {
             serde_json::json!({
                 "id": id, "object": "model", "created": 1786320000,
                 "owned_by": "google-vertex-ai", "publisher": "test", "entitled": true,
+                "display_name": null, "description": null, "context_window": 200000,
+                "sort_order": index + 1, "default": index == 0, "input_modalities": ["text", "image"],
             })
         })
         .collect();
     data.push(serde_json::json!({
         "id": FIXTURE_LOCKED, "object": "model", "created": 1786320000,
         "owned_by": "google-vertex-ai", "publisher": "openai", "entitled": false,
+        "display_name": null, "description": "No funded route.", "context_window": 200000,
+        "sort_order": 99, "default": false, "input_modalities": null,
     }));
     serde_json::json!({ "object": "list", "data": data, "hasGrant": true })
 }
@@ -693,11 +701,8 @@ async fn seed_cache(home: &std::path::Path, ids: &[&str], fetched_at: u64) {
         .iter()
         .map(|id| GatewayRow {
             id: id.to_string(),
-            publisher: None,
             entitled: true,
-            display_name: None,
-            description: None,
-            context_window: None,
+            ..GatewayRow::default()
         })
         .collect();
     let cache = CatalogueCache::new(GatewayCatalogue { has_grant: true, rows }, None, fetched_at);
@@ -853,11 +858,13 @@ async fn a_relabelled_catalogue_swaps_in_place_but_a_changed_one_does_not() {
         ids.iter()
             .map(|id| GatewayRow {
                 id: id.to_string(),
-                publisher: None,
                 entitled: true,
                 display_name: named.then(|| format!("Name of {id}")),
-                description: None,
-                context_window: None,
+                // The fixture's window, kept: the context window is part of
+                // the engine-relevant identity, so changing it here would be
+                // a "changed catalogue", not a relabelling.
+                context_window: Some(200_000),
+                ..GatewayRow::default()
             })
             .collect()
     };
