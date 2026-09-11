@@ -14,9 +14,11 @@ import {
   ChevronDown,
   Search,
   Plus,
+  RotateCw,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useChatStore } from "../stores/chat-store";
+import { useNativeModelsOrgRefresh, useNativeModelsStore } from "../stores/native-models-store";
 import { agents } from "../lib/agents-api";
 import {
   CLAUDE_PERMISSION_MODE_LABEL,
@@ -466,14 +468,25 @@ function ComposerGroupsMenu({
     };
   }, [openGroup]);
 
+  const isNative = agentType === "cersei";
+  const refreshingModels = useNativeModelsStore.use.refreshing();
+  const refreshNativeModels = useNativeModelsStore.use.actions().refresh;
+
   // Self-heal: the store is fed by the bind-time snapshot and the
   // `config_options_updated` delta, and a tab can render before either has
   // landed. Fall back to the persisted per-agent cache so the pill does not
   // flicker away in that gap.
+  //
+  // Not for the native agent. Its list is the gateway's, fetched and cached
+  // by the seam (ADR-0007), and it arrives with the bind-time snapshot; when
+  // it does NOT arrive that is the failure the user must see — an empty
+  // picker with the refresh hint — and a localStorage pre-fill would paper
+  // over it with whatever list some earlier launch saw.
   const models = useMemo(() => {
     if (availableModels && availableModels.length > 0) return availableModels;
+    if (isNative) return [];
     return loadCachedAcpModels(agentType)?.availableModels ?? [];
-  }, [availableModels, agentType]);
+  }, [availableModels, agentType, isNative]);
   const filteredModels = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return models;
@@ -493,7 +506,11 @@ function ComposerGroupsMenu({
   // of the user's own provider keys, which the gateway agent cannot use. The
   // seam now publishes the gateway catalogue through the standard snapshot, so
   // the exclusion would hide the right list to keep showing the wrong one.
-  const showModel = models.length > 0;
+  //
+  // And shown for the native agent even when the list is EMPTY: an empty
+  // list is the gateway not having answered (ADR-0007), and the pill is where
+  // the refresh that fixes it lives. Hiding the pill would hide the fix.
+  const showModel = models.length > 0 || isNative;
 
   const toggle = (g: ComposerGroup) => {
     setQ("");
@@ -677,11 +694,37 @@ function ComposerGroupsMenu({
                     spellCheck={false}
                     className="min-w-0 flex-1 bg-transparent text-[11px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
                   />
+                  {isNative && (
+                    // The gateway's list, re-fetched on demand (ADR-0007).
+                    // Same icon, spin and disabled idiom as the grant bar's
+                    // Refresh — no new pattern.
+                    <button
+                      type="button"
+                      title="Refresh models"
+                      aria-label="Refresh models"
+                      disabled={refreshingModels}
+                      onClick={() => void refreshNativeModels()}
+                      className={cn(
+                        "shrink-0 rounded p-0.5 text-[var(--text-tertiary)] transition-colors",
+                        refreshingModels
+                          ? "cursor-default"
+                          : "cursor-pointer hover:text-[var(--text-primary)]",
+                      )}
+                    >
+                      <RotateCw size={12} className={cn(refreshingModels && "animate-spin")} />
+                    </button>
+                  )}
                 </div>
                 <div className="max-h-[280px] overflow-y-auto hide-scrollbar p-1">
                   {filteredModels.length === 0 ? (
                     <div className="px-2.5 py-2 text-[11px] text-[var(--text-tertiary)]">
                       No models
+                      {isNative && models.length === 0 && (
+                        <span className="mt-0.5 block text-[9px] leading-snug">
+                          Couldn't load the model list. Check your connection or sign in, then
+                          refresh.
+                        </span>
+                      )}
                     </div>
                   ) : (
                     filteredModels.map((m) => {
@@ -877,6 +920,7 @@ export function MessageInput({
   // `AiGrantBar` below only reads the result (see `ai-grant-store.ts` for why
   // the two must not probe independently).
   useAiGrantProbe();
+  useNativeModelsOrgRefresh();
   const noAiGrant = useNoAiGrant();
   // Scoped to the NATIVE agent, which is the only one that talks to the Atlas
   // gateway. Claude Code, Codex and every registry agent run on the user's own

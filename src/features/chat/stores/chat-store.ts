@@ -415,6 +415,11 @@ interface ChatActions {
       currentModel: string | null,
       availableModels: SessionModeInfo[],
     ) => void;
+    /** Replace the model list on EVERY session of an agent type at once — the
+     *  native agent's picker Refresh (ADR-0007), whose list belongs to the
+     *  agent rather than to one session. Never touches a session's current
+     *  model. Caches per agentType like `setAcpModels`. */
+    setAcpModelsForAgent: (agentType: string, availableModels: SessionModeInfo[]) => void;
     /** Pick an ACP model and push it to the bound agent (`session/set_model`). */
     setAcpModel: (sessionId: string, modelId: string) => void;
     /** Seed the ACP slash-command list from a session snapshot's
@@ -1279,6 +1284,17 @@ export const useChatStore = createSelectors(
           const at = get().sessions[sessionId]?.agentType;
           if (availableModels.length > 0 && at) {
             saveCachedAcpModels(at, { availableModels });
+          }
+        },
+        setAcpModelsForAgent: (agentType, availableModels) => {
+          set((s) => {
+            for (const session of Object.values(s.sessions)) {
+              if (session.agentType !== agentType) continue;
+              session.acpAvailableModels = availableModels;
+            }
+          });
+          if (availableModels.length > 0) {
+            saveCachedAcpModels(agentType, { availableModels });
           }
         },
         setAcpModel: (sessionId, modelId) => {

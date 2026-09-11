@@ -1,27 +1,20 @@
-//! The Atlas-authored model catalogue (spec D3).
+//! Projecting a gateway catalogue row into the engine's own record.
+//!
+//! **No model is named in this file.** The list of models Atlas Agent may use
+//! is the gateway's (`GET /v1/catalogue`), fetched and cached by
+//! [`crate::engine::catalog_cache`] (ADR-0007). What lives here is the one
+//! thing the gateway cannot know: what the engine needs to be told about a
+//! model so that a turn over the Chat Completions dialect survives the
+//! crossing.
 //!
 //! The engine can fetch a catalogue from `{base}/models`, and against this
 //! gateway that path does not work: the engine's fetch adds a
 //! `?client_version=` parameter the contract does not define, and then
 //! deserializes the reply as its own rich `{"models":[…]}` record — where the
 //! gateway serves the stock OpenAI `{"object":"list","data":[…]}` list, which
-//! shares nothing with it but the path segment. The deserialize fails outright.
-//! So the catalogue is authored here, which is the engine's first-class static
-//! path rather than a workaround.
-//!
-//! # What the numbers in here decide
-//!
-//! - **`context_window: 200_000`** is the gateway's prompt ceiling, and local
-//!   auto-compaction fires at 90% of whatever this says. Author it too high and
-//!   compaction never runs before the gateway starts answering `413`; too low
-//!   and every long thread compacts early for no reason. Two caveats travel
-//!   with the number and neither is fixable here: the engine counts real
-//!   usage-reported tokens while the gateway's `413` gate estimates
-//!   `ceil(bytes/3)`, so the two meters can cross; and remote compaction is
-//!   capability-gated to OpenAI and Azure, so only local summarisation defends
-//!   the ceiling.
-//! - **The default is `claude-sonnet-4-6`** (D3), which is why it carries
-//!   `priority: 1` — the picker orders on it.
+//! shares nothing with it but the path segment. So the seam builds the record
+//! itself and hands it to the engine through `model_catalog_json`, the
+//! engine's first-class static path.
 //!
 //! # Where these rows differ from an upstream row, and why
 //!
@@ -33,37 +26,29 @@
 //! the dialect flattens freeform tools on the way out and turns the reply back
 //! on the way in, so patching survives the crossing.
 //!
-//! # Two catalogued models are deliberately absent
+//! # The context window
 //!
-//! The gateway's `/v1/catalogue` is the set Atlas *resells*; this file is the
-//! set a user may *pick*. Neither model below can generate, so authoring
-//! either would put a model in the picker that cannot answer — but they fail
-//! at different points, and only one of them is visible on the wire at all.
+//! `context_window` is the gateway's prompt ceiling for that model, and local
+//! auto-compaction fires at 90% of whatever it says. It is the gateway's
+//! number to state (it is being asked to — `docs/requests/gateway-catalogue-
+//! metadata.md`), and until it does the field is simply absent: the engine
+//! then has no ceiling to compact against, and the gateway's `413` is what
+//! ends a long thread. Two caveats travel with the number and neither is
+//! fixable here: the engine counts real usage-reported tokens while the
+//! gateway's `413` gate estimates `ceil(bytes/3)`, so the two meters can
+//! cross; and remote compaction is capability-gated to OpenAI and Azure, so
+//! only local summarisation defends the ceiling.
 //!
-//! - **`deepseek-v3-2`** is withdrawn (ATL-173): its price row names no
-//!   publisher, so it is left out of `/v1/catalogue` entirely and refused
-//!   `403 model_not_allowed` before any spend. Nothing advertises it.
-//! - **`openai/gpt-5.6-sol`** is the harder case, because the gateway *does*
-//!   advertise it — `entitled: true` on `/v1/catalogue` — and it still has no
-//!   funded route (measured 2026-09-05). Every completion comes back
-//!   `502 provider_error` wrapping the gateway's own upstream `402`:
-//!   *"Insufficient balance; add money to your gateway or use BYOK"*. The
-//!   catalogue entry is real and the credit behind it is not, so the refusal
-//!   is total rather than intermittent. Adding the row is a one-line change
-//!   once OpenAI is funded or on BYOK — re-probe before making it.
+//! # The gateway is not Vertex-only
 //!
-//! # The gateway is no longer Vertex-only
-//!
-//! `glm-5.3-flash` is served by Cloudflare Workers AI (`owned_by:
-//! "workers-ai"`, publisher `zai-org`), not by Vertex, and it bills in Workers
-//! AI *neurons* rather than tokens. Nothing in this file has to care — the
-//! broker still answers OpenAI on the same `/v1/chat/completions` — but the
-//! assumption that every row is a Vertex publisher path (§4.3a of
-//! `docs/reference/atlas-ai-api.md`) no longer holds, so do not derive
-//! anything here from it. It replies with a `reasoning_content` field
-//! alongside `content`, which the chat stream parser reads as a reasoning
-//! item, and writes `"tool_calls":null` on those chunks, which the parser
-//! reads as an empty array rather than a lost frame.
+//! `glm-5.3-flash` is served by Cloudflare Workers AI, not by Vertex, and it
+//! bills in Workers AI *neurons* rather than tokens. Nothing in this file has
+//! to care — the broker still answers OpenAI on the same
+//! `/v1/chat/completions` — but do not derive anything here from the
+//! publisher. It replies with a `reasoning_content` field alongside
+//! `content`, which the chat stream parser reads as a reasoning item, and
+//! writes `"tool_calls":null` on those chunks, which the parser reads as an
+//! empty array rather than a lost frame.
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -74,63 +59,29 @@ use codex_protocol::openai_models::ModelsResponse;
 use serde_json::Value;
 use serde_json::json;
 
-/// D3's default model.
-pub const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
-
-/// The gateway's prompt ceiling, and therefore the compaction trigger.
-pub const CONTEXT_WINDOW: i64 = 200_000;
-
 /// The file the engine reads the catalogue from.
 const CATALOG_FILE: &str = "models.json";
 
-/// The gateway's catalogue, in picker order: `(slug, display name, description)`.
-///
-/// Priority is the position, not a field — the picker orders on it, and a
-/// hand-written number that disagrees with the order of this list would be a
-/// silent reordering nobody meant.
-const MODELS: &[(&str, &str, &str)] = &[
-    (
-        DEFAULT_MODEL,
-        "Claude Sonnet 4.6",
-        "The default. Strong agentic coding at the mid tier.",
-    ),
-    (
-        "claude-opus-5",
-        "Claude Opus 5",
-        "The most capable model Atlas serves, and the most expensive.",
-    ),
-    (
-        "claude-opus-4-8",
-        "Claude Opus 4.8",
-        "The previous Opus release, priced identically to Opus 5.",
-    ),
-    (
-        "gemini-3.6-flash",
-        "Gemini 3.6 Flash",
-        "Fast and inexpensive; Atlas follows the latest Flash rather than pinning a version.",
-    ),
-    (
-        "gemini-3.5-flash-lite",
-        "Gemini 3.5 Flash Lite",
-        "The cheap tier — roughly a fifth of Flash on input.",
-    ),
-    (
-        "glm-5.3-flash",
-        "GLM 5.3 Flash",
-        "A reasoning model — it thinks before answering, so even short replies \
-         spend thinking tokens.",
-    ),
-];
-
-/// One catalogue row.
+/// One catalogue row, as the engine's `ModelInfo`.
 ///
 /// Authored as JSON and parsed rather than built as a struct literal, for two
 /// reasons: it is the same document the engine loads from disk, so this is the
 /// shape being asserted on; and the upstream record has forty-odd fields, most
 /// of them defaulted, so a struct literal would have to restate every default
 /// and would break on every upstream field addition.
-fn row(slug: &str, display_name: &str, description: &str, priority: i32) -> Value {
-    json!({
+///
+/// `description` and `context_window` are `Option` because the gateway does
+/// not send them yet. `description` is a required *key* on the engine's
+/// record, so an absent one is written as `null`; `context_window` is
+/// defaulted there, so an absent one is omitted.
+pub fn row(
+    slug: &str,
+    display_name: &str,
+    description: Option<&str>,
+    context_window: Option<i64>,
+    priority: i32,
+) -> Value {
+    let mut row = json!({
         "slug": slug,
         "display_name": display_name,
         "description": description,
@@ -168,14 +119,12 @@ fn row(slug: &str, display_name: &str, description: &str, priority: i32) -> Valu
         "use_responses_lite": false,
         "experimental_supported_tools": [],
 
-        // Both models take images. The gateway's 2 MB body cap is what bounds
-        // them, and that is a policy for the app to enforce (D15c), not a
-        // capability to deny here.
+        // Every gateway model takes images. The gateway's 2 MB body cap is
+        // what bounds them, and that is a policy for the app to enforce
+        // (D15c), not a capability to deny here.
         "input_modalities": ["text", "image"],
         "supports_image_detail_original": false,
 
-        "context_window": CONTEXT_WINDOW,
-        "max_context_window": CONTEXT_WINDOW,
         "truncation_policy": { "mode": "tokens", "limit": 10000 },
 
         // The engine's own bundled prompt, unedited.
@@ -192,117 +141,72 @@ fn row(slug: &str, display_name: &str, description: &str, priority: i32) -> Valu
 
         "availability_nux": null,
         "upgrade": null,
-    })
-}
-
-/// The catalogue, parsed into the engine's own record.
-pub fn atlas_catalog() -> Result<ModelsResponse> {
-    let models: Vec<Value> = MODELS
-        .iter()
-        .enumerate()
-        .map(|(index, (slug, display_name, description))| {
-            row(slug, display_name, description, index as i32 + 1)
-        })
-        .collect();
-    serde_json::from_value(json!({ "models": models }))
-        .context("the authored model catalogue must parse as the engine's own record")
+    });
+    if let Some(window) = context_window {
+        row["context_window"] = json!(window);
+        row["max_context_window"] = json!(window);
+    }
+    row
 }
 
 /// Writes the catalogue into the engine's home and returns its path.
 ///
 /// A file rather than an in-memory value because that is the only route the
 /// engine offers: `Config` reads a catalogue from the `model_catalog_json` path
-/// and nothing else populates it.
-pub async fn write_catalog(home: &Path) -> Result<PathBuf> {
-    let catalog = atlas_catalog()?;
-    let path = home.join(CATALOG_FILE);
-    let body = serde_json::to_vec_pretty(&catalog)
-        .context("serialising the authored model catalogue")?;
-    tokio::fs::write(&path, body)
+/// and nothing else populates it. Written whole (temp file, then rename):
+/// the engine re-reads this file on every thread start, and a half-written
+/// one is a failed thread rather than a fallback.
+pub async fn write_models_json(home: &Path, catalogue: &ModelsResponse) -> Result<PathBuf> {
+    tokio::fs::create_dir_all(home)
         .await
-        .with_context(|| format!("writing the model catalogue to {}", path.display()))?;
+        .with_context(|| format!("creating the engine home at {}", home.display()))?;
+    let path = home.join(CATALOG_FILE);
+    let tmp = home.join(format!("{CATALOG_FILE}.{}.tmp", std::process::id()));
+    let body = serde_json::to_vec_pretty(catalogue).context("serialising the model catalogue")?;
+    tokio::fs::write(&tmp, body)
+        .await
+        .with_context(|| format!("writing the model catalogue to {}", tmp.display()))?;
+    tokio::fs::rename(&tmp, &path)
+        .await
+        .with_context(|| format!("moving the model catalogue into place at {}", path.display()))?;
     Ok(path)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_protocol::openai_models::ModelInfo;
 
-    fn catalog() -> ModelsResponse {
-        match atlas_catalog() {
-            Ok(catalog) => catalog,
-            Err(err) => panic!("the authored catalogue must parse: {err:#}"),
+    fn parse(value: Value) -> ModelInfo {
+        match serde_json::from_value(value) {
+            Ok(model) => model,
+            Err(err) => panic!("a projected row must parse as the engine's record: {err:#}"),
         }
     }
 
     #[test]
-    fn the_catalogue_parses_as_the_record_the_engine_loads() {
-        // The whole point of authoring it: the engine's remote fetch cannot
-        // read the gateway's list, so this file is the catalogue. A row that
+    fn a_row_parses_as_the_record_the_engine_loads() {
+        // The whole point: the engine's remote fetch cannot read the gateway's
+        // list, so this row is what the engine knows about a model. A row that
         // does not parse leaves the picker empty and no model selectable.
-        assert_eq!(catalog().models.len(), MODELS.len());
+        let model = parse(row("claude-opus-5", "Claude Opus 5", Some("big"), Some(200_000), 1));
+        assert_eq!(model.slug, "claude-opus-5");
+        assert_eq!(model.display_name, "Claude Opus 5");
+        assert_eq!(model.description.as_deref(), Some("big"));
+        assert_eq!(model.priority, 1);
+        assert_eq!(model.context_window, Some(200_000));
+        assert_eq!(model.auto_compact_token_limit(), Some(180_000));
     }
 
     #[test]
-    fn the_default_model_is_the_sonnet_the_spec_names_and_it_sorts_first() {
-        // D3. The picker orders on `priority`, so being present is not enough.
-        let catalog = catalog();
-        let Some(first) = catalog.models.first() else {
-            panic!("the catalogue must not be empty");
-        };
-        assert_eq!(first.slug, DEFAULT_MODEL);
-        assert_eq!(first.slug, "claude-sonnet-4-6");
-        assert_eq!(first.priority, 1);
-        assert!(catalog.models.iter().all(|m| m.priority >= 1));
-    }
-
-    #[test]
-    fn the_models_the_gateway_actually_serves_are_the_ones_here() {
-        // Order is priority, so this asserts the picker's order too.
-        let catalog = catalog();
-        let slugs: Vec<&str> = catalog.models.iter().map(|m| m.slug.as_str()).collect();
-        assert_eq!(
-            slugs,
-            [
-                "claude-sonnet-4-6",
-                "claude-opus-5",
-                "claude-opus-4-8",
-                "gemini-3.6-flash",
-                "gemini-3.5-flash-lite",
-                "glm-5.3-flash",
-            ],
-        );
-    }
-
-    #[test]
-    fn a_model_the_gateway_cannot_generate_from_is_not_in_the_catalogue() {
-        // Both are listed by `/v1/catalogue`, and neither can answer:
-        // `deepseek-v3-2` is withdrawn (no publisher on its price row, so
-        // `403 model_not_allowed` before any spend), and `openai/gpt-5.6-sol`
-        // has no funded route (`502` wrapping the gateway's upstream `402`).
-        // Being resold is not the same as being selectable.
-        for unservable in ["deepseek", "gpt-5.6-sol"] {
-            assert!(
-                !catalog().models.iter().any(|m| m.slug.contains(unservable)),
-                "{unservable} cannot generate, so it must not be selectable",
-            );
-        }
-    }
-
-    #[test]
-    fn the_context_window_is_what_makes_compaction_fire_before_the_gateway_refuses() {
-        // Auto-compaction triggers at 90% of this. Left unset, the engine has no
-        // ceiling to compact against and the first sign of trouble is a 413 the
-        // classification arm can only report.
-        for model in catalog().models {
-            assert_eq!(model.context_window, Some(CONTEXT_WINDOW), "{}", model.slug);
-            assert_eq!(
-                model.auto_compact_token_limit(),
-                Some(180_000),
-                "{} must compact before the gateway's ceiling",
-                model.slug,
-            );
-        }
+    fn a_row_without_metadata_still_parses_and_states_no_ceiling() {
+        // What every row looks like until the gateway sends metadata: the
+        // slug doubles as the name, and there is no window to compact against.
+        let model = parse(row("gemini-3.6-flash", "gemini-3.6-flash", None, None, 3));
+        assert_eq!(model.description, None);
+        assert_eq!(model.context_window, None);
+        assert_eq!(model.max_context_window, None);
+        assert_eq!(model.auto_compact_token_limit(), None);
     }
 
     #[test]
@@ -310,18 +214,13 @@ mod tests {
         // Each of these rides a request field the gateway answers with a 400.
         // A row that claims them puts a knob in the UI that silently does
         // nothing, which is worse than not offering it.
-        for model in catalog().models {
-            assert!(
-                model.supported_reasoning_levels.is_empty(),
-                "{}: no reasoning knob crosses this wire",
-                model.slug,
-            );
-            assert!(!model.support_verbosity, "{}", model.slug);
-            assert!(!model.supports_reasoning_summary_parameter, "{}", model.slug);
-            assert!(model.service_tiers.is_empty(), "{}", model.slug);
-            assert!(!model.use_responses_lite, "{}", model.slug);
-            assert!(!model.supports_search_tool, "{}", model.slug);
-        }
+        let model = parse(row("m", "m", None, None, 1));
+        assert!(model.supported_reasoning_levels.is_empty());
+        assert!(!model.support_verbosity);
+        assert!(!model.supports_reasoning_summary_parameter);
+        assert!(model.service_tiers.is_empty());
+        assert!(!model.use_responses_lite);
+        assert!(!model.supports_search_tool);
     }
 
     #[test]
@@ -329,15 +228,9 @@ mod tests {
         // With no `instructions_template` the engine logs a warning and returns
         // an empty string, and the agent runs with no system prompt at all —
         // visible only as an agent that has forgotten how to do its job.
-        for model in catalog().models {
-            let instructions = model.get_model_instructions(/*personality*/ None);
-            assert!(
-                instructions.len() > 1_000,
-                "{} has no usable system prompt ({} bytes)",
-                model.slug,
-                instructions.len(),
-            );
-        }
+        let model = parse(row("m", "m", None, None, 1));
+        let instructions = model.get_model_instructions(/*personality*/ None);
+        assert!(instructions.len() > 1_000, "no usable system prompt ({} bytes)", instructions.len());
     }
 
     #[test]
@@ -345,13 +238,7 @@ mod tests {
         // The dialect flattens freeform tools and turns the reply back, so this
         // stays on. If that round trip is ever removed, this row becomes a tool
         // the model is offered and cannot successfully call.
-        for model in catalog().models {
-            assert!(
-                model.apply_patch_tool_type.is_some(),
-                "{} lost apply_patch",
-                model.slug,
-            );
-        }
+        assert!(parse(row("m", "m", None, None, 1)).apply_patch_tool_type.is_some());
     }
 
     #[tokio::test]
@@ -359,10 +246,17 @@ mod tests {
         let Ok(tmp) = tempfile::tempdir() else {
             panic!("tempdir");
         };
-        let Ok(path) = write_catalog(tmp.path()).await else {
+        let response: ModelsResponse = match serde_json::from_value(json!({
+            "models": [row("m", "m", None, None, 1)]
+        })) {
+            Ok(response) => response,
+            Err(err) => panic!("parse: {err:#}"),
+        };
+        let Ok(path) = write_models_json(tmp.path(), &response).await else {
             panic!("the catalogue must be writable");
         };
         assert!(path.is_file());
+        assert_eq!(path.file_name().and_then(|n| n.to_str()), Some(CATALOG_FILE));
 
         // Round-trips through disk, which is the path the engine takes.
         let Ok(body) = std::fs::read_to_string(&path) else {
@@ -371,6 +265,6 @@ mod tests {
         let Ok(reloaded) = serde_json::from_str::<ModelsResponse>(&body) else {
             panic!("the written catalogue must reload");
         };
-        assert_eq!(reloaded.models.len(), MODELS.len());
+        assert_eq!(reloaded.models.len(), 1);
     }
 }

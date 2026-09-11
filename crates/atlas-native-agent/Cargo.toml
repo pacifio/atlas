@@ -34,8 +34,12 @@ atlas-agent-transcript = { path = "../atlas-agent-transcript" }
 atlas-agent-servers = { path = "../atlas-agent-servers" }
 anyhow = "1"
 futures = "0.3"
+# The catalogue fetch (ADR-0007): one `GET /v1/catalogue` per connect, at
+# most. Same feature shape as the workspace's own stanza — no default TLS, so
+# this client sits on rustls like every other one in the app.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "macros", "rt", "sync", "time"] }
 tracing = "0.1"
 
 # --- The ported engine (#45, ADR-0004) --------------------------------------

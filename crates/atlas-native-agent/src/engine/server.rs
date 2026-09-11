@@ -19,6 +19,7 @@ use codex_login::auth::ExternalAuth;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 
+use crate::engine::catalog_cache::{CatalogueFetcher, GatewayCatalogueFetcher};
 use crate::engine::config::EngineSettings;
 use crate::engine::connection::EngineConnection;
 use crate::CERSEI_AGENT_ID;
@@ -40,6 +41,12 @@ pub struct EngineAgentServer {
     /// its own without global state and the app does not have to thread one
     /// through a `cfg`-gated constructor.
     memory_search: Option<crate::engine::memory::MemorySearch>,
+    /// How the model catalogue is fetched (ADR-0007).
+    ///
+    /// `None` builds the gateway fetcher at connect time, over the registered
+    /// token and org sources — the same lazy resolution the credential gets,
+    /// and for the same reason. A test passes its own to point at a mock.
+    catalogue: Option<Arc<dyn CatalogueFetcher>>,
 }
 
 impl EngineAgentServer {
@@ -49,7 +56,13 @@ impl EngineAgentServer {
             external_auth: None,
             default_mode: None,
             memory_search: None,
+            catalogue: None,
         }
+    }
+
+    pub fn with_catalogue(mut self, catalogue: Arc<dyn CatalogueFetcher>) -> Self {
+        self.catalogue = Some(catalogue);
+        self
     }
 
     pub fn with_memory_search(
@@ -110,6 +123,13 @@ impl AgentServer for EngineAgentServer {
         if let Some(root) = options.root_dir.clone() {
             settings.cwd = root;
         }
+        // Built here, not in the constructor, for the ordering reason above:
+        // the fetcher reads the registered token source when it fetches.
+        let catalogue = self.catalogue.clone().or_else(|| {
+            Some(Arc::new(GatewayCatalogueFetcher::registered(
+                settings.provider.base_url.clone(),
+            )) as Arc<dyn CatalogueFetcher>)
+        });
 
         async move {
             let connection = EngineConnection::connect_full(
@@ -119,6 +139,7 @@ impl AgentServer for EngineAgentServer {
                 external_auth,
                 default_mode,
                 memory_search,
+                catalogue,
             )
             .await?;
             Ok(connection as Arc<dyn AgentConnection>)
@@ -145,7 +166,7 @@ mod tests {
         EngineAgentServer::new(EngineSettings::new(
             EngineHome::at("/tmp/atlas-engine-test"),
             EngineProvider::dev("dev", "https://example.invalid/v1", None),
-            "gpt-5-codex",
+            Some("gpt-5-codex".to_string()),
             PathBuf::from("/tmp"),
         ))
     }

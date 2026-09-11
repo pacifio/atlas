@@ -196,6 +196,16 @@ export function useAiGrantProbe(): void {
   }, [signedIn, local, localId, remoteId]);
 }
 
+/** The gateway identity of the active org, or `null` for a local org or
+ *  signed-out. What the native agent's model list is entitled FOR
+ *  (ADR-0007); `useNativeModelsOrgRefresh` watches it for a switch. */
+export function useActiveGatewayOrgId(): string | null {
+  const snapshot = useAuthStore((s) => s.snapshot);
+  const org = useActiveOrganisation();
+  if (snapshot.status !== "signed-in" || isLocalOrg(org)) return null;
+  return org?.remoteId ?? null;
+}
+
 /**
  * `true` only when the gateway gave a definite no.
  *

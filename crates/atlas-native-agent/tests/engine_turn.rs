@@ -283,7 +283,7 @@ async fn harness_full(
             format!("{}/v1", server.uri()),
             Some(key_var.to_string()),
         ),
-        "gpt-5-codex",
+        Some("gpt-5-codex".to_string()),
         home.path().to_path_buf(),
     );
     // Production leaves this `None`. Without it every sandboxed command in this
@@ -318,6 +318,8 @@ async fn harness_full(
         None,
         None,
         memory_search,
+        // The Responses dialect pins its model; no catalogue is fetched.
+        None,
     )
     .await
     .expect("the engine should start in-process");

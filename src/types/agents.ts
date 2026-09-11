@@ -79,6 +79,19 @@ export interface SessionModeInfo {
   description?: string | null;
 }
 
+/** What `native_agent_refresh_models` returns — the picker's Refresh for the
+ *  native agent (ADR-0007). Mirrors Rust `NativeModelsRefresh`. */
+export interface NativeModelsRefresh {
+  models: SessionModeInfo[];
+  /** The first entitled row: what a new session starts on. */
+  defaultModel: string;
+  /** Anything the user can see changed. */
+  changed: boolean;
+  /** The native connection was restarted so the engine picks up the new
+   *  rows; open native sessions were told and rebind on their next send. */
+  reconnected: boolean;
+}
+
 export interface SessionSnapshot {
   agent_id: AgentId;
   session_id: AcpSessionId;

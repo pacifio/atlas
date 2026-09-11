@@ -26,6 +26,7 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::protocol::AskForApproval;
 use toml::Value as TomlValue;
 
@@ -167,7 +168,13 @@ impl EngineProvider {
 pub struct EngineSettings {
     pub home: EngineHome,
     pub provider: EngineProvider,
-    pub model: String,
+    /// A pinned model, for a provider whose catalogue the seam does not own.
+    ///
+    /// `Some` on the dev (Responses) provider, where the developer names the
+    /// model in the environment. `None` on the gateway: the model a session
+    /// starts on is the first entitled row of the fetched catalogue
+    /// (ADR-0007), decided at connect time, and nothing here may name one.
+    pub model: Option<String>,
     /// The session's working directory.
     pub cwd: PathBuf,
     /// The path to Atlas's own executable.
@@ -211,12 +218,12 @@ pub struct EngineSettings {
 }
 
 impl EngineSettings {
-    pub fn new(home: EngineHome, provider: EngineProvider, model: impl Into<String>, cwd: PathBuf) -> Self {
+    pub fn new(home: EngineHome, provider: EngineProvider, model: Option<String>, cwd: PathBuf) -> Self {
         let wire = provider.wire;
         Self {
             home,
             provider,
-            model: model.into(),
+            model,
             cwd,
             self_exe: std::env::current_exe().ok(),
             // Never guessed. `current_exe()` is a helper only in a process that
@@ -271,7 +278,7 @@ impl EngineSettings {
         Self::new(
             EngineHome::under_config_dir(config_dir),
             EngineProvider::dev("atlas-dev", base_url, Some(env_key)),
-            model,
+            Some(model),
             cwd,
         )
     }
@@ -279,7 +286,10 @@ impl EngineSettings {
     /// The overrides that have no config-file spelling.
     pub fn config_overrides(&self) -> ConfigOverrides {
         ConfigOverrides {
-            model: Some(self.model.clone()),
+            // `None` on the gateway. The engine then defaults to the
+            // catalogue's first-priority row, which is the same row the
+            // connection names explicitly on every thread it starts.
+            model: self.model.clone(),
             model_provider: Some(self.provider.id.clone()),
             cwd: Some(self.cwd.clone()),
             approval_policy: Some(self.approval_policy),
@@ -338,9 +348,10 @@ impl EngineSettings {
             // layer up, where the retry pill can show it.
             out.push((key("request_max_retries"), TomlValue::Integer(0)));
             // The gateway's `/models` is stock-OpenAI shaped and the engine's
-            // fetch cannot read it, so the catalogue is authored and read from
-            // disk (D3). `build_config` writes the file before this path is
-            // used, because a missing one fails config load outright.
+            // fetch cannot read it, so the catalogue the seam fetched and
+            // cached (ADR-0007) is projected and read from disk. `build_config`
+            // writes the file before this path is used, because a missing one
+            // fails config load outright.
             out.push((
                 "model_catalog_json".to_string(),
                 TomlValue::String(self.home.path().join("models.json").display().to_string()),
@@ -358,13 +369,20 @@ impl EngineSettings {
         Self::new(
             EngineHome::under_config_dir(config_dir),
             EngineProvider::gateway(GATEWAY_BASE_URL),
-            crate::engine::catalog::DEFAULT_MODEL,
+            // Nothing is named here. The connection resolves the catalogue
+            // and takes its first entitled row (ADR-0007).
+            None,
             cwd,
         )
     }
 
     /// Loads the engine's `Config` with everything above applied.
-    pub async fn build_config(&self) -> Result<Config> {
+    ///
+    /// `catalogue` is the projected gateway catalogue (ADR-0007). It is
+    /// required on the gateway dialect and ignored on the Responses one; the
+    /// fetch-and-cache policy that produces it lives in `catalog_cache`, not
+    /// here, so this stays a pure assembly step that tests can run offline.
+    pub async fn build_config(&self, catalogue: Option<&ModelsResponse>) -> Result<Config> {
         tokio::fs::create_dir_all(self.home.path())
             .await
             .with_context(|| {
@@ -375,10 +393,15 @@ impl EngineSettings {
             })?;
 
         if self.provider.wire == WireDialect::Chat {
+            let Some(catalogue) = catalogue else {
+                anyhow::bail!(
+                    "the gateway dialect needs a model catalogue and none was resolved"
+                );
+            };
             // Written before the config is loaded, not after: `model_catalog_json`
             // names a path the loader reads immediately, and a missing file is a
             // config-load failure rather than a fallback to the bundled catalogue.
-            crate::engine::catalog::write_catalog(self.home.path()).await?;
+            crate::engine::catalog::write_models_json(self.home.path(), catalogue).await?;
         }
 
         ConfigBuilder::default()
@@ -401,9 +424,35 @@ mod tests {
         EngineSettings::new(
             EngineHome::at(tmp.join("engine")),
             EngineProvider::dev("atlas-dev", "https://example.invalid/v1", None),
-            "gpt-5-codex",
+            Some("gpt-5-codex".to_string()),
             tmp.to_path_buf(),
         )
+    }
+
+    /// A projected catalogue with one entitled row and one locked one — the
+    /// shape `build_config` is handed on the gateway dialect.
+    fn fixture_catalogue() -> ModelsResponse {
+        use crate::engine::catalog_cache::{CatalogueCache, GatewayCatalogue, GatewayRow};
+        let row = |id: &str, entitled: bool| GatewayRow {
+            id: id.to_string(),
+            publisher: None,
+            entitled,
+            display_name: None,
+            description: None,
+            context_window: None,
+        };
+        let cache = CatalogueCache::new(
+            GatewayCatalogue {
+                has_grant: true,
+                rows: vec![row("model-one", true), row("model-locked", false)],
+            },
+            None,
+            0,
+        );
+        match crate::engine::catalog_cache::project(&cache) {
+            Some(projected) => projected.response,
+            None => panic!("the fixture has an entitled row"),
+        }
     }
 
     #[test]
@@ -459,7 +508,7 @@ mod tests {
         let keyed = EngineSettings::new(
             EngineHome::at(tmp.join("engine")),
             EngineProvider::dev("byok", "https://example.invalid/v1", Some("DEV_KEY".into())),
-            "gpt-5-codex",
+            Some("gpt-5-codex".to_string()),
             tmp.clone(),
         );
         assert!(
@@ -516,7 +565,7 @@ mod tests {
     async fn build_config_creates_the_home_and_resolves_the_provider() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let s = settings(tmp.path());
-        let config = s.build_config().await.expect("config should load");
+        let config = s.build_config(None).await.expect("config should load");
 
         assert!(s.home.path().is_dir(), "the engine home must exist after build");
         assert_eq!(config.model.as_deref(), Some("gpt-5-codex"));
@@ -553,7 +602,10 @@ mod tests {
             !overrides.iter().any(|(k, _)| k.ends_with(".env_key")),
             "the gateway authenticates by minted token, never by a stored key",
         );
-        assert_eq!(s.model, crate::engine::catalog::DEFAULT_MODEL);
+        // ADR-0007: no model is named in code. The connection takes the first
+        // entitled row of the fetched catalogue.
+        assert_eq!(s.model, None);
+        assert_eq!(s.config_overrides().model, None);
     }
 
     #[test]
@@ -582,7 +634,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_authored_catalogue_is_on_disk_before_the_config_reads_it() {
+    async fn the_projected_catalogue_is_on_disk_before_the_config_reads_it() {
         // `model_catalog_json` names a path the loader reads immediately; a
         // missing file is a config-load failure, not a quiet fallback to the
         // bundled catalogue. So the write has to happen first, and the failure
@@ -594,21 +646,39 @@ mod tests {
         let mut s = EngineSettings::gateway(tmp.path(), tmp.path().to_path_buf());
         s.home = EngineHome::at(tmp.path().join("engine"));
 
-        let config = match s.build_config().await {
+        let config = match s.build_config(Some(&fixture_catalogue())).await {
             Ok(config) => config,
             Err(err) => panic!("the gateway config must load: {err:#}"),
         };
         assert!(s.home.path().join("models.json").is_file());
 
         let Some(catalog) = config.model_catalog else {
-            panic!("the engine must have loaded the authored catalogue");
+            panic!("the engine must have loaded the projected catalogue");
         };
+        let slugs: Vec<&str> = catalog.models.iter().map(|m| m.slug.as_str()).collect();
+        assert_eq!(
+            slugs,
+            ["model-one"],
+            "exactly the entitled rows, and none of the locked ones",
+        );
+    }
+
+    #[tokio::test]
+    async fn the_gateway_dialect_refuses_to_build_without_a_catalogue() {
+        // Decision 1 of ADR-0007: nothing authored stands in for a missing
+        // list. Building the config with none is a refusal, not a fallback.
+        let Ok(tmp) = tempfile::tempdir() else {
+            panic!("tempdir");
+        };
+        let mut s = EngineSettings::gateway(tmp.path(), tmp.path().to_path_buf());
+        s.home = EngineHome::at(tmp.path().join("engine"));
+        let Err(err) = s.build_config(None).await else {
+            panic!("the gateway dialect must not load with no catalogue");
+        };
+        assert!(err.to_string().contains("catalogue"), "{err:#}");
         assert!(
-            catalog
-                .models
-                .iter()
-                .any(|m| m.slug == crate::engine::catalog::DEFAULT_MODEL),
-            "the default model has to be selectable",
+            !s.home.path().join("models.json").exists(),
+            "and it must not have written an empty file for the engine to trip on",
         );
     }
 }
