@@ -16,7 +16,7 @@ import { AccountMenu } from "./account-menu";
  * Signed out or mid-grant it is a plain button that starts (or reopens)
  * sign-in — the menu has nothing to say in either state.
  */
-export function AccountButton() {
+export function AccountButton({ compact = false }: { compact?: boolean } = {}) {
   const snapshot = useAuthStore.use.snapshot();
   const starting = useAuthStore.use.starting();
   const { beginSignIn, closeDialog } = useAuthStore.use.actions();
@@ -51,7 +51,11 @@ export function AccountButton() {
       title={title}
       aria-label={title}
       className={cn(
-        "relative flex items-center justify-center w-6 h-6 rounded transition-all duration-150",
+        "relative flex items-center justify-center transition-all duration-150",
+        // Inside the titlebar dock the avatar is one of a row of 20px controls
+        // and the pill supplies the surrounding shape, so it loses two pixels
+        // and its own square corners.
+        compact ? "size-5 rounded-full" : "w-6 h-6 rounded",
         // A `<button>` still gets the arrow by default, and this one carries no
         // label or border — the pointer is most of what says it is pressable.
         // Matches the title bar's project-name button beside it.
@@ -60,11 +64,11 @@ export function AccountButton() {
       )}
     >
       {starting || connecting ? (
-        <Loader2 size={14} className="animate-spin" />
+        <Loader2 size={compact ? 12 : 14} className="animate-spin" />
       ) : user ? (
-        <AccountAvatar user={user} size={18} />
+        <AccountAvatar user={user} size={compact ? 16 : 18} />
       ) : (
-        <CircleUser size={14} />
+        <CircleUser size={compact ? 12 : 14} />
       )}
     </button>
   );

@@ -24,6 +24,7 @@ import {
   Hammer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TitlebarDock, type DockItem } from "./titlebar-dock";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import type { Window as TauriWindow } from "@tauri-apps/api/window";
@@ -154,21 +155,37 @@ export function Titlebar() {
       {/* The account button sits OUTSIDE the `currentProject` guard on purpose:
           a fresh install has no project open, and sign-in must be reachable
           from that empty state rather than hidden behind opening a folder. */}
-      <div className="flex items-center gap-1.5">
-        {currentProject && (
-          <>
-            <UpdateButton />
-            <NotificationButton />
-            <RightPanelToggle />
-            {/* Separates the app-level actions from the account. Lives inside
-                the same guard so it never floats alone with no icons beside
-                it (empty state = account button only). */}
-            <div className="mx-0.5 h-4 w-px bg-border-default" aria-hidden />
-          </>
-        )}
-        <AccountButton />
-      </div>
+      {/* One dock, account included. Without a project there are no app-level
+          actions to gather, so the account stands alone as it always has —
+          signing in has to be reachable from an empty window. */}
+      {currentProject ? (
+        <ActionDock />
+      ) : (
+        <div className="flex items-center">
+          <AccountButton />
+        </div>
+      )}
     </div>
+  );
+}
+
+/**
+ * The titlebar's action dock.
+ *
+ * A component rather than three inlined hook calls so the hooks' subscriptions
+ * — updater phase, notification counts, right-panel visibility — re-render
+ * this and nothing else. Put them in `Titlebar` itself and every notification
+ * would re-render the project label and the org switcher beside it.
+ */
+function ActionDock() {
+  const update = useUpdateItem();
+  const notifications = useNotificationItem();
+  const rightPanel = useRightPanelItem();
+  return (
+    <TitlebarDock
+      items={[update, notifications, rightPanel]}
+      trailing={{ label: "Account and settings", node: <AccountButton compact /> }}
+    />
   );
 }
 
@@ -395,7 +412,7 @@ function ArcProgress({ value }: { value: number }) {
   const c = 2 * Math.PI * r;
   const off = c * (1 - Math.max(0, Math.min(1, value)));
   return (
-    <svg width={14} height={14} viewBox="0 0 16 16" className="-rotate-90">
+    <svg width={12} height={12} viewBox="0 0 16 16" className="-rotate-90">
       <circle
         cx="8"
         cy="8"
@@ -427,7 +444,7 @@ function ArcProgress({ value }: { value: number }) {
  * → a badge dot; clicking reopens the "Restart to update" prompt. All state is
  * driven by the `atlas:update-*` events → updater store (fully non-blocking).
  */
-function UpdateButton() {
+function useUpdateItem(): DockItem {
   const checking = useUpdaterStore.use.checking();
   const phase = useUpdaterStore.use.phase();
   const progress = useUpdaterStore.use.progress();
@@ -454,7 +471,7 @@ function UpdateButton() {
       );
   };
 
-  const title = checking
+  const label = checking
     ? "Checking for updates…"
     : downloading
       ? progress != null
@@ -464,39 +481,26 @@ function UpdateButton() {
         ? "Update ready — click to restart"
         : "Check for updates";
 
-  return (
-    <button
-      onClick={onClick}
-      disabled={checking || downloading}
-      className={cn(
-        "relative flex items-center justify-center w-6 h-6 rounded hover:bg-[#ffffff08] transition-all duration-150 outline-none focus:outline-none",
-        ready || downloading ? "text-[#ccc]" : "text-[#555] hover:text-[#aaa]",
-      )}
-      title={title}
-      aria-label={title}
-    >
-      {checking ? (
-        <Loader2 size={14} className="animate-spin" />
-      ) : downloading ? (
-        progress != null ? (
-          <ArcProgress value={progress} />
-        ) : (
-          <Loader2 size={14} className="animate-spin" />
-        )
+  return {
+    label,
+    onClick,
+    disabled: checking || downloading,
+    icon: checking ? (
+      <Loader2 size={12} className="animate-spin" />
+    ) : downloading ? (
+      progress != null ? (
+        <ArcProgress value={progress} />
       ) : (
-        <ArrowDownToLine size={14} />
-      )}
-      {ready && (
-        <span
-          className="absolute -top-[1px] -right-[1px] w-[7px] h-[7px] rounded-full bg-[var(--accent-primary)] ring-1 ring-[var(--bg-base)] pointer-events-none"
-          aria-label="Update ready"
-        />
-      )}
-    </button>
-  );
+        <Loader2 size={12} className="animate-spin" />
+      )
+    ) : (
+      <ArrowDownToLine size={12} />
+    ),
+    badge: ready ? <DockBadge className="bg-[var(--accent-primary)]" /> : undefined,
+  };
 }
 
-function NotificationButton() {
+function useNotificationItem(): DockItem {
   const { toggle } = useNotificationsStore.use.actions();
   const activeOrgId = useOrgStore.use.activeOrganisationId();
   // Select PRIMITIVES (booleans) — returning a filtered array from the selector
@@ -513,46 +517,50 @@ function NotificationButton() {
   );
   const terminalAttention = useTerminalAttention(anyTerminalNeedsAttention);
   const needsAttention = chatAttention || terminalAttention;
-  const hasUnreadAny = unread;
 
-  return (
-    <button
-      onClick={() => toggle(activeOrgId)}
-      className="relative flex items-center justify-center w-6 h-6 rounded text-[#555] hover:text-[#aaa] hover:bg-[#ffffff08] transition-all duration-150 outline-none focus:outline-none"
-      title="Notifications"
-      aria-label="Notifications"
-    >
-      <Bell size={14} />
-      {(hasUnreadAny || needsAttention) && (
-        <span
+  return {
+    label: "Notifications",
+    onClick: () => toggle(activeOrgId),
+    icon: <Bell size={12} />,
+    badge:
+      unread || needsAttention ? (
+        <DockBadge
+          // Priority: error > needs-attention (green) > plain unread.
           className={cn(
-            "absolute -top-[1px] -right-[1px] w-[7px] h-[7px] rounded-full ring-1 ring-[var(--bg-base)] pointer-events-none",
-            // Priority: error > needs-attention (green) > plain unread.
             hasError
               ? "bg-[var(--status-error)]"
               : needsAttention
                 ? "bg-[var(--status-success)] animate-pulse"
                 : "bg-white",
           )}
-          aria-label={needsAttention ? "Something needs your attention" : "Unread notifications"}
+          label={needsAttention ? "Something needs your attention" : "Unread notifications"}
         />
-      )}
-    </button>
-  );
+      ) : undefined,
+  };
 }
 
-function RightPanelToggle() {
+function useRightPanelItem(): DockItem {
   const rightPanel = useLayoutStore.use.rightPanel();
   const { toggleRightPanel } = useLayoutStore.use.actions();
 
+  return {
+    label: rightPanel.visible ? "Hide right panel" : "Show right panel",
+    onClick: toggleRightPanel,
+    icon: <PanelRight size={12} className={rightPanel.visible ? "" : "opacity-40"} />,
+  };
+}
+
+/** The dock's corner dot. Its ring matches the dock fill, not the titlebar —
+ *  the badge now sits on the pill, not on the window. */
+function DockBadge({ className, label }: { className?: string; label?: string }) {
   return (
-    <button
-      onClick={toggleRightPanel}
-      className="flex items-center justify-center w-6 h-6 rounded text-[#555] hover:text-[#aaa] hover:bg-[#ffffff08] transition-all duration-150"
-      title={rightPanel.visible ? "Hide right panel" : "Show right panel"}
-      aria-label={rightPanel.visible ? "Hide right panel" : "Show right panel"}
-    >
-      <PanelRight size={14} className={rightPanel.visible ? "" : "opacity-40"} />
-    </button>
+    <span
+      className={cn(
+        "pointer-events-none absolute right-[3px] top-[3px] size-[6px] rounded-full",
+        "ring-1 ring-[var(--bg-elevated)]",
+        className,
+      )}
+      aria-label={label}
+    />
   );
 }
