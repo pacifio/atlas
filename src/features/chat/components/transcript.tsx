@@ -35,14 +35,11 @@ import {
   useState,
 } from "react";
 import type { ChatMessage } from "@/types/agent";
-import { type SwitchableAgent } from "@/types/agent";
 import {
   agentMeta,
   catalogEntry as agentCatalogEntry,
   switchableAgentOf,
 } from "@/features/agents/lib/agent-meta";
-import { AgentIcons, ExternalAgentIcon, AgentMonogram } from "@/components/agent-icons";
-import { AtlasIcon } from "@/components/atlas-icon";
 import { useIsTabVisible } from "@/features/layout/lib/use-tab-visible";
 import { projectRows, RowKind, type Projection, type Row } from "../lib/turn-rows";
 import { useTranscriptScroll } from "../lib/use-transcript-scroll";
@@ -115,18 +112,6 @@ const STICKY_SETTLE_MS = 4000;
 
 /** Shared with the composer — see `switchableAgentOf`. */
 const switchable = switchableAgentOf;
-
-/** Resolved ONCE per thread and handed to every row as a stable element — a
- *  session's agent never changes mid-thread, so deriving this per row would be
- *  pure per-row cost in the scroll path. */
-const AGENT_ICON: Record<SwitchableAgent, React.ReactNode> = {
-  codex: <AgentIcons.Codex className="size-3.5 text-[var(--text-secondary)]" />,
-  opencode: <AgentIcons.OpenCode className="size-3.5 text-[var(--text-secondary)]" />,
-  cursor: <AgentIcons.Cursor className="size-3.5 text-[var(--text-secondary)]" />,
-  kilo: <AgentIcons.Kilo className="size-3.5 text-[var(--text-secondary)]" />,
-  cersei: <AtlasIcon size={14} />,
-  "claude-code": <AgentIcons.Claude className="size-3.5 text-[var(--text-secondary)]" />,
-};
 
 export interface TranscriptHandle {
   scrollToBottom: () => void;
@@ -250,23 +235,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   if (!live) consumedJustSent.current = justSentMessageId;
   const entranceMessageId =
     justSentMessageId === consumedJustSent.current ? undefined : justSentMessageId;
-  const { label: agentLabel, iconDataUrl: agentIconUrl } = agentMeta(agent);
-  // MEMOIZED, and it must stay that way: this element is handed to every
-  // row, and rows are memo()'d with default shallow compare. The previous
-  // un-memoized `?? <fallback JSX>` allocated a fresh element per Transcript
-  // render for external agents — new prop identity → every row re-rendered
-  // on every streaming delta / window growth / scroll flip, which is what
-  // reintroduced whole-thread blanking during fast scroll.
-  const agentIcon = useMemo(
-    () =>
-      AGENT_ICON[agent] ??
-      (agentIconUrl ? (
-        <ExternalAgentIcon dataUrl={agentIconUrl} size={14} />
-      ) : (
-        <AgentMonogram label={agentLabel} size={14} />
-      )),
-    [agent, agentIconUrl, agentLabel],
-  );
+  const { label: agentLabel } = agentMeta(agent);
 
   // Whether a retry is possible RIGHT NOW. Selector returns a boolean and is
   // O(1), so it runs on every store write but re-renders only when the answer
@@ -801,7 +770,6 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
             row={row}
             tabId={tabId}
             agentLabel={agentLabel}
-            agentIcon={agentIcon}
             justSentMessageId={entranceMessageId}
             onExpandTurn={toggleTurn}
             // Absolute position in the thread, so the newest messages — the
@@ -820,7 +788,6 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
       safeStart,
       tabId,
       agentLabel,
-      agentIcon,
       entranceMessageId,
       canRetryRowId,
       pinScopeKey,
@@ -908,7 +875,6 @@ function RowView({
   justSentMessageId,
   tabId,
   agentLabel,
-  agentIcon,
   priority,
   onToggleExpand,
   onExpandTurn,
@@ -920,7 +886,6 @@ function RowView({
   justSentMessageId?: string;
   tabId: string;
   agentLabel: string;
-  agentIcon: React.ReactNode;
   priority: number;
   onToggleExpand: (id: string) => void;
   onExpandTurn: (turnId: string) => void;
@@ -950,9 +915,7 @@ function RowView({
         />
       );
     case RowKind.Prose:
-      return (
-        <ProseRowView row={row} agentLabel={agentLabel} agentIcon={agentIcon} priority={priority} />
-      );
+      return <ProseRowView row={row} agentLabel={agentLabel} priority={priority} />;
     case RowKind.Thinking:
       return <ThinkingRowView row={row} onToggleExpand={onToggleExpand} />;
     case RowKind.Marker:

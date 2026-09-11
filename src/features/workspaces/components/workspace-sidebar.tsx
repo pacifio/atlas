@@ -30,9 +30,11 @@ import {
   Globe,
   Sparkles,
   BookOpen,
+  BrainCircuit,
   Ellipsis,
 } from "lucide-react";
 import { toast } from "sonner";
+import { copyText } from "@/lib/clipboard";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { GithubIcon } from "@/components/github-icon";
@@ -662,6 +664,26 @@ export function WorkspaceSidebar() {
       data: {},
     });
   }, []);
+  // Same open-or-focus shape as `openKnowledge`. Deliberately NOT gated on a
+  // project: only the panel's Shared tab needs one, and it says so itself —
+  // the graph, policy and timeline views are global.
+  const openMemory = useCallback(() => {
+    const st = useLayoutStore.getState();
+    const g = st.focusedGroupId;
+    const existing = st.tabs.find((t) => (t.groupId ?? "main") === g && t.type === "memory");
+    if (existing) {
+      st.actions.setActiveTab(existing.id);
+      return;
+    }
+    st.actions.addTab({
+      id: `memory-${Date.now()}`,
+      type: "memory",
+      title: "Memory",
+      closable: true,
+      dirty: false,
+      data: {},
+    });
+  }, []);
   const recentProjects = useProjectStore.use.recentProjects();
   const { clearRecents } = useProjectStore.use.actions();
   const recentChats = useRecentChatsStore.use.items();
@@ -1035,6 +1057,7 @@ export function WorkspaceSidebar() {
                   title={hasProject ? undefined : "Open a project to see its source control"}
                   onClick={() => toggleRightPanelMode("source-control")}
                 />
+                <NavItem icon={<BrainCircuit size={14} />} label="Memory" onClick={openMemory} />
                 <NavItem
                   icon={<Ellipsis size={14} />}
                   label="More"
@@ -1504,9 +1527,29 @@ function AppVersion() {
   }, []);
   if (!version) return null;
   return (
-    <span className="select-none pr-1 font-mono text-[10px] tabular-nums text-[var(--text-tertiary)]">
+    // A button, not a span, so the version can be lifted into a bug report
+    // without retyping it. The class list is unchanged except for the hover
+    // colour and the cursor: Tailwind's preflight already strips a button's
+    // padding, border and background, and both elements are flex items of the
+    // footer row, so the box and the alignment are exactly what they were.
+    <button
+      type="button"
+      title="Copy version"
+      onClick={() => {
+        // The bare number is what a version field or a release tag wants; the
+        // toast repeats it so there is no doubt about what was copied.
+        // `copyText` RESOLVES false on failure rather than rejecting, so the
+        // result has to be read — a `.catch()` alone would report success on a
+        // copy that never landed.
+        void copyText(version).then((ok) => {
+          if (ok) toast.success(`Copied ${version}`);
+          else toast.error("Could not copy the version.");
+        });
+      }}
+      className="cursor-pointer select-none pr-1 font-mono text-[10px] tabular-nums text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-secondary)]"
+    >
       v{version}
-    </span>
+    </button>
   );
 }
 

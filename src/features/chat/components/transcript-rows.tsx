@@ -202,32 +202,35 @@ function clampable(row: UserRow): boolean {
 export const ProseRowView = memo(function ProseRowView({
   row,
   agentLabel,
-  agentIcon,
   priority,
 }: {
   row: ProseRow;
   agentLabel: string;
-  agentIcon: React.ReactNode;
   /** Position in the thread — newest parses first. See `CachedMarkdown`. */
   priority: number;
 }) {
   return (
     <Column className="py-2">
-      {/* One left-aligned group: glyph, time, model. The timestamp used to be
+      {/* One left-aligned group: model, dot, time. The timestamp used to be
           pushed to the far right with `ml-auto`, which left a long empty span
           across a 760px column and read as two unrelated headers rather than
-          one line of provenance. Kept in reading order — who, when, what —
-          against the left edge the prose below it also starts from. The
-          agent's NAME is dropped: the glyph already says it, and it was the
-          least useful token in a line competing with the prose underneath. */}
+          one line of provenance. It stays against the left edge the prose
+          below it also starts from.
+
+          What answers a message is the MODEL, so the model leads; the time is
+          the qualifier and follows the separator. The agent glyph is gone —
+          it repeated what the model name already says, and an icon is the
+          heaviest possible way to say it in a line that competes with the
+          prose underneath. `agentLabel` is the fallback for a row whose model
+          is unknown (an older thread, a resumed session), so the line never
+          degrades to a bare timestamp with no provenance at all. */}
       {row.showHeader && (
-        <div className="flex h-[22px] items-center gap-2">
-          <span
-            className="grid size-4 shrink-0 place-items-center"
-            title={agentLabel}
-            aria-label={agentLabel}
-          >
-            {agentIcon}
+        <div className="flex h-[22px] items-center gap-1.5">
+          <span className="min-w-0 truncate font-mono text-[10px] text-[var(--text-tertiary)]">
+            {row.model || agentLabel}
+          </span>
+          <span aria-hidden className="shrink-0 text-[10px] text-[var(--text-ghost)]">
+            ·
           </span>
           <span className="shrink-0 font-mono text-[10px] text-[var(--text-tertiary)]">
             {new Date(row.timestamp).toLocaleTimeString([], {
@@ -235,11 +238,6 @@ export const ProseRowView = memo(function ProseRowView({
               minute: "2-digit",
             })}
           </span>
-          {row.model && (
-            <span className="min-w-0 truncate font-mono text-[10px] text-[var(--text-tertiary)]">
-              {row.model}
-            </span>
-          )}
         </div>
       )}
       {/* Settled prose goes through the plain cached renderer: its root IS
